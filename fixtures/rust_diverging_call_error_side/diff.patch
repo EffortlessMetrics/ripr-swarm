@@ -1,0 +1,8 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,3 +9,3 @@ pub fn total(s: &str) -> Result<u32, E> {
+     for c in s.chars() {
+-        let d = (digit(c))?;
++        let d = digit(c)?;
+         sum += d;

@@ -26,6 +26,47 @@ pub(crate) fn human_after_phase_follow_up(persisted_next_command: &str) -> Strin
         .unwrap_or_else(|| persisted_next_command.to_string())
 }
 
+/// #10009: like [`human_after_phase_follow_up`], but the rendered `--root`
+/// spelling comes from the caller's display root instead of the persisted
+/// command's. The CLI passes the bound host root (identical spelling,
+/// paste-and-run from any working directory); bounded projections (MCP, ADR
+/// 0022) pass the portable root `.` so the projection never leaks the
+/// host-local checkout path. Trust-bound, store-qualified, and unparseable
+/// commands still keep the persisted spelling verbatim, exactly like the
+/// base renderer.
+pub(crate) fn human_after_phase_follow_up_for_display(
+    persisted_next_command: &str,
+    root_display: &str,
+) -> String {
+    if after_phase_requires_advanced_spelling(persisted_next_command) {
+        return persisted_next_command.to_string();
+    }
+    continue_from_agent_after_with_root(persisted_next_command, root_display)
+        .unwrap_or_else(|| persisted_next_command.to_string())
+}
+
+fn continue_from_agent_after_with_root(persisted: &str, root_display: &str) -> Option<String> {
+    let attempt = continue_from_agent_after_attempt(persisted)?;
+    Some(format!(
+        "ripr continue --root {} --attempt {attempt}",
+        crate::agent::loop_commands::shell_arg(root_display),
+    ))
+}
+
+fn continue_from_agent_after_attempt(persisted: &str) -> Option<&str> {
+    const PREFIX: &str = "ripr agent repair --root ";
+    const PHASE: &str = " --phase after";
+    const ATTEMPT: &str = " --attempt ";
+    let rest = persisted.strip_prefix(PREFIX)?.strip_suffix(PHASE)?;
+    let attempt_at = rest.find(ATTEMPT)?;
+    let root = &rest[..attempt_at];
+    let attempt = &rest[attempt_at + ATTEMPT.len()..];
+    if root.is_empty() || attempt.is_empty() || attempt.contains(" --") {
+        return None;
+    }
+    Some(attempt)
+}
+
 fn after_phase_requires_advanced_spelling(command: &str) -> bool {
     command.contains("--edit-authorized")
         || command.contains("--edit-authority")

@@ -37,6 +37,14 @@ fn release_cut_admission_self_test_passes() -> Result<(), String> {
     run_self_test("release_cut_admission.py", "controls passed")
 }
 
+#[test]
+fn trusted_admission_bundle_two_tree_controls_pass() -> Result<(), String> {
+    run_self_test(
+        "test_trusted_bundle.py",
+        "trusted admission bundle controls passed",
+    )
+}
+
 /// Executes the real action shell with a stubbed read-only `gh` so the
 /// wrapper boundary (live-ref re-read) is exercised, not only the pure scripts.
 fn run_wrapper(second_ref_packet_state: &str, initial_absent: bool) -> Result<i32, String> {
@@ -242,11 +250,11 @@ esac
 "#;
     std::fs::write(tmp.join("gh"), gh).map_err(|e| e.to_string())?;
     let _ = Command::new("chmod").arg("+x").arg(tmp.join("gh")).status();
-    let path = format!(
-        "{}:{}",
-        tmp.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    // `join_paths` uses the host separator; a literal `:` splits Windows drive paths.
+    let path = std::env::join_paths(std::iter::once(tmp.clone()).chain(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )))
+    .map_err(|e| e.to_string())?;
     let status = Command::new("bash")
         .args(["-e", "-o", "pipefail"])
         .arg(tmp.join("action.sh"))
@@ -716,11 +724,14 @@ esac
 "#;
     std::fs::write(tmp.join("gh"), gh).map_err(|e| e.to_string())?;
     let _ = Command::new("chmod").arg("+x").arg(tmp.join("gh")).status();
-    let path = format!(
-        "{}:{}",
-        tmp.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    // Python's subprocess cannot launch an extensionless script on Windows; a
+    // .cmd shim lets PATHEXT resolution reach the bash stub (#9272).
+    std::fs::write(tmp.join("gh.cmd"), "@bash \"%~dp0gh\" %*\r\n").map_err(|e| e.to_string())?;
+    // `join_paths` uses the host separator; a literal `:` splits Windows drive paths.
+    let path = std::env::join_paths(std::iter::once(tmp.clone()).chain(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )))
+    .map_err(|e| e.to_string())?;
     let status = Command::new("bash")
         .args(["-e", "-o", "pipefail"])
         .arg(tmp.join("action.sh"))

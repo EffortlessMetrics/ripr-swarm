@@ -314,13 +314,20 @@ jobs:
     needs: [package, attach-release-asset]
     if: ${{ github.event.inputs.publish_vs_marketplace == 'true' }}
     runs-on: ubuntu-latest
+    # Approval/branch gate for the job that holds VSCE_PAT. The environment must be
+    # created and protected in repository settings (required reviewers,
+    # deployment branches limited to main) by a repository admin; this file
+    # only names it (#9303).
+    environment: vs-marketplace-publish
+    permissions:
+      contents: read
     env:
       RAW_VERSION: ${{ github.event.inputs.version }}
       EXPECTED_VSIX_SHA256: ${{ needs.package.outputs.vsix_sha256 }}
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          persist-credentials: false
           ref: ${{ github.event.inputs.source_sha }}
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -341,15 +348,17 @@ jobs:
           version="${RAW_VERSION#v}"
           echo "${EXPECTED_VSIX_SHA256}  dist/ripr-${version}.vsix" | sha256sum -c -
 
-      - name: Require VSCE_PAT
-        if: ${{ env.VSCE_PAT == '' }}
-        run: |
-          echo "::error::VSCE_PAT is not configured; VS Code Marketplace publish cannot run."
-          exit 1
-
+      # The PAT is visible to this one step only (not checkout, setup-node or
+      # npm ci). The secrets context is unavailable in `if:`, so a missing
+      # token is checked inside the step.
       - name: Publish to VS Marketplace
-        if: ${{ env.VSCE_PAT != '' }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::error::VSCE_PAT is not configured; VS Code Marketplace publish cannot run."
+            exit 1
+          fi
           version="${RAW_VERSION#v}"
           vsix_file="$PWD/dist/ripr-${version}.vsix"
           vsce="$PWD/editors/vscode/node_modules/.bin/vsce"
@@ -368,13 +377,20 @@ jobs:
     needs: [package, attach-release-asset]
     if: ${{ github.event.inputs.publish_open_vsx == 'true' }}
     runs-on: ubuntu-latest
+    # Approval/branch gate for the job that holds OVSX_PAT. The environment must be
+    # created and protected in repository settings (required reviewers,
+    # deployment branches limited to main) by a repository admin; this file
+    # only names it (#9303).
+    environment: open-vsx-publish
+    permissions:
+      contents: read
     env:
       RAW_VERSION: ${{ github.event.inputs.version }}
       EXPECTED_VSIX_SHA256: ${{ needs.package.outputs.vsix_sha256 }}
-      OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          persist-credentials: false
           ref: ${{ github.event.inputs.source_sha }}
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -395,15 +411,15 @@ jobs:
           version="${RAW_VERSION#v}"
           echo "${EXPECTED_VSIX_SHA256}  dist/ripr-${version}.vsix" | sha256sum -c -
 
-      - name: Require OVSX_PAT
-        if: ${{ env.OVSX_PAT == '' }}
-        run: |
-          echo "::error::OVSX_PAT is not configured; Open VSX publish cannot run."
-          exit 1
-
+      # The PAT is visible to this one step only; see publish-vs-marketplace.
       - name: Publish to Open VSX
-        if: ${{ env.OVSX_PAT != '' }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
+          if [ -z "$OVSX_PAT" ]; then
+            echo "::error::OVSX_PAT is not configured; Open VSX publish cannot run."
+            exit 1
+          fi
           version="${RAW_VERSION#v}"
           # Lockfile-pinned (.github/ovsx), audited install: a floating
           # `npx -y ovsx` would run unreviewed npm code in a job holding OVSX_PAT.

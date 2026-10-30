@@ -13,8 +13,10 @@
 //! 2. `present_but_superseded` is `included_superseded_by_later_fix`.
 //! 3. `history_reachable_no_final_blob_effect` is
 //!    `included_historical_reachable_only`.
-//! 4. A subject naming the owner issue of a packet claim resolved
-//!    `accepted_defer_with_non_claim` is `included_with_release_nonclaim`.
+//! 4. A non-product commit whose subject names the owner issue of a packet
+//!    claim resolved `accepted_defer_with_non_claim` is
+//!    `included_with_release_nonclaim`. A product-class commit that names the
+//!    same issue landed behavior, so it falls through to rule 5.
 //! 5. Otherwise the strongest path class wins:
 //!    product > unclassified (blocking) > control > automation > evidence > docs.
 //!
@@ -247,11 +249,12 @@ fn decide(commit: &CommitFacts, packet: &SelectionPacket) -> Decision {
         .chain(&commit.issue_refs)
         .copied()
         .collect();
-    if let Some(claim) = packet.claims.iter().find(|claim| {
+    let nonclaim = packet.claims.iter().find(|claim| {
         claim.resolution == "accepted_defer_with_non_claim"
             && claim.owner_issue != 0
             && mentioned.contains(&claim.owner_issue)
-    }) {
+    });
+    if let Some(claim) = nonclaim.filter(|_| class != PathClass::Product) {
         return decided(
             "included_with_release_nonclaim",
             class,

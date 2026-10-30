@@ -1,0 +1,13 @@
+diff --git a/lib/Toolkit.pm b/lib/Toolkit.pm
+index 7f429bd..703be12 100644
+--- a/lib/Toolkit.pm
++++ b/lib/Toolkit.pm
+@@ -39,7 +39,7 @@ sub safe_div {
+ sub slugify {
+     my ($s) = @_;
+     $s = lc $s;
+-    $s =~ s/[^a-z0-9]+/-/g;
++    $s =~ s/[^0-9a-z]+/-/g;
+     return $s;
+ }
+ 

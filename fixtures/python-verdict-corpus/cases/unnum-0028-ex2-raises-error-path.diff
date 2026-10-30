@@ -1,0 +1,9 @@
+diff --git a/unnum/negative.py b/unnum/negative.py
+--- a/unnum/negative.py
++++ b/unnum/negative.py
+@@ -1,4 +1,4 @@
+ def reject_negative(amount: int) -> int:
+     if amount < 0:
+-        raise ValueError("negative amount")
++        raise ValueError("amount below zero")
+     return amount

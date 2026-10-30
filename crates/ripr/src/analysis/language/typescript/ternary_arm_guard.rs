@@ -19,7 +19,7 @@ pub(crate) enum ArmConstant {
     Boolean(bool),
     Null,
     Undefined,
-    /// `Level.High`: a dotted member path, compared by its text only.
+    /// `Level.High`: a member path requiring declaration-backed enum identity.
     Member(String),
 }
 
@@ -50,9 +50,25 @@ pub(crate) struct TernaryArmChange {
 
 impl TernaryArmChange {
     /// Whether a call passing `argument` provably runs the changed arm.
-    pub(crate) fn selects_changed_arm(&self, argument: &str) -> bool {
+    pub(crate) fn selects_changed_arm(
+        &self,
+        argument: &str,
+        same_member: impl FnOnce(&str, &str) -> bool,
+    ) -> bool {
         parse_arm_constant(argument)
-            .and_then(|argument| evaluate(self.comparison, &argument, &self.operand))
+            .and_then(|argument| match (&argument, &self.operand) {
+                (ArmConstant::Member(argument), ArmConstant::Member(operand)) => {
+                    if !same_member(argument, operand) {
+                        return None;
+                    }
+                    match self.comparison {
+                        ArmComparison::Equal => Some(true),
+                        ArmComparison::NotEqual => Some(false),
+                        _ => None,
+                    }
+                }
+                _ => evaluate(self.comparison, &argument, &self.operand),
+            })
             .is_some_and(|holds| holds == self.arm_runs_when)
     }
 
@@ -66,15 +82,6 @@ impl TernaryArmChange {
         };
         evaluate(ArmComparison::Equal, &expected, old) == Some(false)
             && evaluate(ArmComparison::Equal, &expected, new) == Some(false)
-    }
-
-    /// The first segment of a member-path operand (`Level` of `Level.High`),
-    /// whose binding a test could shadow with a different value.
-    pub(crate) fn member_root(&self) -> Option<&str> {
-        match &self.operand {
-            ArmConstant::Member(path) => path.split('.').next(),
-            _ => None,
-        }
     }
 }
 
@@ -117,6 +124,90 @@ pub(crate) fn ts_ternary_arm_change(
         arm_runs_when,
         old_arm: parse_arm_constant(old_arm),
         new_arm: parse_arm_constant(new_arm),
+    })
+}
+
+/// A moved threshold of a returned conditional: `weightKg > 5 ? 900 : 400`
+/// becoming `weightKg > 25 ? 900 : 400`. Same parameter, same comparison,
+/// two different number thresholds and arms that are distinct constants.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TernaryThresholdMove {
+    pub(crate) param_index: usize,
+    comparison: ArmComparison,
+    old: ArmConstant,
+    new: ArmConstant,
+    when_true: ArmConstant,
+    when_false: ArmConstant,
+}
+
+impl TernaryThresholdMove {
+    /// Whether a call passing `argument` takes a different arm on the two
+    /// versions: the argument is a number the old and new threshold put on
+    /// opposite sides of the comparison.
+    pub(crate) fn flips(&self, argument: &str) -> bool {
+        let Some(argument @ ArmConstant::Number(_)) = parse_arm_constant(argument) else {
+            return false;
+        };
+        let (before, after) = (
+            evaluate(self.comparison, &argument, &self.old),
+            evaluate(self.comparison, &argument, &self.new),
+        );
+        matches!((before, after), (Some(before), Some(after)) if before != after)
+    }
+
+    /// Whether `expected` provably equals neither arm, so an assertion on it
+    /// fails on both versions.
+    pub(crate) fn expected_is_dead(&self, expected: &str) -> bool {
+        let Some(expected) = parse_arm_constant(expected) else {
+            return false;
+        };
+        evaluate(ArmComparison::Equal, &expected, &self.when_true) == Some(false)
+            && evaluate(ArmComparison::Equal, &expected, &self.when_false) == Some(false)
+    }
+}
+
+/// The `TernaryThresholdMove` when both lines are `return <cond> ? <a> : <b>;`
+/// with identical arms that are distinct constants, and a condition that
+/// compares one stable owner parameter with a number that is the only change.
+pub(crate) fn ts_ternary_threshold_move(
+    owner: &TypeScriptOwner,
+    line_text: &str,
+    old_line_text: Option<&str>,
+) -> Option<TernaryThresholdMove> {
+    let new = conditional_parts(line_text)?;
+    let old = conditional_parts(old_line_text?)?;
+    if new.condition == old.condition
+        || new.when_true != old.when_true
+        || new.when_false != old.when_false
+    {
+        return None;
+    }
+    let (parameter, comparison, new_operand) = parameter_comparison(&new.condition_text, owner)?;
+    let (old_parameter, old_comparison, old_operand) =
+        parameter_comparison(&old.condition_text, owner)?;
+    if parameter != old_parameter
+        || comparison != old_comparison
+        || !matches!(new_operand, ArmConstant::Number(_))
+        || evaluate(ArmComparison::Equal, &new_operand, &old_operand) != Some(false)
+    {
+        return None;
+    }
+    let when_true = parse_arm_constant(&new.when_true_text)?;
+    let when_false = parse_arm_constant(&new.when_false_text)?;
+    if evaluate(ArmComparison::Equal, &when_true, &when_false) != Some(false) {
+        return None;
+    }
+    let param_index = owner.params.iter().position(|param| *param == parameter)?;
+    if !ts_parameter_is_stable(owner.source_text.as_deref()?, &parameter) {
+        return None;
+    }
+    Some(TernaryThresholdMove {
+        param_index,
+        comparison,
+        old: old_operand,
+        new: new_operand,
+        when_true,
+        when_false,
     })
 }
 
@@ -314,11 +405,6 @@ fn evaluate(
         },
         (ArmConstant::Null, ArmConstant::Null)
         | (ArmConstant::Undefined, ArmConstant::Undefined) => match comparison {
-            Equal => Some(true),
-            NotEqual => Some(false),
-            _ => None,
-        },
-        (ArmConstant::Member(a), ArmConstant::Member(b)) if a == b => match comparison {
             Equal => Some(true),
             NotEqual => Some(false),
             _ => None,

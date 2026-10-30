@@ -1,0 +1,56 @@
+{
+  "case_id": "spec-b-0159-method-call-site",
+  "subject_id": "authored-spec-b-value",
+  "diff": "cases/spec-b-0159-method-call-site.diff",
+  "anchor": {
+    "file": "src/h_method.rs",
+    "line": 7
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "helper_chain_method_call_site",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "3 <= input.len()",
+        "mutated_line": "3 <= input.len()",
+        "outcome": "tests_failed",
+        "failing_test": "h_method::tests::rows_straddle_four_method_h_method",
+        "equivalence_review": "not equivalent: h_method::tests::rows_straddle_four_method_h_method fails on it"
+      },
+      {
+        "replacement": "4 < input.len()",
+        "mutated_line": "4 < input.len()",
+        "outcome": "tests_failed",
+        "failing_test": "h_method::tests::rows_straddle_four_method_h_method",
+        "equivalence_review": "not equivalent: h_method::tests::rows_straddle_four_method_h_method fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "classify_method reaches wide_m as Gauge.wide_m(input), a method call site. The abcd and abc rows fail both mutants of the helper's comparison. Spec cells: RIPR-SPEC-0159#4.",
+  "labeling_observation": {
+    "ripr_commit": "f88e3952",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0159#4"
+  ]
+}

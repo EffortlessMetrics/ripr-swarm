@@ -20,10 +20,16 @@ use super::*;
 /// generator owner, and any other annotation (`number | string`,
 /// `Promise<number>`, none at all) read `false`.
 pub(crate) fn ts_owner_declares_number_return(owner_source: &str) -> bool {
+    ts_owner_declared_return_type(owner_source).is_some_and(|annotation| annotation == "number")
+}
+
+/// The trimmed return annotation of a function or arrow owner source, when
+/// it declares one. `None` for a generic parameter list, an `async` or
+/// generator owner, or no annotation, so a caller comparing the text never
+/// matches those.
+pub(crate) fn ts_owner_declared_return_type(owner_source: &str) -> Option<String> {
     let masked = ts_mask_literals_and_comments(owner_source);
-    let Some(open) = masked.find('(') else {
-        return false;
-    };
+    let open = masked.find('(')?;
     let head = &masked[..open];
     // A generic list can hold parentheses of its own; `async` and `*`
     // change what a call returns.
@@ -32,7 +38,7 @@ pub(crate) fn ts_owner_declares_number_return(owner_source: &str) -> bool {
             .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
             .any(|word| word == "async")
     {
-        return false;
+        return None;
     }
     let mut depth = 0_usize;
     let mut close = None;
@@ -49,17 +55,13 @@ pub(crate) fn ts_owner_declares_number_return(owner_source: &str) -> bool {
             _ => {}
         }
     }
-    let Some(close) = close else {
-        return false;
-    };
-    let Some(annotation) = masked[close + 1..].trim_start().strip_prefix(':') else {
-        return false;
-    };
+    let close = close?;
+    let annotation = masked[close + 1..].trim_start().strip_prefix(':')?;
     let end = [annotation.find('{'), annotation.find("=>")]
         .into_iter()
         .flatten()
         .min();
-    end.is_some_and(|end| annotation[..end].trim() == "number")
+    end.map(|end| annotation[..end].trim().to_string())
 }
 
 /// Loose-equality assertions against a number literal on the whole result
@@ -138,7 +140,7 @@ pub(crate) fn ts_typed_loose_number_facts(
 /// a binding this file imports from the owner's module: a namespace member
 /// `ns.f(...)`, a renamed import `g(...)`, or, when `bare_is_owner`, a bare
 /// `f(...)` or a local bound once to it.
-fn observes_imported_owner_result(
+pub(crate) fn observes_imported_owner_result(
     test: &TypeScriptTest,
     assertion: &TypeScriptAssertion,
     owner: &TypeScriptOwner,

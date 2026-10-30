@@ -359,9 +359,91 @@ pub(super) fn is_inline_test_edit(file: &FileDiff, old_spans: &[Span], new_spans
         })
 }
 
-fn spans_at(repo: &Path, rev: &str, path: &str) -> Result<Vec<Span>, String> {
+/// One file revision: its `#[cfg(test)]` item spans and which lines are blank.
+struct Side {
+    spans: Vec<Span>,
+    /// `blank[n - 1]` is true when 1-based line `n` is whitespace only.
+    blank: Vec<bool>,
+}
+
+impl Side {
+    fn empty() -> Self {
+        Self {
+            spans: Vec::new(),
+            blank: Vec::new(),
+        }
+    }
+
+    fn is_blank(&self, line: u64) -> bool {
+        usize::try_from(line)
+            .ok()
+            .and_then(|line| line.checked_sub(1))
+            .and_then(|index| self.blank.get(index))
+            .copied()
+            .unwrap_or(false)
+    }
+}
+
+fn side_at(repo: &Path, rev: &str, path: &str) -> Result<Side, String> {
     let bytes = git_bytes(repo, &["show", &format!("{rev}:{path}")], GIT_TIMEOUT)?;
-    Ok(test_spans(&String::from_utf8_lossy(&bytes)))
+    let source = String::from_utf8_lossy(&bytes);
+    Ok(Side {
+        spans: test_spans(&source),
+        blank: source.lines().map(|line| line.trim().is_empty()).collect(),
+    })
+}
+
+/// A hunk range without the blank lines at either edge, so a blank separator
+/// added or removed beside a whole test module does not hide that the rest of
+/// the hunk is exactly that module. A hunk of only blank lines is tolerated when
+/// it touches a span (formatting beside a test module) and otherwise kept as is,
+/// which then fails the span check and stays product.
+fn trim_blank_edges(start: u64, count: u64, side: &Side) -> (u64, u64) {
+    if count == 0 {
+        return (start, 0);
+    }
+    let mut first = start;
+    let mut last = start + count - 1;
+    while first <= last && side.is_blank(first) {
+        first += 1;
+    }
+    while last >= first && side.is_blank(last) {
+        last -= 1;
+    }
+    if first <= last {
+        return (first, last - first + 1);
+    }
+    let end = start + count - 1;
+    let beside_span = side
+        .spans
+        .iter()
+        .any(|(from, to)| start == to + 1 || end + 1 == *from);
+    if beside_span {
+        (start, 0)
+    } else {
+        (start, count)
+    }
+}
+
+fn trim_blank_hunks(file: &FileDiff, old: &Side, new: &Side) -> FileDiff {
+    FileDiff {
+        path: file.path.clone(),
+        whole_file: file.whole_file,
+        hunks: file
+            .hunks
+            .iter()
+            .map(|hunk| {
+                let (old_start, old_count) = trim_blank_edges(hunk.old_start, hunk.old_count, old);
+                let (new_start, new_count) = trim_blank_edges(hunk.new_start, hunk.new_count, new);
+                Hunk {
+                    old_start,
+                    old_count,
+                    new_start,
+                    new_count,
+                }
+            })
+            .collect(),
+    }
 }
 
 fn commit_inline_paths(repo: &Path, parent: &str, sha: &str) -> Result<Vec<String>, String> {
@@ -392,17 +474,18 @@ fn commit_inline_paths(repo: &Path, parent: &str, sha: &str) -> Result<Vec<Strin
         if !is_candidate(&file.path) || file.whole_file || file.hunks.is_empty() {
             continue;
         }
-        let old_spans = if file.hunks.iter().any(|hunk| hunk.old_count > 0) {
-            spans_at(repo, parent, &file.path)?
+        let old = if file.hunks.iter().any(|hunk| hunk.old_count > 0) {
+            side_at(repo, parent, &file.path)?
         } else {
-            Vec::new()
+            Side::empty()
         };
-        let new_spans = if file.hunks.iter().any(|hunk| hunk.new_count > 0) {
-            spans_at(repo, sha, &file.path)?
+        let new = if file.hunks.iter().any(|hunk| hunk.new_count > 0) {
+            side_at(repo, sha, &file.path)?
         } else {
-            Vec::new()
+            Side::empty()
         };
-        if is_inline_test_edit(&file, &old_spans, &new_spans) {
+        let trimmed = trim_blank_hunks(&file, &old, &new);
+        if is_inline_test_edit(&trimmed, &old.spans, &new.spans) {
             inline.push(file.path);
         }
     }

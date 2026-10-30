@@ -4,7 +4,7 @@
 use serde::Serialize;
 
 pub(crate) const SCHEMA: &str = "ripr-termination-qualification-v1";
-pub(crate) const CORPUS_SCHEMA: &str = "ripr-termination-corpus-v1";
+pub(crate) const CORPUS_SCHEMA: &str = "ripr-termination-corpus-v2";
 
 /// The #4505 row taxonomy. Only the first two are passing product results.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

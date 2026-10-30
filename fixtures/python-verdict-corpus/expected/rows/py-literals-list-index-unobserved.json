@@ -1,0 +1,22 @@
+{
+  "case_id": "py-literals-list-index-unobserved",
+  "subject_id": "authored-py-pytest-literals",
+  "origin": "authored",
+  "anchor": "lits/cfg.py:38",
+  "behavior_family": "output_value",
+  "test_shape": "pytest_list_other_index_pinned",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -36,7 +36,7 @@ only when `--out-jsonl` is explicit; generated workflows never pass that flag.
 "#;
 pub(super) const PR_COMMENTS_HELP: &str = r#"Plan or publish bounded inline PR comments (off / plan / inline).
 
-Usage: ripr pr-comments plan [--root PATH] [--pr-guidance PATH] [--existing-comments PATH] [--mode off|plan|inline] [--pull-request N] [--event-name NAME] [--head-repo OWNER/REPO] [--base-repo OWNER/REPO] [--token-available] [--no-write-permission] [--out PATH] [--out-md PATH]
+Usage: ripr pr-comments plan [--root PATH] [--pr-guidance PATH] [--existing-comments PATH] [--mode off|plan|inline] [--pull-request N] [--event-name NAME] [--head-repo OWNER/REPO] [--base-repo OWNER/REPO] [--token-available | --no-token] [--write-permission | --no-write-permission] [--max-inline-comments N] [--out PATH] [--out-md PATH]
 
 Plan options:
   --root PATH                 Workspace root label. Defaults to current directory.

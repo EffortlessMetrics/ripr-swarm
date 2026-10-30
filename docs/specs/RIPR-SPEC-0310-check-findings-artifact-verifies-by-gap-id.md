@@ -63,6 +63,12 @@ could not be verified without trusting hand-authored JSON.
    partitioned diff) or any non-empty `run_limitations`.
 4. The analysis format is part of the input identity, so a findings artifact
    and a repo-exposure artifact are incomparable.
+5. `agent verify --gap-id <id>` over two findings artifacts requires positive
+   closure evidence: the gap is present and not `exposed` before, and present
+   and `exposed` after. A gap absent before, already `exposed` before, absent
+   after, or not `exposed` after is a named refusal (exit `3`, empty stdout).
+   On success the verify document carries an additive `bound_gap` member.
+   Over a `repo-exposure-json` snapshot `--gap-id` is an operational error.
 
 ## Required Evidence
 
@@ -82,17 +88,25 @@ could not be verified without trusting hand-authored JSON.
 - Input identity pins mode and base, not the diff. A gap that disappears
   because the diff shrank (production lines reverted, or a base that moved)
   reads as absent in the after artifact. This slice only makes the snapshots
-  trustworthy; a gap-bound receipt (#9103 slice C) must require the gap to be
-  present in the after artifact as `exposed`, never infer closure from
-  absence.
+  trustworthy. Plain `agent verify` and `agent receipt` still compare
+  whatever moved; only `agent verify --gap-id` (behavior 5) requires the named
+  gap to be present in the after artifact as `exposed`. The gap-bound
+  `agent repair` start, after phase and receipt landed (C2a/C2b/C2c,
+  RIPR-SPEC-0311).
 - The outcome parser keys findings by a wider set of gap-id spellings than
   `CheckFindingsFinding::gap_id`; the producer is the only source of these
   artifacts, so the two agree on its output.
 
 ## Non-Goals
 
-- A gap-bound `agent repair` start or attempt (later slices of #9103).
+- Gap-bound repair start, after phase and receipt (C2a/C2b/C2c) and the
+  TypeScript journey-row flips (D) all landed under #9103; this spec owns only
+  the findings artifact and gap-id verify. Verification-run execution for gap
+  attempts remains outside it.
 - Signing, runtime mutation proof, or Python enablement.
+- Plain `agent receipt` over a pair still binds the pair; the gap-bound receipt
+  (RIPR-SPEC-0311 item 8) is issued only over a verify document that closed the
+  gap.
 
 ## Acceptance Examples
 
@@ -102,19 +116,23 @@ could not be verified without trusting hand-authored JSON.
    `gap:typescript:` id.
 2. Editing one classification in the after artifact fails with `content
    commitment mismatch`.
+3. The same pair with `--gap-id` set to the printed gap succeeds and reports
+   `bound_gap.closed`; an unknown gap id is refused with exit `3` and empty
+   stdout.
 
 ## Test Mapping
 
 - `crates/ripr/tests/installed_python_typescript_journeys.rs`:
   `typescript_check_findings_artifacts_verify_by_gap_id_and_reject_forgery`.
 - `crates/ripr/src/agent/artifact.rs` tests: `check_findings_gaps_*`,
-  `verify_snapshot_dispatch_routes_only_the_declared_findings_kind`.
+  `gap_closure_*`, `verify_snapshot_dispatch_routes_only_the_declared_findings_kind`.
 
 ## Implementation Mapping
 
 - `crates/ripr/src/output/check_findings.rs`: producer.
 - `crates/ripr/src/agent/artifact.rs`: `validate_check_findings_artifact`,
-  `validate_verify_snapshot`.
+  `validate_verify_snapshot`, `evaluate_gap_closure`, `verify_gap_closure`.
+- `crates/ripr/src/cli/commands/agent.rs`: `render_agent_verify` (`--gap-id`).
 
 ## Metrics
 

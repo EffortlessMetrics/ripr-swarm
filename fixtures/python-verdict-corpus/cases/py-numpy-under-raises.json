@@ -1,0 +1,45 @@
+{
+  "case_id": "py-numpy-under-raises",
+  "subject_id": "authored-py-pytest-numpy",
+  "diff": "cases/py-numpy-under-raises.diff",
+  "anchor": {
+    "file": "src/extra.py",
+    "line": 14
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "numpy_helper_under_pytest_raises",
+  "hard_case": "False-credit trap: the test looks like it checks the owner but cannot notice a change to it.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.2.0, numpy 2.4.6, assertpy 1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return [int(text) + 2]",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the owner returns [3] instead of [2] for \"1\"; both differ from [99], so the expected AssertionError still arrives"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Trap: the equality helper runs under `pytest.raises(AssertionError)`, so the test passes when the helper fails and rule 28 must not read it as a pin.",
+  "labeling_observation": {
+    "ripr_commit": "35cf5f96",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": []
+}

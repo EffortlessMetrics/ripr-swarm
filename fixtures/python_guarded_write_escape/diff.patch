@@ -1,0 +1,9 @@
+diff --git a/shapes/noter.py b/shapes/noter.py
+--- a/shapes/noter.py
++++ b/shapes/noter.py
+@@ -6,4 +6,4 @@
+         if kind == "error":
+             marker = "\""; return
+         if kind == "error":
+-            self.last = "error"
++            self.last = "fault"

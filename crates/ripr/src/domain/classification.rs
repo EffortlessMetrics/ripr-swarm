@@ -8,6 +8,14 @@ A test may already exercise it through macros, helper-call chains, or integratio
 ripr's static model does not yet trace. If none does, add a co-located test that reaches and \
 observes the changed behavior so a discriminator exists.";
 
+/// #9173: a root build script runs under Cargo before the package compiles and
+/// no package source mounts it, so "add a co-located test" cannot close the
+/// gap; point at what can.
+pub(crate) const BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP: &str = "ripr found no static test path to this change \u{2014} this is not a coverage assessment. \
+A Cargo build script runs before the package compiles and no package source includes it, so no package test can call it. \
+Check the change by building the package and inspecting the script's output or effect (its `cargo:` directives or generated files), \
+or move the logic into a library function that a test can call.";
+
 /// RIPR-SPEC-0133: shared one-sentence reason an owner counts as an
 /// assertion-shaped oracle. Kept in `domain/` so the detector
 /// (`analysis::classify::owner_shape`), the `Finding.evidence` disclosure line,
@@ -25,6 +33,10 @@ pub(crate) const ASSERTION_SHAPED_OWNER_REASON: &str =
 pub(crate) const ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP: &str = "The changed owner is itself an assertion helper (its body is dominated by assert*/expect calls and \
 nothing outside tests calls it), so a test that observes it would be a test of the oracle. Sharpen its \
 assertions, or exercise it indirectly through the code it checks.";
+
+/// Weak predicate whose related test already supplies the changed boundary
+/// input (#10622); the advisory keys off this exact Next step.
+pub(crate) const BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP: &str = "A related test already reaches the boundary input, but ripr grades its assertion as a weak check; write it as an exact-value assertion ripr can credit, for example assert_eq!(result, expected), so the old and changed behavior differ.";
 
 pub(crate) const ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP: &str = "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing \
 outside tests calls it), so exact-equality advice for code under test may not apply — boolean invariants \
@@ -77,6 +89,8 @@ pub(crate) const LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX: &str =
     "limitation_first_unresolved_edge: ";
 pub(crate) const LIMITATION_ANALYZER_ROUTE_PREFIX: &str = "limitation_analyzer_route: ";
 pub(crate) const LIMITATION_NON_CLAIM_PREFIX: &str = "limitation_non_claim: ";
+/// Additive declaration context, kept separate from the canonical edge text.
+pub(crate) const LIMITATION_HELPER_BOUNDARY_PREFIX: &str = "limitation_helper_boundary: ";
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

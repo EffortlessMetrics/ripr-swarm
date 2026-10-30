@@ -1,0 +1,3 @@
+case = "spec0228-pushed-literal-hand-built-expected"
+issue = 8782
+reason = "The bounded inherent-receiver rule cannot establish receiver evidence for the UFCS argument form str::to_uppercase(sku) on the hand-built expected-collection route, so a discriminating test is reported as a gap (#7415, #8782)."

@@ -1,0 +1,12 @@
+diff --git a/channels/core.py b/channels/core.py
+--- a/channels/core.py
++++ b/channels/core.py
+@@ -6,7 +6,7 @@
+ 
+ 
+ def warn_b(name):
+-    print("bad " + name, file=sys.stderr)
++    print("worse " + name, file=sys.stderr)
+ 
+ 
+ def save_c1(a, b):

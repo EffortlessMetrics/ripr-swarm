@@ -48,6 +48,7 @@ pub(crate) fn release_ledger(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("capture") => return run_capture(&args[1..]),
         Some("derive") => return run_derive(&args[1..]),
+        Some("finalize") => return run_finalize(&args[1..]),
         _ => {}
     }
     let args = parse_args(args)?;
@@ -61,14 +62,15 @@ pub(crate) fn release_ledger(args: &[String]) -> Result<(), String> {
         packet: args.packet.map(read_packet).transpose()?,
         markdown: args
             .markdown
-            .map(|path| {
-                fs::read_to_string(path).map_err(|error| format!("failed to read {path}: {error}"))
-            })
+            .map(|path| read_text(path, "markdown"))
             .transpose()?,
         manifest: args
             .manifest
             .map(|path| read_json::<Value>(path, "manifest"))
             .transpose()?,
+        audit_file_sha256: ledger.audit.as_ref().map(|audit| {
+            read_bounded(&audit.path, "audit").map(|bytes| format!("{:x}", Sha256::digest(&bytes)))
+        }),
     };
     let mut reasons = validate(&ledger, &context);
     if args.require_final && ledger.stage != STAGE_FINAL {
@@ -94,6 +96,145 @@ pub(crate) fn release_ledger(args: &[String]) -> Result<(), String> {
             reasons[0]
         ))
     }
+}
+
+/// Inputs of `release-ledger finalize`, the one command that produces the final
+/// ledger at the frozen cut (SPEC-0301, "Producing the final ledger").
+struct FinalizeArgs {
+    cut: String,
+    packet: String,
+    audit: String,
+    overrides: Option<String>,
+    base: String,
+    repo: Option<String>,
+    repository: Option<String>,
+    manifest: Option<String>,
+    outdir: String,
+}
+
+fn parse_finalize_args(args: &[String]) -> Result<FinalizeArgs, String> {
+    let mut values: BTreeMap<&str, String> = BTreeMap::new();
+    let mut index = 0;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        let value = args
+            .get(index + 1)
+            .ok_or_else(|| format!("{flag} requires a value"))?;
+        if !matches!(
+            flag,
+            "--cut"
+                | "--packet"
+                | "--audit"
+                | "--overrides"
+                | "--base"
+                | "--repo"
+                | "--repository"
+                | "--manifest"
+                | "--outdir"
+        ) {
+            return Err(format!("unknown release-ledger finalize argument `{flag}`"));
+        }
+        if values.insert(flag, value.clone()).is_some() {
+            return Err(format!("release-ledger finalize got {flag} more than once"));
+        }
+        index += 2;
+    }
+    let mut take = |flag: &str| values.remove(flag);
+    let required = |value: Option<String>, flag: &str| {
+        value.ok_or_else(|| format!("release-ledger finalize requires {flag}"))
+    };
+    let cut = required(take("--cut"), "--cut <FINAL_SWARM_CUT sha>")?;
+    if cut.len() != 40 || !cut.chars().all(|c| c.is_ascii_hexdigit()) {
+        // A ref such as origin/main moves; the final ledger must name one commit.
+        return Err(format!(
+            "--cut must be the full 40-hex frozen cut commit, not `{cut}`"
+        ));
+    }
+    Ok(FinalizeArgs {
+        cut,
+        packet: required(take("--packet"), "--packet <release-selection.json>")?,
+        audit: required(take("--audit"), "--audit <sample audit file>")?,
+        overrides: take("--overrides"),
+        base: take("--base").unwrap_or_else(|| validate::RELEASE_BASE_0_11.to_string()),
+        repo: take("--repo"),
+        repository: take("--repository"),
+        manifest: take("--manifest"),
+        outdir: take("--outdir").unwrap_or_else(|| "target/ripr/release-ledger/final".to_string()),
+    })
+}
+
+/// Capture at the frozen cut, derive a `final` ledger, render its Markdown
+/// projection and validate all three together. Composes the existing commands so
+/// the documented one-liner cannot drift from the steps it names; any failing
+/// step stops the run before a later step can overwrite its output.
+fn run_finalize(args: &[String]) -> Result<(), String> {
+    let parsed = parse_finalize_args(args)?;
+    let facts = format!("{}/facts.json", parsed.outdir);
+    let ledger_path = format!("{}/ledger.json", parsed.outdir);
+    let markdown = format!("{}/ledger.md", parsed.outdir);
+    let strings = |items: &[&str]| items.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+
+    let mut capture = strings(&[
+        "--base",
+        &parsed.base,
+        "--cut",
+        &parsed.cut,
+        "--main",
+        &parsed.cut,
+    ]);
+    capture.extend(strings(&["--output", &facts]));
+    if let Some(repo) = &parsed.repo {
+        capture.extend(strings(&["--repo", repo]));
+    }
+    if let Some(repository) = &parsed.repository {
+        capture.extend(strings(&["--repository", repository]));
+    }
+    println!("[1/4] capture {}..{}", parsed.base, parsed.cut);
+    run_capture(&capture)?;
+
+    let mut derive = strings(&[
+        "--facts",
+        &facts,
+        "--packet",
+        &parsed.packet,
+        "--audit",
+        &parsed.audit,
+        "--stage",
+        STAGE_FINAL,
+        "--output",
+        &ledger_path,
+    ]);
+    if let Some(overrides) = &parsed.overrides {
+        derive.extend(strings(&["--overrides", overrides]));
+    }
+    println!("[2/4] derive final ledger");
+    run_derive(&derive)?;
+
+    println!("[3/4] render Markdown projection");
+    let ledger: Ledger = read_json(&ledger_path, "ledger")?;
+    write_output(&markdown, &report_markdown(&ledger, "valid", &[]))?;
+    println!("Wrote {markdown}");
+
+    let mut validate_args = strings(&[
+        "--input",
+        &ledger_path,
+        "--packet",
+        &parsed.packet,
+        "--markdown",
+        &markdown,
+        "--expected-base",
+        &parsed.base,
+        "--final",
+    ]);
+    if let Some(manifest) = &parsed.manifest {
+        validate_args.extend(strings(&["--manifest", manifest]));
+    }
+    println!("[4/4] validate --final");
+    release_ledger(&validate_args)?;
+    println!(
+        "Final release ledger: {ledger_path} (Markdown {markdown}); validation reports under target/ripr/reports/"
+    );
+    Ok(())
 }
 
 fn run_derive(args: &[String]) -> Result<(), String> {
@@ -142,8 +283,7 @@ fn run_derive(args: &[String]) -> Result<(), String> {
         .transpose()?;
     let audit = audit
         .map(|path| {
-            let bytes =
-                fs::read(path).map_err(|error| format!("failed to read audit {path}: {error}"))?;
+            let bytes = read_bounded(path, "audit")?;
             Ok::<_, String>(dto::AuditRef {
                 path: path.to_string(),
                 sha256: format!("{:x}", Sha256::digest(&bytes)),
@@ -301,16 +441,47 @@ fn parse_args(args: &[String]) -> Result<Args<'_>, String> {
     Ok(parsed)
 }
 
-fn read_json<T: serde::de::DeserializeOwned>(path: &str, what: &str) -> Result<T, String> {
-    let text = fs::read_to_string(path)
+/// Largest input any release-ledger command reads. The 0.11 facts file (2,213
+/// commits) is about 4.6 MB, so this is more than ten times real use while
+/// still failing closed on a hostile or accidental huge file.
+const MAX_INPUT_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Reads at most `MAX_INPUT_BYTES`; a larger file is an error, never truncated.
+fn read_bounded(path: &str, what: &str) -> Result<Vec<u8>, String> {
+    read_capped(path, what, MAX_INPUT_BYTES)
+}
+
+fn read_capped(path: &str, what: &str, cap: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let file =
+        fs::File::open(path).map_err(|error| format!("failed to read {what} {path}: {error}"))?;
+    let mut bytes = Vec::new();
+    file.take(cap + 1)
+        .read_to_end(&mut bytes)
         .map_err(|error| format!("failed to read {what} {path}: {error}"))?;
-    serde_json::from_str(&text).map_err(|error| format!("failed to parse {what} {path}: {error}"))
+    if bytes.len() as u64 > cap {
+        return Err(format!(
+            "{what} {path} exceeds the {cap}-byte release-ledger input limit"
+        ));
+    }
+    Ok(bytes)
+}
+
+fn read_text(path: &str, what: &str) -> Result<String, String> {
+    String::from_utf8(read_bounded(path, what)?)
+        .map_err(|error| format!("failed to read {what} {path}: {error}"))
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(path: &str, what: &str) -> Result<T, String> {
+    let bytes = read_bounded(path, what)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("failed to parse {what} {path}: {error}"))
 }
 
 /// The packet digest is over the raw file bytes, so any edit to the packet is a
 /// different identity.
 fn read_packet(path: &str) -> Result<SelectionPacket, String> {
-    let bytes = fs::read(path).map_err(|error| format!("failed to read packet {path}: {error}"))?;
+    let bytes = read_bounded(path, "packet")?;
     let mut packet: SelectionPacket = serde_json::from_slice(&bytes)
         .map_err(|error| format!("failed to parse packet {path}: {error}"))?;
     packet.digest = format!("sha256:{:x}", Sha256::digest(&bytes));

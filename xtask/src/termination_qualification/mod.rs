@@ -1,4 +1,5 @@
 mod assess;
+mod candidate_manifest;
 mod command;
 mod controls;
 mod corpus;

@@ -7,10 +7,12 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::{Component, Path, PathBuf};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 /// Producer-neutral inline test-module region cage (#4783), bound to the
@@ -345,11 +347,7 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     baseline: &AttemptBaseline,
     movement: HeadMovement,
 ) -> Result<(AttemptDelta, EditCageVerdict), String> {
-    let after = capture_repository_state(
-        baseline.root.clone(),
-        baseline.policy.clone(),
-        CaptureTraceLabel::Reevaluation,
-    )?;
+    let after = reevaluation_capture(baseline)?;
     let committed = match movement {
         HeadMovement::RequireBaselineHead => (baseline.head == after.head).then(Vec::new),
         HeadMovement::AdmitDescendantCommits => {
@@ -366,6 +364,93 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     }
     let verdict = evaluate_edit_cage(&baseline.policy, &delta);
     Ok((delta, verdict))
+}
+
+/// Captures taken for re-evaluations inside one [`ReevaluationMemoScope`].
+#[derive(Default)]
+struct ReevaluationMemo {
+    entries: Vec<(PathBuf, EditCagePolicy, Rc<AttemptBaseline>)>,
+    captures: usize,
+}
+
+thread_local! {
+    static REEVALUATION_MEMO: RefCell<Option<ReevaluationMemo>> = const { RefCell::new(None) };
+}
+
+/// One read-only status call's reuse of after-captures (#9823). Every finished
+/// attempt's currentness reading re-captures the same worktree; inside this
+/// scope, attempts whose captures are identical share one. The scope is the
+/// only cache: it ends with the call, so an edit made between two calls is
+/// always observed. Only a successful capture is kept, so an error recaptures,
+/// and the key is the root plus the whole policy, so a differing policy
+/// recaptures. An inner scope is inert; the outermost one owns the memo.
+pub(crate) struct ReevaluationMemoScope {
+    owner: bool,
+    /// The memo is thread-local, so the scope must drop on the thread that
+    /// opened it: a `*const ()` makes it `!Send`.
+    _same_thread: std::marker::PhantomData<*const ()>,
+}
+
+impl ReevaluationMemoScope {
+    pub(crate) fn begin() -> Self {
+        let owner = REEVALUATION_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.is_some() {
+                false
+            } else {
+                *memo = Some(ReevaluationMemo::default());
+                true
+            }
+        });
+        Self {
+            owner,
+            _same_thread: std::marker::PhantomData,
+        }
+    }
+
+    /// Repository captures this scope actually performed.
+    #[cfg(test)]
+    pub(crate) fn captures(&self) -> usize {
+        REEVALUATION_MEMO.with(|memo| memo.borrow().as_ref().map_or(0, |memo| memo.captures))
+    }
+}
+
+impl Drop for ReevaluationMemoScope {
+    fn drop(&mut self) {
+        if self.owner {
+            REEVALUATION_MEMO.with(|memo| *memo.borrow_mut() = None);
+        }
+    }
+}
+
+fn reevaluation_capture(baseline: &AttemptBaseline) -> Result<Rc<AttemptBaseline>, String> {
+    let cached = REEVALUATION_MEMO.with(|memo| {
+        memo.borrow().as_ref().and_then(|memo| {
+            memo.entries
+                .iter()
+                .find(|(root, policy, _)| *root == baseline.root && *policy == baseline.policy)
+                .map(|(_, _, state)| Rc::clone(state))
+        })
+    });
+    if let Some(state) = cached {
+        return Ok(state);
+    }
+    let state = Rc::new(capture_repository_state(
+        baseline.root.clone(),
+        baseline.policy.clone(),
+        CaptureTraceLabel::Reevaluation,
+    )?);
+    REEVALUATION_MEMO.with(|memo| {
+        if let Some(memo) = memo.borrow_mut().as_mut() {
+            memo.captures += 1;
+            memo.entries.push((
+                baseline.root.clone(),
+                baseline.policy.clone(),
+                Rc::clone(&state),
+            ));
+        }
+    });
+    Ok(state)
 }
 
 /// The confined selected target must match HEAD in both the worktree and
@@ -618,8 +703,13 @@ fn capture_repository_state(
     let untracked = git_bytes(&root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
     let ignored = ignored_inventory(&root, &policy)?;
 
-    let (inventory, mut ambiguous) =
+    let (mut inventory, mut ambiguous) =
         inventory_paths(&tracked, &untracked, &ignored, MAX_CAPTURE_PATHS)?;
+    if policy.expects_python_tool_caches() {
+        let tracked_paths = nul_records(&tracked).collect::<Result<BTreeSet<_>, _>>()?;
+        inventory
+            .retain(|path, _| tracked_paths.contains(path.as_str()) || !is_python_tool_cache(path));
+    }
     if trace_spans {
         trace_persist_latency(
             &format!("{span_prefix}_git_inventory"),
@@ -941,6 +1031,36 @@ fn collect_nul_records(bytes: &[u8], records: &mut BTreeSet<Vec<u8>>) {
     );
 }
 
+/// Whether `path` is interpreter or test-runner cache output that running the
+/// project's Python tests writes: compiled bytecode under a `__pycache__`
+/// directory, files inside the pytest, mypy and ruff cache directories that
+/// are neither source, bytecode nor importable extensions (`.so`, `.pyd`,
+/// `.pth`), and coverage data at the repository root. Matching is by path
+/// shape only; callers must keep tracked paths observed, so a tracked file
+/// with a cache-like name is never exempted. Importable source never matches:
+/// a `.py`/`.pyi` file anywhere (including inside a cache directory), and a
+/// sourceless `.pyc` outside `__pycache__` (Python imports it directly).
+///
+/// Accepted residual (#10801): a hash-based pyc is loaded when its source hash
+/// matches (checked-hash) or with no source check (unchecked-hash), so an agent
+/// could compile modified production source into `__pycache__` and leave the
+/// `.py` untouched, invisible to the cage.
+fn is_python_tool_cache(path: &str) -> bool {
+    const TOOL_CACHE_DIRS: [&str; 3] = [".pytest_cache", ".mypy_cache", ".ruff_cache"];
+    let components = path.split('/').collect::<Vec<_>>();
+    let Some((file, parents)) = components.split_last() else {
+        return false;
+    };
+    if file.ends_with(".pyc") || file.ends_with(".pyo") {
+        return parents.last() == Some(&"__pycache__");
+    }
+    if parents.iter().any(|dir| TOOL_CACHE_DIRS.contains(dir)) {
+        const IMPORTABLE: [&str; 5] = [".py", ".pyi", ".so", ".pyd", ".pth"];
+        return !IMPORTABLE.iter().any(|ext| file.ends_with(ext));
+    }
+    parents.is_empty() && (*file == ".coverage" || file.starts_with(".coverage."))
+}
+
 fn inventory_paths(
     tracked: &[u8],
     untracked: &[u8],
@@ -962,7 +1082,11 @@ fn inventory_paths(
         }
         let raw_path = raw_path?;
         let path = normalize_repo_relative_path(Path::new(&raw_path))?;
-        if !case_keys.insert(path.to_lowercase()) {
+        if !case_keys.insert(crate::output::path::path_identity_key_on(
+            Path::new(&path),
+            false,
+            true,
+        )) {
             ambiguous = true;
         }
         if inventory.insert(path, ignored_path).is_some() {
@@ -1161,6 +1285,17 @@ fn delta_from_repository_states(
                 .untracked_build_lockfile
                 .as_ref()
                 .is_some_and(|rule| rule.matches(&path))
+        {
+            continue;
+        }
+        // A baseline saved before the Python cache exemption (#10699) still
+        // lists untracked cache files that the filtered after-capture omits,
+        // so they would read as deletions. Apply the same exemption to both
+        // sides; a tracked path is never exempt.
+        if untracked(old)
+            && untracked(new)
+            && before.policy.expects_python_tool_caches()
+            && is_python_tool_cache(&path)
         {
             continue;
         }
@@ -1787,6 +1922,21 @@ pub(crate) struct EditCagePolicy {
 }
 
 impl EditCagePolicy {
+    /// A Python repair runs pytest between the test edit and the next ripr
+    /// command, which writes interpreter and test-runner caches. Those are
+    /// expected output, as Cargo's build directory is for a Rust repair
+    /// (#10699). Derived from the selected target so the serialized policy
+    /// and older baselines keep their shape; only untracked or git-ignored
+    /// cache-shaped paths are exempt, never a tracked file.
+    pub(crate) fn expects_python_tool_caches(&self) -> bool {
+        matches!(
+            Path::new(self.selected_target.path())
+                .extension()
+                .and_then(std::ffi::OsStr::to_str),
+            Some("py" | "pyi")
+        )
+    }
+
     pub(crate) fn allows_path(&self, path: &str) -> bool {
         self.allowed_edit_surface
             .iter()
@@ -1941,6 +2091,21 @@ pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) 
         changed_paths,
         violations,
     }
+}
+
+/// True when an `OutsideInlineTestRegion` refusal reports that the selected
+/// file does not parse after the attempt's edit: the region-observation
+/// detail embedded the `unparseable` label (#8991). The observation parses the
+/// whole file, so the label cannot say whether the syntax error is in the
+/// newly written test or in production code beside it; the renderer names the
+/// file and leads with the plain fix-the-syntax-error statement on this case
+/// only, and every other refusal keeps its existing narration. The label
+/// vocabulary is owned by `inline_test_region`'s `reason_label`; the
+/// `` `mod <name>`: <label> `` detail spelling is owned by `evaluate_edit_cage`
+/// above, so a module name (a Rust identifier) can never smuggle the marker in.
+pub(crate) fn refusal_is_unparseable_selected_file(violation: &EditCageViolation) -> bool {
+    violation.kind == EditCageViolationKind::OutsideInlineTestRegion
+        && violation.reason.contains("`: unparseable)")
 }
 
 fn validate_delta(delta: &AttemptDelta) -> Vec<EditCageViolation> {
@@ -2282,6 +2447,89 @@ mod tests {
         Ok(())
     }
 
+    /// #9823: N re-evaluations of one worktree under one policy inside a
+    /// scope capture it once, and every reading still sees the same delta.
+    /// Negative controls: an edit made after the scope ends is observed by
+    /// the next scope (the memo never outlives a status call), a differing
+    /// policy recaptures, and with no scope every evaluation captures.
+    #[test]
+    fn reevaluation_scope_shares_one_capture_without_hiding_later_edits() -> Result<(), String> {
+        let fixture = git_fixture("reevaluation-memo")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        let edited = "fn boundary() {}\n\n#[test]\nfn focused() {}\n";
+        let changed_paths = |baseline: &AttemptBaseline| -> Result<Vec<String>, String> {
+            let (delta, _) = evaluate_repository_edit_cage_with_delta(baseline)?;
+            Ok(delta
+                .changes
+                .iter()
+                .map(|change| change.path.display().to_string())
+                .collect())
+        };
+        {
+            let scope = ReevaluationMemoScope::begin();
+            let first = changed_paths(&baseline)?;
+            let second = changed_paths(&baseline)?;
+            let third = changed_paths(&baseline)?;
+            if scope.captures() != 1 || first != second || second != third {
+                return Err(format!(
+                    "three same-policy readings must share one capture: {} captures",
+                    scope.captures()
+                ));
+            }
+            // A second baseline for the same root and policy shares it too.
+            let other = capture_attempt_baseline(&fixture.root, &policy()?)?;
+            changed_paths(&other)?;
+            if scope.captures() != 1 {
+                return Err("an equal-policy baseline must reuse the capture".to_string());
+            }
+            // A differing policy recaptures.
+            let mut wider = policy()?;
+            wider
+                .allowed_edit_surface
+                .push(CagePathRule::exact("tests/extra.rs")?);
+            let differing = capture_attempt_baseline(&fixture.root, &wider)?;
+            changed_paths(&differing)?;
+            if scope.captures() != 2 {
+                return Err("a differing policy must recapture".to_string());
+            }
+        }
+        // The edit lands after the scope: the next scope observes it.
+        fs::write(fixture.root.join("tests/pricing.rs"), edited)
+            .map_err(|err| format!("write focused test edit: {err}"))?;
+        {
+            let scope = ReevaluationMemoScope::begin();
+            let after_edit = changed_paths(&baseline)?;
+            if scope.captures() != 1 || !after_edit.iter().any(|path| path == "tests/pricing.rs") {
+                return Err(format!(
+                    "a new scope must observe the edit, saw {after_edit:?}"
+                ));
+            }
+        }
+        // Control: with no scope, every evaluation captures on its own.
+        let outside = changed_paths(&baseline)?;
+        if !outside.iter().any(|path| path == "tests/pricing.rs") {
+            return Err("an unscoped evaluation must observe the edit".to_string());
+        }
+        Ok(())
+    }
+
+    /// #9823: a failed capture is never kept, so a scope cannot turn a
+    /// transient capture error into a cached answer.
+    #[test]
+    fn reevaluation_scope_does_not_cache_a_failed_capture() -> Result<(), String> {
+        let fixture = git_fixture("reevaluation-memo-error")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        let scope = ReevaluationMemoScope::begin();
+        fs::remove_dir_all(&fixture.root).map_err(|err| format!("remove fixture root: {err}"))?;
+        if evaluate_repository_edit_cage_with_delta(&baseline).is_ok() {
+            return Err("a capture without a worktree must fail".to_string());
+        }
+        if scope.captures() != 0 {
+            return Err("a failed capture must not be counted or kept".to_string());
+        }
+        Ok(())
+    }
+
     /// A `core.autocrlf` line-ending flip between the before and after
     /// phases is git-invisible and names no author: the cage compares
     /// CRLF-normalized digests for the changed-path decision, so flipping a
@@ -2599,6 +2847,68 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
         })
+    }
+
+    /// #8991: the predicate is bound to the real producer. An unparseable
+    /// after-source observed by `observe_attempt_inline_region` and refused by
+    /// `evaluate_edit_cage` is recognized, whether the broken text is in the
+    /// new test or in production code, and a production edit is not.
+    #[test]
+    fn unparseable_predicate_agrees_with_the_real_observation_and_cage() -> Result<(), String> {
+        let baseline = inline_test_region::InlineTestRegionBaseline {
+            path: "src/pricing.rs".to_string(),
+            module_name: "tests".to_string(),
+            package_identity: String::new(),
+            source: "pub fn price() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn a() {}\n}\n"
+                .to_string(),
+        };
+        let mut policy = policy()?;
+        policy.selected_target = CagePathRule::exact("src/pricing.rs")?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact("src/pricing.rs")?];
+        policy.forbidden_paths = vec![CagePathRule::exact("Cargo.toml")?];
+        policy.inline_test_module_target = true;
+        let verdict_for = |after: &str| {
+            let observation = inline_test_region::observe_attempt_inline_region(
+                inline_test_region::InlineTargetCopies {
+                    worktree: Ok(after.to_string()),
+                    index_matches: true,
+                    head_matches: true,
+                    baseline: &baseline,
+                },
+            );
+            evaluate_edit_cage(
+                &policy,
+                &AttemptDelta {
+                    comparable: true,
+                    inline_test_region: Some(observation),
+                    changes: vec![AttemptPathChange::modified("src/pricing.rs")],
+                },
+            )
+        };
+        // Broken text in a new test, and broken production code with no new
+        // test: both read unparseable, both are recognized.
+        for broken in [
+            "pub fn price() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn a() {}\n    #[test]\n    fn b() { let = ; }\n}\n",
+            "pub fn price( {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn a() {}\n}\n",
+        ] {
+            let verdict = verdict_for(broken);
+            assert_eq!(verdict.violations.len(), 1, "{verdict:?}");
+            assert!(
+                refusal_is_unparseable_selected_file(&verdict.violations[0]),
+                "{verdict:?}"
+            );
+        }
+        // Control: a parseable production edit is refused for another reason
+        // and is not recognized.
+        let verdict = verdict_for(
+            "pub fn price() { let _ = 1; }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn a() {}\n}\n",
+        );
+        assert_eq!(verdict.violations.len(), 1, "{verdict:?}");
+        assert!(
+            !refusal_is_unparseable_selected_file(&verdict.violations[0]),
+            "{verdict:?}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -3079,6 +3389,352 @@ mod tests {
                 "{relative}: expected the baseline's write guard to refuse the write, got {other:?}"
             )),
         }
+    }
+
+    fn python_fixture(name: &str, gitignore: &str) -> Result<(GitFixture, EditCagePolicy), String> {
+        let fixture = git_fixture(name)?;
+        write_fixture_file(&fixture, ".gitignore", gitignore)?;
+        write_fixture_file(&fixture, "pricing.py", "def discount(q):\n    return q\n")?;
+        write_fixture_file(
+            &fixture,
+            "tests/test_pricing.py",
+            "def test_a():\n    pass\n",
+        )?;
+        git_ok(&fixture.root, &["add", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "python"])?;
+        let policy = EditCagePolicy {
+            selected_target: CagePathRule::exact("tests/test_pricing.py")?,
+            allowed_edit_surface: vec![CagePathRule::exact("tests/test_pricing.py")?],
+            forbidden_paths: vec![CagePathRule::exact("pricing.py")?],
+            expected_operational_writes: vec![CagePathRule::subtree("target/ripr")?],
+            ignored_build_output: None,
+            untracked_build_lockfile: None,
+            inline_test_module_target: false,
+        };
+        Ok((fixture, policy))
+    }
+
+    const PYTHON_CACHE_FILES: [&str; 7] = [
+        ".pytest_cache/.gitignore",
+        ".pytest_cache/v/cache/lastfailed",
+        "__pycache__/pricing.cpython-313.pyc",
+        "tests/__pycache__/test_pricing.cpython-313-pytest-8.0.pyc",
+        ".mypy_cache/3.13/meta.json",
+        ".ruff_cache/CACHEDIR.TAG",
+        ".coverage",
+    ];
+
+    /// #10699: running the printed pytest command between the test edit and
+    /// `ripr continue` writes caches that are not an attempt edit, whether or
+    /// not the repository ignores them.
+    #[test]
+    fn python_cache_exemption_test_run_caches_are_not_an_attempt_edit() -> Result<(), String> {
+        let ignores = "__pycache__/\n.pytest_cache/\n.mypy_cache/\n.ruff_cache/\n.coverage\n";
+        for (name, gitignore) in [("ignored", ignores), ("not-ignored", "target/\n")] {
+            let (fixture, policy) = python_fixture(&format!("python-cache-{name}"), gitignore)?;
+            let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+            write_fixture_file(
+                &fixture,
+                "tests/test_pricing.py",
+                "def test_a():\n    assert 1\n",
+            )?;
+            for cache in PYTHON_CACHE_FILES {
+                write_fixture_file(&fixture, cache, "cache")?;
+            }
+            let verdict = evaluate_repository_edit_cage(&baseline)?;
+            assert_eq!(
+                verdict.status,
+                EditCageVerdictStatus::Compliant,
+                "{name}: {verdict:?}"
+            );
+            assert_eq!(
+                verdict.changed_paths,
+                vec!["tests/test_pricing.py".to_string()],
+                "{name}"
+            );
+        }
+        Ok(())
+    }
+
+    /// A `.pyi` selected target is a Python repair too: the same caches are
+    /// expected output.
+    #[test]
+    fn python_cache_exemption_stub_selected_target_also_expects_test_run_caches()
+    -> Result<(), String> {
+        let (fixture, mut policy) = python_fixture("python-cache-pyi", "")?;
+        write_fixture_file(
+            &fixture,
+            "tests/test_pricing.pyi",
+            "def test_a() -> None: ...\n",
+        )?;
+        git_ok(&fixture.root, &["add", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "stub"])?;
+        policy.selected_target = CagePathRule::exact("tests/test_pricing.pyi")?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact("tests/test_pricing.pyi")?];
+        assert!(policy.expects_python_tool_caches());
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        write_fixture_file(
+            &fixture,
+            "tests/test_pricing.pyi",
+            "def test_a() -> int: ...\n",
+        )?;
+        write_fixture_file(&fixture, "__pycache__/pricing.cpython-313.pyc", "cache")?;
+        write_fixture_file(&fixture, ".pytest_cache/v/cache/lastfailed", "{}")?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
+        );
+        assert_eq!(
+            verdict.changed_paths,
+            vec!["tests/test_pricing.pyi".to_string()]
+        );
+        Ok(())
+    }
+
+    /// Run the Python fixture: capture, write `files`, evaluate.
+    fn python_verdict(
+        name: &str,
+        gitignore: &str,
+        files: &[(&str, &str)],
+    ) -> Result<EditCageVerdict, String> {
+        let (fixture, policy) = python_fixture(name, gitignore)?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        for (path, text) in files {
+            write_fixture_file(&fixture, path, text)?;
+        }
+        evaluate_repository_edit_cage(&baseline)
+    }
+
+    fn assert_violates(verdict: &EditCageVerdict, paths: &[&str]) {
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Violated,
+            "{verdict:?}"
+        );
+        for path in paths {
+            assert!(
+                verdict.violations.iter().any(|v| v.path == *path),
+                "{path}: {verdict:?}"
+            );
+        }
+    }
+
+    /// Negative control for #10699: a production edit alongside cache output
+    /// still violates.
+    #[test]
+    fn python_cache_exemption_does_not_hide_a_production_edit() -> Result<(), String> {
+        let verdict = python_verdict(
+            "python-cache-prod",
+            "__pycache__/\n",
+            &[
+                ("__pycache__/pricing.pyc", "cache"),
+                ("pricing.py", "def discount(q):\n    return 0\n"),
+            ],
+        )?;
+        assert_violates(&verdict, &["pricing.py"]);
+        Ok(())
+    }
+
+    /// Negative control for #10699: new source files and misplaced
+    /// cache-looking names are not caches, including a sourceless root-level
+    /// `.pyc` (importable) and source inside a tool-cache directory.
+    #[test]
+    fn python_cache_exemption_does_not_hide_importable_or_misplaced_files() -> Result<(), String> {
+        let verdict = python_verdict(
+            "python-cache-source",
+            "",
+            &[
+                ("helpers/pytest_cache.py", "x = 1\n"),
+                ("subdir/.coverage", "not root data"),
+                ("foo.pyc", "sourceless bytecode"),
+                ("helpers/foo.pyo", "sourceless bytecode"),
+                (".pytest_cache/evil.py", "x = 1\n"),
+                (".mypy_cache/evil.pyi", "x: int\n"),
+                (".pytest_cache/x.pyc", "bytecode"),
+                (".ruff_cache/ext.so", "binary"),
+                (".mypy_cache/ext.pyd", "binary"),
+                (".pytest_cache/hook.pth", "import os"),
+            ],
+        )?;
+        assert_violates(
+            &verdict,
+            &[
+                "helpers/pytest_cache.py",
+                "subdir/.coverage",
+                "foo.pyc",
+                "helpers/foo.pyo",
+                ".pytest_cache/evil.py",
+                ".mypy_cache/evil.pyi",
+                ".pytest_cache/x.pyc",
+                ".ruff_cache/ext.so",
+                ".mypy_cache/ext.pyd",
+                ".pytest_cache/hook.pth",
+            ],
+        );
+        Ok(())
+    }
+
+    /// Positive controls for #10699: coverage data variants, a nested tool
+    /// cache directory and `.pyo` bytecode are test-run output.
+    #[test]
+    fn python_cache_exemption_covers_coverage_variants_nested_caches_and_pyo() -> Result<(), String>
+    {
+        let verdict = python_verdict(
+            "python-cache-positive",
+            "",
+            &[
+                ("tests/test_pricing.py", "def test_a():\n    assert 1\n"),
+                (".coverage.host.1234.abc", "data"),
+                ("a/.pytest_cache/v/cache/nodeids", "[]"),
+                ("tests/__pycache__/test_pricing.cpython-313.pyo", "cache"),
+            ],
+        )?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
+        );
+        Ok(())
+    }
+
+    /// Deleting an untracked cache file present at baseline is not an edit.
+    #[test]
+    fn python_cache_exemption_ignores_deleting_an_untracked_cache_file() -> Result<(), String> {
+        let (fixture, policy) = python_fixture("python-cache-delete", "")?;
+        write_fixture_file(&fixture, ".pytest_cache/v/cache/lastfailed", "{}")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        fs::remove_file(fixture.root.join(".pytest_cache/v/cache/lastfailed"))
+            .map_err(|err| format!("remove cache file: {err}"))?;
+        write_fixture_file(
+            &fixture,
+            "tests/test_pricing.py",
+            "def test_a():\n    assert 1\n",
+        )?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
+        );
+        Ok(())
+    }
+
+    /// Negative control for #10699: a tracked file with a cache-like name
+    /// stays observed.
+    #[test]
+    fn python_cache_exemption_keeps_tracked_cache_named_files_observed() -> Result<(), String> {
+        let (fixture, policy) = python_fixture("python-cache-tracked", "")?;
+        write_fixture_file(&fixture, "tests/__pycache__/fixture.pyc", "v1")?;
+        git_ok(&fixture.root, &["add", "-f", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "track pyc"])?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        write_fixture_file(&fixture, "tests/__pycache__/fixture.pyc", "v2")?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_violates(&verdict, &["tests/__pycache__/fixture.pyc"]);
+        Ok(())
+    }
+
+    /// A baseline saved by a binary that predates the exemption still lists
+    /// untracked cache files; the filtered after-capture omits them, which must
+    /// not read as deletions (#10699). A tracked cache-shaped file deleted
+    /// stays a violation.
+    #[test]
+    fn python_cache_exemption_normalizes_legacy_baselines() -> Result<(), String> {
+        let (fixture, policy) = python_fixture("python-cache-legacy", "")?;
+        write_fixture_file(&fixture, "tests/__pycache__/tracked.pyc", "v1")?;
+        git_ok(&fixture.root, &["add", "-f", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "track pyc"])?;
+        write_fixture_file(&fixture, ".pytest_cache/v/cache/lastfailed", "{}")?;
+        write_fixture_file(&fixture, "__pycache__/x.cpython-313.pyc", "cache")?;
+        // Old-style capture: a non-Python target keeps the cache entries.
+        let mut legacy_policy = policy.clone();
+        legacy_policy.selected_target = CagePathRule::exact("tests/pricing.rs")?;
+        let mut baseline = capture_attempt_baseline(&fixture.root, &legacy_policy)?;
+        assert!(
+            baseline
+                .paths
+                .contains_key(".pytest_cache/v/cache/lastfailed")
+        );
+        assert!(baseline.paths.contains_key("__pycache__/x.cpython-313.pyc"));
+        baseline.policy = policy;
+        let baseline: AttemptBaseline = serde_json::from_str(
+            &serde_json::to_string(&baseline).map_err(|err| format!("serialize: {err}"))?,
+        )
+        .map_err(|err| format!("deserialize: {err}"))?;
+
+        fs::remove_file(fixture.root.join(".pytest_cache/v/cache/lastfailed"))
+            .map_err(|err| format!("remove: {err}"))?;
+        fs::remove_file(fixture.root.join("__pycache__/x.cpython-313.pyc"))
+            .map_err(|err| format!("remove: {err}"))?;
+        write_fixture_file(
+            &fixture,
+            "tests/test_pricing.py",
+            "def test_a():\n    assert 1\n",
+        )?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
+        );
+
+        fs::remove_file(fixture.root.join("tests/__pycache__/tracked.pyc"))
+            .map_err(|err| format!("remove tracked: {err}"))?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_violates(&verdict, &["tests/__pycache__/tracked.pyc"]);
+        Ok(())
+    }
+
+    /// The delta-level skip gate (#10699) applies only to paths untracked on
+    /// both sides: a cache-shaped file untracked at baseline that the agent
+    /// then force-adds to the index is observed, and a modified legacy cache
+    /// file is not reported either.
+    #[test]
+    fn python_cache_exemption_skip_gate_observes_a_force_added_cache_file() -> Result<(), String> {
+        let (fixture, policy) = python_fixture("python-cache-force-add", "")?;
+        write_fixture_file(&fixture, ".pytest_cache/v/cache/lastfailed", "{}")?;
+        write_fixture_file(&fixture, "__pycache__/legacy.cpython-313.pyc", "v1")?;
+        let mut legacy_policy = policy.clone();
+        legacy_policy.selected_target = CagePathRule::exact("tests/pricing.rs")?;
+        let mut baseline = capture_attempt_baseline(&fixture.root, &legacy_policy)?;
+        baseline.policy = policy;
+
+        write_fixture_file(&fixture, "__pycache__/legacy.cpython-313.pyc", "v2")?;
+        write_fixture_file(
+            &fixture,
+            "tests/test_pricing.py",
+            "def test_a():\n    assert 1\n",
+        )?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
+        );
+
+        git_ok(
+            &fixture.root,
+            &["add", "-f", ".pytest_cache/v/cache/lastfailed"],
+        )?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_violates(&verdict, &[".pytest_cache/v/cache/lastfailed"]);
+        Ok(())
+    }
+
+    /// Negative control for #10699: a Rust repair does not get the Python
+    /// exemption.
+    #[test]
+    fn python_cache_exemption_does_not_apply_to_a_rust_repair() -> Result<(), String> {
+        let (fixture, mut policy) = python_fixture("python-cache-rust", "")?;
+        policy.selected_target = CagePathRule::exact("tests/pricing.rs")?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact("tests/pricing.rs")?];
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        write_fixture_file(&fixture, "__pycache__/pricing.pyc", "cache")?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_violates(&verdict, &["__pycache__/pricing.pyc"]);
+        Ok(())
     }
 
     #[test]
@@ -3879,6 +4535,16 @@ mod tests {
             EditCageVerdictStatus::Incomparable
         );
         Ok(())
+    }
+
+    #[test]
+    fn inventory_flags_non_ascii_case_pairs_as_ambiguous() {
+        let (_, ambiguous) =
+            inventory_paths("\u{c9}.rs\0\u{e9}.rs\0".as_bytes(), b"", b"", 10).unwrap_or_default();
+        assert!(ambiguous);
+        let (_, distinct) =
+            inventory_paths("\u{e9}.rs\0e.rs\0".as_bytes(), b"", b"", 10).unwrap_or_default();
+        assert!(!distinct);
     }
 
     #[test]

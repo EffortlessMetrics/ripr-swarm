@@ -41,6 +41,10 @@ pub(crate) const SEAM_NOT_FOUND: &str = "seam_not_found";
 /// could not be established. The CLI errors before resolving any item in
 /// that state, so no item may be repair-ready (#9108).
 pub(crate) const SEAM_INVENTORY_TRUNCATED: &str = "seam_inventory_truncated";
+/// #7357: a saved tracked-worktree snapshot carries no consumed-source
+/// commitment spanning its findings and the live seam inventory, so repair
+/// readiness is refused rather than claimed current.
+pub(crate) const SEAM_WORKTREE_SOURCE: &str = "worktree_source_not_committed";
 
 /// Whether the repo-wide seam inventory that `ripr repair` resolves against
 /// is complete. The MCP admission resolves over a diff-scoped inventory that
@@ -75,7 +79,7 @@ impl InventoryCompleteness {
         }
     }
 
-    fn refusal_detail(&self) -> Option<String> {
+    pub(crate) fn refusal_detail(&self) -> Option<String> {
         match self {
             Self::Complete => None,
             Self::Truncated { analyzed, total } => Some(format!(
@@ -94,6 +98,11 @@ impl InventoryCompleteness {
 pub(crate) enum SeamVerdict {
     /// Exactly one seam, admitted by the shared repair gate.
     Admitted,
+    /// Exactly one seam, admitted by the shared repair gate, whose edit
+    /// target is its own production file's one governed inline `#[cfg(test)]`
+    /// module (#5210, #5516). The edit cage confines the repair to that
+    /// module; this carries the same module the CLI before phase captures.
+    AdmittedInline { file: String, module: String },
     /// The finding is not startable; `code` is the typed reason and
     /// `detail` the shared validator's own explanation.
     Refused { code: &'static str, detail: String },
@@ -117,6 +126,28 @@ impl SeamAdmission {
         Self::default()
     }
 
+    /// Refuse every finding with one typed reason without consulting any
+    /// seam inventory (#7357): a saved tracked-worktree snapshot gathers no
+    /// inventory, so no verdict can be derived from it.
+    pub(crate) fn withheld(findings: &[Finding], code: &'static str, detail: &str) -> Self {
+        let by_finding = findings
+            .iter()
+            .map(|finding| {
+                (
+                    finding.id.clone(),
+                    SeamVerdict::Refused {
+                        code,
+                        detail: detail.to_string(),
+                    },
+                )
+            })
+            .collect();
+        Self {
+            evaluated: true,
+            by_finding,
+        }
+    }
+
     /// Run the shared repair-subject resolver for every finding over the
     /// refresh's classified seam inventory.
     pub(crate) fn evaluate(
@@ -136,11 +167,13 @@ impl SeamAdmission {
                         code: SEAM_INVENTORY_TRUNCATED,
                         detail: detail.clone(),
                     },
-                    None => verdict_for(resolve_repair_subject_in(
+                    None => verdict_for(
+                        // The server's verdicts are consumed relative to its
+                        // own workspace root, so no `--root` is worded into an
+                        // emitted next command here.
+                        resolve_repair_subject_in(candidate_seams, policy, &finding.id, None),
                         candidate_seams,
-                        policy,
-                        &finding.id,
-                    )),
+                    ),
                 };
                 (finding.id.clone(), verdict)
             })
@@ -169,9 +202,31 @@ impl SeamAdmission {
     }
 }
 
-fn verdict_for(outcome: RepairSubjectOutcome) -> SeamVerdict {
+/// An admitted seam whose recommended edit target is its own inline test
+/// module carries that module, read through the same predicate the CLI and
+/// packet surfaces ask (`recommended_inline_test_module`), so MCP states the
+/// confinement the edit cage will enforce rather than a parallel rule.
+fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) -> SeamVerdict {
+    let inline = candidate_seams
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == seam_id)
+        .and_then(|entry| {
+            let recommended = crate::output::agent_seam_packets::recommended_test_for(entry);
+            crate::output::agent_seam_packets::recommended_inline_test_module(
+                entry,
+                &recommended.file,
+            )
+            .map(|module| (recommended.file.clone(), module.to_string()))
+        });
+    match inline {
+        Some((file, module)) => SeamVerdict::AdmittedInline { file, module },
+        None => SeamVerdict::Admitted,
+    }
+}
+
+fn verdict_for(outcome: RepairSubjectOutcome, candidate_seams: &[ClassifiedSeam]) -> SeamVerdict {
     match outcome {
-        RepairSubjectOutcome::Seam(_) => SeamVerdict::Admitted,
+        RepairSubjectOutcome::Seam(seam_id) => inline_verdict(&seam_id, candidate_seams),
         RepairSubjectOutcome::Ineligible {
             seam_id,
             reason,

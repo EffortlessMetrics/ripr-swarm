@@ -1,0 +1,81 @@
+{
+  "subject_id": "authored-spec-b-bindings",
+  "origin": "authored",
+  "version_label": "authored 2026-10-22 for the RIPR-SPEC-0150 and RIPR-SPEC-0157 acceptance examples",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "4de1264bf995db4e7228e1495fef0f18723c299be6ec4c543e37116ba33a7526"
+    },
+    {
+      "path": "src/b_accept.rs",
+      "sha256": "7c5541a0527e4eb3729a7bc92c67455dc32e2e51e15c68e9f140c029b8281890"
+    },
+    {
+      "path": "src/b_closure.rs",
+      "sha256": "3dc14861014df85e066465f3dac373b402c87794680505f514e1418dea319fe3"
+    },
+    {
+      "path": "src/b_comment.rs",
+      "sha256": "325e51ef4c8be12d536d02e9a871609b2702050dad7def15b1b039cef1f80d48"
+    },
+    {
+      "path": "src/b_else.rs",
+      "sha256": "b7ef2e8fdeadca9e386fa1f57372ae8f55eb4f477b2edfd361725bc4f609ef2a"
+    },
+    {
+      "path": "src/b_lookalike.rs",
+      "sha256": "bd7fa413a56c6a9c80b2880dbed98a74f507d01dd8c889626b7222ebeb81489f"
+    },
+    {
+      "path": "src/b_macro.rs",
+      "sha256": "b8c87d15a90e0d9c071b01b4c665fd54ac395e80dc34105c85e53d15a1eb9c76"
+    },
+    {
+      "path": "src/b_reassigned.rs",
+      "sha256": "a6aa90602e73927805c3ba1b0a1f2a6253241db66e0cd1bf0e155f1d74cdde52"
+    },
+    {
+      "path": "src/b_rebound.rs",
+      "sha256": "17569662a2bbe9e145889784f5a252fb6cbe4cd65b1179a0de8786e0f2d481dd"
+    },
+    {
+      "path": "src/b_shadow.rs",
+      "sha256": "72d22fc1d432b7afa91470fe4425d96031f0f6876e8e893fdbb4108eea178416"
+    },
+    {
+      "path": "src/b_shape.rs",
+      "sha256": "5afd05c46589a75868b29e9e669e8c8fd1af65f92eb96f532366115a4cc8039f"
+    },
+    {
+      "path": "src/b_sibling.rs",
+      "sha256": "5092da3524d46976d9e0c4ac6f8c6f07a4d60f2cc559f6bae98214e1575d0d7a"
+    },
+    {
+      "path": "src/b_string.rs",
+      "sha256": "6e358133d7734608960d6372d8988c45237fe179b741973aba4be61f3480664d"
+    },
+    {
+      "path": "src/b_text.rs",
+      "sha256": "099be62ace49363a086260d9541d674909d25768cdbf5a1e34d511d02ad2c7ac"
+    },
+    {
+      "path": "src/b_two_uses.rs",
+      "sha256": "0f05fc0287142d0925cfab5624c34f68a5fd9836cb811594e38120410464614f"
+    },
+    {
+      "path": "src/b_unreached.rs",
+      "sha256": "b086c9c93247f7811d3dd8d93fd8d04f342b0d16ec1021c7f29b498c173b71e1"
+    },
+    {
+      "path": "src/b_utf8.rs",
+      "sha256": "b61dd1ebaab3cea89732305e4d428f2a1f82ed7b5659c92b47040e89601b79aa"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "2d224dcdf54e955e2066fe4cd4be231e5bdf9267f5c3c3afa40ca3eebed58d46"
+    }
+  ]
+}

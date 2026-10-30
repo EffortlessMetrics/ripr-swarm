@@ -142,11 +142,19 @@ pub(crate) fn typescript_preview_card(finding: &Finding) -> Option<TypeScriptPre
         .missing_discriminators
         .first()
         .map(|missing| missing.value.clone());
-    let static_limits = finding
+    let mut static_limits = finding
         .static_limit_kind
         .map(static_limit_label)
         .into_iter()
         .collect::<Vec<_>>();
+    // Adapter limits that have no `StaticLimitKind` (for example
+    // `typescript_owner_extraction_partial`) travel as `static_limit <name>:`
+    // evidence; project them so the card names what it cannot see.
+    for name in evidence_static_limit_names(finding) {
+        if !static_limits.iter().any(|existing| existing == name) {
+            static_limits.push(name.to_string());
+        }
+    }
     let bun_cross_language_grips = bun_cross_language_grips(finding, &actionability);
     let bun_cross_language_grip = bun_cross_language_grips.first().cloned();
 
@@ -345,6 +353,15 @@ fn evidence_values<'a>(finding: &'a Finding, prefix: &str) -> Vec<&'a str> {
         .filter_map(|entry| entry.strip_prefix(prefix))
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn evidence_static_limit_names(finding: &Finding) -> Vec<&str> {
+    evidence_values(finding, "static_limit ")
+        .into_iter()
+        .filter_map(|entry| entry.split(':').next())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
         .collect()
 }
 
@@ -1616,6 +1633,24 @@ mod tests {
     }
 
     #[test]
+    fn typescript_preview_card_projects_evidence_only_static_limit() -> Result<(), String> {
+        let mut finding = sample_finding(OracleKind::ExactValue, OracleStrength::Strong);
+        finding
+            .evidence
+            .push("static_limit typescript_owner_extraction_partial: enum member".to_string());
+
+        let card = typescript_preview_card(&finding)
+            .ok_or_else(|| "expected TypeScript preview card".to_string())?;
+
+        assert_eq!(
+            card.static_limits,
+            vec!["typescript_owner_extraction_partial"]
+        );
+        assert!(card.suggested_assertion_shape.contains("static limitation"));
+        Ok(())
+    }
+
+    #[test]
     fn typescript_preview_card_names_static_limit() -> Result<(), String> {
         let mut finding = sample_finding(OracleKind::ExactValue, OracleStrength::Strong);
         finding.static_limit_kind = Some(StaticLimitKind::MockedModule);
@@ -1730,6 +1765,7 @@ mod tests {
 
     fn sample_finding(oracle_kind: OracleKind, oracle_strength: OracleStrength) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_pricing.ts:2:typescript_preview".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -1785,6 +1821,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: Some(LanguageId::TypeScript),

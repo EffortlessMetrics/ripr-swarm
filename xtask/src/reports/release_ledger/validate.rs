@@ -52,6 +52,9 @@ pub(super) struct Context {
     pub(super) packet: Option<SelectionPacket>,
     pub(super) markdown: Option<String>,
     pub(super) manifest: Option<Value>,
+    /// Digest of the audit file's current bytes, or why it could not be read.
+    /// `None` means the caller did not re-read it.
+    pub(super) audit_file_sha256: Option<Result<String, String>>,
 }
 
 pub(super) fn compute_digests(ledger: &Ledger) -> Result<Digests, String> {
@@ -90,6 +93,7 @@ pub(super) fn validate(ledger: &Ledger, context: &Context) -> Vec<String> {
     validate_selected_claims(ledger, context, &mut reasons);
     validate_open_prs(ledger, context, &mut reasons);
     validate_final(ledger, &mut reasons);
+    validate_audit_file(ledger, context, &mut reasons);
     if ledger.stage == STAGE_FINAL && context.packet.is_none() {
         reasons.push(
             "a final ledger must be validated against the #2766 packet (--packet)".to_string(),
@@ -595,6 +599,25 @@ fn validate_final(ledger: &Ledger, reasons: &mut Vec<String>) {
         Some(audit)
             if audit.sha256.len() == 64 && audit.sha256.chars().all(|c| c.is_ascii_hexdigit()) => {}
         _ => reasons.push("final ledger needs an audit reference with a sha256 digest".to_string()),
+    }
+}
+
+/// The recorded audit digest must match the audited bytes as they are now, so
+/// an audit edited after derivation no longer backs the ledger.
+fn validate_audit_file(ledger: &Ledger, context: &Context, reasons: &mut Vec<String>) {
+    let (Some(audit), Some(current)) = (&ledger.audit, &context.audit_file_sha256) else {
+        return;
+    };
+    match current {
+        Ok(actual) if actual.eq_ignore_ascii_case(&audit.sha256) => {}
+        Ok(actual) => reasons.push(format!(
+            "audit file {} has sha256 {actual}, not the recorded {}",
+            audit.path, audit.sha256
+        )),
+        Err(error) => reasons.push(format!(
+            "audit file {} cannot be re-read: {error}",
+            audit.path
+        )),
     }
 }
 

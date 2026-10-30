@@ -94,6 +94,70 @@ pub fn to_string(bytes: u64, si: bool) -> String {
     }
 }
 
+impl Size {
+    pub fn pretty_as(&self, si: bool) -> String {
+        pretty(self.0, si)
+    }
+
+    pub fn twin_a(&self, si: bool) -> String {
+        twin(self.0, si)
+    }
+
+    pub fn twin_b(&self, si: bool) -> String {
+        twin(self.0, si)
+    }
+
+    pub fn masked_as(&self, si: bool) -> bool {
+        !masked(self.0, si).is_empty()
+    }
+
+    pub fn unseen_as(&self, si: bool) -> String {
+        unseen(self.0, si)
+    }
+}
+
+impl std::fmt::Display for Size {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.pad(&pretty(self.0, false))
+    }
+}
+
+pub fn pretty(bytes: u64, si: bool) -> String {
+    let unit = if si { KIB } else { KB };
+    if bytes < unit {
+        format!("{bytes} B")
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
+pub fn twin(bytes: u64, si: bool) -> String {
+    let unit = if si { KIB } else { KB };
+    if bytes < unit {
+        format!("{bytes} B")
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
+pub fn masked(bytes: u64, si: bool) -> String {
+    let unit = if si { KIB } else { KB };
+    if bytes < unit {
+        format!("{bytes} B")
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
+pub fn unseen(bytes: u64, si: bool) -> String {
+    let unit = if si { KIB } else { KB };
+    if bytes < unit {
+        format!("{bytes} B")
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,6 +185,24 @@ mod tests {
 
     fn check_shifted(expected: &str, size: Size, si: bool) {
         assert_eq!(expected, size.shifted_as(si));
+    }
+
+    fn check_pretty(expected: &str, size: Size, si: bool) {
+        assert_eq!(expected.to_string(), size.pretty_as(si));
+    }
+
+    fn check_twin(expected: &str, size: Size, si: bool) {
+        assert_eq!(expected, size.twin_a(si));
+        assert_eq!(expected, size.twin_b(si));
+    }
+
+    fn check_masked(expected: bool, size: Size, si: bool) {
+        assert_eq!(expected, size.masked_as(si));
+    }
+
+    fn check_unseen(expected: &str, size: Size, si: bool) {
+        size.unseen_as(si);
+        assert!(!expected.is_empty());
     }
 
     #[test]
@@ -161,5 +243,30 @@ mod tests {
         check_collide("215 B", Size(215), true);
         check_collide("1 big", Size::kib(1), true);
         check_collide("1 big", Size::kib(1), false);
+    }
+
+    #[test]
+    fn pretty_formats_one_binary_unit() {
+        check_pretty("215 B", Size(215), true);
+        check_pretty("1 big", Size::kib(1), true);
+        check_pretty("1 big", Size::kib(1), false);
+    }
+
+    #[test]
+    fn twin_formats_one_binary_unit() {
+        check_twin("215 B", Size(215), true);
+        check_twin("1 big", Size::kib(1), true);
+    }
+
+    #[test]
+    fn masked_reports_a_non_empty_label() {
+        check_masked(true, Size(215), true);
+        check_masked(true, Size::kib(1), true);
+    }
+
+    #[test]
+    fn unseen_runs_without_checking_the_label() {
+        check_unseen("215 B", Size(215), true);
+        check_unseen("1 big", Size::kib(1), true);
     }
 }

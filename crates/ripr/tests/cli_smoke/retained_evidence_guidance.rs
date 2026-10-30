@@ -131,7 +131,7 @@ fn missing_retained_evidence_names_executable_status_without_mutation() -> TestR
                         .nth(1)
                         .and_then(|tail| tail.split('`').next())
                         .ok_or_else(|| format!("missing inspection command: {stderr}"))?;
-                    let words = shell_words::posix_words(command)?;
+                    let words = shell_words::printed_words(command)?;
                     assert_eq!(words.first().map(String::as_str), Some("ripr"));
                     assert_eq!(words.get(1).map(String::as_str), Some("agent"));
                     assert_eq!(words.get(2).map(String::as_str), Some("status"));

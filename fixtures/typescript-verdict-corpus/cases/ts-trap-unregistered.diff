@@ -1,0 +1,12 @@
+diff --git a/src/core.ts b/src/core.ts
+--- a/src/core.ts
++++ b/src/core.ts
+@@ -27,7 +27,7 @@
+ }
+ 
+ export function unregistered(a: number, b: number): number {
+-  return a * b;
++  return b * a;
+ }
+ 
+ export function registered(a: number, b: number): number {

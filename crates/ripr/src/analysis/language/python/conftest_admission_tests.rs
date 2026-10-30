@@ -69,13 +69,71 @@ fn without_conftest_the_same_test_stays_extraction_complete_no_assertion() -> Re
 }
 
 #[test]
-fn conftest_without_implicit_setup_does_not_taint() -> Result<(), String> {
-    let plain = "import pytest\n\n\n@pytest.fixture\ndef db():\n    return 1\n\n\n@pytest.fixture(autouse=False)\ndef other():\n    return 2\n\n\ndef pytest_configure(config):\n    config.addinivalue_line('markers', 'slow')\n";
+fn conftest_without_declarations_does_not_taint() -> Result<(), String> {
+    // Imports and constants run nothing and declare no fixture or hook.
+    let plain = "import pytest\n\nMARKER = 'slow'\n";
     let got = tax_admission(&[
         ("tests/conftest.py", plain),
         ("tests/test_tax.py", CALL_ONLY),
     ])?;
     assert_eq!(got, NONE);
+    Ok(())
+}
+
+#[test]
+fn conftest_fixtures_hooks_and_effects_withhold_extraction_complete_no_assertion()
+-> Result<(), String> {
+    use crate::analysis::language::python::fixtures::taint_admission_by_conftest_declarations;
+    // Any fixture or hook (a built-in override, `pytest_generate_tests`,
+    // `pytest_configure` adding `filterwarnings`) or a top-level call
+    // (`warnings.simplefilter("error")`) can change a test that names none of it.
+    for (label, conftest) in [
+        (
+            "plain fixture",
+            "import pytest\n\n\n@pytest.fixture\ndef db():\n    return 1\n",
+        ),
+        (
+            "configure hook",
+            "def pytest_configure(config):\n    config.addinivalue_line('filterwarnings', 'error')\n",
+        ),
+        (
+            "generate_tests hook",
+            "def pytest_generate_tests(metafunc):\n    metafunc.fixturenames.append('guard')\n",
+        ),
+        (
+            "session finish hook",
+            "def pytest_sessionfinish(session):\n    assert not session.testsfailed\n",
+        ),
+        (
+            "top-level effect",
+            "import warnings\n\nwarnings.simplefilter('error')\n",
+        ),
+    ] {
+        let mut tests = Vec::new();
+        let mut reach = BTreeSet::new();
+        for (path, source) in [
+            ("tests/conftest.py", conftest),
+            ("tests/test_tax.py", CALL_ONLY),
+        ] {
+            let facts = extract_source_facts(Path::new(path), source);
+            if facts.conftest_declares_fixture_or_hook {
+                reach.insert(PathBuf::from(path));
+            }
+            if is_test_file(Path::new(path)) {
+                tests.extend(facts.tests);
+            }
+        }
+        assert!(
+            !reach.is_empty(),
+            "{label}: the conftest must be in the reach set"
+        );
+        taint_admission_by_conftest_declarations(&mut tests, &reach, |_| false);
+        let got = tests
+            .first()
+            .map(|test| test.assertion_admission.as_str())
+            .ok_or("test extracted")?;
+        assert_eq!(got, UNRESOLVED, "{label}");
+    }
     Ok(())
 }
 
@@ -556,4 +614,108 @@ fn conftest_reexports_option_splats_and_autouse_factories_make_admission_unresol
         assert_eq!(got, NONE, "must not taint:\n{inert}");
     }
     Ok(())
+}
+
+// #5491: `missing_input` fails closed on the existence of a conftest fixture
+// or hook on the chain, whether or not it is autouse.
+mod row_reach {
+    use super::super::assertion_selection::PythonAssertionFocus;
+    use super::super::boundary::python_row_boundary_omission;
+    use super::super::fixtures::mark_implicit_reach_by_conftest;
+    use super::super::probe_shape::classify_probe_shape;
+    use super::super::related_tests::related_test_candidates;
+    use super::super::{PythonTest, owner_for_changed_line};
+    use super::*;
+
+    const OWNER: &str = "def can_reserve(qty, on_hand):\n    if qty >= on_hand:\n        return True\n    return False\n";
+    const TEST: &str = "from src.subject import can_reserve\n\ndef test_a():\n    assert can_reserve(5, 3) == True\n";
+
+    /// Whether the row of `tests/test_a.py::test_a` claims an omission, with
+    /// the workspace conftest pass applied.
+    fn omission_with(conftests: &[(&str, &str)], unread: &[&str]) -> Result<bool, String> {
+        let mut tests: Vec<PythonTest> = Vec::new();
+        let mut reach = BTreeSet::new();
+        for (path, source) in conftests {
+            let facts = extract_source_facts(Path::new(path), source);
+            if facts.conftest_declares_fixture_or_hook {
+                reach.insert(PathBuf::from(path));
+            }
+        }
+        tests.extend(extract_source_facts(Path::new("tests/test_a.py"), TEST).tests);
+        mark_implicit_reach_by_conftest(&mut tests, &reach, |conftest| {
+            unread.iter().any(|path| Path::new(path) == conftest)
+        });
+        let file = Path::new("src/subject.py");
+        let owners = super::super::owners_tests::extract_owners(file, OWNER);
+        let owner = owner_for_changed_line(file, 2, &owners)
+            .cloned()
+            .ok_or("owner")?;
+        let after = "    if qty >= on_hand:";
+        let before = "    if qty > on_hand:";
+        let focus =
+            PythonAssertionFocus::for_change(classify_probe_shape(after).0, after, Some(before));
+        let candidates = related_test_candidates(&owner, &tests);
+        if candidates.len() != 1 {
+            return Err(format!("one row expected, got {}", candidates.len()));
+        }
+        Ok(python_row_boundary_omission(
+            after,
+            Some(before),
+            &owner,
+            &candidates[0],
+            &candidates,
+            &focus,
+        ))
+    }
+
+    #[test]
+    fn conftest_fixture_or_hook_on_the_chain_withholds_the_omission() -> Result<(), String> {
+        // Control: no conftest, and a conftest with neither fixture nor hook.
+        assert!(omission_with(&[], &[])?);
+        assert!(omission_with(&[("tests/conftest.py", "LIMIT = 3\n")], &[])?);
+        for (label, source) in [
+            (
+                "plain fixture",
+                "import pytest\n\n@pytest.fixture\ndef boot():\n    return 1\n",
+            ),
+            (
+                "autouse fixture",
+                "import pytest\n\n@pytest.fixture(autouse=True)\ndef boot():\n    yield\n",
+            ),
+            (
+                "collection hook",
+                "def pytest_collection_modifyitems(items):\n    pass\n",
+            ),
+        ] {
+            assert!(
+                !omission_with(&[("tests/conftest.py", source)], &[])?,
+                "{label}"
+            );
+        }
+        // Top-level code that rewrites or calls project code counts; a
+        // constant-only conftest (above) does not.
+        for (label, source) in [
+            (
+                "attribute assignment",
+                "import src.subject as s\n\ns.can_reserve = lambda a, b: True\n",
+            ),
+            (
+                "top-level call",
+                "import src.subject as s\n\ns.can_reserve(4, 4)\n",
+            ),
+        ] {
+            assert!(
+                !omission_with(&[("tests/conftest.py", source)], &[])?,
+                "{label}"
+            );
+        }
+        // A conftest further up the chain counts too, and so does one that
+        // exists but could not be read.
+        assert!(!omission_with(
+            &[("conftest.py", "def pytest_configure(config):\n    pass\n")],
+            &[]
+        )?);
+        assert!(!omission_with(&[], &["tests/conftest.py"])?);
+        Ok(())
+    }
 }

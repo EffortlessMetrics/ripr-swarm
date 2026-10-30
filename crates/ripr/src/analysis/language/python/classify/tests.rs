@@ -447,12 +447,12 @@ fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result
     for decorator in [
         "unittest.skip('disabled')",
         "unittest.skipIf(True, 'disabled')",
-        "unittest.skipIf(False, 'runtime condition not evaluated')",
+        "unittest.skipIf(DISABLED, 'runtime condition not evaluated')",
         "unittest.skipUnless(False, 'disabled')",
         "unittest.expectedFailure",
         "pytest.mark.skip(reason='disabled')",
         "pytest.mark.skipif(True, reason='disabled')",
-        "pytest.mark.skipif(False, reason='runtime condition not evaluated')",
+        "pytest.mark.skipif(DISABLED, reason='runtime condition not evaluated')",
         "pytest.mark.xfail(strict=False)",
     ] {
         let test = if decorator == "unittest.expectedFailure" {
@@ -484,6 +484,31 @@ fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result
                 .any(|line| line.contains("test activation")),
             "{decorator}"
         );
+    }
+    Ok(())
+}
+
+// A boolean-literal condition that never triggers the skip leaves the test
+// running, so its exact oracle credits the edit (#9271 trap controls).
+#[test]
+fn an_inert_literal_skip_condition_keeps_oracle_credit() -> Result<(), String> {
+    for decorator in [
+        "pytest.mark.skipif(False, reason='never')",
+        "pytest.mark.xfail(False, reason='never')",
+        "unittest.skipIf(False, 'never')",
+        "unittest.skipUnless(True, 'never')",
+    ] {
+        let tests = format!(
+            "import unittest\nimport pytest\nfrom src.subject import score\n@{decorator}\ndef test_score():\n    assert score(0) == 8\n"
+        );
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            &tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{decorator}");
     }
     Ok(())
 }
@@ -1251,6 +1276,83 @@ fn parametrize_cases_off_boundary_are_weakly_exposed() -> Result<(), String> {
     Ok(())
 }
 
+/// #10842: a rewrite that keeps the predicate on every integer
+/// (`amount >= 100` -> `amount > 99`) changes no behavior, so its truth is
+/// a wrong version of the new line. One row on the equality point catches
+/// the operator flip but not mutmut's `n + 1` shift of the bound
+/// (`amount > 100`), so `exposed` also needs the row where the shifted bound
+/// differs. A behavior change keeps the equality rule, and a shift that lands
+/// on the equality point (`amount < 100`) needs no further row.
+#[test]
+fn an_integer_equivalent_rewrite_needs_the_row_its_shifted_bound_moves_to() -> Result<(), String> {
+    let finding = |new: &str, old: &str, rows: &str| {
+        let source = format!("def fee(amount):\n    if {new}:\n        return 0\n    return 5\n");
+        let tests = format!(
+            "import pytest\nfrom src.subject import fee\n\n@pytest.mark.parametrize(\"amount, expected\", [{rows}])\ndef test_fee(amount, expected):\n    assert fee(amount) == expected\n"
+        );
+        classify_case(
+            &source,
+            &tests,
+            2,
+            &format!("    if {old}:"),
+            &format!("    if {new}:"),
+        )
+    };
+    for (new, old) in [
+        ("amount > 99", "amount >= 100"),
+        ("99 < amount", "amount >= 100"),
+        ("amount <= 99", "amount < 100"),
+        ("99 >= amount", "100 > amount"),
+    ] {
+        let one_row = finding(new, old, "(99, 5)")?;
+        assert_eq!(
+            one_row.class,
+            ExposureClass::WeaklyExposed,
+            "{new}: {one_row:?}"
+        );
+        assert!(
+            missing_boundary(&one_row, "amount == 100").is_some(),
+            "{new}: {one_row:?}"
+        );
+        let both = finding(new, old, "(99, 5), (100, 0)")?;
+        assert_eq!(both.class, ExposureClass::Exposed, "{new}: {both:?}");
+    }
+    // Controls: a behavior change, and a shift onto the equality point.
+    for (new, old, row) in [
+        ("amount > 99", "amount >= 99", "(99, 5)"),
+        (
+            "amount > 99 or amount == 7",
+            "amount >= 100 and amount == 7",
+            "(99, 5)",
+        ),
+        ("amount < 100", "amount <= 99", "(100, 5)"),
+        ("amount >= 100", "amount > 99", "(100, 0)"),
+    ] {
+        let control = finding(new, old, row)?;
+        assert_eq!(control.class, ExposureClass::Exposed, "{new}: {control:?}");
+    }
+    // A conditional return: the same rewrite needs the shifted row, but one
+    // that also changes a branch value is a behavior change.
+    let conditional = |old_else: &str| {
+        classify_case(
+            "def fee(amount):\n    return 0 if amount > 99 else 5\n",
+            "import pytest\nfrom src.subject import fee\n\n@pytest.mark.parametrize(\"amount, expected\", [(99, 5)])\ndef test_fee(amount, expected):\n    assert fee(amount) == expected\n",
+            2,
+            &format!("    return 0 if amount >= 100 else {old_else}"),
+            "    return 0 if amount > 99 else 5",
+        )
+    };
+    let rewrite = conditional("5")?;
+    assert_eq!(rewrite.class, ExposureClass::WeaklyExposed, "{rewrite:?}");
+    assert!(
+        missing_boundary(&rewrite, "amount == 100").is_some(),
+        "{rewrite:?}"
+    );
+    let changed = conditional("6")?;
+    assert_eq!(changed.class, ExposureClass::Exposed, "{changed:?}");
+    Ok(())
+}
+
 /// Positive control for #4559: one case on the boundary keeps `exposed`, also
 /// through a stacked decorator (the cases are the product).
 #[test]
@@ -1270,13 +1372,12 @@ fn parametrize_case_on_boundary_stays_exposed() -> Result<(), String> {
 }
 
 /// Shapes whose cases are not statically certain keep the pre-#4559
-/// unresolved verdict: argvalues named by a variable, `indirect=`, and an
-/// argname the test body rebinds before the call.
+/// unresolved verdict: argvalues named by a variable and an argname the test
+/// body rebinds before the call.
 #[test]
 fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
     for tests in [
         "import pytest\nfrom src.subject import bulk_discount\n\nCASES = [(50, 0.0)]\n\n@pytest.mark.parametrize(\"quantity, rate\", CASES)\ndef test_bulk_discount(quantity, rate):\n    assert bulk_discount(quantity) == rate\n",
-        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50], indirect=True)\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n",
         "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50])\ndef test_bulk_discount(quantity):\n    quantity = quantity * 2\n    assert bulk_discount(quantity) == 0.0\n",
     ] {
         let finding = classify_case(
@@ -1295,6 +1396,350 @@ fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
                 .any(|line| line.starts_with("boundary_activation_unresolved: ")),
             "{tests}: {:?}",
             finding.evidence
+        );
+    }
+    Ok(())
+}
+
+/// #10832: a test that unpacks a tuple argname first (`quantity, rate =
+/// case`) is the test parametrized by the unpacked names, so its rows meet
+/// the same boundary-reach check as split argnames. Off-boundary rows read
+/// `weakly_exposed` (before the fix the owner call's `quantity` matched no
+/// argname and the unresolved activation kept `exposed`), an on-boundary row
+/// stays `exposed`, and a mark overriding a same-named fixture reads the
+/// mark's rows, not the fixture's.
+#[test]
+fn a_leading_unpack_of_a_tuple_argname_reads_its_rows() -> Result<(), String> {
+    let module = |rows: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", {rows})\ndef test_bulk_discount(case):\n    quantity, rate = case\n    assert bulk_discount(quantity) == rate\n"
+        )
+    };
+    let method = |rows: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\nclass TestBulk:\n    @pytest.mark.parametrize(\"case\", {rows})\n    def test_bulk_discount(self, case):\n        \"\"\"Rows.\"\"\"\n        quantity, rate = case  # unpack\n        assert bulk_discount(quantity) == rate\n"
+        )
+    };
+    let overriding = |rows: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.fixture(params=[(100, 0.0), (101, 0.15)])\ndef case(request):\n    return request.param\n\n@pytest.mark.parametrize(\"case\", {rows})\ndef test_bulk_discount(case):\n    quantity, rate = case\n    assert bulk_discount(quantity) == rate\n"
+        )
+    };
+    let classify = |tests: &str| {
+        classify_case(
+            DISCOUNT_SOURCE,
+            tests,
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )
+    };
+    for (shape, tests) in [
+        ("module", module("[(50, 0.0), (500, 0.15)]")),
+        ("method", method("[(50, 0.0), (500, 0.15)]")),
+        ("override", overriding("[(50, 0.0), (500, 0.15)]")),
+    ] {
+        let finding = classify(&tests)?;
+        assert_owner(&finding, "bulk_discount");
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{shape}: {finding:?}"
+        );
+        assert!(observed(&finding, "quantity = 50"), "{shape}: {finding:?}");
+        assert!(observed(&finding, "quantity = 500"), "{shape}: {finding:?}");
+    }
+    for (shape, tests) in [
+        ("module", module("[(50, 0.0), (100, 0.0)]")),
+        ("method", method("[(100, 0.0)]")),
+    ] {
+        let finding = classify(&tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{shape}: {finding:?}"
+        );
+        assert!(
+            observed(&finding, "quantity == 100"),
+            "{shape}: {finding:?}"
+        );
+    }
+    // A bare target takes the whole literal row.
+    let bare = |rows: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", {rows})\ndef test_bulk_discount(case):\n    quantity = case\n    assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let finding = classify(&bare("[50, 500]"))?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(observed(&finding, "quantity = 500"), "{finding:?}");
+    let finding = classify(&bare("[50, 100]"))?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // A row element that shadows the owner: the test calls `fake`, so the
+    // on-boundary row must not credit the owner (review of #10840).
+    let finding = classify(
+        "import pytest\nfrom src.subject import bulk_discount\n\ndef fake(q):\n    return 0.0\n\n@pytest.mark.parametrize(\"case\", [(100, 0.0, fake)])\ndef test_bulk_discount(case):\n    quantity, rate, bulk_discount = case\n    assert bulk_discount(quantity) == rate\n",
+    )?;
+    assert!(!observed(&finding, "quantity == 100"), "{finding:?}");
+    // Shapes the unpack cannot pin stay unread: a row of another arity, a
+    // starred row, a mutable list row a fixture could change, a name in a
+    // row, a wrapping decorator that may pass another row, a later use of
+    // the argname, a rebound target, a target that is another parameter,
+    // and an unpack sharing its line.
+    for tests in [
+        module("[(50, 0.0), (500, 0.1, 1)]"),
+        module("[(50, 0.0), (*REST, 0.0)]"),
+        module("[(50, 0.0), [500, 0.1]]"),
+        module("[(50, 0.0), (LIMIT, 0.1)]"),
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", [(50, 0.0)])\n@swap_case\ndef test_bulk_discount(case):\n    quantity, rate = case\n    assert bulk_discount(quantity) == rate\n".to_string(),
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", [(50, 0.0)])\ndef test_bulk_discount(case):\n    quantity, rate = case\n    assert bulk_discount(quantity) == rate, case\n".to_string(),
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", [(50, 0.0)])\ndef test_bulk_discount(case):\n    quantity, rate = case\n    quantity = 100\n    assert bulk_discount(quantity) == rate\n".to_string(),
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case, quantity\", [((50, 0.0), 1)])\ndef test_bulk_discount(case, quantity):\n    quantity, rate = case\n    assert bulk_discount(quantity) == rate\n".to_string(),
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", [(50, 0.0)])\ndef test_bulk_discount(case):\n    quantity, rate = case; assert bulk_discount(quantity) == rate\n".to_string(),
+    ] {
+        let finding = classify(&tests)?;
+        assert!(
+            !observed(&finding, "quantity = 50"),
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+/// `indirect=True` routes the case value through a fixture of that name, so
+/// the test reads whatever the fixture returns: the fixture limit applies as
+/// it does to any unread fixture, and a parametrize mark does not lift it
+/// (#9619).
+#[test]
+fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), String> {
+    let module = |mark: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50]{mark})\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let class = |mark: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50]{mark})\nclass TestBulk:\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let limit = |tests: &str| -> Result<_, String> {
+        Ok(classify_case(
+            DISCOUNT_SOURCE,
+            tests,
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )?
+        .static_limit_kind)
+    };
+    // A value the read cannot settle (#10685) may route the name too, and so
+    // may a positional `indirect` or a splat that can carry one.
+    for mark in [
+        ", indirect=True",
+        ", indirect=IND",
+        ", indirect=[\"quantity\"]",
+        ", indirect=[NAME]",
+        ", indirect=routes()",
+        ", indirect=1",
+        ", True",
+        ", IND",
+        ", **{\"indirect\": True}",
+        ", *REST",
+    ] {
+        for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
+            assert_eq!(
+                limit(&tests)?,
+                Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+                "{shape}{mark}"
+            );
+        }
+    }
+    // Marks pytest refuses at collection (#10867): the test never runs, so
+    // it carries the collection-error activation control and lends nothing.
+    for mark in [
+        ", indirect=None",
+        ", indirect=[\"other\"]",
+        ", indirect=(\"quantity\", \"other\")",
+    ] {
+        for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
+            assert_eq!(
+                limit(&tests)?,
+                Some(crate::domain::StaticLimitKind::DecoratorIndirection),
+                "{shape}{mark}"
+            );
+        }
+    }
+    // A mark the read cannot pin to pytest (`import mylib as pytest`) is not
+    // a pytest collection error: its argname stays an unsettled fixture.
+    for mark in [", indirect=None", ", indirect=[\"other\"]"] {
+        let tests = module(mark).replace("import pytest\n", "import mylib as pytest\n");
+        assert_eq!(
+            limit(&tests)?,
+            Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+            "mylib{mark}"
+        );
+    }
+    // Control: values that leave the name direct keep it a pytest value.
+    for mark in [
+        ", indirect=False",
+        ", indirect=()",
+        ", indirect=[]",
+        ", False",
+    ] {
+        for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
+            assert_eq!(limit(&tests)?, None, "{shape}{mark}");
+        }
+    }
+    Ok(())
+}
+
+/// #10685: pytest's parametrize reached through an import alias, a module
+/// name holding the mark, or argnames and `indirect` named by a module value
+/// still supplies the case value directly, so the argname is not an
+/// unresolved fixture. A name the read cannot pin to pytest's mark (another
+/// `mark`, a rebound or later binding, a class-body name) keeps the limit.
+#[test]
+fn a_parametrize_mark_read_through_a_name_supplies_a_direct_value() -> Result<(), String> {
+    let module = |prelude: &str, decorator: &str| {
+        format!(
+            "{prelude}\nfrom src.subject import bulk_discount\n\n@{decorator}\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let method = |prelude: &str, decorator: &str| {
+        format!(
+            "{prelude}\nfrom src.subject import bulk_discount\n\nclass TestBulk:\n    @{decorator}\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let class = |prelude: &str, decorator: &str| {
+        format!(
+            "{prelude}\nfrom src.subject import bulk_discount\n\n@{decorator}\nclass TestBulk:\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let limit = |tests: &str| -> Result<_, String> {
+        Ok(classify_case(
+            DISCOUNT_SOURCE,
+            tests,
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )?
+        .static_limit_kind)
+    };
+    let direct = [
+        (
+            "import pytest as pt",
+            "pt.mark.parametrize(\"quantity\", [50])",
+        ),
+        (
+            "from pytest import mark as m",
+            "m.parametrize(\"quantity\", [50])",
+        ),
+        (
+            "import pytest\n\ncases = pytest.mark.parametrize(\"quantity\", [50])",
+            "cases",
+        ),
+        (
+            "import pytest as pt\n\ncases = pt.mark.parametrize(\"quantity\", [50])",
+            "cases",
+        ),
+        (
+            "import pytest\n\nparametrize = pytest.mark.parametrize",
+            "parametrize(\"quantity\", [50])",
+        ),
+        (
+            "import pytest\n\nNAMES = \"quantity\"",
+            "pytest.mark.parametrize(NAMES, [50])",
+        ),
+        (
+            "import pytest\n\nNAMES = (\"quantity\",)",
+            "pytest.mark.parametrize(NAMES, [(50,)])",
+        ),
+        (
+            "import pytest\n\nIND = False",
+            "pytest.mark.parametrize(\"quantity\", [50], indirect=IND)",
+        ),
+    ];
+    for (prelude, decorator) in direct {
+        for (shape, tests) in [
+            ("module", module(prelude, decorator)),
+            ("method", method(prelude, decorator)),
+            ("class", class(prelude, decorator)),
+        ] {
+            assert_eq!(limit(&tests)?, None, "{shape}: {tests}");
+        }
+    }
+    let limited = [
+        // Another library's `mark`, or `pt` bound to something else.
+        (
+            "from mylib import mark",
+            "mark.parametrize(\"quantity\", [50])",
+        ),
+        (
+            "import mylib as pt",
+            "pt.mark.parametrize(\"quantity\", [50])",
+        ),
+        // A module name rebound later, or `global`-rebound in a function.
+        (
+            "import pytest\n\ncases = pytest.mark.parametrize(\"quantity\", [50])\ncases = pytest.mark.slow",
+            "cases",
+        ),
+        (
+            "import pytest\n\ncases = pytest.mark.parametrize(\"quantity\", [50])\n\ndef reset():\n    global cases\n    cases = pytest.mark.slow",
+            "cases",
+        ),
+        // A module value naming a call, not the mark itself.
+        (
+            "import pytest\n\nparametrize = pytest.mark.parametrize(\"other\", [1])",
+            "parametrize(\"quantity\", [50])",
+        ),
+        (
+            "import pytest\n\nIND = True",
+            "pytest.mark.parametrize(\"quantity\", [50], indirect=IND)",
+        ),
+        // A module list may change before the decorator runs.
+        (
+            "import pytest\n\nIND = []\nIND.append(\"quantity\")",
+            "pytest.mark.parametrize(\"quantity\", [50], indirect=IND)",
+        ),
+        (
+            "import pytest\n\nNAMES = [\"quantity\"]",
+            "pytest.mark.parametrize(NAMES, [(50,)])",
+        ),
+        // The alias root is rebound after its import (Devin review).
+        (
+            "import pytest as pt\nimport other\n\npt = other",
+            "pt.mark.parametrize(\"quantity\", [50])",
+        ),
+        (
+            "from pytest import mark as m\nfrom other import mark as m",
+            "m.parametrize(\"quantity\", [50])",
+        ),
+    ];
+    for (prelude, decorator) in limited {
+        for (shape, tests) in [
+            ("module", module(prelude, decorator)),
+            ("method", method(prelude, decorator)),
+            ("class", class(prelude, decorator)),
+        ] {
+            assert_eq!(
+                limit(&tests)?,
+                Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+                "{shape}: {tests}"
+            );
+        }
+    }
+    // A class-body name shadows the module's mark (or its import root) for
+    // the methods it decorates, and a module binding after the test is not
+    // yet bound.
+    for tests in [
+        "import pytest as pt\nimport other\nfrom src.subject import bulk_discount\n\nclass TestBulk:\n    pt = other\n\n    @pt.mark.parametrize(\"quantity\", [50])\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n",
+        "import pytest\nfrom src.subject import bulk_discount\n\ncases = pytest.mark.parametrize(\"quantity\", [50])\n\nclass TestBulk:\n    cases = pytest.mark.slow\n\n    @cases\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n",
+        "import pytest\nfrom src.subject import bulk_discount\n\n@cases\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n\ncases = pytest.mark.parametrize(\"quantity\", [50])\n",
+    ] {
+        assert_eq!(
+            limit(tests)?,
+            Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+            "{tests}"
         );
     }
     Ok(())
@@ -1607,6 +2052,145 @@ fn fallthrough_return_ignores_early_exit_text_inside_a_docstring() -> Result<(),
         "    return round(total * 1.05, 2)",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// #9184: an `else` arm runs only for inputs that fail every condition of its
+// `if`/`elif` chain. When every strong related call satisfies one of them,
+// the changed `else` line never runs and the exact-value oracle cannot
+// discriminate its change.
+const SIGN_SOURCE: &str =
+    "def sign(x):\n    if x > 0:\n        return 1\n    else:\n        return -2\n";
+
+#[test]
+fn else_arm_return_no_strong_call_enters_is_weakly_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        SIGN_SOURCE,
+        "from src.subject import sign\n\ndef test_sign():\n    assert sign(5) == 1\n",
+        5,
+        "        return -2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let reason = missing_boundary(&finding, "not (x > 0)")
+        .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+    assert!(
+        reason.contains("`else` arm of an `if`/`elif` chain (`x > 0`) that is entered only when none of them hold"),
+        "{reason}"
+    );
+    assert!(observed(&finding, "x = 5"), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn else_arm_return_with_an_entering_call_stays_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        SIGN_SOURCE,
+        "from src.subject import sign\n\ndef test_sign():\n    assert sign(5) == 1\n    assert sign(-3) == -2\n",
+        5,
+        "        return -2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn else_arm_after_an_elif_chain_names_every_chain_condition() -> Result<(), String> {
+    // grade(95) takes the `if` arm and grade(85) the `elif` arm: neither
+    // condition holds for every call, so the reason words "at least one".
+    let finding = classify_added_case(
+        "def grade(s):\n    if s >= 90:\n        return \"A\"\n    elif s >= 80:\n        return \"B\"\n    else:\n        return \"D\"\n",
+        "from src.subject import grade\n\ndef test_grade():\n    assert grade(95) == \"A\"\n    assert grade(85) == \"B\"\n",
+        7,
+        "        return \"D\"",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let reason = missing_boundary(&finding, "not (s >= 90) and not (s >= 80)")
+        .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+    assert!(
+        reason.contains("`else` arm of an `if`/`elif` chain (`s >= 90`, `s >= 80`)"),
+        "{reason}"
+    );
+    // A call that fails both conditions enters the `else` arm.
+    let entered = classify_added_case(
+        "def grade(s):\n    if s >= 90:\n        return \"A\"\n    elif s >= 80:\n        return \"B\"\n    else:\n        return \"D\"\n",
+        "from src.subject import grade\n\ndef test_grade():\n    assert grade(95) == \"A\"\n    assert grade(10) == \"D\"\n",
+        7,
+        "        return \"D\"",
+    )?;
+    assert_eq!(entered.class, ExposureClass::Exposed, "{entered:?}");
+    Ok(())
+}
+
+#[test]
+fn else_text_inside_a_docstring_is_not_an_else_arm() -> Result<(), String> {
+    // The `else:` line lives in a docstring inside the real `if` arm, so the
+    // changed return belongs to that arm and `f(5)` runs it: it stays exposed.
+    let finding = classify_added_case(
+        "def f(x):\n    if x > 0:\n        \"\"\"\n    else:\n        \"\"\"\n        return 2\n    return 0\n",
+        "from src.subject import f\n\ndef test_f():\n    assert f(5) == 2\n",
+        6,
+        "        return 2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn nested_else_reason_does_not_claim_the_inner_chain_excluded_an_outer_guard_row()
+-> Result<(), String> {
+    // f(-1, -1) fails the outer guard `x > 0` and never reaches the inner
+    // chain; the reason must not say the input satisfies an inner condition.
+    let finding = classify_added_case(
+        "def f(x, y):\n    if x > 0:\n        if y > 0:\n            return 1\n        else:\n            return 2\n    return 0\n",
+        "from src.subject import f\n\ndef test_f():\n    assert f(-1, -1) == 0\n",
+        6,
+        "            return 2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let reason = missing_boundary(&finding, "not (y > 0) and x > 0")
+        .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+    assert!(
+        !reason.contains("satisfies at least one condition"),
+        "{reason}"
+    );
+    assert!(
+        reason.contains("by this chain or an enclosing guard"),
+        "{reason}"
+    );
+    Ok(())
+}
+
+#[test]
+fn else_arm_that_does_not_close_an_if_chain_stays_exposed() -> Result<(), String> {
+    // `for`/`else`, an unreadable `or` condition and an unreadable row all
+    // fail open.
+    for (source, tests, line, after) in [
+        (
+            "def f(xs):\n    for x in xs:\n        if x > 0:\n            return 1\n    else:\n        return 0\n",
+            "from src.subject import f\n\ndef test_f():\n    assert f([5]) == 1\n",
+            6,
+            "        return 0",
+        ),
+        (
+            "def f(x, force):\n    if x > 0 or force:\n        return 1\n    else:\n        return 0\n",
+            "from src.subject import f\n\ndef test_f():\n    assert f(5, False) == 1\n",
+            5,
+            "        return 0",
+        ),
+        (
+            "def f(x):\n    if x > limit():\n        return 1\n    else:\n        return 0\n",
+            "from src.subject import f\n\ndef test_f():\n    assert f(5) == 1\n",
+            5,
+            "        return 0",
+        ),
+    ] {
+        let finding = classify_added_case(source, tests, line, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source}: {finding:?}"
+        );
+    }
     Ok(())
 }
 
@@ -2052,7 +2636,17 @@ fn loop_table_that_never_varies_default_is_weakly_exposed() -> Result<(), String
     let finding = last_finding(
         "from src.subject import last\n\ndef test_default():\n    for iterable, default in [([], None), (iter([]), None)]:\n        assert last(iterable, default=default) == default\n",
     )?;
-    last_does_not_vary_default(&finding);
+    // `last(iterable, default=default) == default` hands the expected value to
+    // the call, so it is a property check (rule 25) and a weak oracle before
+    // the table analysis, which reads only strong oracles, runs.
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|test| test.oracle_strength == OracleStrength::Weak),
+        "{finding:?}"
+    );
     Ok(())
 }
 
@@ -2402,6 +2996,415 @@ fn value_preserving_wrapper_around_owner_call_keeps_exposed() -> Result<(), Stri
             "    return int(text) + 5",
         )?;
         assert_eq!(finding.class, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
+
+/// Changed-line classification with both the old line and the new-side source
+/// threaded in, matching the production diff path.
+fn classify_edit_case(
+    source: &str,
+    tests: &str,
+    line: usize,
+    before: &str,
+    after: &str,
+) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(
+        file,
+        line,
+        after,
+        Some(before),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "behavioral fixture must produce a finding".to_string())
+}
+
+// #9426: a reversing flip (`>` -> `<`) differs for every unequal pair, so a
+// strong exact call on unequal literals discriminates it; the `a == b`
+// boundary is not what changed.
+#[test]
+fn reversing_flip_with_unequal_inputs_is_not_a_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def biggest(a, b):\n    return a if a < b else b\n",
+        "from src.subject import biggest\n\ndef test_biggest():\n    assert biggest(2, 9) == 9\n",
+        2,
+        "    return a if a > b else b",
+        "    return a if a < b else b",
+    )?;
+    assert_owner(&finding, "biggest");
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(finding.activation.missing_discriminators.is_empty());
+    Ok(())
+}
+
+// Discriminating negative: an adjacent flip (`>` -> `>=`) keeps the boundary
+// requirement even with unequal inputs.
+#[test]
+fn adjacent_flip_with_unequal_inputs_stays_a_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def biggest(a, b):\n    return a if a >= b else b\n",
+        "from src.subject import biggest\n\ndef test_biggest():\n    assert biggest(2, 9) == 9\n",
+        2,
+        "    return a if a > b else b",
+        "    return a if a >= b else b",
+    )?;
+    assert_owner(&finding, "biggest");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "a == b").is_some(),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+// #9426: `start` is rebound in the loop body, so the argument 3 reaches 0
+// inside the owner; the boundary is unknown, not missing.
+#[test]
+fn rebound_loop_operand_declines_the_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def countdown(start):\n    while start >= 0:\n        yield start\n        start -= 1\n",
+        "from src.subject import countdown\n\ndef test_countdown():\n    assert list(countdown(3)) == [3, 2, 1]\n",
+        2,
+        "    while start > 0:",
+        "    while start >= 0:",
+    )?;
+    assert_owner(&finding, "countdown");
+    assert!(
+        missing_boundary(&finding, "start == 0").is_none(),
+        "{finding:?}"
+    );
+    assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+// Discriminating negative: a parameter named only in `if ...:` headers (the
+// trailing `:` is not an annotation) is not rebound and keeps the gap.
+#[test]
+fn parameter_in_condition_headers_keeps_the_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+        "from src.subject import apply_discount\n\ndef test_apply_discount():\n    assert apply_discount(150, 100) == 140\n",
+        2,
+        "    if amount > threshold:",
+        "    if amount >= threshold:",
+    )?;
+    assert_owner(&finding, "apply_discount");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+// Discriminating negative: a local assigned once from a parameter is not a
+// call-bound operand, so its assignment must not decline the boundary gap.
+#[test]
+fn derived_local_operand_keeps_the_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def parse_age(text):\n    age = int(text)\n    if age <= 0:\n        raise ValueError('bad')\n    return age\n",
+        "import pytest\nfrom src.subject import parse_age\n\ndef test_parse_age():\n    assert parse_age('5') == 5\n    with pytest.raises(ValueError):\n        parse_age('-1')\n",
+        3,
+        "    if age < 0:",
+        "    if age <= 0:",
+    )?;
+    assert_owner(&finding, "parse_age");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+// Discriminating negative: the same adjacent flip with the operand never
+// rebound keeps the gap.
+#[test]
+fn unrebound_loop_operand_keeps_the_boundary_gap() -> Result<(), String> {
+    let finding = classify_edit_case(
+        "def gate(start):\n    while start >= 0:\n        return start\n    return 0\n",
+        "from src.subject import gate\n\ndef test_gate():\n    assert gate(3) == 3\n",
+        2,
+        "    while start > 0:",
+        "    while start >= 0:",
+    )?;
+    assert_owner(&finding, "gate");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "start == 0").is_some(),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+// #9185: a message-only change to a `raise` is discriminated by a `match=`
+// pattern only when the pattern accepts one message and rejects the other.
+const CHECK_SOURCE: &str = "def check(x):\n    if x < 0:\n        raise ValueError(\"negative value: must be at most zero\")\n    return x\n";
+const CHECK_OLD_LINE: &str = "        raise ValueError(\"negative value: must be at least zero\")";
+const CHECK_NEW_LINE: &str = "        raise ValueError(\"negative value: must be at most zero\")";
+
+fn classify_message_change(source: &str, tests: &str) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(
+        file,
+        3,
+        CHECK_NEW_LINE,
+        Some(CHECK_OLD_LINE),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "message change must produce a finding".to_string())
+}
+
+#[test]
+fn message_only_change_under_a_pattern_that_fits_both_messages_is_weakly_exposed()
+-> Result<(), String> {
+    for tests in [
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative value\"):\n        check(-1)\n",
+        "import unittest\nfrom src.subject import check\n\nclass T(unittest.TestCase):\n    def test_negative(self):\n        with self.assertRaisesRegex(ValueError, \"negative value\"):\n            check(-1)\n",
+        // `.` is the regex wildcard and still matches both messages.
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative.value: must be at\"):\n        check(-1)\n",
+    ] {
+        let finding = classify_message_change(CHECK_SOURCE, tests)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        let reason = missing_boundary(&finding, "message \"negative value: must be at most zero\"")
+            .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+        assert!(
+            reason.contains("matches the old message \"negative value: must be at least zero\""),
+            "{reason}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn message_only_change_stays_exposed_when_a_pattern_rejects_the_old_message() -> Result<(), String>
+{
+    // One pattern that tells the messages apart is enough to discriminate.
+    for tests in [
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"at most zero\"):\n        check(-1)\n",
+        "import pytest\nfrom src.subject import check\n\ndef test_a():\n    with pytest.raises(ValueError, match=\"negative value\"):\n        check(-1)\n\ndef test_b():\n    with pytest.raises(ValueError, match=\"at most\"):\n        check(-2)\n",
+    ] {
+        let finding = classify_message_change(CHECK_SOURCE, tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn message_only_change_fails_open_on_unreadable_patterns_and_assertions() -> Result<(), String> {
+    for tests in [
+        // Regex syntax is not evaluated.
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative.*value\"):\n        check(-1)\n",
+        // A non-literal pattern.
+        "import pytest\nfrom src.subject import check\n\nPATTERN = build()\n\ndef test_negative():\n    with pytest.raises(ValueError, match=PATTERN):\n        check(-1)\n",
+        // A comparison of the whole message is read by other rules.
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError) as exc:\n        check(-1)\n    assert str(exc.value) == \"negative value: must be at most zero\"\n",
+    ] {
+        let finding = classify_message_change(CHECK_SOURCE, tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn message_only_change_stays_exposed_when_a_bound_comparison_rejects_the_old_message()
+-> Result<(), String> {
+    // The pattern fits both messages, but the joined `str(exc.value) == ...`
+    // comparison (rule 14) pins the new text: the gate must fail open.
+    let finding = classify_message_change(
+        CHECK_SOURCE,
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative value\") as exc:\n        check(-1)\n    assert str(exc.value) == \"negative value: must be at most zero\"\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn exception_class_change_is_not_a_message_only_change() -> Result<(), String> {
+    let file = Path::new("src/subject.py");
+    let source = "def check(x):\n    if x < 0:\n        raise TypeError(\"negative value: must be at most zero\")\n    return x\n";
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(TypeError, match=\"negative value\"):\n        check(-1)\n",
+    );
+    let finding = classify_change_with_source(
+        file,
+        3,
+        "        raise TypeError(\"negative value: must be at most zero\")",
+        Some(CHECK_OLD_LINE),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "class change must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// #9919: the guarded-arm gate EXCLUDES a call, so it may only decide from
+// literals it reads exactly. A non-decimal numeric literal or an escaped
+// string literal is not read through its parsed value, so the comparison is
+// unreadable and the verdict stays what the oracle alone gives.
+#[test]
+fn unreadable_guard_literals_fail_open_to_the_oracle_verdict() -> Result<(), String> {
+    for (source, call) in [
+        // `"A" == "\x41"` holds in Python, so quote("A") enters the arm.
+        (
+            "def quote(name):\n    if name == \"\\x41\":\n        return 42\n    return 0\n",
+            "quote(\"A\")",
+        ),
+        (
+            "def quote(name):\n    if name == \"A\":\n        return 42\n    return 0\n",
+            "quote(\"\\x41\")",
+        ),
+        // `16 == 0x10` holds in Python, so quote(16) enters the arm.
+        (
+            "def quote(x):\n    if x == 0x10:\n        return 42\n    return 0\n",
+            "quote(16)",
+        ),
+        (
+            "def quote(x):\n    if x == 16:\n        return 42\n    return 0\n",
+            "quote(0x10)",
+        ),
+    ] {
+        let tests = format!(
+            "from src.subject import quote\n\ndef test_quote():\n    assert {call} == 42\n"
+        );
+        let finding = classify_added_case(source, &tests, 3, "        return 42")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source} {call}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn plain_decimal_and_plain_string_guard_literals_still_evaluate() -> Result<(), String> {
+    for (source, call) in [
+        (
+            "def quote(name):\n    if name == \"A\":\n        return 42\n    return 0\n",
+            "quote(\"B\")",
+        ),
+        (
+            "def quote(x):\n    if x == 16:\n        return 42\n    return 0\n",
+            "quote(5)",
+        ),
+    ] {
+        let tests = format!(
+            "from src.subject import quote\n\ndef test_quote():\n    assert {call} == 42\n"
+        );
+        let finding = classify_added_case(source, &tests, 3, "        return 42")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{source} {call}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+// `!=` guards are read through the same equality owner. An early exit on
+// `name != "\x41"` is NOT taken by "A" in Python (they are equal), so the
+// fallthrough return runs; reading the raw text would call it taken.
+#[test]
+fn unreadable_guard_literal_inequality_fails_open() -> Result<(), String> {
+    let finding = classify_added_case(
+        "def quote(name):\n    if name != \"\\x41\":\n        return 0\n    return 42\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(\"A\") == 42\n",
+        4,
+        "    return 42",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// A loop header that opens a multi-line string is masked as string text, so
+// the walk would skip it and read the `if` before it as the guard (or the
+// chain head of a `for`/`else`). The header is unreadable: fail open.
+#[test]
+fn loop_header_opening_a_multiline_string_fails_open() -> Result<(), String> {
+    for (source, test_call, line, after) in [
+        // for/else after an unrelated `if`: f(5) completes the loop and
+        // enters the `else`.
+        (
+            "def f(xs, x):\n    if x > 0:\n        y = 1\n    for s in (\"\"\"\na\"\"\", \"b\"):\n        pass\n    else:\n        return 2\n",
+            "f([], 5)",
+            7,
+            "        return 2",
+        ),
+        // The loop body is not under the earlier `if`: f(-1) runs it.
+        (
+            "def f(x):\n    if x > 0:\n        return 1\n    for s in (\"\"\"\na\"\"\", \"b\"):\n        return 2\n",
+            "f(-1)",
+            6,
+            "        return 2",
+        ),
+        (
+            "def f(x):\n    if x > 0:\n        return 1\n    while x < 0 and \"\"\"\n\"\"\":\n        return 2\n",
+            "f(-1)",
+            6,
+            "        return 2",
+        ),
+    ] {
+        let tests =
+            format!("from src.subject import f\n\ndef test_f():\n    assert {test_call} == 2\n");
+        let finding = classify_added_case(source, &tests, line, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+// A string-opening header written with a tab, no space or a parenthesized
+// condition is still a header (#9919): the keyword boundary decides, not a
+// required ASCII space after it.
+#[test]
+fn string_opening_header_with_any_keyword_boundary_fails_open() -> Result<(), String> {
+    let prefix = "def f(x):\n    if x > 0:\n        return 1\n";
+    let mut sources = Vec::new();
+    for quote in ["\"\"\"", "'''"] {
+        let string = format!("{quote}\na{quote}");
+        for head in ["for s in ", "for\ts in ", "for(s)in"] {
+            sources.push(format!(
+                "{prefix}    {head}({string},):\n        return 42\n"
+            ));
+        }
+        for gap in ["", "\t"] {
+            for keyword in ["while", "if", "elif"] {
+                sources.push(format!(
+                    "{prefix}    {keyword}{gap}(x < 0 and {string}):\n        return 42\n"
+                ));
+            }
+        }
+    }
+    for source in sources {
+        let line = source
+            .lines()
+            .position(|text| text == "        return 42")
+            .ok_or("fixture must contain the changed return")?
+            + 1;
+        let tests = "from src.subject import f\n\ndef test_f():\n    assert f(-1) == 42\n";
+        let finding = classify_added_case(&source, tests, line, "        return 42")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source}: {finding:?}"
+        );
     }
     Ok(())
 }

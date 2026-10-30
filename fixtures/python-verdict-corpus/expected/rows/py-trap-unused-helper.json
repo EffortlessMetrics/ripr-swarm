@@ -1,0 +1,22 @@
+{
+  "case_id": "py-trap-unused-helper",
+  "subject_id": "authored-py-trap-kit",
+  "origin": "authored",
+  "anchor": "trapkit/core.py:49",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assertion_helper_never_called",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -21,6 +21,8 @@ Prepare the pinned fallible owner-return fixture before offline analyzer tests
 or fixture/golden checks. Its anyhow 1.0.100 dependency is separate from the
 workspace dependency graph; a workspace build does not fetch it. Cargo performs
 this locked fetch explicitly; production analyzer metadata stays offline.
+`cargo xtask goldens prepare` runs it for this fixture, and the tests that need
+it name that command when it is missing.
 
 ```bash
 cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
@@ -355,6 +357,25 @@ When changing user-visible output, update or add golden coverage for:
 
 Golden updates must preserve the static language boundary: draft static output
 does not use mutation-runtime terms such as `killed` or `survived`.
+
+CI-summary changed-source escaping has literal render pins in
+`output::ci_summary::tests::given_changed_behavior_*`, covering both first-run
+artifact routes and the `why` fallback. The companion
+`output::json::tests::given_source_controls_when_rendered_then_json_round_trips_and_text_spells_controls`
+checks the real full-text and JSON renderers with delimiters, whitespace, C0/C1
+controls, bidi formatting, and Unicode. These tests distinguish compact Markdown
+line normalization from the exhaustive source representations (RIPR-SPEC-0051).
+
+The companion `given_ci_summary_why_markup_when_rendered_then_one_literal_span`
+test pins both literal Why rows. Comment-plan tests under RIPR-SPEC-0025 use the
+real producer for Why, Repair, and fallback reason: block boundaries must not
+hide raw HTML or mentions, while links, emphasis, valid multiline code spans,
+and fenced/indented code retain their Markdown meaning. These prose controls
+must reject a repair that escapes all intentional formatting.
+
+`context_transition_regression` also checks the rendered result after HTML
+neutralization changes block context. Its blank-line control must preserve
+indented code, and every emitted body must be idempotent under `prose`.
 
 ## CI Test Results
 

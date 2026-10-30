@@ -27,13 +27,7 @@ pub(crate) struct NeutralOperandChange {
 /// is `None`, so the rule never reads a shape it cannot bound.
 pub(crate) fn ts_neutral_operand_change(line_text: &str) -> Option<NeutralOperandChange> {
     let masked = ts_mask_literals_and_comments(line_text.trim());
-    let expression = masked
-        .trim()
-        .strip_prefix("return")
-        .filter(|rest| rest.starts_with(char::is_whitespace))?
-        .trim()
-        .strip_suffix(';')?
-        .trim();
+    let expression = return_expression(&masked)?;
     let operator_at = expression.find(['*', '/'])?;
     let operator = expression[operator_at..].chars().next()?;
     let (left, right) = (
@@ -53,29 +47,55 @@ pub(crate) fn ts_neutral_operand_change(line_text: &str) -> Option<NeutralOperan
     })
 }
 
-/// `true` when `old` and `new` are both `return <operand> <op> <operand>;`
-/// with the same commutative operator (`*` or `+`) over the same two
-/// operands, in either order. Any other edit (a changed operator, a dropped
-/// or replaced term) changes the value, so a test that passes the identity
-/// can still pin it.
-pub(crate) fn ts_operands_rewritten_in_place(old: &str, new: &str) -> bool {
-    let (Some((old_ops, old_op)), Some((new_ops, new_op))) = (operands(old), operands(new)) else {
+/// `true` when the identity input for the new line's right operand also
+/// hides the edit from `old`, so the edit changes the value only where that
+/// operand is not the identity:
+/// - the same commutative operator (`*`) over the same two operands,
+///   in either order;
+/// - the inverse operator over the same operands in the same order
+///   (`a / b` against `a * b`);
+/// - the old line is the new line's left operand alone (`return a;` against
+///   `return a * b;`), an added factor or term.
+///
+/// Any other edit (a changed operand, a dropped term, an unrelated operator)
+/// can be pinned by an identity input, so the credit stays.
+pub(crate) fn ts_identity_hides_edit(old: &str, new: &str) -> bool {
+    let Some((new_ops, new_op)) = operands(new) else {
         return false;
     };
-    let mut swapped = old_ops.clone();
-    swapped.reverse();
-    old_op == new_op && new_op == '*' && (new_ops == old_ops || new_ops == swapped)
+    if let Some((old_ops, old_op)) = operands(old) {
+        let mut swapped = old_ops.clone();
+        swapped.reverse();
+        let commutative =
+            old_op == new_op && new_op == '*' && (new_ops == old_ops || new_ops == swapped);
+        let inverse = new_ops == old_ops && matches!((old_op, new_op), ('/', '*') | ('*', '/'));
+        return commutative || inverse;
+    }
+    single_operand(old).is_some_and(|operand| new_ops.first() == Some(&operand))
+}
+
+/// `return <operand>;` with a plain identifier or number.
+fn single_operand(line: &str) -> Option<String> {
+    let masked = ts_mask_literals_and_comments(line.trim());
+    let operand = return_expression(&masked)?;
+    (is_plain_identifier(operand) || numeric_literal_value(operand).is_some())
+        .then(|| operand.to_string())
+}
+
+/// The expression of `return <expression>[;]`, whether or not the statement
+/// ends in a semicolon.
+fn return_expression(masked: &str) -> Option<&str> {
+    let rest = masked
+        .trim()
+        .strip_prefix("return")
+        .filter(|rest| rest.starts_with(char::is_whitespace))?
+        .trim();
+    Some(rest.strip_suffix(';').unwrap_or(rest).trim())
 }
 
 fn operands(line: &str) -> Option<(Vec<String>, char)> {
     let masked = ts_mask_literals_and_comments(line.trim());
-    let expression = masked
-        .trim()
-        .strip_prefix("return")
-        .filter(|rest| rest.starts_with(char::is_whitespace))?
-        .trim()
-        .strip_suffix(';')?
-        .trim();
+    let expression = return_expression(&masked)?;
     let at = expression.find(['*', '/', '+', '-'])?;
     let operator = expression[at..].chars().next()?;
     let (left, right) = (expression[..at].trim(), expression[at + 1..].trim());
@@ -88,7 +108,7 @@ fn operands(line: &str) -> Option<(Vec<String>, char)> {
     Some((vec![left.to_string(), right.to_string()], operator))
 }
 
-fn is_plain_identifier(text: &str) -> bool {
+pub(crate) fn is_plain_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     chars
         .next()

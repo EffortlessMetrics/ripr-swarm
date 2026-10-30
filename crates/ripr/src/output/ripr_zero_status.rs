@@ -391,6 +391,13 @@ pub(crate) fn build_ripr_zero_status_report(input: RiprZeroStatusInput) -> RiprZ
     }
 }
 
+/// Advisory warnings the report also carries in its JSON/Markdown bodies; the
+/// CLI echoes them to stderr (#9856) so a run that routed from missing inputs
+/// is visible in terminals and `2>&1` CI logs.
+pub(crate) fn ripr_zero_status_warnings(report: &RiprZeroStatusReport) -> &[String] {
+    &report.warnings
+}
+
 pub(crate) fn render_ripr_zero_status_json(
     report: &RiprZeroStatusReport,
 ) -> Result<String, String> {

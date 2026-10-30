@@ -504,7 +504,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// the tower-lsp codec: ASCII-case-insensitive header name, last occurrence
 /// wins. Returns `None` when absent or unparseable (the codec rejects those
 /// deterministically on its own).
-fn declared_content_length(header_block: &[u8]) -> Option<usize> {
+pub(crate) fn declared_content_length(header_block: &[u8]) -> Option<usize> {
     const NAME: &[u8] = b"content-length:";
     let mut declared = None;
     for line in header_block.split(|byte| *byte == b'\n') {

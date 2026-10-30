@@ -40,7 +40,7 @@ pub(crate) enum OverrideInput {
 /// A number keeps its bits, so `-0` and `0` differ, as `toEqual` tells
 /// them apart, while `1` and `1.0` match.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum LiteralValue {
+pub(super) enum LiteralValue {
     Number(u64),
     Text(String),
     Word(&'static str),
@@ -330,7 +330,7 @@ fn balanced_object(text: &str) -> Option<&str> {
 
 /// The top-level entries of a balanced `{ ... }`, trimmed, with a trailing
 /// comma allowed. A comment inside the object refuses the read.
-fn object_entries(object: &str) -> Option<Vec<String>> {
+pub(super) fn object_entries(object: &str) -> Option<Vec<String>> {
     let inner = object.strip_prefix('{')?.strip_suffix('}')?;
     let mut entries = Vec::new();
     let mut current = String::new();
@@ -387,7 +387,7 @@ fn object_entries(object: &str) -> Option<Vec<String>> {
 }
 
 /// `key: value` with a plain or quoted key, or `None` for anything else.
-fn key_value(entry: &str) -> Option<(String, String)> {
+pub(super) fn key_value(entry: &str) -> Option<(String, String)> {
     let (key, value) = entry.split_once(':')?;
     let key = key.trim();
     let key = if let Some(quoted) = quoted_text(key) {
@@ -400,7 +400,7 @@ fn key_value(entry: &str) -> Option<(String, String)> {
     Some((key, value.trim().to_string()))
 }
 
-fn literal_value(text: &str) -> Option<LiteralValue> {
+pub(super) fn literal_value(text: &str) -> Option<LiteralValue> {
     if let Some(text) = quoted_text(text) {
         return Some(LiteralValue::Text(text));
     }
@@ -428,7 +428,7 @@ fn quoted_text(text: &str) -> Option<String> {
     (!inner.contains(['\\', '"', '\''])).then(|| inner.to_string())
 }
 
-fn is_identifier(text: &str) -> bool {
+pub(super) fn is_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     chars
         .next()

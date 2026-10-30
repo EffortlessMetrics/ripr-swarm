@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "Grid cell: boundary x exact pin. The test asserts at 18 and 17, both sides of the threshold.",
+  "reasoning": "Grid cell: boundary x exact pin. The test asserts at 18 and 17, both sides of the threshold. `isAdult` is declared `: boolean`, so RIPR-SPEC-0247 example 13 grades `assert.ok(isAdult(18))` and `assert.ok(!isAdult(17))` exact_value / strong, and ripr reports `exposed`, matching the discriminated truth.",
   "labeling_observation": {
     "ripr_commit": "3608bb9a",
     "full_checkout_verdict": "gap",
@@ -48,5 +48,8 @@
       "weakly_exposed"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0247#13"
+  ]
 }

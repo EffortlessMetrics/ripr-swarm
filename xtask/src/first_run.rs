@@ -1363,9 +1363,16 @@ mod tests {
             assert_eq!(resolve_ripr("weird\\name")?, "weird\\name");
         }
         let cwd = std::env::current_dir().map_err(|err| err.to_string())?;
+        // `std::path::absolute` normalizes separators on Windows, so the
+        // expected spelling is built from components rather than joining the
+        // slash-separated input verbatim.
         assert_eq!(
             resolve_ripr("target/debug/ripr")?,
-            cwd.join("target/debug/ripr").display().to_string()
+            cwd.join("target")
+                .join("debug")
+                .join("ripr")
+                .display()
+                .to_string()
         );
         Ok(())
     }
@@ -1448,7 +1455,7 @@ mod tests {
         assert_eq!(verdict_of(development), Some("infection_unknown"));
         // The bounded default render (#8165) leaves no wire token on the label line,
         // and the summary line before it must not decide the verdict.
-        let plain = "Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path)\n\nStart here:\n  Static exposure: weak (severity: warning, confidence 0.40)\n  Why: exposed to the next test\n";
+        let plain = "Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings\n\nStart here:\n  Static exposure: weak (severity: warning, confidence 0.40)\n  Why: exposed to the next test\n";
         assert_eq!(verdict_of(plain), Some("weakly_exposed"));
         assert_eq!(
             verdict_of("Static exposure: unrevealed (severity: warning)\n"),

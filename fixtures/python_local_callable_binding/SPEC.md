@@ -44,8 +44,8 @@ pin the `>`→`>=` boundary, so the oracle stays `smoke` and the class stays
 `assertTrue(stop(3))` — a *broad boolean* oracle, which `oracle_for_call`
 classifies as `OracleStrength::Smoke`. The sibling golden
 `python_broad_boolean_assertion` deliberately pins the same shape
-(`assert is_priority(100)`, a *direct* call on the changed predicate owner) as
-`weakly_exposed`/`smoke`. Flipping this fixture to `exposed` would contradict that
+(a broad boolean assertion on a non-literal argument, `assert is_priority(amount)`) as
+`weakly_exposed`/`smoke`. (The literal form `assert is_priority(100)` on a provably `bool` owner is an exact pin since #9542; this fixture's `assertTrue(stop(3))` is not that shape.) Flipping this fixture to `exposed` would contradict that
 golden and drift `ripr` back toward coverage. The
 `analysis/python-local-callable-instance-alignment` work resolved the **relation
 diagnosis** (link direct, surface the smoke oracle, correct the card) WITHOUT

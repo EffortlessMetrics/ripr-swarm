@@ -1,0 +1,304 @@
+//! End-to-end witness for a changed return expression that no related test
+//! input can tell apart from its baseline (#8659): an exact assertion on the
+//! owner is not a discriminator for a change its literal inputs never reach.
+
+use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+struct TempRepo {
+    root: PathBuf,
+}
+
+impl Drop for TempRepo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+/// `lib` is the changed `src/lib.rs` whose line 2 replaced `old`; `test` is
+/// the integration test.
+fn findings(lib: &str, old: &str, test: &str) -> Result<Vec<Finding>, String> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let repo = TempRepo {
+        root: std::env::temp_dir().join(format!(
+            "ripr-invisible-change-{}-{sequence}",
+            std::process::id()
+        )),
+    };
+    let root = &repo.root;
+    std::fs::create_dir_all(root.join("src")).map_err(|error| format!("src dir: {error}"))?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| format!("tests dir: {error}"))?;
+    let write = |path: &str, text: &str| {
+        std::fs::write(root.join(path), text).map_err(|error| format!("write {path}: {error}"))
+    };
+    write(
+        "Cargo.toml",
+        "[package]\nname = \"invisible\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+    )?;
+    write("src/lib.rs", lib)?;
+    write("tests/it.rs", test)?;
+    let lines = lib.lines().collect::<Vec<_>>();
+    let new = lines
+        .get(1)
+        .ok_or_else(|| "lib has a second line".to_string())?;
+    let context = |range: std::ops::Range<usize>| {
+        range
+            .filter_map(|index| lines.get(index))
+            .map(|line| format!(" {line}\n"))
+            .collect::<String>()
+    };
+    let diff = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{count} +1,{count} @@\n{}-{old}\n+{new}\n{}",
+        context(0..1),
+        context(2..lines.len()),
+        count = lines.len()
+    );
+    write("diff.patch", &diff)?;
+    let output = check_workspace(CheckInput {
+        root: root.clone(),
+        base: None,
+        diff_file: Some(root.join("diff.patch")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })
+    .map_err(|error| format!("check failed: {error}"))?;
+    Ok(output
+        .findings
+        .into_iter()
+        .filter(|finding| finding.probe.location.line == 2)
+        .collect())
+}
+
+fn return_value(findings: &[Finding]) -> Result<&Finding, String> {
+    findings
+        .iter()
+        .find(|finding| finding.probe.family.as_str() == "return_value")
+        .ok_or_else(|| format!("no return_value finding in {findings:?}"))
+}
+
+const POW: &str = "pub fn backoff_ms(attempt: u32, base: u64) -> u64 {\n    base * 3u64.pow(attempt)\n}\n\npub fn tail() {}\n";
+const POW_OLD: &str = "    base * 2u64.pow(attempt)";
+const MIN: &str =
+    "pub fn capped(attempt: u32) -> u32 {\n    attempt.min(6)\n}\n\npub fn tail() {}\n";
+const MIN_OLD: &str = "    attempt.min(5)";
+
+#[test]
+fn an_input_where_pow_bases_agree_does_not_expose_the_change() -> Result<(), String> {
+    // `3^0 == 2^0`: the only asserted input cannot tell the versions apart.
+    let findings = findings(
+        POW,
+        POW_OLD,
+        "use invisible::backoff_ms;\n\n#[test]\nfn first() {\n    assert_eq!(backoff_ms(0, 100), 100);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(
+        finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_input_below_the_cap_does_not_expose_a_raised_cap() -> Result<(), String> {
+    let findings = findings(
+        MIN,
+        MIN_OLD,
+        "use invisible::capped;\n\n#[test]\nfn low() {\n    assert_eq!(capped(3), 3);\n}\n",
+    )?;
+    assert_ne!(return_value(&findings)?.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_second_input_that_separates_the_versions_keeps_the_credit() -> Result<(), String> {
+    // Control: `backoff_ms(1, 100)` is 300 changed and 200 before.
+    let findings = findings(
+        POW,
+        POW_OLD,
+        "use invisible::backoff_ms;\n\n#[test]\nfn first() {\n    assert_eq!(backoff_ms(0, 100), 100);\n}\n\n#[test]\nfn second() {\n    assert_eq!(backoff_ms(1, 100), 300);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(
+        !finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_input_that_hits_the_cap_keeps_the_credit() -> Result<(), String> {
+    // Control: `capped(9)` is 6 changed and 5 before.
+    let findings = findings(
+        MIN,
+        MIN_OLD,
+        "use invisible::capped;\n\n#[test]\nfn high() {\n    assert_eq!(capped(9), 6);\n}\n",
+    )?;
+    assert!(
+        !return_value(&findings)?
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value")
+    );
+    Ok(())
+}
+
+#[test]
+fn an_owner_call_in_the_expected_operand_keeps_the_credit() -> Result<(), String> {
+    // Control: `capped(3)` agrees, but `capped(9) - 3` is 3 changed and 2 before.
+    let findings = findings(
+        MIN,
+        MIN_OLD,
+        "use invisible::capped;\n\n#[test]\nfn wide() {\n    assert_eq!(capped(3), capped(9) - 3);\n}\n",
+    )?;
+    assert!(
+        !return_value(&findings)?
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value")
+    );
+    Ok(())
+}
+
+#[test]
+fn a_computed_argument_keeps_the_credit() -> Result<(), String> {
+    // Control: `next()` is not a literal, so nothing is folded or claimed.
+    let findings = findings(
+        MIN,
+        MIN_OLD,
+        "use invisible::capped;\n\nfn next() -> u32 {\n    3\n}\n\n#[test]\nfn computed() {\n    assert_eq!(capped(next()), 3);\n}\n",
+    )?;
+    assert!(
+        !return_value(&findings)?
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value")
+    );
+    Ok(())
+}
+
+#[test]
+fn a_relational_sibling_that_holds_on_both_versions_does_not_expose_the_change()
+-> Result<(), String> {
+    // `backoff_ms(3, 100) > backoff_ms(1, 100)` is true before (800 > 200) and after (2700 > 300).
+    let findings = findings(
+        POW,
+        POW_OLD,
+        "use invisible::backoff_ms;\n\n#[test]\nfn first() {\n    assert_eq!(backoff_ms(0, 100), 100);\n}\n\n#[test]\nfn grows() {\n    assert!(backoff_ms(3, 100) > backoff_ms(1, 100));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // The asserted inputs do evaluate differently (800 vs 2700), so the
+    // summary names the unchanged comparison truth, not a missing input
+    // difference (#10916).
+    assert!(
+        finding.ripr.infect.summary.contains("same truth value"),
+        "{finding:?}"
+    );
+    assert!(
+        !finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_rebound_assert_macro_keeps_the_credit() -> Result<(), String> {
+    // Control: the written relational tokens fold the same on both versions,
+    // but the file rebinds `assert!` to an exact-value check the baseline
+    // fails (`2700` after vs `800` before). Ripr reads macro names, not
+    // expansions, so both invisible readings must decline and today's
+    // non-relational reading keeps the finding (#10920 review).
+    let test = "use invisible::backoff_ms;\n\nmacro_rules! assert {\n    ($f:ident($($a:tt)*) > $g:ident($($b:tt)*)) => {\n        std::assert_eq!($f($($a)*), 2700)\n    };\n}\n\n#[test]\nfn first() {\n    assert_eq!(backoff_ms(0, 100), 100);\n}\n\n#[test]\nfn grows() {\n    assert!(backoff_ms(3, 100) > backoff_ms(1, 100));\n}\n";
+    let findings = findings(POW, POW_OLD, test)?;
+    let finding = return_value(&findings)?;
+    assert!(
+        !finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    assert!(
+        !finding.ripr.infect.summary.contains("same truth value"),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_relational_assertion_that_flips_between_versions_keeps_the_credit() -> Result<(), String> {
+    // Control: `backoff_ms(3, 100) > 1000` is true after (2700) and false before (800).
+    let findings = findings(
+        POW,
+        POW_OLD,
+        "use invisible::backoff_ms;\n\n#[test]\nfn first() {\n    assert_eq!(backoff_ms(0, 100), 100);\n}\n\n#[test]\nfn big() {\n    assert!(backoff_ms(3, 100) > 1000);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(
+        !finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    // The flip is a discriminator for the relational reading too, so the
+    // truth-value summary must not appear either (#10920 review).
+    assert!(
+        !finding.ripr.infect.summary.contains("same truth value"),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+const LITERAL: &str = "impl Builder {\n    pub fn build(self) -> Req { Req { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) } }\n\n    pub fn new(url: &str) -> Self { Builder { url: url.to_string(), timeout_ms: None } }\n\n    pub fn timeout_ms(mut self, t: u64) -> Self { self.timeout_ms = Some(t); self }\n}\n\npub struct Builder { url: String, timeout_ms: Option<u64> }\n\n#[derive(Debug)]\npub struct Req { pub url: String, pub timeout_ms: u64 }\n";
+const LITERAL_OLD: &str = "    pub fn build(self) -> Req { Req { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(30_000) } }";
+
+#[test]
+fn an_assertion_on_an_untouched_field_does_not_expose_a_changed_default() -> Result<(), String> {
+    // #10916 case 2: only `timeout_ms` moved. The test reads `url`, and reads
+    // `timeout_ms` only after setting it, so nothing the diff changed reaches
+    // an assertion.
+    let findings = findings(
+        LITERAL,
+        LITERAL_OLD,
+        "use invisible::Builder;\n\n#[test]\nfn url_kept() {\n    assert_eq!(Builder::new(\"http://x\").build().url, \"http://x\");\n}\n\n#[test]\nfn explicit() {\n    let r = Builder::new(\"u\").timeout_ms(500).build();\n    assert_eq!(r.timeout_ms, 500);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn an_assertion_that_reads_the_changed_default_keeps_the_credit() -> Result<(), String> {
+    // Control: the default is read and pinned to the new value.
+    let findings = findings(
+        LITERAL,
+        LITERAL_OLD,
+        "use invisible::Builder;\n\n#[test]\nfn url_kept() {\n    assert_eq!(Builder::new(\"http://x\").build().url, \"http://x\");\n}\n\n#[test]\nfn default() {\n    assert_eq!(Builder::new(\"u\").build().timeout_ms, 3_000);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}

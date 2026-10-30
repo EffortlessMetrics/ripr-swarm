@@ -171,7 +171,7 @@ pub(crate) struct BlindJourneyExecuteCorpusV1 {
 /// The executor fixture scenarios RIPR-SPEC-0205 requires; the committed
 /// corpus must cover all of them and the live executor decides each outcome
 /// independently of the committed expectation.
-pub(crate) const REQUIRED_BLIND_JOURNEY_EXECUTE_SCENARIO_IDS: [&str; 61] = [
+pub(crate) const REQUIRED_BLIND_JOURNEY_EXECUTE_SCENARIO_IDS: [&str; 62] = [
     "executor_positive_journey_emits_receipt",
     "executor_positive_second_eligible_item_selects_b",
     "executor_instrument_watchdog_stays_positive",
@@ -229,6 +229,7 @@ pub(crate) const REQUIRED_BLIND_JOURNEY_EXECUTE_SCENARIO_IDS: [&str; 61] = [
     "installed_typescript_failing_vitest_visible",
     "installed_typescript_verification_skipped_visible",
     "installed_typescript_cyclic_route_discoverability_failure",
+    "installed_typescript_pilot_status_route_resolves_to_gap_start",
     "installed_typescript_deleted_before_artifact_names_recovery",
     "installed_typescript_workspace_binary_rejected",
     "installed_typescript_interrupted_receipt_write_recovers",

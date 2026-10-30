@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr agent repair --help` now describes the single inline `#[cfg(test)]` exception accurately: when a seam's only tests live in one inline module of the production file, the before phase can bind that module's body as the edit cage (production code outside the module stays untouched and the file must be committed), instead of claiming inline modules never qualify their file (#9369).

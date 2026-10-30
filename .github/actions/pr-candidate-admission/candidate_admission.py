@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -67,10 +68,23 @@ GENERATED_DECLARATION_ALLOWED = (
     re.compile(r"^(?:\*\*/)?Cargo\.lock$"),
     re.compile(r"^fixtures/(?:[A-Za-z0-9_.\-*]+/)*expected/\*\*$"),
     re.compile(r"^metrics/public-proof/\*\*$"),
+    # Fact packets a pinned producer wrote for a verdict-corpus case. Data only
+    # (.json), sha256-pinned by the case rows, whose provenance and edits stay
+    # in the counted cases/ files.
+    re.compile(r"^fixtures/[a-z]+-verdict-corpus/packets/\*\*$"),
+)
+# Families narrower than the global data extensions: only these file types in
+# the family are ever exempt, so a note or log dropped beside the packets stays
+# counted.
+GENERATED_FAMILY_EXTENSIONS = (
+    (re.compile(r"^fixtures/[a-z]+-verdict-corpus/packets/"), {".json"}),
 )
 DEFAULT_MAX_GENERATED_LINES = 40000
 # Bounds on the hand-written blobs read to cap count-less files.
 BLOB_READ_TIMEOUT_SECONDS = 30
+# Resolved through PATHEXT so Windows finds gh.exe or a gh.cmd shim; a bare name
+# only matches gh.exe there (#9272).
+GH = shutil.which("gh") or "gh"
 MAX_BLOB_BYTES = 2_000_000
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 TEMPLATE_LINES = {
@@ -278,7 +292,7 @@ def check_generated_declarations(text: str) -> list[str]:
             generated_state(attributes) is not False
         ) and not declaration_allowed(pattern):
             problems.append(
-                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/** and metrics/public-proof/** (extend GENERATED_DECLARATION_ALLOWED in reviewed code)"
+                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/**, fixtures/<language>-verdict-corpus/packets/** and metrics/public-proof/** (extend GENERATED_DECLARATION_ALLOWED in reviewed code)"
             )
     return problems
 
@@ -288,6 +302,9 @@ def is_generated(path: str, rules: list[tuple[re.Pattern[str], bool]]) -> bool:
     suffix = ("." + name.rsplit(".", 1)[-1]).lower() if "." in name else ""
     if name in GENERATED_EXEMPT_NEVER or suffix not in GENERATED_DATA_EXTENSIONS:
         return False
+    for family, extensions in GENERATED_FAMILY_EXTENSIONS:
+        if family.match(path) and suffix not in extensions:
+            return False
     declared = False
     for pattern, generated in rules:
         if pattern.match(path):
@@ -871,14 +888,35 @@ def self_test() -> None:
     assert check_generated_declarations(
         "package-lock.json linguist-generated\nfixtures/**/expected/** linguist-generated\n"
         "metrics/public-proof/** linguist-generated\ncrates/x/*.rs -linguist-generated\n"
+        "fixtures/perl-verdict-corpus/packets/** linguist-generated\n"
     ) == []
     for bad in (
         "fixtures/notexpected/**", "fixtures/myexpected/**", "fixtures/a/xexpected/**",
         "**/*.rs", "*", "**", "src/lib.rs", "xtask/**/*.py", "scripts/run.sh", "*.json",
         "**/*.md", ".claude/**", ".github/**", "crates/**", "scripts/*", "package.json",
         "policy/**", "CLAUDE.md", "fixtures/**/input/**",
+        "fixtures/perl-verdict-corpus/**", "fixtures/perl-verdict-corpus/subjects/**",
+        "fixtures/perl-verdict-corpus/cases/**", "fixtures/packets/**",
+        "fixtures/perl-corpus/packets/**", "fixtures/Perl-verdict-corpus/packets/**",
+        "fixtures/a/b-verdict-corpus/packets/**", "fixtures/perl-verdict-corpus/packets/*.rs",
+        "fixtures/perl-verdict-corpus/xpackets/**", "xtask/fixtures/perl-verdict-corpus/packets/**",
     ):
         assert check_generated_declarations(f"{bad} linguist-generated\n"), bad
+    corpus_rules = parse_generated_rules("fixtures/perl-verdict-corpus/packets/** linguist-generated\n")
+    assert is_generated("fixtures/perl-verdict-corpus/packets/a.json", corpus_rules)
+    # A data file of another type beside the packets stays counted in the totals.
+    beside = [
+        {"filename": "fixtures/perl-verdict-corpus/packets/a.json", "status": "added", "additions": 900, "deletions": 0},
+        {"filename": "fixtures/perl-verdict-corpus/packets/notes.md", "status": "added", "additions": 3500, "deletions": 0},
+        {"filename": "fixtures/perl-verdict-corpus/packets/run.stdout", "status": "added", "additions": 10, "deletions": 0},
+    ]
+    assert generated_totals(beside, corpus_rules, 3) == (1, 900)
+    for kept in (
+        "fixtures/perl-verdict-corpus/packets/notes.md", "fixtures/perl-verdict-corpus/packets/a.jsonl",
+        "fixtures/perl-verdict-corpus/cases/a.json", "fixtures/perl-verdict-corpus/packets/a.pm",
+        "fixtures/perl-verdict-corpus/subjects/s/lib/A.pm", "fixtures/python-verdict-corpus/packets/a.json",
+    ):
+        assert not is_generated(kept, corpus_rules), kept
     assert check_generated_declarations("src/lib.rs linguist-generated=false linguist-generated\n")
     assert run(current, [current], "b" * 40)["reason"] == "candidate_head_moved"
     assert (
@@ -963,7 +1001,7 @@ def gh_blob_lines(
         # or missing `gh` is a failed read, never an exception out of admission.
         try:
             return subprocess.run(
-                ["gh", "api", *args], capture_output=True, check=False, timeout=BLOB_READ_TIMEOUT_SECONDS
+                [GH, "api", *args], capture_output=True, check=False, timeout=BLOB_READ_TIMEOUT_SECONDS
             )
         except (subprocess.TimeoutExpired, OSError):
             return subprocess.CompletedProcess(args, 1, b"", b"unavailable")
@@ -1019,7 +1057,7 @@ def head_unmoved(repository: str, number: str, current: dict[str, Any]) -> bool:
         return False
     try:
         done = subprocess.run(
-            ["gh", "api", f"repos/{repository}/pulls/{number}", "--jq", ".head.sha"],
+            [GH, "api", f"repos/{repository}/pulls/{number}", "--jq", ".head.sha"],
             capture_output=True, check=False, timeout=BLOB_READ_TIMEOUT_SECONDS,
         )
     except (subprocess.TimeoutExpired, OSError):

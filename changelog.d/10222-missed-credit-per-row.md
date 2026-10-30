@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Verdict-corpus missed credit is now accepted as sorted `[[entry]]` blocks in `fixtures/*-verdict-corpus/missed-credit.toml` instead of the shared `missed_credit_ceiling` line, which reduces merge conflicts: PRs that move rows far apart in the sorted list merge cleanly, while edits to adjacent blocks can still conflict. A new missed-credit row still fails `verdict-corpus check` and names the row; an accepted row that credits again passes with a note to delete its entry (#10222).

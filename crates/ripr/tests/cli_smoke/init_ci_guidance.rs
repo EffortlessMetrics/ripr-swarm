@@ -50,14 +50,16 @@ fn init_ci_followup_explains_adoption_for_created_and_refreshed_workflows() -> T
             }
             assert!(stdout.contains("ripr doctor --root"), "{stdout}");
             assert!(stdout.contains("ripr check --root"), "{stdout}");
-            assert!(
-                stdout.contains("(PowerShell) ripr doctor --root"),
-                "{stdout}"
-            );
-            assert!(
-                stdout.contains("(PowerShell) ripr check --root"),
-                "{stdout}"
-            );
+            // The POSIX form quotes the apostrophe as `'\''`, which PowerShell
+            // needs translated; the Windows console form (#7729) already
+            // pastes unchanged, so no PowerShell line follows it.
+            for command in ["ripr doctor --root", "ripr check --root"] {
+                assert_eq!(
+                    stdout.contains(&format!("(PowerShell) {command}")),
+                    !cfg!(windows),
+                    "{stdout}"
+                );
+            }
         }
         Ok(())
     })();

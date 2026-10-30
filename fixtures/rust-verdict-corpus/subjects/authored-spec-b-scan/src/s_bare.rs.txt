@@ -1,0 +1,35 @@
+//! One arm returns a bare identifier as the next state.
+
+pub fn scan_bare(input: &'static str) -> &'static str {
+    let mut state = "text";
+    for symbol in input.chars() {
+        state = match (state, symbol) {
+            ("text", '#') => input,
+            ("text", ' ') => "text",
+            ("text", _) => "word",
+            ("word", ' ') => "text",
+            (_, _) => "word",
+        };
+    }
+    state
+}
+
+pub fn classify_bare(input: &'static str) -> &'static str {
+    let final_state = scan_bare(input);
+    if final_state == "word" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_reads_the_last_state_s_bare() {
+        assert_eq!(classify_bare("ab"), "word");
+        assert_eq!(classify_bare("ab "), "blank");
+    }
+}

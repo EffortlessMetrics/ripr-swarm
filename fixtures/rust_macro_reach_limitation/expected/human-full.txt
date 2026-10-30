@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_macro_reach_limitation/input
 
-Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 1 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 1 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 WARNING ./src/internal.rs:2
   id: probe:src_internal.rs:predicate:114f2322
@@ -14,9 +19,10 @@ Changed
   before: if a > b {
   after:  if a >= b {
 
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/internal.rs::inner
 
 Static exposure
@@ -34,10 +40,12 @@ Weakness
   - No detected boundary input for the changed predicate
 
 Stop reasons:
-  - macro_reach_unresolved — a candidate test path stops at a same-repo macro ripr does not expand
+  - a candidate test path stops at a same-repo macro ripr does not expand (macro_reach_unresolved)
+    Next: Call the changed owner directly from a plain `#[test]` body if tests can name it; if it sits behind a macro ripr does not expand, the edge stays unresolved even with an exact assertion.
 
 Static limitation
   rust_macro_reach_unresolved — A test may reach this change through a Rust macro path ripr cannot expand. The macro edge is unresolved; this is a named limitation, not a coverage claim.
+  Next: Call the changed owner directly from a plain `#[test]` body if tests can name it; if it sits behind a macro ripr does not expand, the edge can stay unresolved even with an exact assertion.
 
 Where to look
   For example, the test `test_outer_returns_difference` (tests/it.rs:4) calls `outer`, and `outer` invokes macro `call_inner!` at src/lib.rs:10 whose definition lexically mentions the changed owner name. The macro path may lead here. Inspect it to judge whether this change is observed.

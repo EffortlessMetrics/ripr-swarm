@@ -70,11 +70,22 @@ registration; the repository has not yet retained cold-session proof that
 either client completes the flow (tracked in #3092), so treat them as
 configuration, not a support claim.
 
-An agent edits the worktree, but `ripr_refresh` analyzes only the committed
-default-branch diff. Commit your edits on a branch that is ahead of the
-default branch before `ripr_refresh` (a commit on the default branch itself
-leaves an empty diff), or use `ripr check --worktree --format json` outside
-MCP.
+An agent edits the worktree, but by default `ripr_refresh` analyzes only the
+committed default-branch diff. To analyze saved staged and unstaged tracked
+edits without committing them, call `ripr_refresh` with `{"source":
+"worktree"}`; omitting `source` (or `"committed"`) keeps the committed
+default. A worktree snapshot is tagged `source: "worktree"`, discloses that
+unsaved editor buffers are outside and that it carries no consumed-source
+commitment, and withholds repair cards and repair readiness
+(`repair_packet_ready: false`, `worktree_source_not_committed`;
+`ripr_get_repair_card` refuses with `incomplete_inventory`): commit the
+change and refresh without `source` for those. Untracked files stay excluded
+until `git add -N <paths>`. The server does not watch the worktree, so
+refresh again after edits. Requested and captured source are separate facts:
+a failed worktree request keeps the last committed snapshot tagged
+committed, and the reverse. A commit on the default branch itself leaves an
+empty committed diff; `ripr check --worktree --format json` remains the
+outside-MCP route.
 
 When the repository's default branch is not `main` or `master` (for example
 `trunk`) and there is no `origin/main`, the default base cannot be resolved and
@@ -156,8 +167,8 @@ runs no tests or verification and grants no execution or edit authority.
 | Surface | Name |
 | --- | --- |
 | Tool (no arguments) | `ripr_workspace_status` |
-| Tool (`base?`) | `ripr_refresh` |
-| Tool (`snapshot_id?`, `offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
+| Tool (`base?`, `source?`) | `ripr_refresh` |
+| Tool (`snapshot_id?`, `offset?`, `omitted_offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
 | Tool (`attempt_id`) | `ripr_get_repair_attempt` |
@@ -192,8 +203,12 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
   completed snapshot identity, last-known-good state, freshness relative to
   the last completed refresh (`current_at_last_refresh`, or
   `stale_after_failed_attempt` once a later attempt fails),
-  the committed snapshot's typed `AnalysisOutcome`, and profile and
-  support facts. Complete-zero and incomplete-zero outcomes stay distinct
+  the committed snapshot's typed `AnalysisOutcome`, an additive
+  `language_completeness` list of `{language, status}` rows from the same
+  analysis run (present only once a snapshot is committed, on the status tool
+  and the status resource; supported readers use the advertised `outputSchema`
+  or tolerate unknown keys), and
+  profile and support facts. Complete-zero and incomplete-zero outcomes stay distinct
   through the typed outcome; a partial outcome keeps its typed limitations;
 - the transport, tool, resource, resource-template, and byte bounds under
   `mcp`.
@@ -206,7 +221,9 @@ disclose this before invocation. `ripr check` defaults to the working tree
 when staged or unstaged tracked edits exist; sharing the authority does not
 mean identical input. `ripr check --committed` selects committed input;
 `ripr check --worktree --format json` analyzes staged and unstaged tracked
-edits outside MCP. The existing response `scope` note discloses detected
+edits outside MCP, or inside MCP with the opt-in `source: "worktree"`
+(RIPR-SPEC-0211, #7357: findings only; repair cards and readiness
+withheld). The existing response `scope` note discloses detected
 excluded edits. The call blocks until the
 attempt reaches a terminal state and reports it: `completed` with the new
 snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the
@@ -227,11 +244,15 @@ zero-config language auto-enable, and a present-but-unreadable or unparseable
 config fails the attempt closed with `config_invalid`. Provider
 configuration stays unloaded.
 
-Gap-list responses use `ripr-mcp-gap-list-v2`, including typed refusals.
+Gap-list responses use `ripr-mcp-gap-list-v4`, including typed refusals.
 The prior v1 success schema forbids unknown top-level properties, so the new
-`filtered` and `filters` fields require this version change. Strict v1 readers
-must rediscover `tools/list`, accept v2 explicitly and validate against the
-advertised `outputSchema`; callers may still omit all filter arguments.
+`filtered` and `filters` fields required the v2 change; v3 adds the snapshot's
+typed `outcome` block (`kind`, a plain label, and the outcome limitation
+kinds), so a `partial_with_limitations` run never reads as clean; v4 adds the
+independently windowed omission disclosure (`omitted_page`, `omitted_offset`). Strict v1
+readers must rediscover `tools/list`, accept v4 explicitly and validate
+against the advertised `outputSchema`; callers may still omit all filter
+arguments.
 
 All MCP document `schema_version` identifiers, so a client can route and
 validate every document the server emits:
@@ -242,7 +263,7 @@ validate every document the server emits:
 | Session block | `ripr-mcp-session-v1` | workspace status/session documents |
 | Snapshot block | `ripr-mcp-snapshot-v1` | snapshot resource |
 | Refresh-time attempt document | `ripr-mcp-refresh-v1` | `ripr_refresh` tool result |
-| Gap list | `ripr-mcp-gap-list-v2` | `ripr_list_gaps` result |
+| Gap list | `ripr-mcp-gap-list-v4` | `ripr_list_gaps` result |
 | Single gap | `ripr-mcp-gap-v1` | `ripr_get_gap` result |
 | Repair attempt list | `ripr-mcp-repair-attempt-list-v1` | durable attempt discovery |
 | Repair packet | `ripr-mcp-repair-packet-v1` | `ripr_prepare_repair` result |
@@ -289,6 +310,14 @@ is invalid for `snapshot_id`, `offset`, `limit`, `file`, `class`,
 `language`, and `repair_ready` (#7314). The server
 returns `-32602` Invalid Params naming the field with the same request ID;
 correct the argument or omit it and retry on the same connection.
+`offset` and `limit` must be whole JSON integers (no fraction or exponent
+form) in `0..=M` and `1..=M`, where `M` is the platform's `usize` width
+(64-bit builds: `18446744073709551615`; 32-bit builds: `4294967295`), and
+`data.maximum`, the message and `data.recovery` all name that one effective
+bound; the `ripr_list_repair_attempts` limit is capped at 256. Each refusal
+names why the value missed (negative, not a number, fractional, larger than the largest
+accepted integer) and carries `data.argument`, `data.minimum`, `data.maximum`
+and `data.recovery` with the accepted range (#9895).
 When the whole selection cannot fit one wire response, the default call
 returns the first wire-fitting page and `continuation.next_page` names the
 `ripr_list_gaps` call that resumes the walk — pinned to the snapshot
@@ -299,10 +328,20 @@ selection exactly once. Pages are sized so the complete structured result
 under the 128-KiB response bound, including empty pages whose echoed filters
 can overflow the structured envelope while the raw document still fits.
 Those pages return the existing typed `result_too_large` refusal with the
-current snapshot identity. Only a listing that cannot fit even one
-page — an omission disclosure alone over the ceiling — fails closed with
-`result_too_large` naming `ripr://snapshot/{snapshot_id}` as the identity
-route. Other tool responses carry the document once at full fidelity:
+current snapshot identity. The omission disclosure no longer makes a listing
+unservable by itself (#9360): `omitted_items` carries at most 200 identities
+and at most 16 KiB per response (identities embed paths, so the byte budget
+is the real bound; the first entry always ships), `omitted_page` (`offset`,
+`returned`, `has_more`, `next_offset`) discloses the window, and
+`continuation.next_omitted_page` names the `ripr_list_gaps` call that reads
+the next window. Each continuation route replays the whole request, advancing
+only its own axis: `next_omitted_page` keeps the snapshot pin, filters, item
+`offset` and `limit`; `next_page` keeps the requested `omitted_offset`.
+Walking `omitted_page.next_offset` covers every omitted identity exactly
+once; a past-end `omitted_offset` is an empty disclosed window. Only a listing whose remaining non-pageable disclosure
+(for example an oversized filter echo) cannot fit even one page fails closed
+with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
+identity route. Other tool responses carry the document once at full fidelity:
 `content[0].text` is the compact JSON serialization, and
 `structuredContent` repeats it in every successful response. Each tool
 advertises an `outputSchema`, so a success never ships without its
@@ -310,6 +349,21 @@ structured copy: when the complete double-carry envelope does not fit the
 id-aware response budget, the call fails closed with the typed
 `result_too_large` refusal and that tool's recovery route (#7768) instead
 of silently dropping `structuredContent`.
+
+Single-item gap overflow uses one captured-input recovery across the raw
+document, tool envelope and resource envelope. Its CLI command retains the
+captured repository root, effective base and explicit `--committed` or
+`--worktree` source; a later failed request does not relabel that route. The
+command analyzes current repository state, not immutable snapshot bytes. CLI
+JSON remains bounded: related tests are capped and a large finding array may
+omit findings. If the complete recovery exceeds its 4096-byte recovery-text budget,
+the refusal explains that literal recovery is unavailable; it never emits a
+truncated command.
+
+Failed worktree refreshes preserve `source: "worktree"` in their MCP retry
+examples, including default-base, explicit invalid-base and configuration-repair recovery. Correct
+the base without silently changing the source. Ordinary committed requests
+retain omission semantics.
 
 `ripr_get_gap` (and the equivalent resource `ripr://gap/{canonical_id}`)
 returns one canonical item's complete bounded evidence bound to its snapshot
@@ -351,13 +405,11 @@ be established, so `ripr repair` refuses every item; widen the budget with
 `RIPR_REPO_EXPOSURE_SEAM_LIMIT`).
 
 The truncation refusal covers repair readiness (`ripr_list_gaps`,
-`ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` is a read-only
-card projection of the shared card producer over the refresh's diff-scoped
-inventory and is out of scope for #9108 (tracked in #9231): it does not start an attempt, and it
-does not yet mirror `ripr agent card`'s own incomplete-inventory refusal. Read
-readiness from `repair_packet_ready` and `repair_ineligibility`, not from the
-card's `readiness.repair_ready`, when the seam limit may have truncated the
-inventory.
+`ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` reads the same
+completeness fact and, like `ripr agent card`, fails with the typed
+`incomplete_inventory` code (and no card) while the inventory is truncated or
+its completeness could not be established, so it never reports
+`readiness.repair_ready` true over a truncated inventory (#9231).
 
 `ripr_get_repair_attempt` (and `ripr://repair-attempt/{attempt_id}`) reads
 one transaction by identity: session transactions answer first; otherwise
@@ -460,7 +512,7 @@ item_not_found         result_too_large    attempt_not_found
 config_invalid         workspace_ambiguous static_limitation
 cancelled              superseded          attempt_invalid
 seam_not_found         policy_omitted      witness_unavailable
-identity_unnameable    budget_overflow
+identity_unnameable    budget_overflow     incomplete_inventory
 ```
 
 Before the first successful refresh the evidence tools fail with
@@ -470,19 +522,86 @@ bound to a snapshot that is no longer current, while superseded tombstones
 older than the 64-entry session bound read `attempt_not_found` instead
 (oldest-first eviction); `attempt_invalid` reports a
 durable manifest that fails canonical validation; `seam_not_found`,
-`identity_unnameable`, and `budget_overflow` are reachable on the repair-card
-read (an item no seam owner-discriminated binds, an unnameable portable
-workspace identity, a card over its detail budget); `policy_omitted` and
+`identity_unnameable`, `budget_overflow`, and `incomplete_inventory` are
+reachable on the repair-card read (an item no seam owner-discriminated binds,
+an unnameable portable workspace identity, a card over its detail budget, a
+truncated or unverified repo-wide seam inventory). The card uses the CLI-pinned
+`incomplete_inventory` code, while the list/get/prepare readiness fields keep
+`seam_inventory_truncated`. `policy_omitted` and
 `witness_unavailable` stay named for wire stability even though this adapter
 cannot reach them; the rest stay reserved for the slices that own those
 states (they are named now so the wire contract
 stays stable). Tool argument shape violations use standard Invalid Params;
 unknown tools use Invalid Params (MCP: the `tools/call` method exists; the
-name argument is wrong) with the available names in `error.data`. Unknown
+name argument is wrong) with the available names in `error.data`. The
+`tools/call` `arguments` member may be omitted; when present it must be an
+object. Null, arrays and scalar values receive a correlated Invalid Params
+(`-32602`) response before tool dispatch, including for `ripr_refresh` and
+the no-argument status tool. Unknown
 methods use Method Not Found (`Method not found: <method>`). `ripr_list_gaps`
 rejects a `language` filter that is not a language wire string (`rust`,
 `typescript`, `javascript`, `python`, `perl`) with Invalid Params listing the
 allowed values, instead of returning an indistinguishable empty page.
+
+### Reading errors: the JSON-RPC code is coarse by contract
+
+A `tools/call` typed failure is a successful JSON-RPC response whose result has
+`isError: true` and the `failure` block above; it is not a JSON-RPC error. A
+`resources/read` typed failure is a JSON-RPC error whose `error.data` carries the
+same typed state. In both, the JSON-RPC `error.code` is deliberately coarse
+(#9854): it separates only "the id you asked for does not exist" from "the
+server is in a state or bound that this request cannot satisfy". Do not branch
+retry, refresh, or give-up behavior on `error.code`. Branch on `error.data.code`
+(the stable typed kind) and follow `error.data.recovery` (one sentence naming
+the next step). `error.data.detail` is bounded human text, and
+`error.data.current_snapshot_id` is present on snapshot-aware reads. The
+`error.message` sentence is `unavailable <kind> resource: <data.code>`.
+
+The server owns this mapping in one place (`resource_failure`); the table below
+lists every `data.code` kind in the shared vocabulary and the JSON-RPC code a
+`resources/read` of that kind answers. A test pins the set of `data.code` kinds (equal to the vocabulary) and each
+kind's JSON-RPC code (equal to the mapping), so a new or removed kind or a
+changed code fails the build until this table is updated. The Class and
+recovery columns are guidance and are not test-pinned. The code column is what
+`resource_failure` would answer for that kind; for the rows marked tool-path
+only it is the mapping, not an observed `resources/read` response.
+
+| `data.code` | resources/read `error.code` | Class | Typical recovery |
+| --- | --- | --- | --- |
+| `item_not_found` | `-32002` | identity miss (`-32602` for 2026-07-28 peers) | the id is not in the current snapshot; re-list with `ripr_list_gaps` |
+| `attempt_not_found` | `-32002` | identity miss (`-32602` for 2026-07-28 peers) | the attempt/receipt id does not exist; list attempts |
+| `no_snapshot` | `-32603` | retryable after refresh | call `ripr_refresh`, then retry |
+| `stale_snapshot` | `-32603` | retryable after refresh | re-read with the `current_snapshot_id` in `error.data` or refresh |
+| `analysis_in_flight` | `-32603` | retryable after wait | another attempt is running; wait and retry |
+| `superseded` | `-32603` | retryable after refresh | the transaction's snapshot is no longer current; refresh and re-prepare |
+| `result_too_large` | `-32603` | bound; narrow the request where a narrower read exists | pageable lists: page or filter. Single-item resources and status/repair documents can have no narrower MCP read; follow `error.data.recovery`, which is authoritative. Retrying unchanged cannot succeed |
+| `budget_overflow` | `-32603` | bound; narrow the request | the card exceeds its detail budget; use `ripr agent card` |
+| `incomplete_inventory` | `-32603` | state; not retryable as-is | the repo-wide seam inventory is truncated or unverified |
+| `seam_not_found` | `-32603` | state; not an id miss | no owner-discriminated seam binds the item |
+| `id_ambiguous` | `-32603` | state; change the id form | the raw id resolves two ways; use the canonical id |
+| `identity_unnameable` | `-32603` | state; not retryable as-is | no portable workspace identity can be named |
+| `attempt_invalid` | `-32603` | state; not retryable as-is | a durable manifest fails canonical validation |
+| `workspace_unavailable` | `-32603` | operator action | restart with `ripr mcp --stdio --root <repository>` |
+| `analysis_failed` | `-32603` | operator action | fix the named cause or pass `base`, then `ripr_refresh` |
+| `unsupported_profile` | `-32603` | operator action; tool-path only, not produced by `resources/read` (`ripr_refresh`) | the workspace input is unsupported; narrow the diff and retry `ripr_refresh` |
+| `config_invalid` | `-32603` | operator action; tool-path only, not produced by `resources/read` (`ripr_refresh`) | repair `ripr.toml`, then `ripr_refresh` |
+| `stale_inventory` | `-32603` | retryable after refresh; tool-path only, not produced by `resources/read` (`ripr_list_repair_attempts`) | re-list the attempt inventory |
+| `policy_omitted` | `-32603` | named, unreachable here | reserved for wire stability |
+| `witness_unavailable` | `-32603` | named, unreachable here | reserved for wire stability |
+| `workspace_ambiguous` | `-32603` | reserved | reserved for a later slice |
+| `static_limitation` | `-32603` | reserved | reserved for a later slice |
+| `cancelled` | `-32603` | reserved | reserved for a later slice |
+
+Genuine invariant failures are different: the server could not build or
+serialize a result it should always be able to build (`serialize workspace
+status`, `serialize resource`, `serialize typed failure`, `invalid status
+projection`) or a response exceeded the transport byte cap. These answer
+`-32603` with no `error.data.code` (the byte-cap fallback carries only
+`maxResponseBytes`). Within `-32603`, the absence of `error.data.code` is how a consumer tells an
+invariant failure from a typed state (an unknown resource URI at `-32002` and
+argument errors at `-32602` also carry no `data.code`); it is not retryable by refreshing, and is
+a server defect worth reporting. Tool argument shape violations stay standard
+Invalid Params (`-32602`).
 
 ## What it does not do
 
@@ -508,10 +627,15 @@ human-readable message. The same routes remain available separately in
 valid resource identities; listing a template does not promise its resource
 currently exists. Recognized snapshot, gap and repair resource routes retain
 their typed missing/stale-identity errors without the generic route list.
-A client that negotiated an older protocol version gets resource-not-found
-(`-32002`) for a resource miss; current clients get Invalid Params (`-32602`).
-The SDK maps the code, while the adapter preserves the same bounded message
-and structured recovery routes in both lifecycles.
+Identity misses on those routes (`item_not_found`, `attempt_not_found`) keep
+resource-not-found: a client that negotiated an older protocol version gets
+`-32002`; current clients get Invalid Params (`-32602`). Every other typed
+resource failure is a server state or a bound, not an identity claim —
+`no_snapshot`, `stale_snapshot`, `analysis_in_flight`,
+`workspace_unavailable` and `result_too_large` answer Internal Error
+(`-32603`) on every protocol version, with the same human sentence, the
+same structured recovery routes, and the stable typed state in
+`error.data.code` in both lifecycles.
 The instructions (returned by both `initialize` and `server/discover`) and the
 tool descriptions state positively what each tool returns, its bounds, and
 what it does not do. Protocol errors keep standard JSON-RPC codes. The pinned
@@ -561,4 +685,6 @@ unsupported or discovery-only requested version is answered with
 `io.modelcontextprotocol/clientCapabilities` in `params._meta` and an
 unsupported version is refused. After `initialize`, `ping` returns an empty
 result even when `params._meta` carries that handshake shape; after
-`server/discover`, `ping` remains method-not-found.
+`server/discover`, `ping` remains method-not-found. A second `initialize` on an
+initialized session is answered `-32600` (invalid request) with a message saying
+the session is already initialized; the session keeps serving.

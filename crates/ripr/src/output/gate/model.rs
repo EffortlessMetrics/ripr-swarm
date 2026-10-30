@@ -82,6 +82,11 @@ pub(crate) struct GateDecisionReport {
     /// passed `--exception-policy`; absent otherwise so existing
     /// gate-decision consumers and goldens see identical output.
     pub(super) exception_policy: Option<super::exception_policy::ExceptionPolicyReport>,
+    /// The candidate source's analysis scope, disclosed verbatim so a
+    /// downstream baseline comparison can tell which files this decision
+    /// actually evaluated (issue #9301 F2). `None` when the source carried
+    /// no scope disclosure; consumers then fail closed.
+    pub(super) analysis_scope: Option<serde_json::Value>,
 }
 
 /// Canonical downstream-thresholding receipt field.

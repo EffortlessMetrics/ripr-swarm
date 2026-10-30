@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "loop_accumulator",
   "test_shape": "smoke_call_no_assert",
-  "hard_case": "A changed compound assignment maps to no probe family and reads static_unknown (#6485).",
+  "hard_case": "A changed update of a zero-initialized loop accumulator the owner returns reads as a return_value change; the test never pins the total exactly, so the gap is real (#6485).",
   "truth": {
     "state": "partially_discriminated",
     "method": "runtime_mutant_kill",
@@ -54,5 +54,8 @@
       "static_unknown"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0360#4"
+  ]
 }

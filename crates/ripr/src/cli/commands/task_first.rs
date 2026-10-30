@@ -19,6 +19,7 @@ use crate::cli::agent::{
     AgentCardOptions, AgentRepairOptions, AgentRepairPhase, AgentStatusOptions,
 };
 use crate::cli::commands_context::ensure_command_root;
+use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
 
@@ -265,7 +266,7 @@ pub(super) fn parse_status_args(args: &[String]) -> Result<StatusFacadeCommand, 
 pub(in crate::cli) fn repair(args: &[String]) -> Result<(), CommandError> {
     match parse_repair_args(args).map_err(CommandError::from)? {
         RepairFacadeCommand::Help => {
-            println!("{REPAIR_HELP}");
+            println!("{}", help::render_command_help(REPAIR_HELP, &[]));
             Ok(())
         }
         RepairFacadeCommand::Repair(options) => run_facade_repair(options),
@@ -275,7 +276,7 @@ pub(in crate::cli) fn repair(args: &[String]) -> Result<(), CommandError> {
 pub(in crate::cli) fn continue_repair(args: &[String]) -> Result<(), CommandError> {
     match parse_continue_args(args).map_err(CommandError::from)? {
         ContinueFacadeCommand::Help => {
-            println!("{CONTINUE_HELP}");
+            println!("{}", help::render_command_help(CONTINUE_HELP, &[]));
             Ok(())
         }
         ContinueFacadeCommand::Continue(options) => run_facade_continue(options),
@@ -285,7 +286,7 @@ pub(in crate::cli) fn continue_repair(args: &[String]) -> Result<(), CommandErro
 pub(in crate::cli) fn status(args: &[String]) -> Result<(), CommandError> {
     match parse_status_args(args).map_err(CommandError::from)? {
         StatusFacadeCommand::Help => {
-            println!("{STATUS_HELP}");
+            println!("{}", help::render_command_help(STATUS_HELP, &[]));
             Ok(())
         }
         StatusFacadeCommand::Status(options) => run_facade_status(options),
@@ -322,7 +323,7 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                     reasons_total,
                 )));
             }
-            RepairStartDecision::Action(action) => {
+            RepairStartDecision::Action(action, candidates) => {
                 // A deliberate named outcome, not a failure: the canonical
                 // block on stderr, stdout empty, decision exit code.
                 eprint!(
@@ -333,6 +334,14 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                     )
                 );
                 if action.action_class() == crate::domain::NextActionClass::ChooseItem {
+                    // #10978: the stop lists bare ids; say where each one is
+                    // and what changed there so the choice is informed.
+                    if !candidates.is_empty() {
+                        eprintln!("choose the change to repair:");
+                        for candidate in &candidates {
+                            eprintln!("  {candidate}");
+                        }
+                    }
                     print_retry_line(&format!(
                         "ripr repair <seam-id> --root {}",
                         crate::agent::loop_commands::shell_arg(
@@ -429,6 +438,8 @@ fn facade_before_options(root: &std::path::Path, seam_id: &str) -> AgentRepairOp
         root: root.to_path_buf(),
         root_explicit: true,
         seam_id: Some(seam_id.to_string()),
+        gap_id: None,
+        base: None,
         attempt_id: None,
         phase: AgentRepairPhase::Before,
         python_repair_trust: None,
@@ -465,6 +476,8 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 root: options.root,
                 root_explicit: true,
                 seam_id: None,
+                gap_id: None,
+                base: None,
                 attempt_id: Some(attempt_id.as_str().to_string()),
                 phase: AgentRepairPhase::After,
                 python_repair_trust: None,
@@ -640,7 +653,7 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
         }
         // The auto selector needs a named seam: `ripr repair` alone would
         // not start one, so it is not printed as the start.
-        Ok(RepairStartDecision::Action(_)) => format!(
+        Ok(RepairStartDecision::Action(..)) => format!(
             "`ripr repair` cannot choose a start by itself right now; run `ripr pilot --root {root_arg}` to list current seam IDs and name one"
         ),
         Err(error) => format!(
@@ -655,10 +668,18 @@ fn no_eligible_seam_message(
     reasons: &[String],
     reasons_total: usize,
 ) -> String {
+    let changed_non_rust = if total_seams == 0 {
+        crate::app::task_first::changed_non_rust_languages(root)
+    } else {
+        Vec::new()
+    };
     let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
         &root.to_string_lossy(),
     ));
     if total_seams == 0 {
+        if !changed_non_rust.is_empty() {
+            return crate::app::task_first::non_rust_repair_guidance(&root, &changed_non_rust);
+        }
         return format!(
             "no seams visible under {root}; analyze the workspace before starting a repair. Next: `ripr pilot --root {root}`"
         );

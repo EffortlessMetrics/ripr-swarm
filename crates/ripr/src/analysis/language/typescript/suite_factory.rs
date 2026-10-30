@@ -19,6 +19,7 @@ use oxc_ast::ast::{Argument, Expression, Function, Statement};
 const MAX_EXPANSIONS: usize = 8;
 
 /// The source with the expansions appended, and where each expansion starts.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct SuiteFactoryExpansion {
     pub(crate) source: String,
     /// `(first line of an appended expansion, line of the call it came from)`,
@@ -27,7 +28,26 @@ pub(crate) struct SuiteFactoryExpansion {
     /// Byte spans of the factory declarations every one of whose calls was
     /// expanded. Their own registrations read `impl(...)` and are never
     /// extracted; the appended copies stand for them.
+    #[serde(with = "range_vec")]
     pub(crate) covered: Vec<std::ops::Range<usize>>,
+}
+
+/// `std::ops::Range<usize>` serializes as an inclusive-looking `(start, end)`
+/// pair; the serialized spelling is on-disk cache identity (#10725).
+mod range_vec {
+    pub(super) fn serialize<S: serde::Serializer>(
+        ranges: &[std::ops::Range<usize>],
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        s.collect_seq(ranges.iter().map(|range| (range.start, range.end)))
+    }
+
+    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
+        d: D,
+    ) -> Result<Vec<std::ops::Range<usize>>, D::Error> {
+        let pairs: Vec<(usize, usize)> = serde::Deserialize::deserialize(d)?;
+        Ok(pairs.into_iter().map(|(start, end)| start..end).collect())
+    }
 }
 
 impl SuiteFactoryExpansion {
@@ -259,7 +279,7 @@ fn span_text(source: &str, span: oxc_span::Span) -> Option<String> {
 /// `None` for a bare `/` (a regex or a division), which this scan does not
 /// classify; a parameter spelled inside text the runner reads as data must
 /// not be renamed, because that would change an expected value or title.
-fn code_bytes(body: &str) -> Option<Vec<bool>> {
+pub(super) fn code_bytes(body: &str) -> Option<Vec<bool>> {
     let bytes = body.as_bytes();
     let mut code = vec![true; bytes.len()];
     let mut at = 0;

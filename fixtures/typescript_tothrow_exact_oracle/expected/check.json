@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_parser.ts:typescript_preview:c440ffa1",
+      "canonical_gap_id": "gap:typescript:typescript_preview:c440ffa1",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -58,7 +59,9 @@
           "oracle_kind": "unknown",
           "oracle": "",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "empty user throws with error code",
@@ -68,7 +71,9 @@
           "oracle_kind": "unknown",
           "oracle": "",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "empty user throws ParseError class",
@@ -78,7 +83,9 @@
           "oracle_kind": "unknown",
           "oracle": "",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {

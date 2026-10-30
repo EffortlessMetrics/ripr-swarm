@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_load.ts:typescript_preview:fd09bc48",
+      "canonical_gap_id": "gap:typescript:typescript_preview:fd09bc48",
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
@@ -131,6 +132,7 @@
     },
     {
       "id": "probe:src_load.ts:typescript_preview:2209cfc8",
+      "canonical_gap_id": "gap:typescript:typescript_preview:2209cfc8",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -188,7 +190,9 @@
           "oracle_kind": "unknown",
           "oracle": "",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {

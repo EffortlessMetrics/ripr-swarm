@@ -6,7 +6,7 @@ TypeScript repositories (re-authored, not copied).
 
 ## Given
 
-Seventeen small authored TypeScript packages under `subjects/`, our own code
+Twenty-seven small authored TypeScript packages under `subjects/`, our own code
 under this repository's license, grouped by test runner:
 
 - jest (ts-jest): `authored-ts-jest-checkout` (strict and loose matchers,
@@ -24,6 +24,12 @@ under this repository's license, grouped by test runner:
 - vitest: `authored-ts-vitest-orders` (vitest 5) and `authored-ts-vitest-cart`
   (its older cases labeled under vitest 3.2.7; its `package.json` now pins
   4.1.11).
+- vitest spec-example cases: `authored-ts-vitest-unnum`, one module and one
+  isolated test file per example of RIPR-SPEC-0027 (1, 3, 4), 0095 (2 to 5),
+  0097 (2, 3, 5) and 0098 (1 to 3), labeled with vitest 4.1.11. Examples 0027#2,
+  0095#1 and 0097#1 and #4 are cited by cases of the subjects above. The
+  `ufo` module keeps its edited line out of a ternary on purpose: a ternary
+  arm change is RIPR-SPEC-0243 rule 15's question, not the barrel's.
 - vitest language shapes: `authored-ts-vitest-shapes`
   (class methods, getters and statics, inheritance, generics, async
   `try`/`catch` and `rejects`, enums, `export *` and `export * as` barrels,
@@ -52,6 +58,9 @@ under this repository's license, grouped by test runner:
 - node:test: `authored-ts-nodetest-billing` and `authored-ts-nodetest-pricing`
   (`node:assert` strict and legacy, `assert.throws` and `assert.rejects`,
   subtests, `t.assert`).
+- node:test operator grid and traps: `authored-ts-grid-<operator>` (seven
+  subjects) and `authored-ts-trap-kit`, described below. Run with
+  `node --experimental-strip-types --test`.
 
 Every RIPR-SPEC-0243 acceptance example has at least one case. Example 33
 (two test files, one mocked) is `jest-spec0243-ex33-two-files-one-mocked`;
@@ -68,8 +77,9 @@ Where the spec says "(today X)", the case keeps today's verdict in its
 labeling observation; where the mutant run contradicts it, the case scores
 it as false and its reasoning names the spec example.
 
-Each case that labels a numbered acceptance example cites it in
-`spec_examples`, and `spec-coverage.toml` gates those citations on a floor.
+Each case that labels an acceptance example (hand-numbered or slug-keyed,
+RIPR-SPEC-0245) cites it in
+`spec_examples`, and `spec-coverage.toml` gates those citations through `spec-examples.lock`.
 In scope are RIPR-SPEC-0243, its amendments RIPR-SPEC-0246 to
 RIPR-SPEC-0252, RIPR-SPEC-0254, RIPR-SPEC-0256, RIPR-SPEC-0258 and RIPR-SPEC-0262. A case cites an example only when its diff and test have
 that example's shape; uncovered examples stay visible in `check`'s coverage
@@ -79,6 +89,14 @@ remain open for later cases without moving the count.
 
 Each subject carries a `ripr.toml` that enables TypeScript beside Rust, the
 way a user opts a repository in today.
+
+The three `ts-table-boundary-*` cases (#10617) apply RIPR-SPEC-0243 example 37's
+changed `>=` boundary itself rather than a rewrite of it, in new `src/table.ts`
+and `test/table.test.ts` files of `authored-ts-grid-boundary`: rows on both
+sides of the boundary (`ts-table-boundary-edit`, `credited`), rows only above
+it (`-one-sided`) and a loop that leaves before the boundary rows
+(`-break`), both `gap`. Each edit was applied by hand and the case's test
+command run on the whole package (Node 22.22.0): only the first fails.
 
 Each case is one edit under `cases/` (one changed line, except the
 `*-throw-second-replaced-line` and `*-throw-uneven-*-block` cases, which
@@ -118,7 +136,17 @@ is what counts as detection, but no test is named as failing, and the case's
 `failing_test` says so rather than naming the test whose callback raised it
 (#7734).
 
-The five `jest-spec0258-*` cases came last and were labeled the same way.
+The two `jest-then-owner-*` cases (#9354) add multiline and namespace-member
+calls in separate source/test files. Their whole expanded Jest package passed
+33 tests and four snapshots under Node 24.19.0, Jest 30.5.2, ts-jest 29.4.15
+and TypeScript 5.9.3. Each hand-applied reducer edit (initial sum 0 to 1)
+failed only its own test at the value assertion (expected 30, received 31),
+and restoration passed again. Both `.then` calls carry rejection handlers;
+rule 4 abstains as `static_unknown` rather than claiming a static oracle.
+Generic-call and `this`-member boundaries retain the unit coverage from #9519;
+these corpus rows exercise bare multiline and namespace-import member calls.
+
+The eight `jest-spec0258-*` cases came last and were labeled the same way.
 Their two own subjects exist because each one's whole-package state is the
 point: a missing snapshot fails every `jest --ci` run of the unedited
 package, so `authored-ts-jest-snapshot-unwritten` runs `jest --ci=false`,
@@ -126,6 +154,13 @@ where each run, started from the committed package without a `.snap`
 file, writes the entry from what the code returns; and
 `authored-ts-jest-snapshot-update` is labeled through `npm test`, which runs
 its `jest -u` script and rewrites the committed entry.
+`authored-ts-jest-snapshot-projects` roots a `projects` entry at a
+project config whose `snapshotResolver` sends snapshots to another
+directory, so `npm test` writes a fresh entry and passes the edited package
+(a non-CI run: under `CI=true` jest implies `--ci` and fails the unedited
+package too); `authored-ts-jest-snapshot-inline-projects` keeps a plain
+inline `projects` object that moves nothing, so the committed entry fails
+the edit.
 
 The 28 `shape-*`, 8 `deco-*`, 12 `pw-*` and 15 `hostile-*` cases are all
 `behavior_change` edits: each edit is its own single mutant, applied by hand
@@ -149,6 +184,17 @@ the mutant applied, which is the line the replay below wrote. Test commands
 are the npm commands each case ran and failing tests are test titles, so
 `verdict-corpus relabel`, which replays cargo commands, does not run on this
 corpus.
+
+`authored-ts-grid-<operator>` (seven subjects) cross each mutation-operator
+class with five node:test styles (exact pin, table loop, property loop,
+helper-wrapped assert, no assertion; returns adds a startsWith case), one
+function per style. `authored-ts-trap-kit` holds false-credit traps (`if
+(false)`, `test.skip`, `{ todo: true }`, a foreign platform guard, a helper no
+test calls, assertions on inputs, a swallowed `AssertionError`, a tautology, a
+truthy-only `assert.ok`, an empty table loop, a swallowing wrapper, a mock
+checked without arguments, a sibling arm, and an unawaited promise whose late
+rejection node:test still fails), each paired with a control. These subjects run
+under `node --experimental-strip-types --test` with no installed packages.
 
 ## When
 

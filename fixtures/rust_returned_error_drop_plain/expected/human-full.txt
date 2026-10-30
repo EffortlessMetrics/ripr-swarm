@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_returned_error_drop_plain/input
 
-Summary: 3 probe(s), 2 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed
+Summary: 3 changed behavior(s) checked: 2 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 3]: reach yes: Related tests appear to reach parse: parses
@@ -23,11 +28,12 @@ Finding 1: INFO ./src/lib.rs:13
 Changed
   before: Err(Cfg { n: x * 2 })
   after:  Err(Cfg { n: x * 3 })
-Probe
+Change type
+  error handling changed
   family: error_path
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::parse
-  canonical gap: gap:rust:src/lib.rs:parse:error_variant:error_path:err_cfg_n_x*3
+  gap id (for scripts): gap:rust:src/lib.rs:parse:error_variant:error_path:err_cfg_n_x*3
 Static exposure
   exposed (info, confidence 1.00)
 Evidence
@@ -41,11 +47,12 @@ Finding 2: WARNING ./src/lib.rs:13
 Changed
   before: n: x * 2
   after:  n: x * 3
-Probe
+Change type
+  a constructed field changed
   family: field_construction
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::parse
-  canonical gap: gap:rust:src/lib.rs:parse:field_construction:field_construction:n_x*3
+  gap id (for scripts): gap:rust:src/lib.rs:parse:field_construction:field_construction:n_x*3
 Static exposure
   weakly_exposed (warning, confidence 0.92)
 Evidence
@@ -53,7 +60,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches constructed field: n: x * 3
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches constructed field: n: x * 3 (line 13)
   - related test src/lib.rs:21 parses uses strong exact error variant oracle: assert_eq!(parse(4), Err(Cfg { n: 12 })); misses: no assertion pins `n: x * 3`
   - source assertion argument value 12 at line 22
@@ -72,11 +79,12 @@ Finding 3: INFO ./src/lib.rs:13
 Changed
   before: Err(Cfg { n: x * 2 })
   after:  Err(Cfg { n: x * 3 })
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::parse
-  canonical gap: gap:rust:src/lib.rs:parse:return_value:return_value:err_cfg_n_x*3
+  gap id (for scripts): gap:rust:src/lib.rs:parse:return_value:return_value:err_cfg_n_x*3
 Static exposure
   exposed (info, confidence 1.00)
 Evidence

@@ -1,7 +1,7 @@
-use super::CheckInput;
 use super::check::check_with_progress;
 use super::progress::{AnalysisProgressScope, AnalysisProgressSink};
 use super::selector::FindingSelection;
+use super::{CheckInput, CheckOutput};
 use crate::config::RiprConfig;
 use crate::output;
 use std::path::Path;
@@ -97,14 +97,15 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
         config,
         selector,
     ) {
-        FindingSelection::Unique(finding) => {
-            Ok(output::human::render_finding_with_context_command(
+        FindingSelection::Unique(finding) => Ok(
+            output::human::render_finding_with_context_command_and_files(
                 finding,
                 config,
                 &navigation.context_command(selector),
                 &output.root,
-            ))
-        }
+                output.source_value_files(finding),
+            ),
+        ),
         FindingSelection::Ambiguous(candidates) => Err(ambiguous_finding_match(
             selector,
             &candidates,
@@ -125,6 +126,7 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
             &worktree_list_command,
             &committed_list_command,
             worktree_from_default,
+            &output,
         )),
     }
 }
@@ -157,6 +159,8 @@ pub(crate) fn no_finding_matched(
     }
     let syntax_hint = if super::selector::location_selector_needs_syntax_hint(selector) {
         " for a file location, use file:line with a nonempty path and a positive decimal line number without leading zeros (for example src/lib.rs:12);"
+    } else if !selector.contains(':') {
+        " a selector is a finding id or a file:line location (for example src/lib.rs:12);"
     } else {
         ""
     };
@@ -259,29 +263,92 @@ pub(crate) fn no_finding_matched_fresh_run(
     worktree_list_command: &str,
     committed_list_command: &str,
     worktree_from_default: bool,
+    output: &CheckOutput,
 ) -> String {
     // #9015: a selector copied from a committed listing carries no scope
     // pin, so a dirty-default worktree run can miss it. The recovery's
     // first listing must then replay the committed scope, not the
     // defaulted working-tree scope that just missed.
-    if worktree && worktree_from_default && committed_history {
+    let mut message = if worktree && worktree_from_default && committed_history {
         let mut message = no_finding_matched(selector, committed_list_command, Some(root));
         message.push_str(&format!(
             ". The working-tree scope was analyzed and also missed; list its finding ids with `{worktree_list_command}`"
         ));
-        return message;
-    }
-    let mut message = no_finding_matched(selector, list_command, Some(root));
-    if worktree || !committed_history || !selector.contains(':') {
-        return message;
-    }
-    if !crate::analysis::working_tree_has_tracked_changes(root) {
-        return message;
-    }
-    message.push_str(&format!(
-        ". Uncommitted tracked edits exist in this repository and are not analyzed without `--worktree`; if the finding came from uncommitted edits, retry `{retry_command}` (or list worktree finding ids with `{worktree_list_command}`)"
-    ));
+        message
+    } else {
+        let mut message = no_finding_matched(selector, list_command, Some(root));
+        if !worktree
+            && committed_history
+            && selector.contains(':')
+            && crate::analysis::working_tree_has_tracked_changes(root)
+        {
+            message.push_str(&format!(
+                ". Uncommitted tracked edits exist in this repository and are not analyzed without `--worktree`; if the finding came from uncommitted edits, retry `{retry_command}` (or list worktree finding ids with `{worktree_list_command}`)"
+            ));
+        }
+        message
+    };
+    append_fresh_run_language_limits(&mut message, output);
     message
+}
+
+/// Preserve the check producer's scope limitations on a fresh lookup miss.
+/// Sample paths are capped, and an opaque id need not name a language, so
+/// these describe this run rather than attribute the selector's miss to an
+/// adapter. Artifact lookups have no complete advisory carrier and never
+/// call this projection (#10720).
+fn append_fresh_run_language_limits(message: &mut String, output: &CheckOutput) {
+    let mut limits = Vec::new();
+    for advisory in &output.preview_language_advisories {
+        if advisory.analyzed(&output.language_runs) {
+            continue;
+        }
+        let (adapter, files) = advisory.prose_names();
+        let noun = if advisory.file_count == 1 {
+            "file"
+        } else {
+            "files"
+        };
+        let mut limit = format!(
+            "{adapter}: {} {files} {noun}; {}",
+            advisory.file_count,
+            advisory.unaudited_why(&output.language_runs)
+        );
+        if let Some(reason) = advisory
+            .non_success_run(&output.language_runs)
+            .and_then(|run| run.reason.as_deref())
+        {
+            limit.push_str(&format!(". Reason: {reason}"));
+        }
+        limits.push(limit);
+    }
+    // A language run can carry a failure without a preview advisory (for
+    // example a partial Rust run). Retain its native reason as well, but
+    // avoid repeating runs already projected with their advisory above.
+    for run in &output.language_runs {
+        if run.status == crate::analysis::LanguageRunStatus::Ok
+            || output
+                .preview_language_advisories
+                .iter()
+                .any(|advisory| advisory.language == run.language)
+        {
+            continue;
+        }
+        let language = crate::domain::LanguageId::display_name_for_wire(&run.language)
+            .unwrap_or(&run.language);
+        let mut limit = format!(
+            "{language}: analysis did not complete successfully ({})",
+            run.status.as_str()
+        );
+        if let Some(reason) = &run.reason {
+            limit.push_str(&format!(". Reason: {reason}"));
+        }
+        limits.push(limit);
+    }
+    if !limits.is_empty() {
+        message.push_str("\nAnalysis limitations for this run:\n  ");
+        message.push_str(&limits.join("\n  "));
+    }
 }
 
 /// Like [`explain_finding_with_config`] but loads the finding set from a
@@ -567,6 +634,30 @@ mod tests {
             message.contains("`ripr repair 0123456789abcdef`"),
             "{message}"
         );
+    }
+
+    /// #9244 item 10: a bare word with no colon names neither a finding id
+    /// nor a location, so the miss says what a selector looks like. Ids and
+    /// well-formed `file:line` selectors keep their existing wording.
+    #[test]
+    fn bare_word_selector_miss_names_the_accepted_selector_forms() {
+        let message = no_finding_matched("nocolon", "ripr check --json", None);
+        assert!(
+            message.contains("a selector is a finding id or a file:line location"),
+            "{message}"
+        );
+        assert!(message.contains("src/lib.rs:12"), "{message}");
+        assert!(
+            message.contains("to list available finding ids"),
+            "{message}"
+        );
+        for selector in ["probe:not-a-real-id", "src/lib.rs:12"] {
+            let message = no_finding_matched(selector, "ripr check --json", None);
+            assert!(
+                !message.contains("a selector is a finding id"),
+                "{selector}: {message}"
+            );
+        }
     }
 
     #[test]

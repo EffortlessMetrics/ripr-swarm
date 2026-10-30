@@ -119,7 +119,10 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 }
 
 fn print_help() {
-    println!("{PR_EVIDENCE_HELP}");
+    println!(
+        "{}",
+        crate::cli::help::render_command_help(PR_EVIDENCE_HELP, &[])
+    );
 }
 
 /// Help body for `ripr pr-evidence`. Also the flag source for unknown-argument

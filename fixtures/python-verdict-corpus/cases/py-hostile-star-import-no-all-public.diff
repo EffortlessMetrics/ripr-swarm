@@ -1,0 +1,10 @@
+diff --git a/hostile/stars_no_all.py b/hostile/stars_no_all.py
+--- a/hostile/stars_no_all.py
++++ b/hostile/stars_no_all.py
+@@ -1,5 +1,5 @@
+ def public_star_total(a, b):
+-    return a + b
++    return a - b
+ 
+ 
+ def _private_star_total(a, b):

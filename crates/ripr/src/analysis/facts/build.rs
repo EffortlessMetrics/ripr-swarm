@@ -132,6 +132,8 @@ pub(crate) fn extend_index_from_loaded_files_with_cache(
     ));
     index.package_names = manifest_package_names(root);
     index.macro_owned_crates = macro_owned_crates(root, index);
+    index.workspace_crates = workspace_member_crates(root, index);
+    index.workspace_member_dirs = absolute_member_dirs(root);
     index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
     index.member_crates = super::member_crates::MemberCrates::new(root);
     Ok(stats)
@@ -298,6 +300,8 @@ fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     index.package_names = manifest_package_names(root);
     index.root_library_name = manifest_library_name(root);
     index.macro_owned_crates = macro_owned_crates(root, &index);
+    index.workspace_crates = workspace_member_crates(root, &index);
+    index.workspace_member_dirs = absolute_member_dirs(root);
     index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
     index.member_crates = super::member_crates::MemberCrates::new(root);
     cancellation::checkpoint()?;
@@ -650,6 +654,8 @@ fn build_index_with_adapters(
     index.package_names = manifest_package_names(root);
     index.root_library_name = manifest_library_name(root);
     index.macro_owned_crates = macro_owned_crates(root, &index);
+    index.workspace_crates = workspace_member_crates(root, &index);
+    index.workspace_member_dirs = absolute_member_dirs(root);
     index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
     index.member_crates = super::member_crates::MemberCrates::new(root);
     cancellation::checkpoint()?;
@@ -732,14 +738,51 @@ fn manifest_library_name(root: &Path) -> Option<String> {
 /// definitions were not scanned.
 fn macro_owned_crates(root: &Path, index: &RustIndex) -> std::collections::BTreeSet<String> {
     let mut names = index.package_names.clone();
+    for directory in workspace_member_directories(root) {
+        if !index.files().iter().any(|(path, _)| {
+            let path = path.strip_prefix(root).unwrap_or(path);
+            path.strip_prefix("./")
+                .unwrap_or(path)
+                .starts_with(&directory)
+        }) {
+            continue;
+        }
+        names.extend(manifest_package_names(&root.join(directory)));
+    }
+    names
+}
+
+/// `index.package_names` plus every `[workspace] members` crate whether or
+/// not a file of it is indexed: a Draft/Fast diff index holds the changed
+/// packages and their dependents, not a dependency such as the member that
+/// declares a trait the changed code implements (#10061).
+fn workspace_member_crates(root: &Path, index: &RustIndex) -> std::collections::BTreeSet<String> {
+    let mut names = index.package_names.clone();
+    for directory in workspace_member_directories(root) {
+        names.extend(manifest_package_names(&root.join(directory)));
+    }
+    names
+}
+
+/// [`workspace_member_directories`] joined onto `root`.
+fn absolute_member_dirs(root: &Path) -> Vec<PathBuf> {
+    workspace_member_directories(root)
+        .into_iter()
+        .map(|directory| root.join(directory))
+        .collect()
+}
+
+/// The `[workspace] members` directories (literal paths and trailing `/*`
+/// globs, minus `exclude`) of the root manifest.
+fn workspace_member_directories(root: &Path) -> Vec<PathBuf> {
     let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
-        return names;
+        return Vec::new();
     };
     let Ok(value) = text.parse::<toml::Table>() else {
-        return names;
+        return Vec::new();
     };
     let Some(workspace) = value.get("workspace").and_then(toml::Value::as_table) else {
-        return names;
+        return Vec::new();
     };
     let patterns = |key: &str| {
         workspace
@@ -770,22 +813,11 @@ fn macro_owned_crates(root: &Path, index: &RustIndex) -> std::collections::BTree
             members.push(pattern);
         }
     }
-    for member in members {
-        if excluded.contains(&member) {
-            continue;
-        }
-        let directory = Path::new(&member);
-        if !index.files().iter().any(|(path, _)| {
-            let path = path.strip_prefix(root).unwrap_or(path);
-            path.strip_prefix("./")
-                .unwrap_or(path)
-                .starts_with(directory)
-        }) {
-            continue;
-        }
-        names.extend(manifest_package_names(&root.join(directory)));
-    }
-    names
+    members
+        .into_iter()
+        .filter(|member| !excluded.contains(member))
+        .map(PathBuf::from)
+        .collect()
 }
 
 /// Source text of one Rust file as the index reads it.

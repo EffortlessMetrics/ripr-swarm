@@ -1,0 +1,12 @@
+diff --git a/src/c_ci.rs b/src/c_ci.rs
+--- a/src/c_ci.rs
++++ b/src/c_ci.rs
+@@ -18,7 +18,7 @@
+ 
+ impl CiOrder {
+     pub fn add_ci(&mut self, sku: &str, qty: u32) {
+-        self.lines.push(CiLine { sku: sku.to_uppercase(), qty });
++        self.lines.push(CiLine { sku: str::to_uppercase(sku), qty });
+     }
+ }
+ 

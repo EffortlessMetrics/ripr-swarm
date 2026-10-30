@@ -1,0 +1,56 @@
+{
+  "case_id": "macro-module-child-boundary",
+  "subject_id": "authored-macro-modules",
+  "diff": "cases/macro-module-child-boundary.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "table_row_boundary",
+  "hard_case": "The table is invoked in the child module `tests/rows/mod.rs`; its generator is defined in `tests/support/mod.rs`, imported by the parent with `#[macro_use]` before `mod rows;` is declared.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "limit > width",
+        "mutated_line": "limit > width",
+        "outcome": "tests_failed",
+        "failing_test": "child_at",
+        "equivalence_review": "not equivalent: 5 against a limit of 5 no longer fits"
+      },
+      {
+        "replacement": "limit + 1 >= width",
+        "mutated_line": "limit + 1 >= width",
+        "outcome": "tests_failed",
+        "failing_test": "child_over",
+        "equivalence_review": "not equivalent: 6 against a limit of 5 now fits"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "child_at(5, 5, true) and child_over(6, 5, false) kill both mutants at runtime. The table is invoked in tests/rows/mod.rs, a child module that tests/modules.rs declares after `#[macro_use] mod support;`, so the definition reaches it through its parent's textual scope. Spec cell: RIPR-SPEC-0117 example 9 (#6925).",
+  "labeling_observation": {
+    "ripr_commit": "f1a6349aa + #6925 cross-file macro scope",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed",
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0117#9"
+  ]
+}

@@ -46,7 +46,8 @@
 
 use super::rust_index::{FileFactsView, RustIndex, TestSummary};
 use super::seams::{RepoSeam, RequiredDiscriminator};
-use crate::domain::{ValueContext, ValueFact};
+use crate::domain::ValueContext;
+use crate::value_origins::LocatedValueFact as ValueFact;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -54,9 +55,6 @@ use std::sync::Arc;
 /// once per indexed test and reused while classifying every seam.
 #[derive(Default)]
 pub(crate) struct ValueEnvFacts {
-    /// Test body with comments stripped so binding scans don't pick
-    /// up `// let threshold = 999;` shadows.
-    body_clean: String,
     /// `IDENT -> LITERAL` from `let IDENT = LITERAL;` lines in the
     /// test body (single-test scope).
     let_bindings: BTreeMap<String, String>,
@@ -163,7 +161,6 @@ impl ValueEnvFacts {
             &local_binding_positions,
         );
         Self {
-            body_clean,
             let_bindings,
             rstest_cases,
             case_param_names,
@@ -407,13 +404,29 @@ impl<'a> ValueEnv<'a> {
     /// fixture override like `with_amount`) before the value counts.
     /// Without that guard, every `.with_seed(42)` would inflate
     /// observed values for unrelated seams.
-    pub(crate) fn builder_facts(&self) -> Vec<ValueFact> {
+    ///
+    /// `test_body` is the raw body the facts were built from. The comment-free
+    /// copy is rebuilt on each call rather than kept alive for every indexed
+    /// test; every expected sink yields at least one allowed token, so the
+    /// strip is not limited to seams that actually contain builder calls.
+    pub(crate) fn builder_facts(&self, test_body: &str) -> Vec<ValueFact> {
         let allowed = self.allowed_builder_method_names();
         if allowed.is_empty() {
             return Vec::new();
         }
+        // Every accepted method name contains an allowed token, and the strip
+        // only drops comment tails and string contents (it keeps the quotes,
+        // so it never joins separated text), so an identifier in the stripped
+        // body is contiguous in the raw body. A body that names no allowed
+        // token holds no matching call: skip the strip and the scan (#10932).
+        if !allowed
+            .iter()
+            .any(|token| test_body.contains(token.as_str()))
+        {
+            return Vec::new();
+        }
         let mut out = Vec::new();
-        for cap in scan_builder_calls(&self.facts.body_clean) {
+        for cap in scan_builder_calls(&strip_comments_and_strings(test_body)) {
             if !builder_method_matches_allowed(&cap.method, &allowed) {
                 continue;
             }
@@ -649,6 +662,29 @@ pub(crate) fn test_let_bound_literal(body: &str, ident: &str) -> Option<String> 
     if is_mut || declarations.next().is_some() {
         return None;
     }
+    // A tuple or struct `let` pattern, a `for`, `if let`, closure or match
+    // binding of the same name is a second binding the simple-`let` scan above
+    // cannot see: `let n = 10; let (n, _) = (9, 1); owner(n)` calls with 9.
+    // The parser counts every pattern; the lexical scan covers macro bodies.
+    let source = if body.trim_start().starts_with("fn ") || body.trim_start().starts_with("#[") {
+        body.to_string()
+    } else {
+        format!("fn __test() {{\n{body}\n}}")
+    };
+    // `has_match_arm_binding` is not used: it reads a one-line `match n { .. }`
+    // scrutinee as an arm pattern, and the parser already counts real arms.
+    let lexical_rebind = cleaned.lines().any(|line| {
+        has_for_binding(line, ident)
+            || has_let_pattern_binding(line, "if let ", ident)
+            || has_let_pattern_binding(line, "while let ", ident)
+            || has_closure_param_binding(line, ident)
+    });
+    if crate::analysis::syntax::fn_name_binding_count(&source, ident) != Some(1)
+        || !non_simple_let_shadowing_lines(&cleaned, ident, 0).is_empty()
+        || lexical_rebind
+    {
+        return None;
+    }
     extract_let_bindings(body).remove(ident)
 }
 
@@ -818,7 +854,7 @@ fn is_integer_literal(value: &str) -> bool {
 
 /// Position of the first top-level `;` in `text`, or `None` if no
 /// such terminator exists. Top-level = depth 0 of `()`/`[]`/`{}`.
-fn top_level_semicolon(text: &str) -> Option<usize> {
+pub(super) fn top_level_semicolon(text: &str) -> Option<usize> {
     let mut depth: i32 = 0;
     for (i, b) in text.bytes().enumerate() {
         match b {

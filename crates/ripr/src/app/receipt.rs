@@ -186,12 +186,18 @@ pub(crate) fn check_receipt(
     opts: &ReceiptCheckOptions,
 ) -> Result<(String, ReceiptCrossRefResult), String> {
     let path = resolve_check_path(opts)?;
+    let displayed = crate::output::path::display_path(&path);
 
     let content = std::fs::read_to_string(&path).map_err(|err| {
-        format!(
-            "receipt at {} not found or unreadable: {err}",
-            path.display()
-        )
+        if err.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "receipt at {displayed} not found or unreadable. Write one first with \
+                 `ripr receipt write` (see `ripr receipt write --help` for the required flags), \
+                 or pass the correct path"
+            )
+        } else {
+            format!("receipt at {displayed} not found or unreadable: {err}")
+        }
     })?;
 
     let value: serde_json::Value = serde_json::from_str(&content).map_err(|err| {
@@ -247,10 +253,17 @@ fn cross_reference_receipt(
     };
 
     let contents = std::fs::read_to_string(path).map_err(|err| {
-        format!(
-            "receipt check --ledger {} unreadable: {err}",
-            path.display()
-        )
+        let displayed = crate::output::path::display_path(path);
+        if err.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "receipt check --ledger {displayed} unreadable: not found. Generate it first \
+                 (for example `ripr reports gap-ledger --root . \
+                 --repo-exposure target/ripr/reports/repo-exposure.json --out gap-ledger.json`), \
+                 or pass the correct path"
+            )
+        } else {
+            format!("receipt check --ledger {displayed} unreadable: {err}")
+        }
     })?;
 
     let records = parse_gap_records_json(&contents).map_err(|err| {
@@ -374,10 +387,10 @@ fn receipt_file_stem(canonical_gap_id: &str) -> String {
 
 fn validate_write_options(opts: &ReceiptWriteOptions) -> Result<(), String> {
     if opts.canonical_gap_id.trim().is_empty() {
-        return Err("receipt requires a canonical_gap_id; re-run with --gap".to_string());
+        return Err("receipt write requires a canonical_gap_id; re-run with --gap".to_string());
     }
     if opts.verify_command.trim().is_empty() {
-        return Err("receipt requires --verify-command".to_string());
+        return Err("receipt write requires --verify-command".to_string());
     }
     if opts.verify_status.trim().is_empty() {
         return Err(format!(
@@ -900,13 +913,76 @@ mod tests {
         match check_receipt(&opts) {
             Ok(_) => Err("check_receipt should have failed for missing file".to_string()),
             Err(err) => {
-                if err.contains("not found") || err.contains("unreadable") {
-                    Ok(())
-                } else {
-                    Err(format!(
+                if !(err.contains("not found") || err.contains("unreadable")) {
+                    return Err(format!(
                         "error should say not found or unreadable, got: {err}"
-                    ))
+                    ));
                 }
+                // The recovery route names the producing command in plain
+                // words, and the raw OS errno must not leak (#9851).
+                if !err.contains("ripr receipt write") {
+                    return Err(format!(
+                        "error should name the `ripr receipt write` recovery route, got: {err}"
+                    ));
+                }
+                if err.contains("os error") {
+                    return Err(format!("error should not leak a raw OS errno, got: {err}"));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn receipt_check_missing_ledger_names_recovery_route() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-receipt-check-missing-ledger-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir failed: {e}"))?;
+        let receipt_path = dir.join("receipt.json");
+        std::fs::write(
+            &receipt_path,
+            serde_json::json!({
+                "schema_version": "0.1",
+                "tool": "ripr",
+                "kind": "receipt",
+                "canonical_gap_id": "gap:demo",
+                "verify_command": "cargo test",
+                "verify_status": "passed",
+                "current_head": "0123456789abcdef0123456789abcdef01234567",
+                "written_at": "2026-10-01T00:00:00Z"
+            })
+            .to_string(),
+        )
+        .map_err(|e| format!("write receipt failed: {e}"))?;
+        let opts = ReceiptCheckOptions {
+            gap: None,
+            path: Some(receipt_path),
+            ledger: Some(dir.join("missing-ledger.json")),
+            json: false,
+        };
+        match check_receipt(&opts) {
+            Ok(_) => {
+                let _ = std::fs::remove_dir_all(&dir);
+                Err("check_receipt should have failed for a missing --ledger".to_string())
+            }
+            Err(err) => {
+                let _ = std::fs::remove_dir_all(&dir);
+                if !err.contains("receipt check --ledger") || !err.contains("not found") {
+                    return Err(format!(
+                        "error should name the missing ledger path, got: {err}"
+                    ));
+                }
+                if !err.contains("reports gap-ledger") {
+                    return Err(format!(
+                        "error should name the gap-ledger recovery route, got: {err}"
+                    ));
+                }
+                if err.contains("os error") {
+                    return Err(format!("error should not leak a raw OS errno, got: {err}"));
+                }
+                Ok(())
             }
         }
     }
