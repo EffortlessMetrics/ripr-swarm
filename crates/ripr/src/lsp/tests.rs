@@ -88,6 +88,7 @@ use tower_lsp_server::{LspService, Server};
 mod analysis_thread_routing_tests;
 mod bare_cr_origin_tests;
 mod consumed_source_tests;
+mod panic_containment_tests;
 mod progress_completion_tests;
 mod progress_create_liveness_tests;
 mod progress_notification_isolation_tests;
@@ -1259,6 +1260,10 @@ fn serve_stdio_call_presence_observer() -> Result<(), String> {
     assert!(
         serve_streams.contains(".concurrency_level(bounds.request_concurrency)"),
         "serve_streams should set the explicit in-flight request concurrency bound (#2034)"
+    );
+    assert!(
+        serve_streams.contains("panic_containment::ContainPanics("),
+        "serve_streams should serve behind the handler panic-containment layer so one panicking request cannot end the session"
     );
     assert!(
         serve_streams.contains("dollar_requests::AnswerDollarRequests(")

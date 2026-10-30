@@ -9225,6 +9225,14 @@ fn agent_repair_names_output_redirected_into_the_checkout() -> Result<(), Box<dy
     let stderr = String::from_utf8_lossy(&after.stderr);
     assert!(stderr.contains("ripr:   before.err ("), "{stderr}");
     assert!(
+        stderr.contains("target/ripr/workflow/agent-packet.json"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("target/ripr/workflow/gap-repair-packet.json"),
+        "{stderr}"
+    );
+    assert!(
         stderr.contains(&format!(
             "`before.err`, `packet.json` were {UNTRACKED_HINT} If one is {REDIRECT_HINT}"
         )),
@@ -19506,7 +19514,7 @@ fn check_python_finding_without_repair_card_names_the_terminal_manual_step() -> 
     )?;
     assert_eq!(
         line,
-        "  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+        "  Safe next action: this Python preview finding has no repair card (static evidence cannot bind `DISCOUNT_THRESHOLD` to a test input, so the boundary equality cannot become a repair target), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
     );
     Ok(())
 }

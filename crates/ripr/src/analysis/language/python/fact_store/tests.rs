@@ -70,6 +70,20 @@ fn stored_facts_restore_every_interned_field() -> Result<(), String> {
         2,
         "a fixture parameter and a body import give the second test its own rebinding facts"
     );
+    assert_eq!(stored.rebinding_modules.indexes.len(), 2);
+    assert_eq!(
+        stored.rebinding_modules.values.len(),
+        1,
+        "tests of one module share one set of module-level rebinding lists"
+    );
+    assert!(
+        stored
+            .rebinding_modules
+            .values
+            .iter()
+            .all(|lists| lists.module_bound.iter().any(|name| name == "geometry")),
+        "the shared lists keep the module's bindings"
+    );
     let production = StoredFacts::from_facts(&extract_source_facts(
         Path::new("src/geometry.py"),
         PRODUCTION,
@@ -80,6 +94,12 @@ fn stored_facts_restore_every_interned_field() -> Result<(), String> {
         1,
         "owners of one file share one import list"
     );
+    assert_eq!(
+        production.owner_module_objects.values.len(),
+        1,
+        "owners of one file share one module-object list"
+    );
+    assert_eq!(production.owner_foreign_writes.values.len(), 1);
     Ok(())
 }
 
