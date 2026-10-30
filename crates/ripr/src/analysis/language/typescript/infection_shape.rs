@@ -27,9 +27,19 @@ pub(crate) struct UnmodeledInfection {
 }
 
 /// The unmodeled shape the edit from `old` to `new` has, if any.
-pub(crate) fn ts_unmodeled_infection(old: Option<&str>, new: &str) -> Option<UnmodeledInfection> {
+///
+/// `predicate_seam` is true when the probe is a predicate: a literal operand
+/// there is a boundary the boundary-input facts model, so no fallback shape is
+/// named. A line with a JSX tag, a regex literal or an unterminated quote
+/// (a multi-line template body) is declined: its text cannot be split into
+/// code and comment reliably.
+pub(crate) fn ts_unmodeled_infection(
+    old: Option<&str>,
+    new: &str,
+    predicate_seam: bool,
+) -> Option<UnmodeledInfection> {
     let old = old?;
-    if old.trim() == new.trim() {
+    if old.trim() == new.trim() || is_undecidable_line(old) || is_undecidable_line(new) {
         return None;
     }
     let (old_code, new_code) = (code_of(old), code_of(new));
@@ -43,11 +53,11 @@ pub(crate) fn ts_unmodeled_infection(old: Option<&str>, new: &str) -> Option<Unm
     if is_arithmetic_noop(&old_code, &new_code) {
         return Some(UnmodeledInfection {
             shape: "arithmetic_noop",
-            reason: "the edit adds or drops an identity operand (`+ 0`, `- 0`, `* 1`, `/ 1`), which the adapter does not fold; whether any input changes the value is not established",
-            behavior_neutral: true,
+            reason: "the edit adds or drops an identity operand (`+ 0`, `- 0`, `* 1`, `/ 1`), which the adapter does not fold; whether any input changes the value is not established (a string `+ 0` or a BigInt operand still changes behavior)",
+            behavior_neutral: false,
         });
     }
-    if fallback_literal_changed(&old_code, &new_code) {
+    if !predicate_seam && fallback_literal_changed(&old_code, &new_code) {
         return Some(UnmodeledInfection {
             shape: "fallback_literal",
             reason: "the edit changes the literal operand of a `??` / `||` fallback, and the adapter does not model whether any test input takes the fallback",
@@ -77,7 +87,7 @@ fn code_of(line: &str) -> String {
     let mut quote: Option<char> = None;
     let mut escaped = false;
     let mut cut = line.len();
-    let mut previous = '\0';
+    let mut previous: Option<char> = None;
     for (index, ch) in line.char_indices() {
         if let Some(open) = quote {
             if escaped {
@@ -89,17 +99,61 @@ fn code_of(line: &str) -> String {
             }
         } else if matches!(ch, '"' | '\'' | '`') {
             quote = Some(ch);
-        } else if ch == '/' && previous == '/' {
-            cut = index - 1;
+        } else if line[index..].starts_with("//") && previous.is_none_or(char::is_whitespace) {
+            // A comment opens at line start or after whitespace; `a//b`,
+            // `http://x` and `/\//g` are code.
+            cut = index;
             break;
         }
-        previous = ch;
+        previous = Some(ch);
     }
     let code = line[..cut].trim();
     code.strip_suffix(';')
         .unwrap_or(code)
         .trim_end()
         .to_string()
+}
+
+/// Lines whose code/comment split cannot be read reliably: an unterminated
+/// quote (the middle of a multi-line template literal), a JSX or generic
+/// `<tag`, or a regex literal.
+fn is_undecidable_line(line: &str) -> bool {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut previous_code: Option<char> = None;
+    let chars: Vec<char> = line.chars().collect();
+    for (index, &ch) in chars.iter().enumerate() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '<' if chars
+                .get(index + 1)
+                .is_some_and(|next| next.is_alphabetic() || *next == '/' || *next == '>') =>
+            {
+                return true;
+            }
+            // A `/` after an operator or opener starts a regex literal.
+            '/' if chars.get(index + 1) != Some(&'/')
+                && previous_code.is_none_or(|p| "(,=:[!&|?{};+-*%~^".contains(p)) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+        if !ch.is_whitespace() {
+            previous_code = Some(ch);
+        }
+    }
+    quote.is_some()
 }
 
 fn is_arithmetic_noop(old: &str, new: &str) -> bool {
@@ -238,6 +292,9 @@ fn default_parameter_changed(old: &str, new: &str) -> bool {
     if old[..old_open] != new[..new_open] {
         return false;
     }
+    if !is_declaration_head(&old[..old_open], &old[old_open..]) {
+        return false;
+    }
     let (Some(old_close), Some(new_close)) = (
         find_outside_quotes(old, ")", false),
         find_outside_quotes(new, ")", false),
@@ -278,4 +335,21 @@ fn literal_return_changed(old: &str, new: &str) -> bool {
         (Some(o), Some(n)) => is_literal(o) && is_literal(n) && o.trim() != n.trim(),
         _ => false,
     }
+}
+
+/// A function or method declaration (`function f(`, `(a = 1) =>`,
+/// `method(a = 1) {`), not a call such as `f(a = 1)`.
+fn is_declaration_head(head: &str, from_open: &str) -> bool {
+    let head = head.trim_end();
+    if head.contains("function") {
+        return true;
+    }
+    let tail = from_open
+        .find(')')
+        .map_or("", |close| from_open[close + 1..].trim());
+    if tail.starts_with("=>") || tail.starts_with(": ") && tail.contains("=>") {
+        return true;
+    }
+    let control = ["if", "while", "for", "switch", "catch", "with"];
+    tail.ends_with('{') && !control.iter().any(|keyword| head.ends_with(keyword))
 }

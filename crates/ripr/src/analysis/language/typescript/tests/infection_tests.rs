@@ -168,3 +168,34 @@ fn unmodeled_shapes_read_infection_unknown_and_never_a_packet() -> Result<(), St
     }
     Ok(())
 }
+
+fn literal_arm(label: &str, call: &str) -> Result<Finding, String> {
+    let source = "export function price(qty: number, coupon?: string): number {\n  if (coupon === 'HALF') {\n    return 7;\n  }\n  return qty;\n}\n";
+    finding_for(
+        label,
+        source,
+        3,
+        "    return 6;",
+        "    return 7;",
+        &weak_test(call),
+    )
+}
+
+#[test]
+fn an_unmodeled_shape_in_an_untaken_arm_reads_the_stronger_no_fact() -> Result<(), String> {
+    let untaken = literal_arm("infect-literal-untaken", "price(2)")?;
+    assert_eq!(untaken.class, ExposureClass::ReachableUnrevealed);
+    assert!(has_evidence(
+        &untaken,
+        "typescript_infection: no (branch_not_entered)"
+    ));
+    // Discriminating control: an input that enters the arm leaves the shape
+    // unknown.
+    let entered = literal_arm("infect-literal-entered", "price(3, 'HALF')")?;
+    assert_eq!(entered.class, ExposureClass::InfectionUnknown);
+    assert!(has_evidence(
+        &entered,
+        "typescript_infection: unknown (literal_return)"
+    ));
+    Ok(())
+}

@@ -7232,8 +7232,31 @@ pub(crate) fn classify_resolved_owner(
     if static_limit.is_none() {
         let weak = matches!(verdict.class, ExposureClass::WeaklyExposed);
         let exposed = matches!(verdict.class, ExposureClass::Exposed);
-        if let Some(shape) =
-            super::infection_shape::ts_unmodeled_infection(old_line_text, line_text)
+        let is_predicate = matches!(probe_shape.family, ProbeFamily::Predicate);
+        // The stronger fact wins: a changed line no test input enters is
+        // infection `no`, whatever shape the edit has.
+        let untaken = if weak && !is_predicate {
+            ts_unentered_guard(&post_ladder_context)
+        } else {
+            None
+        };
+        if let Some(guard) = untaken {
+            verdict.class = ExposureClass::ReachableUnrevealed;
+            verdict.discriminate_state = StageState::Unknown;
+            verdict.missing = vec![format!(
+                "The change to `{}` sits inside `{}`, and no related test call enters it: {}. The changed line never runs under the tests, so no assertion can observe it. Add a test input that enters the guard.",
+                owner.name, guard.condition, guard.observed
+            )];
+            infection = Some(TsInfectionVerdict {
+                state: StageState::No,
+                shape: "branch_not_entered",
+                summary: format!(
+                    "No related test call enters `{}`: {}.",
+                    guard.condition, guard.observed
+                ),
+            });
+        } else if let Some(shape) =
+            super::infection_shape::ts_unmodeled_infection(old_line_text, line_text, is_predicate)
             && (weak || (exposed && shape.behavior_neutral))
         {
             verdict.class = ExposureClass::InfectionUnknown;
@@ -7249,24 +7272,6 @@ pub(crate) fn classify_resolved_owner(
                 summary: format!(
                     "TypeScript preview adapter does not model infection for this `{}` edit: {}.",
                     shape.shape, shape.reason
-                ),
-            });
-        } else if weak
-            && !matches!(probe_shape.family, ProbeFamily::Predicate)
-            && let Some(guard) = ts_unentered_guard(&post_ladder_context)
-        {
-            verdict.class = ExposureClass::ReachableUnrevealed;
-            verdict.discriminate_state = StageState::Unknown;
-            verdict.missing = vec![format!(
-                "The change to `{}` sits inside `{}`, and no related test call enters it: {}. The changed line never runs under the tests, so no assertion can observe it. Add a test input that enters the guard.",
-                owner.name, guard.condition, guard.observed
-            )];
-            infection = Some(TsInfectionVerdict {
-                state: StageState::No,
-                shape: "branch_not_entered",
-                summary: format!(
-                    "No related test call enters `{}`: {}.",
-                    guard.condition, guard.observed
                 ),
             });
         }

@@ -59,3 +59,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_infection_shapes (6)
+
+Reason:
+RIPR-SPEC-0027 (#10704 review): the identity no-op is no longer claimed behavior-neutral, comment detection requires whitespace before //, an unmodeled shape inside an untaken arm reads infection no (branch_not_entered); fixture typescript_infection_shapes re-blessed
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
