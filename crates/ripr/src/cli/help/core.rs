@@ -185,17 +185,12 @@ Common options:
                     excludes repo seam-inventory formats). On analysis_timeout,
                     raise/disable it or narrow the diff; re-run.
 
-For agents and scripts: `ripr check --json --quiet` keeps stderr empty (--json
-alone still prints `ripr progress:` lines to stderr) and prints the full
-versioned report, which is large. Read `summary` and `canonical_next_action`
-first; for one finding's evidence run `ripr context --at <finding-id> --json`.
-
 Exit status: 0 for a completed run, including `exposed` and `weakly_exposed`
 findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
 Examples:
   ripr check
-  ripr check --base origin/main --json --quiet
+  ripr check --base origin/main --json --quiet   (--json alone still prints progress)
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;

@@ -864,10 +864,8 @@ mod tests {
     #[test]
     fn check_short_help_advertises_quiet_json_and_lean_route() {
         let short = super::CHECK_HELP_SHORT;
-        assert!(short.contains("ripr check --json --quiet"));
-        assert!(short.contains("alone still prints `ripr progress:`"));
-        assert!(short.contains("canonical_next_action"));
-        assert!(short.contains("ripr context --at <finding-id> --json"));
+        assert!(short.contains("--json --quiet"));
+        assert!(short.contains("--json alone still prints progress"));
         assert!(CHECK_HELP.contains("agents\n  and scripts reading json should pass it"));
         assert!(
             !short.contains("--json alone silences"),
