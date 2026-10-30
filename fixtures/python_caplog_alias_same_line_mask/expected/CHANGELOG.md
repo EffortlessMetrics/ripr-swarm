@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_caplog_alias_same_line_mask (3)
+
+Reason:
+RIPR-SPEC-0238: refresh human-full.txt to current summary wording after rebase onto main (#10595)
+
+Command:
+`cargo xtask goldens bless python_caplog_alias_same_line_mask --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
