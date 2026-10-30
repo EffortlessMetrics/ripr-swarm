@@ -355,7 +355,7 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
             .is_some();
         let ledger_path = string_path(&packet, &["inputs", "gap_ledger"])
             .ok_or("first-pr --check: no-action source ledger is unavailable; recompose before relying on the packet")?;
-        let (ledger, ledger_digest) = read_json_with_digest(&resolve_path(&root, &ledger_path)).map_err(|_| {
+        let (ledger, ledger_digest) = read_json_with_digest(&resolve_path(&root, &ledger_path)).map_err(|_ledger_error| {
             "first-pr --check: no-action source ledger is missing or malformed; recompose before relying on the packet".to_string()
         })?;
         let recorded_digest = string_path(&packet, &["inputs", "gap_ledger_sha256"]).ok_or(

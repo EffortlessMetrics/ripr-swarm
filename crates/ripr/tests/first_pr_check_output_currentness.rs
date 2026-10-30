@@ -732,8 +732,9 @@ fn legacy_unknown_empty_diff_is_limited_but_explicit_repo_exposure_is_no_action(
     let explicit = root.join("target/explicit-empty.json");
     fs::write(&explicit, include_str!("../../../fixtures/first_successful_pr/empty-diff/inputs/reports/gap-decision-ledger.json")).map_err(|e| e.to_string())?;
     assert!(
-        git(&root, &["diff", "--name-only", "HEAD", "HEAD"])?.is_empty(),
-        "positive diff must be empty"
+        String::from_utf8_lossy(&git(&root, &["diff", "--name-only", "HEAD~1", "HEAD"])?)
+            .contains("calculator.py"),
+        "fixture must contain a real HEAD~1..HEAD change so the HEAD..HEAD empty diff is meaningful"
     );
     let allowed = run(&explicit, "explicit-empty", "HEAD")?;
     assert_eq!(allowed["status"], "no_action", "{allowed}");
