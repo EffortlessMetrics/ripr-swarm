@@ -338,6 +338,7 @@ fn importing_a_writer_name_is_not_a_dynamic_write() {
         "from unittest.mock import patch\n\ndef test_x():\n    assert 1\n",
         "from unittest.mock import (\n    call,\n    patch,\n)\n",
         "import os; from unittest.mock import patch\n",
+        "# note\n\nfrom unittest.mock import patch\n",
     ] {
         assert!(!super::writes_namespace_dynamically(source), "{source}");
     }
@@ -347,6 +348,7 @@ fn importing_a_writer_name_is_not_a_dynamic_write() {
         "from unittest.mock import patch\n\n@patch('pkg.X', 5)\ndef test_x(m):\n    pass\n",
         "import os; setattr(os, 'x', 1)\n",
         "from importlib import reload as r\n",
+        "from unittest.mock import (\n    patch  # c\n    as p,\n)\n",
     ] {
         assert!(super::writes_namespace_dynamically(source), "{source}");
     }
