@@ -230,6 +230,28 @@ fn record_review_comments_timeout(
     }
 }
 
+/// The named refusal error for a producer-refusal check document (#11161):
+/// the typed run status when known, the producer's own message, and the
+/// next step. A refusal envelope carries no `analysis_outcome` at all —
+/// nothing was analyzed — so the generic missing-outcome error would hide
+/// the cause.
+fn review_comments_refusal_error(
+    path: &Path,
+    refusal: &crate::output::gate::ProducerRefusal,
+) -> String {
+    let status = refusal
+        .status
+        .as_deref()
+        .unwrap_or("unknown producer refusal");
+    format!(
+        "review-comments --check-output {} is invalid: producer refusal (run_status: {status}); \
+         nothing was analyzed. Producer message: {}. Next step: {}",
+        path.display(),
+        refusal.message,
+        refusal.repair_route,
+    )
+}
+
 fn load_review_comments_analysis_outcome(
     path: Option<&Path>,
     root: &Path,
@@ -305,7 +327,29 @@ fn load_review_comments_analysis_outcome(
             path.display()
         ));
     }
+    // #9010: a findings-bounded check document is a bounded subset, never a complete
+    // outcome; present non-`true` (including malformed) fails closed. Runs
+    // before the outcome checks so a bounded document keeps its own repair
+    // route even when its outcome is absent — a bounded envelope also
+    // carries an explicit non-consumable record, exactly as in the gate
+    // ordering (#11161).
+    if crate::output::gate::discloses_limited_findings_bound(&value)
+        || crate::output::gate::discloses_bounded_analysis_document(&value)
+    {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: findings-bounded check document (document_complete is not true or run_limitations names limited_findings_bound); re-run with RIPR_CHECK_FINDINGS_BYTES=0",
+            path.display()
+        ));
+    }
     let Some(envelope) = value.get("analysis_outcome") else {
+        // #11161: a producer refusal envelope carries no `analysis_outcome`
+        // at all — nothing was analyzed — so name the refusal (its run
+        // status, the producer's own message, and the next step) instead of
+        // the generic missing-outcome error. A consumable envelope without
+        // an outcome keeps the generic error below.
+        if let Some(refusal) = crate::output::gate::producer_refusal(&value) {
+            return Err(review_comments_refusal_error(path, &refusal));
+        }
         return Err(format!(
             "review-comments --check-output {} is invalid: missing analysis_outcome",
             path.display()
@@ -314,16 +358,6 @@ fn load_review_comments_analysis_outcome(
     if envelope.is_null() {
         return Err(format!(
             "review-comments --check-output {} is invalid: analysis_outcome is null",
-            path.display()
-        ));
-    }
-    // #9010: a findings-bounded check document is a bounded subset, never a complete
-    // outcome; present non-`true` (including malformed) fails closed.
-    if crate::output::gate::discloses_limited_findings_bound(&value)
-        || crate::output::gate::discloses_bounded_analysis_document(&value)
-    {
-        return Err(format!(
-            "review-comments --check-output {} is invalid: findings-bounded check document (document_complete is not true or run_limitations names limited_findings_bound); re-run with RIPR_CHECK_FINDINGS_BYTES=0",
             path.display()
         ));
     }

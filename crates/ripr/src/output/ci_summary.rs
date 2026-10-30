@@ -48,6 +48,10 @@ const PILOT_SUMMARY_MD: &str = "target/ripr/pilot/pilot-summary.md";
 const LEDGER_JSON: &str = "target/ripr/reports/pr-evidence-ledger.json";
 const LEDGER_MD: &str = "target/ripr/reports/pr-evidence-ledger.md";
 const COMMENTS_JSON: &str = "target/ripr/review/comments.json";
+/// The producer check document the PR-guidance step renders (#11161). When
+/// the producer refused to run, this envelope is the only place that names
+/// the cause; every downstream packet degrades to a missing/blocked state.
+const CHECK_JSON: &str = "target/ripr/pr/check.json";
 const GATE_JSON: &str = "target/ripr/reports/gate-decision.json";
 const GATE_MD: &str = "target/ripr/reports/gate-decision.md";
 const DELTA_JSON: &str = "target/ripr/reports/baseline-debt-delta.json";
@@ -251,6 +255,15 @@ impl Summary {
 
     fn first_run_status(&mut self, base_ref: &str) {
         self.line("#### First-run status");
+        // #11161: when the producer refused to run, the downstream packets
+        // carry missing/blocked states whose regeneration commands cannot
+        // succeed — the author sees an unexplained "blocked". The refusal
+        // cause lives only in `target/ripr/pr/check.json`'s own disclosure,
+        // so name it here: the typed status, the producer's message, that
+        // nothing was analyzed, and the next step. A complete, absent, or
+        // malformed check document adds nothing (keeps the downstream
+        // states), and a non-refusal envelope adds nothing either.
+        self.analysis_refusal_status();
         if let Some(doc) = self.doc(START_HERE_JSON) {
             self.start_here_status(&doc);
         } else if let Some(doc) = self.doc(FIRST_ACTION_JSON) {
@@ -1525,6 +1538,40 @@ impl Summary {
         } else {
             self.line("- Inline comments are disabled by default. Set `RIPR_COMMENT_MODE` to `plan` to inspect a publish plan or `inline` to publish same-repo changed-line comments when permissions are safe.");
         }
+        self.blank();
+    }
+
+    /// A declined producer run, named from its own disclosure (#11161). The
+    /// check envelope carries the refusal identity the shared gate predicate
+    /// reads (`output::gate::producer_refusal`): an explicit
+    /// non-consumable record plus the typed status, message, and repair
+    /// route when the producer wrote them. Renders nothing for a complete,
+    /// absent, or malformed check document — or for a consumable envelope
+    /// without an outcome — so those keep their downstream handling.
+    fn analysis_refusal_status(&mut self) {
+        let bytes = match fs::read(self.root.join(CHECK_JSON)) {
+            Ok(bytes) => bytes,
+            Err(_) => return,
+        };
+        let value: Value = match serde_json::from_slice(&bytes) {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+        let Some(refusal) = crate::output::gate::producer_refusal(&value) else {
+            return;
+        };
+        let status = refusal.status.as_deref().unwrap_or("producer refusal");
+        self.line("#### PR analysis did not run");
+        self.line(&format!("- Producer run status: `{status}`"));
+        self.line(&format!(
+            "- Producer message: {}",
+            code_span(&refusal.message)
+        ));
+        self.line(
+            "- This is a declined run, not a clean result: nothing was analyzed, \
+             so downstream PR guidance, evidence, and gate packets carry missing or blocked states.",
+        );
+        self.line(&format!("- Next step: {}", code_span(&refusal.repair_route)));
         self.blank();
     }
 

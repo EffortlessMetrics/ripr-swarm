@@ -1527,6 +1527,59 @@ fn partial_scope_input_error(value: &Value, path: &Path) -> Option<String> {
     }
 }
 
+/// The named producer refusal a check document discloses (#11161): the
+/// typed run status when the document carries a known one, the producer's
+/// own first limitation message, and its repair route. `Some` exactly when
+/// the document carries an explicit non-consumable record
+/// (`downstream_consumable: false` from either the `analysis_scope` or the
+/// `run_limitations[]` position) — the RIPR-SPEC-0362 refusal identity — so
+/// a complete, absent, or malformed document, or a consumable envelope
+/// without an outcome, yields `None` and keeps its downstream generic
+/// handling. Runs after the typed bounded/partial/incomplete checks in
+/// every consumer so those keep their own named repairs.
+pub(crate) struct ProducerRefusal {
+    pub(crate) status: Option<String>,
+    pub(crate) message: String,
+    pub(crate) repair_route: String,
+}
+
+/// See [`ProducerRefusal`].
+pub(crate) fn producer_refusal(value: &Value) -> Option<ProducerRefusal> {
+    if !discloses_non_consumable_record(value) {
+        return None;
+    }
+    let status = refusal_run_status(value).map(str::to_string);
+    let message = value
+        .get("run_limitations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("message").and_then(Value::as_str))
+        .find(|message| !message.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| "no producer message recorded".to_string());
+    let repair_route = value
+        .pointer("/analysis_scope/repair_route")
+        .and_then(Value::as_str)
+        .filter(|route| !route.trim().is_empty())
+        .or_else(|| {
+            value
+                .get("run_limitations")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.get("repair_route").and_then(Value::as_str))
+                .find(|route| !route.trim().is_empty())
+        })
+        .map(str::to_string)
+        .unwrap_or_else(|| "not recorded".to_string());
+    Some(ProducerRefusal {
+        status,
+        message,
+        repair_route,
+    })
+}
+
 /// Whether a JSON document discloses the `limited_partial_scope` run state in
 /// any of the positions the run-state vocabulary uses.
 pub(crate) fn discloses_limited_partial_scope(value: &Value) -> bool {
