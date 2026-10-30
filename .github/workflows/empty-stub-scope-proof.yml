@@ -1,0 +1,478 @@
+name: Empty stub scope candidate (non-shipping)
+run-name: Empty stub scope at 79d2e550
+on:
+  push:
+    branches: [codex/8547-stub-tail-proof]
+    paths: [.github/workflows/empty-stub-scope-proof.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: empty-stub-scope-proof
+  cancel-in-progress: false
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BASE: 79d2e55079e03dd1d3ac7e149270e04893f9b003
+      CANDIDATE_BRANCH: codex/8547-empty-stub-scope
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 79d2e55079e03dd1d3ac7e149270e04893f9b003
+          path: build
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: 79d2e55079e03dd1d3ac7e149270e04893f9b003
+          path: subject
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.95.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: build -> target
+          shared-key: ripr-swarm-rust-small-${{ runner.os }}
+          save-if: 'false'
+      - name: Bind inputs and inspect retained baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/empty-stub-scope-proof"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          mkdir -p "$EVIDENCE"
+          for tree in build subject; do
+            test "$(git -C "$tree" rev-parse HEAD)" = "$BASE"
+            test -z "$(git -C "$tree" status --porcelain)"
+          done
+          test "$(gh api repos/$GITHUB_REPOSITORY/git/ref/heads/$CANDIDATE_BRANCH --jq .object.sha)" = "$BASE"
+          {
+            printf 'controller=%s\nbase=%s\nrun=%s\nattempt=%s\n' "$GITHUB_SHA" "$BASE" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            rustc +1.95.0 -Vv
+            cargo +1.95.0 -Vv
+            nproc
+            free -h
+            df -h .
+          } > "$EVIDENCE/identity.txt"
+          python3 - <<'PY'
+          import shutil
+          assert shutil.disk_usage('.').free > 20 * 1024**3, 'insufficient owned build space'
+          PY
+          # Only the previously inspected, bounded diagnostic artifact is read.
+          # Its hash binds the reused observations, not the new candidate.
+          gh api repos/$GITHUB_REPOSITORY/actions/artifacts/13012608997/zip > "$EVIDENCE/baseline.zip"
+          python3 - <<'PY'
+          import difflib, hashlib, json, os, zipfile
+          from pathlib import Path
+          root = Path(os.environ['EVIDENCE'])
+          data = (root / 'baseline.zip').read_bytes()
+          assert hashlib.sha256(data).hexdigest() == '6c310b06cbb9f677c332978b583e89df6a43dfcf23659b260e6cdfaf55cb8783'
+          with zipfile.ZipFile(root / 'baseline.zip') as archive:
+              assert sum(item.file_size for item in archive.infolist()) < 16 * 1024**2
+              def read(suffix):
+                  matches = [item.filename for item in archive.infolist() if item.filename == suffix]
+                  assert len(matches) == 1, suffix
+                  return archive.read(matches[0])
+              comparison = json.loads(read('output-comparison.json'))
+              print('PRIOR_OUTPUT_COMPARISON', json.dumps(comparison))
+              for row in comparison:
+                  if row.get('stdout_byte_identical') is False:
+                      suffix = f"{row['scope']}-{row['format']}-{row['repeat']}.stdout"
+                      before = read('baseline/' + suffix).decode().splitlines(True)
+                      after = read('instrumented/' + suffix).decode().splitlines(True)
+                      diff = ''.join(difflib.unified_diff(before, after, fromfile='baseline', tofile='instrumented'))
+                      (root / ('prior-' + suffix + '.diff')).write_text(diff)
+                      print(diff)
+              (root / 'baseline-measurements.json').write_bytes(read('baseline/measurements.json'))
+              for name in ['repository-json-0.stdout', 'repository-human-full-0.stdout', 'boundary-fixture-json-0.stdout', 'boundary-fixture-human-full-0.stdout', 'boundary-fixture-human-0.stdout']:
+                  (root / ('baseline-' + name)).write_bytes(read('baseline/' + name))
+          PY
+      - name: Prepare only the four-file candidate
+        working-directory: build
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          path = Path('crates/ripr/src/analysis/seam_inventory.rs')
+          text = path.read_text()
+          anchor = '''        .filter(|path| production_file_set.contains(path))
+              .collect::<BTreeSet<_>>();
+
+          '''
+          assert text.count(anchor) == 1, 'scope anchor changed'
+          block = '''    // #8547: role filtering can leave an empty production scope (for
+              // example, a human stub lookup for an example or test file). With
+              // no caller names there are no seams to classify. Do not rebuild
+              // the whole workspace index just to return an empty inventory.
+              // Keep paths that need global limits, staged evidence or a consumer
+              // on their existing path; this is not an analysis budget shortcut.
+              if changed_file_set.is_empty()
+                  && changed_owner_names.is_empty()
+                  && !with_repo_seam_limit
+                  && stages.is_none()
+                  && consumer.is_none()
+              {
+                  state.verify_corpus_unchanged()?;
+                  cancellation::checkpoint()?;
+                  return Ok(ScopedClassifiedSeamInventory {
+                      classified: Vec::new(),
+                      classified_seams_considered: 0,
+                      file_fact_cache: FileFactCacheStats::zero_work(),
+                      workspace_cache_key,
+                      total_rust_files,
+                      total_production_files,
+                      scoped_production_files: Vec::new(),
+                      changed_production_files: Vec::new(),
+                      parser_declined_files: Vec::new(),
+                      immediate_caller_files: Vec::new(),
+                      unevaluated_seams: 0,
+                      absent_changed_files,
+                      repo_seam_limit: None,
+                  });
+              }
+
+          '''
+          path.write_text(text.replace(anchor, anchor + block, 1) + '\n#[cfg(test)]\n#[path = "seam_inventory_empty_scope_tests.rs"]\nmod empty_scope_tests;\n')
+          Path(os.environ['EVIDENCE'], 'fast-path.txt').write_text(block)
+          tests = Path('crates/ripr/src/analysis/seam_inventory_empty_scope_tests.rs')
+          assert not tests.exists()
+          tests.write_text('''//! Empty-scope index-work controls for #8547. No timing-based unit oracle.
+          use super::*;
+          use crate::analysis::facts::index_build_probe;
+          use std::sync::atomic::{AtomicUsize, Ordering};
+
+          static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
+          struct Fixture(PathBuf);
+          impl Fixture {
+              fn new() -> Result<Self, String> {
+                  let stamp = std::time::SystemTime::now()
+                      .duration_since(std::time::UNIX_EPOCH)
+                      .map_err(|error| error.to_string())?.as_nanos();
+                  let root = std::env::temp_dir().join(format!(
+                      "ripr-empty-scope-{}-{stamp}-{}", std::process::id(),
+                      SEQUENCE.fetch_add(1, Ordering::Relaxed)
+                  ));
+                  std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+                  let fixture = Self(root);
+                  for (name, content) in [
+                      ("Cargo.toml", "[package]\\nname = \\\"empty_scope\\\"\\nversion = \\\"0.1.0\\\"\\nedition = \\\"2024\\\"\\n[workspace]\\n"),
+                      ("src/lib.rs", "pub fn amount(value: i32) -> i32 { value + 1 }\\npub fn caller(value: i32) -> i32 { amount(value) }\\n"),
+                      ("tests/amount.rs", "#[test]\\nfn observes_amount() { assert_eq!(empty_scope::amount(2), 3); }\\n"),
+                      ("examples/demo.rs", "fn main() { let _value = empty_scope::amount(2); }\\n"),
+                  ] {
+                      let path = fixture.0.join(name);
+                      if let Some(parent) = path.parent() {
+                          std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                      }
+                      std::fs::write(path, content).map_err(|error| error.to_string())?;
+                  }
+                  Ok(fixture)
+              }
+          }
+          impl Drop for Fixture {
+              fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+          }
+
+          #[test]
+          fn nonproduction_scope_does_not_build_an_index() -> Result<(), String> {
+              let fixture = Fixture::new()?;
+              for relative in ["tests/amount.rs", "examples/demo.rs"] {
+                  let changed = [PathBuf::from(relative)];
+                  let (inventory, builds) = index_build_probe::observe(||
+                      inventory_diff_scoped_classified_seams_inner(
+                          &fixture.0, &RiprConfig::default(),
+                          DiffScopeInputs::canonical(&changed, &[]), false, None, None
+                      )
+                  );
+                  let inventory = inventory?;
+                  assert!(inventory.total_rust_files >= 3, "nonempty workspace control");
+                  assert!(inventory.total_production_files > 0, "unrelated production stays present");
+                  assert!(inventory.classified.is_empty());
+                  assert!(inventory.scoped_production_files.is_empty());
+                  assert!(inventory.changed_production_files.is_empty());
+                  assert!(inventory.immediate_caller_files.is_empty());
+                  assert!(inventory.parser_declined_files.is_empty());
+                  assert!(inventory.absent_changed_files.is_empty());
+                  assert_eq!(inventory.classified_seams_considered, 0);
+                  assert_eq!(inventory.unevaluated_seams, 0);
+                  assert_eq!(builds, 0, "empty production scope rebuilt an index");
+              }
+              Ok(())
+          }
+
+          #[test]
+          fn empty_scope_preserves_missing_changed_source_disclosure() -> Result<(), String> {
+              let fixture = Fixture::new()?;
+              let changed = [PathBuf::from("src/missing.rs")];
+              let (inventory, builds) = index_build_probe::observe(||
+                  inventory_diff_scoped_classified_seams_inner(
+                      &fixture.0, &RiprConfig::default(),
+                      DiffScopeInputs::canonical(&changed, &[]), false, None, None
+                  )
+              );
+              let inventory = inventory?;
+              assert_eq!(inventory.absent_changed_files, changed);
+              assert!(inventory.classified.is_empty());
+              assert_eq!(builds, 0);
+              Ok(())
+          }
+
+          #[test]
+          fn production_and_caller_scopes_still_build_and_classify() -> Result<(), String> {
+              let fixture = Fixture::new()?;
+              for (changed, owners, expect_callers) in [
+                  (vec![PathBuf::from("src/lib.rs")], Vec::new(), false),
+                  (vec![PathBuf::from("tests/amount.rs")], vec!["amount".to_string()], true),
+              ] {
+                  let (inventory, builds) = index_build_probe::observe(||
+                      inventory_diff_scoped_classified_seams_inner(
+                          &fixture.0, &RiprConfig::default(),
+                          DiffScopeInputs::canonical(&changed, &owners), false, None, None
+                      )
+                  );
+                  let inventory = inventory?;
+                  assert!(builds > 0, "nonempty scope lost its real index");
+                  assert!(!inventory.classified.is_empty(), "nonempty scope lost its seams");
+                  assert_eq!(inventory.scoped_production_files, vec![PathBuf::from("src/lib.rs")]);
+                  if expect_callers {
+                      assert!(inventory.changed_production_files.is_empty());
+                      assert_eq!(inventory.immediate_caller_files, vec![PathBuf::from("src/lib.rs")]);
+                  } else {
+                      assert_eq!(inventory.changed_production_files, changed);
+                  }
+              }
+              Ok(())
+          }
+
+          #[test]
+          fn global_limit_requests_keep_the_existing_index_path() -> Result<(), String> {
+              let fixture = Fixture::new()?;
+              let changed = [PathBuf::from("tests/amount.rs")];
+              let mut scope = DiffScopeInputs::canonical(&changed, &[]);
+              scope.with_repo_seam_limit = true;
+              let (inventory, builds) = index_build_probe::observe(||
+                  inventory_diff_scoped_classified_seams_inner(
+                      &fixture.0, &RiprConfig::default(), scope, false, None, None
+                  )
+              );
+              let inventory = inventory?;
+              assert!(builds > 0, "global-limit evidence was silently skipped");
+              assert!(inventory.classified.is_empty());
+              assert!(inventory.repo_seam_limit.is_some());
+              Ok(())
+          }
+          ''')
+          contribution = Path('CONTRIBUTING.md')
+          old = '''5. Try the binary against the in-repo sample:
+
+             ```bash
+             cargo run -p ripr -- check --diff crates/ripr/examples/sample/example.diff
+             ```'''
+          new = '''5. Run a bounded first-use smoke check from the repository root:
+
+             ```bash
+             cargo run --locked -p ripr -- check --root fixtures/boundary_gap/input --diff fixtures/boundary_gap/diff.patch
+             ```
+
+             Expect a nonempty boundary finding, not a clean bill of health. This
+             fixture exercises real diff loading, Rust analysis and default human
+             guidance within a small, explicit workspace. It does not analyze this
+             whole repository, other languages, or an installed package.
+
+             The reference budget is one second **after the CLI is built** on the
+             measured Linux x86-64 four-CPU runner; downloads and compilation are
+             outside that budget. The retained measurements and their limits are
+             in [#8547](https://github.com/EffortlessMetrics/ripr-swarm/issues/8547).
+             This is a bounded smoke budget, not a whole-repository latency promise.
+
+             For the broader repository-root sample, use:
+
+             ```bash
+             cargo run --locked -p ripr -- check --diff crates/ripr/examples/sample/example.diff
+             ```
+
+             That is a different workload and is not covered by the fixture budget.
+             Do not substitute `--root crates/ripr/examples/sample`: the sample is
+             not a standalone Cargo workspace, so that invocation can report an
+             incomplete analysis rather than a faster equivalent result.'''
+          text = contribution.read_text()
+          assert text.count(old) == 1, 'contributor command changed'
+          contribution.write_text(text.replace(old, new))
+          fragment = Path('changelog.d/8547-empty-stub-scope.md')
+          assert not fragment.exists()
+          fragment.write_text('<!-- section: Fixed -->\n- Empty production scopes no longer rebuild workspace fact indexes solely for stub guidance; nonempty scopes keep their existing classification, and contributor setup names a bounded Rust smoke command with explicit scope limits (#8547).\n')
+          PY
+          cargo +1.95.0 fmt --all
+          git diff --check
+          git add crates/ripr/src/analysis/seam_inventory.rs crates/ripr/src/analysis/seam_inventory_empty_scope_tests.rs CONTRIBUTING.md changelog.d/8547-empty-stub-scope.md
+          test -z "$(git diff --name-only)"
+          test "$(git diff --cached --name-only | wc -l)" = 4
+          git diff --cached --binary > "$EVIDENCE/candidate.patch"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'perf(check): avoid index rebuilds for empty stub scopes (#8547)'
+          git rev-parse HEAD | tee "$EVIDENCE/candidate.sha"
+          git rev-parse HEAD^{tree} > "$EVIDENCE/candidate.tree"
+          test "$(git rev-parse HEAD^)" = "$BASE"
+      - name: Focused positive and wrong-implementation proof
+        working-directory: build
+        run: |
+          set -euo pipefail
+          run() {
+            name="$1"; shift
+            printf '%q ' "$@" > "$EVIDENCE/$name.command"
+            set +e
+            timeout --signal=TERM --kill-after=30s 1500s "$@" > "$EVIDENCE/$name.stdout" 2> "$EVIDENCE/$name.stderr"
+            status=$?
+            set -e
+            echo "$name exit=$status" | tee -a "$EVIDENCE/status.txt"
+            if [ "$status" -ne 0 ]; then tail -n 60 "$EVIDENCE/$name.stdout" "$EVIDENCE/$name.stderr"; return "$status"; fi
+          }
+          run format cargo +1.95.0 fmt --all -- --check
+          run focused cargo +1.95.0 test --locked -p ripr --lib empty_scope_tests -- --nocapture
+          grep -E 'test result: ok\. 4 passed; 0 failed;' "$EVIDENCE/focused.stdout"
+          run stub-owners cargo +1.95.0 test --locked -p ripr --lib app::test_stub -- --nocapture
+          grep 'test result:' "$EVIDENCE/stub-owners.stdout"
+          run clippy cargo +1.95.0 clippy --locked -p ripr --lib -- -D warnings
+          file=crates/ripr/src/analysis/seam_inventory.rs
+          trap 'git restore --source=HEAD -- "$file"' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/ripr/src/analysis/seam_inventory.rs')
+          text = path.read_text()
+          start = text.index('    // #8547: role filtering can leave an empty production scope')
+          end = text.index('    let build_started = Instant::now();', start)
+          path.write_text(text[:start] + text[end:])
+          PY
+          git diff --binary > "$EVIDENCE/removal.patch"
+          set +e
+          timeout --signal=TERM --kill-after=30s 1500s cargo +1.95.0 test --locked -p ripr --lib nonproduction_scope_does_not_build_an_index -- --nocapture > "$EVIDENCE/negative.stdout" 2> "$EVIDENCE/negative.stderr"
+          status=$?
+          set -e
+          echo "negative exit=$status" | tee -a "$EVIDENCE/status.txt"
+          test "$status" = 101
+          grep -F 'empty production scope rebuilt an index' "$EVIDENCE/negative.stderr"
+          grep -E 'test result: FAILED\. 0 passed; 1 failed;' "$EVIDENCE/negative.stdout"
+          git restore --source=HEAD -- "$file"
+          run restored cargo +1.95.0 test --locked -p ripr --lib empty_scope_tests -- --nocapture
+          grep -E 'test result: ok\. 4 passed; 0 failed;' "$EVIDENCE/restored.stdout"
+          git diff --exit-code
+      - name: Measure real candidate CLI and preserve output contracts
+        working-directory: build
+        run: |
+          set -euo pipefail
+          set +e
+          timeout --signal=TERM --kill-after=30s 1500s cargo +1.95.0 build --locked -p ripr --bin ripr > "$EVIDENCE/build.stdout" 2> "$EVIDENCE/build.stderr"
+          status=$?
+          set -e
+          echo "build exit=$status" | tee -a "$EVIDENCE/status.txt"
+          test "$status" = 0
+          python3 - <<'PY'
+          import hashlib, json, os, signal, subprocess, time
+          from pathlib import Path
+          evidence = Path(os.environ['EVIDENCE'])
+          binary = Path.cwd() / 'target/debug/ripr'
+          subject = Path(os.environ['GITHUB_WORKSPACE']) / 'subject'
+          binary_sha = hashlib.sha256(binary.read_bytes()).hexdigest()
+          rows = []
+          for scope in ['repository', 'boundary-fixture']:
+              for output_format in ['json', 'human-full', 'human']:
+                  cache = evidence / 'caches' / (scope + '-' + output_format)
+                  cache.mkdir(parents=True)
+                  for repeat in range(5 if scope == 'boundary-fixture' and output_format == 'human' else 2):
+                      argv = [str(binary), 'check']
+                      if scope == 'repository':
+                          argv += ['--diff', 'crates/ripr/examples/sample/example.diff']
+                      else:
+                          argv += ['--root', 'fixtures/boundary_gap/input', '--diff', 'fixtures/boundary_gap/diff.patch']
+                      argv += ['--format', output_format]
+                      # Hold display state constant instead of masking arbitrary
+                      # output. The baseline's first fixture Human had the legend.
+                      if output_format == 'human':
+                          argv += ['--legend']
+                      label = f'{scope}-{output_format}-{repeat}'
+                      stdout = evidence / (label + '.stdout')
+                      stderr = evidence / (label + '.stderr')
+                      begin = time.perf_counter()
+                      stopped = False
+                      with stdout.open('wb') as out, stderr.open('wb') as err:
+                          process = subprocess.Popen(argv, cwd=subject, env=dict(os.environ, RIPR_CACHE_DIR=str(cache)), stdout=out, stderr=err, start_new_session=True)
+                          try:
+                              code = process.wait(timeout=30)
+                          except subprocess.TimeoutExpired:
+                              stopped = True
+                              os.killpg(process.pid, signal.SIGTERM)
+                              try:
+                                  code = process.wait(timeout=5)
+                              except subprocess.TimeoutExpired:
+                                  os.killpg(process.pid, signal.SIGKILL)
+                                  code = process.wait()
+                      elapsed = time.perf_counter() - begin
+                      row = dict(scope=scope, format=output_format, repeat=repeat, argv=argv, binary_sha256=binary_sha, elapsed_seconds=elapsed, exit_code=code, external_stop=stopped, cache_condition='empty-ripr-cache' if repeat == 0 else 'repeat', stdout_bytes=stdout.stat().st_size, stdout_sha256=hashlib.sha256(stdout.read_bytes()).hexdigest())
+                      rows.append(row)
+                      (evidence / 'candidate-measurements.json').write_text(json.dumps(rows, indent=2) + '\n')
+                      print('CANDIDATE', json.dumps(row), flush=True)
+                      assert not stopped and code == 0, 'candidate failed to complete; do not publish'
+                      assert stdout.stat().st_size > 0
+                      if output_format == 'json':
+                          report = json.loads(stdout.read_text())
+                          assert report['analysis_outcome']['analysis_complete'] is True
+                          assert not report['analysis_outcome']['outcome']['limitations']
+                          assert len(report['findings']) == (4 if scope == 'repository' else 1)
+                      if scope == 'boundary-fixture' and output_format == 'human':
+                          assert elapsed < 1.0, 'reference smoke budget not met on this runner'
+                      baseline = evidence / f'baseline-{scope}-{output_format}-0.stdout'
+                      if baseline.exists():
+                          same = baseline.read_bytes() == stdout.read_bytes()
+                          row['baseline_stdout_byte_identical'] = same
+                          print('OUTPUT_EQUIVALENCE', scope, output_format, repeat, same, flush=True)
+                          assert same, 'completed baseline output changed; inspect rather than bless'
+              (evidence / 'candidate-measurements.json').write_text(json.dumps(rows, indent=2) + '\n')
+          # One extra literal default-human run proves the documented command,
+          # without --legend, also completes. Its display state is reported.
+          argv = [str(binary), 'check', '--root', 'fixtures/boundary_gap/input', '--diff', 'fixtures/boundary_gap/diff.patch']
+          result = subprocess.run(argv, cwd=subject, capture_output=True, timeout=10)
+          (evidence / 'documented-command.stdout').write_bytes(result.stdout)
+          (evidence / 'documented-command.stderr').write_bytes(result.stderr)
+          assert result.returncode == 0 and result.stdout
+          print('DOCUMENTED_COMMAND exit=0 bytes=' + str(len(result.stdout)))
+          PY
+          git diff --exit-code
+          git -C ../subject diff --exit-code
+      - name: Publish only the qualified candidate branch
+        working-directory: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/$GITHUB_REPOSITORY/git/ref/heads/$CANDIDATE_BRANCH --jq .object.sha)" = "$BASE"
+          test -z "$(git status --porcelain)"
+          test "$(git diff --name-only "$BASE" HEAD | wc -l)" = 4
+          # No force, main update, release, credential persistence or PR admission.
+          gh auth setup-git
+          git push origin "HEAD:refs/heads/$CANDIDATE_BRANCH"
+          test "$(gh api repos/$GITHUB_REPOSITORY/git/ref/heads/$CANDIDATE_BRANCH --jq .object.sha)" = "$(git rev-parse HEAD)"
+          echo 'candidate_published=true; independent review and required qualification remain' | tee -a "$EVIDENCE/status.txt"
+      - name: Retain bounded native proof
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: empty-stub-scope-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/empty-stub-scope-proof/*.txt
+            ${{ runner.temp }}/empty-stub-scope-proof/*.json
+            ${{ runner.temp }}/empty-stub-scope-proof/*.sha
+            ${{ runner.temp }}/empty-stub-scope-proof/*.tree
+            ${{ runner.temp }}/empty-stub-scope-proof/*.patch
+            ${{ runner.temp }}/empty-stub-scope-proof/*.diff
+            ${{ runner.temp }}/empty-stub-scope-proof/*.command
+            ${{ runner.temp }}/empty-stub-scope-proof/*.stdout
+            ${{ runner.temp }}/empty-stub-scope-proof/*.stderr
+          if-no-files-found: error
+          retention-days: 14
