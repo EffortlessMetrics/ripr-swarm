@@ -1,0 +1,6 @@
+# Registers the AVA macro-form callback regression (#10964).
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::reads_callback_after_a_named_macro",
+]

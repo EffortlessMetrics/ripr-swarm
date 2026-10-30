@@ -28,6 +28,37 @@ pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
 const PRODUCER_DISCRIMINATOR_EVIDENCE: &str = "producer-owned missing discriminator fact";
 const SAFE_TEST_TARGET_EVIDENCE: &str = "safe test target";
 
+/// Plain-language rendering of one readiness-evidence string for human
+/// output surfaces only (#10644). A reader cannot act on the internal fact
+/// code, so each known discriminator kind maps to the test evidence the
+/// route still needs. Machine-readable readiness (card wire data, JSON
+/// records) keeps the stable internal strings; consumers of those fields
+/// never pass them through this mapping, and an unrecognized string passes
+/// through unchanged rather than inventing a taxonomy.
+pub(crate) fn humanize_evidence(evidence: &str) -> String {
+    const FACT_PREFIX: &str = "producer-owned missing discriminator fact: ";
+    // #10691: the internal "observable sink" noun becomes plain words on the
+    // human screens; the machine list keeps the stable code.
+    if evidence == "observable sink localization" {
+        return "a way to follow the changed value to something a test can check".to_string();
+    }
+    if let Some(kind) = evidence.strip_prefix(FACT_PREFIX) {
+        let phrase = match kind {
+            "boundary_value" => "a test assertion that pins the changed boundary value exactly",
+            "error_variant" => "a test assertion that observes the changed error variant",
+            "return_value" => "a test assertion that checks the changed return value",
+            "field_value" => "a test assertion that checks the changed field value",
+            "effect" => "a test that observes the changed effect",
+            "match_arm_taken" => "a test assertion that pins which match arm runs",
+            "call_site" => "a test that reaches the changed call",
+            _ => "a test assertion that discriminates the changed behavior exactly",
+        };
+        phrase.to_string()
+    } else {
+        evidence.to_string()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RepairRouteState {
@@ -223,11 +254,89 @@ fn incomplete_stage_evidence(class: SeamGripClass) -> &'static str {
     }
 }
 
+/// The missing/required-evidence string for a discriminator kind. The one
+/// producer of this format; human refusal text that needs to recognise a kind
+/// goes through [`is_boundary_value_discriminator_evidence`] instead of parsing
+/// the string itself.
+pub(crate) fn producer_discriminator_evidence(kind: &str) -> String {
+    format!("{PRODUCER_DISCRIMINATOR_EVIDENCE}: {kind}")
+}
+
+/// The `ripr agent stub --kind` spelling for a missing discriminator item
+/// whose gap has a working hand-written route, if any.
+pub(crate) fn stub_kind_for_missing_evidence(item: &str) -> Option<&'static str> {
+    let kind = item
+        .strip_prefix(PRODUCER_DISCRIMINATOR_EVIDENCE)?
+        .strip_prefix(": ")?;
+    match kind {
+        "return_value" => Some("return_value"),
+        "error_variant" => Some("error_path"),
+        "boundary_value" => Some("predicate"),
+        _ => None,
+    }
+}
+
+/// Whether a readiness evidence item names the boundary-value discriminator.
+pub(crate) fn is_boundary_value_discriminator_evidence(item: &str) -> bool {
+    item == producer_discriminator_evidence(
+        RequiredDiscriminator::BoundaryValue {
+            description: String::new(),
+        }
+        .as_str(),
+    )
+}
+
+/// The seam-side twin of `check`'s boundary-observed weak-oracle gate (#10683;
+/// `domain::boundary_input_observed_with_weak_oracle` is the finding side): a
+/// weakly gripped predicate boundary whose activation is observed, with no
+/// missing boundary fact left to name, and whose only credited related oracle
+/// is a weak check on a direct, admitted existing Rust test. Returns that test:
+/// the remaining work is strengthening its assertion, not writing a new test.
+/// Guidance only; repair eligibility is decided by `repair_packet_eligibility`
+/// and stays fail-closed (this seam has no discriminator fact, so it is never
+/// repair-ready).
+pub(crate) fn boundary_observed_weak_oracle_test(
+    entry: &ClassifiedSeam,
+) -> Option<&RelatedTestGrip> {
+    let evidence = &entry.evidence;
+    if entry.seam.kind() != SeamKind::PredicateBoundary
+        || entry.class != SeamGripClass::WeaklyGripped
+        || evidence.activate.state != StageState::Yes
+        || !evidence.missing_discriminators.is_empty()
+        // Parity with the finding-side gate: the discriminate stage must
+        // itself grade the oracle weak.
+        || evidence.discriminate.state != StageState::Weak
+        || cross_language_oracle_visibility_unresolved(entry)
+        || cross_language_test_target_unresolved(entry)
+        // The activation stage aggregates observed boundary values across all
+        // related tests, so with several related tests the observer of the
+        // boundary input may not be the weakly asserting one. Name a test only
+        // when it is the sole related test, so the observer is unambiguous;
+        // otherwise withhold the claim (previous guidance applies).
+        || evidence.related_tests.len() != 1
+        || evidence.related_tests.iter().any(|test| {
+            matches!(
+                test.oracle_strength,
+                OracleStrength::Strong | OracleStrength::Medium
+            )
+        })
+    {
+        return None;
+    }
+    evidence
+        .related_tests
+        .iter()
+        .find(|test| {
+            test.relation_reason == RelationReason::DirectOwnerCall
+                && test.test_target.is_some()
+                && test.oracle_strength == OracleStrength::Weak
+        })
+        .map(Arc::as_ref)
+}
+
 fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> RepairRouteReadiness {
-    let discriminator_evidence = format!(
-        "{PRODUCER_DISCRIMINATOR_EVIDENCE}: {}",
-        seam.required_discriminator().as_str()
-    );
+    let discriminator_evidence =
+        producer_discriminator_evidence(seam.required_discriminator().as_str());
     let required = vec![
         discriminator_evidence.clone(),
         SAFE_TEST_TARGET_EVIDENCE.to_string(),
@@ -799,7 +908,7 @@ mod tests {
 
     use super::{
         ClassifiedSeam, RepairPacketIneligibility, RepairTargetSelection,
-        cross_language_oracle_visibility_unresolved, discriminator_fact_matches,
+        cross_language_oracle_visibility_unresolved, discriminator_fact_matches, humanize_evidence,
         is_safe_for_repair_packet, repair_packet_eligibility, repair_packet_queue_visible,
     };
     use crate::analysis::new_test_target::{
@@ -913,6 +1022,99 @@ mod tests {
             blocker: None,
             owner_inline_region: None,
         }
+    }
+
+    #[test]
+    fn humanize_evidence_maps_each_discriminator_kind_to_plain_words() -> Result<(), String> {
+        let cases = [
+            (
+                "producer-owned missing discriminator fact: boundary_value",
+                "a test assertion that pins the changed boundary value exactly",
+            ),
+            (
+                "producer-owned missing discriminator fact: error_variant",
+                "a test assertion that observes the changed error variant",
+            ),
+            (
+                "producer-owned missing discriminator fact: return_value",
+                "a test assertion that checks the changed return value",
+            ),
+            (
+                "producer-owned missing discriminator fact: field_value",
+                "a test assertion that checks the changed field value",
+            ),
+            (
+                "producer-owned missing discriminator fact: effect",
+                "a test that observes the changed effect",
+            ),
+            (
+                "producer-owned missing discriminator fact: match_arm_taken",
+                "a test assertion that pins which match arm runs",
+            ),
+            (
+                "producer-owned missing discriminator fact: call_site",
+                "a test that reaches the changed call",
+            ),
+            // #10691: the internal "observable sink" noun is rendered in words.
+            (
+                "observable sink localization",
+                "a way to follow the changed value to something a test can check",
+            ),
+        ];
+        for (internal, plain) in cases {
+            if humanize_evidence(internal) != plain {
+                return Err(format!(
+                    "humanize_evidence({internal:?}) must be {plain:?}, got {:?}",
+                    humanize_evidence(internal)
+                ));
+            }
+            if humanize_evidence(internal).contains("producer-owned") {
+                return Err(format!(
+                    "humanized text leaks the internal phrase: {internal}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn humanize_evidence_falls_back_and_passes_non_fact_strings_through() -> Result<(), String> {
+        let unknown = humanize_evidence("producer-owned missing discriminator fact: future_kind");
+        if unknown.contains("producer-owned") || unknown.contains("future_kind") {
+            return Err(format!(
+                "unknown kind must not leak internal spelling, got {unknown:?}"
+            ));
+        }
+        for already_plain in ["safe test target", "incomplete evidence stage: activation"] {
+            if humanize_evidence(already_plain) != already_plain {
+                return Err(format!(
+                    "non-fact evidence must pass through unchanged, got {:?}",
+                    humanize_evidence(already_plain)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn readiness_data_keeps_internal_strings_for_machine_consumers() -> Result<(), String> {
+        // #10644 control: the humanizer is a render-boundary translation
+        // only; the producer-owned readiness vectors that JSON and card wire
+        // data carry must keep the stable internal strings.
+        let mut entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        entry.evidence.new_test_target = Some(inline_unit_admission());
+        let readiness = repair_packet_eligibility(&entry).readiness;
+        if !readiness
+            .required_evidence
+            .iter()
+            .any(|evidence| evidence.starts_with("producer-owned missing discriminator fact"))
+        {
+            return Err(format!(
+                "machine readiness must keep the internal string: {:?}",
+                readiness.required_evidence
+            ));
+        }
+        Ok(())
     }
 
     #[test]

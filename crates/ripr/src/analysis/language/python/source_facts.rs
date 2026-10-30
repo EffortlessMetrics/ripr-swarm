@@ -23,14 +23,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonSourceFacts {
     pub(super) file: PathBuf,
+    #[serde(skip, default = "super::fact_serde::python_language")]
     pub(super) language: &'static str,
     pub(super) owners: Vec<PythonOwner>,
     pub(super) tests: Vec<PythonTest>,
     /// Module-level `@pytest.fixture` functions (#4563).
     pub(super) fixtures: Vec<super::PythonFixtureDef>,
+    /// Fixture-reaching code `fixtures` does not record (#9619).
+    pub(super) fixture_side_effects: super::fixtures::FixtureSideEffects,
     /// Single-assert helper defs of the module (#9419).
     pub(super) helper_module: super::helper_assertions::PythonHelperModule,
     /// The file is a `conftest.py` that installs implicit setup around the
@@ -47,9 +50,17 @@ pub(super) struct PythonSourceFacts {
     /// Physical lines of every `import` / `from ... import` statement, at any
     /// nesting depth (a multi-line parenthesized import spans several lines).
     pub(super) import_line_ranges: Vec<RangeInclusive<usize>>,
+    /// Attribute names the file's statements assign, from this parse of the
+    /// original source; None when it does not parse. The workspace foreign
+    /// index reads it instead of parsing every file again (#10914).
+    pub(super) assigned_attributes: Option<Vec<String>>,
+    /// The foreign index's lexes of the source as written; filled only by
+    /// [`extract_workspace_source_facts`], so the workspace index reads them
+    /// instead of lexing every file again (#10914).
+    pub(super) foreign_lexes: Option<super::module_value::ForeignLexes>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonSourceFact {
     pub(super) kind: PythonSourceFactKind,
     pub(super) file: PathBuf,
@@ -61,7 +72,9 @@ pub(super) struct PythonSourceFact {
     pub(super) text: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub(super) enum PythonSourceFactKind {
     Module,
     Class,
@@ -112,7 +125,7 @@ impl PythonSourceFactKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonSourceLimitation {
     pub(super) kind: StaticLimitKind,
     pub(super) evidence: String,
@@ -619,6 +632,14 @@ pub(super) fn source_facts_syntax_parse_error(
     })
 }
 
+/// [`extract_source_facts`] for a workspace file the foreign index will read:
+/// also lexes the source as written for that index (#10914).
+pub(super) fn extract_workspace_source_facts(file: &Path, source: &str) -> PythonSourceFacts {
+    let mut facts = extract_source_facts(file, source);
+    facts.foreign_lexes = Some(super::module_value::ForeignLexes::of(source));
+    facts
+}
+
 pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFacts {
     let mut snapshot = PythonSourceFacts {
         file: file.to_path_buf(),
@@ -626,6 +647,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         owners: Vec::new(),
         tests: Vec::new(),
         fixtures: Vec::new(),
+        fixture_side_effects: super::fixtures::FixtureSideEffects::default(),
         helper_module: super::helper_assertions::PythonHelperModule::default(),
         conftest_implicit_setup: false,
         conftest_declares_fixture_or_hook: false,
@@ -633,6 +655,8 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         limitations: Vec::new(),
         docstring_line_ranges: Vec::new(),
         import_line_ranges: Vec::new(),
+        assigned_attributes: None,
+        foreign_lexes: None,
     };
     let module = match parse_module_result(file, source) {
         Ok(Mod::Module(module)) => module,
@@ -654,16 +678,22 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
             return snapshot;
         }
     };
+    snapshot.assigned_attributes = Some(super::module_constants::assigned_attribute_names(
+        &module.body,
+    ));
     // A plain test's calls to a same-file assertion helper read as the
     // helper's asserts (#9636); extract from the rewritten source, which keeps
-    // every line number.
+    // every line number. The foreign index reads the file as written, so the
+    // assigned attributes stay those of the original source.
     if is_test_file(file)
         && let Some(inlined) = super::helper_inline::inline_test_helpers(source, &module.body)
         // Defence in depth: a rewrite that fails to parse degrades to the
         // original source (unknown), never to a file with no tests.
         && matches!(parse_module_result(file, &inlined), Ok(Mod::Module(_)))
     {
-        return extract_source_facts(file, &inlined);
+        let mut rewritten = extract_source_facts(file, &inlined);
+        rewritten.assigned_attributes = snapshot.assigned_attributes;
+        return rewritten;
     }
     // One line-start index per file; every line lookup below is a binary
     // search against it rather than a rescan from byte 0 (#4495).
@@ -703,6 +733,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
     snapshot
         .owners
         .push(module_owner(file, source, module_range, &imports));
+    let module_values = super::module_constants::module_stable_names(source, &module.body);
     collect_tests_from_statements(
         file,
         source,
@@ -712,6 +743,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         TestImportContext {
             body: &imports,
             definition: &[],
+            module_values: &module_values,
             standard_unittest_list: false,
             subclassed: false,
             admission: &PythonAdmissionContext::of_module(
@@ -723,6 +755,8 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &mut snapshot.tests,
     );
     snapshot.fixtures = super::fixtures::collect_fixture_defs(file, source, &module.body, &imports);
+    snapshot.fixture_side_effects =
+        super::fixtures::collect_fixture_side_effects(source, &module.body, &imports);
     snapshot.helper_module =
         super::helper_assertions::collect_helper_module(file, source, &module.body);
     snapshot.conftest_implicit_setup = file.file_name().and_then(|name| name.to_str())

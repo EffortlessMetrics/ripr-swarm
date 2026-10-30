@@ -1,0 +1,51 @@
+{
+  "case_id": "py-trap-wrapped-finally",
+  "subject_id": "authored-py-trap-kit",
+  "diff": "cases/py-trap-wrapped-finally.diff",
+  "anchor": {
+    "file": "trapkit/core.py",
+    "line": 137
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_inside_reraising_wrapper_with_finally_return",
+  "hard_case": "False-credit trap: the wrapper looks like it re-raises but swallows the pin.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return b + a",
+        "mutated_line": "return b + a",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 7 + 3 is 10, not 21"
+      },
+      {
+        "replacement": "return b / a",
+        "mutated_line": "return b / a",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 7 / 3 is not 21"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Trap: the exact pin runs inside a wrapper whose handler re-raises but whose finally clause returns, which discards the exception, AssertionError included. Negative for the bounded wrapper rule (RIPR-SPEC-0238 rule 27).",
+  "labeling_observation": {
+    "ripr_commit": "e9b163d1",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

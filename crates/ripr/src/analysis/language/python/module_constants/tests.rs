@@ -322,6 +322,7 @@ fn mock_patching_in_a_test_file_counts_as_a_dynamic_writer() {
     for source in [
         "from unittest import mock\n\n@mock.patch('pricing.DISCOUNT_THRESHOLD', 5)\ndef test_x():\n    pass\n",
         "from unittest.mock import patch\nimport pricing\n\ndef test_x():\n    with patch.object(pricing, 'DISCOUNT_THRESHOLD', 5):\n        pass\n",
+        "import pricing\n\neval(\"globals()\")[\"DISCOUNT_THRESHOLD\"] = 5000\n",
     ] {
         assert!(super::writes_namespace_dynamically(source), "{source}");
     }
@@ -336,6 +337,7 @@ fn dynamic_namespace_writers_unresolve_owner_constants() -> Result<(), String> {
         "importlib.reload(pricing)",
         "pricing.__setattr__('DISCOUNT_THRESHOLD', 5)",
         "delattr(pricing, 'DISCOUNT_THRESHOLD')",
+        "eval(\"globals().update(DISCOUNT_THRESHOLD=5)\")",
     ] {
         let source = format!(
             "import importlib\nimport src.pricing as pricing\nDISCOUNT_THRESHOLD = 10_000\n{writer}\n{OWNER}"

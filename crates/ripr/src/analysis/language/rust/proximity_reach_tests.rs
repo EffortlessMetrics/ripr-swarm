@@ -293,7 +293,7 @@ fn d1(x: i64) -> i64 { inner_rate(x) }
 }
 
 #[test]
-fn a_forwarding_helper_chain_relates_and_establishes_reach_without_credit() -> Result<(), String> {
+fn a_forwarding_helper_chain_relates_and_credits_an_exact_entry_pin() -> Result<(), String> {
     // A same-file test that reaches a private helper through its forwarding
     // caller relates by the chain, not file proximity.
     let fixture = Fixture::new(
@@ -316,11 +316,12 @@ mod tests {
     )?;
     let finding = fixture.rate_finding()?;
     // RIPR-SPEC-0159: the chain relation outranks file proximity, so the
-    // same-file test now relates to `inner_rate` through `outer` as a
-    // `helper_owner_call` and reach reads yes. The wrapper's return-value
-    // oracle is not credited for the helper's change (no return-value
-    // crediting through wrappers), so the class stays `weakly_exposed`
-    // without the transitive-reach limit.
+    // same-file test relates to `inner_rate` through `outer` as a
+    // `helper_owner_call` and reach reads yes. `outer` hands the helper's
+    // result on unchanged, both are unique bare-name functions of one scope,
+    // and the exact `outer(4) == 12` pin moves with the helper (free-call
+    // entry pin, #9638), so the class is `exposed` without the
+    // transitive-reach limit.
     assert!(
         finding
             .related_tests
@@ -330,7 +331,7 @@ mod tests {
         finding.related_tests
     );
     assert_eq!(finding.ripr.reach.state, StageState::Yes, "{finding:?}");
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.class, ExposureClass::Exposed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     assert!(
         !finding

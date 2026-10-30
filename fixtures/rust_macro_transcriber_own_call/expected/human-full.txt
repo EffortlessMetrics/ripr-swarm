@@ -1,0 +1,91 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_macro_transcriber_own_call/input
+
+Summary: 2 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 1 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+WARNING ./src/lib.rs:2
+  id: probe:src_lib.rs:predicate:7ce86f3b
+
+Changed
+  before: n > 100
+  after:  n >= 100
+
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  src/lib.rs::bulk
+  gap id (for scripts): gap:rust:src/lib.rs:bulk:predicate_boundary:predicate:n==100
+
+Static exposure
+  infection_unknown (warning, confidence 0.66)
+
+Evidence
+  - reach weak: No test is seen calling bulk; tests share only its file or a name token: small_orders_are_not_bulk
+  - infection unknown: Related tests pass no literal ripr can compare with the changed boundary [100] (inputs are strings, computed values or fixtures); activation/infection is unknown, and if a test input drives the compared value, one that sits exactly on the boundary would settle it
+  - propagation yes: Changed behavior appears to influence returned value: n >= 100
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator unknown: Assertions exist, but oracle strength is unknown
+  - local flow reaches returned value: n >= 100 (line 2)
+  - related test src/lib.rs:15 small_orders_are_not_bulk uses an unclassified oracle, not graded against this probe: check_small!(false); misses: no established call path to the changed code; linked by name only
+  - source assertion argument value false at line 16
+
+Weakness
+  - No detected boundary input for the changed predicate
+  - No strong discriminator was detected
+  - Related tests pass no literal ripr can compare with the changed boundary [100] (inputs are strings, computed values or fixtures); activation/infection is unknown, and if a test input drives the compared value, one that sits exactly on the boundary would settle it
+
+Stop reasons:
+  - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
+    Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
+
+Next step
+  Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast probe:src_lib.rs:predicate:7ce86f3b
+  ripr context --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast --at probe:src_lib.rs:predicate:7ce86f3b
+
+WARNING ./src/lib.rs:2
+  id: probe:src_lib.rs:return_value:6b389299
+
+Changed
+  before: n > 100
+  after:  n >= 100
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::bulk
+  gap id (for scripts): gap:rust:src/lib.rs:bulk:return_value:return_value:n>=100
+
+Static exposure
+  weakly_exposed (warning, confidence 0.66)
+
+Evidence
+  - reach weak: No test is seen calling bulk; tests share only its file or a name token: small_orders_are_not_bulk
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: n >= 100
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
+  - local flow reaches returned value: n >= 100 (line 2)
+  - related test src/lib.rs:15 small_orders_are_not_bulk uses an unclassified oracle, not graded against this probe: check_small!(false); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - source assertion argument value false at line 16
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast probe:src_lib.rs:return_value:6b389299
+  ripr context --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast --at probe:src_lib.rs:return_value:6b389299

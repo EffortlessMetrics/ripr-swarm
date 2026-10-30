@@ -52,5 +52,8 @@
     "packet": "packets/perl-testmore-shipping-smoke-ok.json",
     "sha256": "662b96692b3fd6e3594aa178c4ce72bf2346df09051c0d5b91f75bcc30f37024",
     "provenance": "producer"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0235#2"
+  ]
 }

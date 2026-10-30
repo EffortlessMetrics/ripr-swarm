@@ -1,0 +1,18 @@
+# RIPR-SPEC-0028: an operator swap around an imported call (#9619).
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::a_pinned_operator_swap_around_an_imported_call_is_credited",
+  "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::an_assertion_both_operators_satisfy_is_not_credited",
+  "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::an_assertion_that_does_not_pin_the_call_is_not_credited",
+  "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::an_edit_that_is_more_than_an_operator_swap_is_not_credited",
+  "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::an_edit_that_moves_one_operand_of_the_same_length_is_not_credited",
+  "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::a_callee_that_is_not_one_plain_workspace_function_is_not_credited",
+  "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::a_rewritten_owner_or_callee_is_not_credited",
+  "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::a_patched_owner_keeps_the_mocked_module_abstention",
+  "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::the_other_operand_may_be_an_expression_and_the_call_may_come_second",
+  "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::a_call_with_keywords_or_a_test_that_cannot_run_is_not_credited",
+  "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::a_workspace_type_with_its_own_arithmetic_keeps_the_abstention",
+  "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::arithmetic_reached_through_another_import_keeps_the_abstention",
+  "crates/ripr/src/analysis/language/python/imported_call_operator_tests.rs::replacing_the_owners_code_slots_elsewhere_is_not_credited",
+]

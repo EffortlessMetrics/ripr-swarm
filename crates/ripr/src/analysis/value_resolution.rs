@@ -414,6 +414,17 @@ impl<'a> ValueEnv<'a> {
         if allowed.is_empty() {
             return Vec::new();
         }
+        // Every accepted method name contains an allowed token, and the strip
+        // only drops comment tails and string contents (it keeps the quotes,
+        // so it never joins separated text), so an identifier in the stripped
+        // body is contiguous in the raw body. A body that names no allowed
+        // token holds no matching call: skip the strip and the scan (#10932).
+        if !allowed
+            .iter()
+            .any(|token| test_body.contains(token.as_str()))
+        {
+            return Vec::new();
+        }
         let mut out = Vec::new();
         for cap in scan_builder_calls(&strip_comments_and_strings(test_body)) {
             if !builder_method_matches_allowed(&cap.method, &allowed) {
@@ -651,6 +662,29 @@ pub(crate) fn test_let_bound_literal(body: &str, ident: &str) -> Option<String> 
     if is_mut || declarations.next().is_some() {
         return None;
     }
+    // A tuple or struct `let` pattern, a `for`, `if let`, closure or match
+    // binding of the same name is a second binding the simple-`let` scan above
+    // cannot see: `let n = 10; let (n, _) = (9, 1); owner(n)` calls with 9.
+    // The parser counts every pattern; the lexical scan covers macro bodies.
+    let source = if body.trim_start().starts_with("fn ") || body.trim_start().starts_with("#[") {
+        body.to_string()
+    } else {
+        format!("fn __test() {{\n{body}\n}}")
+    };
+    // `has_match_arm_binding` is not used: it reads a one-line `match n { .. }`
+    // scrutinee as an arm pattern, and the parser already counts real arms.
+    let lexical_rebind = cleaned.lines().any(|line| {
+        has_for_binding(line, ident)
+            || has_let_pattern_binding(line, "if let ", ident)
+            || has_let_pattern_binding(line, "while let ", ident)
+            || has_closure_param_binding(line, ident)
+    });
+    if crate::analysis::syntax::fn_name_binding_count(&source, ident) != Some(1)
+        || !non_simple_let_shadowing_lines(&cleaned, ident, 0).is_empty()
+        || lexical_rebind
+    {
+        return None;
+    }
     extract_let_bindings(body).remove(ident)
 }
 
@@ -820,7 +854,7 @@ fn is_integer_literal(value: &str) -> bool {
 
 /// Position of the first top-level `;` in `text`, or `None` if no
 /// such terminator exists. Top-level = depth 0 of `()`/`[]`/`{}`.
-fn top_level_semicolon(text: &str) -> Option<usize> {
+pub(super) fn top_level_semicolon(text: &str) -> Option<usize> {
     let mut depth: i32 = 0;
     for (i, b) in text.bytes().enumerate() {
         match b {
