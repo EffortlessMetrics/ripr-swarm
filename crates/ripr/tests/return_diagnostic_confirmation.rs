@@ -31,6 +31,7 @@ fn check_source(source: &str, test: &str) -> Result<String, String> {
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     )));
+    std::fs::create_dir_all(std::env::temp_dir()).map_err(|e| e.to_string())?;
     std::fs::create_dir(&dir.0).map_err(|e| e.to_string())?;
     std::fs::create_dir(dir.path().join("src")).map_err(|e| e.to_string())?;
     std::fs::create_dir(dir.path().join("tests")).map_err(|e| e.to_string())?;
@@ -78,6 +79,7 @@ fn direct_wording_observer_remains_exposed() -> Result<(), String> {
 #[test]
 fn native_mutants_separate_structural_and_value_observers() -> Result<(), String> {
     let root = std::env::temp_dir().join(format!("ripr-catalog-native-{}", std::process::id()));
+    std::fs::create_dir_all(std::env::temp_dir()).map_err(|e| e.to_string())?;
     std::fs::create_dir(&root).map_err(|e| e.to_string())?;
     struct Cleanup(std::path::PathBuf);
     impl Drop for Cleanup {
