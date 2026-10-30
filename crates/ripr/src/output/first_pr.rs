@@ -4960,7 +4960,7 @@ mod tests {
         let reason = packet["selected"]["reason"].as_str().unwrap_or_default();
         assert!(
             reason.contains(
-                "Static limitation `python_repair_card_unavailable` at `src/pricing.py:10`: this Python preview finding has no repair card (static evidence names no concrete missing discriminator)"
+                "Static limitation `python_repair_card_unavailable` at `src/pricing.py:10`: this Python preview finding has no repair card (static evidence cannot bind `DISCOUNT_THRESHOLD` to a test input, so the boundary equality cannot become a repair target)"
             ),
             "{reason}"
         );
