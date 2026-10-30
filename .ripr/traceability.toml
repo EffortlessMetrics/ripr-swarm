@@ -3341,6 +3341,14 @@ tests = [
   "crates/ripr/src/lsp/backend.rs::workspace_input_tests::typescript_detection_inputs_classify_like_the_detector",
   "crates/ripr/src/lsp/backend.rs::workspace_input_tests::dynamic_watchers_cover_the_canonical_detection_input_set",
   "crates/ripr/src/lsp/tests.rs::watched_typescript_inputs_reload_config_and_refresh_analysis",
+  "crates/ripr/src/domain/confidence_basis.rs::tests::distinct_evidence_gets_distinct_basis_for_the_same_class",
+  "crates/ripr/src/domain/confidence_basis.rs::tests::exposed_with_exact_oracle_carries_only_the_adapter_caps",
+  "crates/ripr/src/domain/confidence_basis.rs::tests::line_names_language_and_denies_rust_comparability",
+  "crates/ripr/src/domain/confidence_basis.rs::tests::exposed_without_a_strong_oracle_is_capped_on_the_oracle",
+  "crates/ripr/src/domain/confidence_basis.rs::tests::remaining_arms_name_their_own_reason",
+  "crates/ripr/src/output/json/formatter.rs::tests::confidence_basis_fields_write_nothing_when_empty",
+  "crates/ripr/src/output/json/formatter.rs::tests::confidence_basis_fields_render_valid_escaped_json",
+  "crates/ripr/src/output/json/report.rs::tests::finding_serde_skips_an_empty_confidence_basis_and_round_trips_a_set_one",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -3367,6 +3375,9 @@ code = [
   "crates/ripr/src/output/json/report.rs",
   "crates/ripr/src/output/perl_preview_card.rs",
   "crates/ripr/src/analysis/language/typescript/mod.rs",
+  "crates/ripr/src/domain/confidence_basis.rs",
+  "crates/ripr/src/output/json/formatter.rs",
+  "crates/ripr/src/domain/context_packet.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0026-language-adapter-contract.md",
