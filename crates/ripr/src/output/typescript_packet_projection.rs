@@ -90,6 +90,18 @@ pub(crate) enum TargetAssertionShape {
         operand: String,
         value: i64,
     },
+    /// The discriminator is a `typeof` kind test (`typeof input == "function"`,
+    /// #11196): the missing assertion calls the owner with a value OF that
+    /// kind. The observed input is never reused (a repeat of it is the call
+    /// the finding is weak on), and the kind's name as a string is not a value
+    /// of the kind it names. `shape` states the kind with an example in place
+    /// of the argument, and the packet stays delegatable.
+    KindInput {
+        shape: String,
+        observed_call: String,
+        discriminator: String,
+        kind: String,
+    },
 }
 
 /// The analysis-side boundary input fact (`typescript_boundary_input:
@@ -226,7 +238,8 @@ impl TargetAssertionShape {
             Self::Unreachable { shape, .. }
             | Self::UnresolvedBoundary { shape, .. }
             | Self::UnboundOperand { shape, .. }
-            | Self::DerivedBoundary { shape, .. } => shape,
+            | Self::DerivedBoundary { shape, .. }
+            | Self::KindInput { shape, .. } => shape,
         }
     }
 
@@ -235,7 +248,7 @@ impl TargetAssertionShape {
     /// eligible through the normal complete-contract projection.
     fn packet_ineligibility_reason(&self) -> Option<String> {
         match self {
-            Self::Observed { .. } | Self::DerivedBoundary { .. } => None,
+            Self::Observed { .. } | Self::DerivedBoundary { .. } | Self::KindInput { .. } => None,
             Self::Unreachable {
                 observed_call,
                 discriminator,
@@ -296,6 +309,17 @@ impl TargetAssertionShape {
                      re-run `ripr check` before writing the assertion."
                 ))
             }
+            Self::KindInput {
+                observed_call,
+                discriminator,
+                kind,
+                ..
+            } => Some(format!(
+                "Do not reuse the observed call `{observed_call}` or pass the string \"{kind}\"; \
+                 the missing discriminator `{discriminator}` is met by a value whose typeof is \
+                 \"{kind}\", written as that value in the call (a type assertion is allowed, \
+                 a variable is not). Pass it at the position of the parameter the guard reads."
+            )),
             Self::Unreachable { discriminator, .. } => Some(format!(
                 "Do not reuse the observed call input; it cannot reach the missing \
                  discriminator `{discriminator}`. Derive an input that hits the \
@@ -424,6 +448,21 @@ pub(crate) fn typescript_target_assertion_shape_with_boundary_facts(
     else {
         return observed_shape;
     };
+    // A `typeof` kind test is met by a value of that kind at the guard's
+    // parameter, whatever the observed oracle looks like (#11196).
+    if let Some(kind) = typeof_kind_of_discriminator(discriminator)
+        && let Some(owner) = owner_name.map(str::trim).filter(|owner| !owner.is_empty())
+    {
+        return TargetAssertionShape::KindInput {
+            shape: format!(
+                "expect({owner}(/* {} */)){expected_clause}",
+                typeof_kind_example(kind)
+            ),
+            observed_call: observed.to_string(),
+            discriminator: discriminator.to_string(),
+            kind: kind.to_string(),
+        };
+    }
     let Some(call) = parse_static_call_expression(observed) else {
         return observed_shape;
     };
@@ -500,6 +539,27 @@ pub(crate) fn typescript_target_assertion_shape_with_boundary_facts(
             discriminator: discriminator.to_string(),
             operand,
         },
+    }
+}
+
+/// The kind a `typeof <operand> == "<kind>"` discriminator tests.
+fn typeof_kind_of_discriminator(discriminator: &str) -> Option<&str> {
+    let rest = discriminator.trim().strip_prefix("typeof ")?;
+    let (_, kind) = rest.split_once(" == ")?;
+    let kind = kind.trim().strip_prefix('"')?.strip_suffix('"')?;
+    (!kind.is_empty() && kind.chars().all(|ch| ch.is_ascii_alphabetic())).then_some(kind)
+}
+
+/// The argument placeholder for a value of a `typeof` kind, with an example.
+fn typeof_kind_example(kind: &str) -> String {
+    match kind {
+        "function" => "a function value, e.g. () => value".to_string(),
+        "string" => "a string value, e.g. 'value'".to_string(),
+        "number" => "a number value, e.g. 1".to_string(),
+        "boolean" => "a boolean value, e.g. true".to_string(),
+        "object" => "an object value, e.g. {}".to_string(),
+        "undefined" => "undefined".to_string(),
+        other => format!("a value whose typeof is \"{other}\""),
     }
 }
 
@@ -2305,6 +2365,81 @@ pub(crate) mod tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn typeof_kind_discriminator_never_reuses_the_observed_input_or_the_kind_name() {
+        for (observed, discriminator, example) in [
+            (
+                "resolveValue(42)",
+                "typeof input == \"function\"",
+                "a function value, e.g. () => value",
+            ),
+            // An observed local binding is not a call this projection can
+            // read; the kind test still asks for a value of the kind.
+            (
+                "result",
+                "typeof input == \"string\"",
+                "a string value, e.g. 'value'",
+            ),
+        ] {
+            let shape = typescript_target_assertion_shape(
+                &ProbeFamily::Predicate,
+                observed,
+                Some(discriminator),
+                Some("resolveValue"),
+            );
+            assert!(
+                matches!(shape, TargetAssertionShape::KindInput { .. }),
+                "expected a kind-input shape for {discriminator}, got {shape:?}"
+            );
+            let shape = shape.shape();
+            assert_eq!(
+                shape,
+                format!("expect(resolveValue(/* {example} */)).toBe(expected)")
+            );
+            assert!(
+                !shape.contains("42") && !shape.contains("as any"),
+                "{shape}"
+            );
+        }
+    }
+
+    #[test]
+    fn typeof_kind_shape_keeps_the_packet_delegatable_and_forbids_the_name_string() {
+        let shape = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "resolveValue(42)",
+            Some("typeof input == \"function\""),
+            Some("resolveValue"),
+        );
+        assert_eq!(shape.packet_ineligibility_reason(), None);
+        let stop = shape.boundary_stop_condition().unwrap_or_default();
+        assert!(
+            stop.contains("resolveValue(42)") && stop.contains("the string \"function\""),
+            "{stop}"
+        );
+    }
+
+    #[test]
+    fn a_non_typeof_discriminator_is_not_read_as_a_kind_test() {
+        for discriminator in [
+            "kind == \"function\"",
+            "typeof input == function",
+            "typeof input == \"\"",
+            "typeof input == \"two words\"",
+        ] {
+            let shape = typescript_target_assertion_shape(
+                &ProbeFamily::Predicate,
+                "resolveValue(42)",
+                Some(discriminator),
+                Some("resolveValue"),
+            );
+            assert!(
+                !matches!(shape, TargetAssertionShape::KindInput { .. }),
+                "{discriminator}: {shape:?}"
+            );
+        }
     }
 
     #[test]

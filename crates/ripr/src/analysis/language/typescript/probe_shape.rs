@@ -331,6 +331,12 @@ pub(crate) fn typescript_boundary_discriminator_with_shape(
             if operand_looks_like_call(left_raw) || operand_looks_like_call(right_raw) {
                 return None;
             }
+            // `typeof input === "function"` tests the KIND of `input`, so
+            // `input == "function"` would name a value the guard never
+            // compares (#11196). Name the kind test or name nothing.
+            if let Some(kind_test) = typeof_kind_test(&expression, idx, operator) {
+                return kind_test.map(|boundary| (boundary, false));
+            }
             let left = comparison_operand_before(&expression, idx)?;
             let right = comparison_operand_after(&expression, idx + operator.len())?;
             if is_simple_typescript_discriminator_operand(&left)
@@ -341,6 +347,61 @@ pub(crate) fn typescript_boundary_discriminator_with_shape(
         }
     }
     None
+}
+
+/// The `typeof <operand> == "<kind>"` discriminator of an equality test on
+/// a `typeof` expression. `None` when the comparison does not involve
+/// `typeof`; `Some(None)` when it does but names no checkable kind (two
+/// `typeof` sides, a relational operator, or a non-literal kind), so the
+/// caller withholds the discriminator rather than naming the type-name
+/// string as if it were the input.
+fn typeof_kind_test(expression: &str, idx: usize, operator: &str) -> Option<Option<String>> {
+    let left_raw = expression.get(..idx)?.trim_end();
+    let right_raw = expression.get(idx + operator.len()..)?.trim_start();
+    let left_operand = left_raw
+        .rsplit_once(char::is_whitespace)
+        .and_then(|(head, operand)| head.trim_end().ends_with("typeof").then_some(operand));
+    let right_operand = right_raw
+        .strip_prefix("typeof ")
+        .map(|rest| {
+            let end = rest
+                .find(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$' | '.')))
+                .unwrap_or(rest.len());
+            rest.get(..end).unwrap_or("")
+        })
+        .filter(|operand| !operand.is_empty());
+    if left_operand.is_none() && right_operand.is_none() {
+        return None;
+    }
+    if left_operand.is_some() && right_operand.is_some() {
+        return Some(None);
+    }
+    if !matches!(operator, "===" | "!==" | "==" | "!=") {
+        return Some(None);
+    }
+    let (operand, kind) = match (left_operand, right_operand) {
+        (Some(operand), None) => (
+            operand,
+            comparison_operand_after(expression, idx + operator.len()),
+        ),
+        (None, Some(operand)) => (operand, comparison_operand_before(expression, idx)),
+        _ => return Some(None),
+    };
+    let Some(kind) = kind else {
+        return Some(None);
+    };
+    let quote = kind.chars().next().filter(|ch| matches!(ch, '"' | '\''));
+    let body = quote.and_then(|quote| {
+        kind.strip_prefix(quote)
+            .and_then(|rest| rest.strip_suffix(quote))
+    });
+    let (Some(body), true) = (
+        body.filter(|body| !body.is_empty() && body.chars().all(|ch| ch.is_ascii_alphabetic())),
+        is_simple_typescript_discriminator_operand(operand) && !operand.contains(['"', '\'']),
+    ) else {
+        return Some(None);
+    };
+    Some(Some(format!("typeof {operand} == \"{body}\"")))
 }
 
 /// The boundary condition of a returned predicate: the condition of a

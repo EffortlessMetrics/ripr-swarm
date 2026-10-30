@@ -3492,6 +3492,15 @@ id = "RIPR-SPEC-0027"
 name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::typeof_guard_names_the_kind_test_not_the_type_name_string",
+  "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::typeof_guard_never_names_the_bare_operand_as_the_literal",
+  "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::non_typeof_comparisons_keep_their_discriminator",
+  "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::literal_argument_kind_reads_only_what_the_text_fixes",
+  "crates/ripr/src/output/typescript_packet_projection.rs::tests::typeof_kind_discriminator_never_reuses_the_observed_input_or_the_kind_name",
+  "crates/ripr/src/output/typescript_packet_projection.rs::tests::typeof_kind_shape_keeps_the_packet_delegatable_and_forbids_the_name_string",
+  "crates/ripr/src/output/typescript_packet_projection.rs::tests::a_non_typeof_discriminator_is_not_read_as_a_kind_test",
+  "crates/ripr/src/agent/artifact.rs::tests::still_open_refusal_says_why_from_the_artifact_discriminators",
+  "crates/ripr/src/agent/artifact.rs::tests::check_findings_gaps_read_the_missing_discriminator_the_artifact_states",
   "crates/ripr/src/analysis/language/typescript/tests/module_const_tests.rs::exported_scalar_constants_read_as_a_return_value_change",
   "crates/ripr/src/analysis/language/typescript/tests/module_const_tests.rs::non_ascii_constant_name_is_matched_in_the_tests",
   "crates/ripr/src/analysis/language/typescript/tests/module_const_tests.rs::computed_or_structured_initializers_are_not_scalar_constants",
@@ -3632,6 +3641,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::a_dropped_semicolon_before_a_comment_is_never_a_neutral_comment_edit"
 ]
 fixtures = [
+  "fixtures/typescript_typeof_kind_gap",
+  "fixtures/typescript_typeof_kind_exposed",
   "fixtures/typescript_empty_each",
   "fixtures/benches_harness_evidence",
   "fixtures/typescript_boundary_gap",
