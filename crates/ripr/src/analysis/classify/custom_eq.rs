@@ -462,7 +462,10 @@ fn import_shadows(index: &RustIndex, name: &str) -> bool {
                 .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
                 .next()
                 .unwrap_or("");
-            if matches!(root, "std" | "core" | "alloc") {
+            // A braced group can mix a std path with a foreign one
+            // (`use {std::io, outside::String};`), so only a plain std path
+            // is skipped; a group is read by its names like any other.
+            if matches!(root, "std" | "core" | "alloc") && !statement.contains('{') {
                 return false;
             }
             let glob =
@@ -722,6 +725,17 @@ mod tests {
         ));
         assert!(lenient(
             "use outside::*;\npub struct Line { sku: String }\n"
+        ));
+        // A braced group is read by its names, so a std path beside a foreign
+        // one cannot hide the foreign `String`.
+        assert!(lenient(
+            "use {std::io, outside::String};\npub struct Line { sku: String }\n"
+        ));
+        assert!(lenient(
+            "use std::{io, outside::String};\npub struct Line { sku: String }\n"
+        ));
+        assert!(!lenient(
+            "use std::{io, collections::BTreeMap};\npub struct Line { sku: String }\n"
         ));
         // Workspace-relative globs and std imports keep the std reading.
         assert!(!lenient(
