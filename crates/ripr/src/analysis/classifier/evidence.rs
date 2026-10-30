@@ -278,10 +278,53 @@ impl ClassifiedProbeEvidence {
             }
             other => other,
         });
+        // #10980: a related test whose assertion statically contradicts the
+        // changed owner's fold on BOTH versions fails everywhere and cannot
+        // notice the change, so its activation credit is withheld — the
+        // diff-side reading of the whole-test contradiction control the
+        // repo-seam activation authority enforces (#6026, #7007, #8610
+        // review), made base-relative because here the current body is the
+        // candidate under review: a row the candidate breaks is the
+        // discriminator itself, not a broken test. The diff surface reads
+        // the one owner in
+        // `test_grip_evidence::test_fails_on_both_diff_versions`, so
+        // identical evidence reaches one verdict on both surfaces. A clean
+        // or not-evaluable test keeps today's credit, so the fold can only
+        // withhold, and a contradiction whose reading the owner pin refuses
+        // is not established (RIPR-SPEC-0240): such a test keeps its credit
+        // and the refusal's own named-limit reading stands.
+        let activation_credited: Vec<&TestSummary> = context
+            .owner_fn
+            .map(|owner| {
+                test_summaries
+                    .iter()
+                    .copied()
+                    .filter(|test| {
+                        use crate::analysis::test_grip_evidence::{
+                            contradicted_assertion_reading_is_established,
+                            test_fails_on_both_diff_versions,
+                        };
+                        !test_fails_on_both_diff_versions(
+                            test,
+                            owner,
+                            context.probe.before.as_deref(),
+                            context.probe.after.as_deref(),
+                        ) || !contradicted_assertion_reading_is_established(
+                            test,
+                            owner,
+                            context.probe,
+                            pin_syntax,
+                            context.index,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|| test_summaries.to_vec());
+        let withheld_activation_tests = test_summaries.len() - activation_credited.len();
         let mut gathered = activation_and_boundary_input(
             context.probe,
             context.owner_fn,
-            &test_summaries,
+            &activation_credited,
             &flow_sinks,
             context.helper_chain.as_ref(),
             context.index,
@@ -398,6 +441,24 @@ impl ClassifiedProbeEvidence {
             owner_has_other_callers,
             assertion_macros_rebound,
         );
+        // #10980: when the whole-test contradiction withheld EVERY credited
+        // activation path (the repo-seam authority's own branch condition,
+        // #7007), the stage discloses the withholding instead of reading the
+        // withheld tests' literals as if they still ran. A credited test
+        // keeps its normal infection reading even when it passes no
+        // comparable values (a zero-argument owner), so this fires only on
+        // an empty credited set, never on empty observed values.
+        let infect = if withheld_activation_tests > 0 && activation_credited.is_empty() {
+            StageEvidence::new(
+                StageState::Unknown,
+                Confidence::Low,
+                format!(
+                    "Activation credit withheld from {withheld_activation_tests} related test(s): an assertion statically contradicts the changed owner's folded behavior, so that test fails at baseline and cannot credit activation"
+                ),
+            )
+        } else {
+            infect
+        };
         // #6796's computed-argument discipline, wrapper edition (#6672,
         // #6694): when the tests reach the owner only through the helper
         // chain and a chain entry argument is a computed expression
@@ -2344,6 +2405,173 @@ mod tests {
             &crate::analysis::classify::TransitiveReachIndex::new(context.index),
         );
         assert_eq!(evidence.classify(&probe), ExposureClass::Exposed);
+        Ok(())
+    }
+
+    /// #10980: a test whose boundary assertions statically contradict the
+    /// owner's fold (`assert!(is_adult(18)); assert!(!is_adult(18));`)
+    /// fails at baseline, so the diff surface withholds its activation
+    /// credit — the same whole-test rule the repo-seam activation
+    /// authority enforces (#7007, #8610 review) — and reads infection
+    /// unknown with that typed limitation instead of `exposed`. The clean
+    /// single-assertion spelling keeps its #10792 credit on this surface.
+    #[test]
+    fn a_whole_test_contradiction_withholds_diff_mode_activation() -> Result<(), String> {
+        use crate::domain::ExposureClass;
+
+        let classify_with = |test_body: &str| -> Result<(ExposureClass, String), String> {
+            let source = format!(
+                "pub fn is_adult(age: u32) -> bool {{\n    age >= 18\n}}\n\n\
+                 #[cfg(test)]\nmod tests {{\n    use super::*;\n\
+                 #[test]\nfn adult_boundary() {{\n{test_body}\n}}\n}}\n"
+            );
+            let path = PathBuf::from("src/lib.rs");
+            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: facts.functions.clone(),
+                tests: facts.tests.clone(),
+                files: [(path, facts)].into_iter().collect(),
+                ..Default::default()
+            });
+            crate::analysis::facts::compose_fixture_source_roles(
+                &mut index,
+                std::path::Path::new(""),
+            );
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.name == "is_adult")
+                .ok_or("missing owner")?;
+            let test = index
+                .tests()
+                .iter()
+                .find(|test| test.name == "adult_boundary")
+                .ok_or("missing test")?;
+            assert!(
+                !test.assertions.is_empty(),
+                "nonempty subject: the fixture must parse its assertions"
+            );
+            let probe = Probe {
+                id: ProbeId("probe:contradiction".to_string()),
+                location: SourceLocation::new("src/lib.rs", 2, 5),
+                owner: Some(owner.id.clone()),
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Control,
+                before: Some("age > 18".to_string()),
+                after: Some("age >= 18".to_string()),
+                expression: "age >= 18".to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            };
+            let context = ProbeContext::new(
+                &probe,
+                Some(owner),
+                vec![(test, RelationReason::DirectOwnerCall)],
+                false,
+                &index,
+                true,
+            );
+            let evidence = ClassifiedProbeEvidence::gather(
+                &context,
+                &probe.expression,
+                &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+            );
+            Ok((evidence.classify(&probe), evidence.infect.summary.clone()))
+        };
+
+        let (contradicted_class, contradicted_summary) =
+            classify_with("assert!(is_adult(18));\nassert!(!is_adult(18));")?;
+        assert_eq!(
+            contradicted_class,
+            ExposureClass::InfectionUnknown,
+            "the baseline-failing contradictory test must not credit diff-mode exposure: \
+             {contradicted_summary}"
+        );
+        assert!(
+            contradicted_summary.contains("statically contradicts"),
+            "the typed limitation must name the contradiction: {contradicted_summary}"
+        );
+
+        // Clean sibling control: the natural boolean credit survives on the
+        // diff surface; only the contradiction withholds.
+        let (clean_class, clean_summary) = classify_with("assert!(is_adult(18));")?;
+        assert_eq!(
+            clean_class,
+            ExposureClass::Exposed,
+            "the clean assertion must keep its credit: {clean_summary}"
+        );
+        Ok(())
+    }
+
+    /// #10980 review control: a credited test keeps its normal infection
+    /// reading when a sibling test is withheld, even when the credited test
+    /// passes no comparable values (a zero-argument owner whose literal
+    /// tail the equality fold reads). The sibling's stale literal
+    /// contradicts BOTH the candidate fold (7) and the reconstructed
+    /// baseline fold (6), so it is genuinely withheld, and the withholding
+    /// fires only on an empty credited set, so the clean test's reach keeps
+    /// infection `yes`. The literal `7` occurs exactly once in the owner
+    /// body, so the `after`→`before` reconstruction reaches the withheld
+    /// path.
+    #[test]
+    fn a_credited_zero_argument_test_keeps_infection_beside_a_withheld_sibling()
+    -> Result<(), String> {
+        use crate::domain::ExposureClass;
+
+        let source = "pub fn answer() -> i32 {\n    7\n}\n\n\
+             #[cfg(test)]\nmod tests {\n    use super::*;\n\
+             #[test]\nfn pins_new_value() {\nassert_eq!(answer(), 7);\n}\n\
+             #[test]\nfn stale_old_value() {\nassert_eq!(answer(), 5);\n}\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(path, facts)].into_iter().collect(),
+            ..Default::default()
+        });
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, std::path::Path::new(""));
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "answer")
+            .ok_or("missing owner")?;
+        let tests = index
+            .tests()
+            .iter()
+            .filter(|test| test.name == "pins_new_value" || test.name == "stale_old_value")
+            .map(|test| (test, RelationReason::DirectOwnerCall))
+            .collect::<Vec<_>>();
+        assert_eq!(tests.len(), 2, "nonempty subject: both fixture tests parse");
+        let probe = Probe {
+            id: ProbeId("probe:zero-arg-mixed".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 5),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Value,
+            before: Some("6".to_string()),
+            after: Some("7".to_string()),
+            expression: "7".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let context = ProbeContext::new(&probe, Some(owner), tests, false, &index, true);
+        let evidence = ClassifiedProbeEvidence::gather(
+            &context,
+            &probe.expression,
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+        );
+        assert_eq!(
+            evidence.infect.state,
+            StageState::Yes,
+            "the credited zero-argument test keeps infection credit: {}",
+            evidence.infect.summary
+        );
+        assert_ne!(
+            evidence.classify(&probe),
+            ExposureClass::InfectionUnknown,
+            "the mixed zero-argument case must not read infection unknown"
+        );
         Ok(())
     }
 
