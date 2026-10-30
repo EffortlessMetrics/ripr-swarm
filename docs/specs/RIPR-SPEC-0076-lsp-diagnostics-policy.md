@@ -116,6 +116,16 @@ The WARNING/INFORMATION mapping is owned by `SeverityConfig` (per
 `diagnostic_severity_for_grip_class_with_config`). No repair-packet
 completeness check applies. This exception is documented in the code.
 
+### Finding message
+
+A finding's Problems-panel text is its reconciled next step. When that step
+is the generic one and the finding's witness names a first missing
+discriminator that the step does not already quote, the message ends with
+` Missing check: `<value>`.` so editors that show only the message still name
+the concrete input or value. Preview findings, an empty value and a value
+longer than 80 characters leave the message unchanged. This changes wording
+only; class, severity and actionability are untouched.
+
 ### Limited / stale run policy
 
 When `snapshot_run_status` returns anything other than `"full"`
@@ -182,6 +192,7 @@ and status surfaces, and it cannot authorize full-run gap diagnostics.
 - `no_warning_for_static_limit_gap_record` — complete packet + static_limit_kind=Some → INFORMATION.
 - `limited_run_downgrades_finding_warnings` — snapshot with static_limit finding → run_status="limited" → finding WARNING downgrades to INFORMATION.
 - `stale_run_suppresses_gap_record_diagnostics` — StaleArtifact rejection → run_status="stale" → gap records suppressed (is_full_run=false).
+- `generic_next_step_names_the_missing_check_when_the_witness_has_one` — generic next step + witness missing value → message ends with ``Missing check: `value`.``; a step that already quotes the value, or no missing value, is unchanged.
 - `typed_incomplete_outcome_never_projects_as_full` — incomplete producer outcome → run_status="limited_incomplete_input" → full-run repair diagnostics suppressed.
 
 ## Implementation Mapping

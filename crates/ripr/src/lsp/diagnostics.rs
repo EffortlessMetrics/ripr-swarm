@@ -3828,6 +3828,13 @@ fn lsp_message(finding: &Finding) -> String {
     {
         return witness_message;
     }
+    // The recommended next step is generic ("add boundary tests ..."); the
+    // Problems panel row is the only text many editors show, so name the
+    // concrete missing input or value the witness already carries.
+    let base = match missing_check_suffix(finding, &base) {
+        Some(suffix) => format!("{base} {suffix}"),
+        None => base,
+    };
     if finding
         .language_status
         .as_ref()
@@ -3845,6 +3852,22 @@ fn lsp_message(finding: &Finding) -> String {
         return message;
     }
     base
+}
+
+/// `Missing check: `age == 18`.` for a finding whose witness names its first
+/// missing discriminator and whose message does not already say so. Only
+/// ordinary (non-preview) findings carry a witness, so a preview finding's
+/// message is unchanged.
+fn missing_check_suffix(finding: &Finding, base: &str) -> Option<String> {
+    if finding.language_status.is_some() {
+        return None;
+    }
+    let witness = DiagnosticWitness::from_finding(finding)?;
+    let missing = witness.missing_discriminators.first()?.value.trim();
+    if missing.is_empty() || missing.len() > 80 || base.contains(missing) {
+        return None;
+    }
+    Some(format!("Missing check: `{missing}`."))
 }
 
 fn absolute_finding_path(root: &Path, finding: &Finding) -> PathBuf {
@@ -5775,6 +5798,34 @@ mod diagnostic_policy_tests {
             "{message}"
         );
         assert!(!message.contains("is not observed"), "{message}");
+    }
+
+    #[test]
+    fn generic_next_step_names_the_missing_check_when_the_witness_has_one() {
+        let mut finding = policy_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.language_status = None;
+        finding.recommended_next_step =
+            Some("Add boundary tests for the changed threshold.".to_string());
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "age == 18".to_string(),
+            reason: "no test uses 18".to_string(),
+            flow_sink: None,
+        }];
+        let message = lsp_message(&finding);
+        assert_eq!(
+            message,
+            "Add boundary tests for the changed threshold. Missing check: `age == 18`."
+        );
+
+        // A step that already quotes the value is not repeated.
+        finding.recommended_next_step = Some("Test `age == 18` exactly.".to_string());
+        assert_eq!(lsp_message(&finding), "Test `age == 18` exactly.");
+
+        // No missing discriminator, no suffix.
+        finding.recommended_next_step = Some("Add a test.".to_string());
+        finding.activation.missing_discriminators.clear();
+        assert_eq!(lsp_message(&finding), "Add a test.");
     }
 
     #[test]
