@@ -51,6 +51,8 @@ const COMMAND: &str = "reports ci-packet";
 
 const REPORTS: &str = "target/ripr/reports";
 const COMMENTS_JSON: &str = "target/ripr/review/comments.json";
+/// Disables the check-JSON findings byte budget for one child (#11143).
+const CHECK_FINDINGS_BYTES_ENV: &str = "RIPR_CHECK_FINDINGS_BYTES";
 const REPO_EXPOSURE: &str = "target/ripr/reports/repo-exposure.json";
 const GATE_DECISION: &str = "target/ripr/reports/gate-decision.json";
 const BASELINE_DELTA: &str = "target/ripr/reports/baseline-debt-delta.json";
@@ -387,6 +389,13 @@ impl PacketRun {
     /// `ripr ARGS > OUT`: the file is truncated before the command runs, as
     /// the shell redirect did.
     fn ripr_to(&self, args: &[String], out: &str) -> StageResult {
+        self.ripr_to_with_env(args, out, &[])
+    }
+
+    /// [`Self::ripr_to`] with environment overrides for the child only. A
+    /// recorded run prefixes the command line with each `NAME=VALUE`, as a
+    /// shell would write it.
+    fn ripr_to_with_env(&self, args: &[String], out: &str, envs: &[(&str, &str)]) -> StageResult {
         let target = self.path(out);
         // Same symlink-refusing owner as every other advisory write: refuse a
         // planted link or non-regular leaf, then truncate by replacing the
@@ -406,15 +415,23 @@ impl PacketRun {
                 .map_err(|err| format!("cannot write {out}: {err}"))?;
         }
         if let Some(recorded) = &self.recorded {
+            let prefix: String = envs
+                .iter()
+                .map(|(name, value)| format!("{name}={value} "))
+                .collect();
             recorded
                 .borrow_mut()
-                .push(format!("ripr {} > {out}", args.join(" ")));
+                .push(format!("{prefix}ripr {} > {out}", args.join(" ")));
             return Ok(());
         }
-        self.spawn(args, Stdio::from(file))
+        self.spawn_with_env(args, Stdio::from(file), envs)
     }
 
     fn spawn(&self, args: &[String], stdout: Stdio) -> StageResult {
+        self.spawn_with_env(args, stdout, &[])
+    }
+
+    fn spawn_with_env(&self, args: &[String], stdout: Stdio, envs: &[(&str, &str)]) -> StageResult {
         if let Some(recorded) = &self.recorded {
             recorded
                 .borrow_mut()
@@ -429,6 +446,9 @@ impl PacketRun {
             .stdin(Stdio::null())
             .stdout(stdout)
             .stderr(Stdio::inherit());
+        for (name, value) in envs {
+            command.env(name, value);
+        }
         let shown = format!("ripr {}", args.join(" "));
         let status = OwnedProcess::spawn(command)
             .and_then(|mut child| child.wait())
@@ -1282,9 +1302,18 @@ impl PacketRun {
         self.mkdir("target/ripr/pr")?;
         self.mkdir("target/ripr/review")?;
         let base = format!("origin/{}", self.settings.base_ref);
-        if let Err(err) = self.ripr_to(
+        // `review-comments` fail-closed refuses a findings-bounded check
+        // document, and the default 1 MB findings budget engages at about 50
+        // findings, so an ordinary multi-file PR on a large codebase lost all
+        // PR guidance (#11143). This document is only read by
+        // `review-comments`, which applies its own brief limits, so the
+        // producer must hand it the complete findings array. Only this child
+        // gets the override; an operator-set smaller budget would refuse the
+        // same way and is not honored here.
+        if let Err(err) = self.ripr_to_with_env(
             &args(&["check", "--root", ".", "--base", &base, "--format", "json"]),
             "target/ripr/pr/check.json",
+            &[(CHECK_FINDINGS_BYTES_ENV, "0")],
         ) {
             println!(
                 "RIPR check did not produce a complete result ({}); review-comments will fail closed on the named artifact.",
@@ -2010,7 +2039,7 @@ mod tests {
             "ripr agent packet --root . --seam-id seam-1 --json > target/ripr/workflow/agent-packet.json.partial",
             "ripr reports gap-ledger --root . --repo-exposure target/ripr/reports/repo-exposure.json --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md",
             "capture origin/main...HEAD > target/ripr/reports/pr.diff",
-            "ripr check --root . --base origin/main --format json > target/ripr/pr/check.json",
+            "RIPR_CHECK_FINDINGS_BYTES=0 ripr check --root . --base origin/main --format json > target/ripr/pr/check.json",
             "ripr review-comments --root . --base origin/main --head HEAD --check-output target/ripr/pr/check.json --out target/ripr/review/comments.json",
             "ripr pr-comments plan --root . --pr-guidance target/ripr/review/comments.json --mode inline --event-name pull_request --pull-request 7 --head-repo owner/repo --base-repo owner/repo --out target/ripr/review/comment-publish-plan.json --out-md target/ripr/review/comment-publish-plan.md --existing-comments target/ripr/review/existing-comments.json --token-available --write-permission",
             "ripr check --root . --diff target/ripr/reports/pr.diff --format sarif > target/ripr/reports/ripr-findings.sarif",
@@ -2327,6 +2356,62 @@ mod tests {
         assert_eq!(
             run.failed,
             vec!["Required".to_string(), "Gate input".to_string()]
+        );
+        Ok(())
+    }
+
+    /// #11143: only the producer of `check.json` drops the findings byte
+    /// budget. Every other `ripr check` stage keeps the default bound.
+    #[test]
+    fn only_the_pr_guidance_check_drops_the_findings_budget() -> Result<(), String> {
+        let (packet, failed) = recorded_full_packet()?;
+        assert!(failed.is_empty(), "{failed:?}");
+        let unbounded: Vec<&str> = packet
+            .lines()
+            .filter(|line| line.contains("RIPR_CHECK_FINDINGS_BYTES"))
+            .collect();
+        assert_eq!(
+            unbounded,
+            vec![
+                "RIPR_CHECK_FINDINGS_BYTES=0 ripr check --root . --base origin/main --format json > target/ripr/pr/check.json"
+            ]
+        );
+        let bounded_checks = packet
+            .lines()
+            .filter(|line| line.starts_with("ripr check "))
+            .count();
+        assert!(bounded_checks >= 4, "{packet}");
+        Ok(())
+    }
+
+    /// The override reaches the child process and does not leak into the next
+    /// command: a plain spawn after it sees no override.
+    #[cfg(unix)]
+    #[test]
+    fn child_env_override_reaches_only_that_child() -> Result<(), String> {
+        let (base, root, _) = link_scratch("child-env")?;
+        let mut run = recording_run(&root);
+        run.recorded = None;
+        run.exe = PathBuf::from("sh");
+        let probe = args(&["-c", "printf '%s' \"${RIPR_CHECK_FINDINGS_BYTES-unset}\""]);
+        run.ripr_to_with_env(
+            &probe,
+            "target/ripr/reports/with.txt",
+            &[(CHECK_FINDINGS_BYTES_ENV, "0")],
+        )?;
+        run.ripr_to(&probe, "target/ripr/reports/without.txt")?;
+        let with = fs::read_to_string(root.join("target/ripr/reports/with.txt"))
+            .map_err(|e| e.to_string())?;
+        let without = fs::read_to_string(root.join("target/ripr/reports/without.txt"))
+            .map_err(|e| e.to_string())?;
+        let _ = fs::remove_dir_all(&base);
+        assert_eq!(with, "0");
+        // The parent test process may itself carry the variable; the child
+        // must only see what this process inherits, never "0" from the
+        // previous call.
+        assert_eq!(
+            without,
+            std::env::var("RIPR_CHECK_FINDINGS_BYTES").unwrap_or_else(|_| "unset".to_string())
         );
         Ok(())
     }

@@ -1542,6 +1542,14 @@ ripr review-comments \
   --out target/ripr/review/comments.json
 ```
 
+The `target/ripr/pr/check.json` it reads is written by the packet with the
+check findings byte budget disabled (`RIPR_CHECK_FINDINGS_BYTES=0` on that one
+child, #11143). The renderer refuses a findings-bounded document, and the
+default 1 MB budget engages at about 50 findings, so a bounded input would
+cost an ordinary multi-file PR all of its guidance. The renderer applies its
+own brief limits, so the author still sees a short ranked summary. Other
+`ripr check` stages in the packet keep the default bound.
+
 That renderer writes JSON and Markdown under `target/ripr/review/` and does
 not post to GitHub by itself. The generated workflow then:
 
