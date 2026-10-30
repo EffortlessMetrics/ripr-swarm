@@ -200,12 +200,40 @@ pub(super) fn read_gap_ledger_impl(
         }
         Err(error) => {
             config_errors.push(format!(
-                "required gap decision ledger input {} is invalid: {error}",
-                display_path(path)
+                "required gap decision ledger input {} is invalid: {error}{}",
+                display_path(path),
+                gap_ledger_source_hint(&text),
             ));
             Some(Vec::new())
         }
     }
+}
+
+/// Names the way forward for a mode that needs a baseline the run does not
+/// have (#11206): start non-blocking, then create the baseline from a real
+/// gate decision.
+const BASELINE_START_HINT: &str = "To start without blocking, use --mode visible-only \
+     (RIPR_GATE_MODE=visible-only). To adopt baseline-check, create a baseline from a \
+     gate decision with `ripr baseline create --from target/ripr/reports/gate-decision.json`, \
+     commit it, and pass it with --baseline (see docs/BASELINE_LEDGER_WORKFLOW.md)";
+
+/// A `--gap-ledger` that is not a gap decision ledger usually is the
+/// repo-exposure report or another full-repo document. Say which input the
+/// gate accepts instead of only the parser's key list (#11206).
+fn gap_ledger_source_hint(text: &str) -> String {
+    let is_repo_exposure = serde_json::from_str::<Value>(text)
+        .ok()
+        .is_some_and(|value| value.get("seams").is_some());
+    let what = if is_repo_exposure {
+        "this file is a repo-exposure report, not a gap decision ledger"
+    } else {
+        "this file is not a gap decision ledger"
+    };
+    format!(
+        "; {what}. Build the ledger with `ripr reports gap-ledger --check-output \
+         target/ripr/pr/check.json`, or gate the pull request with --pr-guidance \
+         target/ripr/review/comments.json (from `ripr review-comments`)"
+    )
 }
 
 pub(super) fn read_recommendation_calibration_impl(
@@ -344,7 +372,8 @@ pub(super) fn read_baseline_impl(
 ) -> BaselineIndex {
     if input.mode.requires_baseline() && input.baseline.is_none() {
         config_errors.push(format!(
-            "{} mode requires an explicit --baseline artifact",
+            "{} mode requires an explicit --baseline artifact (RIPR_GATE_BASELINE in the \
+             generated workflow). {BASELINE_START_HINT}",
             input.mode.as_str()
         ));
         return BaselineIndex::default();
@@ -406,7 +435,7 @@ pub(super) fn read_baseline_impl(
         }
         Err(error) if input.mode.requires_baseline() => {
             config_errors.push(format!(
-                "required baseline {} is invalid: {error}",
+                "required baseline {} is invalid: {error}. {BASELINE_START_HINT}",
                 display_path(path)
             ));
             BaselineIndex::default()

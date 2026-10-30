@@ -320,6 +320,90 @@ fn gate_acknowledgeable_keeps_waived_candidate_visible() -> Result<(), String> {
     Ok(())
 }
 
+/// #11206: a baseline-check run with no baseline is the first-time-team
+/// misconfiguration; the config error must say how to proceed.
+#[test]
+fn gate_baseline_mode_without_baseline_names_the_way_forward() -> Result<(), String> {
+    let (_fixture_input, input) = fixture_input(GateMode::BaselineCheck)?;
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "config_error");
+    let error = report
+        .config_errors
+        .iter()
+        .find(|error| error.contains("requires an explicit --baseline"))
+        .ok_or("missing baseline config error")?;
+    assert!(error.contains("ripr baseline create --from"), "{error}");
+    assert!(error.contains("--mode visible-only"), "{error}");
+    assert!(error.contains("BASELINE_LEDGER_WORKFLOW.md"), "{error}");
+    Ok(())
+}
+
+/// Discriminating negative: a required baseline that is named but missing
+/// gets the same pointer, while an unrelated config error (a gap ledger that
+/// cannot be read) does not borrow the baseline advice.
+#[test]
+fn gate_baseline_hint_is_only_on_baseline_errors() -> Result<(), String> {
+    let (_fixture_input, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    input.baseline = Some(PathBuf::from("no-such-baseline.json"));
+    input.gap_ledger = Some(PathBuf::from("no-such-ledger.json"));
+    let report = build_gate_decision_report(&input)?;
+    let baseline_error = report
+        .config_errors
+        .iter()
+        .find(|error| error.contains("required baseline"))
+        .ok_or("missing required-baseline config error")?;
+    assert!(
+        baseline_error.contains("ripr baseline create --from"),
+        "{baseline_error}"
+    );
+    let ledger_error = report
+        .config_errors
+        .iter()
+        .find(|error| error.contains("gap decision ledger input"))
+        .ok_or("missing ledger config error")?;
+    assert!(
+        !ledger_error.contains("ripr baseline create"),
+        "{ledger_error}"
+    );
+    Ok(())
+}
+
+/// #11206: a repo-exposure report passed as `--gap-ledger` names the inputs
+/// the gate accepts; a document that is not a repo-exposure report does not
+/// claim to be one.
+#[test]
+fn gate_gap_ledger_that_is_not_a_ledger_names_accepted_sources() -> Result<(), String> {
+    let dir = temp_dir("gate-gap-ledger-hint")?;
+    let exposure = write_temp_json(&dir, "repo-exposure.json", r#"{"seams": []}"#)?;
+    let other = write_temp_json(&dir, "other.json", r#"{"unknown_key": []}"#)?;
+    let (_fixture_input, mut input) = fixture_input(GateMode::VisibleOnly)?;
+    input.pr_guidance = None;
+
+    input.gap_ledger = Some(exposure);
+    let report = build_gate_decision_report(&input)?;
+    let error = report
+        .config_errors
+        .first()
+        .ok_or("repo-exposure ledger must be a config error")?;
+    assert!(error.contains("repo-exposure report"), "{error}");
+    assert!(error.contains("--pr-guidance"), "{error}");
+    assert!(
+        error.contains("ripr reports gap-ledger --check-output"),
+        "{error}"
+    );
+
+    input.gap_ledger = Some(other);
+    let report = build_gate_decision_report(&input)?;
+    let error = report
+        .config_errors
+        .first()
+        .ok_or("unknown ledger must be a config error")?;
+    assert!(error.contains("not a gap decision ledger"), "{error}");
+    assert!(!error.contains("repo-exposure report"), "{error}");
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
 #[test]
 fn gate_calibrated_mode_requires_explicit_baseline() -> Result<(), String> {
     let (_fixture_input, input) = fixture_input(GateMode::CalibratedGate)?;
