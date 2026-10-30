@@ -229,6 +229,26 @@ A static limit does not automatically erase a useful related test or strong
 oracle. It means the reviewer should keep the limitation visible while deciding
 the next test change.
 
+## Read Preview Confidence
+
+TypeScript and JavaScript preview findings carry a `confidence` number that is
+a per-class constant (`0.6` exposed, `0.4` weakly exposed or no static path,
+`0.2` static unknown). It is a preview ordinal, not a probability, and it is
+not on the same scale as Rust's `confidence`. The number is unchanged by
+#10700; what the finding adds is the reason it is held there:
+
+- `confidence_basis` in `check` and `context` JSON (`explain` prints the `Why capped:` text line only) is a list of
+  `{code, summary}` capping reasons: `preview_stages_not_modeled`,
+  `syntax_first_no_type_resolution`, and the evidence-specific
+  `infection_not_established`, `propagation_not_established`, `no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
+  `observation_not_confirmed` or `discriminator_not_established`.
+- `confidence_why_capped` is the one plain-English line; human `check` and
+  `explain` print it as `Why capped:` under the confidence.
+- Rust findings carry neither field. The basis explains the score only; it
+  never changes the class, actionability or repair-packet readiness. The
+  reasons live in the shared `ConfidenceCap` domain type so the Python adapter
+  can adopt them without a new wire shape.
+
 ## Read Mixed-Language Reports
 
 In JSON outputs, preview findings remain in the same arrays as Rust findings.

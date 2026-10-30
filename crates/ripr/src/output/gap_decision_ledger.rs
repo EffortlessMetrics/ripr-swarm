@@ -63,9 +63,13 @@ pub(crate) struct GapDecisionLedgerReport {
     /// gate reads the same position on the ledger it reads on check output.
     run_limitations: Option<Value>,
     /// The analysis input's `source_subject` stamp and root, kept so a writer
-    /// can derive the ledger stamp from them (#4544). Never rendered.
+    /// can derive the ledger stamp from them (#4544). The check producer's
+    /// root is also retained on the rendered ledger as provenance (#10983).
     input_source_subject: Option<Value>,
     input_root: Option<String>,
+    /// Origin of check-output records, carried across `--records` derivation
+    /// so an intermediate ledger cannot erase the producer's root/limits.
+    check_output_provenance: Option<Value>,
     /// Content digests the analysis saw for the files the records name,
     /// copied from the input stamp. `None` until a writer derives it.
     source_subject: Option<GapSourceSubject>,
@@ -662,6 +666,24 @@ pub(crate) fn build_gap_decision_ledger_report(
     }
     .to_string();
 
+    let check_output_provenance = match input.source_kind {
+        GapDecisionLedgerSourceKind::CheckOutput => Some(serde_json::json!({
+            "root": input_root.clone(),
+        })),
+        GapDecisionLedgerSourceKind::Records => source_value_snapshot.as_ref().and_then(|value| {
+            value.get("check_output_provenance").cloned().or_else(|| {
+                (value.pointer("/inputs/source_kind").and_then(Value::as_str)
+                    == Some("check_output"))
+                .then(|| {
+                    serde_json::json!({
+                        "root": value.get("input_root"),
+                        "source_subject_unavailable": value.get("source_subject_unavailable"),
+                    })
+                })
+            })
+        }),
+        GapDecisionLedgerSourceKind::RepoExposure => None,
+    };
     GapDecisionLedgerReport {
         status,
         root: input.root,
@@ -675,6 +697,7 @@ pub(crate) fn build_gap_decision_ledger_report(
         run_limitations,
         input_source_subject,
         input_root,
+        check_output_provenance,
         source_subject: None,
         source_subject_unavailable: None,
         records,
@@ -704,6 +727,10 @@ pub(crate) fn render_gap_decision_ledger_json(
         root: &'a str,
         generated_at: &'a str,
         inputs: &'a GapDecisionLedgerInputs,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        input_root: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        check_output_provenance: Option<&'a Value>,
         summary: &'a GapDecisionLedgerSummary,
         #[serde(skip_serializing_if = "Option::is_none")]
         analysis_outcome: Option<&'a Value>,
@@ -726,6 +753,12 @@ pub(crate) fn render_gap_decision_ledger_json(
         root: &report.root,
         generated_at: &report.generated_at,
         inputs: &report.inputs,
+        input_root: report
+            .check_output_provenance
+            .as_ref()
+            .and_then(|origin| origin.get("root"))
+            .and_then(Value::as_str),
+        check_output_provenance: report.check_output_provenance.as_ref(),
         summary: &report.summary,
         analysis_outcome: report.analysis_outcome.as_ref(),
         run_limitations: report.run_limitations.as_ref(),
@@ -784,6 +817,17 @@ pub(crate) fn stamp_gap_decision_ledger_source_subject(
             report.source_subject = None;
             report.source_subject_unavailable = Some(reason);
         }
+    }
+    if report.inputs.source_kind == "check_output"
+        && let Some(origin) = report
+            .check_output_provenance
+            .as_mut()
+            .and_then(Value::as_object_mut)
+    {
+        origin.insert(
+            "source_subject_unavailable".to_string(),
+            serde_json::json!(report.source_subject_unavailable),
+        );
     }
     Ok(())
 }
@@ -879,6 +923,20 @@ pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerRepo
     out.push_str("# RIPR Gap Decision Ledger\n\n");
     out.push_str(&format!("Status: `{}`\n\n", md_inline(&report.status)));
     out.push_str(&format!("Root: `{}`\n\n", md_inline(&report.root)));
+    if let Some(origin) = &report.check_output_provenance {
+        let source_root = origin
+            .get("root")
+            .and_then(Value::as_str)
+            .unwrap_or("unavailable");
+        let subject_limit = origin
+            .get("source_subject_unavailable")
+            .and_then(Value::as_str)
+            .unwrap_or("not recorded");
+        out.push_str(&format!(
+            "Check-output producer root: `{}`; producer subject limitation: `{}`. These are provenance disclosures, not complete corpus currentness.\n\n",
+            md_inline(source_root), md_inline(subject_limit)
+        ));
+    }
     out.push_str("Authority: gate-decision artifacts own pass/fail authority. This report is advisory projection input.\n\n");
     if let Some(outcome) = &report.analysis_outcome {
         let complete = outcome
@@ -2390,12 +2448,23 @@ fn gap_record_from_python_no_repair_card_finding(
             )
         })
         .flatten();
+    // #11103: the boundary decline already names the equality in the Missing
+    // check but cannot bind one operand to a test input, so no repair card
+    // exists. Name that operand instead of the generic line; routing stays
+    // fail-closed (no gap id, no card). The extraction is shared with the
+    // human triage surface so the two wordings cannot drift.
+    let unresolved_operand =
+        crate::output::human::unresolved_boundary_operand(&string_array_at(finding, &["missing"]));
     let reason = if let Some(repo_reason) = repo_reason.as_deref() {
-        repo_reason
+        repo_reason.to_string()
+    } else if let Some(operand) = unresolved_operand {
+        format!(
+            "static evidence cannot bind `{operand}` to a test input, so the boundary equality cannot become a repair target"
+        )
     } else if first_missing_discriminator_value(finding).is_none() {
-        "static evidence names no concrete missing discriminator"
+        "static evidence names no concrete missing discriminator".to_string()
     } else {
-        "its test placement or related-test evidence is incomplete"
+        "its test placement or related-test evidence is incomplete".to_string()
     };
     let detail = format!(
         "this Python preview finding has no repair card ({reason}), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
@@ -5833,7 +5902,7 @@ mod tests {
         assert_eq!(
             record.static_limit_detail.as_deref(),
             Some(
-                "this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+                "this Python preview finding has no repair card (static evidence cannot bind `DISCOUNT_THRESHOLD` to a test input, so the boundary equality cannot become a repair target), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
             )
         );
         assert!(record.repair_route.is_none());
@@ -5864,7 +5933,8 @@ mod tests {
 
     // The other reason branch: a finding that names a missing discriminator
     // but still has no card is held by incomplete placement or related-test
-    // evidence, and says so.
+    // evidence, and says so. Scoped to a non-boundary discriminator so the
+    // #11103 unresolved-operand arm keeps its own specific wording.
     #[test]
     fn check_output_python_no_repair_card_with_discriminator_names_incomplete_evidence()
     -> Result<(), String> {
@@ -5879,6 +5949,11 @@ mod tests {
         {
             finding["missing_discriminators"] =
                 serde_json::json!([{"value": "amount == discount_threshold"}]);
+            // Drop the unresolved-operand boundary shape so this case
+            // exercises the placement-reason branch, not #11103.
+            if let Some(missing) = finding["missing"].as_array_mut() {
+                missing.clear();
+            }
         }
         let report = check_output_ledger(payload.to_string());
         let records = python_no_repair_card_records(&report);

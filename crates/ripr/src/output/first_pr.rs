@@ -14,9 +14,10 @@ use crate::output::start_here_state::{
 #[cfg(not(windows))]
 use crate::testing::cwd_placeholder::{project_cwd_text, project_renderer_cwd, project_root_text};
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 const SCHEMA_VERSION: &str = "0.1";
@@ -317,6 +318,8 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let (json_path, markdown_path) =
         check_packet_paths(repo, &root, root_recovery.is_some(), None, options)?;
     let preflight_recovery = root_recovery.or_else(|| git_preflight_recovery(&root, options));
+    let current_preflight_no_action =
+        matches!(&preflight_recovery, Some(Selection::NoAction { .. }));
     let packet = validate_start_here_packet(&json_path, &markdown_path)?;
     let out_dir = json_path.parent().ok_or_else(|| {
         format!(
@@ -339,6 +342,37 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
             first_pr_write_command(options, out_dir, false)
         )
     })?;
+    // Historical packets can already contain the old no-action projection.
+    // `--check` must not validate that conclusion merely because its schema
+    // and producer version are intact. This is validation only: do not run
+    // analysis or rewrite the packet here.
+    if packet.get("status").and_then(Value::as_str) == Some("no_action")
+        && !current_preflight_no_action
+    {
+        let direct_check_output = packet
+            .pointer("/inputs/check_output")
+            .and_then(Value::as_str)
+            .is_some();
+        let ledger_path = string_path(&packet, &["inputs", "gap_ledger"])
+            .ok_or("first-pr --check: no-action source ledger is unavailable; recompose before relying on the packet")?;
+        let (ledger, ledger_digest) = read_json_with_digest(&resolve_path(&root, &ledger_path)).map_err(|_ledger_error| {
+            "first-pr --check: no-action source ledger is missing or malformed; recompose before relying on the packet".to_string()
+        })?;
+        let recorded_digest = string_path(&packet, &["inputs", "gap_ledger_sha256"]).ok_or(
+            "first-pr --check: source_currentness_unavailable; this historical no-action packet does not bind its source ledger bytes. Recompose before relying on it",
+        )?;
+        if recorded_digest != ledger_digest {
+            return Err("first-pr --check: stale_evidence; the no-action source ledger differs from the bytes used to compose the packet. Recompose before relying on it".to_string());
+        }
+        let source_kind = string_path(&ledger, &["inputs", "source_kind"])
+            .ok_or("first-pr --check: no-action source kind is unavailable; recompose before relying on the packet")?;
+        if direct_check_output || requires_no_action_source_limit(&ledger) {
+            return Err("first-pr --check: source_currentness_unavailable; this historical no-action packet cannot establish current source-corpus identity. Recompose from its original inputs and inspect a fresh selected-workspace check; a fresh check alone cannot establish unavailable preview/mixed corpus provenance (#7452).".to_string());
+        }
+        if !matches!(source_kind.as_str(), "records" | "repo_exposure") {
+            return Err("first-pr --check: no-action source kind is unrecognized; recompose before relying on the packet".to_string());
+        }
+    }
     print!(
         "{}",
         start_here_cli_summary(&packet, &json_path, &markdown_path)
@@ -449,16 +483,22 @@ fn validate_current_preflight_recovery(
 fn render_start_here_packet(root: &Path, options: &FirstPrOptions) -> Value {
     let gap_path = resolve_path(root, &options.gap_ledger);
     let mut warnings = Vec::new();
-    let selection = match read_json(&gap_path) {
-        Ok(gap_ledger) => select_from_gap_ledger(&gap_ledger, root, options),
-        Err(ArtifactReadError::Missing) => missing_gap_ledger_selection(root, options),
-        Err(ArtifactReadError::Malformed(message)) => Selection::blocked(
-            "malformed_artifact",
-            format!("The gap decision ledger could not be parsed: {message}"),
-            Some(format!(
-                "Regenerate the gap ledger with `{}` before assigning repair work.",
-                regenerate_gap_ledger_command(root, options)
-            )),
+    let (selection, ledger_digest) = match read_json_with_digest(&gap_path) {
+        Ok((gap_ledger, digest)) => (
+            select_from_gap_ledger(&gap_ledger, root, options),
+            Some(digest),
+        ),
+        Err(ArtifactReadError::Missing) => (missing_gap_ledger_selection(root, options), None),
+        Err(ArtifactReadError::Malformed(message)) => (
+            Selection::blocked(
+                "malformed_artifact",
+                format!("The gap decision ledger could not be parsed: {message}"),
+                Some(format!(
+                    "Regenerate the gap ledger with `{}` before assigning repair work.",
+                    regenerate_gap_ledger_command(root, options)
+                )),
+            ),
+            None,
         ),
     };
     if let Some(warning) = selection.warning() {
@@ -469,7 +509,13 @@ fn render_start_here_packet(root: &Path, options: &FirstPrOptions) -> Value {
         warnings.extend(preflight.warnings());
     }
 
-    render_start_here_packet_with_selection(root, options, selection, warnings, preflight)
+    let no_action = matches!(&selection, Selection::NoAction { .. });
+    let mut packet =
+        render_start_here_packet_with_selection(root, options, selection, warnings, preflight);
+    if no_action && let Some(digest) = ledger_digest {
+        packet["inputs"]["gap_ledger_sha256"] = Value::String(digest);
+    }
+    packet
 }
 
 fn render_start_here_recovery_packet(
@@ -499,12 +545,16 @@ fn render_start_here_packet_with_selection(
             "check_output",
             "Check output",
             check_output,
-            Some(format!(
-                "ripr check --root {} --base {} --json > {}",
-                shell_arg(&options.command_root()),
-                shell_arg(&options.base),
-                options.anchored_arg(check_output)
-            )),
+            (!selection.is_unbound_no_action_limit()
+                || direct_check_output_bound_to_root(root, options))
+            .then(|| {
+                format!(
+                    "ripr check --root {} --base {} --json > {}",
+                    shell_arg(&options.command_root()),
+                    shell_arg(&options.base),
+                    options.anchored_arg(check_output)
+                )
+            }),
         ));
     }
     artifacts.extend([
@@ -513,7 +563,8 @@ fn render_start_here_packet_with_selection(
             "gap_ledger",
             "Gap decision ledger",
             &options.gap_ledger,
-            Some(regenerate_gap_ledger_command(root, options)),
+            (!selection.is_unbound_no_action_limit())
+                .then(|| regenerate_gap_ledger_command(root, options)),
         ),
         artifact_status(
             root,
@@ -932,6 +983,7 @@ enum Selection {
         state: String,
         message: String,
         next_command: Option<String>,
+        reason_code: Option<String>,
     },
     NoAction {
         state: String,
@@ -962,6 +1014,21 @@ impl Selection {
             state: state.to_string(),
             message,
             next_command,
+            reason_code: None,
+        }
+    }
+
+    fn blocked_with_reason(
+        state: &str,
+        reason_code: &str,
+        message: String,
+        next_command: Option<String>,
+    ) -> Self {
+        Self::Blocked {
+            state: state.to_string(),
+            message,
+            next_command,
+            reason_code: Some(reason_code.to_string()),
         }
     }
 
@@ -991,6 +1058,11 @@ impl Selection {
         }
     }
 
+    fn is_unbound_no_action_limit(&self) -> bool {
+        matches!(self, Self::Blocked { reason_code: Some(code), .. }
+            if matches!(code.as_str(), "check_output_wrong_root" | "source_currentness_unavailable"))
+    }
+
     fn agent_packet_command(&self) -> Option<String> {
         let Self::TopGap(top_gap) = self else {
             return None;
@@ -1000,10 +1072,12 @@ impl Selection {
 
     fn commands_json(&self, root: &Path, options: &FirstPrOptions) -> Value {
         let mut commands = Map::new();
-        commands.insert(
-            "regenerate_gap_ledger".to_string(),
-            Value::String(regenerate_gap_ledger_command(root, options)),
-        );
+        if !self.is_unbound_no_action_limit() {
+            commands.insert(
+                "regenerate_gap_ledger".to_string(),
+                Value::String(regenerate_gap_ledger_command(root, options)),
+            );
+        }
         match self {
             Self::TopGap(top_gap) => {
                 if let Some(command) = &top_gap.agent_packet_command {
@@ -1078,12 +1152,19 @@ impl Selection {
                 state,
                 message,
                 next_command,
-            } => json!({
-                "state": state,
-                "output_state": normalize_start_here_output_state(state),
-                "message": message,
-                "next_command": next_command
-            }),
+                reason_code,
+            } => {
+                let mut value = json!({
+                    "state": state,
+                    "output_state": normalize_start_here_output_state(state),
+                    "message": message,
+                    "next_command": next_command
+                });
+                if let Some(reason_code) = reason_code {
+                    value["reason_code"] = Value::String(reason_code.clone());
+                }
+                value
+            }
             Self::NoAction {
                 state,
                 reason,
@@ -1211,6 +1292,22 @@ impl TopGapSelection {
 
 fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOptions) -> Selection {
     let records = gap_records(gap_ledger);
+    // A foreign or unknown producer root cannot authorize a command that
+    // overwrites the supplied check artifact, regardless of ledger status or
+    // record count. Only a verified same-root producer may use that route.
+    // One exception stays fail-closed either way: a zero-record projection
+    // miss whose input is the selected root's own root-relative artifact
+    // falls through to its blocked recovery, which regenerates the
+    // repo-exposure/ledger inputs under the selected root and never promotes
+    // the supplied evidence to an actionable or no-action conclusion.
+    if is_check_output_derived(gap_ledger)
+        && !matches!(check_output_root(gap_ledger, root), CheckOutputRoot::Same)
+        && !(direct_check_output_bound_to_root(root, options)
+            && ledger_check_output_projected_nothing(gap_ledger))
+        && let Some(limitation) = unbound_no_action_limit(gap_ledger, root, options)
+    {
+        return limitation;
+    }
     if ledger_reports_timeout(gap_ledger) {
         return Selection::blocked(
             "timeout",
@@ -1277,6 +1374,9 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         );
     }
     if ledger_reports_empty_diff(gap_ledger) {
+        if let Some(limitation) = unbound_no_action_limit(gap_ledger, root, options) {
+            return limitation;
+        }
         return Selection::no_action(
             "empty_diff",
             "The PR diff is empty, so no repairable Rust gap was selected.".to_string(),
@@ -1302,6 +1402,9 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         Ok(top_gap) => Selection::TopGap(Box::new(top_gap)),
         Err(CardFallback::Recover(selection)) => selection,
         Err(CardFallback::NoCard(note)) => {
+            if let Some(limitation) = unbound_no_action_limit(gap_ledger, root, options) {
+                return limitation;
+            }
             let mut reason = "No repairable PR-local stable Rust or preview Python/TypeScript gap was selected from the gap decision ledger."
                 .to_string();
             if let Some(limitation) = records
@@ -1340,6 +1443,181 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
             Selection::no_action("no_action", reason, records.len())
         }
     }
+}
+
+/// A check-output ledger is a projection of an earlier analysis, not a new
+/// analysis of the selected workspace. Its named-file stamp cannot establish
+/// the complete preview/mixed test corpus (#7452), especially for no-action
+/// records that do not name the tests they observed. Keep that limitation
+/// explicit instead of promoting a lack of repair rows to current no-action.
+fn unbound_no_action_limit(
+    ledger: &Value,
+    root: &Path,
+    options: &FirstPrOptions,
+) -> Option<Selection> {
+    if !requires_no_action_source_limit(ledger) {
+        return None;
+    }
+
+    // A supplied input or any guessed output can alias existing data. Offer a
+    // direct human check with no redirected artifact, so the operator can
+    // inspect current findings without overwriting a foreign or valuable file.
+    let inspect = format!(
+        "ripr check --root {} --base {} --worktree --format human-full",
+        shell_arg(&options.command_root()),
+        shell_arg(&options.base)
+    );
+    let resolve_commit = |revision: &str| {
+        let commit = format!("{revision}^{{commit}}");
+        run_git(
+            root,
+            &git_args(&[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "--end-of-options",
+                &commit,
+            ]),
+        )
+        .ok()
+        .filter(CommandOutput::success)
+        .map(|output| output.stdout)
+    };
+    let selected_head = resolve_commit(&options.head);
+    let live_head = resolve_commit("HEAD");
+    let inspect = match (selected_head, live_head) {
+        (Some(selected), Some(live)) if selected == live => Some(inspect),
+        _ => None,
+    };
+    let inspection_boundary = if inspect.is_some() {
+        "The suggested command is a fresh default worktree analysis, not a replay of the input's mode or policy."
+    } else {
+        "No worktree check is offered because the selected head is not established as the live HEAD; use a checkout at the selected head and the intended analysis configuration."
+    };
+    let source_root = string_path(ledger, &["input_root"]);
+    let root_identity = check_output_root(ledger, root);
+    if let CheckOutputRoot::Foreign(source) = &root_identity {
+        return Some(Selection::blocked_with_reason(
+            "wrong_root",
+            "check_output_wrong_root",
+            format!(
+                "The check output was produced for `{source}`, not the selected root `{}`. {inspection_boundary} The supplied input is not overwritten.",
+                options.command_root()
+            ),
+            inspect,
+        ));
+    }
+
+    let subject = string_path(
+        ledger,
+        &["check_output_provenance", "source_subject_unavailable"],
+    )
+    .or_else(|| string_path(ledger, &["source_subject_unavailable"]))
+    .unwrap_or_else(|| "source_corpus_provenance_unavailable".to_string());
+    let source_label = source_root.as_deref().unwrap_or("unavailable");
+    let root_boundary = if matches!(root_identity, CheckOutputRoot::Unknown) {
+        "The check-output producer root cannot be established; the supplied input must not be overwritten."
+    } else {
+        "Complete source-corpus currentness is unavailable (preview/mixed corpus provenance: #7452)."
+    };
+    let mut message = format!(
+        "The check evidence cannot be bound to the current workspace: source root `{source_label}`; source subject `{subject}`. {root_boundary} {inspection_boundary} If a fresh check still has no repairable gap, this limitation remains until the producer can establish corpus currentness. Do not treat the fresh check alone as proof of no action."
+    );
+    if let Some(note) = gap_records(ledger)
+        .iter()
+        .find_map(|record| static_limitation_note(record))
+    {
+        message.push(' ');
+        message.push_str(&note);
+    }
+    Some(Selection::blocked_with_reason(
+        "blocked_artifact",
+        "source_currentness_unavailable",
+        message,
+        inspect,
+    ))
+}
+
+/// A `--check-output` supplied as a plain root-relative path names the
+/// selected root's own artifact slot: first-pr resolves it against the
+/// selected root, so regenerating it with the anchored `--root` can only
+/// write under that root. An absolute (or `..`-escaping) path can name a
+/// foreign file, so it keeps the fail-closed treatment for unknown or
+/// foreign producer roots. The artifact must be present and canonicalize
+/// inside the selected root, so a symlink cannot smuggle the write out.
+fn direct_check_output_bound_to_root(root: &Path, options: &FirstPrOptions) -> bool {
+    let Some(check_output) = options.check_output.as_deref() else {
+        return false;
+    };
+    let path = Path::new(check_output);
+    if path.as_os_str().is_empty()
+        || !path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+    {
+        return false;
+    }
+    match (
+        resolve_path(root, check_output).canonicalize(),
+        root.canonicalize(),
+    ) {
+        (Ok(target), Ok(root)) => target.starts_with(&root),
+        _ => false,
+    }
+}
+
+enum CheckOutputRoot {
+    Same,
+    Foreign(String),
+    Unknown,
+}
+
+fn check_output_root(ledger: &Value, root: &Path) -> CheckOutputRoot {
+    let Some(source) = string_path(ledger, &["input_root"]) else {
+        return CheckOutputRoot::Unknown;
+    };
+    let source_path = Path::new(&source);
+    if !source_path.is_absolute()
+        || source_path.canonicalize().is_err()
+        || root.canonicalize().is_err()
+    {
+        return CheckOutputRoot::Unknown;
+    }
+    if crate::output::gap_source_subject::same_root(root, source_path) {
+        CheckOutputRoot::Same
+    } else {
+        CheckOutputRoot::Foreign(source)
+    }
+}
+
+fn is_check_output_derived(ledger: &Value) -> bool {
+    string_path(ledger, &["inputs", "source_kind"]).as_deref() == Some("check_output")
+        || ledger.get("check_output_provenance").is_some()
+}
+
+/// Older `--records` projections may already have lost their check-output
+/// origin. Preview/mixed, presentation-text, or unclassifiable populations
+/// lack complete corpus authority; changing the immediate input kind cannot
+/// turn them into a current no-action. Keep explicitly non-presentation Rust
+/// records on their existing route; their separate corpus authority is owned
+/// elsewhere.
+fn requires_no_action_source_limit(ledger: &Value) -> bool {
+    if is_check_output_derived(ledger) {
+        return true;
+    }
+    match string_path(ledger, &["inputs", "source_kind"]).as_deref() {
+        Some("repo_exposure") => return false,
+        Some("records") | None => {}
+        Some(_) => return true,
+    }
+    let records = gap_records(ledger);
+    records.is_empty()
+        || records.iter().any(|record| {
+            string_path(record, &["language"]).as_deref() != Some("rust")
+                || string_path(record, &["language_status"]).as_deref() != Some("stable")
+                || string_path(record, &["evidence_class"])
+                    .is_none_or(|class| class == "presentation_text")
+        })
 }
 
 /// #7374: true when the current review-cards artifact was rendered from a
@@ -1931,8 +2209,9 @@ fn ledger_reports_blocked(value: &Value) -> bool {
 /// #5264: `no_records` from a `--check-output` ledger is the honest healthy
 /// no-op for languages that route cannot project. first-pr must still
 /// recover (the route did not see this PR's language), but only for that
-/// source: `no_records` from a repo-exposure or records ledger is a genuine
-/// empty result, not a recoverable projection miss.
+/// source: `no_records` from repo-exposure is a genuine empty result, not a
+/// projection miss. An empty records input may lack origin and is separately
+/// limited before a no-action conclusion (#10983).
 fn ledger_check_output_projected_nothing(value: &Value) -> bool {
     string_path(value, &["status"]).as_deref() == Some("no_records")
         && string_path(value, &["inputs", "source_kind"]).as_deref() == Some("check_output")
@@ -2417,6 +2696,21 @@ fn read_json(path: &Path) -> Result<Value, ArtifactReadError> {
         }
     })?;
     serde_json::from_str(&text).map_err(|err| ArtifactReadError::Malformed(err.to_string()))
+}
+
+/// Read and hash the same bytes that selection consumes. A later replacement
+/// at the same path cannot validate an older no-action packet as current.
+fn read_json_with_digest(path: &Path) -> Result<(Value, String), ArtifactReadError> {
+    let bytes = fs::read(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            ArtifactReadError::Missing
+        } else {
+            ArtifactReadError::Malformed(format!("read failed: {error}"))
+        }
+    })?;
+    let value = serde_json::from_slice(&bytes)
+        .map_err(|error| ArtifactReadError::Malformed(error.to_string()))?;
+    Ok((value, format!("sha256:{:x}", Sha256::digest(&bytes))))
 }
 
 fn gap_records(value: &Value) -> Vec<&Value> {
@@ -3284,20 +3578,21 @@ mod tests {
     /// #5264: a check-output ledger that parsed cleanly but projected zero
     /// records (the route projects Python/TypeScript/Perl only) recovers
     /// through the same blocked-artifact regeneration compound; the same
-    /// `no_records` status from any other source is a genuine empty result
-    /// and must not trigger the recovery.
+    /// `no_records` status from repo-exposure is a genuine empty result and
+    /// must not trigger this projection-miss recovery.
     #[test]
     fn no_records_check_output_ledger_recovers_through_regeneration_compound() -> Result<(), String>
     {
+        let root = temp_repo("first-pr-no-records-recovery")?;
         let ledger_value = |status: &str, source_kind: &str| {
             serde_json::json!({
                 "status": status,
                 "inputs": {"source_kind": source_kind},
+                "input_root": root,
                 "records": [],
                 "warnings": ["check output contained 3 findings, but the --check-output route projects presentation/output-text and Python/TypeScript/Perl findings only; no gap records were derived from them. For Rust findings, use `ripr check` to read them and `ripr repair` to start a repair"]
             })
         };
-        let root = temp_repo("first-pr-no-records-recovery")?;
         let options = FirstPrOptions::default();
 
         let selection =
@@ -3331,6 +3626,7 @@ mod tests {
             &serde_json::json!({
                 "status": "no_records",
                 "inputs": {"source_kind": "check_output"},
+                "input_root": root,
                 "records": [],
                 "warnings": []
             }),
@@ -3910,6 +4206,7 @@ mod tests {
         let text = packet.to_string();
         assert!(text.contains("Go (1 file(s))"), "{text}");
         assert!(!text.contains("Pass the repository root"), "{text}");
+        check_first_pr(&repo, &options)?;
 
         // A nested Cargo crate below the Go root means `--root` should point
         // at that crate, so the recovery stays `wrong_root`.
@@ -4748,6 +5045,7 @@ mod tests {
                 "schema_version": "0.1",
                 "kind": "gap_decision_ledger",
                 "status": "empty_diff",
+                "inputs": {"source_kind": "repo_exposure"},
                 "summary": {"records_total": 0},
                 "records": []
             }),
@@ -4841,6 +5139,7 @@ mod tests {
             &ledger,
             json!({
                 "schema_version": "0.1",
+                "inputs": {"source_kind": "repo_exposure"},
                 "records": [
                     {
                         "gap_id": "gap:report-only",
@@ -4867,11 +5166,295 @@ mod tests {
         cleanup(&repo)
     }
 
+    #[test]
+    fn no_action_check_binds_the_consumed_ledger_bytes() -> Result<(), String> {
+        let repo = temp_repo("first-pr-no-action-ledger-binding")?;
+        let ledger_path = repo.join(DEFAULT_GAP_LEDGER);
+        let ledger = json!({
+            "schema_version": "0.1",
+            "inputs": {"source_kind": "repo_exposure"},
+            "records": [{"gap_id": "gap:report-only", "language": "rust", "language_status": "stable", "scope": "pr_local", "gap_state": "report_only", "policy_state": "not_policy_targeted", "repairability": "analyzer_limitation"}]
+        });
+        write_json(&ledger_path, ledger.clone())?;
+        write_json(
+            &repo.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(Vec::new()),
+        )?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "no_action", "{packet}");
+        assert!(
+            packet["inputs"]["gap_ledger_sha256"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("sha256:"))
+        );
+        check_first_pr(&repo, &options)?;
+        let mut replacement = ledger;
+        replacement["replacement"] = json!(true);
+        write_json(&ledger_path, replacement)?;
+        let error = match check_first_pr(&repo, &options) {
+            Ok(()) => {
+                return Err("replacement must not validate an older no-action packet".to_string());
+            }
+            Err(error) => error,
+        };
+        assert!(error.contains("stale_evidence"), "{error}");
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn check_output_no_action_keeps_unavailable_and_source_identity_explicit() -> Result<(), String>
+    {
+        let root = temp_repo("first-pr-check-no-action-subject")?;
+        let other = temp_repo("first-pr-check-no-action-other")?;
+        let options = FirstPrOptions {
+            root: root.to_string_lossy().into_owned(),
+            check_output: Some(other.join("foreign.json").to_string_lossy().into_owned()),
+            ..FirstPrOptions::default()
+        };
+        let input = json!({
+            "inputs": {"source_kind": "check_output", "records": options.check_output.clone()},
+            "input_root": other.to_string_lossy(),
+            "source_subject_unavailable": "input_source_subject_incomplete",
+            "records": []
+        });
+        let wrong = unbound_no_action_limit(&input, &root, &options)
+            .ok_or("check output needs admission")?
+            .to_json();
+        assert_eq!(wrong["output_state"], "wrong_root", "{wrong}");
+        assert_eq!(wrong["reason_code"], "check_output_wrong_root");
+        let command = wrong["next_command"].as_str().ok_or("missing recovery")?;
+        assert!(command.contains("--worktree"), "{command}");
+        assert!(command.contains("--format human-full"), "{command}");
+        assert!(
+            !command.contains('>'),
+            "inspection must not redirect: {command}"
+        );
+        assert!(
+            !command.contains("foreign.json"),
+            "foreign input must not be overwritten: {command}"
+        );
+
+        for legacy in [json!(null), json!("."), json!(root.to_string_lossy())] {
+            let mut same = input.clone();
+            same["input_root"] = legacy;
+            let selected = unbound_no_action_limit(&same, &root, &options)
+                .ok_or("check output needs admission")?
+                .to_json();
+            assert_eq!(selected["state"], "blocked_artifact", "{selected}");
+            assert_eq!(selected["reason_code"], "source_currentness_unavailable");
+            let message = selected["message"].as_str().ok_or("missing limitation")?;
+            assert!(
+                message.contains("input_source_subject_incomplete"),
+                "{message}"
+            );
+            assert!(message.contains("limitation remains"), "{message}");
+            assert!(
+                message.contains("Do not treat the fresh check alone as proof"),
+                "{message}"
+            );
+        }
+        let mut old_records = input.clone();
+        old_records["inputs"]["source_kind"] = json!("records");
+        old_records
+            .as_object_mut()
+            .ok_or("ledger object")?
+            .remove("input_root");
+        old_records["records"] = json!([{"language": "python", "language_status": "preview"}]);
+        assert!(
+            unbound_no_action_limit(&old_records, &root, &options).is_some(),
+            "legacy preview rewrap must remain limited"
+        );
+        old_records["records"] = json!([{"language": "rust", "language_status": "stable", "evidence_class": "predicate"}]);
+        assert!(
+            unbound_no_action_limit(&old_records, &root, &options).is_none(),
+            "stable Rust records retain their existing route"
+        );
+        old_records["records"] = json!([{"language": "rust", "language_status": "stable", "evidence_class": "presentation_text"}]);
+        assert!(
+            unbound_no_action_limit(&old_records, &root, &options).is_some(),
+            "old check-output presentation-text rewrap must remain limited"
+        );
+        old_records["records"] = json!([{"language_status": "stable"}]);
+        assert!(
+            unbound_no_action_limit(&old_records, &root, &options).is_some(),
+            "unknown language cannot acquire currentness"
+        );
+
+        fs::write(root.join("next.txt"), "next").map_err(|e| e.to_string())?;
+        run_git_setup(&root, &["add", "next.txt"])?;
+        run_git_setup(&root, &["commit", "-m", "next"])?;
+        let mut historical = options.clone();
+        historical.head = "HEAD~1".to_string();
+        let selected = unbound_no_action_limit(&input, &root, &historical)
+            .ok_or("historical input needs admission")?
+            .to_json();
+        assert!(
+            selected["next_command"].is_null(),
+            "historical head must not offer a live-worktree check: {selected}"
+        );
+        assert!(
+            selected["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("selected head")
+        );
+        #[cfg(unix)]
+        {
+            let alias = root.with_extension("alias");
+            std::os::unix::fs::symlink(&root, &alias).map_err(|e| e.to_string())?;
+            let mut same = input.clone();
+            same["input_root"] = json!(alias.to_string_lossy());
+            let selected = unbound_no_action_limit(&same, &root, &options)
+                .ok_or("check output needs admission")?
+                .to_json();
+            assert_eq!(
+                selected["reason_code"], "source_currentness_unavailable",
+                "alias must not be treated as a different root: {selected}"
+            );
+            fs::remove_file(alias).map_err(|e| e.to_string())?;
+        }
+        cleanup(&root)?;
+        cleanup(&other)
+    }
+
+    #[test]
+    fn root_relative_check_output_keeps_anchored_regeneration_under_unbound_limit()
+    -> Result<(), String> {
+        let root = temp_repo("first-pr-root-bound-check-output")?;
+        write_json(&root.join(DEFAULT_CHECK_OUTPUT), json!({"root": "."}))?;
+        let options = FirstPrOptions {
+            root: root.to_string_lossy().into_owned(),
+            check_output: Some(DEFAULT_CHECK_OUTPUT.to_string()),
+            ..FirstPrOptions::default()
+        };
+        let limited = || {
+            Selection::blocked_with_reason(
+                "blocked_artifact",
+                "source_currentness_unavailable",
+                "limited".to_string(),
+                None,
+            )
+        };
+        let packet =
+            render_start_here_packet_with_selection(&root, &options, limited(), Vec::new(), None);
+        let artifact = |packet: &Value, id: &str| {
+            packet["artifacts"]
+                .as_array()
+                .and_then(|artifacts| artifacts.iter().find(|artifact| artifact["id"] == id))
+                .cloned()
+        };
+        let check_output = artifact(&packet, "check_output").ok_or("check_output artifact")?;
+        let command = check_output["regeneration_command"]
+            .as_str()
+            .ok_or("root-bound check output keeps its regeneration command")?;
+        assert!(
+            command.contains(&options.command_root()) && command.contains(DEFAULT_CHECK_OUTPUT),
+            "{command}"
+        );
+        let gap_ledger = artifact(&packet, "gap_ledger").ok_or("gap ledger artifact")?;
+        assert!(
+            gap_ledger["regeneration_command"].is_null(),
+            "unbound ledger regeneration stays withheld: {gap_ledger}"
+        );
+
+        // An absolute supplied file stays withheld under the same limit.
+        let other = temp_repo("first-pr-root-bound-check-output-other")?;
+        let foreign = other.join("foreign.json");
+        write_json(&foreign, json!({"root": "."}))?;
+        let foreign_options = FirstPrOptions {
+            check_output: Some(foreign.to_string_lossy().into_owned()),
+            ..options.clone()
+        };
+        let packet = render_start_here_packet_with_selection(
+            &root,
+            &foreign_options,
+            limited(),
+            Vec::new(),
+            None,
+        );
+        let check_output = artifact(&packet, "check_output").ok_or("check_output artifact")?;
+        assert!(
+            check_output["regeneration_command"].is_null(),
+            "absolute supplied input must not be overwritten: {check_output}"
+        );
+
+        // A zero-record projection miss on the root-bound artifact falls
+        // through to its blocked repo-exposure recovery, not the unbound
+        // limit, and still claims no actionable or no-action conclusion.
+        let ledger = json!({
+            "status": "no_records",
+            "inputs": {"source_kind": "check_output"},
+            "input_root": ".",
+            "records": [],
+            "warnings": ["check output contained 1 finding, but the --check-output route projects presentation/output-text and Python/TypeScript/Perl findings only; no gap records were derived from them. For Rust findings, use `ripr check` to read them and `ripr repair` to start a repair"]
+        });
+        let selected = select_from_gap_ledger(&ledger, &root, &options).to_json();
+        assert_eq!(selected["state"], "blocked_artifact", "{selected}");
+        assert!(
+            selected.get("reason_code").is_none(),
+            "projection miss keeps its own blocked route: {selected}"
+        );
+        let next = selected["next_command"].as_str().ok_or("recovery")?;
+        assert!(next.contains("repo-exposure"), "{next}");
+        cleanup(&root)?;
+        cleanup(&other)
+    }
+
+    #[test]
+    fn legacy_rust_presentation_check_rewrap_cannot_become_current_no_action() -> Result<(), String>
+    {
+        use crate::output::gap_decision_ledger::{
+            GapDecisionLedgerInput, GapDecisionLedgerSourceKind, build_gap_decision_ledger_report,
+            render_gap_decision_ledger_json,
+        };
+        let root = temp_repo("first-pr-legacy-presentation")?;
+        let input = json!({"root": root.to_string_lossy(), "finding_alignment": {"items": [{
+            "evidence_class": "presentation_text", "gap_state": "already_observed",
+            "actionability": "none", "canonical_gap_id": "pt::HELP",
+            "raw_findings": [{"file": "src/lib.rs", "line": 1}],
+            "presentation_text": {"constant_name": "HELP", "text_literal": "hello"}
+        }]}});
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: root.to_string_lossy().into_owned(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "check.json".to_string(),
+            records_json: Ok(input.to_string()),
+        });
+        let mut legacy: Value = serde_json::from_str(&render_gap_decision_ledger_json(&report)?)
+            .map_err(|e| e.to_string())?;
+        assert_eq!(legacy["records"].as_array().map(Vec::len), Some(1));
+        assert_eq!(legacy["records"][0]["language"], "rust");
+        assert_eq!(legacy["records"][0]["evidence_class"], "presentation_text");
+        assert_eq!(legacy["records"][0]["gap_state"], "already_observed");
+        legacy["inputs"]["source_kind"] = json!("records");
+        legacy
+            .as_object_mut()
+            .ok_or("ledger object")?
+            .remove("check_output_provenance");
+        legacy
+            .as_object_mut()
+            .ok_or("ledger object")?
+            .remove("input_root");
+        write_json(
+            &root.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(Vec::new()),
+        )?;
+        let selected = select_from_gap_ledger(&legacy, &root, &FirstPrOptions::default()).to_json();
+        assert_eq!(
+            selected["reason_code"], "source_currentness_unavailable",
+            "{selected}"
+        );
+        cleanup(&root)
+    }
+
     /// #4224: a TypeScript finding whose repair packet failed closed used to
     /// leave the ledger empty (`blocked`), and first-pr looped on "refresh
     /// the first-run evidence". The ledger built from real check output now
     /// carries a non-delegatable static-limitation record, and first-pr names
-    /// that limitation and target shape as advisory no-action.
+    /// that limitation and target shape even when currentness is unavailable.
     #[test]
     fn fail_closed_typescript_packet_names_limitation_instead_of_blocked() -> Result<(), String> {
         use crate::output::gap_decision_ledger::{
@@ -4899,9 +5482,12 @@ mod tests {
             review_comments_report(Vec::new()),
         )?;
         let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
-        assert_eq!(packet["status"], "no_action", "{packet}");
-        assert_eq!(packet["selected"]["output_state"], "no_actionable_gap");
-        let reason = packet["selected"]["reason"].as_str().unwrap_or_default();
+        assert_eq!(packet["status"], "blocked", "{packet}");
+        assert_eq!(
+            packet["selected"]["reason_code"],
+            "source_currentness_unavailable"
+        );
+        let reason = packet["selected"]["message"].as_str().unwrap_or_default();
         assert!(
             reason.contains(
                 "Static limitation `typescript_repair_packet_not_delegatable` at `src/auth.ts:2`"
@@ -4929,7 +5515,7 @@ mod tests {
     /// #4216: a weakly exposed Python finding without a repair card used to
     /// leave first-pr at a bare generic "no actionable gap". The ledger now
     /// carries a non-delegatable static-limitation record, and first-pr names
-    /// why no card exists and the manual step, as advisory no-action.
+    /// why no card exists and the manual step, even when currentness is unavailable.
     #[test]
     fn python_finding_without_repair_card_names_limitation_and_manual_step() -> Result<(), String> {
         use crate::output::gap_decision_ledger::{
@@ -4956,12 +5542,15 @@ mod tests {
             review_comments_report(Vec::new()),
         )?;
         let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
-        assert_eq!(packet["status"], "no_action", "{packet}");
-        assert_eq!(packet["selected"]["output_state"], "no_actionable_gap");
-        let reason = packet["selected"]["reason"].as_str().unwrap_or_default();
+        assert_eq!(packet["status"], "blocked", "{packet}");
+        assert_eq!(
+            packet["selected"]["reason_code"],
+            "source_currentness_unavailable"
+        );
+        let reason = packet["selected"]["message"].as_str().unwrap_or_default();
         assert!(
             reason.contains(
-                "Static limitation `python_repair_card_unavailable` at `src/pricing.py:10`: this Python preview finding has no repair card (static evidence names no concrete missing discriminator)"
+                "Static limitation `python_repair_card_unavailable` at `src/pricing.py:10`: this Python preview finding has no repair card (static evidence cannot bind `DISCOUNT_THRESHOLD` to a test input, so the boundary equality cannot become a repair target)"
             ),
             "{reason}"
         );
@@ -4984,6 +5573,7 @@ mod tests {
         json!({
             "schema_version": "0.1",
             "kind": "gap_decision_ledger",
+            "inputs": {"source_kind": "repo_exposure"},
             "records": [
                 {
                     "gap_id": "gap:repo:pricing",
@@ -5993,7 +6583,7 @@ mod tests {
         run_git_setup(&repo, &["add", "app/pricing.py"])?;
         run_git_setup(&repo, &["commit", "-m", "change pricing"])?;
         let check_output = repo.join(DEFAULT_CHECK_OUTPUT);
-        write_json(&check_output, check_output_with_python_repair_card())?;
+        write_json(&check_output, check_output_with_python_repair_card(&repo))?;
         let written = fs::metadata(&check_output)
             .and_then(|metadata| metadata.modified())
             .map_err(|err| format!("check output mtime: {err}"))?;
@@ -6047,6 +6637,7 @@ mod tests {
             "source_kind": "check_output",
             "records": DEFAULT_CHECK_OUTPUT,
         });
+        ledger["input_root"] = json!(repo);
 
         // No check report on disk: nothing to compare against.
         write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger.clone())?;
@@ -6061,7 +6652,7 @@ mod tests {
         // A `ripr outcome` receipt compares snapshots itself: no re-check.
         write_json(
             &repo.join(DEFAULT_CHECK_OUTPUT),
-            check_output_with_python_repair_card(),
+            check_output_with_python_repair_card(&repo),
         )?;
         write_json(
             &repo.join(DEFAULT_GAP_LEDGER),
@@ -6157,7 +6748,7 @@ mod tests {
         );
         write_json(
             &repo.join("saved/check.json"),
-            check_output_with_python_repair_card(),
+            check_output_with_python_repair_card(&repo),
         )?;
         let saved_before = options.anchored_arg("saved/check.json");
         let saved_after = options.anchored_arg("saved/check.after.json");
@@ -6184,7 +6775,7 @@ mod tests {
         run_git_setup(&repo, &["commit", "-m", "change pricing"])?;
         write_json(
             &repo.join(DEFAULT_CHECK_OUTPUT),
-            check_output_with_python_repair_card(),
+            check_output_with_python_repair_card(&repo),
         )?;
 
         let options = FirstPrOptions {
@@ -6323,9 +6914,12 @@ mod tests {
         assert_eq!(ledger["summary"]["projection_agent_packet_eligible"], 0);
 
         let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
-        assert_eq!(packet["status"], "no_action");
-        assert_eq!(packet["selected"]["state"], "no_action");
-        assert_eq!(packet["selected"]["output_state"], "no_actionable_gap");
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        assert_eq!(
+            packet["selected"]["reason_code"],
+            "source_currentness_unavailable"
+        );
         assert!(packet["selected"]["gap_id"].is_null());
         assert!(packet["selected"]["receipt_command"].is_null());
         assert!(packet["selected"]["agent_packet_command"].is_null());
@@ -6351,13 +6945,12 @@ mod tests {
     #[test]
     fn python_no_strong_oracle_check_output_is_selected_for_start_here() -> Result<(), String> {
         let repo = temp_python_repo("first-pr-python-no-strong-oracle")?;
-        write_json(
-            &repo.join(DEFAULT_CHECK_OUTPUT),
-            serde_json::from_str(include_str!(
-                "../../../../fixtures/python_boundary_gap/expected/check.json"
-            ))
-            .map_err(|error| format!("parse boundary Python fixture: {error}"))?,
-        )?;
+        let mut check: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/python_boundary_gap/expected/check.json"
+        ))
+        .map_err(|error| format!("parse boundary Python fixture: {error}"))?;
+        check["root"] = json!(repo);
+        write_json(&repo.join(DEFAULT_CHECK_OUTPUT), check)?;
         let options = FirstPrOptions {
             check_output: Some(DEFAULT_CHECK_OUTPUT.to_string()),
             ..FirstPrOptions::default()
@@ -6943,8 +7536,9 @@ mod tests {
         })
     }
 
-    fn check_output_with_python_repair_card() -> Value {
+    fn check_output_with_python_repair_card(root: &Path) -> Value {
         json!({
+            "root": root,
             "schema_version": "0.1",
             "tool": "ripr",
             "findings": [
@@ -7048,6 +7642,22 @@ mod tests {
             .and_then(|file| file.set_modified(std::time::SystemTime::now()))
             .map_err(|err| format!("refresh ledger mtime {}: {err}", ledger.display()))?;
         let mut actual_json = render_start_here_packet(&case, &options);
+        if case_id == "typescript-preview-gap" {
+            // This historical, portable ledger does not record its producer
+            // root. It must be limited as-is. Bind a separate in-memory test
+            // instance to this fixture's physical root to retain the existing
+            // actionable projection control; this is not producer evidence.
+            assert_eq!(
+                actual_json["selected"]["reason_code"], "source_currentness_unavailable",
+                "rootless fixture must not claim same-root authority: {actual_json}"
+            );
+            let mut bound_ledger = read_packet(&ledger)?;
+            bound_ledger["input_root"] = json!(case.canonicalize().map_err(|e| e.to_string())?);
+            let selection = select_from_gap_ledger(&bound_ledger, &case, &options);
+            let warnings = selection.warning().into_iter().collect();
+            actual_json =
+                render_start_here_packet_with_selection(&case, &options, selection, warnings, None);
+        }
         // The new context names the physical selected fixture root, which
         // can differ from the renderer CWD used by historical output paths.
         // Normalize only that advisory context before rendering; raw command

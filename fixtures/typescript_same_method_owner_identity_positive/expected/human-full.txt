@@ -44,6 +44,7 @@ Preview actionability
 
 Static exposure
   exposed (info, confidence 0.60)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related test(s) found for owner `validate`
