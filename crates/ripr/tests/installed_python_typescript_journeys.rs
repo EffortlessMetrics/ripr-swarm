@@ -2473,3 +2473,96 @@ fn gap_bound_after_phase_stops_when_the_retry_budget_is_spent() -> Result<(), St
     }
     Ok(())
 }
+
+/// Repeat a Python gap repair while retaining the first attempt and its
+/// compatibility projections, then check the second attempt's byte binding.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_repeated_gap_attempt_remains_current_and_detects_drift() -> Result<(), String> {
+    let (_guard, root, decoy) =
+        materialize("blind_journey_installed_python", "head", "py-repeat", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "Python check")?;
+    let (gap, base) = gap_start_tokens(&check).ok_or("no Python gap start")?;
+    let base = fixture_git_output(&root, &["rev-parse", &base])?
+        .trim()
+        .to_string();
+    let start = || -> Result<String, String> {
+        let (ok, output) = ripr(
+            &decoy,
+            &[
+                "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg,
+                "--phase", "before",
+            ],
+        )?;
+        expect_exit(ok, true, &format!("Python before: {output}"))?;
+        let line = output
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("Next, after the test edit: "))
+            .ok_or("no Python continuation")?;
+        line.split_whitespace()
+            .skip_while(|token| *token != "--attempt")
+            .nth(1)
+            .map(str::to_string)
+            .ok_or_else(|| "no attempt id".to_string())
+    };
+    let test_path = root.join("tests/test_pricing.py");
+    let original = std::fs::read_to_string(&test_path).map_err(|e| e.to_string())?;
+    let repaired = format!(
+        "{original}\n\ndef test_exact_boundary_gets_discount():\n    assert bulk_discount_rate(20) == 0.15\n"
+    );
+    let first = start()?;
+    std::fs::write(&test_path, &repaired).map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "tests/test_pricing.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "close gap"])?;
+    let (ok, output) = ripr(
+        &decoy,
+        &["continue", "--root", &root_arg, "--attempt", &first],
+    )?;
+    expect_exit(ok, true, &format!("first Python after: {output}"))?;
+    if !root
+        .join("target/ripr/workflow/after.check-findings.json")
+        .is_file()
+    {
+        return Err("first projection missing".into());
+    }
+    std::fs::write(&test_path, &original).map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "tests/test_pricing.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "reopen gap"])?;
+    let second = start()?;
+    if first == second {
+        return Err("attempt IDs reused".into());
+    }
+    std::fs::write(&test_path, &repaired).map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "tests/test_pricing.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "reclose gap"])?;
+    let (ok, output) = ripr(
+        &decoy,
+        &["continue", "--root", &root_arg, "--attempt", &second],
+    )?;
+    expect_exit(ok, true, &format!("second Python after: {output}"))?;
+    let current = || -> Result<bool, String> {
+        let (ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg, "--json"])?;
+        expect_exit(ok, true, "Python status")?;
+        let doc: serde_json::Value = serde_json::from_str(&status).map_err(|e| e.to_string())?;
+        doc["repair_attempts"]
+            .as_array()
+            .ok_or("no attempts")?
+            .iter()
+            .find(|row| row["attempt_id"].as_str() == Some(&second))
+            .and_then(|row| row["head_current"].as_bool())
+            .ok_or_else(|| format!("missing second currentness: {status}"))
+    };
+    if !current()? {
+        return Err("second Python attempt was immediately noncurrent".into());
+    }
+    std::fs::write(&test_path, repaired.replace("== 0.15", "== 0.16"))
+        .map_err(|e| e.to_string())?;
+    let drift = current();
+    std::fs::write(&test_path, repaired).map_err(|e| e.to_string())?;
+    if drift? || !current()? {
+        return Err("Python drift/restoration misread".into());
+    }
+    decoy_untouched(&decoy)
+}

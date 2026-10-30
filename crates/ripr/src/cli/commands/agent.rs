@@ -2297,6 +2297,15 @@ fn run_agent_repair_phase(
         }
         AgentRepairPhase::After => {
             ensure_command_root(&root, "agent repair --phase after")?;
+            // Internal artifact paths are passed to consumers that resolve
+            // relative paths against the root. Anchor the root once so a
+            // caller's relative spelling is not applied a second time.
+            let root = root.canonicalize().map_err(|error| {
+                format!(
+                    "canonicalize agent repair root {} failed: {error}",
+                    root.display()
+                )
+            })?;
             if let Some(id) = attempt_id.as_deref() {
                 crate::app::repair_attempt::complete_pending_terminal_retention_from(
                     &root, store_ref, id,
