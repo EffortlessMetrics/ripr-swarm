@@ -3892,6 +3892,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::spellings_the_relation_accepts",
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_decorator_argument_call_is_not_a_helper_edge",
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_click_name_that_is_not_the_click_module_is_not_a_command",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_runner_invoke_in_a_test_of_the_package_is_named_without_changing_the_class",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::without_a_recognised_runner_invoke_the_generic_line_stays",
   "crates/ripr/src/analysis/language/python/effect_order_tests.rs",
 ]
 fixtures = [
