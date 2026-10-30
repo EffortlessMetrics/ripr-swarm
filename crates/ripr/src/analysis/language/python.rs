@@ -1704,6 +1704,25 @@ impl PythonAdapter {
             );
             findings.extend(deleted);
         }
+        // Freeing the run's facts takes ~0.3 s on one thread for a large
+        // workspace (#10914: pandas, ~23k tests). Nothing in the result
+        // borrows them, so a worker frees them while the result returns.
+        drop(related_memo);
+        drop(foreign_index);
+        drop(import_roots);
+        let facts = (
+            all_tests,
+            all_owners,
+            workspace_read,
+            foreign_prior_by_file,
+            fixture_defs_by_file,
+            fixture_side_by_file,
+            helper_modules_by_file,
+            docstring_ranges_by_file,
+            import_ranges_by_file,
+            star_facts_by_file,
+        );
+        rayon::spawn(move || drop(facts));
         Ok(LanguageDiffResult {
             value_origins,
             findings,
