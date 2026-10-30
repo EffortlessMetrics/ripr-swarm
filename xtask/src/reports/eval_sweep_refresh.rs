@@ -559,7 +559,7 @@ fn resolve_binary(supplied: &str) -> Result<BinaryIdentity, String> {
             "eval-sweep refresh --ripr-bin `{supplied}` does not name an existing file; supply the explicit built binary (e.g. target/debug/ripr.exe); PATH cannot select the analyzer\n{USAGE}"
         ));
     }
-    let binary_digest = super::release_server::sha256_file(&absolute).map_err(|error| {
+    let binary_digest = super::release_server::sha256_file_io(&absolute).map_err(|error| {
         format!(
             "eval-sweep refresh cannot read the supplied binary `{supplied}` for its digest: {error}\n{USAGE}"
         )
@@ -607,7 +607,7 @@ fn resolve_binary(supplied: &str) -> Result<BinaryIdentity, String> {
 /// after EACH subject's run: a concurrent rebuild must never let rows keep a
 /// stale digest while executed bytes changed underneath them.
 fn binary_identity_drift(binary: &BinaryIdentity) -> Option<String> {
-    match super::release_server::sha256_file(&binary.absolute) {
+    match super::release_server::sha256_file_io(&binary.absolute) {
         Ok(post_run_digest) => {
             if post_run_digest == binary.binary_digest {
                 None
@@ -4024,7 +4024,26 @@ mod python_eval_sweep_refresh {
         let drift = binary_identity_drift(&binary).ok_or("tail change was not detected")?;
         assert!(drift.contains(&sha256_hex(&bytes)), "{drift}");
         std::fs::remove_file(&path).map_err(|error| error.to_string())?;
-        assert!(binary_identity_drift(&binary).is_some());
+        let original_error = std::fs::read(&path)
+            .err()
+            .ok_or("missing file was readable")?;
+        assert_eq!(
+            binary_identity_drift(&binary),
+            Some(format!(
+                "binary could not be re-read after the run for its identity check: {original_error}"
+            ))
+        );
+        let directory_error = std::fs::read(&root).err().ok_or("directory was readable")?;
+        let directory_binary = BinaryIdentity {
+            absolute: root.clone(),
+            ..binary
+        };
+        assert_eq!(
+            binary_identity_drift(&directory_binary),
+            Some(format!(
+                "binary could not be re-read after the run for its identity check: {directory_error}"
+            ))
+        );
         super::discard_partial_dir(&root);
         Ok(())
     }

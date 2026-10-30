@@ -512,6 +512,12 @@ pub(crate) fn sha256_file(path: &Path) -> Result<String, String> {
         .map_err(|err| format!("failed to read {} for hashing: {err}", path.display()))
 }
 
+/// Hash a file while retaining its native I/O error for callers that own diagnostics.
+pub(crate) fn sha256_file_io(path: &Path) -> std::io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    sha256_reader(&mut file)
+}
+
 fn sha256_reader(reader: &mut impl Read) -> std::io::Result<String> {
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 8192];
