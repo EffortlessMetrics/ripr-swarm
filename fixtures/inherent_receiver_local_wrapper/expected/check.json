@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/inherent_receiver_local_wrapper/input",
-  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":2,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:cbbe0ad76a79a14ca5abf45b4a1e332ac7212e232a8933b4538e183416efbcc1","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -23,7 +23,7 @@
         "normalized_discriminator": "self_object_value"
 
       },
-      "classification": "weakly_exposed",
+      "classification": "reachable_unrevealed",
       "severity": "warning",
       "confidence": 0.66,
       "probe": {
@@ -38,15 +38,15 @@
         "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling as_object; tests share only its file or a name token: wrapper_route"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: Self::Object(value) =>"},
-        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
-      "evidence_path": ["reach weak: No test is seen calling as_object; tests share only its file or a name token: wrapper_route", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Self::Object(value) =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: Self::Object(value) => (line 6)", "related test src/lib.rs:17 wrapper_route uses strong exact value oracle: assert_eq!(wrapper.as_object(), Some(7));", "source assertion argument value 7 at line 19"],
+      "evidence_path": ["reach weak: No test is seen calling as_object; tests share only its file or a name token: wrapper_route", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Self::Object(value) =>", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches match arm result: Self::Object(value) => (line 6)", "related test src/lib.rs:17 wrapper_route uses strong exact value oracle: assert_eq!(wrapper.as_object(), Some(7));", "source assertion argument value 7 at line 19"],
       "flow_sinks": [
         {"kind":"match_arm","text":"Self::Object(value) =>","line":6}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: Self::Object(value) =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No test is seen calling as_object; tests share only its file or a name token: wrapper_route", "Reachable tests can plausibly activate this changed behavior"],
-      "missing": ["No strong discriminator was detected"],
+      "evidence": ["Changed behavior appears to influence match arm result: Self::Object(value) =>", "No assertion found on related tests", "No test is seen calling as_object; tests share only its file or a name token: wrapper_route", "Reachable tests can plausibly activate this changed behavior", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
+      "missing": ["No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
       "assertion_texts": {
         "19": "assert_eq!(wrapper.as_object(), Some(7));"
       },
@@ -81,8 +81,8 @@
           "oracle": "assert_eq!(wrapper.as_object(), Some(7));",
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         }
       ],
       "stop_reasons": [],
@@ -107,9 +107,9 @@
         "normalized_discriminator": "some*value"
 
       },
-      "classification": "weakly_exposed",
+      "classification": "reachable_unrevealed",
       "severity": "warning",
-      "confidence": 0.66,
+      "confidence": 0.63,
       "probe": {
         "id": "probe:src_lib.rs:return_value:3068903e",
         "family": "return_value",
@@ -122,15 +122,15 @@
         "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling as_object; tests share only its file or a name token: wrapper_route"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for returned value: Self::Object(value) => Some(*value)"},
-        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
-      "evidence_path": ["reach weak: No test is seen calling as_object; tests share only its file or a name token: wrapper_route", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: Self::Object(value) => Some(*value)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: Self::Object(value) => Some(*value) (line 6)", "related test src/lib.rs:17 wrapper_route uses strong exact value oracle: assert_eq!(wrapper.as_object(), Some(7));", "source assertion argument value 7 at line 19"],
+      "evidence_path": ["reach weak: No test is seen calling as_object; tests share only its file or a name token: wrapper_route", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: Self::Object(value) => Some(*value)", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: Self::Object(value) => Some(*value) (line 6)", "related test src/lib.rs:17 wrapper_route uses strong exact value oracle: assert_eq!(wrapper.as_object(), Some(7));", "source assertion argument value 7 at line 19"],
       "flow_sinks": [
         {"kind":"return_value","text":"Self::Object(value) => Some(*value)","line":6}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: Self::Object(value) => Some(*value)", "No test is seen calling as_object; tests share only its file or a name token: wrapper_route", "Reachable tests can plausibly activate this changed behavior"],
-      "missing": ["No strong discriminator was detected"],
+      "evidence": ["No assertion found on related tests", "No complete owner-bound propagation witness found for returned value: Self::Object(value) => Some(*value)", "No test is seen calling as_object; tests share only its file or a name token: wrapper_route", "Reachable tests can plausibly activate this changed behavior", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
+      "missing": ["No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
       "assertion_texts": {
         "19": "assert_eq!(wrapper.as_object(), Some(7));"
       },
@@ -165,8 +165,8 @@
           "oracle": "assert_eq!(wrapper.as_object(), Some(7));",
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         }
       ],
       "stop_reasons": [],

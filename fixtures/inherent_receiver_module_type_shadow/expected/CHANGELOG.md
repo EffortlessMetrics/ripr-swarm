@@ -46,3 +46,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — inherent_receiver_module_type_shadow (5)
+
+Reason:
+RIPR-SPEC-0005: class weakly_exposed -> reachable_unrevealed from 0bfaa83289 (#9342/#9169); less credit, no new exposed (#7415)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_module_type_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

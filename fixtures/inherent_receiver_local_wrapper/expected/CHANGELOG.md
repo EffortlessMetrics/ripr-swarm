@@ -50,3 +50,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — inherent_receiver_local_wrapper (5)
+
+Reason:
+RIPR-SPEC-0005: class weakly_exposed -> reachable_unrevealed from 0bfaa83289 (#9342/#9169); less credit, no new exposed (#7415)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_local_wrapper --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
