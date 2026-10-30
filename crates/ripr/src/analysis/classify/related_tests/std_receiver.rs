@@ -393,9 +393,24 @@ fn trait_implemented_for(index: &RustIndex, trait_name: &str, head: &str) -> boo
     index.functions().iter().any(|function| {
         matches!(&function.item.container,
             FunctionContainer::TraitImpl { trait_path, self_ty }
-                if base_type_name(self_ty) == head
-                    && impl_trait_name_matches(trait_path, trait_name))
+                if impl_trait_name_matches(trait_path, trait_name)
+                    && (base_type_name(self_ty) == head || impl_self_reaches_std(self_ty)))
     })
+}
+
+/// Whether an `impl <trait> for <self_ty>` can apply to a std collection
+/// receiver without naming it: a slice, array, `str` or `dyn` type is reached
+/// by deref, and a bare single-letter type parameter is a blanket impl.
+fn impl_self_reaches_std(self_ty: &str) -> bool {
+    let mut text = self_ty.trim();
+    while let Some(rest) = text.strip_prefix('&') {
+        text = rest.trim_start();
+        text = text.strip_prefix("mut ").unwrap_or(text).trim_start();
+    }
+    text.starts_with('[')
+        || text.starts_with("dyn ")
+        || base_type_name(text) == "str"
+        || (text.len() == 1 && text.bytes().all(|byte| byte.is_ascii_uppercase()))
 }
 
 fn impl_trait_name_matches(trait_path: &str, trait_name: &str) -> bool {
@@ -434,5 +449,23 @@ mod tests {
             vec![false, true]
         );
         assert!(method_spellings("not_contains(x); contains_all(y);", "contains").is_empty());
+    }
+
+    #[test]
+    fn given_impl_self_types_when_checking_reach_then_deref_and_blanket_block() {
+        for reaches in [
+            "[u8]",
+            "&[T]",
+            "&mut [u8; 4]",
+            "str",
+            "&str",
+            "dyn Any",
+            "T",
+        ] {
+            assert!(impl_self_reaches_std(reaches), "{reaches}");
+        }
+        for named in ["Unit", "Vec<u8>", "Wrapper<T>", "Tx"] {
+            assert!(!impl_self_reaches_std(named), "{named}");
+        }
     }
 }

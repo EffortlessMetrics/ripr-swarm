@@ -8996,6 +8996,18 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             counter_default_fn_relation(body, vec![implementor], ""),
             RelationReason::DirectOwnerCall
         );
+        for self_ty in ["[u32]", "T"] {
+            let mut deref_implementor = function("src/lib.rs", "step");
+            deref_implementor.item.container = FunctionContainer::TraitImpl {
+                trait_path: "Counter".to_string(),
+                self_ty: self_ty.to_string(),
+            };
+            assert_eq!(
+                counter_default_fn_relation(body, vec![deref_implementor], ""),
+                RelationReason::DirectOwnerCall,
+                "an impl for {self_ty} can reach a Vec receiver"
+            );
+        }
     }
 
     /// #11113: a module file's own `use super::*;` is the ordinary test-module
