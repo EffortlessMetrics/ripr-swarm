@@ -106,7 +106,7 @@ jobs:
       ((contains(toJSON(inputs), '"subject_sha"') && needs.source-identity.result == 'success' && inputs.run_release_proof) ||
       (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci'))))
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 20 || 45 }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
         with:
@@ -186,7 +186,7 @@ jobs:
       ((contains(toJSON(inputs), '"subject_sha"') && needs.source-identity.result == 'success' && inputs.run_rust_only) ||
       (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')))))
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 20 || 45 }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
         with:
@@ -265,7 +265,7 @@ jobs:
       ((contains(toJSON(inputs), '"subject_sha"') && needs.source-identity.result == 'success' && inputs.run_msrv) ||
       (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci')))))
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 20 || 30 }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -285,7 +285,7 @@ jobs:
       ((contains(toJSON(inputs), '"subject_sha"') && needs.source-identity.result == 'success' && inputs.run_vscode) ||
       (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci'))))
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 20 || 30 }}
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: editors/vscode

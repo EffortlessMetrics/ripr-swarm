@@ -496,7 +496,21 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
         assert!(child.contains("    needs: source-identity"));
         assert!(child.contains("ref: ${{ inputs.subject_sha || github.sha }}"));
         assert!(child.contains("persist-credentials: false"));
-        assert!(child.contains("&& 20 ||"));
+        // The callable qualification budget equals the retained predecessor's
+        // budget for the same job; first-ever admitted runs must not fit a
+        // tighter envelope than the lane they mirror.
+        let timeout = |source: &str| {
+            source
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("timeout-minutes: "))
+                .ok_or("timeout missing")
+                .map(str::to_owned)
+        };
+        assert_eq!(
+            timeout(child).map_err(|e| e.to_string())?,
+            timeout(job(ORIGINAL, name)).map_err(|e| e.to_string())?,
+            "budget {name}"
+        );
     }
     assert!(WORKFLOW.contains("permissions:\n  contents: read\n"));
     assert!(!WORKFLOW.contains("continue-on-error:") && !WORKFLOW.contains("secrets:"));

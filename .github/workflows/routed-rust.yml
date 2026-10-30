@@ -75,7 +75,7 @@ env:
     .node_id == $pr_id and .number == $number and .state == "open" and .draft == false and
     .head.repo.node_id == $repo_id and .head.repo.full_name == $repo and .head.sha == $head and
     .base.repo.node_id == $repo_id and .base.ref == "main" and
-    any(.labels[]; (.name | ascii_downcase) == "merge-ready")
+    any(.labels[]; .name == "merge-ready")
   NATIVE_COMMIT_JQ: |
     .sha == $merge and .tree.sha == $tree and (.parents | map(.sha) == [$base,$head])
   QUALIFICATION_SUBJECT_JQ: |
@@ -137,7 +137,7 @@ env:
     same_repository: check(.head.repo.full_name == $repo), main_base: check(.base.ref == "main"),
     mergeable: check(.mergeable == true), exact_head: check(.head.sha == $head),
     stored_base_matches_event: check(.base.sha == $base), exact_subject: check(.merge_commit_sha == $subject),
-    merge_ready: check(any(.labels[]; (.name | ascii_downcase) == "merge-ready"))}),
+    merge_ready: check(any(.labels[]; .name == "merge-ready"))}),
     observed:($pr | {head:check(.head.sha | sha),base:check(.base.sha | sha),subject:check(.merge_commit_sha | sha)})}
   READINESS_REVIEWS_DIAGNOSTIC_JQ: |
     [ .[][] ] as $reviews |
@@ -196,7 +196,7 @@ jobs:
           GENERATION: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
-          if [ "$ACTION" != labeled ] || [ "${LABEL,,}" != merge-ready ]; then
+          if [ "$ACTION" != labeled ] || [ "$LABEL" != merge-ready ]; then
             printf 'execute=false\nprior_result=nonrequest\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -745,7 +745,7 @@ jobs:
         run: |
           set -euo pipefail
           trap 'status=$?; printf "qualification_refusal status=%s\n" "$status" >&2; exit "$status"' ERR
-          [ "${LABEL,,}" = merge-ready ] || exit 0
+          [ "$LABEL" = merge-ready ] || exit 0
           [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           [[ "$EXPECTED_REQUEST_ID" == "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" ]] || { echo 'Qualification attempt substitution refused' >&2; exit 1; }
           for sha in "$HEAD_SHA" "$SUBJECT_SHA" "$GENERATION"; do [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; done
@@ -801,7 +801,7 @@ jobs:
           }
           readiness_phase='start'
           trap readiness_refused ERR
-          [ "${LABEL,,}" = merge-ready ] || exit 0
+          [ "$LABEL" = merge-ready ] || exit 0
           settle_request() {
             local attempt state
             for attempt in 1 2 3; do
@@ -904,7 +904,7 @@ jobs:
               done
               ;;
             pull_request:*)
-              [ "${LABEL,,}" = merge-ready ] || exit 0
+              [ "$LABEL" = merge-ready ] || exit 0
               [ "$ADMISSION_RESULT" = success ] || { echo 'Admission missing/failed' >&2; exit 1; }
               if [ "$EXECUTE" = false ]; then
                 [ "$PRIOR_RESULT" = success ] || { echo 'Prior required result failed; no implicit retry' >&2; exit 1; }
