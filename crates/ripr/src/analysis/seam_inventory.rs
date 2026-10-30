@@ -82,7 +82,13 @@ static PILOT_INVENTORY_DEFAULT: AtomicUsize = AtomicUsize::new(0);
 /// built-in default moves, and it keeps reporting `source: default`.
 /// Dropping the guard restores the product default.
 #[must_use = "the pilot inventory default lasts only while the guard is held"]
-pub(crate) struct PilotInventoryDefault;
+///
+/// The cap is process-wide (a static, not thread-local, because inventory work
+/// runs on worker threads): one pilot run at a time per process. The guard
+/// restores the value it replaced, so nested guards unwind in order.
+pub(crate) struct PilotInventoryDefault {
+    previous: usize,
+}
 
 impl PilotInventoryDefault {
     /// Validates `RIPR_PILOT_SEAM_BUDGET` (#4529) and scopes the default.
@@ -90,26 +96,37 @@ impl PilotInventoryDefault {
         let cap = pilot_seam_budget()?.map_or(0, |(budget, _)| {
             budget.min(DEFAULT_REPO_EXPOSURE_SEAM_LIMIT)
         });
-        PILOT_INVENTORY_DEFAULT.store(cap, Ordering::Relaxed);
-        Ok(Self)
+        let previous = PILOT_INVENTORY_DEFAULT.swap(cap, Ordering::Relaxed);
+        Ok(Self { previous })
     }
 }
 
 impl PilotInventoryDefault {
-    /// Whether a built-in-default inventory cut was made at a cap below the
-    /// product default, so `ripr check` (which keeps the product default) would
-    /// analyze a larger population than the pilot snapshot holds.
-    pub(crate) fn cut_below_check_default(info: Option<&SeamLimitInfo>) -> bool {
+    /// Re-labels an inventory cut made by the pilot-scoped default cap as the
+    /// pilot budget cut it stands in for: same analyzed and total counts, the
+    /// budget's own source. `None` for any other cut (an explicit
+    /// `RIPR_REPO_EXPOSURE_SEAM_LIMIT`, or a cap equal to the product default).
+    pub(crate) fn as_budget_cut(info: Option<&SeamLimitInfo>) -> Option<SeamLimitInfo> {
         let cap = PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed);
-        cap != 0
-            && cap < DEFAULT_REPO_EXPOSURE_SEAM_LIMIT
-            && info.is_some_and(|info| info.source == SeamLimitSource::Default)
+        let info = info?;
+        if cap == 0
+            || cap >= DEFAULT_REPO_EXPOSURE_SEAM_LIMIT
+            || info.source != SeamLimitSource::Default
+        {
+            return None;
+        }
+        let (_, source) = pilot_seam_budget().ok()??;
+        Some(SeamLimitInfo {
+            analyzed: info.analyzed,
+            total: info.total,
+            source,
+        })
     }
 }
 
 impl Drop for PilotInventoryDefault {
     fn drop(&mut self) {
-        PILOT_INVENTORY_DEFAULT.store(0, Ordering::Relaxed);
+        PILOT_INVENTORY_DEFAULT.store(self.previous, Ordering::Relaxed);
     }
 }
 

@@ -385,9 +385,21 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         .with_absent_file_limitations(absent_file_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
     let budget_started = Instant::now();
-    let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
+    let mut pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
     })?;
+    // The pilot-scoped default inventory cap (#10726) is the pilot budget cut
+    // earlier. Disclose it as the budget, naming `RIPR_PILOT_SEAM_BUDGET`, and
+    // not as an inventory cut whose repair route would not lift the budget.
+    // It is also not the population `ripr check` analyzes, so the snapshot
+    // carries no comparable identity, exactly as for a budget cut.
+    if pilot_budget_info.is_none()
+        && let Some(info) =
+            analysis::PilotInventoryDefault::as_budget_cut(inventory_limit_info.as_ref())
+    {
+        pilot_budget_info = Some(info);
+        inventory_limit_info = None;
+    }
     timings.record("seam_budget", budget_started, Some(classified.len()));
     let pilot_budget_truncated = pilot_budget_info.is_some();
     // The summary's disclosure counts from the outermost population: when
@@ -401,10 +413,6 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         }),
         (budget, inventory) => budget.clone().or_else(|| inventory.clone()),
     };
-    // The pilot-scoped default inventory cap (#10726) is below the cap
-    // `ripr check` applies, so a cut by it is not the check population either.
-    let inventory_cut_below_check =
-        analysis::PilotInventoryDefault::cut_below_check_default(inventory_limit_info.as_ref());
     let limit_info = pilot_budget_info.or(inventory_limit_info);
     let repo_exposure_limit = limit_info.as_ref().map(|info| {
         if pilot_budget_truncated {
@@ -458,11 +466,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         output::render::detect_python_repo_exposure_guidance_pub(&input.root, &classified);
     // The existing context is available only for the check-comparable full
     // population. Keep base None, matching pilot's printed after command.
-    let snapshot_context = if pilot_budget_truncated
-        || inventory_cut_below_check
-        || change_seams_added
-        || diff_bound_corpus
-    {
+    let snapshot_context = if pilot_budget_truncated || change_seams_added || diff_bound_corpus {
         None
     } else {
         Some(

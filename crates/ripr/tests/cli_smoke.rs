@@ -17753,11 +17753,13 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
 }
 
 /// #10726: the built-in inventory cap follows the pilot artifact budget, so
-/// pilot stops classifying seams it would only discard. Pin that the ranking
-/// does not move: the default run (inventory bounded by the budget) and a run
-/// that classifies the whole inventory before the same budget cuts it name
-/// the same top gap and the same ranked artifact seams, and the bounded run
-/// still discloses that the cap truncated the inventory as a default.
+/// pilot stops classifying seams it would only discard. The ranking and the
+/// disclosure must not move: with the inventory env var unset (bounded by the
+/// budget) and with `RIPR_REPO_EXPOSURE_SEAM_LIMIT=0` (whole inventory
+/// classified, then cut by the same budget), pilot names the same seams, the
+/// same top actionable seams, the same summary limit, and the same pilot-budget
+/// limitation (category, control, repair route). Also pin that a changed seam
+/// past the cap still survives into the pilot result.
 #[test]
 fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -17772,10 +17774,10 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
     commit_repair_fixture(&root, &["-qam", "expanded pilot fixture"])?;
 
     let run = |inventory_limit: Option<&str>| -> Result<
-        (String, serde_json::Value, serde_json::Value),
+        (serde_json::Value, serde_json::Value),
         Box<dyn std::error::Error>,
     > {
-        let mut env = vec![("RIPR_PILOT_SEAM_BUDGET", "2")];
+        let mut env = vec![("RIPR_PILOT_SEAM_BUDGET", "1")];
         if let Some(limit) = inventory_limit {
             env.push(("RIPR_REPO_EXPOSURE_SEAM_LIMIT", limit));
         }
@@ -17786,14 +17788,13 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
             &env,
         )?;
         assert_success(&pilot);
-        let stdout = String::from_utf8_lossy(&pilot.stdout).into_owned();
         let exposure: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
             root.join("target/ripr/pilot/repo-exposure.json"),
         )?)?;
         let summary: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
             root.join("target/ripr/pilot/pilot-summary.json"),
         )?)?;
-        Ok((stdout, exposure, summary))
+        Ok((exposure, summary))
     };
     let seam_ids = |exposure: &serde_json::Value| -> Vec<String> {
         exposure["seams"]
@@ -17801,37 +17802,80 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
             .map(|seams| {
                 seams
                     .iter()
-                    .map(|seam| seam["id"].to_string())
-                    .collect::<Vec<_>>()
+                    .map(|seam| seam["seam_id"].to_string())
+                    .collect()
             })
             .unwrap_or_default()
     };
+    let assert_same_result =
+        |label: &str,
+         default: &(serde_json::Value, serde_json::Value),
+         full: &(serde_json::Value, serde_json::Value)| {
+            assert_eq!(seam_ids(&default.0), seam_ids(&full.0), "{label}");
+            assert_eq!(
+                default.1["top_actionable_seams"], full.1["top_actionable_seams"],
+                "{label}: {}\n{}",
+                default.1, full.1
+            );
+            assert_eq!(
+                default.1["seam_limit"], full.1["seam_limit"],
+                "{label}: the summary must disclose the same cut"
+            );
+            // The cut is the pilot budget in both runs: same category, control and
+            // repair route, never the inventory control.
+            let limitation = |doc: &serde_json::Value| doc["limitations"][0].clone();
+            assert_eq!(limitation(&default.0), limitation(&full.0), "{label}");
+            assert_eq!(
+                limitation(&default.0)["category"],
+                "pilot_seam_budget_applied",
+                "{label}: {}",
+                default.0
+            );
+            assert_eq!(
+                limitation(&default.0)["control"],
+                "RIPR_PILOT_SEAM_BUDGET",
+                "{label}"
+            );
+            assert_eq!(
+                default.0.get("artifact"),
+                full.0.get("artifact"),
+                "{label}: a budget-cut snapshot carries no comparable identity"
+            );
+            assert!(default.0.get("artifact").is_none(), "{label}");
+        };
 
-    let (full_stdout, full_exposure, full_summary) = run(Some("0"))?;
-    let (default_stdout, default_exposure, default_summary) = run(None)?;
-
-    // Precondition: the whole inventory is larger than the budget, so the
-    // budget cut something in the unbounded run.
-    let full_total = full_summary["seam_limit"]["total"]
+    // Clean tree: nothing supplemented.
+    let full = run(Some("0"))?;
+    let default = run(None)?;
+    let total = full.1["seam_limit"]["total"]
         .as_u64()
-        .ok_or("the unbounded run must report the budget cut")?;
-    assert!(full_total > 2, "{full_summary}");
-    assert_eq!(seam_ids(&full_exposure).len(), 2, "{full_exposure}");
+        .ok_or("the budget must cut the fixture inventory")?;
+    assert!(total > 1, "{}", full.1);
+    assert_eq!(seam_ids(&full.0).len(), 1, "{}", full.0);
+    assert_same_result("clean tree", &default, &full);
 
-    assert_eq!(seam_ids(&default_exposure), seam_ids(&full_exposure));
-    assert_eq!(
-        default_summary["top_actionable_seams"], full_summary["top_actionable_seams"],
-        "default: {default_summary}\nunbounded: {full_summary}"
+    // A changed seam past the cap (the last function of the file, well past
+    // a one-seam cap) is still classified and kept.
+    let mut lib = std::fs::read_to_string(root.join("src/lib.rs"))?;
+    lib = lib.replace(
+        "if items > 3 { 2 } else { 0 }",
+        "if items > 4 { 2 } else { 0 }",
     );
-    assert_eq!(default_summary["seam_limit"]["analyzed"], 2);
-    assert_eq!(default_summary["seam_limit"]["total"], full_total);
-    // The default cap is disclosed as a default, not as an operator setting.
-    assert_eq!(default_summary["seam_limit"]["source"], "default");
-    assert_eq!(full_summary["seam_limit"]["source"], "configured");
-    assert_eq!(
-        default_stdout.contains("Top recommendation:"),
-        full_stdout.contains("Top recommendation:")
+    std::fs::write(root.join("src/lib.rs"), lib)?;
+    let full = run(Some("0"))?;
+    let default = run(None)?;
+    assert!(
+        default.0["seams"]
+            .as_array()
+            .ok_or("seams must be an array")?
+            .iter()
+            .any(|seam| seam["owner"]
+                .as_str()
+                .is_some_and(|o| o.contains("handling_fee"))),
+        "the changed seam past the cap must survive: {}",
+        default.0
     );
+    assert_same_result("changed seam past the cap", &default, &full);
     std::fs::remove_dir_all(root)?;
     Ok(())
 }

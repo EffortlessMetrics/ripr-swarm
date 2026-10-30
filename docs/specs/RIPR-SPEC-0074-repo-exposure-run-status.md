@@ -79,8 +79,9 @@ seams. This bounds the pathological 41-minute full-repo run.
 (`min(DEFAULT_PILOT_SEAM_BUDGET, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT)`, #10726)
 because it ranks and writes no more than that budget; classifying the rest
 only to discard it cost 3x the wall time on a mid-size repo. The source stays
-`"default"`, an explicit env var still wins, and a snapshot cut by that lower
-default carries no comparable artifact identity.
+`"default"`, an explicit env var still wins, and a cut by that lower default is
+disclosed as the pilot budget (`pilot_seam_budget_applied`, `RIPR_PILOT_SEAM_BUDGET`)
+with the inventory's real total, and carries no comparable artifact identity.
 
 - **Default-capped run** (env var unset, `total > 10_000`): emits
   `"run_status": "seam_limit_applied"` with `"limit_source": "default"`.
