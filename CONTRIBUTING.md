@@ -57,11 +57,33 @@ traceability without reconstructing intent from chat history.
    cargo test --workspace
    ```
 
-5. Try the binary against the in-repo sample:
+5. Run a bounded first-use smoke check from the repository root:
 
    ```bash
-   cargo run -p ripr -- check --diff crates/ripr/examples/sample/example.diff
+   cargo run --locked -p ripr -- check --root fixtures/boundary_gap/input --diff fixtures/boundary_gap/diff.patch
    ```
+
+   Expect one boundary finding for `amount >= discount_threshold`, not
+   an all-clear. This exercises real diff loading, Rust analysis and
+   default human guidance in a small, explicit workspace. It does not
+   analyze this whole repository, other languages or an installed package.
+
+   The reference smoke budget is **one second after the CLI is built**
+   on the measured Linux x86-64 four-CPU runner. Downloads and compilation
+   are separate; other hosts may differ. The command, repeated cold-RIPR-
+   cache and warm measurements, and host identity are retained in
+   [#8547](https://github.com/EffortlessMetrics/ripr-swarm/issues/8547).
+   This is a bounded-fixture budget, not a whole-repository latency promise.
+
+   The broader repository-root sample remains available:
+
+   ```bash
+   cargo run --locked -p ripr -- check --diff crates/ripr/examples/sample/example.diff
+   ```
+
+   That is a different workload. Its default human guidance can still
+   build a repository-wide evidence index, so it is not the quick setup
+   check and is not covered by the fixture budget.
 
 Before fixture or golden checks, prepare the canonical locked Rust fixture:
 

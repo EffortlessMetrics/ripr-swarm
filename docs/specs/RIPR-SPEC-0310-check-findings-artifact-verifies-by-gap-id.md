@@ -134,8 +134,18 @@ could not be verified without trusting hand-authored JSON.
 
 - `crates/ripr/tests/installed_python_typescript_journeys.rs`:
   `typescript_check_findings_artifacts_verify_by_gap_id_and_reject_forgery`.
+- `crates/ripr/tests/agent_command_journey.rs`:
+  `gap_bound_verify_refuses_valid_repo_exposure_snapshots` (#9712: a valid
+  repo-exposure pair passes unbound verification; `--gap-id` then refuses it
+  with the before-side snapshot-kind diagnostic at exit 2).
 - `crates/ripr/src/agent/artifact.rs` tests: `check_findings_gaps_*`,
   `gap_closure_*`, `verify_snapshot_dispatch_routes_only_the_declared_findings_kind`,
+  `gap_binding_over_a_non_findings_snapshot_is_operational_not_a_typed_refusal`
+  (before-side kind label), and
+  `gap_binding_over_a_non_findings_after_snapshot_names_the_after_artifact`
+  (after-side kind label; covered at unit level because pair comparability —
+  the canonical input identity includes the analysis format — refuses a
+  mixed-kind pair before the gap-kind gate can name the after artifact).
   `check_findings_incomplete_refusal_names_the_limitation_not_regenerate`,
   `check_findings_outcome_completeness_is_one_predicate`.
 - `crates/ripr/tests/installed_python_typescript_journeys.rs`:

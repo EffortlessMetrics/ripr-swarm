@@ -468,6 +468,22 @@ pub(crate) struct TypeScriptConditionalCreditGap {
     pub(crate) sample_line: usize,
     /// Bounded single-line source text of the unevaluated condition.
     pub(crate) condition: String,
+    /// Every unevaluated branch in the file holding a credited assertion,
+    /// with the calls enclosing it. Empty means the sites are unknown, so the
+    /// whole file counts (fail-closed); the sample above is the first site.
+    #[serde(default)]
+    pub(crate) sites: Vec<TypeScriptCreditSite>,
+}
+
+/// One unevaluated branch holding a credited assertion, and where it sits.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TypeScriptCreditSite {
+    pub(crate) line: usize,
+    /// Bounded single-line source text of the unevaluated condition.
+    pub(crate) condition: String,
+    /// Start lines of the calls enclosing the branch, outermost first. A
+    /// registered test reports its call's start line as its own line.
+    pub(crate) enclosing_call_lines: Vec<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

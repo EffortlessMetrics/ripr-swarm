@@ -36,6 +36,8 @@ Linked issues:
 - #9182 (`var`/`let` CommonJS runner bindings)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
+- #11196 (start rate: a conditional assertion in an unconsulted test no longer
+  marks a finding's analysis incomplete; rule 11)
 
 Linked PRs:
 
@@ -683,6 +685,35 @@ passes on the old code reaches it and fails on the edit. Both cases need the cha
   scalar changed arms and scalar branch values.)
 
 ### Reach
+
+Setup-derived receiver identity requires a known hook callable at the registration
+call. Parsed assignment, update, destructuring and loop targets affect subsequent
+registrations of that binding, including properties of known global roots.
+A local root can alias the actual global object: only a `const` binding to an
+empty object literal in that lexical frame proves a disjoint root here. Parameters,
+mutable bindings and other initializers keep possible ambient writes; nonempty
+literals may contain forwarding setters and remain unresolved.
+Parameter-default effects resolve in the parameter/outer environment before
+body-local declarations or empty-object proofs become visible. A default value
+does not itself prove a parameter's object identity; uncertain effects stay
+conservative without a parameter-value evaluator.
+All suite-call arguments are evaluated before its synchronous callback, including
+that callback's parameter defaults and body. A later write cannot revoke an
+already registered callback. A separate lexical binding or ambient property does
+not rebind an imported identifier; direct runner imports retain that identity.
+Mocha's named `before` and `beforeEach` exports additionally look up their ambient
+hook at invocation, so preceding or argument-time ambient writes withhold their
+setup evidence too.
+An unreadable computed global target withholds affected ambient hook identities.
+Only ordinary statements and admitted synchronous suite callbacks have ordered
+registration facts. Helper bodies, conditional/repeated registration order and
+restoration remain conservative. Self-referencing callbacks and hook-binding
+writes during argument evaluation keep unknown registration facts. Comments,
+strings, regexes and an ordinary
+object's same-named property are not hook-binding writes. Per-call identity is
+shared with Mocha setup-body admission. Existing duplicate-hook/race summaries,
+receiver rebinding and scope resolution retain their independent limits; filtering
+an ineligible hook cannot erase those summaries or add oracle credit.
 
 Candidates come from the first non-empty tier:
 
@@ -1689,6 +1720,19 @@ keys); do not take the next number.
     Assertions before the `try` and in its finalizer stay
     credited. The one shared predicate also bounds the conditional-credit
     probe and walker.
+    The limitation is scoped to the tests the findings consulted (#11196). The
+    walker records every unevaluated branch in a test file with the test
+    registration calls enclosing it, and the outcome keeps a branch only when
+    a registered test enclosing it is one a finding listed as a related test,
+    or when no registered test encloses it (a hook, a helper, a describe-level
+    branch). A branch inside a different test of the same file cannot hide the
+    oracle of a consulted test, so `src/f.ts` pinned by an unconditional test
+    does not read incomplete because `tests/mixed.test.ts` holds a different
+    test with `if (ok) { expect(g(2)).toBe(4); }`; a finding that rests on the
+    conditional test keeps the limitation. A gap without recorded sites and a
+    file whose tests came from an expanded suite factory keep the whole file's
+    disclosure. The scoping does not change any classification, and the
+    gap-bound repair start still consults the unchanged completeness predicate.
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
     "") { throw new Error("empty"); } return s; }`, formatted with the
     `throw` on its own line, which is the changed line: `"empty"` changed

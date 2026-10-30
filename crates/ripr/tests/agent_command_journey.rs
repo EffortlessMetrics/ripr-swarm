@@ -719,6 +719,69 @@ fn cleanup(root: &Path) {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// #9712: a valid repo-exposure pair passes unbound verification but is not
+/// an admissible input to `--gap-id`. Invalid artifacts fail before this path.
+#[test]
+fn gap_bound_verify_refuses_valid_repo_exposure_snapshots() -> Result<(), String> {
+    let root = unique_temp_workspace("gap-bound-repo-exposure");
+    let result = (|| -> Result<(), String> {
+        init_producer_fixture_repo(&root)?;
+        let root_arg = root_arg_of(&root);
+        let before = root.join("target/ripr/gap-kind-before.json");
+        let after = root.join("target/ripr/gap-kind-after.json");
+        produce_repo_exposure_snapshot(&root, &root_arg, &before)?;
+        // Distinct ancestor/descendant heads satisfy the movement gate while
+        // an empty commit preserves the pair's analysis inputs.
+        advance_fixture_head(&root, "advance valid snapshot pair")?;
+        produce_repo_exposure_snapshot(&root, &root_arg, &after)?;
+        for path in [&before, &after] {
+            let snapshot = read_json(path)?;
+            if snapshot.pointer("/artifact/kind").and_then(Value::as_str) != Some("repo_exposure") {
+                return Err(format!(
+                    "expected a producer-owned repo-exposure snapshot: {}",
+                    path.display()
+                ));
+            }
+            first_snapshot_seam_id(path)?;
+        }
+
+        let before_arg = before.to_string_lossy();
+        let after_arg = after.to_string_lossy();
+        let mut args: Vec<&str> = vec![
+            "agent",
+            "verify",
+            "--root",
+            &root_arg,
+            "--before",
+            &before_arg,
+            "--after",
+            &after_arg,
+            "--json",
+        ];
+        let unbound = run_ripr(&root, &args)?;
+        assert_success(
+            &unbound,
+            "unbound verify over valid repo-exposure snapshots",
+        )?;
+
+        args.extend(["--gap-id", "gap:typescript:typescript_preview:1a2b3c4d"]);
+        let bound = run_ripr(&root, &args)?;
+        let stderr = String::from_utf8_lossy(&bound.stderr);
+        if bound.status.code() != Some(2)
+            || !bound.stdout.is_empty()
+            || !stderr.contains("agent verify --gap-id requires `check-findings-json` snapshots; the before artifact is not one")
+        {
+            return Err(format!(
+                "gap-bound verify over valid repo-exposure snapshots must exit 2 with empty stdout and the snapshot-kind diagnostic; status={:?}, stdout={}, stderr={stderr}",
+                bound.status.code(), String::from_utf8_lossy(&bound.stdout),
+            ));
+        }
+        Ok(())
+    })();
+    cleanup(&root);
+    result
+}
+
 /// #7289: each artifact command in a brief must prepare its own redirect,
 /// even when pasted before the before-snapshot command from a foreign cwd.
 #[test]
