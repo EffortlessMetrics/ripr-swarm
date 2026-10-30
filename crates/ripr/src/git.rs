@@ -475,7 +475,17 @@ pub(crate) fn tracked_files_under(dir: &Path) -> Result<bool, String> {
 /// exists, never that any particular file is tracked, so callers must fail
 /// closed rather than treat it as a tracked-file answer.
 fn git_marker_above(dir: &Path) -> Option<PathBuf> {
-    for ancestor in dir.ancestors() {
+    // Resolve symlinks first: a cache dir linked into a work tree carries
+    // the tree's marker only on its canonical path, not its lexical one.
+    let canonical;
+    let start: &Path = match std::fs::canonicalize(dir) {
+        Ok(path) => {
+            canonical = path;
+            &canonical
+        }
+        Err(_) => dir,
+    };
+    for ancestor in start.ancestors() {
         let marker = ancestor.join(".git");
         if marker.is_dir() {
             return Some(marker);
@@ -519,45 +529,68 @@ mod missing_git_marker_tests {
         candidate
     }
 
-    #[test]
-    fn missing_git_dotgit_directory_above_base_is_a_marker() {
-        let root = scratch("dir-marker");
-        let base = root.join("target/ripr/cache");
-        std::fs::create_dir_all(&base).unwrap();
-        std::fs::create_dir_all(root.join(".git")).unwrap();
-        assert!(git_marker_above(&base).is_some());
-        let _ = std::fs::remove_dir_all(&root);
+    fn setup(label: &str, base_rel: &str) -> Result<(PathBuf, PathBuf), String> {
+        let root = scratch(label);
+        let base = root.join(base_rel);
+        std::fs::create_dir_all(&base)
+            .map_err(|err| format!("create scratch base {}: {err}", base.display()))?;
+        Ok((root, base))
     }
 
     #[test]
-    fn missing_git_plain_directory_without_marker_stays_admitted() {
+    fn missing_git_dotgit_directory_above_base_is_a_marker() -> Result<(), String> {
+        let (root, base) = setup("dir-marker", "target/ripr/cache")?;
+        std::fs::create_dir_all(root.join(".git"))
+            .map_err(|err| format!("create .git marker: {err}"))?;
+        assert!(git_marker_above(&base).is_some());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_git_plain_directory_without_marker_stays_admitted() -> Result<(), String> {
         // Extracted archives and exported trees have this shape.
-        let root = scratch("plain");
-        let base = root.join("cache");
-        std::fs::create_dir_all(&base).unwrap();
+        let (root, base) = setup("plain", "cache")?;
         assert!(git_marker_above(&base).is_none());
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
-    fn missing_git_gitfile_with_gitdir_prefix_is_a_marker() {
+    fn missing_git_gitfile_with_gitdir_prefix_is_a_marker() -> Result<(), String> {
         // Linked worktrees and submodules: `.git` is a file.
-        let root = scratch("gitfile");
-        let base = root.join("cache");
-        std::fs::create_dir_all(&base).unwrap();
-        std::fs::write(root.join(".git"), "gitdir: /elsewhere/.git/worktrees/w\n").unwrap();
+        let (root, base) = setup("gitfile", "cache")?;
+        std::fs::write(root.join(".git"), "gitdir: /elsewhere/.git/worktrees/w\n")
+            .map_err(|err| format!("write gitfile: {err}"))?;
         assert!(git_marker_above(&base).is_some());
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
-    fn missing_git_stray_dotgit_file_is_not_authority() {
-        let root = scratch("stray");
-        let base = root.join("cache");
-        std::fs::create_dir_all(&base).unwrap();
-        std::fs::write(root.join(".git"), "not a gitfile\n").unwrap();
+    fn missing_git_stray_dotgit_file_is_not_authority() -> Result<(), String> {
+        let (root, base) = setup("stray", "cache")?;
+        std::fs::write(root.join(".git"), "not a gitfile\n")
+            .map_err(|err| format!("write stray .git: {err}"))?;
         assert!(git_marker_above(&base).is_none());
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_git_symlinked_base_resolves_to_marked_tree() -> Result<(), String> {
+        // A cache dir linked into a work tree: the marker exists only on
+        // the canonical path, so the lexical walk must not miss it.
+        let (root, _base) = setup("symlink", "tree/cache")?;
+        std::fs::create_dir_all(root.join(".git"))
+            .map_err(|err| format!("create .git marker: {err}"))?;
+        let link = root.join("link");
+        std::os::unix::fs::symlink(root.join("tree"), &link)
+            .map_err(|err| format!("link cache base: {err}"))?;
+        assert!(git_marker_above(&link.join("cache")).is_some());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 }
 
