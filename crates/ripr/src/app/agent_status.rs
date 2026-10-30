@@ -6701,14 +6701,21 @@ mod tests {
         let commit = "git -C . --literal-pathspecs commit -m \"<message>\" -- src/pricing.py";
 
         // A decoy-cwd user needs the commit anchored at the analyzed root.
+        // The expectation goes through the same production quoting the
+        // producer uses (`shell_arg` renders console-quoted on Windows and
+        // single-quoted on Unix, the #10833 expectation pattern), so the
+        // anchored commit step stays discriminated on both hosts (#10996).
         let anchored = PilotGapStart::from_route("/repo root", &route(&["src/[ab].py"]));
         let anchored_message =
             pilot_routed_to_check_message(&routes, "/repo root", Some(&anchored));
+        let anchored_commit = format!(
+            "git -C {} --literal-pathspecs commit -m \"<message>\" -- {}",
+            shell_arg("/repo root"),
+            shell_arg("src/[ab].py")
+        );
         assert!(
-            anchored_message.contains(
-                "git -C '/repo root' --literal-pathspecs commit -m \"<message>\" -- 'src/[ab].py'"
-            ),
-            "{anchored_message}"
+            anchored_message.contains(&anchored_commit),
+            "Expected message to contain:\n{anchored_commit}\n\nActual message:\n{anchored_message}"
         );
 
         let clean_routed = pilot_routed_to_check_message(&routes, ".", Some(&clean));
