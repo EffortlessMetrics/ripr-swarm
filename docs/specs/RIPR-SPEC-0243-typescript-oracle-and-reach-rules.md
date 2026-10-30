@@ -36,6 +36,8 @@ Linked issues:
 - #9182 (`var`/`let` CommonJS runner bindings)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
+- #11196 (start rate: a conditional assertion in an unconsulted test no longer
+  marks a finding's analysis incomplete; rule 11)
 
 Linked PRs:
 
@@ -697,6 +699,35 @@ passes on the old code reaches it and fails on the edit. Both cases need the cha
   flat object; a nested or array expectation only removes the dynamic limit.)
 
 ### Reach
+
+Setup-derived receiver identity requires a known hook callable at the registration
+call. Parsed assignment, update, destructuring and loop targets affect subsequent
+registrations of that binding, including properties of known global roots.
+A local root can alias the actual global object: only a `const` binding to an
+empty object literal in that lexical frame proves a disjoint root here. Parameters,
+mutable bindings and other initializers keep possible ambient writes; nonempty
+literals may contain forwarding setters and remain unresolved.
+Parameter-default effects resolve in the parameter/outer environment before
+body-local declarations or empty-object proofs become visible. A default value
+does not itself prove a parameter's object identity; uncertain effects stay
+conservative without a parameter-value evaluator.
+All suite-call arguments are evaluated before its synchronous callback, including
+that callback's parameter defaults and body. A later write cannot revoke an
+already registered callback. A separate lexical binding or ambient property does
+not rebind an imported identifier; direct runner imports retain that identity.
+Mocha's named `before` and `beforeEach` exports additionally look up their ambient
+hook at invocation, so preceding or argument-time ambient writes withhold their
+setup evidence too.
+An unreadable computed global target withholds affected ambient hook identities.
+Only ordinary statements and admitted synchronous suite callbacks have ordered
+registration facts. Helper bodies, conditional/repeated registration order and
+restoration remain conservative. Self-referencing callbacks and hook-binding
+writes during argument evaluation keep unknown registration facts. Comments,
+strings, regexes and an ordinary
+object's same-named property are not hook-binding writes. Per-call identity is
+shared with Mocha setup-body admission. Existing duplicate-hook/race summaries,
+receiver rebinding and scope resolution retain their independent limits; filtering
+an ineligible hook cannot erase those summaries or add oracle credit.
 
 Candidates come from the first non-empty tier:
 
@@ -1551,6 +1582,58 @@ the masker.
     no removed counterpart, which a count sees), or a value that decides
     how many calls run (a count sees both), an aliased or optional-chained count,
     and `mock.calls[0].arguments` pins, which keep their reading.
+23. **Factory-built getter receivers (2026-10-30, #10402).** Adopted: a getter
+    owner is related to a test that binds `const box = factory(...)` once and
+    asserts `expect(box.<getter>)`, when the owner's module exports `factory`
+    and every `return` the factory runs is `new Class(...)` of the getter's own
+    class (not async or a generator, ending in a return or throw, never naming
+    the class except as `new Class`, and the only declaration of its name,
+    never reassigned). The test reaches the factory through a resolved named,
+    renamed or default import, or a resolved namespace import; a same-file
+    callee is not followed. The class and every same-file ancestor must be
+    unable to replace the getter on an instance: no instance field of that
+    name, `this.<getter> =`, constructor that returns a value, repeated or
+    reassigned class name (cast and non-null targets included), or second
+    getter of the name; an ancestor that is imported or not a plain
+    identifier refuses. The owner file is scanned with a closed rule: ANY
+    mention of `defineProperty`, `defineProperties`, `setPrototypeOf`,
+    `replaceProperty`, `__proto__` or `Class.prototype` refuses, whatever the
+    arguments or spacing. The relation is refused when
+    the receiver is declared twice, written again, bound by a catch, function,
+    arrow or loop parameter, or mentioned outside the block that declares it;
+    when the factory call is not the whole initializer; when the read is not
+    the subject of an `expect(...)`; when the test file mentions `defineProperty`,
+    `defineProperties`, `setPrototypeOf`, `replaceProperty`, `__proto__`,
+    `replaceGetter`, `replaceSetter`, `proxyquire`, `rewire` or
+    `createStubInstance` at all (or `td.replace` / `testdouble.replace`),
+    contains a `spyOn` that is not a call with a plain string-literal member
+    name, a `mocked` of anything but an identifier path, an index assignment,
+    or an argument list past the scan bound (the closed rule refuses every
+    name); when the arguments of any `spyOn`, `mock`, `doMock`, `stubGlobal`,
+    `stub`, `replace`, `mockImplementation` or `mockReturnValue` call, or a
+    `.name =` assignment target, name the getter, the class or the factory,
+    whatever its fabrication form; when the owner module is mocked;
+    and for computed access. The relation reads like a constructed receiver
+    (`receiver_owner_call`), so it lends reach and the assertion's oracle, and
+    the classifier then decides the class exactly as it does for
+    `new Class(...)`: the factory adds no strength of its own, and a changed
+    line the oracle discriminates can read `exposed` as it would with a
+    constructed receiver. Rejected: following a factory that returns a
+    subclass or a union, crediting a receiver declared outside the test body,
+    and crediting a call of the factory without a getter read. Known limit: an
+    `expect(...)` on a different object elsewhere in the same test can still
+    donate its oracle, as for a constructed receiver. A class or accessor
+    decorator refuses; a decorator on another declaration is not examined. Helper or setup
+    modules (an imported local helper, jest `setupFilesAfterEnv`, vitest
+    `setupFiles`, an owner-module `patch()` export) that patch the prototype
+    are not scanned, as for a constructed receiver; obfuscated spellings
+    (`Object["define" + "Property"]`) and a mid-line shadow of the factory
+    name are not detected. Also not detected, with the same parity for
+    constructed receivers: a module patched through `Object.assign` or
+    `Reflect.set` on a CommonJS namespace, a prototype getter removed with
+    `delete` or `Reflect.deleteProperty` (including an owner-side
+    `delete (Cached as any).prototype.value`), and rebinds spelled through
+    `eval`.
 
 ### Counted removal receiver witness (#10157)
 
@@ -1703,6 +1786,19 @@ keys); do not take the next number.
     Assertions before the `try` and in its finalizer stay
     credited. The one shared predicate also bounds the conditional-credit
     probe and walker.
+    The limitation is scoped to the tests the findings consulted (#11196). The
+    walker records every unevaluated branch in a test file with the test
+    registration calls enclosing it, and the outcome keeps a branch only when
+    a registered test enclosing it is one a finding listed as a related test,
+    or when no registered test encloses it (a hook, a helper, a describe-level
+    branch). A branch inside a different test of the same file cannot hide the
+    oracle of a consulted test, so `src/f.ts` pinned by an unconditional test
+    does not read incomplete because `tests/mixed.test.ts` holds a different
+    test with `if (ok) { expect(g(2)).toBe(4); }`; a finding that rests on the
+    conditional test keeps the limitation. A gap without recorded sites and a
+    file whose tests came from an expanded suite factory keep the whole file's
+    disclosure. The scoping does not change any classification, and the
+    gap-bound repair start still consults the unchanged completeness predicate.
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
     "") { throw new Error("empty"); } return s; }`, formatted with the
     `throw` on its own line, which is the changed line: `"empty"` changed

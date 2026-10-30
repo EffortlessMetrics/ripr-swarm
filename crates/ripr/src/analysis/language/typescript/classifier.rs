@@ -9496,6 +9496,7 @@ fn module_entry_reach_summary(
     let called: Vec<String> = owner
         .module_entries
         .iter()
+        .filter(|entry| !entry.instance_factory)
         .filter(|entry| {
             let entry_owner = module_entry_owner(owner, entry);
             candidates.iter().any(|candidate| {

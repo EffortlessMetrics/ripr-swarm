@@ -80,7 +80,7 @@
       "items": { "$ref": "#/$defs/after_refusal" }
     },
     "terminal_artifacts": {
-      "description": "After-phase static-result artifacts retained under this attempt (`agent_receipt` and the `agent_verify` document it was built from). Absent or empty on legacy manifests. Compatibility projections under target/ripr/reports and target/ripr/workflow are not the sole surviving copy.",
+      "description": "After-phase static-result artifacts retained under this attempt (`agent_receipt` and its `agent_verify`; gap-bound attempts also retain `after_check_findings`). Absent or empty on legacy manifests. Compatibility projections under target/ripr/reports and target/ripr/workflow are not the sole surviving copy.",
       "type": "array",
       "items": { "$ref": "#/$defs/artifact" }
     },
