@@ -1934,7 +1934,11 @@ fn gap_bound_after_phase_enforces_the_edit_cage() -> Result<(), String> {
 #[test]
 fn gap_bound_cage_refusal_names_its_own_packet() -> Result<(), String> {
     let attempt = GapAttempt::start("ts-cage-packet-hint")?;
-    if !attempt.root.join("target/ripr/workflow/gap-repair-packet.json").is_file() {
+    if !attempt
+        .root
+        .join("target/ripr/workflow/gap-repair-packet.json")
+        .is_file()
+    {
         return Err("before phase did not write its gap packet".to_string());
     }
     attempt.commit_closing_test()?;
