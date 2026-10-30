@@ -77,7 +77,6 @@ pub(crate) fn render_check_with_config_and_progress(
                 output.root.clone(),
                 output.mode.as_str().to_string(),
                 output.base.clone(),
-                config,
                 inputs,
             )?;
             super::check_findings::render_check_findings_json_with_context(output, config, &context)

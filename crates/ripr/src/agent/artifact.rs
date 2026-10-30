@@ -130,7 +130,6 @@ impl RepoExposureArtifactContext {
         root: PathBuf,
         mode: String,
         base_revision: Option<String>,
-        config: &crate::config::RiprConfig,
         inputs: &crate::analysis_outcome::CheckFindingsInputs,
     ) -> Result<Self, String> {
         // The diff check consumes language selection and TypeScript settings
@@ -147,9 +146,7 @@ impl RepoExposureArtifactContext {
         languages.sort_unstable();
         let config_identity = format!(
             "{};unchanged_tests={};languages={:?}",
-            crate::config::check_artifact_config_identity_hash(config),
-            inputs.include_unchanged_tests,
-            languages
+            inputs.config_identity, inputs.include_unchanged_tests, languages
         );
         Self::for_analysis_format(
             root,
@@ -4455,8 +4452,8 @@ mod tests {
                     root.clone(),
                     "draft".to_string(),
                     None,
-                    config,
                     &crate::analysis_outcome::CheckFindingsInputs {
+                        config_identity: crate::config::check_artifact_config_identity_hash(config),
                         include_unchanged_tests: true,
                         languages: vec![crate::domain::LanguageId::Rust],
                         perl_facts_used: false,
@@ -4497,6 +4494,7 @@ mod tests {
             commit_fixture_file(&root)?;
             let config = crate::config::RiprConfig::default();
             let inputs = CheckFindingsInputs {
+                config_identity: crate::config::check_artifact_config_identity_hash(&config),
                 include_unchanged_tests: true,
                 languages: vec![LanguageId::Rust],
                 perl_facts_used: false,
@@ -4506,7 +4504,6 @@ mod tests {
                     root.clone(),
                     "draft".to_string(),
                     None,
-                    &config,
                     inputs,
                 )
             };

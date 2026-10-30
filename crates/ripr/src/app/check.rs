@@ -469,6 +469,7 @@ fn check_with_progress_and_origins_run(
 
     if let Some(outcome) = analysis.analysis_outcome.as_mut() {
         outcome.check_findings_inputs = Some(crate::analysis_outcome::CheckFindingsInputs {
+            config_identity: crate::config::check_artifact_config_identity_hash(config),
             include_unchanged_tests: input.include_unchanged_tests,
             languages: languages.clone(),
             perl_facts_used: input.perl_facts_path.is_some(),

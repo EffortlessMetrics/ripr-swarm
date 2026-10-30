@@ -385,6 +385,7 @@ pub(crate) struct AnalysisOutcome {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckFindingsInputs {
+    pub(crate) config_identity: String,
     pub(crate) include_unchanged_tests: bool,
     pub(crate) languages: Vec<crate::domain::LanguageId>,
     pub(crate) perl_facts_used: bool,
