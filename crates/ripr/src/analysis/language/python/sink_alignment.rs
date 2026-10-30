@@ -1168,9 +1168,10 @@ pub(super) fn classify_sink_alignment_prepared(
     // or generator body ran. Cover every credit branch, including method-name
     // credit for writes outside ChangedEffect's modeled channels.
     let helper_owner_supported = |unit: &AlignmentUnit<'_>| {
-        !unit.helper_derived
-            || (!owner.decorators.iter().any(|name| name == "async_def")
-                && !owner.term_facts.may_yield())
+        unit.helper_origin != super::PythonHelperOrigin::FieldHelperRefused
+            && (!unit.helper_origin.is_helper()
+                || (!owner.decorators.iter().any(|name| name == "async_def")
+                    && !owner.term_facts.may_yield()))
     };
     let gates_ok = |unit: &AlignmentUnit<'_>| {
         helper_owner_supported(unit)
@@ -1201,7 +1202,7 @@ pub(super) fn classify_sink_alignment_prepared(
                     unit.line,
                     unit.source_range,
                     &unit.observed_operands,
-                    unit.helper_derived,
+                    unit.helper_origin.is_helper(),
                 )
             })
             && field_construction_credit_ok(unit)
@@ -1342,7 +1343,7 @@ struct AlignmentUnit<'a> {
     /// A mock assertion admitted only to observe a changed call's arguments.
     effect_only: bool,
     /// Origin of the actual assertion, independent of its graded strength.
-    helper_derived: bool,
+    helper_origin: super::PythonHelperOrigin,
 }
 
 /// Every strong assertion of every strong related test, in related-test order
@@ -1380,8 +1381,8 @@ fn alignment_units<'a>(
                     source_range: assertion.source_range,
                     observed_operands: assertion.observed_operands.clone(),
                     kind: assertion.oracle_kind.clone(),
-                    effect_only: !strong,
-                    helper_derived: assertion.helper_derived,
+                    effect_only: !strong || assertion.helper_origin.effect_only(),
+                    helper_origin: assertion.helper_origin,
                 })
             }));
         }
@@ -1392,6 +1393,7 @@ fn alignment_units<'a>(
             && admits(&related.oracle_kind)
             && related.oracle_strength.rank() >= OracleStrength::Strong.rank()
         {
+            let helper_origin = reported_helper_origin(test, text);
             units.push(AlignmentUnit {
                 related,
                 test,
@@ -1401,19 +1403,51 @@ fn alignment_units<'a>(
                 source_range: None,
                 observed_operands: Vec::new(),
                 kind: related.oracle_kind.clone(),
-                effect_only: false,
-                // A legacy reported oracle must not wash out known helper
-                // origin or borrow it from another assertion in this test.
-                helper_derived: test.is_some_and(|test| {
-                    test.assertions.iter().any(|assertion| {
-                        assertion.helper_derived
-                            && (assertion.text == *text || assertion.gate_text == *text)
-                    })
-                }),
+                effect_only: helper_origin.effect_only(),
+                helper_origin,
             });
         }
     }
     units
+}
+
+// Prefer the actual reported assertion over another helper's synthesized
+// comparison. If only gates match, a refusal must survive ambiguity.
+fn reported_helper_origin(test: Option<&PythonTest>, text: &str) -> super::PythonHelperOrigin {
+    use super::PythonHelperOrigin;
+    let Some(test) = test else {
+        return PythonHelperOrigin::Inline;
+    };
+    let reported = test
+        .assertions
+        .iter()
+        .any(|assertion| assertion.text == text);
+    test.assertions
+        .iter()
+        .filter(|assertion| {
+            if reported {
+                assertion.text == text
+            } else {
+                assertion.gate_text == text
+            }
+        })
+        .map(|assertion| assertion.helper_origin)
+        .fold(PythonHelperOrigin::Inline, |origin, next| {
+            match (origin, next) {
+                (PythonHelperOrigin::FieldHelperRefused, _)
+                | (_, PythonHelperOrigin::FieldHelperRefused) => {
+                    PythonHelperOrigin::FieldHelperRefused
+                }
+                (PythonHelperOrigin::FieldHelperSupported, _)
+                | (_, PythonHelperOrigin::FieldHelperSupported) => {
+                    PythonHelperOrigin::FieldHelperSupported
+                }
+                (PythonHelperOrigin::ValueHelper, _) | (_, PythonHelperOrigin::ValueHelper) => {
+                    PythonHelperOrigin::ValueHelper
+                }
+                _ => PythonHelperOrigin::Inline,
+            }
+        })
 }
 
 /// Whether this assertion calls a function-scope stand-in of the owner
@@ -1672,6 +1706,44 @@ mod helper_origin_tests {
     use std::path::PathBuf;
 
     #[test]
+    fn helper_fallback_keeps_one_origin_and_prefers_reported_raw_text() -> Result<(), String> {
+        use super::super::PythonHelperOrigin;
+        for (replacement, expected) in [
+            ("", PythonHelperOrigin::FieldHelperSupported),
+            (
+                "    stats.writes = 0\n",
+                PythonHelperOrigin::FieldHelperRefused,
+            ),
+        ] {
+            let file = PathBuf::from("tests/test_stats.py");
+            let source = format!(
+                "from src.stats import Stats\n\ndef check_writes(obj, want):\n    assert obj.writes >= want\n\ndef test_writes():\n    stats = Stats()\n{replacement}    check_writes(stats, 0)\n    assert stats.writes >= 0\n"
+            );
+            let facts = super::super::source_facts::extract_source_facts(&file, &source);
+            let mut tests = facts.tests;
+            let modules = BTreeMap::from([(file, facts.helper_module)]);
+            super::super::helper_assertions::apply_helper_assertions(&mut tests, &modules);
+            let test = tests.first().ok_or("expected parsed test")?;
+            let helper = test
+                .assertions
+                .iter()
+                .find(|a| a.helper_origin.is_helper())
+                .ok_or("expected helper")?;
+            assert_eq!(reported_helper_origin(Some(test), &helper.text), expected);
+            assert_eq!(
+                reported_helper_origin(Some(test), &helper.gate_text),
+                PythonHelperOrigin::Inline
+            );
+            let mut no_raw = test.clone();
+            no_raw.assertions.retain(|a| a.helper_origin.is_helper());
+            let origin = reported_helper_origin(Some(&no_raw), &helper.gate_text);
+            assert_eq!(origin, expected);
+            assert!(origin.effect_only());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn helper_origin_survives_reported_oracle_fallback_without_tainting_raw_assertions()
     -> Result<(), String> {
         let file = PathBuf::from("tests/test_stats.py");
@@ -1685,12 +1757,12 @@ mod helper_origin_tests {
         let helper = test
             .assertions
             .iter()
-            .find(|assertion| assertion.helper_derived)
+            .find(|assertion| assertion.helper_origin.is_helper())
             .ok_or("the existing helper pass must supply the control assertion")?;
         let raw = test
             .assertions
             .iter()
-            .find(|assertion| !assertion.helper_derived)
+            .find(|assertion| !assertion.helper_origin.is_helper())
             .ok_or("an unrelated raw assertion must remain in the same test")?;
         let lookup = TestLookup::new(&tests);
         for (oracle, expected_helper) in [
@@ -1723,7 +1795,7 @@ mod helper_origin_tests {
             );
             assert_eq!(units.len(), 1);
             assert_eq!(units[0].line, None, "control must reach fallback");
-            assert_eq!(units[0].helper_derived, expected_helper);
+            assert_eq!(units[0].helper_origin.is_helper(), expected_helper);
         }
         Ok(())
     }
