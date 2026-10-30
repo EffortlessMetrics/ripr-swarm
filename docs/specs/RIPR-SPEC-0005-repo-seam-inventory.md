@@ -149,7 +149,7 @@ in both diff and repository consumers; a sibling module's private macro does
 not shadow a real assertion outside it. Foreign or unresolved helper last hops
 cannot make the private owner strongly gripped. General type resolution,
 parameter/field flow and cross-file helper receiver inference remain outside
-this bounded admission. The five retained corpus accuracy losses keep their
+this bounded admission. The retained corpus accuracy losses keep their
 runtime truth and false-actionable accounting.
 
 ### Bounded Rust module motion
