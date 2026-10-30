@@ -101,11 +101,79 @@ fn a_forwarder_credits_only_through_certain_bindings_and_a_flipped_assertion() -
     let stdlib_test = TEST.replace("shapes.rates.quote", "json.rates.quote");
     let patcher = "import shapes.rates.quote as forward\n\nforward.find = len\n";
     let level_two = "# from .table import lookup\nfrom ..table import lookup\n\n\ndef quote(tier, units):\n    return lookup(tier) * units\n";
+    let base_gone = [
+        ("shapes/__init__.py", None),
+        ("shapes/rates/__init__.py", None),
+        ("shapes/rates/table.py", None),
+        ("shapes/rates/quote.py", None),
+    ];
+    let flat_test = TEST.replace("shapes.rates.quote", "quote");
+    let src_package: Vec<(&str, Option<&str>)> = base_gone
+        .iter()
+        .copied()
+        .chain([
+            ("src/__init__.py", Some("")),
+            ("src/table.py", Some(TABLE)),
+            ("src/quote.py", Some(QUOTE)),
+            ("tests/test_rates.py", Some(flat_test.as_str())),
+        ])
+        .collect();
+    let src_layout: Vec<(&str, Option<&str>)> = base_gone
+        .iter()
+        .copied()
+        .chain([
+            ("src/shapes/__init__.py", Some("")),
+            ("src/shapes/rates/__init__.py", Some("")),
+            ("src/shapes/rates/table.py", Some(TABLE)),
+            ("src/shapes/rates/quote.py", Some(QUOTE)),
+        ])
+        .collect();
+    let mut src_shadowed = src_layout.clone();
+    src_shadowed.push(("tests/shapes/__init__.py", Some("")));
+    let receiver_test = "import shapes.rates.quote as q\n\n\ndef test_quote_gold():\n    assert q.quote(\"gold\", 3) == 30\n";
+    let circular_owner = format!("{TABLE}\n\nfrom .quote import helper\n");
+    let circular_quote = format!("{QUOTE}\n\ndef helper():\n    return 1\n");
+    let module_call = format!("{QUOTE}\n\nDEFAULT = quote(\"gold\", 1)\n");
     let cases: Vec<Case<'_>> = vec![
         (
             "aliased reader",
             true,
             vec![("shapes/rates/quote.py", Some(alias))],
+        ),
+        ("src layout", true, src_layout),
+        (
+            "package imported from inside its own directory",
+            false,
+            src_package,
+        ),
+        (
+            "test directory package shadows a src-layout package",
+            false,
+            src_shadowed,
+        ),
+        (
+            "module receiver the package __init__ rebinds",
+            false,
+            vec![
+                (
+                    "shapes/rates/__init__.py",
+                    Some("from .quote import quote\n"),
+                ),
+                ("tests/test_rates.py", Some(receiver_test)),
+            ],
+        ),
+        (
+            "owner imports the forwarder module",
+            false,
+            vec![
+                ("shapes/rates/table.py", Some(&circular_owner)),
+                ("shapes/rates/quote.py", Some(&circular_quote)),
+            ],
+        ),
+        (
+            "forwarder module calls the forwarder while loading",
+            false,
+            vec![("shapes/rates/quote.py", Some(&module_call))],
         ),
         (
             "forwarder module rebinds the reader",

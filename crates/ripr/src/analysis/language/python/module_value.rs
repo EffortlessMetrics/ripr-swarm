@@ -1067,6 +1067,18 @@ pub(super) fn compiled_package_shadow(
     } else {
         None
     };
+    // The starts that give an importable name: the whole path, and the path
+    // below a `src` layout root at any depth or a `lib` root at the top.
+    let leading_starts: Vec<usize> = std::iter::once(0)
+        .chain(
+            parts
+                .iter()
+                .enumerate()
+                .take(parts.len().saturating_sub(1))
+                .filter(|(index, part)| **part == "src" || (*index == 0 && **part == "lib"))
+                .map(|(index, _)| index + 1),
+        )
+        .collect();
     let own_ancestors: Vec<std::path::PathBuf> = file
         .ancestors()
         .skip(1)
@@ -1079,13 +1091,13 @@ pub(super) fn compiled_package_shadow(
                 if depth > 0 && compiled_entry(&directory, name) {
                     return true;
                 }
-                let leading = start == 0 && depth + 1 < parts.len();
-                if leading
-                    && !own_ancestors.contains(&directory.join(name))
-                    && (directory.join(format!("{name}.py")).is_file()
-                        || initializer_in_package(&directory.join(name)))
-                {
-                    return true;
+                if leading_starts.contains(&start) && start + depth + 1 < parts.len() {
+                    let path = directory.join(name);
+                    if !own_ancestors.contains(&path)
+                        && (path.with_extension("py").is_file() || initializer_in_package(&path))
+                    {
+                        return true;
+                    }
                 }
                 directory.push(name);
                 if !directory.is_dir() {
@@ -1838,7 +1850,7 @@ fn credits<'a>(
         readers.push((owner, old_reader, new_reader));
     }
 
-    let forwarders = forwarders_of(module_owner, file, &readers, owners);
+    let forwarders = forwarders_of(module_owner, file, new_source, &readers, owners);
 
     let mut out = Vec::new();
     for test in all_tests {
@@ -1944,6 +1956,25 @@ fn credits<'a>(
                 {
                     continue;
                 }
+                // Only `from <package>.<module> import forwarder`: a path that
+                // drops the forwarder's package (a `src` package imported from
+                // inside) breaks its relative import, and a module receiver
+                // may be a name the package `__init__` rebinds.
+                if test.imports.iter().any(|import| {
+                    (import_source_module_matches_owner(import, forwarder.owner, &test.file)
+                        || !submodule_receivers(import, forwarder.owner, &test.file).is_empty())
+                        && !(import.imported == forwarder.owner.name
+                            && import
+                                .source_module
+                                .split('.')
+                                .collect::<Vec<_>>()
+                                .ends_with(&[
+                                    forwarder.package.as_str(),
+                                    forwarder.module.as_str(),
+                                ]))
+                }) {
+                    continue;
+                }
                 let spellings = reader_spellings(test, forwarder.owner);
                 let callee = |reader| Callee {
                     local: &forwarder.local,
@@ -1989,6 +2020,9 @@ fn credits<'a>(
 /// import lookup` (#9619).
 struct Forwarder<'o> {
     owner: &'o PythonOwner,
+    /// The forwarder module's package directory name and module name.
+    package: String,
+    module: String,
     body: Reader,
     /// The forwarder module's name for the reader.
     local: String,
@@ -2006,6 +2040,7 @@ struct Forwarder<'o> {
 fn forwarders_of<'o>(
     module_owner: &PythonOwner,
     file: &Path,
+    owner_source: &str,
     readers: &[(&PythonOwner, Reader, Reader)],
     owners: &'o [PythonOwner],
 ) -> Vec<Forwarder<'o>> {
@@ -2035,11 +2070,26 @@ fn forwarders_of<'o>(
         {
             continue;
         }
+        let (Some(module_stem), Some(package)) = (
+            module.file.file_stem().and_then(|stem| stem.to_str()),
+            module
+                .file
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str()),
+        ) else {
+            continue;
+        };
+        // The owner importing the forwarder module makes the import order
+        // matter: loading it first can meet a partly initialized module.
+        if mentions_identifier(owner_source, module_stem) {
+            continue;
+        }
         let Ok(Mod::Module(parsed)) = parse_module_result(&module.file, source) else {
             continue;
         };
         let facts = ModuleBindingFacts::of(source, &parsed.body);
-        if facts.assigns_dunder() {
+        if facts.assigns_dunder() || !inert_forwarder_module(&parsed.body, stem) {
             continue;
         }
         let mut callees: Vec<(String, usize)> = Vec::new();
@@ -2081,6 +2131,8 @@ fn forwarders_of<'o>(
                 };
                 out.push(Forwarder {
                     owner,
+                    package: package.to_string(),
+                    module: module_stem.to_string(),
                     body,
                     local: local.clone(),
                     reader: index,
@@ -2089,6 +2141,62 @@ fn forwarders_of<'o>(
         }
     }
     out
+}
+
+/// Whether loading a forwarder module runs nothing but its import of the
+/// owner module `stem`: a docstring, `from __future__` and `from .<stem>`
+/// imports, `pass`, assignments of literals, and undecorated `def`s whose
+/// defaults are literals and whose annotations are names or strings. Any
+/// other statement could call the forwarder, or import a module that does,
+/// before its import binds the reader.
+fn inert_forwarder_module(body: &[Stmt], stem: &str) -> bool {
+    fn literal(expr: &Expr) -> bool {
+        match expr {
+            Expr::Constant(_) => true,
+            Expr::List(list) => list.elts.iter().all(literal),
+            Expr::Tuple(tuple) => tuple.elts.iter().all(literal),
+            _ => false,
+        }
+    }
+    fn annotation(expr: Option<&Expr>) -> bool {
+        match expr {
+            None | Some(Expr::Constant(_)) | Some(Expr::Name(_)) => true,
+            Some(_) => false,
+        }
+    }
+    body.iter().all(|statement| match statement {
+        Stmt::Pass(_) => true,
+        Stmt::Expr(expr) => matches!(expr.value.as_ref(), Expr::Constant(_)),
+        Stmt::ImportFrom(import) => match import.level.map(|level| level.to_u32()) {
+            Some(1) => import.module.as_deref() == Some(stem),
+            None | Some(0) => import.module.as_deref() == Some("__future__"),
+            Some(_) => false,
+        },
+        Stmt::Assign(assign) => literal(&assign.value),
+        Stmt::AnnAssign(assign) => {
+            annotation(Some(&assign.annotation)) && assign.value.as_deref().is_none_or(literal)
+        }
+        Stmt::FunctionDef(function) => {
+            let args = &function.args;
+            function.decorator_list.is_empty()
+                && annotation(function.returns.as_deref())
+                && args
+                    .posonlyargs
+                    .iter()
+                    .chain(&args.args)
+                    .chain(&args.kwonlyargs)
+                    .all(|arg| {
+                        annotation(arg.def.annotation.as_deref())
+                            && arg.default.as_deref().is_none_or(literal)
+                    })
+                && args
+                    .vararg
+                    .iter()
+                    .chain(&args.kwarg)
+                    .all(|arg| annotation(arg.annotation.as_deref()))
+        }
+        _ => false,
+    })
 }
 
 /// The credits for a body-only edit of a top-level `NAME = lambda ...`
