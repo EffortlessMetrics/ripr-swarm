@@ -261,7 +261,7 @@ fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -
     #[cfg(windows)]
     need(
         &check,
-        "Verify from the selected root: python -m pytest ",
+        "Suggested command (unverified; inspect and run from the selected root): python -m pytest ",
         "manual Windows verify",
     )?;
     // #10373: the finding's GapRecord passes the shared agent-packet

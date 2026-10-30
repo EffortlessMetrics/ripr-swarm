@@ -32,7 +32,7 @@ fn native_pytest_route(finding: &Finding) -> Option<NativePytestRoute<'_>> {
     let node = unique("suggested_test_node_id: ")?;
     let raw = unique("suggested_verify_command: ")?;
     let selected = crate::domain::python_suggested_related_test(finding)?;
-    native_pytest_route_parts(file, node, raw, &selected.name)
+    native_pytest_route_parts(file, node, raw, &selected.name, cfg!(windows), false)
 }
 
 fn native_pytest_route_parts<'a>(
@@ -40,12 +40,14 @@ fn native_pytest_route_parts<'a>(
     node: &'a str,
     raw: &str,
     selected: &str,
+    windows: bool,
+    allow_qualified: bool,
 ) -> Option<NativePytestRoute<'a>> {
     let name = node.strip_prefix(file)?.strip_prefix("::")?;
     if name.is_empty()
-        || name.contains("::")
+        || (!allow_qualified && name.contains("::"))
         || name.rsplit("::").next()? != selected
-        || crate::domain::python_pytest_verify_display(file, name, false).as_deref() != Some(raw)
+        || crate::domain::python_pytest_verify_display(file, name, windows).as_deref() != Some(raw)
         || file.chars().chain(node.chars()).any(char::is_control)
         || Path::new(file)
             .components()
@@ -60,12 +62,34 @@ fn native_pytest_route_parts<'a>(
     })
 }
 
-pub(crate) fn validated_pytest_raw(finding: &Finding) -> Option<&str> {
-    native_pytest_route(finding)?;
-    finding
-        .evidence
-        .iter()
-        .find_map(|s| s.strip_prefix("suggested_verify_command: "))
+pub(crate) fn manual_python_raw(finding: &Finding) -> Option<&str> {
+    if finding.language != Some(LanguageId::Python) {
+        return None;
+    }
+    let unique = |prefix: &str| {
+        let mut values = finding
+            .evidence
+            .iter()
+            .filter_map(|s| s.strip_prefix(prefix));
+        let value = values.next()?;
+        (values.next().is_none() && !value.is_empty()).then_some(value)
+    };
+    let selected = crate::domain::python_suggested_related_test(finding)?;
+    let file = unique("suggested_test_file: ")?;
+    let raw = unique("suggested_verify_command: ")?;
+    if raw.chars().any(char::is_control) {
+        return None;
+    }
+    if let Some(node) = unique("suggested_test_node_id: ") {
+        native_pytest_route_parts(file, node, raw, &selected.name, cfg!(windows), true)?;
+    } else if !raw.starts_with("python -m unittest ")
+        || !raw
+            .trim_end_matches('"')
+            .ends_with(&format!(".{}", selected.name))
+    {
+        return None;
+    }
+    Some(raw)
 }
 
 /// Render the producer's pytest selector as a Bash action at the selected root.
@@ -604,46 +628,59 @@ mod tests {
 
     #[test]
     fn native_route_refuses_disagreeing_or_escaping_test_identity() {
+        let route = super::native_pytest_route_parts;
         let file = "tests/test_order.py";
         let node = "tests/test_order.py::test_total";
         let raw = "python -m pytest tests/test_order.py::test_total";
-        assert!(super::native_pytest_route_parts(file, node, raw, "test_total").is_some());
+        assert!(route(file, node, raw, "test_total", false, false).is_some());
+        assert!(route(file, node, raw, "test_other", false, false).is_none());
         assert!(
-            super::native_pytest_route_parts(
-                file,
-                "tests/test_order.py::TestOther::test_total",
-                "python -m pytest tests/test_order.py::TestOther::test_total",
-                "test_total"
-            )
-            .is_none()
-        );
-        assert!(super::native_pytest_route_parts(file, node, raw, "test_other").is_none());
-        assert!(
-            super::native_pytest_route_parts(
+            route(
                 file,
                 node,
                 "python -m pytest tests/test_order.py::test_other",
-                "test_total"
+                "test_total",
+                false,
+                false
             )
             .is_none()
         );
         assert!(
-            super::native_pytest_route_parts(
+            route(
                 file,
                 "tests/test_other.py::test_total",
                 raw,
-                "test_total"
+                "test_total",
+                false,
+                false
             )
             .is_none()
         );
         assert!(
-            super::native_pytest_route_parts(
+            route(
                 "../test_order.py",
                 "../test_order.py::test_total",
                 "python -m pytest ../test_order.py::test_total",
-                "test_total"
+                "test_total",
+                false,
+                false
             )
             .is_none()
+        );
+        let class_node = "tests/test_order.py::TestOther::test_total";
+        let class_raw = "python -m pytest tests/test_order.py::TestOther::test_total";
+        assert!(route(file, class_node, class_raw, "test_total", false, false).is_none());
+        assert!(route(file, class_node, class_raw, "test_total", false, true).is_some());
+        assert!(
+            route(
+                "tests/my file.py",
+                "tests/my file.py::test_total",
+                r#"python -m pytest "tests/my file.py::test_total""#,
+                "test_total",
+                true,
+                true
+            )
+            .is_some()
         );
     }
 

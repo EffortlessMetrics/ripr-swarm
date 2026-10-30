@@ -14,7 +14,7 @@ use crate::output::preview_actionability::{
     PreviewActionability, PreviewRawEvidenceRef, preview_actionability_for,
 };
 use crate::output::python_repair_card::{
-    PythonRepairCard, python_repair_card, rooted_pytest_action, validated_pytest_raw,
+    PythonRepairCard, manual_python_raw, python_repair_card, rooted_pytest_action,
 };
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use crate::output::typescript_preview_card::{
@@ -269,10 +269,10 @@ pub(crate) fn render_finding_digest_with_config(
                 "  Verify command (Bash): {action} ({})\n",
                 placement.verify_confidence
             ));
-        } else if let Some(raw) = validated_pytest_raw(finding) {
+        } else if let Some(raw) = manual_python_raw(finding) {
             out.push_str(&format!(
-                "  Verify from the selected root: {} ({})\n",
-                raw, placement.verify_confidence
+                "  Suggested command (unverified; inspect and run from the selected root): {}\n",
+                raw
             ));
         } else if finding.language == Some(LanguageId::Python) {
             out.push_str("  Verify: no verified command; select and run a project test from the selected root\n");
@@ -751,7 +751,11 @@ pub(super) fn render_finding_with_shared_sections(
             out.push_str(&format!("  pytest node: {node_id}\n"));
         }
         if finding.language == Some(LanguageId::Python) {
-            out.push_str("  verify: no verified command; select and run a project test from the selected root\n");
+            if let Some(raw) = manual_python_raw(finding) {
+                out.push_str(&format!("  suggested command (unverified; inspect and run from the selected root): {raw}\n"));
+            } else {
+                out.push_str("  verify: no verified command; select and run a project test from the selected root\n");
+            }
         } else {
             out.push_str(&format!(
                 "  verify: {} ({})\n",
@@ -953,10 +957,10 @@ fn push_python_repair_card(
             "  verify (Bash): {action} ({})\n",
             card.verify_command_confidence
         ));
-    } else if let Some(raw) = validated_pytest_raw(finding) {
+    } else if let Some(raw) = manual_python_raw(finding) {
         out.push_str(&format!(
-            "  verify from the selected root: {} ({})\n",
-            raw, card.verify_command_confidence
+            "  suggested command (unverified; inspect and run from the selected root): {}\n",
+            raw
         ));
     } else {
         out.push_str(

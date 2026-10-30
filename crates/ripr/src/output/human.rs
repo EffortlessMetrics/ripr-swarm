@@ -2730,6 +2730,36 @@ mod tests {
         assert!(!text.contains("python -m pytest"), "{text}");
     }
 
+    #[test]
+    fn coherent_class_and_unittest_suggestions_remain_manual() {
+        let mut finding = python_preview_finding(1, true);
+        finding
+            .evidence
+            .retain(|entry| !entry.starts_with("suggested_verify_command: "));
+        finding.evidence.push("suggested_test_line: 7".to_string());
+        finding.evidence.push("suggested_test_node_id: tests/test_pricing.py::TestPricing::test_small_order_pays_shipping".to_string());
+        finding.evidence.push("suggested_verify_command: python -m pytest tests/test_pricing.py::TestPricing::test_small_order_pays_shipping".to_string());
+        let render = |f: &Finding| {
+            super::sections::render_finding_digest_with_config(
+                f,
+                &RiprConfig::default(),
+                Path::new("/tmp/selected"),
+            )
+        };
+        let text = render(&finding);
+        assert!(
+            text.contains("Suggested command (unverified; inspect and run from the selected root)"),
+            "{text}"
+        );
+        finding.evidence.retain(|entry| {
+            !entry.starts_with("suggested_test_node_id: ")
+                && !entry.starts_with("suggested_verify_command: ")
+        });
+        finding.evidence.push("suggested_verify_command: python -m unittest tests.test_pricing.TestPricing.test_small_order_pays_shipping".to_string());
+        let text = render(&finding);
+        assert!(text.contains("Suggested command (unverified; inspect and run from the selected root): python -m unittest"), "{text}");
+    }
+
     /// #5531: the same carded finding stamped as repo-scoped gets no repair
     /// card (no repo-mode Python repair_routing cell); unstamped keeps it.
     #[test]
