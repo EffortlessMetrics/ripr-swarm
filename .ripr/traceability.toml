@@ -3761,6 +3761,9 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::parse_test_reads_only_one_single_operand_test_of_a_bare_name",
+  "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::read_input_reads_only_plain_scalar_literals",
+  "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::tests_disagree_only_where_the_swap_changes_the_branch",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_quoted_for_membership_reads_keep_receiver_credit",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_unterminated_literals_do_not_invent_receiver_credit",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_real_for_targets_still_withhold_receiver_credit",
@@ -3966,6 +3969,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/effect_order_tests.rs",
 ]
 fixtures = [
+  "fixtures/python_truthiness_swap_no_exposed_credit",
+  "fixtures/python_truthiness_swap_falsy_input_control",
   "fixtures/python_dynamic_namespace_dunder_setattr",
   "fixtures/python_dynamic_namespace_reload",
   "fixtures/python_dynamic_namespace_renamed_delattr",
@@ -4066,6 +4071,7 @@ fixtures = [
 ]
 code = [
   "xtask/src/fixture_contracts/upstream_python.rs",
+  "crates/ripr/src/analysis/language/python/truthiness_swap.rs",
   "crates/ripr/src/analysis/language/python.rs",
   "crates/ripr/src/analysis/language/python/oracles/unittest_list.rs",
   "crates/ripr/src/analysis/language/python/static_limits.rs",

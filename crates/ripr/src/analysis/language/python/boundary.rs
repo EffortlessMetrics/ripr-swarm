@@ -163,7 +163,19 @@ pub(super) fn python_boundary_evidence(
     let condition = predicate_condition(line_text);
     let relational = relational_operators(&condition);
     let (operators, old_equality_operands) = if relational.is_empty() {
-        let gate = equality_predicate_gate(&condition, old_line_text)?;
+        let Some(gate) = equality_predicate_gate(&condition, old_line_text) else {
+            // A single-operand test swap (`x is None` -> `not x`, #9186).
+            let old_line_text = old_line_text?;
+            return super::truthiness_swap::python_truthiness_swap_evidence(
+                line_text,
+                old_line_text,
+                (&condition, &predicate_condition(old_line_text)),
+                owner,
+                owner_source,
+                related_candidates,
+                focus,
+            );
+        };
         (gate.operators, gate.old_operands)
     } else {
         (relational, None)
