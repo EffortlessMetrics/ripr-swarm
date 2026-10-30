@@ -170,9 +170,11 @@ When Git refuses the repository state while reading committed content (exit
 128), the refusal keeps Git's reason. Only when that reason says the index
 itself is damaged (for example a truncated index) does it add rebuild advice:
 copy the index file Git names aside first, since a rebuild from HEAD discards
-staged changes, then remove it and run a shell-quoted `git -C '<root>' reset`
-bound to the selected root, so the advice works from another directory, from a
-root with spaces, and for a linked worktree whose index lives under its gitdir.
+staged changes, then remove it and run a single-quoted `git -C '<root>' reset`
+bound to the selected root. The quoting is POSIX single-quoting, which POSIX
+shells and PowerShell both accept (cmd.exe does not treat single quotes as
+quoting), so the advice works from another directory, from a root with spaces
+or single quotes, and for a linked worktree whose index lives under its gitdir.
 An unreadable but valid index, or any other exit-128 cause, gets no
 delete-and-reset advice (#10567).
 

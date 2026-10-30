@@ -1101,7 +1101,15 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
                 return Err(format!("{label}: missing `{needle}`\n{}", ran.stderr));
             }
         }
-        for wrong in ["No git remote is configured", "not inside a Git work tree"] {
+        for wrong in [
+            "No git remote is configured",
+            "not inside a Git work tree",
+            // These four damages all refuse with exit 128 and no index damage:
+            // the all-platform negative control for the rebuild-advice gate,
+            // whose only red-refusal test is #[cfg(unix)] (#10567).
+            "damaged index",
+            "git -C",
+        ] {
             if ran.stderr.contains(wrong) {
                 return Err(format!("{label}: wrong cause `{wrong}`\n{}", ran.stderr));
             }
@@ -1113,11 +1121,12 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
 /// A truncated `.git/index` is refused with Git's reason and a rebuild route
 /// bound to the selected root, not Git's `fatal:` line alone (#10567). The run
 /// starts in a different repository with a staged change, and the root has a
-/// space in its name, so an unbound or unquoted `git reset` would be wrong.
+/// space and a single quote in its name, so an unbound, unquoted or unescaped
+/// `git reset` would be wrong.
 #[test]
 fn truncated_index_refusal_names_the_rebuild_repair() -> Result<(), String> {
     let scratch = Scratch::new("truncated-index")?;
-    let root = plain(&scratch, "truncated index")?;
+    let root = plain(&scratch, "trunc'ated index")?;
     let decoy = plain(&scratch, "decoy")?;
     fs::write(decoy.join("staged.txt"), "staged\n").map_err(|e| format!("write failed: {e}"))?;
     git(&decoy, &["add", "staged.txt"])?;
@@ -1128,6 +1137,9 @@ fn truncated_index_refusal_names_the_rebuild_repair() -> Result<(), String> {
     let bytes = fs::read(&index).map_err(|e| format!("read index failed: {e}"))?;
     fs::write(&index, &bytes[..bytes.len().min(20)]).map_err(|e| format!("write failed: {e}"))?;
     let root_arg = root.to_string_lossy().into_owned();
+    // POSIX single-quoting with the `'` -> `'\''` escape: a needle built from
+    // the raw root would let an unescaped or unquoted command pass.
+    let quoted_root = format!("'{}'", root_arg.replace('\'', "'\\''"));
     let ran = ripr(
         &decoy,
         &["check", "--root", &root_arg, "--base", "main"],
@@ -1137,7 +1149,7 @@ fn truncated_index_refusal_names_the_rebuild_repair() -> Result<(), String> {
     if ran.code != Some(2) {
         return Err(format!("expected a refusal\n{}", ran.stderr));
     }
-    let bound = format!("git -C '{root_arg}' reset");
+    let bound = format!("git -C {quoted_root} reset");
     for needle in [
         "index file smaller than expected",
         "discards staged changes",
