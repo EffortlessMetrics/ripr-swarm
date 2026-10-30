@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The generated workflow's job summary now opens with `PR analysis did not run`, naming the producer refusal (for example `diff_scope_oversized` on a 2,878-line refactor in ripgrep) and its next step, instead of only `blocked / missing_artifact` plus a regeneration command that could not succeed; `ripr review-comments --check-output` names the refusal rather than `missing analysis_outcome`; docs/CI.md gains a Large pull requests section (#11161).

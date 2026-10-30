@@ -1514,6 +1514,29 @@ requests, the generated workflow writes that report before emitting
 changed-line check annotations by default without posting inline review
 comments.
 
+#### Large pull requests
+
+`ripr check` refuses to expand a pull request into probes past a changed-line
+budget (`RIPR_MAX_DIFF_CHANGED_RUST_LINES`, 2000 added plus removed Rust lines
+by default; the Python and TypeScript previews have their own budgets) and
+exits 2 with `diff_scope_oversized` before analyzing anything, so a
+repository-wide rename or an extraction PR gets no PR guidance. That is a
+declined run, not a clean result. In the generated workflow:
+
+- the advisory job stays green (`continue-on-error`) under `RIPR_GATE_MODE`
+  empty or `visible-only`, and the job summary opens with `PR analysis did not
+  run`, naming the refusal and its limit instead of only a missing artifact;
+- under a blocking `RIPR_GATE_MODE` the PR-guidance step is gate-critical, so
+  the job fails until the PR is split, narrowed or the limit is raised.
+  `ripr-waive` cannot help because there is no guidance to acknowledge.
+
+To get guidance anyway, split the pull request, analyze a subset locally with
+`ripr check --base origin/main --path 'crates/foo/**'` (repeatable `--path` and
+`--exclude`, files left out are reported as not analyzed), or raise the limit
+for the job by adding `RIPR_MAX_DIFF_CHANGED_RUST_LINES: "5000"` to the
+workflow `env:` block once the runner has been shown to afford it. See
+[Configuration](CONFIGURATION.md) for the guard and its memory rationale.
+
 See [LLM operator guide](LLM_OPERATOR_GUIDE.md) for the same status, workflow
 packet, verify, receipt, and reviewer-summary loop outside CI. See
 [PR review guidance](PR_REVIEW_GUIDANCE.md) for the PR-facing annotation

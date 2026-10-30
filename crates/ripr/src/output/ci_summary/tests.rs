@@ -816,3 +816,57 @@ fn preview_promotion_packets_follow_the_shell_glob() -> TestResult {
     assert!(packets.contains("<details><summary>Full report: target/ripr/reports/preview-promotion-python-a.md</summary>\n\n# A\n</details>"), "{packets}");
     Ok(())
 }
+
+/// A producer refusal on the PR diff (a huge refactor over the diff-scope
+/// budget) is named in the summary with its detail and next step. A
+/// `check.json` that discloses no refusal, or no `check.json`, adds nothing.
+#[test]
+fn a_producer_refusal_is_named_instead_of_only_a_missing_artifact() -> TestResult {
+    let refusal = Fixture::new("pr-refusal")?;
+    refusal.json(
+        "target/ripr/pr/check.json",
+        &json!({
+            "analysis_scope": {"run_status": "diff_scope_oversized", "downstream_consumable": false},
+            "findings": [],
+            "run_limitations": [{
+                "category": "diff_scope_oversized",
+                "run_status": "diff_scope_oversized",
+                "message": "diff_scope_oversized: 2878 changed Rust lines across 11 Rust files exceed the RIPR_MAX_DIFF_CHANGED_RUST_LINES limit (2000)"
+            }]
+        }),
+    )?;
+    let summary = refusal.render(&[])?;
+    let block = block(&summary, "#### PR analysis did not run");
+    assert!(
+        block.contains("- Reason: `diff_scope_oversized`"),
+        "{block}"
+    );
+    assert!(
+        block.contains("2878 changed Rust lines across 11 Rust files"),
+        "{block}"
+    );
+    assert!(block.contains("not a clean result"), "{block}");
+    assert!(block.contains("--path <glob>"), "{block}");
+    // It leads the first-run status, so the cause precedes the generic
+    // "missing artifact" state.
+    let refused_at = summary
+        .find("#### PR analysis did not run")
+        .unwrap_or(usize::MAX);
+    let status_at = summary.find("#### First-run status").unwrap_or(0);
+    assert!(refused_at < status_at, "{summary}");
+
+    // Negative: a complete check document names no refusal.
+    let complete = Fixture::new("pr-complete")?;
+    complete.json(
+        "target/ripr/pr/check.json",
+        &json!({"findings": [], "run_limitations": [], "analysis_scope": {}}),
+    )?;
+    assert!(!complete.render(&[])?.contains("PR analysis did not run"));
+    // Negative: no check.json, or a malformed one, adds nothing.
+    let absent = Fixture::new("pr-absent")?;
+    assert!(!absent.render(&[])?.contains("PR analysis did not run"));
+    let malformed = Fixture::new("pr-malformed")?;
+    malformed.write("target/ripr/pr/check.json", "{not json")?;
+    assert!(!malformed.render(&[])?.contains("PR analysis did not run"));
+    Ok(())
+}

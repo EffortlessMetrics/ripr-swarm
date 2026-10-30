@@ -48,6 +48,7 @@ const PILOT_SUMMARY_MD: &str = "target/ripr/pilot/pilot-summary.md";
 const LEDGER_JSON: &str = "target/ripr/reports/pr-evidence-ledger.json";
 const LEDGER_MD: &str = "target/ripr/reports/pr-evidence-ledger.md";
 const COMMENTS_JSON: &str = "target/ripr/review/comments.json";
+const PR_CHECK_JSON: &str = "target/ripr/pr/check.json";
 const GATE_JSON: &str = "target/ripr/reports/gate-decision.json";
 const GATE_MD: &str = "target/ripr/reports/gate-decision.md";
 const DELTA_JSON: &str = "target/ripr/reports/baseline-debt-delta.json";
@@ -86,6 +87,7 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
         out: Vec::new(),
     };
     summary.start_here();
+    summary.pr_analysis_refusal();
     summary.first_run_status(&input.base_ref);
     summary.language_preview(&input.configured_languages);
     summary.front_panel();
@@ -246,6 +248,43 @@ impl Summary {
         } else {
             self.line("- Start-here artifact: not generated yet; inspect uploaded artifacts and job logs.");
         }
+        self.blank();
+    }
+
+    /// Name why the PR analysis did not run when the producer refused the
+    /// diff (for example `diff_scope_oversized` on a huge refactor). Without
+    /// this the summary only says a downstream artifact is missing and
+    /// points at a regeneration command that cannot succeed. Silent when
+    /// `check.json` is absent, unreadable or does not disclose a refusal.
+    fn pr_analysis_refusal(&mut self) {
+        let Ok(bytes) = fs::read(self.root.join(PR_CHECK_JSON)) else {
+            return;
+        };
+        let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+            return;
+        };
+        let Some(status) = crate::output::gate::refusal_run_status(&value) else {
+            return;
+        };
+        let detail = value
+            .get("run_limitations")
+            .and_then(Value::as_array)
+            .and_then(|limitations| {
+                limitations.iter().find_map(|entry| {
+                    let named = ["run_status", "category"]
+                        .iter()
+                        .any(|key| entry.get(*key).and_then(Value::as_str) == Some(status));
+                    named
+                        .then(|| entry.get("message").and_then(Value::as_str))
+                        .flatten()
+                })
+            })
+            .unwrap_or("ripr declined to analyze this pull request");
+        self.line("#### PR analysis did not run");
+        self.line(&format!("- Reason: `{status}`"));
+        self.line(&format!("- Detail: {}", code_span(detail)));
+        self.line("- Effect: no PR guidance, inline comments, annotations or gate input exist for this head. This is a declined run, not a clean result.");
+        self.line("- Next: split the pull request, or analyze a subset with `ripr check --base <ref> --path <glob>` / `--exclude <glob>`, or raise the named limit in the workflow `env:` block after checking the runner can afford it. See docs/CI.md, Large pull requests.");
         self.blank();
     }
 

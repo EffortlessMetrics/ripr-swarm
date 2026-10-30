@@ -305,6 +305,31 @@ fn load_review_comments_analysis_outcome(
             path.display()
         ));
     }
+    // A producer refusal (`diff_scope_oversized`, `repo_scope_oversized`)
+    // carries no outcome by design. Name the refusal and its own repair
+    // route instead of the misleading "missing analysis_outcome".
+    if let Some(status) = crate::output::gate::refusal_run_status(&value) {
+        let detail = value
+            .get("run_limitations")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|limitations| {
+                limitations.iter().find_map(|entry| {
+                    entry
+                        .get("message")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|_| {
+                            ["run_status", "category"].iter().any(|key| {
+                                entry.get(*key).and_then(serde_json::Value::as_str) == Some(status)
+                            })
+                        })
+                })
+            })
+            .unwrap_or("the producer declined to analyze this diff");
+        return Err(format!(
+            "review-comments --check-output {} is invalid: the check producer refused this diff ({status}), so there is nothing to render: {detail}",
+            path.display()
+        ));
+    }
     let Some(envelope) = value.get("analysis_outcome") else {
         return Err(format!(
             "review-comments --check-output {} is invalid: missing analysis_outcome",
@@ -1129,6 +1154,57 @@ mod tests {
                     .ok_or_else(|| format!("{shape}: a bounded check document must be refused"))?;
             assert!(error.contains("findings-bounded"), "{shape}: {error}");
         }
+        Ok(())
+    }
+
+    /// A producer refusal (`diff_scope_oversized`) carries no outcome by
+    /// design. The refusal must be named with its own repair text; an
+    /// otherwise identical envelope with no refusal keeps the generic
+    /// "missing analysis_outcome" error, so the new branch is not a catch-all.
+    #[test]
+    fn check_output_loader_names_a_producer_refusal() -> Result<(), String> {
+        let dir = unique_command_test_dir("review-comments-refused-check-output");
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let _cleanup = OwnedDeadlineFixture(dir.clone());
+        let root = dir.join("repo");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let write = |name: &str, refusal: bool| -> Result<PathBuf, String> {
+            let mut document = serde_json::json!({
+                "schema_version": "0.2", "tool": "ripr", "mode": "draft",
+                "root": output::outcome::display_path(&root),
+                "base": "main", "summary": {}, "findings": []
+            });
+            if refusal {
+                document["analysis_scope"] = serde_json::json!({
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false
+                });
+                document["run_limitations"] = serde_json::json!([
+                    {"category": "diff_scope_oversized",
+                     "run_status": "diff_scope_oversized",
+                     "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); split the extraction PR"}
+                ]);
+            }
+            let path = dir.join(name);
+            std::fs::write(&path, document.to_string()).map_err(|error| error.to_string())?;
+            Ok(path)
+        };
+        let refused = write("refused.json", true)?;
+        let error = load_review_comments_analysis_outcome(Some(&refused), &root, "main", "diff")
+            .err()
+            .ok_or_else(|| "a refusal envelope must be rejected".to_string())?;
+        assert!(
+            error.contains("refused this diff (diff_scope_oversized)"),
+            "{error}"
+        );
+        assert!(error.contains("2878 changed Rust lines"), "{error}");
+        assert!(!error.contains("missing analysis_outcome"), "{error}");
+        let plain = write("plain.json", false)?;
+        let error = load_review_comments_analysis_outcome(Some(&plain), &root, "main", "diff")
+            .err()
+            .ok_or_else(|| "an envelope without an outcome must be rejected".to_string())?;
+        assert!(error.contains("missing analysis_outcome"), "{error}");
+        assert!(!error.contains("refused this diff"), "{error}");
         Ok(())
     }
 
