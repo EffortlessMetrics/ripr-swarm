@@ -372,7 +372,7 @@ impl PythonFileFactStore {
         let approx_bytes = bytes.len();
         if self
             .remaining_store_bytes
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
                 remaining.checked_sub(approx_bytes)
             })
             .is_err()
@@ -397,5 +397,7 @@ pub(super) fn served_view(mut facts: PythonSourceFacts) -> PythonSourceFacts {
     facts
 }
 
+#[cfg(test)]
+mod budget_tests;
 #[cfg(test)]
 mod tests;
