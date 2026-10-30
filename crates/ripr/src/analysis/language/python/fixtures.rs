@@ -643,7 +643,15 @@ fn imported_modules_may_touch_fixture(
     let mut seen_modules = BTreeSet::new();
     let mut seen_files: BTreeSet<&PathBuf> = BTreeSet::new();
     while let Some(module) = pending.pop() {
-        if module.is_empty() || !seen_modules.insert(module) {
+        // The module that defines the tool class names it everywhere (its
+        // own `class CliRunner`); it is the tool, not a patch of it.
+        if module.is_empty()
+            || INERT_TOOL_CLASSES.iter().any(|(tool_module, name)| {
+                *name == class
+                    && (module == *tool_module || module.starts_with(&format!("{tool_module}.")))
+            })
+            || !seen_modules.insert(module)
+        {
             continue;
         }
         let path = module.replace('.', "/");

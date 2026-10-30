@@ -618,10 +618,22 @@ pub(super) fn names_used_beyond_construction(source: &str) -> Vec<String> {
                 line_start = true;
                 continue;
             }
+            Tok::Semi => {
+                in_import = false;
+                line_start = true;
+                continue;
+            }
             Tok::Indent | Tok::Dedent => continue,
             Tok::Import | Tok::From if line_start => in_import = true,
+            // `def CliRunner(...)` and `class CliRunner(...)` redefine the
+            // name; only a call constructs it.
             Tok::Name { name }
-                if !in_import && !matches!(tokens.get(index + 1), Some(Tok::Lpar)) =>
+                if !in_import
+                    && (!matches!(tokens.get(index + 1), Some(Tok::Lpar))
+                        || index
+                            .checked_sub(1)
+                            .and_then(|before| tokens.get(before))
+                            .is_some_and(|before| matches!(before, Tok::Def | Tok::Class))) =>
             {
                 names.push(name.to_string());
             }

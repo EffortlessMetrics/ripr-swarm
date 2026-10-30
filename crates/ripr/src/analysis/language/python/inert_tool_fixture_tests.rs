@@ -294,3 +294,35 @@ fn an_imported_module_that_patches_or_re_exports_keeps_the_limit() -> Result<(),
     assert_eq!(control.static_limit_kind, None, "{:?}", control.evidence);
     Ok(())
 }
+
+#[test]
+fn a_semicolon_or_redefinition_does_not_hide_a_class_patch() -> Result<(), String> {
+    for (case, tail) in [
+        (
+            "semicolon after an import",
+            "\nimport os; CliRunner.invoke = None\n",
+        ),
+        (
+            "def redefinition",
+            "\ndef CliRunner(*a, **k):\n    return object()\n",
+        ),
+        ("class redefinition", "\nclass CliRunner:\n    pass\n"),
+    ] {
+        assert_limited(&classify_total(&format!("{CONFTEST}{tail}"), TEST)?, case);
+    }
+    Ok(())
+}
+
+#[test]
+fn the_tool_library_in_the_workspace_is_not_a_patch() -> Result<(), String> {
+    // pallets/click's own tree holds `class CliRunner` in click/testing.py.
+    let testing = "class CliRunner:\n    def invoke(self):\n        return None\n";
+    let finding = classify_files(&[
+        ("shop/__init__.py", SHOP),
+        ("tests/conftest.py", CONFTEST),
+        ("tests/test_shop.py", TEST),
+        ("src/click/testing.py", testing),
+    ])?;
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
