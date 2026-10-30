@@ -24,6 +24,11 @@ pub(crate) struct KnownFalse {
     /// The ripr-swarm issue that owns the fix.
     pub(crate) issue: u64,
     pub(crate) reason: String,
+    /// The accepted-cost issue that names this case, required when the entry
+    /// is new in the diff for a row that was not a false verdict at the merge
+    /// base (#10986). Without it the entry is a bless side effect.
+    #[serde(default)]
+    pub(crate) accepted_growth: Option<u64>,
 }
 
 /// The directory of entry files inside a corpus directory.
@@ -192,6 +197,148 @@ pub(crate) fn known_false_ledger_violations(
     violations
 }
 
+/// What the ledger and the blessed rows were at the merge base, so a diff
+/// cannot list a new false verdict in the same change that causes it (#10986).
+pub(crate) trait BaseLedger {
+    /// Whether `known-false/<case>.toml` existed at the base.
+    fn listed(&self, case: &str) -> Result<bool, String>;
+    /// The base's blessed outcome for the case; `None` when the row did not exist.
+    fn outcome(&self, case: &str) -> Result<Option<Outcome>, String>;
+}
+
+/// The `known_false` entries a diff adds for rows that were not false at the
+/// base. An entry for a row already false there, or one already listed, is not
+/// growth. A new false verdict needs `accepted_growth`, an accepted-cost issue,
+/// and the case named in the `reason`; both are visible in the reviewed diff.
+/// This cannot read the issue, so it makes growth explicit, not approved.
+pub(crate) fn growth_violations(
+    ledger: &Ledger,
+    ledger_label: &str,
+    base: &dyn BaseLedger,
+) -> Result<Vec<String>, String> {
+    let mut violations = Vec::new();
+    for entry in &ledger.known_false {
+        if base.listed(&entry.case)? || base.outcome(&entry.case)?.is_some_and(is_false) {
+            continue;
+        }
+        let accepted = entry.accepted_growth.is_some_and(|issue| issue != 0)
+            && entry.reason.contains(entry.case.as_str());
+        if !accepted {
+            violations.push(format!(
+                "verdict-corpus: known_false case `{}` in {ledger_label} is new in this diff and the row was not a false verdict at the merge base; a bless cannot list its own regression. Fix the case, spec or analyzer. Accepting a new false verdict adds `accepted_growth = <issue>` (an accepted-cost issue that names the case) to the entry and names `{}` in its `reason`, and is a reviewed edit",
+                entry.case, entry.case
+            ));
+        }
+    }
+    Ok(violations)
+}
+
+/// The base revision for the growth gate: `RIPR_VERDICT_CORPUS_BASE`, else the
+/// merge base with `origin/main` or `main`.
+fn resolve_base(dir: &Path) -> Result<String, String> {
+    if let Some(rev) = std::env::var_os("RIPR_VERDICT_CORPUS_BASE") {
+        let rev = rev.to_string_lossy().trim().to_string();
+        if !rev.is_empty() {
+            return Ok(rev);
+        }
+    }
+    let mut failures = Vec::new();
+    for branch in ["origin/main", "main"] {
+        match git_in(dir, &["merge-base", branch, "HEAD"]) {
+            Ok(output) if output.status.success() => {
+                let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !sha.is_empty() {
+                    return Ok(sha);
+                }
+                failures.push(format!("{branch}: empty merge base"));
+            }
+            Ok(output) => failures.push(format!(
+                "{branch}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+            Err(err) => failures.push(format!("{branch}: {err}")),
+        }
+    }
+    Err(failures.join("; "))
+}
+
+fn git_in(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    std::process::Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .map_err(|err| format!("git {}: {err}", args.join(" ")))
+}
+
+/// The ledger as the merge base stored it, read through `git`.
+struct GitBase<'a> {
+    dir: &'a Path,
+    rev: String,
+}
+
+impl GitBase<'_> {
+    /// `git show <rev>:./<path>`, relative to the corpus directory; `None`
+    /// when the path did not exist at the base.
+    fn file_at_base(&self, path: &str) -> Result<Option<Vec<u8>>, String> {
+        let spec = format!("{}:./{path}", self.rev);
+        let exists = git_in(self.dir, &["cat-file", "-e", &spec])?;
+        if !exists.status.success() {
+            return Ok(None);
+        }
+        let shown = git_in(self.dir, &["show", &spec])?;
+        if !shown.status.success() {
+            return Err(format!(
+                "git show {spec}: {}",
+                String::from_utf8_lossy(&shown.stderr).trim()
+            ));
+        }
+        Ok(Some(shown.stdout))
+    }
+}
+
+impl BaseLedger for GitBase<'_> {
+    fn listed(&self, case: &str) -> Result<bool, String> {
+        Ok(self
+            .file_at_base(&format!("{KNOWN_FALSE_DIR}/{case}.toml"))?
+            .is_some())
+    }
+
+    fn outcome(&self, case: &str) -> Result<Option<Outcome>, String> {
+        #[derive(Deserialize)]
+        struct Row {
+            outcome: Outcome,
+        }
+        let Some(bytes) = self.file_at_base(&format!("expected/rows/{case}.json"))? else {
+            return Ok(None);
+        };
+        serde_json::from_slice::<Row>(&bytes)
+            .map(|row| Some(row.outcome))
+            .map_err(|err| format!("parse base row `{case}`: {err}"))
+    }
+}
+
+/// The growth gate over a corpus directory. A base that cannot be read fails
+/// in hosted runs, where history is always fetched, and is named elsewhere.
+fn growth_gate(dir: &Path, ledger: &Ledger, ledger_label: &str) -> Result<Option<String>, String> {
+    let hosted = std::env::var_os("GITHUB_ACTIONS").is_some_and(|value| value == "true");
+    let base = match resolve_base(dir) {
+        Ok(rev) => GitBase { dir, rev },
+        Err(why) if hosted => {
+            return Ok(Some(format!(
+                "verdict-corpus: the known-false growth gate has no merge base to compare with ({why}); fetch history or set RIPR_VERDICT_CORPUS_BASE"
+            )));
+        }
+        Err(why) => {
+            println!(
+                "verdict-corpus: known-false growth gate not established locally (no merge base: {why})"
+            );
+            return Ok(None);
+        }
+    };
+    let violations = growth_violations(ledger, ledger_label, &base)?;
+    Ok((!violations.is_empty()).then(|| violations.join("\n")))
+}
+
 /// Compare the scored rows (case id, outcome) with the ledger. `Err` names every unlisted false row and every stale entry.
 pub(crate) fn known_false_gate(
     rows: &[(&str, Outcome)],
@@ -313,6 +460,7 @@ pub(crate) fn apply_known_false_gate(
     if let Err(failure) = missed_credit_gate(&missed_credit(rows), &ledger, &label) {
         failures.push(failure);
     }
+    failures.extend(growth_gate(dir, &ledger, &label)?);
     if failures.is_empty() {
         return Ok(existing);
     }
@@ -692,5 +840,130 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    /// A base where some cases were already listed and rows had outcomes.
+    struct FakeBase {
+        listed: Vec<&'static str>,
+        outcomes: Vec<(&'static str, Outcome)>,
+    }
+
+    impl BaseLedger for FakeBase {
+        fn listed(&self, case: &str) -> Result<bool, String> {
+            Ok(self.listed.contains(&case))
+        }
+        fn outcome(&self, case: &str) -> Result<Option<Outcome>, String> {
+            Ok(self
+                .outcomes
+                .iter()
+                .find(|(id, _)| *id == case)
+                .map(|(_, outcome)| *outcome))
+        }
+    }
+
+    fn growth(entries: &str, base: &FakeBase) -> Result<Vec<String>, String> {
+        growth_violations(&ledger(entries)?, "ledger.toml", base)
+    }
+
+    #[test]
+    fn a_new_entry_for_a_row_that_was_not_false_fails() -> Result<(), String> {
+        // The #8577 shape: the row was ideal at the base and the same diff
+        // re-blesses it false and lists it.
+        for outcomes in [
+            vec![("a", Outcome::Ideal)],
+            vec![("a", Outcome::Abstained)],
+            Vec::new(),
+        ] {
+            let base = FakeBase {
+                listed: Vec::new(),
+                outcomes,
+            };
+            let violations = growth(ENTRY, &base)?;
+            assert_eq!(violations.len(), 1, "{violations:?}");
+            assert!(
+                violations[0].contains("known_false case `a`"),
+                "{violations:?}"
+            );
+            assert!(violations[0].contains("accepted_growth"), "{violations:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_entry_already_listed_or_already_false_at_the_base_is_not_growth() -> Result<(), String> {
+        let listed = FakeBase {
+            listed: vec!["a"],
+            outcomes: vec![("a", Outcome::FalseSilent)],
+        };
+        assert!(growth(ENTRY, &listed)?.is_empty());
+        // A row false at the base but listed elsewhere (a moved entry file).
+        for outcome in [
+            Outcome::FalseActionable,
+            Outcome::FalseExposed,
+            Outcome::FalseSilent,
+        ] {
+            let moved = FakeBase {
+                listed: Vec::new(),
+                outcomes: vec![("a", outcome)],
+            };
+            assert!(growth(ENTRY, &moved)?.is_empty(), "{outcome:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_accepted_cost_override_must_name_an_issue_and_the_case() -> Result<(), String> {
+        let base = FakeBase {
+            listed: Vec::new(),
+            outcomes: vec![("a", Outcome::Ideal)],
+        };
+        let accepted = "[[known_false]]\ncase = \"a\"\nissue = 7\naccepted_growth = 9\nreason = \"a is accepted until 7\"\n";
+        assert!(growth(accepted, &base)?.is_empty());
+        // Each missing piece alone keeps the failure.
+        for (entry, what) in [
+            (
+                "[[known_false]]\ncase = \"a\"\nissue = 7\naccepted_growth = 0\nreason = \"a is accepted\"\n",
+                "zero issue",
+            ),
+            (
+                "[[known_false]]\ncase = \"a\"\nissue = 7\naccepted_growth = 9\nreason = \"why\"\n",
+                "case not named",
+            ),
+            (
+                "[[known_false]]\ncase = \"a\"\nissue = 7\nreason = \"a is accepted\"\n",
+                "no override",
+            ),
+        ] {
+            assert_eq!(growth(entry, &base)?.len(), 1, "{what}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn only_the_new_entries_of_a_mixed_diff_fail() -> Result<(), String> {
+        let base = FakeBase {
+            listed: vec!["old"],
+            outcomes: vec![("old", Outcome::FalseSilent), ("new", Outcome::Ideal)],
+        };
+        let entries = "[[known_false]]\ncase = \"old\"\nissue = 7\nreason = \"r\"\n[[known_false]]\ncase = \"new\"\nissue = 7\nreason = \"r\"\n";
+        let violations = growth(entries, &base)?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("`new`"), "{violations:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn an_unreadable_base_row_is_an_error_not_a_pass() {
+        struct Broken;
+        impl BaseLedger for Broken {
+            fn listed(&self, _case: &str) -> Result<bool, String> {
+                Err("git failed".to_string())
+            }
+            fn outcome(&self, _case: &str) -> Result<Option<Outcome>, String> {
+                Ok(None)
+            }
+        }
+        let result = ledger(ENTRY).and_then(|ledger| growth_violations(&ledger, "l.toml", &Broken));
+        assert_eq!(result, Err("git failed".to_string()));
     }
 }
