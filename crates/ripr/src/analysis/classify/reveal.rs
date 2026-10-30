@@ -40,8 +40,8 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// the exact subsequently asserted field. It grants neither reach nor strength.
     pub(in crate::analysis) recording_double_observed:
         &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
-    /// A changed whole returned closure needs its admitted applied owner pin;
-    /// token coincidence cannot establish that the closure ran discriminatingly.
+    /// A changed returned closure or unsafe Display format edit needs its
+    /// admitted owner pin; token coincidence cannot confirm discrimination.
     pub(in crate::analysis) returned_closure_pin_required: bool,
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// #9870: a Result.map callback runs only on Ok. Token coincidence in

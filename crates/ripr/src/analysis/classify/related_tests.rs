@@ -37,7 +37,7 @@ pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
 pub(in crate::analysis) use fmt_dispatch::{
-    assertion_pins_display_string, changes_only_string_literals,
+    assertion_pins_display_string, changes_only_string_literals, is_display_fmt_owner,
 };
 
 /// Per-pass workspace dependency context for the #2972 cross-crate admit.

@@ -14817,6 +14817,46 @@
       ]
     },
     {
+      "id": "rust_display_placeholder_edit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_display_placeholder_edit",
+      "vector": "encoded_placeholder_change_cannot_borrow_display_pin",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_display_raw_placeholder_edit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_display_raw_placeholder_edit",
+      "vector": "raw_placeholder_change_cannot_recover_credit_through_token_overlap",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
       "id": "rust_nested_use_dependency_glob",
       "language": "rust",
       "tier": "pure",

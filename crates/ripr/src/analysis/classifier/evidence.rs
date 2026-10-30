@@ -728,6 +728,36 @@ impl ClassifiedProbeEvidence {
         let field_oracle_needs_admission = arm_selector
             .as_ref()
             .is_some_and(ArmSelector::field_oracle_needs_admission);
+        // RIPR-SPEC-0297 / #9836: an unsafe Display write edit needs its
+        // admitted owner pin; generic token overlap cannot establish that
+        // the changed format output is discriminated.
+        let fmt_write_tail = context
+            .owner_fn
+            .is_some_and(crate::analysis::classify::is_display_fmt_owner)
+            && matches!(
+                &propagation_witness,
+                Some(PropagationWitnessDiagnostic::Valid(witness))
+                    if witness.limitations.iter().any(|limit| limit == "fmt_write_owner_tail")
+            );
+        let fmt_literal_edit = fmt_write_tail
+            && crate::analysis::classify::changes_only_string_literals(
+                context.probe.before.as_deref(),
+                context.probe.after.as_deref(),
+            );
+        let fmt_display_assertion = |test: &TestSummary, assertion: &OracleFact| {
+            fmt_write_tail
+                && context.owner_fn.is_some_and(|owner| {
+                    crate::analysis::classify::assertion_pins_display_string(
+                        test,
+                        assertion,
+                        owner,
+                        context.index,
+                    )
+                })
+        };
+        let fmt_display_pin = |test: &TestSummary, assertion: &OracleFact| {
+            fmt_literal_edit && fmt_display_assertion(test, assertion)
+        };
         let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
             pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
                 && (!field_oracle_needs_admission
@@ -850,16 +880,6 @@ impl ClassifiedProbeEvidence {
                 })
             })
         };
-        // RIPR-SPEC-0297: a `write!(f, ..)`-only `Display::fmt` has its whole
-        // output pinned by an exact `value.to_string()` assertion.
-        let fmt_write_tail = matches!(
-            &propagation_witness,
-            Some(PropagationWitnessDiagnostic::Valid(witness))
-                if witness.limitations.iter().any(|limit| limit == "fmt_write_owner_tail")
-        ) && crate::analysis::classify::changes_only_string_literals(
-            context.probe.before.as_deref(),
-            context.probe.after.as_deref(),
-        );
         let map_callback_pin_required = matches!(
             &propagation_witness,
             Some(PropagationWitnessDiagnostic::Valid(witness))
@@ -881,6 +901,11 @@ impl ClassifiedProbeEvidence {
             })
         };
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            // Refuses every owner-pin route, not only token overlap: none of them
+            // observes the written output without an admitted display pin.
+            if fmt_write_tail && !fmt_literal_edit {
+                return false;
+            }
             if map_callback_pin_required {
                 return direct_owner_pin_admits(test, assertion);
             }
@@ -902,15 +927,7 @@ impl ClassifiedProbeEvidence {
                     })
                 });
             entry_pinned
-                || (fmt_write_tail
-                    && context.owner_fn.is_some_and(|owner| {
-                        crate::analysis::classify::assertion_pins_display_string(
-                            test,
-                            assertion,
-                            owner,
-                            context.index,
-                        )
-                    }))
+                || fmt_display_pin(test, assertion)
                 || field_projection.as_ref().is_some_and(|receipt| {
                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
                 })
@@ -962,9 +979,13 @@ impl ClassifiedProbeEvidence {
                         carrier.admits(test, assertion, context.index, pin_syntax)
                     })
                 },
-                returned_closure_pin_required: context.owner_fn.is_some_and(|owner| {
-                    crate::analysis::classify::returned_closure_pin_required(context.probe, owner)
-                }),
+                returned_closure_pin_required: (fmt_write_tail && !fmt_literal_edit)
+                    || context.owner_fn.is_some_and(|owner| {
+                        crate::analysis::classify::returned_closure_pin_required(
+                            context.probe,
+                            owner,
+                        )
+                    }),
                 owner_return_pin: &owner_pin_admits,
                 owner_return_pin_required: map_callback_pin_required,
                 wrapper_return_pin: &|test, assertion| {
