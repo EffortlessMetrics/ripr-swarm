@@ -383,7 +383,9 @@ finding also prints no repair start, one further line follows (#10710):
 route for this kind of change yet, ...`, so a gap with neither route never ends
 without a named next step; beside a repair advisory that names its own route or
 recovery (several binding seams, a not-ready packet, the seam budget, a
-classification failure) the step omits the "no repair route" clause. A refusal that already names the existing test to
+classification failure, an unavailable gap route, an unreadable config, or no
+binding seam while the file holds seams, which points at `ripr pilot`) the
+step omits the "no repair route" clause. A refusal that already names the existing test to
 strengthen (the weak-assertion pointer) gets no such line. When several seams
 share the line and exactly one is the finding's changed expression, the block
 prints the stub command for that seam (`--seam-id`) instead of listing the

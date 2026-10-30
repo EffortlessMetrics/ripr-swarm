@@ -2095,7 +2095,8 @@ mod tests {
         let root = Path::new("no-such-root-10710");
         let config = RiprConfig::default();
         let ids = |count: usize| (0..count).map(|i| format!("s{i}")).collect::<Vec<_>>();
-        let cases: Vec<(&str, usize, Option<Result<Vec<ClassifiedSeam>, String>>)> = vec![
+        type Inventory = Option<Result<Vec<ClassifiedSeam>, String>>;
+        let cases: Vec<(&str, usize, Inventory)> = vec![
             ("too many", AMBIGUOUS_VALIDATION_LIMIT + 1, None),
             (
                 "unclassifiable",

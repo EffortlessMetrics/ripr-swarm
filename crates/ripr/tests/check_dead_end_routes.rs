@@ -262,7 +262,13 @@ fn two_ungripped_fields_print_the_changed_fields_stub_not_the_first() -> Result<
         "use dd::mk;\n\n#[test]\nfn t() {\n    let _built = mk();\n}\n",
     )?;
     let check = repo.check()?;
-    for output in repo.printed_stub_outputs(&check)? {
+    let outputs = repo.printed_stub_outputs(&check)?;
+    assert_eq!(
+        outputs.len(),
+        1,
+        "precondition, exactly one stub is printed so the loop below is not vacuous:\n{check}"
+    );
+    for output in outputs {
         assert!(
             output.contains("`y: 3`") && !output.contains("`x: 1`"),
             "a stub for the unchanged field must not be offered as the answer:\n{output}\n\ncheck said:\n{check}"

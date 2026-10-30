@@ -637,8 +637,10 @@ pub(super) fn hidden_stub_route_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'
 }
 
 /// #10710: the one plain next step for a finding that has neither a repair
-/// start nor a test stub. It names the test to write by hand and says no ripr
-/// repair route exists for this kind of change yet, so the reader is never
+/// start nor a test stub. It names the test to write by hand. It says no ripr
+/// repair route exists for this kind of change yet only when the advisory on
+/// screen says the same (`no_route`); beside an advisory that names its own
+/// route or recovery it omits that clause. Either way the reader is never
 /// pointed at a command that would refuse.
 fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool) -> String {
     let shape = match finding.probe.family {
