@@ -193,6 +193,7 @@ pub(super) struct EffectReads {
     first_call_end: Option<usize>,
     guarded_field: Option<(String, Rc<str>)>,
     operands: Vec<String>,
+    field_call_ends: std::collections::BTreeMap<String, usize>,
     mocked_calls: Vec<String>,
     /// The file line of the test's first owner call. A read on an earlier
     /// line sees the state before the changed effect ran, so it observes
@@ -278,10 +279,22 @@ impl EffectReads {
             }
             ChangedEffect::SelfField { attr } => {
                 if let Some((class, _)) = owner.qualified_name.rsplit_once('.') {
-                    reads.operands = owner_method_bound_locals(test, owner, class, &owner.name)
-                        .into_iter()
-                        .map(|local| format!("{local}.{attr}"))
-                        .collect();
+                    for local in owner_method_bound_locals(test, owner, class, &owner.name) {
+                        let operand = format!("{local}.{attr}");
+                        let callee = format!("{local}.{}", owner.name);
+                        let end = call_arglists_with_offsets(&test.body_text, &callee, false)
+                            .into_iter()
+                            .map(|(_, args)| {
+                                args.as_ptr().addr() - test.body_text.as_ptr().addr()
+                                    + args.len()
+                                    + 1
+                            })
+                            .min();
+                        if let Some(end) = end {
+                            reads.field_call_ends.insert(operand.clone(), end);
+                            reads.operands.push(operand);
+                        }
+                    }
                 }
                 // `with Manager() as m:` runs `__enter__` at the statement and
                 // `__exit__` when the block ends; the state is readable from
@@ -343,8 +356,13 @@ impl EffectReads {
             if !compared.contains(&operand.as_str()) {
                 continue;
             }
+            let call_end = self
+                .field_call_ends
+                .get(operand)
+                .copied()
+                .unwrap_or(call_end);
             let read = if helper_derived {
-                Some(usize::from(range.start()))
+                (call_end <= usize::from(range.start())).then_some(usize::from(range.start()))
             } else {
                 observations
                     .iter()

@@ -4,7 +4,7 @@ use super::approx_band::{PythonBandReading, parse_expression, python_band_readin
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::effect_alignment::ChangedEffect;
-use super::fixtures::literal_owner_instance_fixture;
+use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
 use super::forwarding_decorator::is_forwarding_decorator;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
@@ -347,7 +347,7 @@ pub(super) const LAMBDA_LIMIT_EVIDENCE: &str =
 /// is a plain one-line string literal return (`return "lambda x"`): no braces
 /// (an f-string expression or a dict could hold code), no triple quotes (the
 /// line may close a string opened above) and no other quote state to track.
-fn contains_lambda_keyword(text: &str) -> bool {
+pub(super) fn contains_lambda_keyword(text: &str) -> bool {
     let plain_line =
         !text.contains(['{', '\\']) && !text.contains("\"\"\"") && !text.contains("'''");
     text.match_indices("lambda").any(|(idx, _)| {
@@ -943,6 +943,7 @@ pub(super) fn unresolved_pytest_fixture_names<'t>(
         .filter(|fixture| !test.takes_parametrize_value(fixture))
         .filter(|fixture| !is_known_auxiliary_pytest_fixture(fixture))
         .filter(|fixture| !literal_owner_instance_fixture(test, owner, fixture))
+        .filter(|fixture| !inert_tool_fixture(test, fixture))
         .filter(|fixture| body_uses_identifier(&test.body_text, fixture))
         .collect()
 }
@@ -1388,6 +1389,37 @@ fn owner_called_inside_lambda(body_text: &str, owner: &PythonOwner) -> bool {
                 })
         })
     })
+}
+
+/// #9226: the edit changes only the value of integer literals. Every other
+/// token is identical, so no callee, keyword, operator or operand moved and the
+/// imported symbol the line calls is the same before and after. The line is
+/// `classify` lifts the import abstention for it only when a strong exact
+/// oracle observes the owner (it then reads `weakly_exposed`); otherwise the
+/// limit stands.
+pub(super) fn integer_literal_swap(old: &str, new: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    // Re-indenting moves the statement under or out of a block, which changes
+    // which inputs reach it.
+    if old.get(..indent(old)) != new.get(..indent(new)) {
+        return false;
+    }
+    let (old, new) = (old.trim(), new.trim());
+    let tokens = |text: &str| -> Option<Vec<Tok>> {
+        lex(text, Mode::Module)
+            .map(|result| result.ok().map(|(token, _)| token))
+            .collect()
+    };
+    let (Some(old), Some(new)) = (tokens(old), tokens(new)) else {
+        return false;
+    };
+    old.len() == new.len()
+        && old != new
+        && old
+            .iter()
+            .zip(&new)
+            .all(|(a, b)| a == b || matches!((a, b), (Tok::Int { .. }, Tok::Int { .. })))
 }
 
 pub(super) fn line_uses_imported_symbol(text: &str, imports: &[PythonImport]) -> bool {

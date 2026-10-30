@@ -28,6 +28,8 @@ use super::{
     route,
 };
 mod admission;
+#[cfg(test)]
+mod assertion_helper_tests;
 mod assertion_selection;
 mod bounded_read;
 mod fact_serde;
@@ -73,6 +75,7 @@ mod approx_band;
 mod arm_activation;
 mod bool_oracle;
 mod boundary;
+mod call_chain;
 mod caplog_text;
 mod classify;
 mod conditional_defs;
@@ -194,6 +197,7 @@ use static_limits::{
     PythonStaticLimit, has_identifier_boundary, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
+mod cli_runner;
 mod transitive_reach;
 #[cfg(test)]
 use static_limits::{
@@ -502,6 +506,10 @@ struct PythonFixtureDef {
     /// The class the fixture returns a fresh literal-built instance of
     /// (`return Account(100)`), when that is its whole shape (#9619).
     literal_construction: Option<String>,
+    /// The inert test-support class (`CliRunner`) the fixture returns a fresh
+    /// literal-built instance of, when that is its whole shape; the
+    /// fixture may take a lone unused `request` (#11016).
+    inert_tool: Option<String>,
     /// The literal `params=` rows a fixture returning `request.param` hands
     /// the test, one run per row (#9619, `param_fixtures.rs`).
     literal_params: Option<Vec<param_fixtures::FixtureParamRow>>,
@@ -524,6 +532,26 @@ struct PythonImport {
     source_module: String,
 }
 
+/// A helper's comparison is retained even when its execution/bindings cannot
+/// establish effect credit. Named states prevent fallback from laundering it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum PythonHelperOrigin {
+    Inline,
+    ValueHelper,
+    FieldHelperSupported,
+    FieldHelperRefused,
+}
+
+impl PythonHelperOrigin {
+    fn is_helper(self) -> bool {
+        self != Self::Inline
+    }
+
+    fn effect_only(self) -> bool {
+        matches!(self, Self::FieldHelperSupported | Self::FieldHelperRefused)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonAssertion {
     text: String,
@@ -538,7 +566,7 @@ struct PythonAssertion {
     callable_call: Option<String>,
     /// The existing helper-resolution pass supplied this assertion. Its
     /// comparison alone does not establish a deferred owner's execution.
-    helper_derived: bool,
+    helper_origin: PythonHelperOrigin,
     /// Native assertion/call span, relative to the containing test body.
     #[serde(with = "fact_serde::option_range")]
     source_range: Option<rustpython_parser::text_size::TextRange>,
@@ -572,6 +600,10 @@ struct PythonKnownEqualityHelper {
     /// The two compared operands, parenthesized where `==` would regroup.
     left: String,
     right: String,
+    /// Whether the test file's imports prove the helper, answered by the
+    /// workspace source-fact parse so the credit pass does not parse the file
+    /// again (#10914); None until a pass answers it.
+    established: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1101,6 +1133,7 @@ impl PythonAdapter {
             BTreeMap::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
+        let mut star_facts_by_file: BTreeMap<PathBuf, reexports::PrimedStarFacts> = BTreeMap::new();
         let mut foreign_prior_by_file: BTreeMap<PathBuf, module_value::PriorFileFacts> =
             BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
@@ -1161,6 +1194,9 @@ impl PythonAdapter {
                     && let Some(limitation) = source_fact_parse_error_limitation(relative, &facts)?
                 {
                     limitations.push(limitation);
+                }
+                if let Some(star) = &facts.star_facts {
+                    star_facts_by_file.insert(relative.clone(), star.clone());
                 }
                 foreign_prior_by_file.insert(
                     relative.clone(),
@@ -1233,9 +1269,11 @@ impl PythonAdapter {
         fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
             options.root.join(path).exists()
         });
-        reexports::apply_package_reexports(&mut all_owners, |file| {
-            workspace_read.sources.get(file).map(String::as_str)
-        });
+        reexports::apply_package_reexports(
+            &mut all_owners,
+            |file| workspace_read.sources.get(file).map(String::as_str),
+            &|file| star_facts_by_file.get(file),
+        );
         bool_oracle::credit_bare_bool_asserts(&mut all_tests, &all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
@@ -1401,8 +1439,47 @@ impl PythonAdapter {
             workspace_incomplete,
             &foreign_prior_by_file,
         );
+        // Bytecode CPython never checks against its source, or an import path
+        // a test configuration adds, can run code other than what is read
+        // here (#9226). Read once, only when a file changed.
+        let shadowed_import = !python_changed_files.is_empty()
+            && (module_value::unchecked_bytecode(
+                &options.root,
+                workspace_read.sources.keys().map(|file| file.as_path()),
+            ) || module_value::import_path_configured(
+                &options.root,
+                workspace_read.sources.keys().map(|file| file.as_path()),
+            ));
+        let extension_names = if python_changed_files.is_empty() {
+            Some(BTreeSet::new())
+        } else {
+            module_value::extension_names(
+                &options.root,
+                workspace_read.sources.keys().map(|file| file.as_path()),
+            )
+        };
+        // pytest's prepend mode can put any ancestor of a test file on
+        // `sys.path`, including one with no source of its own.
+        let import_roots: BTreeSet<&Path> = workspace_read
+            .sources
+            .keys()
+            .flat_map(|file| file.ancestors().skip(1))
+            .collect();
         for changed in &python_changed_files {
-            let foreign = foreign_index.excluding(&changed.path);
+            let mut foreign = foreign_index.excluding(&changed.path);
+            if shadowed_import
+                || module_value::extension_beside(&options.root, &changed.path)
+                || module_value::compiled_package_shadow(
+                    &options.root,
+                    &import_roots,
+                    &changed.path,
+                )
+                || extension_names
+                    .as_ref()
+                    .is_none_or(|names| module_value::shadowed_by_extension(names, &changed.path))
+            {
+                foreign.mark_compiled_shadow();
+            }
             conditional_defs::retain_workspace_certain(&mut all_owners, &changed.path, &foreign);
             for owner in all_owners
                 .iter_mut()
@@ -1710,6 +1787,10 @@ mod deleted_lines_tests;
 mod fixtures_tests;
 
 #[cfg(test)]
+mod import_writer_tests;
+#[cfg(test)]
+mod inert_tool_fixture_tests;
+#[cfg(test)]
 mod literal_fixture_tests;
 
 #[cfg(test)]
@@ -1735,8 +1816,16 @@ mod helper_inline_tests;
 mod literal_patch_tests;
 
 #[cfg(test)]
+mod cli_runner_tests;
+#[cfg(test)]
 mod helper_owner_call_tests;
+#[cfg(test)]
+mod imported_literal_tests;
+#[cfg(test)]
+mod test_body_writer_tests;
 
+#[cfg(test)]
+mod call_chain_tests;
 #[cfg(test)]
 mod imported_call_operator_tests;
 #[cfg(test)]

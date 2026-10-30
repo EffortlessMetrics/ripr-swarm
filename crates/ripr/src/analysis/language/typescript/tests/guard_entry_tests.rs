@@ -1,5 +1,6 @@
 //! #8569: a changed line under an `if` arm no related test call enters keeps
-//! `exposed` only when some call's inputs can enter the arm.
+//! `exposed` only when some call's inputs can enter the arm; otherwise it reads
+//! `reachable_unrevealed` with infection `no` (#10704).
 
 use super::*;
 
@@ -73,7 +74,7 @@ fn a_guard_no_test_input_enters_withdraws_exposed() -> Result<(), String> {
         ),
     ] {
         let finding = then_arm(label, &test_with(&calls))?;
-        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+        assert_eq!(finding.class, ExposureClass::ReachableUnrevealed, "{label}");
         assert!(
             finding
                 .missing
@@ -130,7 +131,7 @@ fn an_else_arm_is_entered_by_the_inputs_that_fail_the_guard() -> Result<(), Stri
     let weak = run("else-unentered", &[("price(2, 'A')", "6")])?;
     assert_eq!(
         weak.class,
-        ExposureClass::WeaklyExposed,
+        ExposureClass::ReachableUnrevealed,
         "{:?}",
         weak.missing
     );
@@ -299,7 +300,7 @@ fn arrow_owner_locates_by_position_or_fails_open() -> Result<(), String> {
     )?;
     assert_eq!(
         finding.class,
-        ExposureClass::WeaklyExposed,
+        ExposureClass::ReachableUnrevealed,
         "{:?}",
         finding.missing
     );
@@ -390,7 +391,7 @@ fn comments_before_an_if_keep_the_real_condition() -> Result<(), String> {
     let missed = run("guard-comment-missed", &[("price(2)", "20")])?;
     assert_eq!(
         missed.class,
-        ExposureClass::WeaklyExposed,
+        ExposureClass::ReachableUnrevealed,
         "{:?}",
         missed.missing
     );
@@ -485,7 +486,7 @@ fn an_options_object_guard_no_test_input_enters_withdraws_exposed() -> Result<()
         ),
     ] {
         let finding = options_else_arm(label, &test_with(&calls))?;
-        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+        assert_eq!(finding.class, ExposureClass::ReachableUnrevealed, "{label}");
         assert!(
             finding
                 .missing
@@ -556,7 +557,7 @@ fn braceless_arm(label: &str, test: &str) -> Result<Finding, String> {
 #[test]
 fn a_braceless_arm_no_test_input_enters_withdraws_exposed() -> Result<(), String> {
     let finding = braceless_arm("braceless-closed", &test_with(&[("price(2)", "20")]))?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
     Ok(())
 }
 
@@ -613,7 +614,7 @@ fn a_switch_clause_no_test_input_selects_withdraws_exposed() -> Result<(), Strin
         ),
     ] {
         let finding = switch_clause(label, &test_with(&calls))?;
-        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+        assert_eq!(finding.class, ExposureClass::ReachableUnrevealed, "{label}");
     }
     Ok(())
 }

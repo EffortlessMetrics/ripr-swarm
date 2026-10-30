@@ -47,8 +47,10 @@ constructor that is the single source of truth for that family:
   document whose saved-state diagnostics were withdrawn;
   `ripr-diagnostic-analysis-pending` (#7774) names a workspace no analysis
   snapshot exists for yet, served on both pull paths in place of an empty
-  report that would claim a clean workspace. These are not
-  analyzer findings or actionable repairs.
+  report that would claim a clean workspace;
+  `ripr-diagnostic-language-not-analyzed` (#10715) names a changed file whose
+  language adapter is not enabled, so an empty list for it is not a clean
+  result (served for every document of that language when the producer's file sample is incomplete). These are not analyzer findings or actionable repairs.
 
 Each catalog entry carries the code identity used today: the stable `code` and
 the deprecated `aliases` that still resolve to it. Compatibility aliases are

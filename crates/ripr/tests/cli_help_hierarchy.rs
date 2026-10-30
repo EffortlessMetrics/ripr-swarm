@@ -130,6 +130,92 @@ fn agent_repair_phase_refusals_render_scoped_recovery_without_writes() -> Result
 }
 
 #[test]
+fn agent_repair_default_and_later_phase_selectors_match_help() -> Result<(), String> {
+    in_help_workspace(|root| {
+        let implicit = run_ripr_in(&["agent", "repair", "--root", "."], Some(root))?;
+        let explicit = run_ripr_in(
+            &["agent", "repair", "--root", ".", "--phase", "before"],
+            Some(root),
+        )?;
+        for output in [&implicit, &explicit] {
+            assert_eq!(output.status.code(), Some(2));
+            assert!(output.stdout.is_empty());
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .starts_with("ripr: agent repair --phase before requires --seam-id <id>;")
+            );
+        }
+        assert_eq!(implicit.stderr, explicit.stderr);
+        for (phase, expected) in [
+            ("after", "requires --attempt <id> or --seam-id <id>"),
+            ("verify", "requires --attempt <id>"),
+        ] {
+            let output = run_ripr_in(&["agent", "repair", "--phase", phase], Some(root))?;
+            assert_eq!(output.status.code(), Some(2), "{phase}: {output:?}");
+            assert!(output.stdout.is_empty());
+            assert_eq!(
+                String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+                format!("ripr: agent repair --phase {phase} {expected}\n")
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn agent_repair_later_phases_require_existing_attempts_without_writes() -> Result<(), String> {
+    in_help_workspace(|root| {
+        let attempt = "repair-attempt-0123456789abcdef01234567";
+        for phase in ["after", "verify"] {
+            let mut args = vec![
+                "agent",
+                "repair",
+                "--root",
+                ".",
+                "--phase",
+                phase,
+                "--attempt",
+                attempt,
+            ];
+            if phase == "verify" {
+                args.extend(["--verify-authorized", "--verify-authority", "help-contract"]);
+            }
+            let output = run_ripr_in(&args, Some(root))?;
+            assert_eq!(output.status.code(), Some(2), "{phase}: {output:?}");
+            assert!(output.stdout.is_empty());
+            assert_contains(
+                phase,
+                &String::from_utf8_lossy(&output.stderr),
+                &format!("repair attempt manifest not found for {attempt}"),
+            )?;
+        }
+        // After's compatibility selector still resolves an existing attempt;
+        // it must not start one, nor be refused as an unsupported selector.
+        let output = run_ripr_in(
+            &[
+                "agent",
+                "repair",
+                "--root",
+                ".",
+                "--phase",
+                "after",
+                "--seam-id",
+                "seam:missing",
+            ],
+            Some(root),
+        )?;
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_contains(
+            "after seam selector",
+            &String::from_utf8_lossy(&output.stderr),
+            "no awaiting repair attempt exists for seam `seam:missing`; start one with",
+        )?;
+        Ok(())
+    })
+}
+
+#[test]
 fn agent_subcommand_typos_render_scoped_recovery() -> Result<(), String> {
     let accepted = "start, brief, packet, card, stub, verify, verify-execute, receipt, status, review-summary, repair";
     for (typo, suggestion) in [("brief2", "brief"), ("verify-execue", "verify-execute")] {
@@ -856,7 +942,8 @@ fn default_help_keeps_the_task_roles_distinct() -> Result<(), String> {
             "Diagnose setup ripr doctor",
             "Inspect one change ripr check",
             "Guided repo adoption ripr pilot --root .",
-            "Repair one named gap ripr repair",
+            "Repair a Rust seam ripr repair",
+            "Repair a diff gap follow the start from ripr check, when offered",
             "Compose PR evidence ripr first-pr",
             "Adopt advisory CI ripr init --ci github",
             "ripr help --all",
@@ -883,7 +970,7 @@ fn default_help_discloses_exit_codes_and_global_verbose() -> Result<(), String> 
         for needle in [
             "Exit codes: 0 completed",
             "2 could not complete",
-            "3 blocking decision or typed refusal",
+            "3 ripr declined",
             "130 interrupted",
             "docs/EXIT_CODES.md",
             "-v, --verbose",
@@ -1023,7 +1110,8 @@ fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
         "Diagnose setup ripr doctor",
         "Inspect one change ripr check",
         "Guided repo adoption ripr pilot --root .",
-        "Repair one named gap ripr repair [<item>] | ripr continue | ripr status",
+        "Repair a Rust seam ripr repair [<item>] | ripr continue | ripr status",
+        "Repair a diff gap follow the start from ripr check, when offered",
         "Compose PR evidence ripr first-pr --root . --base BASE --head HEAD",
         "Adopt advisory CI ripr init --ci github",
         "`ripr check` is the ordinary first-value analysis; `ripr pilot` is the guided repo-adoption workflow.",
@@ -1146,7 +1234,7 @@ fn help_screens_state_the_surfaces_the_parsers_accept() -> Result<(), String> {
         assert_contains("exhaustive help (`ripr help --all`)", &all, needle)?;
     }
 
-    // Discriminators. The `Repair one named gap` role line is the task-first
+    // Discriminators. The `Repair a Rust seam` role line is the task-first
     // alternation `repair | continue | status`: it names the ordinary
     // commands rather than the internal phase vocabulary, and
     // `default_help_keeps_the_task_roles_distinct` pins it as role
@@ -1379,6 +1467,8 @@ fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<()
         "--verify-authorized",
         "--verify-authority ID",
         "--verify-rollback",
+        "Which phase of the repair loop to run. Defaults to `before` (start a new attempt); `after` and `verify` require an existing repair attempt.",
+        "--attempt ID Select one durable repair attempt; valid for `after` and `verify` (verify accepts only `--attempt`).",
         "ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase before",
         "ripr agent repair [--root PATH] [--store PATH] (--attempt ID|--seam-id ID) --phase after",
         "ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify",

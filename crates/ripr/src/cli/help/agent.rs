@@ -422,7 +422,9 @@ Options:
   --attempt ID         Select one durable repair attempt; valid for `after`
                        and `verify` (verify accepts only `--attempt`).
   --phase before|after|verify
-                       Which phase of the repair loop to run.
+                       Which phase of the repair loop to run. Defaults to
+                       `before` (start a new attempt); `after` and `verify`
+                       require an existing repair attempt.
   --python-repair-trust-manifest PATH
                        Bind this attempt to an accepted Python repair-trust
                        selection manifest; `before` only.

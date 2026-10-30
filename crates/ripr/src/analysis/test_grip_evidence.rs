@@ -14,6 +14,7 @@
 mod boolean_boundary_pin;
 mod call_budget;
 mod owner_result_binding;
+mod panic_outcome;
 mod reach_limit;
 mod related_tests;
 pub(crate) mod shared_grips;
@@ -100,6 +101,23 @@ pub(crate) struct TestGripEvidence {
     /// bump.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) new_test_target: Option<NewTestTargetAdmission>,
+}
+
+impl TestGripEvidence {
+    /// Whether any stage summary names the typed static `limit`: the evidence
+    /// record's own marker that a named limitation, not a missing test,
+    /// explains the stage (#10703).
+    pub(crate) fn names_static_limit(&self, limit: crate::domain::StaticLimitKind) -> bool {
+        [
+            &self.reach,
+            &self.activate,
+            &self.propagate,
+            &self.observe,
+            &self.discriminate,
+        ]
+        .iter()
+        .any(|stage| stage.summary.contains(limit.as_str()))
+    }
 }
 
 const COMPACT_RELATED_TEST_LIMIT: usize = 12;
@@ -486,6 +504,24 @@ fn evidence_for_seam_with_context(
     // #8600: read over the full related set, the same set the stages read.
     let saturated = call_budget::any_saturated(related.iter().copied());
     call_budget::withhold(&mut evidence, saturated);
+    // #10703: the same named limit `check` applies to a `#[should_panic]`
+    // test whose panic may be the changed code's.
+    let panicking = panic_outcome::deciding_tests(
+        related_with_reason
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+            .map(|(indexed, _)| {
+                (
+                    indexed.test.name.as_str(),
+                    indexed.test.file.as_path(),
+                    indexed.test.start_line,
+                )
+            }),
+        owner_fn,
+        seam.display_line(),
+        context.index,
+    );
+    panic_outcome::withhold(seam, &mut evidence, &panicking);
     evidence
 }
 
@@ -1462,6 +1498,24 @@ pub(crate) fn compact_evidence_for_seam(
     // #8600: read over every ranked related test, before the compact cap.
     let saturated = call_budget::any_saturated(ranked.iter().map(|(indexed, _)| indexed.test));
     call_budget::withhold(&mut evidence, saturated);
+    // #10703: the same named limit `check` applies to a `#[should_panic]`
+    // test whose panic may be the changed code's.
+    let panicking = panic_outcome::deciding_tests(
+        ranked
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+            .map(|(indexed, _)| {
+                (
+                    indexed.test.name.as_str(),
+                    indexed.test.file.as_path(),
+                    indexed.test.start_line,
+                )
+            }),
+        owner_fn,
+        seam.display_line(),
+        context.index,
+    );
+    panic_outcome::withhold(seam, &mut evidence, &panicking);
     evidence
 }
 
@@ -3164,7 +3218,15 @@ fn assertion_verdict_for_test(
 /// line, so the consistent first line must not lend the failing test's
 /// promotion to the seam (#8610 review). Fail-closed toward prior credit:
 /// without a resolved owner nothing is contradicted.
-fn test_has_contradicted_assertion(test: &TestSummary, owner_fn: Option<&FunctionSummary>) -> bool {
+///
+/// This is the one whole-test contradiction rule for every surface that
+/// credits the test: the repo-seam activation authority reads it in
+/// [`activate_evidence`], and the diff-mode classifier reads it for the same
+/// purpose (#10980), so identical evidence reaches one verdict on both.
+pub(in crate::analysis) fn test_has_contradicted_assertion(
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+) -> bool {
     let Some(owner_fn) = owner_fn else {
         return false;
     };
@@ -3173,6 +3235,92 @@ fn test_has_contradicted_assertion(test: &TestSummary, owner_fn: Option<&Functio
             assertion_verdict_for_test(Some(owner_fn), &oracle.text, test),
             ExactValueVerdict::Contradicted { .. }
         )
+    })
+}
+
+/// The diff-mode whole-test contradiction (#10980). A related test carries
+/// the diff surface's credit only when it passes SOMEWHERE: it is withheld
+/// when it fails on BOTH versions — some assertion row contradicts the
+/// candidate body's fold and some row contradicts the baseline body — so
+/// the test passes on neither version and cannot notice the change. A row
+/// written for the baseline that the candidate breaks is the discriminator
+/// itself (the exact-boundary witness of the agentic b4 journey), and a
+/// row the candidate satisfies is the change's own credit; neither
+/// withholds. The baseline body is the owner's current body with the
+/// probe's `after` expression replaced by `before` exactly once (the
+/// #8659/#10916 reconstruction); a probe without a baseline expression or
+/// a body that does not reconstruct keeps the test's credit — the fold
+/// can only withhold. The repo-seam rule above stays current-fold-only:
+/// there the current body is the shipped code and a contradicted row is
+/// a wrong-way discriminator, while on the diff surface the current body
+/// is the candidate under review.
+pub(in crate::analysis) fn test_fails_on_both_diff_versions(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    before: Option<&str>,
+    after: Option<&str>,
+) -> bool {
+    let (Some(before), Some(after)) = (before, after) else {
+        return false;
+    };
+    if before == after || owner.body.matches(after).count() != 1 {
+        return false;
+    }
+    let mut baseline_owner = owner.clone();
+    baseline_owner.body =
+        crate::analysis::facts::SourceText::from(owner.body.as_str().replacen(after, before, 1));
+    let mut fails_on_candidate = false;
+    let mut fails_on_base = false;
+    for oracle in &test.assertions {
+        if !fails_on_candidate
+            && matches!(
+                assertion_verdict_for_test(Some(owner), &oracle.text, test),
+                ExactValueVerdict::Contradicted { .. }
+            )
+        {
+            fails_on_candidate = true;
+        }
+        if !fails_on_base
+            && matches!(
+                assertion_verdict_for_test(Some(&baseline_owner), &oracle.text, test),
+                ExactValueVerdict::Contradicted { .. }
+            )
+        {
+            fails_on_base = true;
+        }
+        if fails_on_candidate && fails_on_base {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether the whole-test contradiction has an established reading. The
+/// fold's premise is the written assertion's plain macro semantics, so a
+/// row the owner pin's reading refuses (a binding that may rebind the
+/// macro, a guard that may keep it from running) leaves the
+/// baseline-failing claim unestablished and the caller must not withhold
+/// on it (#5431, RIPR-SPEC-0240): the same refusal authority the outcome's
+/// named-limit projection consults, not a second rule. An equality-family
+/// row the pin admits reads established; non-equality rows (the #8610
+/// direct boolean assertions) carry their own fail-closed shape guards in
+/// [`value_contradiction::boolean_assertion_verdict_for_test`].
+pub(in crate::analysis) fn contradicted_assertion_reading_is_established(
+    test: &TestSummary,
+    owner_fn: &FunctionSummary,
+    probe: &crate::domain::Probe,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    index: &RustIndex,
+) -> bool {
+    test.assertions.iter().all(|assertion| {
+        let contradicted = matches!(
+            assertion_verdict_for_test(Some(owner_fn), &assertion.text, test),
+            ExactValueVerdict::Contradicted { .. }
+        );
+        !contradicted
+            || pin_syntax
+                .equality_assertion_refusal(probe, test, assertion, index)
+                .is_none()
     })
 }
 
