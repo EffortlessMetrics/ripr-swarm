@@ -101,6 +101,51 @@ fn prepare_release_update(
     })
 }
 
+/// Read-only release-version sync check (#10731). `bump-version` verifies the
+/// surfaces it writes, but nothing re-checked them between bumps, so a stale
+/// extension manifest could reach packaging. Every release-version surface
+/// must equal the workspace version.
+pub(crate) fn check_release_version_sync() -> Result<(), String> {
+    release_version_drift(
+        &read_file(WORKSPACE_MANIFEST)?,
+        &read_file(EXTENSION_MANIFEST)?,
+        &read_file(EXTENSION_LOCKFILE)?,
+        &read_file(NPM_LAUNCHER_MANIFEST)?,
+    )
+}
+
+fn release_version_drift(
+    workspace: &str,
+    extension: &str,
+    lockfile: &str,
+    launcher: &str,
+) -> Result<(), String> {
+    let expected = section_version(workspace, "workspace.package")?;
+    let surfaces = [
+        (
+            EXTENSION_MANIFEST,
+            json_root_version(extension, EXTENSION_MANIFEST)?,
+        ),
+        (EXTENSION_LOCKFILE, lockfile_versions(lockfile)?),
+        (
+            NPM_LAUNCHER_MANIFEST,
+            json_root_version(launcher, NPM_LAUNCHER_MANIFEST)?,
+        ),
+    ];
+    let drifted: Vec<String> = surfaces
+        .iter()
+        .filter(|(_, version)| *version != expected)
+        .map(|(path, version)| format!("{path} is {version}"))
+        .collect();
+    if drifted.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "release version drift: {WORKSPACE_MANIFEST} is {expected} but {}; run `cargo xtask bump-version` instead of editing versions by hand",
+        drifted.join(", ")
+    ))
+}
+
 fn prepare_update(
     workspace: &str,
     extension: &str,
@@ -643,6 +688,91 @@ mod tests {
                     return Err(format!("expected error {expected:?}, got {error:?}"));
                 }
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn release_version_sync_flags_stale_extension_and_accepts_aligned() -> Result<(), String> {
+        let workspace = "[workspace.package]\nversion = \"0.10.0\"\n";
+        let lock = |v: &str| {
+            format!("{{\"version\":\"{v}\",\"packages\":{{\"\":{{\"version\":\"{v}\"}}}}}}")
+        };
+        let pkg = |v: &str| format!("{{\"version\":\"{v}\"}}");
+        super::release_version_drift(workspace, &pkg("0.10.0"), &lock("0.10.0"), &pkg("0.10.0"))?;
+        let Err(error) =
+            super::release_version_drift(workspace, &pkg("0.8.0"), &lock("0.10.0"), &pkg("0.10.0"))
+        else {
+            return Err("stale extension version must fail".to_string());
+        };
+        if !error.contains("editors/vscode/package.json is 0.8.0") || error.contains("package-lock")
+        {
+            return Err(format!("unexpected message: {error}"));
+        }
+        if super::release_version_drift(workspace, &pkg("0.10.0"), &lock("0.8.0"), &pkg("0.9.0"))
+            .is_ok()
+        {
+            return Err("stale lockfile and launcher must fail".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn release_version_sync_reports_every_drifted_surface_and_rejects_bad_fields()
+    -> Result<(), String> {
+        let workspace = "[workspace.package]\nversion = \"0.10.0\"\n";
+        let lock = |v: &str| {
+            format!("{{\"version\":\"{v}\",\"packages\":{{\"\":{{\"version\":\"{v}\"}}}}}}")
+        };
+        let pkg = |v: &str| format!("{{\"version\":\"{v}\"}}");
+        // Each single-surface drift is caught and names only that surface.
+        let Err(error) =
+            super::release_version_drift(workspace, &pkg("0.10.0"), &lock("0.10.0"), &pkg("0.9.0"))
+        else {
+            return Err("stale launcher must fail".to_string());
+        };
+        if !error.contains("packaging/npm/launcher/package.json is 0.9.0")
+            || error.contains("editors/vscode")
+        {
+            return Err(format!("unexpected launcher message: {error}"));
+        }
+        let Err(error) =
+            super::release_version_drift(workspace, &pkg("0.10.0"), &lock("0.8.0"), &pkg("0.10.0"))
+        else {
+            return Err("stale lockfile must fail".to_string());
+        };
+        if !error.contains("editors/vscode/package-lock.json is 0.8.0")
+            || error.contains("editors/vscode/package.json is")
+        {
+            return Err(format!("unexpected lockfile message: {error}"));
+        }
+        // Every drifted surface is reported together.
+        let Err(error) =
+            super::release_version_drift(workspace, &pkg("0.7.0"), &lock("0.8.0"), &pkg("0.9.0"))
+        else {
+            return Err("all-stale surfaces must fail".to_string());
+        };
+        for needle in [
+            "package.json is 0.7.0",
+            "package-lock.json is 0.8.0",
+            "is 0.9.0",
+        ] {
+            if !error.contains(needle) {
+                return Err(format!("missing {needle:?} in {error}"));
+            }
+        }
+        // Absent or malformed version fields are errors, not silent matches.
+        let good = pkg("0.10.0");
+        if super::release_version_drift(workspace, "{}", &lock("0.10.0"), &good).is_ok() {
+            return Err("missing extension version must fail".to_string());
+        }
+        if super::release_version_drift(workspace, &good, "not json", &good).is_ok() {
+            return Err("malformed lockfile must fail".to_string());
+        }
+        if super::release_version_drift(workspace, &good, &lock("0.10.0"), "{\"version\":1}")
+            .is_ok()
+        {
+            return Err("non-string launcher version must fail".to_string());
         }
         Ok(())
     }

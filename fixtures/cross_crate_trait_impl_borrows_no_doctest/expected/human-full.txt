@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/cross_crate_trait_impl_borrows_no_doctest/input
 
-Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach no: No test is seen calling size_hint; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)
@@ -21,11 +26,12 @@ Finding 1: WARNING ./util/src/stream/take.rs:10
 Changed
   before: x < self.remaining
   after:  x <= self.remaining
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  util/src/stream/take.rs::impl Stream for Take::size_hint
-  canonical gap: gap:rust:util/src/stream/take.rs:impl Stream for Take::size_hint:predicate_boundary:predicate:x==self.remaining
+  gap id (for scripts): gap:rust:util/src/stream/take.rs:impl Stream for Take::size_hint:predicate_boundary:predicate:x==self.remaining
 Static exposure
   no_static_path (warning, confidence 0.48)
 Evidence
@@ -46,11 +52,12 @@ Finding 2: WARNING ./util/src/stream/take.rs:10
 Changed
   before: Some(x) if x < self.remaining => Some(x),
   after:  Some(x)
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  util/src/stream/take.rs::impl Stream for Take::size_hint
-  canonical gap: gap:rust:util/src/stream/take.rs:impl Stream for Take::size_hint:return_value:return_value:some_x
+  gap id (for scripts): gap:rust:util/src/stream/take.rs:impl Stream for Take::size_hint:return_value:return_value:some_x
 Static exposure
   no_static_path (warning, confidence 0.35)
 Evidence

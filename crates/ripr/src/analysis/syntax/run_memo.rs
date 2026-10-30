@@ -32,6 +32,17 @@ pub(crate) enum Product {
     ForeignEntryImport,
 }
 
+impl Product {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::ExternalDocs => "external_docs",
+            Self::LocalTestMacros => "local_test_macros",
+            Self::FunctionOracles => "function_oracles",
+            Self::ForeignEntryImport => "foreign_entry_import",
+        }
+    }
+}
+
 type Key = (Product, [u8; 32]);
 
 #[derive(Default)]
@@ -78,6 +89,10 @@ fn key(product: Product, discriminator: usize, extra: &str, source: &str) -> Key
 /// `compute`'s result for `(product, discriminator, source)`, computed once
 /// per scope. Outside a scope it is computed on every call. `compute` runs
 /// without the memo borrowed, so it may itself memoize other products.
+///
+/// Every call that consults an entry (a warm hit or a first computation)
+/// records a memo read in the probe read trace, attributed to the caller.
+#[track_caller]
 pub(crate) fn memoize<T: Clone + 'static>(
     product: Product,
     discriminator: usize,
@@ -89,6 +104,7 @@ pub(crate) fn memoize<T: Clone + 'static>(
 
 /// [`memoize`] for a product that also depends on `extra` (a name or other
 /// query beside the source text): the entry is keyed by both.
+#[track_caller]
 pub(crate) fn memoize_with<T: Clone + 'static>(
     product: Product,
     discriminator: usize,
@@ -100,6 +116,7 @@ pub(crate) fn memoize_with<T: Clone + 'static>(
         return compute();
     }
     let key = key(product, discriminator, extra, source);
+    crate::analysis::probe_read_trace::memo(product.name(), &key.1);
     let cached = MEMO.with(|memo| memo.borrow().entries.get(&key).cloned());
     if let Some(value) = cached.as_ref().and_then(|value| value.downcast_ref::<T>()) {
         return value.clone();
@@ -126,7 +143,9 @@ pub(crate) fn memoize_with<T: Clone + 'static>(
 /// `compute` runs on pool workers that have no scope of their own, so unlike
 /// [`memoize`] it must not rely on memoizing other products: a nested
 /// `memoize` there recomputes and nothing reaches the caller's scope. Keys use
-/// discriminator 0 and no extra query, matching `memoize`.
+/// discriminator 0 and no extra query, matching `memoize`. Each source records
+/// one memo read on the calling thread, like the serial form.
+#[track_caller]
 pub(crate) fn memoize_many<T: Clone + Send + 'static>(
     product: Product,
     sources: &[&str],
@@ -148,6 +167,9 @@ pub(crate) fn memoize_many<T: Clone + Send + 'static>(
         .iter()
         .map(|source| key(product, 0, "", source))
         .collect();
+    for key in &keys {
+        crate::analysis::probe_read_trace::memo(product.name(), &key.1);
+    }
     let recall = |key: &Key| {
         MEMO.with(|memo| {
             memo.borrow()

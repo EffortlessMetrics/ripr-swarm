@@ -216,3 +216,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_transitive_reach_negative (19)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless python_transitive_reach_negative --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

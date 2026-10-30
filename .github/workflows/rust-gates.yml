@@ -164,7 +164,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Install CI tools
-        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
         with:
           tool: ${{ inputs.use-scratch && 'sccache,nextest' || 'nextest' }}
 
@@ -192,6 +192,7 @@ jobs:
         run: |
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
       - name: Repository policy preflight
         id: precommit
@@ -403,6 +404,8 @@ jobs:
           # a hung producer wastes at most one hour — the scope guard
           # still caps memory).
           RIPR_PR_EVIDENCE_TIMEOUT_SECS: "3600"
+          # Align ripr check's own 600s budget (#5369) with the step ceiling.
+          RIPR_CHECK_TIMEOUT: "3600"
         run: |
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA"
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA" --check

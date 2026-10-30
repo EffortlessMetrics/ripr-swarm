@@ -323,7 +323,7 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                     reasons_total,
                 )));
             }
-            RepairStartDecision::Action(action) => {
+            RepairStartDecision::Action(action, candidates) => {
                 // A deliberate named outcome, not a failure: the canonical
                 // block on stderr, stdout empty, decision exit code.
                 eprint!(
@@ -334,6 +334,14 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                     )
                 );
                 if action.action_class() == crate::domain::NextActionClass::ChooseItem {
+                    // #10978: the stop lists bare ids; say where each one is
+                    // and what changed there so the choice is informed.
+                    if !candidates.is_empty() {
+                        eprintln!("choose the change to repair:");
+                        for candidate in &candidates {
+                            eprintln!("  {candidate}");
+                        }
+                    }
                     print_retry_line(&format!(
                         "ripr repair <seam-id> --root {}",
                         crate::agent::loop_commands::shell_arg(
@@ -645,7 +653,7 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
         }
         // The auto selector needs a named seam: `ripr repair` alone would
         // not start one, so it is not printed as the start.
-        Ok(RepairStartDecision::Action(_)) => format!(
+        Ok(RepairStartDecision::Action(..)) => format!(
             "`ripr repair` cannot choose a start by itself right now; run `ripr pilot --root {root_arg}` to list current seam IDs and name one"
         ),
         Err(error) => format!(
@@ -660,10 +668,18 @@ fn no_eligible_seam_message(
     reasons: &[String],
     reasons_total: usize,
 ) -> String {
+    let changed_non_rust = if total_seams == 0 {
+        crate::app::task_first::changed_non_rust_languages(root)
+    } else {
+        Vec::new()
+    };
     let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
         &root.to_string_lossy(),
     ));
     if total_seams == 0 {
+        if !changed_non_rust.is_empty() {
+            return crate::app::task_first::non_rust_repair_guidance(&root, &changed_non_rust);
+        }
         return format!(
             "no seams visible under {root}; analyze the workspace before starting a repair. Next: `ripr pilot --root {root}`"
         );

@@ -2,20 +2,20 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/boundary_named_constant/input
 
-Summary: 3 probes (2 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown); 3 of 3 findings unsuppressed
+Summary: 3 changed behaviors checked: 2 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 3 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 6 changed line(s), 3 candidate line(s), 3 probe(s), 3 finding(s)
+  Counts: 1 changed file(s), 6 changed line(s), 3 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
 
 Start here:
-  State: limited by static analysis
-  Safe next action: inspect the named static limitation before treating this as repair-ready
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
   File: ./src/lib.rs:30
   Static exposure: unknown (severity: warning, confidence 0.66)
-  Why unknown: the change reaches a sink but infection could not be determined statically
-  Canonical gap: gap:rust:src/lib.rs:shipping:predicate_boundary:predicate:amount==free_shipping
+  Why unknown: the change reaches something a test can check, but ripr could not tell which inputs would trigger it
+  Gap ID (for scripts): gap:rust:src/lib.rs:shipping:predicate_boundary:predicate:amount==free_shipping
   Changed behavior: amount >= FREE_SHIPPING
-  Missing discriminator (1 of 2): No detected boundary input for the changed predicate
+  Missing check (1 of 2): No detected boundary input for the changed predicate
   Related test (1 of 2 matched rows): tests/pricing.rs:17 shipping_boundary
   Next step: Open the related test and trace its input through the local or computed operand
     (including default and empty cases) to see which side of the changed condition it exercises,
@@ -30,11 +30,11 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
-      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
-      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
-      candidate line = changed line ripr considers for probes
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach shipping: shipping_boundary
     - infection unknown: Predicate compares against constant FREE_SHIPPING; ripr cannot see its value statically or match it to a related test input (a same-file integer const, a…
     - 10 more detail line(s) in --format human-full
@@ -42,13 +42,13 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/boundary_named_constant/input --diff <cwd>/fixtures/boundary_named_constant/diff.patch --mode fast probe:src_lib.rs:predicate:70700926
   ripr context --root <cwd>/fixtures/boundary_named_constant/input --diff <cwd>/fixtures/boundary_named_constant/diff.patch --mode fast --at probe:src_lib.rs:predicate:70700926
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that pins the changed boundary value exactly; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/boundary_named_constant/input --at src/lib.rs:30 --kind predicate
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:12 (exposed)
-    - ./src/lib.rs:21 (exposed)
+    - ./src/lib.rs:12 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/lib.rs:21 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

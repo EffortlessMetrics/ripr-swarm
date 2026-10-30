@@ -1,0 +1,95 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_exported_expect_lookalike/input
+config: <cwd>/fixtures/typescript_exported_expect_lookalike/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING src/price.ts:2
+  id: probe:src_price.ts:typescript_preview:1c2fe599
+
+Changed
+  after:    return amount - 20;
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  typescript:src/price.ts::price
+
+Language
+  language: typescript
+  status: preview
+  owner kind: function
+
+Preview actionability
+  authority: preview_advisory_only
+  gap state: advisory
+  category: incomplete_repair_packet
+  repair packet ready: false
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
+  missing fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
+  evidence needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
+  raw evidence: src/price.ts:2 (typescript_preview_probe) source=probe:src_price.ts:typescript_preview:1c2fe599 owner=price
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 4 related test(s) found for owner `price`
+  - infection unknown: TypeScript preview adapter does not yet model infection
+  - propagation unknown: TypeScript preview adapter does not yet model propagation
+  - observation weak: Strongest extracted oracle kind: `unknown` (rank 0)
+  - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == amount - 20`
+  - local flow reaches returned value: return amount - 20; (line 2)
+  - related test tests/const.test.js:3 price uses no oracle
+  - related test tests/default.test.ts:3 price uses no oracle
+  - related test tests/destructured.test.ts:3 price uses no oracle
+  - related test tests/function.test.ts:3 price uses no oracle
+
+Weakness
+  - Related test reaches `price` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)
+  - missing discriminator return value == amount - 20: changed TypeScript returned-value at line 2 lacks a concrete preview discriminator
+
+TypeScript preview card (advisory)
+  card version: typescript_preview_card.v1
+  authority: preview_advisory_only (typescript/preview)
+  owner: price
+  owner kind: function
+  changed behavior: return_value changed at src/price.ts:2: `return amount - 20;`
+  related test: tests/function.test.ts:3 price
+  oracle: unknown (unknown)
+  missing discriminator: return value == amount - 20
+  suggested assertion shape: Add an exact return-value assertion for the changed output.
+  repair packet ready: false
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
+  limits:
+    - Syntax-first TypeScript/JavaScript preview evidence only.
+    - No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.
+    - This card is advisory and is not a repair packet.
+
+TypeScript repair packet (advisory)
+  status: not actionable
+  limitation: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
+
+Next step
+  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == amount - 20`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
+Drill in:
+  ripr explain --root <cwd>/fixtures/typescript_exported_expect_lookalike/input --diff <cwd>/fixtures/typescript_exported_expect_lookalike/diff.patch --mode fast probe:src_price.ts:typescript_preview:1c2fe599
+  ripr context --root <cwd>/fixtures/typescript_exported_expect_lookalike/input --diff <cwd>/fixtures/typescript_exported_expect_lookalike/diff.patch --mode fast --at probe:src_price.ts:typescript_preview:1c2fe599
+
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

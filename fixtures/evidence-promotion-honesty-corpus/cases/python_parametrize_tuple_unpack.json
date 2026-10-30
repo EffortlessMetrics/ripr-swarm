@@ -1,0 +1,23 @@
+{
+  "id": "python_parametrize_tuple_unpack",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_parametrize_tuple_unpack",
+  "vector": "tuple_argname_unpacked_rows_off_boundary",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}
