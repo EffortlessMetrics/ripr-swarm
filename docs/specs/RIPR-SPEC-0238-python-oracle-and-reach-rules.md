@@ -445,7 +445,9 @@ This order is the existing behavior and is normative:
   exactly once (that import) and the enclosing class body does not bind
   it, where a dynamic writer (`setattr`, `globals()`, `patch`) that only
   lives inside a `test*` function or `Test*` method body is out of reach of
-  the decorator, which runs at import, and does not unsettle the root
+  the decorator, provided nothing else names that function (a module-level
+  call or a decorator that runs it would execute it at import) and its
+  decorators are pytest marks or fixtures; the decorator, which runs at import, and does not unsettle the root
   (#11018); a canonical spelling whose root is not pinned that way (another
   library's `mark`, a rebound or class-local root) leaves every argname
   unsettled. A bare decorator name (`@cases`), the mark's callee

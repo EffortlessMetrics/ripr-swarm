@@ -45,6 +45,19 @@ fn a_setattr_inside_a_test_body_does_not_unsettle_the_decorator() -> Result<(), 
     let patched = classify_total(&format!("{HEAD}{PARAMETRIZED}{PATCHING_TEST}"))?;
     assert_eq!(patched.static_limit_kind, None, "{:?}", patched.evidence);
     assert_eq!(patched.class, control.class);
+    let async_patched = classify_total(&format!(
+        "{HEAD}{PARAMETRIZED}{}",
+        PATCHING_TEST.replace("def test_separator", "async def test_separator")
+    ))?;
+    assert_eq!(
+        async_patched.static_limit_kind, None,
+        "{:?}",
+        async_patched.evidence
+    );
+    let in_class = classify_total(&format!(
+        "{HEAD}{PARAMETRIZED}\n\nclass TestSep:\n    def test_separator(self, monkeypatch):\n        monkeypatch.setattr(\"os.sep\", \"/\")\n        assert os.sep == \"/\"\n"
+    ))?;
+    assert_eq!(in_class.static_limit_kind, None, "{:?}", in_class.evidence);
     Ok(())
 }
 
@@ -63,6 +76,18 @@ fn a_writer_that_can_run_before_the_decorator_keeps_the_limit() -> Result<(), St
             "helper called at import",
             format!(
                 "{HEAD}def _patch():\n    globals()[\"pytest\"] = None\n\n\n_patch()\n\n\n{PARAMETRIZED}"
+            ),
+        ),
+        (
+            "test-named helper called at import",
+            format!(
+                "{HEAD}def test_setup():\n    globals()[\"pytest\"] = None\n\n\ntest_setup()\n\n\n{PARAMETRIZED}"
+            ),
+        ),
+        (
+            "test-named function run by a decorator",
+            format!(
+                "{HEAD}def run_now(function):\n    function()\n    return function\n\n\n@run_now\ndef test_setup():\n    globals()[\"pytest\"] = None\n\n\n{PARAMETRIZED}"
             ),
         ),
         (

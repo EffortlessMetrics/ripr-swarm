@@ -160,32 +160,62 @@ pub(super) fn module_stable_names<'a>(
 
 /// `source` with the bodies of module-level `test*` functions and of `test*`
 /// methods in `Test*` classes blanked (newlines kept). pytest runs those
-/// after collection, so a writer named only there is out of reach of a
-/// decorator that already ran. Helpers, fixtures, class bodies and module
-/// code stay visible.
+/// after collection, so a text-detected writer (`setattr`, `patch`,
+/// `globals()`) named only there is out of reach of a decorator that already
+/// ran. A function is masked only when nothing else can run it at import: its
+/// name is mentioned nowhere outside its own definition (no module-level
+/// call, no decorator argument) and its decorators are pytest marks or
+/// fixtures. Helpers, class bodies and module code stay visible. Bindings,
+/// `global` and attribute writes are read from the unmasked statements, so
+/// they still unsettle a name from inside a test.
 fn mask_test_bodies(source: &str, statements: &[Stmt]) -> String {
     let mut ranges = Vec::new();
-    let mut add_test = |function: &ast::StmtFunctionDef| {
-        if function.name.as_str().starts_with("test")
-            && let Some(first) = function.body.first()
+    let mut add_test = |name: &str,
+                        decorators: &[Expr],
+                        range: ast::text_size::TextRange,
+                        body: &[Stmt]| {
+        let (start, end) = (usize::from(range.start()), usize::from(range.end()));
+        let only_marked = decorators.iter().all(|decorator| {
+            let text = source
+                .get(usize::from(decorator.range().start())..usize::from(decorator.range().end()))
+                .unwrap_or_default();
+            text.contains("mark.") || text.contains("fixture")
+        });
+        let referenced = source
+            .get(..start)
+            .is_none_or(|before| mentions_identifier(before, name))
+            || source
+                .get(end..)
+                .is_none_or(|after| mentions_identifier(after, name));
+        if name.starts_with("test")
+            && only_marked
+            && !referenced
+            && let Some(first) = body.first()
         {
-            ranges.push((
-                usize::from(first.range().start()),
-                usize::from(function.range.end()),
-            ));
+            ranges.push((usize::from(first.range().start()), end));
         }
+    };
+    let mut add_def = |stmt: &Stmt| match stmt {
+        Stmt::FunctionDef(function) => add_test(
+            function.name.as_str(),
+            &function.decorator_list,
+            function.range,
+            &function.body,
+        ),
+        Stmt::AsyncFunctionDef(function) => add_test(
+            function.name.as_str(),
+            &function.decorator_list,
+            function.range,
+            &function.body,
+        ),
+        _ => {}
     };
     for stmt in statements {
         match stmt {
-            Stmt::FunctionDef(function) => add_test(function),
             Stmt::ClassDef(class) if class.name.as_str().starts_with("Test") => {
-                for inner in &class.body {
-                    if let Stmt::FunctionDef(function) = inner {
-                        add_test(function);
-                    }
-                }
+                class.body.iter().for_each(&mut add_def);
             }
-            _ => {}
+            other => add_def(other),
         }
     }
     let mut bytes = source.as_bytes().to_vec();
