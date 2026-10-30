@@ -2566,3 +2566,238 @@ fn python_repeated_gap_attempt_remains_current_and_detects_drift() -> Result<(),
     }
     decoy_untouched(&decoy)
 }
+
+/// Stop a real after process while it owns a backup, then run a second after
+/// from another store. The second process must not touch the live transaction.
+#[cfg(all(feature = "lang-typescript", target_os = "linux"))]
+#[test]
+fn concurrent_after_processes_in_distinct_stores_preserve_live_backups() -> Result<(), String> {
+    exercise_cross_store_after(false)
+}
+
+#[cfg(all(feature = "lang-typescript", target_os = "linux"))]
+#[test]
+fn crashed_after_leaves_unknown_backup_for_inspection() -> Result<(), String> {
+    exercise_cross_store_after(true)
+}
+
+#[cfg(all(feature = "lang-typescript", target_os = "linux"))]
+fn exercise_cross_store_after(crash: bool) -> Result<(), String> {
+    use nix::sys::signal::{Signal, kill};
+    use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+    use nix::unistd::Pid;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    struct ChildGuard(std::process::Child);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let first = GapAttempt::start("cross-store-process")?;
+    let manifest = first.manifest_for_only_attempt()?;
+    let base = manifest["gap_binding"]["base_commit"]
+        .as_str()
+        .ok_or("missing base")?
+        .to_string();
+    first.commit_closing_test()?;
+    let output = first.after(true)?;
+    expect_exit(output.status.success(), true, "seed first attempt")?;
+    let prior_projection = std::fs::read(
+        first
+            .root
+            .join("target/ripr/workflow/after.check-findings.json"),
+    )
+    .map_err(|e| e.to_string())?;
+    if prior_projection.is_empty() {
+        return Err("seed projection was empty".into());
+    }
+    let test_path = first.root.join("test/pricing.test.ts");
+    let repaired = std::fs::read_to_string(&test_path).map_err(|e| e.to_string())?;
+    let needle = "  it(\"discounts exactly at the threshold\", () => {\n    expect(discountedTotal(10000)).toBe(9500);\n  });\n\n";
+    if !repaired.contains(needle) {
+        return Err("seed closing test missing".into());
+    }
+    std::fs::write(&test_path, repaired.replacen(needle, "", 1)).map_err(|e| e.to_string())?;
+    fixture_git_ok(&first.root, &["add", "test/pricing.test.ts"])?;
+    fixture_git_ok(&first.root, &["commit", "-q", "-m", "reopen"])?;
+    let mut ids = Vec::new();
+    for store in ["target/ripr/store-a", "target/ripr/store-b"] {
+        let (ok, before) = ripr(
+            &first.decoy,
+            &[
+                "agent",
+                "repair",
+                "--gap-id",
+                &first.gap,
+                "--base",
+                &base,
+                "--root",
+                &first.root_arg,
+                "--store",
+                store,
+                "--phase",
+                "before",
+            ],
+        )?;
+        expect_exit(ok, true, &format!("start {store}: {before}"))?;
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(first.root.join(store)).map_err(|e| e.to_string())? {
+            let path = entry
+                .map_err(|e| e.to_string())?
+                .path()
+                .join("attempt.json");
+            if path.is_file() {
+                let doc: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?;
+                found.push(attempt_id_of(&doc)?);
+            }
+        }
+        if found.len() != 1 {
+            return Err(format!("expected one attempt in {store}: {found:?}"));
+        }
+        ids.push(found.remove(0));
+    }
+    std::fs::write(&test_path, repaired).map_err(|e| e.to_string())?;
+    fixture_git_ok(&first.root, &["add", "test/pricing.test.ts"])?;
+    fixture_git_ok(&first.root, &["commit", "-q", "-m", "reclose"])?;
+    let backup = first
+        .root
+        .join("target/ripr/workflow/after.check-findings.json.ripr-preattempt-backup");
+    let child = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(&first.decoy)
+        .args([
+            "agent",
+            "repair",
+            "--root",
+            &first.root_arg,
+            "--store",
+            "target/ripr/store-a",
+            "--phase",
+            "after",
+            "--attempt",
+            &ids[0],
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let mut child = ChildGuard(child);
+    let pid = Pid::from_raw(i32::try_from(child.0.id()).map_err(|e| e.to_string())?);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while std::fs::read(&backup).ok().as_deref() != Some(prior_projection.as_slice()) {
+        if let Some(status) = child.0.try_wait().map_err(|e| e.to_string())? {
+            return Err(format!("first process exited before backup: {status}"));
+        }
+        if Instant::now() >= deadline {
+            return Err("first process did not create a backup".into());
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    kill(pid, Signal::SIGSTOP).map_err(|e| e.to_string())?;
+    if !matches!(
+        waitpid(pid, Some(WaitPidFlag::WUNTRACED)).map_err(|e| e.to_string())?,
+        WaitStatus::Stopped(_, Signal::SIGSTOP)
+    ) {
+        return Err("first process did not stop".into());
+    }
+    let saved = std::fs::read(&backup).map_err(|e| e.to_string())?;
+    let (ok, second) = ripr(
+        &first.decoy,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &first.root_arg,
+            "--store",
+            "target/ripr/store-b",
+            "--phase",
+            "after",
+            "--attempt",
+            &ids[1],
+        ],
+    )?;
+    expect_exit(ok, false, "concurrent after")?;
+    need(
+        &second,
+        "another repair phase is using the shared workflow artifacts",
+        "cross-store lock refusal",
+    )?;
+    if std::fs::read(&backup).map_err(|e| e.to_string())? != saved {
+        return Err("concurrent after changed live backup".into());
+    }
+    if crash {
+        child.0.kill().map_err(|e| e.to_string())?;
+        child.0.wait().map_err(|e| e.to_string())?;
+        let (ok, retry) = ripr(
+            &first.decoy,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &first.root_arg,
+                "--store",
+                "target/ripr/store-b",
+                "--phase",
+                "after",
+                "--attempt",
+                &ids[1],
+            ],
+        )?;
+        expect_exit(ok, false, "after following crash")?;
+        need(&retry, "unresolved workflow backup", "crash backup refusal")?;
+        if std::fs::read(&backup).map_err(|e| e.to_string())? != saved {
+            return Err("crash recovery changed unknown backup".into());
+        }
+        return decoy_untouched(&first.decoy);
+    }
+    kill(pid, Signal::SIGCONT).map_err(|e| e.to_string())?;
+    let status = child.0.wait().map_err(|e| e.to_string())?;
+    if !status.success() {
+        use std::io::Read as _;
+        let mut stderr = String::new();
+        if let Some(pipe) = &mut child.0.stderr {
+            pipe.read_to_string(&mut stderr)
+                .map_err(|e| e.to_string())?;
+        }
+        return Err(format!("first after did not finish: {status}: {stderr}"));
+    }
+    if backup.exists() {
+        return Err("successful first after left its backup".into());
+    }
+    decoy_untouched(&first.decoy)
+}
+
+#[cfg(all(feature = "lang-typescript", unix))]
+#[test]
+fn after_preserves_original_when_backup_creation_is_denied() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let attempt = GapAttempt::start("backup-create-denied")?;
+    let workflow = attempt.root.join("target/ripr/workflow");
+    let projection = workflow.join("after.check-findings.json");
+    std::fs::write(&projection, b"prior projection").map_err(|e| e.to_string())?;
+    attempt.commit_closing_test()?;
+    let permissions = std::fs::metadata(&workflow)
+        .map_err(|e| e.to_string())?
+        .permissions();
+    std::fs::set_permissions(&workflow, std::fs::Permissions::from_mode(0o555))
+        .map_err(|e| e.to_string())?;
+    let result = attempt.after(true);
+    std::fs::set_permissions(&workflow, permissions).map_err(|e| e.to_string())?;
+    let output = result?;
+    let (_, stderr) = text_of(&output);
+    expect_exit(output.status.success(), false, "denied backup creation")?;
+    need(&stderr, "create backup", "backup creation failure")?;
+    if std::fs::read(&projection).map_err(|e| e.to_string())? != b"prior projection"
+        || workflow
+            .join("after.check-findings.json.ripr-preattempt-backup")
+            .exists()
+    {
+        return Err("failed backup creation changed the original or published a backup".into());
+    }
+    Ok(())
+}

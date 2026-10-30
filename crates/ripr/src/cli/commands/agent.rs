@@ -5497,6 +5497,37 @@ mod repair_summary_tests {
 
     #[cfg(unix)]
     #[test]
+    fn failed_restore_keeps_the_original_backup() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = temp_root("restore-denied")?;
+        let path = root.join("target/ripr/workflow/after.check-findings.json");
+        let directory = path.parent().ok_or("missing parent")?;
+        std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+        std::fs::write(&path, b"prior").map_err(|error| error.to_string())?;
+        let mut tracked = SharedWorkflowArtifacts::track(&root, true)?;
+        std::fs::write(&path, b"phase").map_err(|error| error.to_string())?;
+        tracked.note_write(&path, b"phase")?;
+        let permissions = std::fs::metadata(directory)
+            .map_err(|error| error.to_string())?
+            .permissions();
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o555))
+            .map_err(|error| error.to_string())?;
+        let result = tracked.resolve(false, true, true);
+        std::fs::set_permissions(directory, permissions).map_err(|error| error.to_string())?;
+        let backup = path.with_extension("json.ripr-preattempt-backup");
+        let intact = std::fs::read(&backup).map_err(|error| error.to_string())? == b"prior"
+            && std::fs::read(&path).map_err(|error| error.to_string())? == b"phase";
+        let _ = std::fs::remove_dir_all(&root);
+        if result.is_ok() || !intact {
+            return Err(
+                "denied restore lost the original backup or changed the phase output".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn tracking_restores_original_mode_on_refusal() -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt as _;
         let root = temp_root("restore-mode")?;
