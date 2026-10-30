@@ -48,16 +48,39 @@ jobs:
       - name: Verify server fixture prepared
         shell: pwsh
         run: if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'selector-result.json.prepared'))) { throw 'fixture not prepared' }
+      - name: Verify real client created
+        if: always()
+        shell: pwsh
+        run: if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'selector-result.json.factory'))) { throw 'client factory not reached' }
+      - name: Verify client start invoked
+        if: always()
+        shell: pwsh
+        run: if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'selector-result.json.client-start'))) { throw 'client start not invoked' }
+      - name: Verify LSP peer process started
+        if: always()
+        shell: pwsh
+        run: if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'did-open.jsonl.peer'))) { throw 'peer not started' }
+      - name: Verify peer received initialize
+        if: always()
+        shell: pwsh
+        run: if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'did-open.jsonl.init'))) { throw 'initialize not received' }
+      - name: Verify real client started
+        if: always()
+        shell: pwsh
+        run: if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'selector-result.json.client-started'))) { throw 'client did not start' }
       - name: Verify controller started
+        if: always()
         shell: pwsh
         run: if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'selector-result.json.started'))) { throw 'controller start failed' }
       - name: Verify host reached selector and version
+        if: always()
         shell: pwsh
         run: |
           if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'selector-result.json'))) { throw 'selector result absent' }
           $result = Get-Content (Join-Path $env:RUNNER_TEMP 'selector-result.json') -Raw | ConvertFrom-Json
           if ($result.version -ne '1.91.0' -or ($null -eq $result.own) -or ($null -eq $result.other)) { throw 'unexpected VS Code version or result shape' }
       - name: Verify selected assertion row
+        if: always()
         shell: pwsh
         env:
           ROW: ${{ matrix.row }}

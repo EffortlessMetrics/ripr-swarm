@@ -24,8 +24,9 @@ suite('Windows glob controller probe', () => {
     const script = path.join(path.dirname(folder.uri.fsPath), 'server.cjs');
     const rpc = require.resolve('vscode-jsonrpc/node');
     fs.writeFileSync(script, `const fs=require('fs'); const rpc=require(${JSON.stringify(rpc)});
+fs.writeFileSync(${JSON.stringify(receipt)}+'.peer','reached');
 const c=rpc.createMessageConnection(new rpc.StreamMessageReader(process.stdin),new rpc.StreamMessageWriter(process.stdout));
-c.onRequest('initialize',()=>({capabilities:{textDocumentSync:1}})); c.onRequest('shutdown',()=>null);
+c.onRequest('initialize',()=>{fs.writeFileSync(${JSON.stringify(receipt)}+'.init','reached'); return {capabilities:{textDocumentSync:1}}}); c.onRequest('shutdown',()=>null);
 c.onNotification('textDocument/didOpen',p=>fs.appendFileSync(${JSON.stringify(receipt)},JSON.stringify(p.textDocument.uri)+'\\n'));
 c.onNotification('exit',()=>process.exit(0)); c.listen();`);
     assert.ok(process.env.NODE_BINARY);
@@ -37,8 +38,14 @@ c.onNotification('exit',()=>process.exit(0)); c.listen();`);
       isWorkspaceTrusted: () => true,
       readFile: async () => undefined,
       resolveServer: async () => ({ command: process.env.NODE_BINARY!, source: 'configured', detail: 'fake client', installationState: 'unmanaged', compatibilityResult: compatibleLspEvidence }),
-      createLanguageClient: (server: ServerOptions, options: LanguageClientOptions) => new LanguageClient('glob-probe', 'glob-probe', server, options),
-      createFileSystemWatcher: () => ({ dispose: () => undefined })
+      createLanguageClient: (server: ServerOptions, options: LanguageClientOptions) => {
+        checkpoint('factory');
+        const client = new LanguageClient('glob-probe', 'glob-probe', server, options);
+        const start = client.start.bind(client);
+        client.start = async () => { checkpoint('client-start'); await start(); checkpoint('client-started'); };
+        return client;
+      },
+      createFileSystemWatcher: (pattern: vscode.GlobPattern) => vscode.workspace.createFileSystemWatcher(pattern)
     } as unknown as RiprClientRuntime;
     const output = vscode.window.createOutputChannel('glob probe', { log: true });
     const controller = new RiprClientController({} as vscode.ExtensionContext, output, runtime);
