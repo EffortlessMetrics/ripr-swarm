@@ -17326,8 +17326,14 @@ fn analyze_diff_discloses_a_test_extraction_worker_failure() -> Result<(), Strin
         control.limitations
     );
 
-    // The first parse of the test file (its per-file facts) succeeds; the
-    // dedicated test extraction after it loses its worker.
+    // The control run cached this file's facts and extraction by content, so
+    // the armed run changes the bytes to reach the worker again. The first
+    // parse of the test file (its per-file facts) succeeds; the dedicated
+    // test extraction after it loses its worker.
+    ts_write_file(
+        &root.join("tests/calc.test.ts"),
+        "// uncached bytes\nimport { add } from '../src/calc';\nit('adds', () => {\n  expect(add(1, 2)).toBe(3);\n});\n",
+    )?;
     let _armed = super::parse::injected_worker_panic::arm(Path::new("tests/calc.test.ts"), 1);
     let failed = run(&root)?;
     assert!(
