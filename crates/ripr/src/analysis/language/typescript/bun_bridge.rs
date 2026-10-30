@@ -1305,7 +1305,14 @@ pub(crate) fn bun_cross_language_finding_for_changed_rust_line_with_profile(
         bun_cross_language_stage_states(hint.verdict);
     Some(Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
-        confidence_basis: Vec::new(),
+        confidence_basis: crate::domain::ConfidenceCap::for_preview(
+            &class,
+            &crate::domain::ConfidenceBasisInputs {
+                has_related_test: true,
+                strong_oracle_present: false,
+                boundary_input_matched: true,
+            },
+        ),
         id: probe.id.0.clone(),
         canonical_gap: None,
         probe,
