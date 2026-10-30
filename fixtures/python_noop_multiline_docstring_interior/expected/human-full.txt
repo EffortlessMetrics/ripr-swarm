@@ -3,13 +3,18 @@ mode: fast
 root: fixtures/python_noop_multiline_docstring_interior/input
 config: <cwd>/fixtures/python_noop_multiline_docstring_interior/input/ripr.toml
 
-Summary: 0 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 0 of 0 finding(s) unsuppressed
+Summary: 0 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 0 of 0 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Changed file(s) by language: python = 1
 
 Analysis outcome: no changed line is behavior ripr checks (analysis complete; no_behavioral_candidates)
-  Counts: 1 changed file(s), 2 changed line(s), 0 candidate line(s), 0 probe(s), 0 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 0 candidate line(s), 0 changed behavior(s) checked, 0 finding(s)
 
-No diff-derived static exposure probes found.
+No findings: ripr checked no changed behavior.
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

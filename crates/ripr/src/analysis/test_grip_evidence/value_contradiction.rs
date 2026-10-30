@@ -12,17 +12,22 @@
 //! actionable repair signal is worse than a missed advisory finding, so the
 //! fold's contradiction must be typed instead of credited.
 //!
-//! Scope is deliberately narrow and fail-closed toward the current credit:
+//! The existing integer entrypoints are fail-closed toward the current credit:
 //! when the owner is not a free function of pure literal arithmetic, when any
 //! argument or expected expression does not fold, or when anything about the
 //! shape is unexpected, the verdict is [`ExactValueVerdict::NotEvaluable`]
 //! and every consumer keeps today's behavior. Only a fold that completes and
 //! contradicts the asserted relation downgrades the oracle, states the
 //! contradiction in the receipt, and stops closing the gap. The downgrade
-//! direction is always weaker, so a fold bug cannot manufacture stronger
-//! evidence — it can only withhold it.
+//! direction is always weaker for those entrypoints, so a fold bug can only
+//! withhold their evidence.
+//!
+//! #8610 also reads a boolean result for a narrowly admitted direct assertion:
+//! a whole comparison of primitive integer parameters/literals, called with
+//! literal integer arguments. Only a completed, consistent boolean fold may
+//! pass that new pin's consistency gate; unknown is never promotion evidence.
 
-use crate::analysis::extract::equality_assertion_arguments;
+use crate::analysis::extract::{equality_assertion_arguments, outer_assertion_condition};
 use crate::analysis::facts::TestFact as TestSummary;
 use crate::analysis::facts::{FunctionSummary, SourceText};
 use crate::analysis::syntax::parse_clean_source_file;
@@ -99,6 +104,141 @@ pub(super) fn exact_value_assertion_verdict_for_test(
         }
     }
     verdict
+}
+
+/// Consistency for #8610's already owner-admitted `assert!(owner(literal))`
+/// or `assert!(!owner(literal))`. This never invents equality assertion text.
+/// Qualified calls, let-bound results, parameterized tests and unread owner
+/// shapes stay not evaluable; the caller must not raise their strength.
+pub(super) fn boolean_assertion_verdict_for_test(
+    owner: &FunctionSummary,
+    oracle_text: &str,
+    test: &TestSummary,
+) -> ExactValueVerdict {
+    if bare_owner_call_is_shadowed(test, &owner.name) {
+        return ExactValueVerdict::NotEvaluable;
+    }
+    let Some(condition) = outer_assertion_condition(oracle_text) else {
+        return ExactValueVerdict::NotEvaluable;
+    };
+    let (operand, expected) = match condition.trim().strip_prefix('!') {
+        Some(negated) => (negated.trim_start(), false),
+        None => (condition.trim(), true),
+    };
+    let Some(arguments) = owner_call_arguments(operand, &owner.name) else {
+        return ExactValueVerdict::NotEvaluable;
+    };
+    let Some(actual) = fold_boolean_owner_call(owner, &arguments) else {
+        return ExactValueVerdict::NotEvaluable;
+    };
+    if actual == expected {
+        ExactValueVerdict::Consistent
+    } else {
+        ExactValueVerdict::Contradicted {
+            expected: expected.to_string(),
+            evaluated: i128::from(actual),
+        }
+    }
+}
+
+fn whole_integer_literal(text: &str) -> Option<i128> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let tokens = tokenize(&masked)?;
+    match tokens.as_slice() {
+        [Token::Int(value)] => Some(*value),
+        [Token::Symbol("-"), Token::Int(value)] => value.checked_neg(),
+        _ => None,
+    }
+}
+
+fn integer_literal_in_type(text: &str, ty: &str) -> Option<i128> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let literal = masked.trim();
+    if INTEGER_SUFFIXES
+        .iter()
+        .find(|suffix| literal.ends_with(**suffix))
+        .is_some_and(|suffix| *suffix != ty)
+    {
+        return None;
+    }
+    let value = whole_integer_literal(text)?;
+    let (low, high) = declared_integer_range(ty)?;
+    (low..=high).contains(&value).then_some(value)
+}
+
+/// Reuse the fold only where integer comparison has primitive Rust semantics.
+/// No arithmetic, overloadable operand, pointer-sized type or hidden statement
+/// can obtain the new boolean credit from the fold's integer approximation.
+fn fold_boolean_owner_call(owner: &FunctionSummary, arguments: &[String]) -> Option<bool> {
+    let parse = parse_clean_source_file(owner.body.as_str())?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    if function
+        .ret_type()?
+        .syntax()
+        .text()
+        .to_string()
+        .replace(' ', "")
+        != "->bool"
+    {
+        return None;
+    }
+    let parameters = function.param_list()?;
+    if parameters.self_param().is_some() || parameters.params().count() != arguments.len() {
+        return None;
+    }
+    let mut names = Vec::new();
+    let mut types = Vec::new();
+    let mut values = Vec::new();
+    for (parameter, argument) in parameters.params().zip(arguments) {
+        let ty = parameter.ty()?.syntax().text().to_string();
+        values.push(integer_literal_in_type(argument, &ty)?);
+        let ast::Pat::IdentPat(name) = parameter.pat()? else {
+            return None;
+        };
+        if name.pat().is_some() || name.ref_token().is_some() {
+            return None;
+        }
+        names.push(name.name()?.text().to_string());
+        types.push(ty);
+    }
+    let body = function.body()?;
+    if body.stmt_list()?.statements().next().is_some() {
+        return None;
+    }
+    let ast::Expr::BinExpr(comparison) = body.tail_expr()? else {
+        return None;
+    };
+    if !matches!(comparison.op_kind(), Some(ast::BinaryOp::CmpOp(_))) {
+        return None;
+    }
+    let left = comparison.lhs()?.syntax().text().to_string();
+    let right = comparison.rhs()?.syntax().text().to_string();
+    let parameter_type = |operand: &str| {
+        let masked = crate::analysis::extract::mask_comments_and_strings(operand);
+        let tokens = tokenize(&masked)?;
+        match tokens.as_slice() {
+            [Token::Ident(name)] => names
+                .iter()
+                .position(|parameter| parameter == name)
+                .map(|position| types[position].as_str()),
+            _ => None,
+        }
+    };
+    match (parameter_type(&left), parameter_type(&right)) {
+        (Some(left_type), Some(right_type)) if left_type == right_type => {}
+        (Some(ty), None) => {
+            integer_literal_in_type(&right, ty)?;
+        }
+        (None, Some(ty)) => {
+            integer_literal_in_type(&left, ty)?;
+        }
+        _ => return None,
+    }
+    bool_value(fold_function_value(owner.body.as_str(), &values)?)
 }
 
 /// The `#[case]` parameter bindings of each `#[case(..)]` row of an rstest
@@ -287,16 +427,31 @@ impl PointerReturnChange {
 /// and on the change, so it cannot reveal the difference even though its
 /// exact assertion shares the owner. Every other shape (a call outside an
 /// assertion, a case table, a value that does not fold, a body where `after`
-/// is not found exactly once) is `false` and keeps today's credit.
+/// is not found exactly once) is `None` and keeps today's credit.
+/// Why every related test failed to tell the changed expression from its
+/// baseline. The honest gap statement differs between the two, so the caller
+/// turns the reason into the matching infection summary (#8659, #10916).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::analysis) enum InvisibilityReason {
+    /// Every equality assertion folds the owner to the same value at its
+    /// asserted input on both versions: no asserted input reaches a
+    /// difference.
+    SameValueAtEveryAssertedInput,
+    /// A relational assertion's comparison folds to the same truth value on
+    /// both versions: the asserted inputs may evaluate differently, yet no
+    /// assertion's outcome distinguishes them.
+    RelationalTruthUnchanged,
+}
+
 pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
     owner: &FunctionSummary,
     before: &str,
     after: &str,
     tests: &[&TestSummary],
-) -> bool {
+) -> Option<InvisibilityReason> {
     let current = owner.body.as_str();
     if tests.is_empty() || before == after || current.matches(after).count() != 1 {
-        return false;
+        return None;
     }
     let baseline = current.replacen(after, before, 1);
     // An equivalent rewrite (`x * 3` to `3 * x`) is invisible to every test
@@ -304,32 +459,51 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
     // test that cannot exist. The change must differ somewhere: a small input
     // grid has to find a call at which the two bodies fold to different values.
     if !versions_differ_on_small_inputs(current, &baseline) {
-        return false;
+        return None;
     }
     // A related test that never names the owner exercises it through no call
     // the fold could miss (a helper that calls it makes the owner have other
     // callers, which the caller checks), so it neither blocks nor supports
     // the reading; at least one test must name the owner.
-    let mut naming_tests = tests
+    let naming_tests = tests
         .iter()
         .filter(|test| count_name_tokens(test.body.as_str(), &owner.name) > 0);
-    if naming_tests.clone().next().is_none() {
-        return false;
-    }
-    naming_tests.all(|test| {
+    naming_tests.clone().next()?;
+    // A mixture of equality and relational assertions reads as relational:
+    // "the same truth value on both versions" holds for every member, while
+    // "no input reaches a difference" does not survive a relational
+    // assertion that calls the owner at two different inputs.
+    let mut relational_seen = false;
+    for test in naming_tests {
         if case_row_bindings(test).is_some()
             || bare_owner_call_is_shadowed(test, &owner.name)
             || test.assertions.is_empty()
         {
-            return false;
+            return None;
         }
         // Every mention of the owner must be the one call an assertion folds:
         // a second call in the expected operand, or one outside an
         // assertion, may separate the versions at an input the fold never saw.
         // The call may sit in either operand, or in the `let` that binds the
         // operand, so the operands are resolved before the mentions are counted.
-        let resolved: Vec<Vec<ResolvedOperand>> = test
-            .assertions
+        // A relational assertion (`assert!(f(3) > f(1))`) passes on the
+        // baseline exactly when its comparison folds the same way there, so
+        // it is invisible when the comparison's truth value is unchanged.
+        let mut relational_mentions = 0usize;
+        let mut equality_assertions = Vec::new();
+        for oracle in &test.assertions {
+            match relational_assertion(&oracle.text, &owner.name) {
+                Some(relational) => {
+                    if !relational.truth_unchanged(current, &baseline) {
+                        return None;
+                    }
+                    relational_seen = true;
+                    relational_mentions += relational.owner_calls;
+                }
+                None => equality_assertions.push(oracle),
+            }
+        }
+        let resolved: Vec<Vec<ResolvedOperand>> = equality_assertions
             .iter()
             .map(|oracle| assertion_operands(&oracle.text, test.body.as_str()))
             .collect();
@@ -345,10 +519,12 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
             })
             .map(|operand| count_name_tokens(&operand.text, &owner.name))
             .sum();
-        if count_name_tokens(test.body.as_str(), &owner.name) != resolved_mentions {
-            return false;
+        if count_name_tokens(test.body.as_str(), &owner.name)
+            != resolved_mentions + relational_mentions
+        {
+            return None;
         }
-        resolved.iter().all(|operands| {
+        let all_fold_equal = resolved.iter().all(|operands| {
             let mut holding = operands
                 .iter()
                 .map(|operand| operand.text.as_str())
@@ -383,8 +559,130 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
                 (Some(changed), Some(unchanged)) => changed == unchanged,
                 _ => false,
             }
-        })
+        });
+        if !all_fold_equal {
+            return None;
+        }
+    }
+    Some(if relational_seen {
+        InvisibilityReason::RelationalTruthUnchanged
+    } else {
+        InvisibilityReason::SameValueAtEveryAssertedInput
     })
+}
+
+/// An `assert!(left OP right)` whose comparison is `<`, `<=`, `>` , `>=` or
+/// `!=` and whose sides are each an integer literal expression or one bare
+/// call of the owner with literal arguments.
+struct RelationalAssertion {
+    operator: &'static str,
+    left: String,
+    right: String,
+    owner_name: String,
+    owner_calls: usize,
+}
+
+fn relational_assertion(oracle_text: &str, owner_name: &str) -> Option<RelationalAssertion> {
+    let trimmed = oracle_text.trim_start();
+    let body = trimmed
+        .strip_prefix("assert!")
+        .or_else(|| trimmed.strip_prefix("debug_assert!"))?
+        .trim_start();
+    let inside = super::delimited_contents_at(body, body.find(['(', '['])?)?;
+    let condition = super::split_top_level_commas(&inside).into_iter().next()?;
+    let bytes = condition.as_bytes();
+    let mut depth = 0i32;
+    let mut found = None;
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'"' | b'\'' | b'&' | b'|' | b'!' if depth == 0 => {
+                if byte == b'!' && bytes.get(at + 1) == Some(&b'=') {
+                    if found.replace((at, "!=")).is_some() {
+                        return None;
+                    }
+                    at += 1;
+                } else {
+                    return None;
+                }
+            }
+            b'=' if depth == 0 => {
+                // `==` is the equality family; a lone `=` is not an assertion.
+                return None;
+            }
+            b'<' | b'>' if depth == 0 => {
+                let two = bytes.get(at + 1) == Some(&b'=');
+                let operator = match (byte, two) {
+                    (b'<', true) => "<=",
+                    (b'<', false) => "<",
+                    (b'>', true) => ">=",
+                    _ => ">",
+                };
+                if found.replace((at, operator)).is_some() {
+                    return None;
+                }
+                at += usize::from(two);
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    let (index, operator) = found?;
+    let width = operator.len();
+    let left = condition[..index].trim().to_string();
+    let right = condition[index + width..].trim().to_string();
+    let calls = count_name_tokens(&left, owner_name) + count_name_tokens(&right, owner_name);
+    if calls == 0 || left.is_empty() || right.is_empty() {
+        return None;
+    }
+    Some(RelationalAssertion {
+        operator,
+        left,
+        right,
+        owner_name: owner_name.to_string(),
+        owner_calls: calls,
+    })
+}
+
+impl RelationalAssertion {
+    fn side(&self, text: &str, body: &str) -> Option<i128> {
+        let environment = BTreeMap::new();
+        match count_name_tokens(text, &self.owner_name) {
+            0 => fold_expression(text, &environment),
+            1 => {
+                let arguments = owner_call_arguments(text, &self.owner_name)?;
+                let mut values = Vec::with_capacity(arguments.len());
+                for argument in &arguments {
+                    values.push(fold_expression(argument, &environment)?);
+                }
+                fold_function_text(body, &values)
+            }
+            _ => None,
+        }
+    }
+
+    fn holds(&self, body: &str) -> Option<bool> {
+        let left = self.side(&self.left, body)?;
+        let right = self.side(&self.right, body)?;
+        Some(match self.operator {
+            "<" => left < right,
+            "<=" => left <= right,
+            ">" => left > right,
+            ">=" => left >= right,
+            _ => left != right,
+        })
+    }
+
+    /// Only a completed fold on both versions that gives the same truth
+    /// value counts; anything unfolded keeps today's credit.
+    fn truth_unchanged(&self, current: &str, baseline: &str) -> bool {
+        matches!(
+            (self.holds(current), self.holds(baseline)),
+            (Some(changed), Some(unchanged)) if changed == unchanged
+        )
+    }
 }
 
 /// The compared operands of an equality assertion (either order, or the two
@@ -578,6 +876,36 @@ pub(super) fn bare_owner_call_is_shadowed(
 /// `Some((true, ..))` is the `assert_ne!` family (the asserted relation is
 /// inequality); `None` is not an equality assertion at all.
 fn equality_assertion_shape(oracle_text: &str) -> Option<(bool, Vec<String>)> {
+    EQUALITY_SHAPE_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if let Some(shape) = memo.get(oracle_text) {
+            return shape.clone();
+        }
+        let shape = equality_assertion_shape_uncached(oracle_text);
+        if memo.len() >= EQUALITY_SHAPE_MEMO_ENTRIES {
+            memo.clear();
+        }
+        memo.insert(oracle_text.to_string(), shape.clone());
+        shape
+    })
+}
+
+/// Per-thread memo of [`equality_assertion_shape`], keyed by the full oracle
+/// text (equality, never a hash), so a hit is exactly the shape a fresh call
+/// returns. The shape reads only the assertion text, but the verdict asks it
+/// once per (seam, related test, oracle) and again per rstest row; masking and
+/// splitting the same assertion each time was a quarter of cold repo-exposure
+/// evidence on regex (#10932).
+const EQUALITY_SHAPE_MEMO_ENTRIES: usize = 4096;
+
+type EqualityShape = Option<(bool, Vec<String>)>;
+
+thread_local! {
+    static EQUALITY_SHAPE_MEMO: std::cell::RefCell<std::collections::HashMap<String, EqualityShape>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+fn equality_assertion_shape_uncached(oracle_text: &str) -> Option<(bool, Vec<String>)> {
     let trimmed = oracle_text.trim_start();
     let starts_with_any = |names: &[&str]| {
         names.iter().any(|name| {
@@ -664,6 +992,15 @@ fn fold_owner_call(owner: &FunctionSummary, arguments: &[i128]) -> Option<i128> 
 /// [`fold_owner_call`] over the function's source text, so a baseline body
 /// can be folded beside the current one.
 fn fold_function_text(body: &str, arguments: &[i128]) -> Option<i128> {
+    match fold_function_value(body, arguments)? {
+        Value::Int(value) => Some(value),
+        Value::Bool(_) => None,
+    }
+}
+
+/// Keep the parser's result type so the narrow boolean caller can inspect it.
+/// Existing integer callers still reject a boolean through `fold_function_text`.
+fn fold_function_value(body: &str, arguments: &[i128]) -> Option<Value> {
     let parse = parse_clean_source_file(body)?;
     let function = parse
         .tree()
@@ -1481,7 +1818,7 @@ fn fold_block(
     environment: &BTreeMap<String, i128>,
     range: Option<(i128, i128)>,
     uniform: Option<(i128, i128)>,
-) -> Option<i128> {
+) -> Option<Value> {
     let mut parser = Parser {
         tokens,
         position: 0,
@@ -1493,16 +1830,57 @@ fn fold_block(
     if parser.position != tokens.len() {
         return None;
     }
-    match value {
-        Value::Int(value) => Some(value),
-        Value::Bool(_) => None,
-    }
+    Some(value)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+
+    #[test]
+    fn equality_shape_memo_returns_what_a_fresh_shape_would() {
+        let texts = [
+            "assert_eq!(discounted_total(1, 2)\n, 3\n)",
+            "assert_ne!(discounted_total(1, 2)\n, 4\n)",
+            "debug_assert_eq!(f(1)\n, 1\n)",
+            "assert!(flag)",
+            "assert_eq!(discounted_total(1, 2)\n, 3\n)",
+        ];
+        for text in texts {
+            let fresh = equality_assertion_shape_uncached(text);
+            assert_eq!(equality_assertion_shape(text), fresh, "first ask: {text}");
+            assert_eq!(equality_assertion_shape(text), fresh, "memo hit: {text}");
+        }
+        assert!(
+            equality_assertion_shape("assert!(flag)").is_none(),
+            "a non-equality assertion stays not an equality shape"
+        );
+        assert_eq!(
+            equality_assertion_shape("assert_ne!(f(1)\n, 2\n)").map(|shape| shape.0),
+            Some(true),
+            "the assert_ne family keeps its inequality flag through the memo"
+        );
+    }
+
+    #[test]
+    fn equality_shape_memo_answers_a_repeat_from_the_memo() {
+        // A planted entry no fresh computation could produce proves the
+        // second ask reads the memo instead of recomputing the shape.
+        let text = "assert_eq!(memo_probe(1)\n, 2\n)";
+        let planted: EqualityShape = Some((true, vec!["planted".to_string()]));
+        assert_ne!(equality_assertion_shape_uncached(text), planted);
+        EQUALITY_SHAPE_MEMO
+            .with(|memo| memo.borrow_mut().insert(text.to_string(), planted.clone()));
+        assert_eq!(equality_assertion_shape(text), planted);
+        let entries = EQUALITY_SHAPE_MEMO.with(|memo| memo.borrow().len());
+        assert_eq!(equality_assertion_shape(text), planted);
+        assert_eq!(
+            EQUALITY_SHAPE_MEMO.with(|memo| memo.borrow().len()),
+            entries,
+            "a hit must not add an entry"
+        );
+    }
 
     fn verdict_for_owner(owner: &str, assertion: &str) -> Result<ExactValueVerdict, String> {
         let adapter = RaRustSyntaxAdapter;
@@ -2074,7 +2452,12 @@ mod tests {
         );
     }
 
-    fn invisible(owner: &str, before: &str, after: &str, test: &str) -> Result<bool, String> {
+    fn invisible_reason(
+        owner: &str,
+        before: &str,
+        after: &str,
+        test: &str,
+    ) -> Result<Option<InvisibilityReason>, String> {
         let adapter = RaRustSyntaxAdapter;
         let source = format!("{owner}\n\n{test}\n");
         let facts = adapter
@@ -2091,12 +2474,88 @@ mod tests {
         ))
     }
 
+    fn invisible(owner: &str, before: &str, after: &str, test: &str) -> Result<bool, String> {
+        Ok(invisible_reason(owner, before, after, test)?.is_some())
+    }
+
     const CAP: &str = "pub fn owner(n: u32) -> u32 {\n    n.min(6)\n}";
 
     #[test]
     fn an_assertion_below_the_cap_cannot_see_the_raised_cap() -> Result<(), String> {
         let test = "#[test]\nfn low() {\n    assert_eq!(owner(3), 3);\n}";
         assert!(invisible(CAP, "n.min(5)", "n.min(6)", test)?);
+        Ok(())
+    }
+
+    const POWER: &str =
+        "pub fn owner(attempt: u32, base: u64) -> u64 {\n    base * 3u64.pow(attempt)\n}";
+
+    #[test]
+    fn a_relational_sibling_that_holds_on_both_versions_stays_invisible() -> Result<(), String> {
+        // `owner(3,100) > owner(1,100)` is 2700 > 300 changed and 800 > 200 before.
+        let test = "#[test]\nfn a() {\n    assert_eq!(owner(0, 100), 100);\n}\n#[test]\nfn grows() {\n    assert!(owner(3, 100) > owner(1, 100));\n}";
+        assert!(invisible(
+            POWER,
+            "base * 2u64.pow(attempt)",
+            "base * 3u64.pow(attempt)",
+            test
+        )?);
+        // The relational member names the reason: the asserted inputs may
+        // evaluate differently, so the caller owes the truth-value summary,
+        // not "no input reaches a difference" (#10916).
+        assert_eq!(
+            invisible_reason(
+                POWER,
+                "base * 2u64.pow(attempt)",
+                "base * 3u64.pow(attempt)",
+                test
+            )?,
+            Some(InvisibilityReason::RelationalTruthUnchanged)
+        );
+        // The equality-only shape keeps the value-equality reason.
+        let equality_only = "#[test]\nfn a() {\n    assert_eq!(owner(0, 100), 100);\n}";
+        assert_eq!(
+            invisible_reason(
+                POWER,
+                "base * 2u64.pow(attempt)",
+                "base * 3u64.pow(attempt)",
+                equality_only
+            )?,
+            Some(InvisibilityReason::SameValueAtEveryAssertedInput)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_relational_assertion_that_flips_between_versions_is_visible() -> Result<(), String> {
+        // 2700 > 1000 changed, 800 > 1000 before: this test can tell them apart.
+        let test = "#[test]\nfn a() {\n    assert_eq!(owner(0, 100), 100);\n}\n#[test]\nfn big() {\n    assert!(owner(3, 100) > 1000);\n}";
+        assert!(!invisible(
+            POWER,
+            "base * 2u64.pow(attempt)",
+            "base * 3u64.pow(attempt)",
+            test
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn a_relational_assertion_with_an_unfoldable_side_keeps_the_credit() -> Result<(), String> {
+        let test =
+            "#[test]\nfn a() {\n    let n = 3;\n    assert!(owner(n, 100) > owner(1, 100));\n}";
+        assert!(!invisible(
+            POWER,
+            "base * 2u64.pow(attempt)",
+            "base * 3u64.pow(attempt)",
+            test
+        )?);
+        let test = "#[test]\nfn a() {\n    assert!(owner(3, 100) > owner(1, 100) && true);\n}";
+        assert!(!invisible(
+            POWER,
+            "base * 2u64.pow(attempt)",
+            "base * 3u64.pow(attempt)",
+            test
+        )?);
         Ok(())
     }
 

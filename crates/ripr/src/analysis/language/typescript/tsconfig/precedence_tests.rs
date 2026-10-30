@@ -218,8 +218,17 @@ fn direct_and_barrel_relations_do_not_borrow_a_same_named_fallback_owner() -> Re
             .map_err(|err| format!("read barrel fixture: {err}"))?;
         let mut sources = std::collections::HashMap::new();
         sources.insert(PathBuf::from("src/barrel.ts"), barrel_source);
+        // The production index includes the owner and decoy sources. An
+        // omitted source now correctly means unavailable export facts, not
+        // a successfully indexed module with no additional export bindings.
+        sources.insert(owner_file.to_path_buf(), source.to_string());
+        sources.insert(decoy_file.to_path_buf(), source.to_string());
         let index = ReExportIndex::build(
-            &[PathBuf::from("src/barrel.ts")],
+            &[
+                PathBuf::from("src/barrel.ts"),
+                owner_file.to_path_buf(),
+                decoy_file.to_path_buf(),
+            ],
             &sources,
             &workspace.0,
             Some(&map),

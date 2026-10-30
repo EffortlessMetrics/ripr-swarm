@@ -19,6 +19,9 @@ mod agent_policy_guidance;
 mod artifact_mode_precedence;
 #[path = "cli_smoke/baseline_path_values.rs"]
 mod baseline_path_values;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/binary_alias_authority.rs"]
+mod binary_alias_authority;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
 #[cfg(feature = "lang-rust")]
@@ -103,6 +106,9 @@ mod python_source_admission;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_unittest_selectors.rs"]
 mod python_unittest_selectors;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/qualified_owner_observation.rs"]
+mod qualified_owner_observation;
 #[path = "cli_smoke/recall_tradeoff.rs"]
 mod recall_tradeoff;
 #[cfg(unix)]
@@ -124,6 +130,9 @@ mod retained_evidence_guidance;
 mod same_line_owner_tail;
 #[path = "cli_smoke/sample_output.rs"]
 mod sample_output;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/selector_language_recovery.rs"]
+mod selector_language_recovery;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/selector_recovery_scope.rs"]
 mod selector_recovery_scope;
@@ -149,6 +158,9 @@ mod typescript_effect_aliases;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_finally_completion.rs"]
 mod typescript_finally_completion;
+#[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_partial_star.rs"]
+mod typescript_partial_star;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
@@ -1990,11 +2002,11 @@ fn check_start_here_names_production_finding_for_boundary_flip_with_test() -> Re
         .next()
         .unwrap_or(start_here);
     assert!(
-        stdout.contains("1 unknown"),
+        stdout.contains("1 unclear"),
         "the signature-line edit must seed the fn-level unknown probe:\n{stdout}"
     );
     assert!(
-        !block.contains("limited by static analysis"),
+        !block.contains("ripr cannot tell from reading the code"),
         "Start here must not lead with the limitation state when the production edit is decisive:\n{block}"
     );
     assert!(
@@ -4280,6 +4292,131 @@ fn rerun_json_unreadable_gap_ledger_emits_refusal_envelope() -> Result<(), Strin
     }
     ignore_remove_dir_all(&root);
     Ok(())
+}
+
+/// #10720: fresh context preserves the check producer's named failure on
+/// both source routes, instead of flattening it through the String wrapper.
+#[test]
+fn context_json_fresh_analysis_preserves_base_failures() -> Result<(), String> {
+    let root = init_check_refusal_repo("context-json-typed-base", 1)?;
+    let result = (|| {
+        std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
+            .map_err(|err| format!("write config: {err}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn v0() -> u8 { 1 }\n")
+            .map_err(|err| format!("write tracked edit: {err}"))?;
+        let root_arg = root.display().to_string();
+        let base = "definitely-not-a-real-ref-10720";
+        for source in ["--committed", "--worktree"] {
+            let check = run_ripr(&[
+                "check", "--root", &root_arg, source, "--base", base, "--json",
+            ]);
+            assert_check_json_refusal(&check, "base_unresolvable", "analysis/base-resolution")?;
+            let context = run_ripr(&[
+                "context",
+                "--root",
+                &root_arg,
+                source,
+                "--base",
+                base,
+                "--finding",
+                "probe:not-a-real-id",
+            ]);
+            let value = assert_json_refusal_envelope(
+                &context,
+                "1.1",
+                "diff",
+                "base_unresolvable",
+                "analysis/base-resolution",
+            )?;
+            assert_eq!(value["run_limitations"][0]["basis"], "base_unresolvable");
+            assert_eq!(value["base"], base);
+            assert_eq!(value["root"], printed_path(&root));
+            assert_eq!(value["mode"], "deep");
+            let message = value["run_limitations"][0]["message"]
+                .as_str()
+                .ok_or("base refusal must carry a message")?;
+            assert!(message.contains(base), "{message}");
+        }
+        Ok(())
+    })();
+    ignore_remove_dir_all(&root);
+    result
+}
+
+/// A real directory outside Git reaches the analysis producer and must keep
+/// its distinct root failure rather than borrowing the base-error identity.
+#[test]
+fn context_json_fresh_analysis_preserves_repository_root_failure() -> Result<(), String> {
+    let root = unique_external_workspace("context-json-typed-root")?;
+    let result = (|| {
+        std::fs::create_dir_all(&root).map_err(|err| format!("create plain dir: {err}"))?;
+        std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"ready\"\n")
+            .map_err(|err| format!("write config: {err}"))?;
+        let root_arg = root.display().to_string();
+        let output = run_ripr(&[
+            "context",
+            "--root",
+            &root_arg,
+            "--committed",
+            "--base",
+            "main",
+            "--finding",
+            "probe:not-a-real-id",
+        ]);
+        let value = assert_json_refusal_envelope(
+            &output,
+            "1.1",
+            "diff",
+            "repository_root_unusable",
+            "analysis/repository-root",
+        )?;
+        assert_eq!(
+            value["run_limitations"][0]["basis"],
+            "repository_root_unusable"
+        );
+        assert_eq!(value["root"], printed_path(&root));
+        assert_eq!(value["mode"], "ready");
+        Ok(())
+    })();
+    ignore_remove_dir_all(&root);
+    result
+}
+
+/// Preserving typed failures does not invent a family for an unmigrated
+/// loader error. A missing supplied diff retains the generic fallback.
+#[test]
+fn context_json_fresh_analysis_keeps_untyped_failure_fallback() -> Result<(), String> {
+    let root = init_check_refusal_repo("context-json-missing-diff", 1)?;
+    let result = (|| {
+        let root_arg = root.display().to_string();
+        let missing_diff = root.join("missing-10720.patch");
+        let missing_arg = missing_diff.display().to_string();
+        let output = run_ripr(&[
+            "context",
+            "--root",
+            &root_arg,
+            "--diff",
+            &missing_arg,
+            "--finding",
+            "probe:not-a-real-id",
+        ]);
+        let value = assert_json_refusal_envelope(
+            &output,
+            "1.1",
+            "diff",
+            "analysis_failed",
+            "analysis/failure",
+        )?;
+        assert_eq!(value["run_limitations"][0]["basis"], "analysis_failed");
+        let message = value["run_limitations"][0]["message"]
+            .as_str()
+            .ok_or("diff refusal must carry a message")?;
+        assert!(message.contains("failed to read diff file"), "{message}");
+        assert!(message.contains("missing-10720.patch"), "{message}");
+        Ok(())
+    })();
+    ignore_remove_dir_all(&root);
+    result
 }
 
 /// #7331: `ripr context --from <missing>` names `check_artifact_unusable`,
@@ -6574,6 +6711,29 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
             assert!(card["next_action"].is_null());
             assert!(before.stdout.is_empty());
             assert!(!String::from_utf8_lossy(&before.stderr).contains("before phase complete"));
+            // #10712: `agent start` applies the same admission gate, so the
+            // seam `repair` and `card` call not repair-ready is a typed
+            // refusal (exit 3) and writes no workflow.
+            let out = root.join("not-ready-workflow");
+            let start = run_ripr(&[
+                "agent",
+                "start",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                BOUNDARY_GAP_SEAM_ID,
+                "--out",
+                &out.display().to_string(),
+            ]);
+            assert_eq!(
+                start.status.code(),
+                Some(3),
+                "stderr:\n{}",
+                String::from_utf8_lossy(&start.stderr)
+            );
+            assert!(start.stdout.is_empty());
+            assert!(String::from_utf8_lossy(&start.stderr).contains("not repair-eligible"));
+            assert!(!out.exists(), "a refused start must write no workflow");
         } else {
             assert_success(&before);
             assert_eq!(
@@ -7976,11 +8136,13 @@ fn agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2()
     Ok(())
 }
 
-/// #10537 review: a KNOWN seam withheld by agent policy is not an unknown
-/// seam. `agent start` keeps the plain failure (exit 2), as `agent packet`
-/// does for the same case; only an id absent from the inventory exits 3.
+/// #10537 review, revised by #10712: a KNOWN seam withheld by agent policy is
+/// not an unknown seam, but it is still a typed refusal. `agent start` exits 3
+/// like `agent card` and `agent packet` and names the policy cause; an id
+/// absent from the inventory also exits 3 with the "not found" cause.
 #[test]
-fn agent_start_config_hidden_known_seam_stays_exit_2() -> Result<(), Box<dyn std::error::Error>> {
+fn agent_start_config_hidden_known_seam_is_a_policy_refusal()
+-> Result<(), Box<dyn std::error::Error>> {
     let (root, diff) = agent_brief_sample_workspace("agent-start-config-hidden")?;
     let root_path = root.display().to_string();
     let diff = diff.display().to_string();
@@ -8016,11 +8178,13 @@ fn agent_start_config_hidden_known_seam_stays_exit_2() -> Result<(), Box<dyn std
     ]);
     assert_eq!(
         hidden.status.code(),
-        Some(2),
+        Some(3),
         "stderr:\n{}",
         String::from_utf8_lossy(&hidden.stderr)
     );
-    assert!(String::from_utf8_lossy(&hidden.stderr).contains("hidden by config"));
+    let hidden_stderr = String::from_utf8_lossy(&hidden.stderr);
+    assert!(hidden_stderr.contains("configured off for weakly_gripped seams"));
+    assert!(!hidden_stderr.contains("not found"));
 
     // Discriminator: a truly absent id under the same config exits 3.
     let absent = run_ripr(&[
@@ -8032,6 +8196,7 @@ fn agent_start_config_hidden_known_seam_stays_exit_2() -> Result<(), Box<dyn std
         "no-such-seam",
     ]);
     assert_eq!(absent.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&absent.stderr).contains("was not found"));
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -9528,76 +9693,52 @@ fn agent_repair_before_inline_only_seam(ambiguous: bool) -> Result<(), Box<dyn s
     }
     assert_failure(&before);
     let stderr = String::from_utf8_lossy(&before.stderr);
+    // #10978: the refusal names the change by file:line, says in plain words
+    // why ripr cannot pick a place, and pre-fills the stub command. It carries
+    // none of the packet-field jargon the old wall of text did.
     assert!(
-        stderr.contains(&format!(
-            "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started."
-        )),
-        "the refusal must say why in plain words:\n{stderr}"
+        stderr
+            .contains("ripr did not start a repair for the change at `crates/rates/src/lib.rs:11`"),
+        "the refusal must name the change location:\n{stderr}"
     );
-    // #4332: the refusal states the observable packet field, not only the
-    // producer-jargon cause, so an agent can check the packet itself.
-    assert!(
-        stderr.contains("recommended_test.file: \"not_applicable\""),
-        "the refusal must name the observable packet field:\n{stderr}"
-    );
-    // #5210: the inline-only boundary is reachable from the refusal via
-    // the repair help carrying the scope statement.
     assert!(
         stderr.contains(
-            "Repair scope, including the inline-test boundary, is in `ripr agent repair --help`"
+            "`crates/rates/src/lib.rs` has 2 test modules (`mod more_tests`, `mod tests`) and ripr cannot tell which one to edit"
         ),
-        "the refusal must point at the repair scope boundary:\n{stderr}"
+        "the refusal must name the competing test modules:\n{stderr}"
     );
-    // #7735: the pick-another-seam advice is a dead end when no seam can
-    // start a repair (e.g. ambiguous inline-only crates), so the refusal
-    // must name the stub forward route `check` already advertises — pinned
-    // to the repair root, because this harness runs repair from outside the
-    // workspace and an unpinned route would resolve in the wrong directory,
-    // and with the probe family, so a line holding several gap families
-    // cannot stub another seam. The root renders through `shell_arg` (so it
-    // is quoted when the path needs it, with embedded quotes POSIX-escaped)
-    // and with `/` separators on Windows (`root_path_display`), so compare
-    // the quote-stripped, separator-normalized form on both sides.
+    assert!(
+        stderr.contains("no repair attempt was started"),
+        "the refusal must say nothing was started:\n{stderr}"
+    );
     let normalized_stderr = stderr.replace('\'', "").replace('\\', "/");
     let normalized_root = root_arg.replace('\'', "").replace('\\', "/");
     assert!(
-        normalized_stderr.contains(&format!("ripr agent stub --root {normalized_root}")),
-        "the refusal must pin the stub route to the repair root:\n{stderr}"
+        normalized_stderr.contains(&format!(
+            "ripr agent stub --root {normalized_root} --at crates/rates/src/lib.rs:11 --kind predicate"
+        )),
+        "the refusal must pre-fill the stub command for this change:\n{stderr}"
     );
+    // The plain text comes first; the exact diagnostic trails it as a labeled
+    // detail (the agent card reports the same blocker text).
+    let plain = stderr.split(" (Detail: ").next().unwrap_or_default();
     assert!(
-        stderr.contains("--at FILE:LINE --kind KIND"),
-        "the refusal must name the location-and-family stub route:\n{stderr}"
+        stderr.contains(" (Detail: "),
+        "the exact diagnostic must trail the refusal:\n{stderr}"
     );
-    // The refusal states the inline boundary accurately: an ambiguous
-    // multi-module inline layout proposes no target, while one governed
-    // inline module would qualify (#5210 — demonstrated by this test's
-    // other arm, whose repair starts confined to that module).
-    assert!(
-        stderr
-            .contains("a crate whose inline tests are spread over several `#[cfg(test)]` modules"),
-        "the refusal must name the ambiguous inline layout:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("one governed inline module would qualify"),
-        "the refusal must state the single-module boundary accurately:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("never qualify as a repair target"),
-        "the refusal must not declare inline tests categorically ineligible:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("add a `tests/`-surface test file"),
-        "the refusal must name the add-a-tests-file remedy:\n{stderr}"
-    );
-    // The packet-field claim covers both states: not_applicable when no
-    // target was proposed, the production file with an empty surface for
-    // an inline-module proposal.
-    assert!(
-        stderr.contains(
-            "when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface)"
-        ),
-        "the refusal must state both packet states:\n{stderr}"
-    );
+    for jargon in [
+        "recommended_test",
+        "edit surface",
+        "Cause:",
+        "repair packet",
+        "edit target",
+        "FILE:LINE",
+    ] {
+        assert!(
+            !plain.contains(jargon),
+            "the plain refusal must not use `{jargon}`:\n{stderr}"
+        );
+    }
     assert!(
         !stderr.contains("before phase complete"),
         "a refused before phase must not claim completion:\n{stderr}"

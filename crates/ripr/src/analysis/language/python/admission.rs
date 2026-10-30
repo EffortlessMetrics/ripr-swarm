@@ -55,7 +55,7 @@ use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Assertion admission for one extracted Python test.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) enum PythonAssertionAdmission {
     /// The extractor recognized at least one assertion or observer it can
     /// grade (anything other than an unknown custom helper).

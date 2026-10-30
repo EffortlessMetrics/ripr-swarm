@@ -16,8 +16,9 @@ use super::super::rust_index::{
 
 use super::arm_selection::ArmSelector;
 use super::builder_override::{
-    EarlierWrite, KeyedFallback, OwnerCall, is_literal_key, literals_equal, overridden_fields_read,
-    setter_names, struct_literal_fields,
+    EarlierWrite, KeyedFallback, OwnerCall, changed_struct_literal_fields, is_literal_key,
+    literals_equal, overridden_fields_read, setter_names, struct_literal_field_texts,
+    struct_literal_fields,
 };
 use super::propagation_witness::{
     assertion_field_collection_reads, assertion_keyed_getter_reads,
@@ -35,6 +36,10 @@ use crate::domain::*;
 /// execution/macro decision also gates predicate boundary pairing; it applies
 /// before token, strength, observation, or owner-pin confirmation.
 pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
+    /// #9766: the trait double demonstrably retains this call's argument in
+    /// the exact subsequently asserted field. It grants neither reach nor strength.
+    pub(in crate::analysis) recording_double_observed:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// A changed returned closure or unsafe Display format edit needs its
     /// admitted owner pin; token coincidence cannot confirm discrimination.
     pub(in crate::analysis) returned_closure_pin_required: bool,
@@ -150,6 +155,7 @@ fn reveal_evidence(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            recording_double_observed: &|_, _| false,
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
@@ -195,6 +201,7 @@ fn reveal_evidence_with_exit(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            recording_double_observed: &|_, _| false,
             assertion_has_known_implicit_observer: &|_, _| None,
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
@@ -243,6 +250,7 @@ fn reveal_evidence_proximity_reach(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            recording_double_observed: &|_, _| false,
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
@@ -1999,7 +2007,16 @@ fn analyze_related_assertions(
     return_admission: &ReturnOracleAdmission<'_>,
     arm_selector: Option<&ArmSelector>,
 ) -> RevealAssertionAnalysis {
-    let probe_tokens = if is_effect_family(&probe.family) {
+    let probe_tokens = if let Some(fields) = changed_literal_fields(probe) {
+        // The diff changed some initializers of a struct literal and left the
+        // rest: only the changed fields' text names the behavior, so an
+        // assertion on an untouched field (`url` beside a changed
+        // `timeout_ms`) observes nothing the diff moved.
+        fields
+            .iter()
+            .flat_map(|(name, text)| extract_identifier_tokens(&format!("{name} {text}")))
+            .collect()
+    } else if is_effect_family(&probe.family) {
         // An effect target rooted at a binding the owner itself introduces
         // (`let table = ..; table.validate()?;`) names a value no test can
         // hold: a test's same-named local is a different binding, so the
@@ -2176,7 +2193,9 @@ fn analyze_related_assertions(
     // reads the field only after the test overwrote it on the owner's result.
     let override_fields: Vec<String> = match probe.family {
         ProbeFamily::ReturnValue => {
-            let fields = struct_literal_fields(&probe.expression);
+            let fields = changed_literal_fields(probe)
+                .map(|fields| fields.into_iter().map(|(name, _)| name).collect())
+                .unwrap_or_else(|| struct_literal_fields(&probe.expression));
             if !fields.is_empty() {
                 fields
             } else if constructed_field.is_some() {
@@ -2188,7 +2207,9 @@ fn analyze_related_assertions(
         ProbeFamily::FieldConstruction => {
             constructed_field.map(str::to_string).into_iter().collect()
         }
-        _ => Vec::new(),
+        _ => changed_literal_fields(probe)
+            .map(|fields| fields.into_iter().map(|(name, _)| name).collect())
+            .unwrap_or_default(),
     };
     let override_owner = probe
         .owner
@@ -2573,7 +2594,15 @@ fn analyze_related_assertions(
                     parameter,
                 ) && super::expression_writes_parameter(&probe.expression, parameter)
             });
+            let recording_double_read = credits_oracle
+                && *reason == RelationReason::DirectOwnerCall
+                && !import_defeats_owner
+                && !cross_package_defeats_owner
+                && !match_context.owner_shadowed
+                && !test_is_should_panic(test)
+                && (return_admission.recording_double_observed)(test, assertion);
             let matched = matched
+                || recording_double_read
                 || field_collection_read
                 || collection_argument_read
                 || out_parameter.is_some()
@@ -2746,6 +2775,7 @@ fn analyze_related_assertions(
                             ) || field_collection_read
                                 || collection_argument_read
                                 || out_parameter_confirmed
+                                || recording_double_read
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
@@ -3172,6 +3202,21 @@ struct RevealMatchContext<'a> {
 /// The field a `field_construction` expression assigns: the identifier
 /// before a single `:` (`total: a + b`), or the whole shorthand
 /// identifier (`storage,`).
+/// The `(field, initializer)` pairs a probe on a struct literal expression
+/// changed, when the diff touched only some of its fields
+/// ([`changed_struct_literal_fields`]).
+fn changed_literal_fields(probe: &Probe) -> Option<Vec<(String, String)>> {
+    let before = probe.before.as_deref()?;
+    let names = changed_struct_literal_fields(before, &probe.expression)?;
+    let after = struct_literal_field_texts(&probe.expression);
+    Some(
+        after
+            .into_iter()
+            .filter(|(name, _)| names.contains(name))
+            .collect(),
+    )
+}
+
 fn constructed_field_name(expression: &str) -> Option<&str> {
     let expression = expression.trim().trim_end_matches(',').trim();
     let head = match expression.find(':') {
@@ -4551,6 +4596,13 @@ pub(in crate::analysis) struct FileUseStatements {
     macro_defined: crate::analysis::sync_memo::SyncMemo<
         std::collections::BTreeMap<(std::path::PathBuf, String), bool>,
     >,
+    /// Each file's macro sites, parsed once however many names ask.
+    macro_sites: crate::analysis::sync_memo::SyncMemo<
+        std::collections::BTreeMap<
+            std::path::PathBuf,
+            std::sync::Arc<super::macro_item_names::MacroSites>,
+        >,
+    >,
 }
 
 impl FileUseStatements {
@@ -4563,11 +4615,17 @@ impl FileUseStatements {
         source: &str,
         callee: &str,
     ) -> bool {
-        let key = (file.to_path_buf(), callee.to_string());
+        let file = file.to_path_buf();
+        let key = (file.clone(), callee.to_string());
         if let Some(known) = self.macro_defined.borrow().get(&key) {
             return *known;
         }
-        let defined = super::macro_item_names::macro_may_define_item_named(source, callee);
+        // Build the scan outside the memo lock: a full-file parse behind the
+        // guard would serialize workers that first query different files.
+        let sites = self
+            .macro_sites
+            .get_or_build(&file, || super::macro_item_names::MacroSites::scan(source));
+        let defined = sites.may_define(callee);
         self.macro_defined.borrow_mut().insert(key, defined);
         defined
     }
@@ -6082,6 +6140,7 @@ mod tests {
             )
         };
         let admission = ReturnOracleAdmission {
+            recording_double_observed: &|_, _| false,
             assertion_has_known_implicit_observer: &|_, _| None,
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
@@ -7526,6 +7585,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
@@ -7622,6 +7682,7 @@ mod tests {
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    recording_double_observed: &|_, _| false,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
@@ -7805,6 +7866,7 @@ mod tests {
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    recording_double_observed: &|_, _| false,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
@@ -7915,6 +7977,7 @@ mod tests {
                 import,
                 package,
                 &ReturnOracleAdmission {
+                    recording_double_observed: &|_, _| false,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &pin,
@@ -8338,6 +8401,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -8430,6 +8494,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10207,6 +10272,7 @@ return Err(\"typed pin\".into());
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10278,6 +10344,7 @@ return Err(\"typed pin\".into());
             &|_, callee| file_imports_foreign_callee_name(without_import, callee, &own_crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10320,6 +10387,7 @@ return Err(\"typed pin\".into());
             },
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10381,6 +10449,7 @@ return Err(\"typed pin\".into());
             &|_, callee| file_imports_foreign_callee_name(aliased_import, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10444,6 +10513,7 @@ return Err(\"typed pin\".into());
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10651,6 +10721,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| true,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10696,6 +10767,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10810,6 +10882,53 @@ return Err(\"typed pin\".into());
             assert_eq!(discriminate.summary, BUILDER_OVERRIDE_UNOBSERVED_SUMMARY);
             assert!(discriminate.summary.contains("(observation_unverified)"));
         }
+    }
+
+    /// #10916: the diff moved one initializer of a returned struct literal.
+    /// An assertion on an untouched field (`url`, `retries`) observes nothing
+    /// the diff changed, so it cannot confirm the literal; one on the changed
+    /// field still can.
+    #[test]
+    fn untouched_field_assertion_does_not_confirm_a_partly_changed_literal() {
+        let mut probe = builder_override_probe(
+            ProbeFamily::ReturnValue,
+            "RetryBuilder { attempts: 4, delay_ms: 100 }",
+        );
+        probe.before = Some("RetryBuilder { attempts: 3, delay_ms: 100 }".to_string());
+        let untouched = builder_override_test(
+            "let retry = RetryBuilder::new().build();",
+            "assert_eq!(retry.delay_ms, 100);",
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&untouched, RelationReason::DirectOwnerCall)]);
+        assert_ne!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+        let changed = builder_override_test(
+            "let retry = RetryBuilder::new().build();",
+            "assert_eq!(retry.attempts, 4);",
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&changed, RelationReason::DirectOwnerCall)]);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+        // Control: with no `before`, every field stays in play.
+        probe.before = None;
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&untouched, RelationReason::DirectOwnerCall)]);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
     }
 
     /// Controls for the builder override: reading the default with no
@@ -11111,6 +11230,7 @@ return Err(\"typed pin\".into());
                     &|_, _| false,
                     &|_, _| false,
                     &ReturnOracleAdmission {
+                        recording_double_observed: &|_, _| false,
                         expected_operand_value: &|_, _| None,
                         call_cannot_store: &|_, _, _, _| None,
                         constructor_starts_empty: &|_, _, _| false,
@@ -11191,6 +11311,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    recording_double_observed: &|_, _| false,
                     expected_operand_value: &|_, _| None,
                     call_cannot_store: &|_, _, _, _| None,
                     constructor_starts_empty: &|_, _, _| false,
@@ -11290,6 +11411,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    recording_double_observed: &|_, _| false,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
@@ -11581,6 +11703,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -11687,6 +11810,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    recording_double_observed: &|_, _| false,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
@@ -11736,6 +11860,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -12236,6 +12361,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -12784,6 +12910,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,

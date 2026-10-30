@@ -1,0 +1,4 @@
+[package]
+name = "rust_let_literal_pattern_rebound"
+version = "0.1.0"
+edition = "2024"

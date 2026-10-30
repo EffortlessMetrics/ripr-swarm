@@ -41,7 +41,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach classify: other_label_is_word, word_label_is_blank", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: \"word\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"word\" (line 12)", "related test tests/classify.rs:9 other_label_is_word uses strong exact value oracle: assert_eq!(classify(\"zz\"), \"word\");", "related test tests/classify.rs:4 word_label_is_blank uses strong exact value oracle: assert_eq!(classify(\"word\"), \"blank\");", "source assertion argument value \"blank\" at line 5", "source function argument value final_label == \"beta\" at line 5", "source function argument value input = \"word\" at line 5", "source assertion argument value \"word\" at line 10", "source function argument value input = \"zz\" at line 10"],
+      "evidence_path": ["reach yes: Related tests appear to reach classify: other_label_is_word, word_label_is_blank", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: \"word\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"word\" (line 12)", "related test tests/classify.rs:9 other_label_is_word uses strong exact value oracle: assert_eq!(classify(\"zz\"), \"word\");", "related test tests/classify.rs:4 word_label_is_blank uses strong exact value oracle: assert_eq!(classify(\"word\"), \"blank\");", "source assertion argument value \"blank\" at line 5", "source function argument value final_label == \"beta\" at line 5", "source function argument value input = \"word\" at line 5", "source assertion argument value \"word\" at line 10", "source function argument value final_label == \"alpha\" at line 10", "source function argument value input = \"zz\" at line 10"],
       "flow_sinks": [
         {"kind":"return_value","text":"\"word\"","line":12}
       ],
@@ -76,6 +76,12 @@
           },
           {
             "line": 10,
+            "value": "final_label == \"alpha\"",
+            "context": "function_argument",
+            "provenance": "assert_eq!(classify(\"zz\"), \"word\"); | label_of = \"alpha\" via helper return of `label_of` over bound inputs (1 hop); replaced constant \"alpha\""
+          },
+          {
+            "line": 10,
             "value": "input = \"zz\"",
             "context": "function_argument"
           }
@@ -104,6 +110,12 @@
           "line": 10,
           "value": "\"word\"",
           "context": "assertion_argument"
+        },
+        {
+          "line": 10,
+          "value": "final_label == \"alpha\"",
+          "context": "function_argument",
+          "provenance": "assert_eq!(classify(\"zz\"), \"word\"); | label_of = \"alpha\" via helper return of `label_of` over bound inputs (1 hop); replaced constant \"alpha\""
         },
         {
           "line": 10,

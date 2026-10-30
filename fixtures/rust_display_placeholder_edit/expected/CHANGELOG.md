@@ -51,3 +51,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_display_placeholder_edit (5)
+
+Reason:
+RIPR-SPEC-0297: integration recomposition past main's plain-words human renderer wording; Summary/Counts/Gap ID/Missing check line vocabulary moved to changed-behavior phrasing while verdict classes, gap identity and the withheld weakly_exposed verdict are unchanged (formatting_only per goldens check)
+
+Command:
+`cargo xtask goldens bless rust_display_placeholder_edit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

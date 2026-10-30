@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// A module-level def that is nothing but `assert <comparison of params>`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonAssertionHelper {
     name: String,
     params: Vec<String>,
@@ -37,7 +37,7 @@ pub(super) struct PythonAssertionHelper {
 }
 
 /// The assertion helpers of one module and every name the module binds.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonHelperModule {
     pub(super) helpers: Vec<PythonAssertionHelper>,
     /// Module-level defs that call their one callable argument inside a

@@ -88,6 +88,7 @@ use tower_lsp_server::{LspService, Server};
 mod analysis_thread_routing_tests;
 mod bare_cr_origin_tests;
 mod consumed_source_tests;
+mod progress_completion_tests;
 mod progress_create_liveness_tests;
 mod progress_notification_isolation_tests;
 mod shutdown_clear_tests;
@@ -22761,6 +22762,7 @@ fn partition_partial_scope() -> crate::analysis::PartialDiffScope {
         uninspected_changed_lines_lower_bound: 1,
         stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
         next_file_changed_lines: Some(1),
+        whole_diff_budgets: None,
         partition_identity: "sha256:partition".to_string(),
     }
 }
@@ -23363,6 +23365,7 @@ async fn workspace_status_keeps_outside_partition_reason_when_both_apply() -> Re
         uninspected_changed_lines_lower_bound: 1,
         stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
         next_file_changed_lines: Some(1),
+        whole_diff_budgets: None,
         partition_identity: "sha256:partition".to_string(),
     };
     backend
@@ -28467,7 +28470,11 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
         let (server_read, server_write) = tokio::io::split(server_io);
-        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let (builder, mut publications) =
+            progress_completion_tests::with_publication_barrier(LspService::build(|client| {
+                Backend::new(client, PathBuf::from("."))
+            }));
+        let (service, socket) = builder.finish();
         let mut server_task = tokio::spawn(async move {
             Server::new(server_read, server_write, socket)
                 .serve(service)
@@ -28498,7 +28505,21 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             }),
         )
         .await?;
-        let limited = run_wire_refresh_collecting(&mut client_read, &mut client_write, 2).await?;
+        let publication = progress_completion_tests::arm_publication(
+            &mut client_read,
+            &mut client_write,
+            &mut publications,
+            90,
+        )
+        .await?;
+        let (limited_generation, limited) = progress_completion_tests::run_started_refresh(
+            &mut client_read,
+            &mut client_write,
+            publication,
+            2,
+            "limited",
+        )
+        .await?;
         let statuses = analysis_status_params(&limited);
         let status = statuses
             .last()
@@ -28537,6 +28558,10 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             "one accepted limited refresh must end exactly once"
         );
         assert_eq!(
+            ends[0]["params"]["token"],
+            format!("ripr-analysis-{limited_generation}")
+        );
+        assert_eq!(
             ends[0]["params"]["value"]["message"],
             "analysis completed with limited evidence"
         );
@@ -28552,6 +28577,13 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
         assert_eq!(workspace_status["result"]["diagnostics"]["findings"], 0);
         assert_eq!(workspace_status["result"]["run_status"], "limited");
 
+        let publication = progress_completion_tests::arm_publication(
+            &mut client_read,
+            &mut client_write,
+            &mut publications,
+            91,
+        )
+        .await?;
         // The real configuration notification restores the normal deadline.
         // It owns one automatic refresh; await that run instead of adding
         // another explicit request that could create a second progress token.
@@ -28563,34 +28595,15 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             }),
         )
         .await?;
-        let mut recovered = Vec::new();
-        tokio::time::timeout(Duration::from_mins(1), async {
-            loop {
-                let message = read_lsp_message(&mut client_read).await?;
-                if message["method"] == "window/workDoneProgress/create" {
-                    let id = message
-                        .get("id")
-                        .cloned()
-                        .ok_or("create request carried no id")?;
-                    write_lsp_message(
-                        &mut client_write,
-                        serde_json::json!({
-                            "jsonrpc": "2.0", "id": id, "result": null
-                        }),
-                    )
-                    .await?;
-                    continue;
-                }
-                let ended = message["method"] == "$/progress"
-                    && message["params"]["value"]["kind"] == "end";
-                recovered.push(message);
-                if ended {
-                    return Ok::<(), String>(());
-                }
-            }
-        })
-        .await
-        .map_err(|error| format!("normal-timeout recovery did not finish: {error}"))??;
+        let (recovered_generation, recovered) =
+            progress_completion_tests::read_started_refresh_until_settled(
+                &mut client_read,
+                &mut client_write,
+                publication,
+                None,
+                "seams_deferred",
+            )
+            .await?;
         write_lsp_message(
             &mut client_write,
             serde_json::json!({
@@ -28614,9 +28627,31 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             })
             .count();
         assert_eq!(recovered_ends, 1);
+        for end in recovered.iter().filter(|message| {
+            message["method"] == "$/progress" && message["params"]["value"]["kind"] == "end"
+        }) {
+            assert_eq!(
+                end["params"]["token"],
+                format!("ripr-analysis-{recovered_generation}")
+            );
+        }
         // Configuration changes request Interactive analysis. A separate
         // explicit request is required to establish a full recovered run.
-        let full = run_wire_refresh_collecting(&mut client_read, &mut client_write, 5).await?;
+        let publication = progress_completion_tests::arm_publication(
+            &mut client_read,
+            &mut client_write,
+            &mut publications,
+            92,
+        )
+        .await?;
+        let (full_generation, full) = progress_completion_tests::run_started_refresh(
+            &mut client_read,
+            &mut client_write,
+            publication,
+            5,
+            "full",
+        )
+        .await?;
         let full_statuses = analysis_status_params(&full);
         let full_status = full_statuses
             .last()
@@ -28632,6 +28667,14 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             full_ends, 1,
             "one explicit full refresh must end exactly once"
         );
+        for end in full.iter().filter(|message| {
+            message["method"] == "$/progress" && message["params"]["value"]["kind"] == "end"
+        }) {
+            assert_eq!(
+                end["params"]["token"],
+                format!("ripr-analysis-{full_generation}")
+            );
+        }
         write_lsp_message(
             &mut client_write,
             serde_json::json!({

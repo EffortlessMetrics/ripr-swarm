@@ -26,6 +26,16 @@ impl TestDeclarationRoot {
 /// (`it(name, { timeout }, fn)`); otherwise the callback is argument 1, which
 /// keeps `test(name, fn, timeout)` working (#4548).
 pub(super) fn declaration_callback_index(call: &oxc_ast::ast::CallExpression<'_>) -> usize {
+    callback_index(call, false)
+}
+
+/// [`declaration_callback_index`] for a root bound to AVA's `test`
+/// (`ava_macro`), where a named macro may precede the callback
+/// (`test(title, macro, async (t) => {})`, #10964). Without that provenance a
+/// named second argument is not a macro: `node:test` and Vitest accept an
+/// options object by name, and treating its callback as running would credit a
+/// skipped test.
+fn callback_index(call: &oxc_ast::ast::CallExpression<'_>, ava_macro: bool) -> usize {
     let is_function = |argument: Option<&oxc_ast::ast::Argument<'_>>| {
         matches!(
             argument,
@@ -39,6 +49,10 @@ pub(super) fn declaration_callback_index(call: &oxc_ast::ast::CallExpression<'_>
         Some(oxc_ast::ast::Argument::ObjectExpression(_)) if is_function(call.arguments.get(2)) => {
             2
         }
+        Some(
+            oxc_ast::ast::Argument::Identifier(_)
+            | oxc_ast::ast::Argument::StaticMemberExpression(_),
+        ) if ava_macro && is_function(call.arguments.get(2)) => 2,
         _ => 1,
     }
 }
@@ -1699,11 +1713,9 @@ fn collect_hook_assignment(
                 .iter()
                 .filter_map(|declarator| declarator.init.as_ref())
             {
-                let span = init.span();
-                let text = source
-                    .get(span.start as usize..span.end as usize)
-                    .unwrap_or_default();
-                for name in assigned_identifier_names(text) {
+                let mut strings = StringLiteralSpans::default();
+                oxc_ast_visit::Visit::visit_expression(&mut strings, init);
+                for name in assigned_names_outside_strings(source, init.span(), &strings) {
                     out.push((name, ScopeValue::Other));
                 }
             }
@@ -1726,13 +1738,53 @@ fn collect_hook_assignment(
         }
         _ => {}
     }
-    let span = stmt.span();
-    let text = source
-        .get(span.start as usize..span.end as usize)
-        .unwrap_or_default();
-    for name in assigned_identifier_names(text) {
+    let mut strings = StringLiteralSpans::default();
+    oxc_ast_visit::Visit::visit_statement(&mut strings, stmt);
+    for name in assigned_names_outside_strings(source, stmt.span(), &strings) {
         out.push((name, ScopeValue::Other));
     }
+}
+
+/// Spans of plain string literals. Their text is data, never code, so a
+/// write-shaped substring inside one (`"?test=1"`) is not a write. Template
+/// literals are left out: a `${...}` expression inside one can write.
+#[derive(Default)]
+struct StringLiteralSpans(Vec<std::ops::Range<usize>>);
+
+impl<'a> oxc_ast_visit::Visit<'a> for StringLiteralSpans {
+    fn visit_string_literal(&mut self, literal: &oxc_ast::ast::StringLiteral<'a>) {
+        self.0
+            .push(literal.span.start as usize..literal.span.end as usize);
+    }
+}
+
+/// [`assigned_identifier_names`] over the source slice `span`, with the
+/// contents of `strings` blanked (#10820): a quoted `"test=1"` argument made
+/// the hook-write scan read the runner `test` as reassigned and withheld
+/// every registration in the file.
+fn assigned_names_outside_strings(
+    source: &str,
+    span: oxc_span::Span,
+    strings: &StringLiteralSpans,
+) -> Vec<String> {
+    let (start, end) = (span.start as usize, span.end as usize);
+    let Some(text) = source.get(start..end) else {
+        return Vec::new();
+    };
+    // A string handed to `eval` or `Function` is code, so a write inside it
+    // must stay visible (fail closed).
+    if identifier_occurrences(text, "eval").next().is_some()
+        || identifier_occurrences(text, "Function").next().is_some()
+    {
+        return assigned_identifier_names(text);
+    }
+    let relative: Vec<std::ops::Range<usize>> = strings
+        .0
+        .iter()
+        .filter(|range| range.start >= start && range.end <= end)
+        .map(|range| range.start - start..range.end - start)
+        .collect();
+    assigned_identifier_names(&blank_ranges(text, &relative))
 }
 
 /// `true` when `stmt` may leave the enclosing callback early: a `return`
@@ -2660,13 +2712,14 @@ fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
 
 /// Parameter names of the registration callback in a statement's call
 /// (`describe.each(...)('x', (row) => ...)`, `it('x', ({ fixture }) => ...)`,
-/// `it('x', { timeout }, (t) => ...)`).
+/// `it('x', { timeout }, (t) => ...)`). An untitled conditional suite's
+/// callback is the first argument, so its parameters are read there too.
 fn statement_callback_parameter_names(stmt: &Statement<'_>) -> Vec<String> {
     let Some(call) = statement_call(stmt) else {
         return Vec::new();
     };
     call.arguments
-        .get(declaration_callback_index(call))
+        .get(registration_callback_index(call))
         .map(argument_parameter_names)
         .unwrap_or_default()
 }
@@ -3088,10 +3141,38 @@ fn conditional_describe_factory<'s, 'a>(
     .then_some(&**factory)
 }
 
+/// Whether the registration call is the untitled callback-only conditional
+/// suite: `describe.skipIf(cond)(() => { ... })` / `describe.runIf(...)` with
+/// its callback in the title position (#10982).
+fn untitled_conditional_describe(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    conditional_describe_factory(call).is_some()
+        && matches!(
+            call.arguments.first(),
+            Some(
+                oxc_ast::ast::Argument::ArrowFunctionExpression(_)
+                    | oxc_ast::ast::Argument::FunctionExpression(_)
+            )
+        )
+}
+
+/// The callback argument of a registration statement, shared by the body,
+/// parameter and strict-mode readers so all three see the same callback: an
+/// untitled conditional suite carries its callback in the title position.
+fn registration_callback_index(call: &oxc_ast::ast::CallExpression<'_>) -> usize {
+    if untitled_conditional_describe(call) {
+        0
+    } else {
+        declaration_callback_index(call)
+    }
+}
+
 /// `describe.skipIf(cond)('name', () => { ... })` and the `runIf` twin: the
 /// suite name, its body and the factory call's source as the guard. The
 /// condition is a runtime value static analysis does not evaluate, so the
-/// suite's tests are indexed for reach but earn no assertion credit.
+/// suite's tests are indexed for reach but earn no assertion credit. The
+/// untitled callback-only form (`describe.runIf(cond)(() => { ... })`)
+/// holds its callback in the title position: the suite is named like any
+/// non-literal title and the body is the first argument.
 fn conditional_describe_body<'a>(
     stmt: &'a Statement<'a>,
     source: &SourceText<'_>,
@@ -3103,7 +3184,7 @@ fn conditional_describe_body<'a>(
     }
     let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
     let body = function_body_statements_from_argument(
-        call.arguments.get(declaration_callback_index(call))?,
+        call.arguments.get(registration_callback_index(call))?,
     )?;
     let guard = snippet_for_span(
         source.text(),
@@ -3546,7 +3627,8 @@ fn test_name_and_assertions_from_registration(
     }
 
     let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
-    let callback = call.arguments.get(declaration_callback_index(call))?;
+    let ava_macro = bindings.registration_is_ava(callee_root_name(&call.callee));
+    let callback = call.arguments.get(callback_index(call, ava_macro))?;
     // `node:test` / AVA-style contexts end a running test as skipped or todo
     // when the body calls `t.skip()` / `t.todo()` (RIPR-SPEC-0243 rule 17):
     // the run passes however the later assertions would have gone, so the
@@ -4435,7 +4517,7 @@ fn statement_callback_is_strict(statement: &Statement<'_>) -> bool {
         || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
         || conditional_describe_factory(call).is_some()
     {
-        declaration_callback_index(call)
+        registration_callback_index(call)
     } else {
         // The other supported callback traversal is Array#forEach.
         0

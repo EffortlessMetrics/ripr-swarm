@@ -1276,6 +1276,83 @@ fn parametrize_cases_off_boundary_are_weakly_exposed() -> Result<(), String> {
     Ok(())
 }
 
+/// #10842: a rewrite that keeps the predicate on every integer
+/// (`amount >= 100` -> `amount > 99`) changes no behavior, so its truth is
+/// a wrong version of the new line. One row on the equality point catches
+/// the operator flip but not mutmut's `n + 1` shift of the bound
+/// (`amount > 100`), so `exposed` also needs the row where the shifted bound
+/// differs. A behavior change keeps the equality rule, and a shift that lands
+/// on the equality point (`amount < 100`) needs no further row.
+#[test]
+fn an_integer_equivalent_rewrite_needs_the_row_its_shifted_bound_moves_to() -> Result<(), String> {
+    let finding = |new: &str, old: &str, rows: &str| {
+        let source = format!("def fee(amount):\n    if {new}:\n        return 0\n    return 5\n");
+        let tests = format!(
+            "import pytest\nfrom src.subject import fee\n\n@pytest.mark.parametrize(\"amount, expected\", [{rows}])\ndef test_fee(amount, expected):\n    assert fee(amount) == expected\n"
+        );
+        classify_case(
+            &source,
+            &tests,
+            2,
+            &format!("    if {old}:"),
+            &format!("    if {new}:"),
+        )
+    };
+    for (new, old) in [
+        ("amount > 99", "amount >= 100"),
+        ("99 < amount", "amount >= 100"),
+        ("amount <= 99", "amount < 100"),
+        ("99 >= amount", "100 > amount"),
+    ] {
+        let one_row = finding(new, old, "(99, 5)")?;
+        assert_eq!(
+            one_row.class,
+            ExposureClass::WeaklyExposed,
+            "{new}: {one_row:?}"
+        );
+        assert!(
+            missing_boundary(&one_row, "amount == 100").is_some(),
+            "{new}: {one_row:?}"
+        );
+        let both = finding(new, old, "(99, 5), (100, 0)")?;
+        assert_eq!(both.class, ExposureClass::Exposed, "{new}: {both:?}");
+    }
+    // Controls: a behavior change, and a shift onto the equality point.
+    for (new, old, row) in [
+        ("amount > 99", "amount >= 99", "(99, 5)"),
+        (
+            "amount > 99 or amount == 7",
+            "amount >= 100 and amount == 7",
+            "(99, 5)",
+        ),
+        ("amount < 100", "amount <= 99", "(100, 5)"),
+        ("amount >= 100", "amount > 99", "(100, 0)"),
+    ] {
+        let control = finding(new, old, row)?;
+        assert_eq!(control.class, ExposureClass::Exposed, "{new}: {control:?}");
+    }
+    // A conditional return: the same rewrite needs the shifted row, but one
+    // that also changes a branch value is a behavior change.
+    let conditional = |old_else: &str| {
+        classify_case(
+            "def fee(amount):\n    return 0 if amount > 99 else 5\n",
+            "import pytest\nfrom src.subject import fee\n\n@pytest.mark.parametrize(\"amount, expected\", [(99, 5)])\ndef test_fee(amount, expected):\n    assert fee(amount) == expected\n",
+            2,
+            &format!("    return 0 if amount >= 100 else {old_else}"),
+            "    return 0 if amount > 99 else 5",
+        )
+    };
+    let rewrite = conditional("5")?;
+    assert_eq!(rewrite.class, ExposureClass::WeaklyExposed, "{rewrite:?}");
+    assert!(
+        missing_boundary(&rewrite, "amount == 100").is_some(),
+        "{rewrite:?}"
+    );
+    let changed = conditional("6")?;
+    assert_eq!(changed.class, ExposureClass::Exposed, "{changed:?}");
+    Ok(())
+}
+
 /// Positive control for #4559: one case on the boundary keeps `exposed`, also
 /// through a stacked decorator (the cases are the product).
 #[test]
@@ -1324,24 +1401,347 @@ fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
     Ok(())
 }
 
+/// #10832: a test that unpacks a tuple argname first (`quantity, rate =
+/// case`) is the test parametrized by the unpacked names, so its rows meet
+/// the same boundary-reach check as split argnames. Off-boundary rows read
+/// `weakly_exposed` (before the fix the owner call's `quantity` matched no
+/// argname and the unresolved activation kept `exposed`), an on-boundary row
+/// stays `exposed`, and a mark overriding a same-named fixture reads the
+/// mark's rows, not the fixture's.
+#[test]
+fn a_leading_unpack_of_a_tuple_argname_reads_its_rows() -> Result<(), String> {
+    let module = |rows: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", {rows})\ndef test_bulk_discount(case):\n    quantity, rate = case\n    assert bulk_discount(quantity) == rate\n"
+        )
+    };
+    let method = |rows: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\nclass TestBulk:\n    @pytest.mark.parametrize(\"case\", {rows})\n    def test_bulk_discount(self, case):\n        \"\"\"Rows.\"\"\"\n        quantity, rate = case  # unpack\n        assert bulk_discount(quantity) == rate\n"
+        )
+    };
+    let overriding = |rows: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.fixture(params=[(100, 0.0), (101, 0.15)])\ndef case(request):\n    return request.param\n\n@pytest.mark.parametrize(\"case\", {rows})\ndef test_bulk_discount(case):\n    quantity, rate = case\n    assert bulk_discount(quantity) == rate\n"
+        )
+    };
+    let classify = |tests: &str| {
+        classify_case(
+            DISCOUNT_SOURCE,
+            tests,
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )
+    };
+    for (shape, tests) in [
+        ("module", module("[(50, 0.0), (500, 0.15)]")),
+        ("method", method("[(50, 0.0), (500, 0.15)]")),
+        ("override", overriding("[(50, 0.0), (500, 0.15)]")),
+    ] {
+        let finding = classify(&tests)?;
+        assert_owner(&finding, "bulk_discount");
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{shape}: {finding:?}"
+        );
+        assert!(observed(&finding, "quantity = 50"), "{shape}: {finding:?}");
+        assert!(observed(&finding, "quantity = 500"), "{shape}: {finding:?}");
+    }
+    for (shape, tests) in [
+        ("module", module("[(50, 0.0), (100, 0.0)]")),
+        ("method", method("[(100, 0.0)]")),
+    ] {
+        let finding = classify(&tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{shape}: {finding:?}"
+        );
+        assert!(
+            observed(&finding, "quantity == 100"),
+            "{shape}: {finding:?}"
+        );
+    }
+    // A bare target takes the whole literal row.
+    let bare = |rows: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", {rows})\ndef test_bulk_discount(case):\n    quantity = case\n    assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let finding = classify(&bare("[50, 500]"))?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(observed(&finding, "quantity = 500"), "{finding:?}");
+    let finding = classify(&bare("[50, 100]"))?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // A row element that shadows the owner: the test calls `fake`, so the
+    // on-boundary row must not credit the owner (review of #10840).
+    let finding = classify(
+        "import pytest\nfrom src.subject import bulk_discount\n\ndef fake(q):\n    return 0.0\n\n@pytest.mark.parametrize(\"case\", [(100, 0.0, fake)])\ndef test_bulk_discount(case):\n    quantity, rate, bulk_discount = case\n    assert bulk_discount(quantity) == rate\n",
+    )?;
+    assert!(!observed(&finding, "quantity == 100"), "{finding:?}");
+    // Shapes the unpack cannot pin stay unread: a row of another arity, a
+    // starred row, a mutable list row a fixture could change, a name in a
+    // row, a wrapping decorator that may pass another row, a later use of
+    // the argname, a rebound target, a target that is another parameter,
+    // and an unpack sharing its line.
+    for tests in [
+        module("[(50, 0.0), (500, 0.1, 1)]"),
+        module("[(50, 0.0), (*REST, 0.0)]"),
+        module("[(50, 0.0), [500, 0.1]]"),
+        module("[(50, 0.0), (LIMIT, 0.1)]"),
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", [(50, 0.0)])\n@swap_case\ndef test_bulk_discount(case):\n    quantity, rate = case\n    assert bulk_discount(quantity) == rate\n".to_string(),
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", [(50, 0.0)])\ndef test_bulk_discount(case):\n    quantity, rate = case\n    assert bulk_discount(quantity) == rate, case\n".to_string(),
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", [(50, 0.0)])\ndef test_bulk_discount(case):\n    quantity, rate = case\n    quantity = 100\n    assert bulk_discount(quantity) == rate\n".to_string(),
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case, quantity\", [((50, 0.0), 1)])\ndef test_bulk_discount(case, quantity):\n    quantity, rate = case\n    assert bulk_discount(quantity) == rate\n".to_string(),
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", [(50, 0.0)])\ndef test_bulk_discount(case):\n    quantity, rate = case; assert bulk_discount(quantity) == rate\n".to_string(),
+    ] {
+        let finding = classify(&tests)?;
+        assert!(
+            !observed(&finding, "quantity = 50"),
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
 /// `indirect=True` routes the case value through a fixture of that name, so
 /// the test reads whatever the fixture returns: the fixture limit applies as
 /// it does to any unread fixture, and a parametrize mark does not lift it
 /// (#9619).
 #[test]
 fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), String> {
-    let finding = classify_case(
-        DISCOUNT_SOURCE,
-        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50], indirect=True)\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n",
-        2,
-        "    if quantity > 100:",
-        "    if quantity >= 100:",
-    )?;
-    assert_eq!(finding.class, ExposureClass::StaticUnknown);
-    assert_eq!(
-        finding.static_limit_kind,
-        Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture)
-    );
+    let module = |mark: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50]{mark})\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let class = |mark: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50]{mark})\nclass TestBulk:\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let limit = |tests: &str| -> Result<_, String> {
+        Ok(classify_case(
+            DISCOUNT_SOURCE,
+            tests,
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )?
+        .static_limit_kind)
+    };
+    // A value the read cannot settle (#10685) may route the name too, and so
+    // may a positional `indirect` or a splat that can carry one.
+    for mark in [
+        ", indirect=True",
+        ", indirect=IND",
+        ", indirect=[\"quantity\"]",
+        ", indirect=[NAME]",
+        ", indirect=routes()",
+        ", indirect=1",
+        ", True",
+        ", IND",
+        ", **{\"indirect\": True}",
+        ", *REST",
+    ] {
+        for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
+            assert_eq!(
+                limit(&tests)?,
+                Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+                "{shape}{mark}"
+            );
+        }
+    }
+    // Marks pytest refuses at collection (#10867): the test never runs, so
+    // it carries the collection-error activation control and lends nothing.
+    for mark in [
+        ", indirect=None",
+        ", indirect=[\"other\"]",
+        ", indirect=(\"quantity\", \"other\")",
+    ] {
+        for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
+            assert_eq!(
+                limit(&tests)?,
+                Some(crate::domain::StaticLimitKind::DecoratorIndirection),
+                "{shape}{mark}"
+            );
+        }
+    }
+    // A mark the read cannot pin to pytest (`import mylib as pytest`) is not
+    // a pytest collection error: its argname stays an unsettled fixture.
+    for mark in [", indirect=None", ", indirect=[\"other\"]"] {
+        let tests = module(mark).replace("import pytest\n", "import mylib as pytest\n");
+        assert_eq!(
+            limit(&tests)?,
+            Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+            "mylib{mark}"
+        );
+    }
+    // Control: values that leave the name direct keep it a pytest value.
+    for mark in [
+        ", indirect=False",
+        ", indirect=()",
+        ", indirect=[]",
+        ", False",
+    ] {
+        for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
+            assert_eq!(limit(&tests)?, None, "{shape}{mark}");
+        }
+    }
+    Ok(())
+}
+
+/// #10685: pytest's parametrize reached through an import alias, a module
+/// name holding the mark, or argnames and `indirect` named by a module value
+/// still supplies the case value directly, so the argname is not an
+/// unresolved fixture. A name the read cannot pin to pytest's mark (another
+/// `mark`, a rebound or later binding, a class-body name) keeps the limit.
+#[test]
+fn a_parametrize_mark_read_through_a_name_supplies_a_direct_value() -> Result<(), String> {
+    let module = |prelude: &str, decorator: &str| {
+        format!(
+            "{prelude}\nfrom src.subject import bulk_discount\n\n@{decorator}\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let method = |prelude: &str, decorator: &str| {
+        format!(
+            "{prelude}\nfrom src.subject import bulk_discount\n\nclass TestBulk:\n    @{decorator}\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let class = |prelude: &str, decorator: &str| {
+        format!(
+            "{prelude}\nfrom src.subject import bulk_discount\n\n@{decorator}\nclass TestBulk:\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let limit = |tests: &str| -> Result<_, String> {
+        Ok(classify_case(
+            DISCOUNT_SOURCE,
+            tests,
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )?
+        .static_limit_kind)
+    };
+    let direct = [
+        (
+            "import pytest as pt",
+            "pt.mark.parametrize(\"quantity\", [50])",
+        ),
+        (
+            "from pytest import mark as m",
+            "m.parametrize(\"quantity\", [50])",
+        ),
+        (
+            "import pytest\n\ncases = pytest.mark.parametrize(\"quantity\", [50])",
+            "cases",
+        ),
+        (
+            "import pytest as pt\n\ncases = pt.mark.parametrize(\"quantity\", [50])",
+            "cases",
+        ),
+        (
+            "import pytest\n\nparametrize = pytest.mark.parametrize",
+            "parametrize(\"quantity\", [50])",
+        ),
+        (
+            "import pytest\n\nNAMES = \"quantity\"",
+            "pytest.mark.parametrize(NAMES, [50])",
+        ),
+        (
+            "import pytest\n\nNAMES = (\"quantity\",)",
+            "pytest.mark.parametrize(NAMES, [(50,)])",
+        ),
+        (
+            "import pytest\n\nIND = False",
+            "pytest.mark.parametrize(\"quantity\", [50], indirect=IND)",
+        ),
+    ];
+    for (prelude, decorator) in direct {
+        for (shape, tests) in [
+            ("module", module(prelude, decorator)),
+            ("method", method(prelude, decorator)),
+            ("class", class(prelude, decorator)),
+        ] {
+            assert_eq!(limit(&tests)?, None, "{shape}: {tests}");
+        }
+    }
+    let limited = [
+        // Another library's `mark`, or `pt` bound to something else.
+        (
+            "from mylib import mark",
+            "mark.parametrize(\"quantity\", [50])",
+        ),
+        (
+            "import mylib as pt",
+            "pt.mark.parametrize(\"quantity\", [50])",
+        ),
+        // A module name rebound later, or `global`-rebound in a function.
+        (
+            "import pytest\n\ncases = pytest.mark.parametrize(\"quantity\", [50])\ncases = pytest.mark.slow",
+            "cases",
+        ),
+        (
+            "import pytest\n\ncases = pytest.mark.parametrize(\"quantity\", [50])\n\ndef reset():\n    global cases\n    cases = pytest.mark.slow",
+            "cases",
+        ),
+        // A module value naming a call, not the mark itself.
+        (
+            "import pytest\n\nparametrize = pytest.mark.parametrize(\"other\", [1])",
+            "parametrize(\"quantity\", [50])",
+        ),
+        (
+            "import pytest\n\nIND = True",
+            "pytest.mark.parametrize(\"quantity\", [50], indirect=IND)",
+        ),
+        // A module list may change before the decorator runs.
+        (
+            "import pytest\n\nIND = []\nIND.append(\"quantity\")",
+            "pytest.mark.parametrize(\"quantity\", [50], indirect=IND)",
+        ),
+        (
+            "import pytest\n\nNAMES = [\"quantity\"]",
+            "pytest.mark.parametrize(NAMES, [(50,)])",
+        ),
+        // The alias root is rebound after its import (Devin review).
+        (
+            "import pytest as pt\nimport other\n\npt = other",
+            "pt.mark.parametrize(\"quantity\", [50])",
+        ),
+        (
+            "from pytest import mark as m\nfrom other import mark as m",
+            "m.parametrize(\"quantity\", [50])",
+        ),
+    ];
+    for (prelude, decorator) in limited {
+        for (shape, tests) in [
+            ("module", module(prelude, decorator)),
+            ("method", method(prelude, decorator)),
+            ("class", class(prelude, decorator)),
+        ] {
+            assert_eq!(
+                limit(&tests)?,
+                Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+                "{shape}: {tests}"
+            );
+        }
+    }
+    // A class-body name shadows the module's mark (or its import root) for
+    // the methods it decorates, and a module binding after the test is not
+    // yet bound.
+    for tests in [
+        "import pytest as pt\nimport other\nfrom src.subject import bulk_discount\n\nclass TestBulk:\n    pt = other\n\n    @pt.mark.parametrize(\"quantity\", [50])\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n",
+        "import pytest\nfrom src.subject import bulk_discount\n\ncases = pytest.mark.parametrize(\"quantity\", [50])\n\nclass TestBulk:\n    cases = pytest.mark.slow\n\n    @cases\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n",
+        "import pytest\nfrom src.subject import bulk_discount\n\n@cases\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n\ncases = pytest.mark.parametrize(\"quantity\", [50])\n",
+    ] {
+        assert_eq!(
+            limit(tests)?,
+            Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+            "{tests}"
+        );
+    }
     Ok(())
 }
 

@@ -14,13 +14,17 @@ pub(crate) use generated_rust_corpus::{
     absent_changed_rust_file_limitations, generated_rust_recovery,
 };
 pub(crate) mod harness_projection;
-mod language;
+pub(crate) mod language;
 pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
 pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
+pub(crate) use pipeline::{
+    DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+};
+mod probe_read_trace;
 mod probes;
 pub(crate) mod repair_route;
 /// Process CPU time and peak resident memory observability (#5213). One
@@ -133,8 +137,8 @@ pub(crate) use seam_inventory::{
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config, pilot_seam_budget,
-    repo_exposure_seam_limit, scoped_file_seams, seam_kind_for_probe_family,
-    workspace_cache_key_at_with_config,
+    probe_family_for_seam_kind, repo_exposure_seam_limit, scoped_file_seams,
+    seam_kind_for_probe_family, workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{
@@ -1033,6 +1037,12 @@ pub struct AnalysisResult {
     /// aggregate (#6475). A sidecar for in-process consumers (the editor);
     /// never serialized and not part of the public output contract.
     pub(crate) language_view: Option<language_outcome::LanguageCompletenessView>,
+    /// Per-language persistent fact-cache admissions for this run (#10725),
+    /// collected from each adapter's `LanguageDiffResult`. Rendered into the
+    /// verbose disclosure line by `app::check`; empty when no adapter did
+    /// cache work.
+    pub(crate) preview_fact_caches:
+        Vec<(crate::domain::LanguageId, language::PreviewFactCacheStats)>,
 }
 
 /// Default language list when callers do not pass `[languages]` config.

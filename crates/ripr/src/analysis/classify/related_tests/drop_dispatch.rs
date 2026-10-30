@@ -148,7 +148,11 @@ pub(super) fn test_drops_owner_value(
 /// Whether the test's file may bind `drop` or `mem` to something other than
 /// the standard function: a `fn drop` that is not a `Drop` impl's method, a
 /// `mod mem`, or a `use` that renames or imports another `drop`.
-fn standard_drop_may_be_shadowed(source: &str, file: &std::path::Path, index: &RustIndex) -> bool {
+pub(super) fn standard_drop_may_be_shadowed(
+    source: &str,
+    file: &std::path::Path,
+    index: &RustIndex,
+) -> bool {
     let masked = mask_comments_and_strings(source);
     let declared = masked.matches("fn drop").count();
     let impl_methods = index

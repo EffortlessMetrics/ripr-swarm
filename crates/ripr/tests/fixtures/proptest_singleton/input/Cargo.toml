@@ -1,0 +1,10 @@
+[package]
+name = "lib_proptest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dev-dependencies]
+proptest = "=1.11.0"

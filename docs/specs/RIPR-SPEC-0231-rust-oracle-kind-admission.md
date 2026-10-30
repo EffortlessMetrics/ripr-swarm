@@ -609,7 +609,11 @@ Two pattern terms are used below.
    into a test that compares the value `rows` returns with `12`. No assertion
    macro appears in the source, so nothing above reads it. The producer
    synthesizes `assert_eq!(<returned expression>, <literal>)` once per
-   `=> literal` row, keyed to the function's `fn` line, and the
+   `=> literal` row, with the row's literal arguments written in for the
+   parameters (`#[test_case(0 => 0)] fn rows(x) { scale(x) }` reads as
+   `assert_eq!(scale(0), 0)`, so an input pair that cannot tell an edit
+   apart grades like the plain assertion, #10797), keyed to the function's
+   `fn` line, and the
    RIPR-SPEC-0197 execution admission accepts exactly that synthesis. The
    producer is all or nothing per function: one unreadable row leaves every
    row of the function unread. The reading holds only when all of these are
@@ -624,7 +628,11 @@ Two pattern terms are used below.
      operator expression and a constant name all stay unread;
    - the function body is a single returned expression with no
      statements, so the compared value is what that expression yields, and
-     the function is neither `#[should_panic]` nor `#[ignore]`.
+     the function is neither `#[should_panic]` nor `#[ignore]`;
+   - the parameters are plain named bindings and the expression reads each
+     only as a one-segment path: a closure or `let` binding, a field or method
+     of the same name, a macro argument or a `mut` or pattern parameter
+     leaves the function unread.
 
    The reading adds an oracle and nothing else: the returned expression
    goes through the same owner-call, hidden-input and observation checks as

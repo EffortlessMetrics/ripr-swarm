@@ -1100,6 +1100,62 @@ class TestTwice:
     );
 }
 
+/// #10685: a mark held by a module name (`@cases`) parametrizes the test as
+/// much as the spelled decorator, so literal-instance fixture credit, which
+/// skips parametrized tests, cannot treat its argname as a fixture. A name
+/// bound to anything else, or rebound, does not.
+#[test]
+fn a_module_name_holding_a_parametrize_mark_parametrizes_the_test() {
+    let flags = |source: &str| -> Vec<(String, bool, Vec<String>)> {
+        extract_tests(Path::new("tests/test_account.py"), source)
+            .into_iter()
+            .map(|test| (test.name, test.parametrized, test.direct_parametrized))
+            .collect()
+    };
+    assert_eq!(
+        flags(
+            "import pytest as pt\n\ncases = pt.mark.parametrize(\"account\", [1])\n\n@cases\ndef test_a(account):\n    pass\n"
+        ),
+        vec![("test_a".to_string(), true, vec!["account".to_string()])]
+    );
+    for source in [
+        "import pytest\n\ncases = pytest.mark.slow\n\n@cases\ndef test_a(account):\n    pass\n",
+        "import pytest\n\ncases = pytest.mark.parametrize(\"account\", [1])\ncases = pytest.mark.slow\n\n@cases\ndef test_a(account):\n    pass\n",
+    ] {
+        assert_eq!(
+            flags(source),
+            vec![("test_a".to_string(), false, Vec::new())],
+            "{source}"
+        );
+    }
+}
+
+/// #10867: the literal cases come from the same pytest mark the routing read
+/// accepts. A spelled mark whose root may be another library's records no
+/// rows; pytest's mark reached through an alias does.
+#[test]
+fn parametrize_cases_follow_the_routing_read_of_the_mark() {
+    let cases = |import: &str| -> Vec<Option<usize>> {
+        let source = format!(
+            "{import}\n\n@{root}.mark.parametrize(\"account\", [1, 2])\ndef test_a(account):\n    pass\n",
+            root = if import.contains(" as pt") {
+                "pt"
+            } else {
+                "pytest"
+            }
+        );
+        extract_tests(Path::new("tests/test_account.py"), &source)
+            .into_iter()
+            .map(|test| test.parametrize.map(|found| found.cases.len()))
+            .collect()
+    };
+    assert_eq!(cases("import pytest"), vec![Some(2)]);
+    assert_eq!(cases("import pytest as pt"), vec![Some(2)]);
+    for import in ["import mylib as pytest", "import pytest\nimport pytest"] {
+        assert_eq!(cases(import), vec![None], "{import}");
+    }
+}
+
 #[test]
 fn extract_tests_recognizes_pytest_parametrize_and_unittest() {
     let tests = extract_tests(
@@ -4553,6 +4609,7 @@ fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), Str
                 body_text: "def caplog():\n    return Recorder()\n".to_string(),
                 imports: Vec::new(),
                 literal_construction: None,
+                inert_tool: None,
                 literal_params: None,
                 isolated: false,
                 scope_imports: Vec::new(),
@@ -5257,7 +5314,14 @@ fn classify_change_suppresses_repair_guidance_for_non_actionable_python_cases() 
     .ok_or_else(|| "unrelated return change should classify".to_string())?;
     assert_eq!(no_static_path.class, ExposureClass::NoStaticPath);
     assert!(no_static_path.activation.missing_discriminators.is_empty());
-    assert!(no_static_path.recommended_next_step.is_none());
+    // #10708: the directly resolvable owner with no static link now carries
+    // the honest generic add-test / native-verifier / refresh route.
+    assert!(
+        no_static_path
+            .recommended_next_step
+            .as_deref()
+            .is_some_and(|step| step.contains("no statically linked test calls `apply_discount(`"))
+    );
 
     Ok(())
 }
@@ -5926,6 +5990,132 @@ fn classify_change_unresolved_pytest_fixture_fails_closed() -> Result<(), String
             .iter()
             .any(|entry| entry.contains("Static limit `unresolved_pytest_fixture`"))
     );
+    // The blocker is named so the reader knows which fixture to open (#10979).
+    assert!(
+        finding.evidence.iter().any(|entry| entry
+            == "unresolved_fixtures: discount_case (test_apply_discount_fixture_case)"),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// Classify the changed predicate against a parametrized pytest test whose
+/// module text is `module_text` (#10979).
+fn classify_parametrized_module(module_text: &str) -> Result<Finding, String> {
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+    );
+    let tests = extract_tests(Path::new("tests/test_pricing.py"), module_text);
+    assert_eq!(
+        tests.len(),
+        1,
+        "fixture must parse exactly one test: {tests:?}"
+    );
+    assert_eq!(
+        tests[0].direct_parametrized,
+        vec!["amount".to_string(), "expected".to_string()],
+        "fixture must read both parametrize argnames"
+    );
+    classify_change(
+        Path::new("src/pricing.py"),
+        2,
+        "    if amount >= threshold:",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed predicate inside owner should classify".to_string())
+}
+
+const PARAMETRIZED_TEST: &str = "@pytest.mark.parametrize((\"amount\", \"expected\"), [(5, 5), (50, 40)])\ndef test_apply_discount(amount, expected):\n    assert apply_discount(amount, 10) == expected\n";
+
+#[test]
+fn classify_change_parametrize_argnames_survive_prose_that_names_dynamic_writers()
+-> Result<(), String> {
+    // Words such as `vars` and `reload` in a docstring or a comment write
+    // nothing (#10979): the parametrize argnames are still values pytest
+    // passes to the test, not fixtures.
+    let module_text = format!(
+        "import pytest\nfrom src.pricing import apply_discount\n\n# Flask --reload/--no-reload and setattr are only prose here.\n{PARAMETRIZED_TEST}\ndef helper_other():\n    \"\"\"Env vars are plain strings; globals() and exec are not called.\"\"\"\n    assert apply_discount(5, 10) == 5\n"
+    );
+    let finding = classify_parametrized_module(&module_text)?;
+    assert_ne!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::UnresolvedPytestFixture),
+        "{:?}",
+        finding.evidence
+    );
+    assert_ne!(finding.class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn classify_change_parametrize_argnames_stay_unsettled_when_code_writes_the_namespace()
+-> Result<(), String> {
+    // The discriminating negative: the same module with a real dynamic
+    // writer in code, an f-string expression, or `sys.modules` keeps the
+    // fail-closed fixture limit.
+    for writer in [
+        "vars()\n",
+        "globals()[\"pytest\"] = object()\n",
+        "label = f\"{globals()}\"\n",
+        "import sys\nsys . modules[\"pytest\"] = object()\n",
+        "setattr(object(), \"x\", 1)\n",
+        "eval(\"globals().update(x=1)\")\n",
+        "import pydoc\npydoc.locate(\"importlib.reload\")(object())\n",
+        "getattr(object(), \"__setattr__\")(\"x\", 1)\n",
+    ] {
+        let module_text = format!(
+            "import pytest\nfrom src.pricing import apply_discount\n\n{writer}\n{PARAMETRIZED_TEST}"
+        );
+        let finding = classify_parametrized_module(&module_text)?;
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::UnresolvedPytestFixture),
+            "writer {writer:?} must keep the limit: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn classify_change_names_unsettled_indirect_values_apart_from_known_fixtures() -> Result<(), String>
+{
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+    );
+    // `indirect=` is a call ripr cannot read: `amount` is a parametrize value
+    // that may or may not pass through a fixture, while `rate` is a plain
+    // fixture the test takes (#10979).
+    let tests = extract_tests(
+        Path::new("tests/test_pricing.py"),
+        "import pytest\nfrom src.pricing import apply_discount\n\n@pytest.mark.parametrize(\"amount\", [5], indirect=flag())\ndef test_apply_discount(amount, rate):\n    assert apply_discount(amount, rate) == 5\n",
+    );
+    let finding = classify_change(
+        Path::new("src/pricing.py"),
+        2,
+        "    if amount >= threshold:",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed predicate inside owner should classify".to_string())?;
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::UnresolvedPytestFixture)
+    );
+    for expected in [
+        "unresolved_fixtures: rate (test_apply_discount)",
+        "unsettled_indirect_params: amount (test_apply_discount)",
+    ] {
+        assert!(
+            finding.evidence.iter().any(|entry| entry == expected),
+            "{expected} missing from {:?}",
+            finding.evidence
+        );
+    }
     Ok(())
 }
 
@@ -6039,7 +6229,49 @@ fn classify_change_returns_no_static_path_without_related_test() -> Result<(), S
     assert_eq!(finding.ripr.reach.state, StageState::No);
     assert_eq!(finding.ripr.infect.state, StageState::Yes);
     assert_eq!(finding.ripr.propagate.state, StageState::Yes);
-    assert!(finding.recommended_next_step.is_none());
+    // #10708: the directly resolvable owner with no static link gains honest
+    // generic guidance — the ordered add-test / native-verifier / refresh
+    // route — while classification, confidence, and related-test evidence
+    // stay put.
+    assert!(
+        (finding.confidence - 0.4).abs() < f32::EPSILON,
+        "no-static-path confidence stays 0.4; got {}",
+        finding.confidence
+    );
+    assert!(finding.static_limit_kind.is_none());
+    assert!(finding.related_tests.is_empty());
+    let step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "owner with no static link must carry guidance".to_string())?;
+    for expected in [
+        "no statically linked test calls `apply_discount(`",
+        "add a test that calls the changed owner",
+        "an exact return-value assertion",
+        "run the project's native Python test command",
+        "rerun `ripr check`",
+    ] {
+        assert!(
+            step.contains(expected),
+            "next step must contain {expected:?}; got: {step}"
+        );
+    }
+    for forbidden in [
+        "python -m pytest",
+        "pytest",
+        "unittest",
+        "tests/test_",
+        "test_pricing",
+    ] {
+        assert!(
+            !step.contains(forbidden),
+            "no invented exact file/command may appear; found {forbidden:?} in: {step}"
+        );
+    }
+    assert!(
+        !step.contains("no test "),
+        "must not claim universal test absence; got: {step}"
+    );
     Ok(())
 }
 
@@ -6066,6 +6298,120 @@ fn classify_change_ignores_unrelated_text_mentions() -> Result<(), String> {
 
     assert_eq!(finding.class, ExposureClass::NoStaticPath);
     assert!(finding.related_tests.is_empty());
+    // #10708 negative: a text-only mention is not a related test, reach,
+    // oracle, or repair credit — but the owner with no static link keeps the
+    // same honest generic guidance as the no-link case, not silence.
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert!(finding.static_limit_kind.is_none());
+    let step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "text-only mention must not silence guidance".to_string())?;
+    assert!(
+        step.contains("no statically linked test calls `apply_discount(`"),
+        "guidance must keep the statically-linked wording; got: {step}"
+    );
+    assert!(
+        step.contains("add a test that calls the changed owner"),
+        "guidance must keep the ordered add-test route; got: {step}"
+    );
+    Ok(())
+}
+
+#[test]
+fn transitive_reach_witness_silences_with_no_link_guidance() -> Result<(), String> {
+    // TABLE_SOURCE in transitive_reach.rs: _get_padding_width reachable via
+    // render; the test constructs Table but never calls the changed method.
+    // #10708 requires the stale direct-call advice to not survive the
+    // witness: class, evidence, and readiness stay, guidance goes silent.
+    let source = "class Table:\n    def __init__(self):\n        self.columns = [1, 2]\n\n    def __rich_console__(self, console, options):\n        return self._calculate_column_widths()\n\n    def _calculate_column_widths(self):\n        return self._get_padding_width(0)\n\n    def _get_padding_width(self, column_index):\n        if column_index == len(self.columns) - 1:\n            return 0\n        return 1\n";
+    let changed = "        if column_index == len(self.columns) - 1:";
+    let line = source
+        .lines()
+        .position(|line| line == changed)
+        .ok_or_else(|| "fixture source must contain the changed line".to_string())?
+        + 1;
+    let owners = extract_owners(Path::new("src/table.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_table.py"),
+        "from src.table import Table\n\ndef test_print_table():\n    table = Table()\n    assert table is not None\n",
+    );
+    let Some(finding) = classify_change(Path::new("src/table.py"), line, changed, &owners, &tests)
+    else {
+        return Err("changed line inside owner should classify".to_string());
+    };
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert!(finding.related_tests.is_empty());
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::PythonTransitiveReachUnresolved)
+    );
+    assert!(finding.recommended_next_step.is_none());
+    assert!(
+        finding
+            .missing
+            .iter()
+            .all(|line| !line.contains("No Python test references")),
+        "witnessed limitation must not claim no tests were found: {:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn typer_sibling_helper_keeps_guidance_but_registered_command_stays_silent() -> Result<(), String> {
+    // #10708 Devin thread 1 (executable-confirmed): a Typer app elsewhere in
+    // the module must not silence an unrelated plain helper; a function the
+    // decorator registers as a command stays silent.
+    let source = "import typer\n\napp = typer.Typer()\n\ndef calculate_total(x):\n    return x + 2\n\n@app.command()\ndef serve(port):\n    return port\n";
+    let owners = extract_owners(Path::new("src/billing.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_other.py"),
+        "def test_other():\n    assert True\n",
+    );
+    let helper_changed = "    return x + 2";
+    let helper_line = source
+        .lines()
+        .position(|line| line == helper_changed)
+        .ok_or_else(|| "fixture source must contain the helper line".to_string())?
+        + 1;
+    let Some(helper) = classify_change(
+        Path::new("src/billing.py"),
+        helper_line,
+        helper_changed,
+        &owners,
+        &tests,
+    ) else {
+        return Err("helper change should classify".to_string());
+    };
+    assert_eq!(helper.class, ExposureClass::NoStaticPath);
+    assert!(helper.related_tests.is_empty());
+    assert!(helper.static_limit_kind.is_none());
+    let step = helper
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "plain helper beside a Typer app must carry guidance".to_string())?;
+    assert!(
+        step.contains("no statically linked test calls `calculate_total(`"),
+        "guidance must name the helper; got: {step}"
+    );
+    let command_changed = "    return port";
+    let command_line = source
+        .lines()
+        .position(|line| line == command_changed)
+        .ok_or_else(|| "fixture source must contain the command line".to_string())?
+        + 1;
+    let Some(command) = classify_change(
+        Path::new("src/billing.py"),
+        command_line,
+        command_changed,
+        &owners,
+        &tests,
+    ) else {
+        return Err("command change should classify".to_string());
+    };
+    assert_eq!(command.class, ExposureClass::NoStaticPath);
+    assert!(command.recommended_next_step.is_none());
     Ok(())
 }
 
@@ -6123,18 +6469,33 @@ fn generous_walk_limits() -> PythonDiffWalkLimits {
     }
 }
 
+/// Past the cap, a refused file that names what the diff changes keeps the
+/// run partial (#10785): `b.py` calls the changed `a`, and the changed file
+/// takes the only slot.
 #[test]
 fn analyze_diff_discloses_workspace_file_count_cap() -> Result<(), String> {
     let root = unique_test_root("diff-walk-count-cap");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     write_repo_file(&root.join("a.py"), "def a():\n    return 1\n")?;
-    write_repo_file(&root.join("b.py"), "def b():\n    return 2\n")?;
+    write_repo_file(
+        &root.join("b.py"),
+        "from a import a\n\n\ndef b():\n    return a()\n",
+    )?;
     let options = repo_options(&root);
     let limits = PythonDiffWalkLimits {
         max_workspace_files: 1,
         ..generous_walk_limits()
     };
-    let result = PythonAdapter::analyze_diff_with_limits(&options, &[], limits)?;
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("a.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    return 1".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let result = PythonAdapter::analyze_diff_with_limits(&options, &changed_files, limits)?;
     assert_eq!(
         result.limitations.len(),
         1,
@@ -6150,8 +6511,8 @@ fn analyze_diff_discloses_workspace_file_count_cap() -> Result<(), String> {
     assert_eq!(limitation.affected_items, Some(1));
     let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
     assert!(
-        detail.contains("1 discovered .py file(s) were not analyzed"),
-        "refused count missing from detail: {detail}"
+        detail.contains("1 of the 1 discovered .py file(s) that may reach the diff"),
+        "refused reaching count missing from detail: {detail}"
     );
     assert!(
         detail.contains("RIPR_PYTHON_MAX_WORKSPACE_FILES"),
@@ -6341,7 +6702,10 @@ fn declared_handwritten_file_under_build_dir_is_analyzed() -> Result<(), String>
 fn analyze_diff_keeps_a_late_sorting_changed_file_past_the_cap() -> Result<(), String> {
     let root = unique_test_root("diff-walk-cap-keeps-changed");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
-    write_repo_file(&root.join("a.py"), "def a():\n    return 1\n")?;
+    write_repo_file(
+        &root.join("a.py"),
+        "from zz_changed import price\n\n\ndef a():\n    return price(1)\n",
+    )?;
     write_repo_file(&root.join("b.py"), "def b():\n    return 2\n")?;
     write_repo_file(
         &root.join("zz_changed.py"),
@@ -6380,13 +6744,541 @@ fn analyze_diff_keeps_a_late_sorting_changed_file_past_the_cap() -> Result<(), S
     assert_eq!(limitation.kind, AnalysisLimitationKind::DiffScopeOversized);
     assert_eq!(
         limitation.affected_items,
-        Some(2),
-        "both unchanged files are refused because the changed file takes the only slot"
+        Some(1),
+        "the changed file takes the only slot, so `a.py`, which calls `price`, is refused; \
+         `b.py` names nothing the diff changes and is not counted"
     );
     let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
     assert!(
         detail.contains("changed .py files are kept past this cap"),
         "disclosure must say changed files were kept: {detail}"
+    );
+    Ok(())
+}
+
+/// #10785: past the cap, the files that name the changed owner and the helper
+/// module their test imports are admitted first. When every refused file
+/// names nothing the diff changes, the run is complete and its findings equal
+/// the uncapped run's, related tests and helper-backed oracle included.
+#[test]
+fn analyze_diff_over_cap_matches_uncapped_when_no_refused_file_can_reach() -> Result<(), String> {
+    let root = unique_test_root("diff-walk-cap-reach-differential");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("pricing.py"),
+        "def discount(amount):\n    if amount > 100:\n        return amount - 10\n    return amount\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/test_pricing.py"),
+        "from pricing import discount\nfrom tests.helpers import assert_price\n\n\ndef test_discount_applies():\n    assert discount(150) == 140\n\n\ndef test_no_discount_at_boundary():\n    assert_price(discount(100), 100)\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/helpers.py"),
+        "def assert_price(actual, expected):\n    assert actual == expected\n",
+    )?;
+    // Unrelated modules that sort ahead of `tests/`: the earliest-path cap
+    // used to keep these and refuse the test.
+    for index in 0..30 {
+        write_repo_file(
+            &root.join(format!("filler/m{index:02}.py")),
+            &format!("def f{index}(value):\n    return value + {index}\n"),
+        )?;
+    }
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("pricing.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if amount > 100:".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if amount >= 100:".to_string(),
+            new_side_line: 2,
+        }],
+    }];
+    let options = repo_options(&root);
+    let capped = PythonAdapter::analyze_diff_with_limits(
+        &options,
+        &changed_files,
+        PythonDiffWalkLimits {
+            max_workspace_files: 3,
+            ..generous_walk_limits()
+        },
+    )?;
+    let uncapped =
+        PythonAdapter::analyze_diff_with_limits(&options, &changed_files, generous_walk_limits())?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    assert!(
+        uncapped.limitations.is_empty(),
+        "the uncapped reference must be complete: {:?}",
+        uncapped.limitations
+    );
+    let related: Vec<usize> = uncapped
+        .findings
+        .iter()
+        .map(|finding| finding.related_tests.len())
+        .collect();
+    assert!(
+        related.contains(&2),
+        "fixture must relate both tests in the uncapped run, got {related:?}"
+    );
+    assert!(
+        capped.limitations.is_empty(),
+        "only files that name nothing the diff changes were refused, so the run is complete: {:?}",
+        capped
+            .limitations
+            .iter()
+            .map(|limitation| limitation.bounded_detail.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(capped.findings, uncapped.findings);
+    Ok(())
+}
+
+/// #10785: a test that reaches the changed owner only through a `conftest.py`
+/// fixture names neither the owner nor its module, yet the adapter relates it
+/// (`fixture_owner_call`). The reach scan follows the fixture, so the capped
+/// run keeps the test and matches the uncapped run.
+#[test]
+fn analyze_diff_over_cap_keeps_a_test_reaching_the_owner_through_a_fixture() -> Result<(), String> {
+    let root = unique_test_root("diff-walk-cap-reach-fixture");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("orders.py"),
+        "def make_order(count):\n    if count > 2:\n        return count * 3\n    return count\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/conftest.py"),
+        "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order():\n    return make_order(3)\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/test_totals.py"),
+        "def test_total(order):\n    assert order == 9\n",
+    )?;
+    for index in 0..10 {
+        write_repo_file(
+            &root.join(format!("filler/m{index:02}.py")),
+            &format!("def f{index}(value):\n    return value + {index}\n"),
+        )?;
+    }
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("orders.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if count > 2:".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let options = repo_options(&root);
+    let capped = PythonAdapter::analyze_diff_with_limits(
+        &options,
+        &changed_files,
+        PythonDiffWalkLimits {
+            max_workspace_files: 3,
+            ..generous_walk_limits()
+        },
+    )?;
+    let uncapped =
+        PythonAdapter::analyze_diff_with_limits(&options, &changed_files, generous_walk_limits())?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let related: Vec<usize> = uncapped
+        .findings
+        .iter()
+        .map(|finding| finding.related_tests.len())
+        .collect();
+    assert!(
+        related.iter().any(|count| *count > 0),
+        "fixture must relate the test in the uncapped run, got {related:?}"
+    );
+    assert!(
+        capped.limitations.is_empty(),
+        "only unrelated files were refused: {:?}",
+        capped.limitations
+    );
+    assert_eq!(capped.findings, uncapped.findings);
+    Ok(())
+}
+
+/// #10785: the fixture relation the analysis supports holds when the
+/// conftest spells the decorator or the owner through an import alias, so
+/// reach admission must keep the test that only takes the fixture.
+fn assert_capped_fixture_test_matches_uncapped(label: &str, conftest: &str) -> Result<(), String> {
+    let root = unique_test_root(label);
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("orders.py"),
+        "def make_order(count):\n    if count > 2:\n        return count * 3\n    return count\n",
+    )?;
+    write_repo_file(&root.join("tests/conftest.py"), conftest)?;
+    write_repo_file(
+        &root.join("tests/test_totals.py"),
+        "def test_total(order):\n    assert order == 9\n",
+    )?;
+    for index in 0..10 {
+        write_repo_file(
+            &root.join(format!("filler/m{index:02}.py")),
+            &format!("def f{index}(value):\n    return value + {index}\n"),
+        )?;
+    }
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("orders.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if count > 2:".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let options = repo_options(&root);
+    let capped = PythonAdapter::analyze_diff_with_limits(
+        &options,
+        &changed_files,
+        PythonDiffWalkLimits {
+            max_workspace_files: 3,
+            ..generous_walk_limits()
+        },
+    )?;
+    let uncapped =
+        PythonAdapter::analyze_diff_with_limits(&options, &changed_files, generous_walk_limits())?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let related: Vec<usize> = uncapped
+        .findings
+        .iter()
+        .map(|finding| finding.related_tests.len())
+        .collect();
+    assert!(
+        related.iter().any(|count| *count > 0),
+        "{label}: the fixture must relate the test in the uncapped run, got {related:?}"
+    );
+    assert!(
+        capped.limitations.is_empty(),
+        "{label}: only unrelated files were refused: {:?}",
+        capped.limitations
+    );
+    assert_eq!(capped.findings, uncapped.findings, "{label}");
+    // Equal findings could still both miss the route under test; the capped
+    // run must relate the fixture-only test itself.
+    assert!(
+        capped
+            .findings
+            .iter()
+            .flat_map(|finding| &finding.related_tests)
+            .any(|test| test.name.ends_with("test_total")
+                && test.file.ends_with("tests/test_totals.py")),
+        "{label}: the capped run must relate test_total"
+    );
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_over_cap_keeps_a_test_through_an_aliased_fixture_decorator() -> Result<(), String> {
+    assert_capped_fixture_test_matches_uncapped(
+        "diff-walk-cap-reach-fixture-decorator-alias",
+        "from pytest import fixture as fx\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+    )
+}
+
+#[test]
+fn analyze_diff_over_cap_keeps_a_test_through_a_fixture_calling_an_import_alias()
+-> Result<(), String> {
+    assert_capped_fixture_test_matches_uncapped(
+        "diff-walk-cap-reach-fixture-import-alias",
+        "import pytest\n\nfrom orders import make_order as build\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n",
+    )
+}
+
+/// #10785: Python accepts any whitespace, parentheses and `;` in an import,
+/// so the alias routes above must hold for every spelling, not only a
+/// single space.
+#[test]
+fn analyze_diff_over_cap_keeps_fixture_alias_tests_for_every_import_spelling() -> Result<(), String>
+{
+    for (label, conftest) in [
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-tab",
+            "from pytest\timport fixture as fx\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-parens",
+            "from pytest import(fixture as fx)\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-comment",
+            "from pytest import (\n    # decorator\n    fixture as fx,\n)\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-import-alias-comment",
+            "import pytest\n\nfrom orders import (  # owners (see #1)\n    make_order as build,  # alias\n)\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-after-pass",
+            "pass; from pytest import fixture as fx\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-after-hash-string",
+            "import os; '#'; from pytest import fixture as fx\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-crlf-continuation",
+            "from pytest import \\\r\n    fixture as fx\r\n\r\nfrom orders import make_order\r\n\r\n\r\n@fx\r\ndef order():\r\n    return make_order(3)\r\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-import-alias-crlf-continuation",
+            "import pytest\r\n\r\nfrom orders import \\\r\n    make_order as build\r\n\r\n\r\n@pytest.fixture\r\ndef order():\r\n    return build(3)\r\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-import-alias-tab",
+            "import pytest\n\nfrom orders\timport make_order\tas\tbuild\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-import-alias-semicolon",
+            "import pytest; from orders import make_order as build\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n",
+        ),
+    ] {
+        assert_capped_fixture_test_matches_uncapped(label, conftest)?;
+    }
+    Ok(())
+}
+
+/// #10785: a fixture's body ends at its logical header and body, not at the
+/// first column-0 physical line, so a header split over lines (Black's
+/// `def order(\n):`), an `async def`, a header comment or string holding a
+/// bracket, a bracketed decorator, or a column-0 docstring line must not
+/// drop the fixture's owner call before the cap.
+#[test]
+fn analyze_diff_over_cap_keeps_fixture_tests_for_every_header_shape() -> Result<(), String> {
+    for (label, conftest) in [
+        (
+            "diff-walk-cap-reach-fixture-header-multiline",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order(\n):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-async",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\nasync def order(\nrequest,\n):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-comment",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order(  # )\nrequest,  # )\n):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-string",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order(label=\")\",\nrequest=None):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-decorator-arguments",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture(\nscope=\"module\",\n)\ndef order(\n):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-body-column-zero-docstring",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order():\n    \"\"\"Build an order.\n\nColumn zero.\n    \"\"\"\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-backslash",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order() \\\n:\n    return make_order(3)\n",
+        ),
+    ] {
+        assert_capped_fixture_test_matches_uncapped(label, conftest)?;
+    }
+    Ok(())
+}
+
+/// #10785: routes by which a test relates to a changed owner without naming
+/// it in its own body (a star import, a module alias, a conftest fixture in a
+/// parent directory, a fixture taken by a test-class method, a fixture over a
+/// module attribute, a fixture defined in the test module itself). Under a
+/// cap that only fits the changed file and the files on the route, each run
+/// must stay complete and match the uncapped findings.
+#[test]
+fn analyze_diff_over_cap_keeps_every_supported_relation_route() -> Result<(), String> {
+    let fixture = "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order():\n    return make_order(3)\n";
+    // (label, files beside orders.py, cap)
+    type Route<'a> = (&'a str, &'a [(&'a str, &'a str)], usize);
+    let routes: &[Route] = &[
+        (
+            "star-import",
+            &[
+                ("helpers.py", "from orders import *\n"),
+                (
+                    "tests/test_a.py",
+                    "from helpers import *\n\n\ndef test_a():\n    assert make_order(3) == 9\n",
+                ),
+            ],
+            3,
+        ),
+        (
+            "module-alias",
+            &[(
+                "tests/test_a.py",
+                "import orders as o\n\n\ndef test_a():\n    assert o.make_order(3) == 9\n",
+            )],
+            2,
+        ),
+        (
+            "parent-conftest",
+            &[
+                ("conftest.py", fixture),
+                (
+                    "tests/unit/deep/test_a.py",
+                    "def test_a(order):\n    assert order == 9\n",
+                ),
+            ],
+            3,
+        ),
+        (
+            "test-class-fixture",
+            &[
+                ("tests/conftest.py", fixture),
+                (
+                    "tests/test_a.py",
+                    "class TestA:\n    def test_a(self, order):\n        assert order == 9\n",
+                ),
+            ],
+            3,
+        ),
+        (
+            "module-attribute-fixture",
+            &[
+                (
+                    "tests/conftest.py",
+                    "import pytest\nimport orders\n\n\n@pytest.fixture\ndef order():\n    yield orders.make_order(3)\n",
+                ),
+                (
+                    "tests/test_a.py",
+                    "def test_a(order):\n    assert order == 9\n",
+                ),
+            ],
+            3,
+        ),
+        (
+            "fixture-in-test-module",
+            &[(
+                "tests/test_a.py",
+                "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order():\n    return make_order(3)\n\n\ndef test_a(order):\n    assert order == 9\n",
+            )],
+            2,
+        ),
+    ];
+    for (label, files, cap) in routes {
+        let root = unique_test_root(&format!("diff-walk-cap-route-{label}"));
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        write_repo_file(
+            &root.join("orders.py"),
+            "def make_order(count):\n    if count > 2:\n        return count * 3\n    return count\n",
+        )?;
+        for (path, text) in *files {
+            write_repo_file(&root.join(path), text)?;
+        }
+        for index in 0..10 {
+            write_repo_file(
+                &root.join(format!("filler/m{index:02}.py")),
+                &format!("def f{index}(value):\n    return value + {index}\n"),
+            )?;
+        }
+        let changed_files = vec![ChangedFile {
+            path: PathBuf::from("orders.py"),
+            added_lines: vec![ChangedLine {
+                line: 2,
+                text: "    if count > 2:".to_string(),
+                new_side_line: 2,
+            }],
+            removed_lines: Vec::new(),
+        }];
+        let options = repo_options(&root);
+        let capped = PythonAdapter::analyze_diff_with_limits(
+            &options,
+            &changed_files,
+            PythonDiffWalkLimits {
+                max_workspace_files: *cap,
+                ..generous_walk_limits()
+            },
+        )?;
+        let uncapped = PythonAdapter::analyze_diff_with_limits(
+            &options,
+            &changed_files,
+            generous_walk_limits(),
+        )?;
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        assert!(
+            uncapped
+                .findings
+                .iter()
+                .any(|finding| !finding.related_tests.is_empty()),
+            "{label}: the route must relate the test in the uncapped run"
+        );
+        assert!(
+            capped.limitations.is_empty(),
+            "{label}: only unrelated files were refused: {:?}",
+            capped.limitations
+        );
+        assert_eq!(capped.findings, uncapped.findings, "{label}");
+        assert!(
+            capped
+                .findings
+                .iter()
+                .flat_map(|finding| &finding.related_tests)
+                .any(|test| test.name.ends_with("test_a") && test.file.ends_with("test_a.py")),
+            "{label}: the capped run must relate test_a through this route"
+        );
+    }
+    Ok(())
+}
+
+/// #10785 negative control: the same workspace with a cap too small for the
+/// reaching set (the changed file plus one slot) refuses the helper module
+/// the test imports, so the run stays partial and names one refused file.
+#[test]
+fn analyze_diff_over_cap_stays_partial_when_a_reaching_file_is_refused() -> Result<(), String> {
+    let root = unique_test_root("diff-walk-cap-reach-refused");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("pricing.py"),
+        "def discount(amount):\n    if amount > 100:\n        return amount - 10\n    return amount\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/test_pricing.py"),
+        "from pricing import discount\nfrom tests.helpers import assert_price\n\n\ndef test_no_discount_at_boundary():\n    assert_price(discount(100), 100)\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/helpers.py"),
+        "def assert_price(actual, expected):\n    assert actual == expected\n",
+    )?;
+    write_repo_file(
+        &root.join("filler/m.py"),
+        "def f(value):\n    return value\n",
+    )?;
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("pricing.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if amount > 100:".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let result = PythonAdapter::analyze_diff_with_limits(
+        &repo_options(&root),
+        &changed_files,
+        PythonDiffWalkLimits {
+            max_workspace_files: 2,
+            ..generous_walk_limits()
+        },
+    )?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let [limitation] = result.limitations.as_slice() else {
+        return Err(format!(
+            "exactly the count-cap disclosure is expected, got {:?}",
+            result.limitations
+        ));
+    };
+    assert_eq!(limitation.kind, AnalysisLimitationKind::DiffScopeOversized);
+    assert_eq!(limitation.affected_items, Some(1));
+    let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("1 of the 2 discovered .py file(s) that may reach the diff")
+            && detail.contains("1 that name nothing it changes were skipped"),
+        "detail must split reaching and unrelated refusals: {detail}"
     );
     Ok(())
 }
@@ -8167,6 +9059,109 @@ fn protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited() 
             "{test_src}"
         );
         assert_eq!(finding.class, ExposureClass::Exposed, "{test_src}");
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_quoted_for_membership_reads_keep_receiver_credit() -> Result<(), String> {
+    for literal in [
+        "'word'",
+        "'for'",
+        r#""for""#,
+        "r'for'",
+        "u'for'",
+        "b'for'",
+        "f'for'",
+        "'''for'''",
+        r#""""for""""#,
+        "rf'''for'''",
+        "\"\"\"prefix\nfor\"\"\"",
+        "r'''prefix\nfor'''",
+        // The extra quote makes the receiver visible to the line-local mask;
+        // only full-prefix masking can identify `for` as literal text here.
+        "\"\"\"prefix\nfor\" \"\"\"",
+        "r'''prefix\nfor' '''",
+        "\"\"\"é prefix\nfor for\" \"\"\"",
+        "'é for for'",
+        "'foré'",
+    ] {
+        let test_src = format!(
+            "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(1)\n    assert {literal} and ((r)) in [r]\n    assert list(reversed(r)) == [0]\n"
+        );
+        let (finding, relations) = classify_reversed_guard(&test_src)?;
+        assert_eq!(
+            relations,
+            vec![("test_reads".to_string(), "protocol_entry_call")],
+            "{test_src}"
+        );
+        assert_eq!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_real_for_targets_still_withhold_receiver_credit() -> Result<(), String> {
+    for (target, items) in [
+        ("(r)", "[[1]]"),
+        ("((r))", "[[1]]"),
+        ("(( r ))", "[[1]]"),
+        ("[r]", "[[[1]]]"),
+        ("(\n        (r)\n    )", "[[1]]"),
+        ("[\n        r\n    ]", "[[[1]]]"),
+    ] {
+        let test_src = format!(
+            "from src.nr import numeric_range\n\n\ndef test_rebound():\n    r = numeric_range(0)\n    note = 'for'\n    for {target} in {items}:\n        pass\n    assert list(reversed(r)) == [1]\n"
+        );
+        let (finding, relations) = classify_reversed_guard(&test_src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert!(
+            relations
+                .iter()
+                .all(|(_, kind)| *kind != "protocol_entry_call"),
+            "{test_src}: {relations:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_unterminated_literals_do_not_invent_receiver_credit() -> Result<(), String> {
+    for delimiter in ["\"\"\"", "'''", "r\"\"\"", "rf'''"] {
+        let source = format!(
+            "from src.nr import numeric_range\n\ndef test_unterminated():\n    r = numeric_range(1)\n    note = {delimiter}prefix\nfor ((r)) in [[1]]:\n    assert list(reversed(r)) == [0]\n"
+        );
+        for needle in ["for ((r))", "r)) in", "reversed(r)"] {
+            let at = source
+                .find(needle)
+                .ok_or_else(|| format!("missing {needle}"))?;
+            assert!(super::related_tests::python_text_hides_code(&source, at));
+        }
+        let facts =
+            super::source_facts::extract_source_facts(Path::new("tests/test_nr.py"), &source);
+        assert!(super::source_facts::source_facts_syntax_parse_error(&facts).is_some());
+        assert!(
+            facts.tests.is_empty(),
+            "malformed source must retain no test facts"
+        );
+        let file = Path::new("src/nr.py");
+        let owners = extract_owners(file, REVERSED_OWNER);
+        let owner = owners
+            .iter()
+            .find(|owner| owner.name == "__reversed__")
+            .ok_or_else(|| "missing __reversed__ owner".to_string())?;
+        assert!(candidate_relations(owner, &facts.tests).is_empty());
+        let finding = classify_change_with_old(
+            file,
+            6,
+            "        if not self.stop:",
+            Some("        if self.stop:"),
+            &owners,
+            &facts.tests,
+        )
+        .ok_or_else(|| "missing reversed guard finding".to_string())?;
+        assert_ne!(finding.class, ExposureClass::Exposed);
     }
     Ok(())
 }
@@ -9956,4 +10951,61 @@ fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
     ] {
         assert!(!binds_in_target_list(body, "r"), "{body:?}");
     }
+}
+
+const ORDER_SOURCE: &str = "def make_order(qty):\n    return {\"qty\": qty, \"total\": qty * 3}\n";
+
+#[test]
+fn name_prefilter_skips_a_test_that_never_spells_the_owner() {
+    // The name prefilter returns None without scanning a test that spells the
+    // owner nowhere; the debug cross-check runs the full scan to confirm it.
+    let owners = extract_owners(Path::new("src/orders.py"), ORDER_SOURCE);
+    let tests = extract_tests(
+        Path::new("tests/test_orders.py"),
+        "from src.orders import cancel_order\n\n\ndef test_cancel():\n    assert cancel_order(1) is None\n",
+    );
+    assert_eq!(owners[0].name, "make_order");
+    assert_eq!(tests.len(), 1);
+    assert_eq!(related_test_relation(&tests[0], &owners[0]), None);
+}
+
+#[test]
+fn name_prefilter_keeps_a_fixture_only_mention() {
+    // Only the conftest fixture the test requests spells `make_order`; the
+    // prefilter must read fixture bodies and imports and still relate it.
+    let owners = extract_owners(Path::new("src/orders.py"), ORDER_SOURCE);
+    let conftest_imports = extract_tests(
+        Path::new("tests/conftest.py"),
+        "from src.orders import make_order\n\n\ndef test_probe():\n    pass\n",
+    )
+    .first()
+    .map(|test| test.imports.clone())
+    .unwrap_or_default();
+    let mut tests = extract_tests(
+        Path::new("tests/test_orders.py"),
+        "def test_total(order):\n    assert order[\"total\"] == 3\n",
+    );
+    for test in &mut tests {
+        test.fixture_defs.push(PythonFixtureDef {
+            name: "order".to_string(),
+            binding: "order".to_string(),
+            file: PathBuf::from("tests/conftest.py"),
+            body_text: "def order():\n    return make_order(1)\n".to_string(),
+            imports: conftest_imports.clone(),
+            literal_construction: None,
+            inert_tool: None,
+            literal_params: None,
+            isolated: false,
+            scope_imports: Vec::new(),
+        });
+    }
+    assert_eq!(owners[0].name, "make_order");
+    assert!(!conftest_imports.is_empty());
+    assert_eq!(tests.len(), 1);
+    assert!(!tests[0].body_text.contains("make_order"));
+    assert!(tests[0].imports.is_empty());
+    assert_eq!(
+        related_test_relation(&tests[0], &owners[0]),
+        Some(PythonRelationKind::FixtureOwnerCall)
+    );
 }

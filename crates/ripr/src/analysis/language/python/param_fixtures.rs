@@ -54,7 +54,7 @@ use std::collections::BTreeMap;
 
 /// One literal `params=` row: its source text and, for a tuple row, the
 /// source text of each element.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct FixtureParamRow {
     pub(super) text: String,
     pub(super) elements: Option<Vec<String>>,
@@ -170,8 +170,9 @@ fn literal_strings(expr: &Expr) -> Option<usize> {
 /// `mark_isolated_fixture_defs`.
 pub(super) fn apply_literal_param_fixtures(tests: &mut [PythonTest]) {
     for test in tests {
-        if let Some((cases, unpack)) = literal_param_cases(test) {
-            blank_range(&mut test.body_text, unpack);
+        if let Some((cases, unpack)) = literal_param_cases(test)
+            && blank_range(&mut test.body_text, unpack)
+        {
             test.parametrize = Some(cases);
         }
     }
@@ -193,43 +194,25 @@ fn literal_param_cases(
     {
         return None;
     }
+    // The unpacked fixture must be an isolated literal-param fixture the test
+    // requests (checked below), so a test without one skips the parse.
+    if !test.fixture_defs.iter().any(|def| {
+        def.isolated && def.literal_params.is_some() && test.fixtures.contains(&def.name)
+    }) {
+        return None;
+    }
     let Ok(Mod::Module(module)) = parse(&test.body_text, Mode::Module, "<python-test-body>") else {
         return None;
     };
     let Some(Stmt::FunctionDef(function)) = module.body.first() else {
         return None;
     };
-    let (unpack, rest) = match function.body.as_slice() {
-        [Stmt::Expr(docstring), unpack, rest @ ..] if is_string(&docstring.value) => (unpack, rest),
-        [unpack, rest @ ..] => (unpack, rest),
-        [] => return None,
-    };
-    let Stmt::Assign(assign) = unpack else {
-        return None;
-    };
-    let ([target], Expr::Name(source)) = (assign.targets.as_slice(), &*assign.value) else {
-        return None;
-    };
-    let fixture = source.id.as_str();
-    // Only a bare name takes the whole row; `x, = fixture` unpacks it.
-    let bare = matches!(target, Expr::Name(_));
-    let names: Vec<String> = match target {
-        Expr::Name(name) => vec![name.id.to_string()],
-        Expr::Tuple(tuple) => tuple
-            .elts
-            .iter()
-            .map(|element| match element {
-                Expr::Name(name) => Some(name.id.to_string()),
-                _ => None,
-            })
-            .collect::<Option<_>>()?,
-        _ => return None,
-    };
-    let distinct: std::collections::BTreeSet<&String> = names.iter().collect();
-    if distinct.len() != names.len()
-        || names
-            .iter()
-            .any(|name| name == fixture || test.fixtures.contains(name))
+    let unpack = leading_unpack(&function.body, &test.body_text)?;
+    let fixture = unpack.source;
+    let names = &unpack.names;
+    if names
+        .iter()
+        .any(|name| name == fixture || test.fixtures.contains(name))
         || !test.fixtures.iter().any(|parameter| parameter == fixture)
         || !injected_parameter(test, fixture)
     {
@@ -245,39 +228,10 @@ fn literal_param_cases(
     {
         return None;
     }
-    let range_of = |stmt: &Stmt| usize::from(stmt.range().start())..usize::from(stmt.range().end());
-    // The unpack is alone on its lines but for a comment (no `;` neighbour,
-    // no one-line def),
-    // so blanking it leaves a body that still parses.
-    let span = range_of(unpack);
-    let line_start = test.body_text[..span.start]
-        .rfind('\n')
-        .map_or(0, |at| at + 1);
-    let line_end = test.body_text[span.end..]
-        .find('\n')
-        .map_or(test.body_text.len(), |at| span.end + at);
-    if !test.body_text[line_start..span.start].trim().is_empty()
-        || !{
-            let after = test.body_text[span.end..line_end].trim();
-            after.is_empty() || after.starts_with('#')
-        }
-    {
-        return None;
-    }
-    // Every later statement, nested scopes included, must leave the fixture
-    // and the unpacked names alone.
-    for stmt in rest {
-        let text = test.body_text.get(range_of(stmt))?;
-        if mentions_identifier(text, fixture)
-            || names.iter().any(|name| text_binds_name(text, name))
-        {
-            return None;
-        }
-    }
     let cases: Option<Vec<BTreeMap<String, String>>> = rows
         .iter()
         .map(|row| match (names.as_slice(), &row.elements) {
-            ([name], _) if bare => Some(BTreeMap::from([(name.clone(), row.text.clone())])),
+            ([name], _) if unpack.bare => Some(BTreeMap::from([(name.clone(), row.text.clone())])),
             (names, Some(elements)) if elements.len() == names.len() => Some(
                 names
                     .iter()
@@ -288,18 +242,170 @@ fn literal_param_cases(
             _ => None,
         })
         .collect();
-    let cases = PythonParametrizeCases { cases: cases? }.excluding_body_bindings(rest)?;
+    let cases = PythonParametrizeCases { cases: cases? }.excluding_body_bindings(unpack.rest)?;
     names
         .iter()
         .all(|name| cases.binds(name))
-        .then(|| (cases, range_of(unpack)))
+        .then_some((cases, unpack.span))
+}
+
+/// A test body's first statement (after a docstring) `name = source` or
+/// `a, b = source`, alone on its lines, with the rest of the body leaving
+/// `source` and the target names alone.
+pub(super) struct LeadingUnpack<'b> {
+    /// The unpacked name: a fixture or a parametrize argname.
+    pub(super) source: &'b str,
+    pub(super) names: Vec<String>,
+    /// A bare name target takes the whole row; `x, = source` unpacks it.
+    pub(super) bare: bool,
+    /// The statement's byte range in the text its ranges index.
+    pub(super) span: std::ops::Range<usize>,
+    pub(super) rest: &'b [Stmt],
+}
+
+/// The [`LeadingUnpack`] of a test body whose statement ranges index `text`.
+pub(super) fn leading_unpack<'b>(body: &'b [Stmt], text: &str) -> Option<LeadingUnpack<'b>> {
+    let (unpack, rest) = match body {
+        [Stmt::Expr(docstring), unpack, rest @ ..] if is_string(&docstring.value) => (unpack, rest),
+        [unpack, rest @ ..] => (unpack, rest),
+        [] => return None,
+    };
+    let Stmt::Assign(assign) = unpack else {
+        return None;
+    };
+    let ([target], Expr::Name(source)) = (assign.targets.as_slice(), &*assign.value) else {
+        return None;
+    };
+    let source = source.id.as_str();
+    let bare = matches!(target, Expr::Name(_));
+    let names: Vec<String> = match target {
+        Expr::Name(name) => vec![name.id.to_string()],
+        Expr::Tuple(tuple) => tuple
+            .elts
+            .iter()
+            .map(|element| match element {
+                Expr::Name(name) => Some(name.id.to_string()),
+                _ => None,
+            })
+            .collect::<Option<_>>()?,
+        _ => return None,
+    };
+    let distinct: std::collections::BTreeSet<&String> = names.iter().collect();
+    if distinct.len() != names.len() || names.iter().any(|name| name == source) {
+        return None;
+    }
+    let range_of = |stmt: &Stmt| usize::from(stmt.range().start())..usize::from(stmt.range().end());
+    // The unpack is alone on its lines but for a comment (no `;` neighbour,
+    // no one-line def), so blanking it leaves a body that still parses.
+    let span = range_of(unpack);
+    let line_start = text.get(..span.start)?.rfind('\n').map_or(0, |at| at + 1);
+    let line_end = text
+        .get(span.end..)?
+        .find('\n')
+        .map_or(text.len(), |at| span.end + at);
+    if !text.get(line_start..span.start)?.trim().is_empty() || {
+        let after = text.get(span.end..line_end)?.trim();
+        !(after.is_empty() || after.starts_with('#'))
+    } {
+        return None;
+    }
+    // Every later statement, nested scopes included, must leave the source
+    // and the unpacked names alone.
+    for stmt in rest {
+        let text = text.get(range_of(stmt))?;
+        if mentions_identifier(text, source) || names.iter().any(|name| text_binds_name(text, name))
+        {
+            return None;
+        }
+    }
+    Some(LeadingUnpack {
+        source,
+        names,
+        bare,
+        span,
+        rest,
+    })
+}
+
+/// A parametrized test whose first statement unpacks one argname
+/// (`amount, fee = fee_case` under `parametrize("fee_case", [(50, 5)])`) is
+/// the test parametrized by the unpacked names over a body without the
+/// unpack (#10832), the same reading the literal-params fixture gets. The
+/// cases and the unpack's range in `source` come back, or None unless every
+/// case value is a scalar literal (bare target) or a tuple of scalar
+/// literals of the targets' arity, no target is another parameter, and the
+/// rest of the body neither names the argname nor rebinds a target. Literal
+/// rows keep the read off mutable lists a fixture could change and off a
+/// row value that shadows the owner (`quantity, bulk_discount = case`).
+pub(super) fn unpacked_parametrize_cases(
+    cases: &PythonParametrizeCases,
+    body: &[Stmt],
+    source: &str,
+    parameters: &[String],
+) -> Option<(PythonParametrizeCases, std::ops::Range<usize>)> {
+    let unpack = leading_unpack(body, source)?;
+    let argname = unpack.source;
+    if !cases.binds(argname) || unpack.names.iter().any(|name| parameters.contains(name)) {
+        return None;
+    }
+    let unpacked: Option<Vec<BTreeMap<String, String>>> = cases
+        .cases
+        .iter()
+        .map(|case| {
+            let value = case.get(argname)?;
+            let elements = literal_row_elements(value, unpack.bare)?;
+            let elements = if unpack.bare {
+                vec![value.clone()]
+            } else if elements.len() == unpack.names.len() {
+                elements
+            } else {
+                return None;
+            };
+            let mut case = case.clone();
+            case.remove(argname);
+            case.extend(unpack.names.iter().cloned().zip(elements));
+            Some(case)
+        })
+        .collect();
+    let cases = PythonParametrizeCases { cases: unpacked? }.excluding_body_bindings(unpack.rest)?;
+    unpack
+        .names
+        .iter()
+        .all(|name| cases.binds(name))
+        .then_some((cases, unpack.span))
+}
+
+/// The element texts of a case value that is a tuple of scalar literals,
+/// or, for a bare target, the value itself when it is a scalar literal or
+/// such a tuple. Lists, names, calls and starred elements are refused.
+fn literal_row_elements(text: &str, bare: bool) -> Option<Vec<String>> {
+    let Ok(Mod::Expression(expression)) = parse(text, Mode::Expression, "<parametrize-row>") else {
+        return None;
+    };
+    let value = &*expression.body;
+    if bare && is_literal_argument(value) {
+        return Some(vec![text.trim().to_string()]);
+    }
+    let Expr::Tuple(tuple) = value else {
+        return None;
+    };
+    if !tuple.elts.iter().all(is_literal_argument) {
+        return None;
+    }
+    tuple
+        .elts
+        .iter()
+        .map(|element| text.get(usize::from(element.start())..usize::from(element.end())))
+        .map(|element| element.map(|element| element.trim().to_string()))
+        .collect()
 }
 
 /// Replace a statement's text with spaces, keeping every byte offset and
 /// line number of the rest of the body.
-fn blank_range(text: &mut String, range: std::ops::Range<usize>) {
+/// False, leaving the text unchanged, when the range is not in it.
+pub(super) fn blank_range(text: &mut String, range: std::ops::Range<usize>) -> bool {
     let Some(span) = text.get(range.clone()) else {
-        return;
+        return false;
     };
     let blanked: String = span
         .chars()
@@ -308,4 +414,5 @@ fn blank_range(text: &mut String, range: std::ops::Range<usize>) {
     // Multi-byte characters become one space each; pad to keep offsets.
     let blanked = format!("{blanked:<width$}", width = span.len());
     text.replace_range(range, &blanked);
+    true
 }

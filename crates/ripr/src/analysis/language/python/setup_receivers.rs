@@ -16,7 +16,7 @@ const UNITTEST_HOOKS: [&str; 2] = ["setUp", "setUpClass"];
 const PYTEST_HOOKS: [&str; 2] = ["setup_method", "setup_class"];
 
 /// An attribute path (`self.stock`) bound once to a construction of `callee`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct SetupReceiver {
     pub(super) path: String,
     pub(super) callee: String,
