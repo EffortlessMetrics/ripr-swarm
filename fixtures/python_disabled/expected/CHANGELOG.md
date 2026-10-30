@@ -227,3 +227,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_disabled (14)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless python_disabled --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_disabled (15)
+
+Reason:
+RIPR-SPEC-0090: summary.changed_files_by_language now lists the path-routed changed files of a language whose adapter did not run (#10719); human output gains the by-language line
+
+Command:
+`cargo xtask goldens bless python_disabled --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

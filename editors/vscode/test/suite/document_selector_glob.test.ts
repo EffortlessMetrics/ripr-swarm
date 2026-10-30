@@ -19,11 +19,15 @@ suite('Document selector workspace-root glob escaping', () => {
     fs.writeFileSync(file, 'pub fn f() {}\n');
     try {
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
-      const selectors = riprDocumentSelectorsForWorkspace(root);
+      // The controller receives workspace folder URI fsPaths, not the raw
+      // spelling returned by the OS temporary-directory API. On Windows VS
+      // Code normalizes the drive letter in that URI before glob matching.
+      const workspaceRoot = vscode.Uri.file(root).fsPath;
+      const selectors = riprDocumentSelectorsForWorkspace(workspaceRoot);
       const rust = selectors.find((selector) => selector.language === 'rust');
       assert.ok(rust, 'rust selector present');
       assert.ok(vscode.languages.match(rust, doc) > 0, 'escaped pattern selects the file');
-      const unescaped = { ...rust, pattern: `${root.replace(/\\/g, '/')}/**/*` };
+      const unescaped = { ...rust, pattern: `${workspaceRoot.replace(/\\/g, '/')}/**/*` };
       assert.strictEqual(vscode.languages.match(unescaped, doc), 0, 'unescaped root does not match (the defect)');
     } finally {
       fs.rmSync(parent, { recursive: true, force: true });

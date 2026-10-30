@@ -202,6 +202,62 @@ Each positive case needs a runtime mutant label, so the row can be measured in
 the verdict corpus (RIPR-SPEC-0219) and the Rust `missed_credit_ceiling` falls
 by exactly the rows that flip.
 
+The must-not-claim shapes above are the authored cases
+`spec0048-flow-*` (`authored-spec0048-const-flow` and
+`authored-spec0048-shape-kit`).
+
+#### Value-flow evaluation (the same-file direct-reader promotion)
+
+The promotion is decided by evaluating, not by naming. For a changed
+`const`/`static` whose old and new initializers are both bound literals, the
+classifier evaluates the same-file reader on each related test's literal call
+arguments twice, once with the old initializer and once with the new, and then
+evaluates the test's assertion on each result.
+
+- The declaration is a single changed line (`const NAME: T = expr;` removed and
+  re-added); a multi-line declaration is not paired.
+- The reader body is one expression over its parameters and the constant:
+  literals, parameters, the constant, `+ - * /`, comparisons, `&&`, `||`, `!`,
+  parentheses, `min`/`max`, `is_empty`, `len`, and `format!` whose arguments are
+  the same terms. Any control flow (`if`, `match`, loops), `let`, call, lookup,
+  cast or other method makes the flow unevaluable.
+- The test's assertion is `assert!(call)`, `assert!(!call)`, `assert_eq!`/
+  `assert_ne!` between the call (optionally with `.is_empty()` or `.len()`) and
+  a literal, with the call's arguments literals. A non-literal expected value
+  (the constant itself, a value computed from it, a binding) makes it
+  unevaluable.
+- An assertion that does not hold on the old initializer is stale or
+  misread; the flow is unevaluable rather than credited.
+- Integer arithmetic stays inside the declared type and `i64`; an overflow,
+  underflow or division by zero makes the flow unevaluable.
+- Each comparison in the assertion has a literal-only side written in the test.
+  `assert_eq!(read(), read())`, an expected value naming the constant, or a
+  comparison between two calls moves with the edit and pins nothing.
+- The reader must be the only function of its name in the file and must not be
+  behind a `cfg` attribute.
+- The declaration and every reader sit in the same module scope of the file
+  (the same chain of inline `mod` blocks, no enclosing function or `impl`
+  block). A same-spelled constant imported into another module cannot be told
+  from the edited one by name, so a reader there is not evaluated.
+
+Outcomes, over every related test that calls a reader:
+
+| Evaluation | Class |
+| --- | --- |
+| Some assertion holds on the old initializer and fails on the new | `exposed` (credited); the test discriminates the changed value |
+| Every related test is evaluated and every assertion holds on both | `weakly_exposed` (gap); the tests reach the reader and cannot tell the values apart |
+| A value-keeping rewrite | decided by the neighbour rule below |
+| Anything else: a test, assertion or reader that is unevaluable, no related test calls a reader | unchanged: `static_unknown` with reach `weak` |
+
+A rewrite that keeps the value (`10` to `5 + 5`) has no old/new pair, so it is
+asked the mutation question instead: the integer constant is evaluated one
+below and one above its value (neighbours its declared type admits). It is
+`exposed` only when every neighbour makes some assertion, in any related
+test, that holds on the current value fail (each neighbour's breaking
+assertion is cited); if any neighbour goes unnoticed, or the constant is not an
+integer, it keeps its abstention. A rewrite is never reported as a gap here:
+the neighbours are a sample of the wrong values, not all of them.
+
 The first implementation slice after this spec should target only the
 same-file direct-reader row; the slice after it targets only `opaque_config_lookup`. Generated output, macro output, dynamic dispatch,
 and unsupported cross-file flow must stay named static limitations unless a

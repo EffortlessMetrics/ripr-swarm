@@ -1,0 +1,45 @@
+{
+  "case_id": "py-numpy-wide-hex-scalar",
+  "subject_id": "authored-py-pytest-numpy",
+  "diff": "cases/py-numpy-wide-hex-scalar.diff",
+  "anchor": {
+    "file": "src/extra.py",
+    "line": 34
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "numpy_helper_wide_scalar",
+  "hard_case": "False-credit trap: the test looks like it checks the owner but cannot notice a change to it.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.2.0, numpy 2.4.6, assertpy 1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return [int(text) + 0x100000000000000000000000000000000] * 2",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the owner returns a two-element list instead of the single integer; assert_array_equal broadcasts the scalar so the longer array still passes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Trap: `np.testing.assert_array_equal(wide(\"1\"), 0x100000000000000000000000000000001)` compares against a scalar integer wider than 128 bits, which numpy broadcasts, so a shape change goes unseen and the call must not read as an exact pin.",
+  "labeling_observation": {
+    "ripr_commit": "bebafae2",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": []
+}

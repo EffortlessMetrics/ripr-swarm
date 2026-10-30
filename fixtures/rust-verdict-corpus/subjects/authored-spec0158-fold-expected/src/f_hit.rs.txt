@@ -1,0 +1,19 @@
+pub fn tier_hit(qty: u32) -> u32 {
+    if 10 <= qty {
+        5
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tenth_unit_earns_the_tier_f_hit() {
+        let base = 9;
+        assert_eq!(tier_hit(base + 1), 5);
+        assert_eq!(tier_hit(base), 0);
+    }
+}

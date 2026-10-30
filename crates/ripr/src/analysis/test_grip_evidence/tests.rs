@@ -1,3 +1,4 @@
+mod boolean_owner_pin;
 mod module_extraction;
 mod shared_execution_context;
 mod warm_entrypoint;
@@ -22,6 +23,30 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[test]
+fn suffixed_decimal_arguments_preserve_whole_literal_boundaries() {
+    for (literal, expected) in [
+        ("100i32", "100"),
+        ("-100i32", "-100"),
+        ("1_00u64", "1_00"),
+        ("0usize", "0"),
+    ] {
+        assert_eq!(scalar_values(literal), [expected], "{literal}");
+    }
+    for expression in [
+        "100i32 as i8",
+        "100i32.abs()",
+        "100i32..101i32",
+        "100i32 + 1",
+        "value100i32",
+        "1e2f64",
+        "0x64u8",
+        "-100u32",
+    ] {
+        assert!(scalar_values(expression).is_empty(), "{expression}");
+    }
+}
 
 fn index_from_files(files: &[(PathBuf, &str)]) -> Result<FixtureIndex, String> {
     let stamp = SystemTime::now()
@@ -3247,9 +3272,15 @@ fn device_labels_start_empty() {
         "activation summary should explain the value-insensitive owner-call route: {}",
         evidence.activate.summary
     );
+    // #10701: the only debt is the exact changed return value (the weak
+    // `is_empty()` oracle), never a boundary-value fact.
     assert!(
-        evidence.missing_discriminators.is_empty(),
-        "return-value no-arg activation must not create boundary debt"
+        evidence
+            .missing_discriminators
+            .iter()
+            .all(|fact| fact.value == return_seam.expression()),
+        "return-value no-arg activation must not create boundary debt: {:?}",
+        evidence.missing_discriminators
     );
     Ok(())
 }
@@ -3296,9 +3327,15 @@ fn device_labels_start_empty() {
         "activation summary should explain the value-insensitive owner-call route: {}",
         evidence.activate.summary
     );
+    // #10701: the only debt is the exact changed return value (the weak
+    // `is_empty()` oracle), never a boundary-value fact.
     assert!(
-        evidence.missing_discriminators.is_empty(),
-        "multiline value-insensitive direct owner calls must not create boundary debt"
+        evidence
+            .missing_discriminators
+            .iter()
+            .all(|fact| fact.value == return_seam.expression()),
+        "multiline value-insensitive direct owner calls must not create boundary debt: {:?}",
+        evidence.missing_discriminators
     );
     Ok(())
 }
@@ -19614,6 +19651,172 @@ fn asserted_token_affinity_alone_does_not_reach_a_function_owner() -> Result<(),
     Ok(())
 }
 
+/// #7415: repository and compact evidence cannot promote unique inherent
+/// method names without a real, still-visible receiver declaration.
+#[test]
+fn unique_inherent_receiver_refuses_decoys_in_full_and_compact_repo_evidence() -> Result<(), String>
+{
+    let owner = r#"use std::collections::BTreeMap;
+pub(crate) enum JsonValue { Object(BTreeMap<String, i32>), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<&BTreeMap<String, i32>> {
+        match self { Self::Object(value) => Some(value), _ => None }
+    }
+}
+trait ForeignView { fn as_object(&self) -> Option<()> { None } }
+impl<T> ForeignView for T {}
+#[cfg(test)] mod tests {
+    use super::*;
+    #[test] fn actual_object() {
+        let value = JsonValue::Object(BTreeMap::from([("key".to_owned(), 1)]));
+        assert_eq!(value.as_object().unwrap().len(), 1);
+    }
+    #[test] fn actual_null() {
+        let value = JsonValue::Null;
+        assert_eq!(value.as_object(), None);
+    }
+    #[test] fn actual_null_after_expired_shadow() {
+        let value = JsonValue::Null;
+        { let value = serde_json::Value::Null; let _ = value; }
+        assert_eq!(value.as_object(), None);
+    }
+    #[test] fn wrong_json_type() {
+        let value = serde_json::json!({"key": 1});
+        DECOY
+    }
+    fn actual_reader_as_object() -> usize {
+        let value = JsonValue::Object(BTreeMap::from([("key".to_owned(), 1)]));
+        value.as_object().unwrap().len()
+    }
+    #[test] fn mixed_valid_helper_and_wrong_direct() {
+        let serialized = serde_json::json!({"key": 1});
+        assert_eq!(serialized.as_object().unwrap().len(), 1);
+        assert_eq!(actual_reader_as_object(), 1);
+    }
+}
+"#;
+    let foreign = r#"fn main() {}
+#[cfg(test)] mod tests {
+    #[test] fn unrelated_main_json_object() {
+        let serialized = serde_json::json!({"key": 1});
+        assert_eq!(serialized.as_object().unwrap().len(), 1);
+    }
+}
+"#;
+    for decoy in [
+        "let value = JsonValue::Null;\n        assert_eq!({ struct value; value.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ struct value(); value.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ enum JsonValue { Null } JsonValue::Null.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ type JsonValue = serde_json::Value; JsonValue::Null.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ fn ripr_receiver_operand(value: serde_json::Value) -> Option<()> { value.as_object(); None } None::<()> }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ struct value; impl value { fn as_object(&self) -> Option<()> { None } } value.as_object() }, None);",
+        "assert_eq!(value.as_object().unwrap().len(), 1);",
+        "assert_eq!(value.as_object().unwrap().len(), 1); // JsonValue::as_object()",
+        "{ let value = JsonValue::Null; assert!(matches!(value, JsonValue::Null)); }\n        assert_eq!(value.as_object().unwrap().len(), 1);",
+        "let value = JsonValue::Null;\n        let mut values = Some(serde_json::json!({\"key\": 1}));\n        while let Some(value) = values.take() { assert_eq!(value.as_object().unwrap().len(), 1); }",
+        "let value = JsonValue::Null;\n        { const value: serde_json::Value = serde_json::Value::Null; assert_eq!(value.as_object(), None); }",
+        "let value = JsonValue::Null;\n        mod foreign { pub static value: serde_json::Value = serde_json::Value::Null; }\n        { use foreign::value; assert_eq!(value.as_object(), None); }",
+        "let value = JsonValue::Null;\n        assert_eq!({ const value: serde_json::Value = serde_json::Value::Null; value.as_object() }, None);",
+    ] {
+        let source = owner.replace("DECOY", decoy);
+        let path = PathBuf::from("src/reader.rs");
+        let index = index_from_files(&[
+            (path.clone(), source.as_str()),
+            (PathBuf::from("src/main.rs"), foreign),
+            (
+                PathBuf::from("xtask/main.rs"),
+                "#[path = \"../src/reader.rs\"] mod reader; fn main() {}",
+            ),
+        ])?;
+        let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
+            .into_iter()
+            .filter(|seam| seam.owner() == "src/reader.rs::impl JsonValue::as_object")
+            .collect();
+        assert_eq!(seams.len(), 4, "private seams stay nonempty and complete");
+        let context = CompactGripContext::new(&index);
+        for seam in &seams {
+            assert!(seam.owner().ends_with("::as_object"));
+            let full = evidence_for_seam(seam, &index);
+            let compact = find_related_tests_with_context(seam, &context);
+            let full_rows: BTreeMap<_, _> = full
+                .related_tests
+                .iter()
+                .map(|test| (test.test_name.as_str(), test.relation_reason))
+                .collect();
+            let compact_rows: BTreeMap<_, _> = compact
+                .iter()
+                .map(|(test, reason)| (test.test.name.as_str(), *reason))
+                .collect();
+            assert_eq!(full_rows, compact_rows, "full/compact relationship parity");
+            for actual in [
+                "actual_object",
+                "actual_null",
+                "actual_null_after_expired_shadow",
+            ] {
+                assert_eq!(
+                    full_rows.get(actual),
+                    Some(&RelationReason::DirectOwnerCall),
+                    "{decoy}: {full_rows:?}"
+                );
+            }
+            assert!(
+                full_rows.contains_key("wrong_json_type"),
+                "retain the operand decoy: {full_rows:?}"
+            );
+            for wrong in ["wrong_json_type", "unrelated_main_json_object"] {
+                assert!(
+                    !matches!(
+                        full_rows.get(wrong),
+                        Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
+                    ),
+                    "{decoy}: {full_rows:?}"
+                );
+            }
+            assert_eq!(
+                full_rows.get("mixed_valid_helper_and_wrong_direct"),
+                Some(&RelationReason::HelperOwnerCall),
+                "the genuine helper survives its caller's wrong direct receiver"
+            );
+            let compact_evidence = compact_evidence_for_seam(seam, &context);
+            assert_eq!(full.reach.state, compact_evidence.reach.state);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn public_inherent_receiver_keeps_cross_target_full_and_compact_repo_evidence() -> Result<(), String>
+{
+    let source = "pub struct PublicReader { pub size: u32 }\nimpl PublicReader {\n    pub fn object_size(&self) -> u32 { self.size + 1 }\n}\n";
+    let test = "use memory_fixture::PublicReader;\n#[test]\nfn public_inherent_owner_call() {\n    let value = PublicReader { size: 1 };\n    assert_eq!(value.object_size(), 2);\n}\n";
+    let path = PathBuf::from("src/lib.rs");
+    let index = index_from_files(&[
+        (path.clone(), source),
+        (PathBuf::from("tests/public_library.rs"), test),
+    ])?;
+    let seams = inventory_seams_from_index(&[path], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.owner().ends_with("::object_size") && seam.kind() == SeamKind::ReturnValue
+        })
+        .ok_or("public inherent method return seam must exist")?;
+    let full = evidence_for_seam(seam, &index);
+    assert!(
+        full.related_tests
+            .iter()
+            .any(|test| test.test_name == "public_inherent_owner_call"
+                && test.relation_reason == RelationReason::DirectOwnerCall)
+    );
+    let context = CompactGripContext::new(&index);
+    let compact = find_related_tests_with_context(seam, &context);
+    assert!(compact.iter().any(
+        |(test, reason)| test.test.name == "public_inherent_owner_call"
+            && *reason == RelationReason::DirectOwnerCall
+    ));
+    Ok(())
+}
+
 /// #7966: the real fixture's manifest/source authority survives observation
 /// binding, and both detailed and compact producers keep the same decision.
 #[test]
@@ -19684,6 +19887,404 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
             "{case}: compact consumer"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn named_call_scan_sees_calls_after_an_earlier_line_comment() {
+    // The single-line stripper truncated a whole body at its first `//`.
+    for (body, expected) in [
+        ("// delegates\nfn wrapper() {\n    compute(1);\n}\n", true),
+        ("fn wrapper() {\n    // compute(1);\n}\n", false),
+        ("fn wrapper() {\n    let s = \"compute(1)\";\n}\n", false),
+        ("fn compute() {}\n", false),
+    ] {
+        assert_eq!(
+            call_text_contains_named_call(body, "compute"),
+            expected,
+            "{body}"
+        );
+    }
+}
+
+// #7415: index-backed oracles for the bounded inherent-receiver rule.
+fn receiver_rule_parts(source: &str, call: &str) -> Result<(FixtureIndex, String), String> {
+    let source = format!("{source}\n#[test]\nfn t() {{\n    {call}\n}}\n");
+    Ok((
+        index_from_files(&[(PathBuf::from("src/lib.rs"), &source)])?,
+        source,
+    ))
+}
+
+fn receiver_resolves(source: &str, call: &str) -> Result<bool, String> {
+    let (index, _) = receiver_rule_parts(source, call)?;
+    let find = |name: &str| {
+        index
+            .functions()
+            .iter()
+            .find(|f| f.name == name && f.item.has_self_param)
+    };
+    let owner = find("area").ok_or("missing owner")?;
+    let caller = index
+        .tests()
+        .iter()
+        .find(|t| t.name == "t")
+        .ok_or("missing test")?;
+    Ok(crate::analysis::classify::inherent_owner_call_resolves(
+        caller, owner, &index,
+    ))
+}
+
+/// `Site { v }` with `area(&self)`, then `$items` inside the same impl.
+macro_rules! site {
+    ($items:literal) => {
+        concat!(
+            "pub struct Site { v: u32 }\npub struct Cache;\npub struct Foreign;\n",
+            "impl Site { pub fn area(&self) -> u32 { self.v } ",
+            $items
+        )
+    };
+}
+
+#[test]
+#[rustfmt::skip]
+fn inherent_receiver_constructors_need_indexed_declarations() -> Result<(), String> {
+    let bound = "let s = Site::make();\n    assert_eq!(s.area(), 1);";
+    for (source, call, expected) in [
+        // Factory return type: Self/Site admit; wrappers, async, self, foreign
+        // types, a type parameter named Site and where/inline bounds refuse.
+        (site!("pub fn make() -> Self { Site { v: 1 } } }"), bound, true),
+        (site!("pub fn make() -> Site { Site { v: 1 } } }"), bound, true),
+        (site!("pub fn make() -> Result<Self, ()> { todo!() } }"), bound, false),
+        (site!("pub async fn make() -> Self { Site { v: 1 } } }"), bound, false),
+        (site!("pub fn make(&self) -> Self { Site { v: 1 } } }"), bound, false),
+        (site!("pub fn make() -> Foreign { Foreign } }"), bound, false),
+        (site!("pub fn make<Site>() -> Site { todo!() } }"), bound, false),
+        (site!("pub fn make<F>(f: F) -> Foreign where F: Fn() -> Self { f(); Foreign } }"), bound, false),
+        (site!("pub fn make<F: Fn() -> Self>(f: F) -> Foreign { f(); Foreign } }"), bound, false),
+        (site!("pub fn make() -> Self { Site { v: 1 } } } impl Site { pub fn make() -> Foreign { Foreign } }"), bound, false),
+        (site!("pub fn make() -> Self { Site { v: 1 } } }"), "assert_eq!(Other::make().area(), 1);", false),
+        // Constructor-sounding names return a foreign type; qualified paths.
+        (site!("pub fn new() -> Self { Site { v: 1 } } pub fn with_x() -> Self { Site { v: 1 } } pub fn from_parts(v: u32) -> Site { Site { v } } pub fn with_cache() -> Cache { Cache } pub fn new_cache() -> Cache { Cache } pub fn from_cache(_v: u32) -> Cache { Cache } }"), "assert_eq!(Site::new().area(), 1);", true),
+        (site!("pub fn with_x() -> Self { Site { v: 1 } } }"), "assert_eq!(Site::with_x().area(), 1);", true),
+        (site!("pub fn from_parts(v: u32) -> Site { Site { v } } }"), "assert_eq!(Site::from_parts(1).area(), 1);", true),
+        (site!("}"), "assert_eq!(Site { v: 1 }.area(), 1);", true),
+        (site!("pub fn with_cache() -> Cache { Cache } }"), "assert_eq!(Site::with_cache().area(), 1);", false),
+        (site!("pub fn new_cache() -> Cache { Cache } }"), "assert_eq!(Site::new_cache().area(), 1);", false),
+        (site!("pub fn from_cache(_v: u32) -> Cache { Cache } }"), "assert_eq!(Site::from_cache(1).area(), 1);", false),
+        (site!("pub fn new() -> Self { Site { v: 1 } } }"), "assert_eq!(foreign::Site::new().area(), 1);", false),
+        (site!("}"), "assert_eq!(foreign::Site { v: 1 }.area(), 1);", false),
+        (site!("pub fn with_x() -> Self { Site { v: 1 } } }"), "assert_eq!(crate::foreign::Site::with_x().area(), 1);", false),
+        (site!("}"), "assert_eq!(Site::missing().area(), 1);", false),
+        // Default / From need positive impl or derive evidence.
+        ("#[derive(Default)]\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }", "assert_eq!(Site::default().area(), 1);", true),
+        ("pub struct Site { v: u32 }\nimpl Default for Site { fn default() -> Self { Site { v: 1 } } }\nimpl Site { pub fn area(&self) -> u32 { self.v } }", "assert_eq!(Site::default().area(), 1);", true),
+        ("pub struct Site { v: u32 }\nimpl From<u8> for Site { fn from(v: u8) -> Self { Site { v: v.into() } } }\nimpl Site { pub fn area(&self) -> u32 { self.v } }", "assert_eq!(Site::from(1).area(), 1);", true),
+        (site!("}"), "assert_eq!(Site::default().area(), 1);", false),
+        (site!("}"), "assert_eq!(Site::from(1).area(), 1);", false),
+        (site!("pub fn default() -> Cache { Cache } }"), "assert_eq!(Site::default().area(), 1);", false),
+        (site!("pub fn default() -> Self { Site { v: 1 } } }"), "assert_eq!(Site::default().area(), 1);", true),
+        ("#[derive(Default)]\npub struct Cache;\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }", "assert_eq!(Site::default().area(), 1);", false),
+        ("pub struct Cache;\nimpl From<u8> for Cache { fn from(_v: u8) -> Self { Cache } }\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }", "assert_eq!(Site::from(1).area(), 1);", false),
+        ("#[derive(Default)]\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }", "assert_eq!(foreign::Site::default().area(), 1);", false),
+        // Generic owner: turbofish and inherent factory on `Site<T>`.
+        ("pub struct Site<T> { v: T }\nimpl<T> Site<T> { pub fn new(v: T) -> Self { Site { v } } pub fn area(&self) -> u32 { 1 } }", "assert_eq!(Site::<u8>::new(1).area(), 1);", true),
+        ("pub struct Site<T> { v: T }\nimpl<T> Site<T> { pub fn new(v: T) -> Self { Site { v } } pub fn area(&self) -> u32 { 1 } }", "assert_eq!(Site::new(1).area(), 1);", true),
+        // Free fixture function returning the owner type, and its refusals.
+        (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }"), "assert_eq!(fixture().area(), 1);", true),
+        (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }"), "let s = fixture();\n    assert_eq!(s.area(), 1);", true),
+        (concat!(site!("}"), "\nfn fixture() -> Cache { Cache }"), "assert_eq!(fixture().area(), 1);", false),
+        (concat!(site!("}"), "\nasync fn fixture() -> Site { Site { v: 1 } }"), "assert_eq!(fixture().area(), 1);", false),
+        (site!("}"), "assert_eq!(fixture().area(), 1);", false),
+        (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }\nmod other { pub fn fixture() -> super::Cache { super::Cache } }"), "assert_eq!(fixture().area(), 1);", false),
+        (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }"), "let fixture = || 0;\n    assert_eq!(fixture().area(), 1);", false),
+        // Bare unit struct is a value only when verified; a constant is not.
+        ("pub struct Site;\nimpl Site { pub fn area(&self) -> u32 { 1 } }", "assert_eq!(Site.area(), 1);", true),
+        ("pub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }\npub struct Cache;\nimpl Cache { pub fn area(&self) -> u32 { 1 } }\npub const Site: Cache = Cache;", "assert_eq!(Site.area(), 1);", false),
+        ("pub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }\npub struct Cache;\npub const Site: Cache = Cache;", "let s = Site;\n    assert_eq!(s.area(), 1);", false),
+        ("pub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }\npub enum E { Site }", "use E::Site;\n    assert_eq!(Site.area(), 1);", false),
+        ("pub struct Site;\nimpl Site { pub fn area(&self) -> u32 { 1 } }", "use ext::Other as Site;\n    assert_eq!(Site.area(), 1);", false),
+        // A `use` in the test body can rebind the free-fixture head.
+        (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }"), "use ext::fixture;\n    assert_eq!(fixture().area(), 1);", false),
+        (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }"), "use ext::*;\n    assert_eq!(fixture().area(), 1);", false),
+    ] {
+        assert_eq!(receiver_resolves(source, call)?, expected, "{call} over {source}");
+    }
+    Ok(())
+}
+
+/// An injected rstest fixture reaches the test as a typed parameter. Only a
+/// plain, unqualified, unshadowed owner type is the nominal owner.
+#[test]
+fn inherent_receiver_typed_parameter_names_the_owner_only_for_a_plain_type() -> Result<(), String> {
+    let used = "assert_eq!(s.area(), 1);";
+    for (params, call, expected) in [
+        ("s: Site", used, true),
+        ("mut s: Site", used, true),
+        ("s: &Site", used, true),
+        ("s: &mut Site", used, true),
+        ("s: Cache", used, false),
+        ("s: foreign::Site", used, false),
+        ("s: Box<Site>", used, false),
+        ("s: impl Into<Site>", used, false),
+        ("other: Site", used, false),
+        (
+            "s: Site",
+            "let s = Foreign;\n    assert_eq!(s.area(), 1);",
+            false,
+        ),
+        (
+            "s: Site",
+            "if let Some(s) = ext() {\n        assert_eq!(s.area(), 1);\n    }",
+            false,
+        ),
+        (
+            "s: Site",
+            "let f = |s: Cache| s.area();\n    f(Cache);",
+            false,
+        ),
+        // `prefix|params`: a type parameter named like the owner, or an
+        // import that rebinds the owner name, is not the nominal owner.
+        ("<Site: Tr>|s: Site", used, false),
+        ("use ext::Site;|s: Site", used, false),
+        ("use ext::Other as Site;|s: Site", used, false),
+        ("use ext::*;|s: Site", used, false),
+        ("mod inner { pub struct Site; }|s: Site", used, false),
+        ("trait Site {}|s: Site", used, false),
+        ("mod tests { use super::*; }|s: Site", used, true),
+        ("mod a { mod b { use super::*; } }|s: Site", used, false),
+    ] {
+        let (prefix, params) = params.split_once('|').unwrap_or(("", params));
+        let (imports, generics) = if !prefix.starts_with('<') {
+            (prefix, "")
+        } else {
+            ("", prefix)
+        };
+        let source = format!(
+            "{}\n{imports}\n#[test]\nfn t{generics}({params}) {{\n    {call}\n}}\n",
+            site!("}")
+        );
+        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), &source)])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|f| f.name == "area" && f.item.has_self_param)
+            .ok_or("missing owner")?;
+        let caller = index
+            .tests()
+            .iter()
+            .find(|t| t.name == "t")
+            .ok_or("missing test")?;
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+            expected,
+            "{prefix} {params} / {call}"
+        );
+    }
+    Ok(())
+}
+
+/// `Site::default()` is credited by a `#[derive(Default)]` declared once in
+/// the test's own file even when sibling files also spell the type, but not
+/// when that file lacks the derive, declares the type twice or imports it.
+#[test]
+fn inherent_receiver_default_derive_is_read_from_the_test_file() -> Result<(), String> {
+    let owner_file = |declaration: &str| {
+        format!(
+            "{declaration}\nimpl Site {{ pub fn area(&self) -> u32 {{ 1 }} }}\n\
+             #[test]\nfn t() {{\n    assert_eq!(Site::default().area(), 1);\n}}\n"
+        )
+    };
+    let derived = "#[derive(Default)]\npub struct Site { v: u32 }";
+    for (own, sibling, expected) in [
+        (owner_file(derived), derived, true),
+        (owner_file(derived), "pub struct Site;", true),
+        (owner_file("pub struct Site { v: u32 }"), derived, false),
+        (
+            owner_file(&format!("{derived}\nmod inner {{ {derived} }}")),
+            derived,
+            false,
+        ),
+        (
+            owner_file(&format!("use ext::Site;\n{derived}")),
+            derived,
+            false,
+        ),
+        (
+            owner_file(&format!("use ext::*;\n{derived}")),
+            derived,
+            false,
+        ),
+        (
+            owner_file(&format!(
+                "type Site = ext::Real;\nmod inner {{ {derived} }}"
+            )),
+            derived,
+            false,
+        ),
+        (
+            owner_file(&format!("mod fixtures {{ {derived} }}")),
+            derived,
+            false,
+        ),
+    ] {
+        let index = index_from_files(&[
+            (PathBuf::from("src/lib.rs"), &own),
+            (PathBuf::from("src/other.rs"), sibling),
+        ])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|f| f.name == "area" && f.item.has_self_param)
+            .ok_or("missing owner")?;
+        let caller = index
+            .tests()
+            .iter()
+            .find(|t| t.name == "t")
+            .ok_or("missing test")?;
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+            expected,
+            "{own} / {sibling}"
+        );
+    }
+    Ok(())
+}
+
+/// The file-local claims speak of the test file's root type, so they bind the
+/// probed owner only when its `impl` is a root item of that file (#11000).
+#[test]
+fn inherent_receiver_file_local_credit_needs_a_root_owner_impl() -> Result<(), String> {
+    let nested_owner = "mod other { impl super::Site { pub fn area(&self) -> u32 { 1 } } }";
+    for (source, expected) in [
+        (
+            "#[derive(Default)]\npub struct Site { v: u32 }\n\
+             mod other { #[derive(Default)] pub struct Site { v: u32 }\n\
+             impl Site { pub fn area(&self) -> u32 { 1 } } }\n\
+             #[test]\nfn t() {\n    assert_eq!(Site::default().area(), 1);\n}\n"
+                .to_string(),
+            false,
+        ),
+        (
+            format!(
+                "pub struct Site {{ v: u32 }}\n{nested_owner}\n\
+                 #[test]\nfn t(s: Site) {{\n    assert_eq!(s.area(), 1);\n}}\n"
+            ),
+            false,
+        ),
+        (
+            "#[derive(Default)]\npub struct Site { v: u32 }\n\
+             impl Site { pub fn area(&self) -> u32 { 1 } }\n\
+             #[test]\nfn t() {\n    assert_eq!(Site::default().area(), 1);\n}\n"
+                .to_string(),
+            true,
+        ),
+    ] {
+        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), &source)])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|f| f.name == "area" && f.item.has_self_param)
+            .ok_or("missing owner")?;
+        let caller = index
+            .tests()
+            .iter()
+            .find(|t| t.name == "t")
+            .ok_or("missing test")?;
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+            expected,
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn inherent_helper_hop_credits_only_a_sync_helper_that_binds_the_owner_type() -> Result<(), String>
+{
+    let site = site!("pub fn new() -> Self { Site { v: 1 } } }");
+    for (helper, call, expected) in [
+        (
+            "fn helper() -> u32 { let s = Site::new(); s.area() }",
+            "assert_eq!(helper(), 1);",
+            true,
+        ),
+        (
+            "fn helper() -> u32 { let s = Foreign::new(); s.area() }",
+            "assert_eq!(helper(), 1);",
+            false,
+        ),
+        (
+            "async fn helper() -> u32 { let s = Site::new(); s.area() }",
+            "let _ = helper();",
+            false,
+        ),
+        (
+            "fn helper() -> u32 { let s = Site::new(); s.area() }",
+            "assert_eq!(1, 1);",
+            false,
+        ),
+    ] {
+        let (index, _) = receiver_rule_parts(&format!("{site}\n{helper}"), call)?;
+        let find = |name: &str| index.functions().iter().find(|f| f.name == name);
+        let (owner, helper_fn) = (
+            find("area").ok_or("owner")?,
+            find("helper").ok_or("helper")?,
+        );
+        let caller = index.tests().iter().find(|t| t.name == "t").ok_or("test")?;
+        assert_eq!(
+            inherent_helper_path_reaches_owner(
+                caller,
+                owner,
+                &index,
+                HELPER_OWNER_CALL_GRAPH_MAX_HOPS,
+                &mut BTreeSet::new(),
+            ),
+            expected,
+            "{helper} / {call}"
+        );
+        let classify = crate::analysis::classify::function_declaration_is_async;
+        assert_eq!(
+            classify(helper_fn, &index),
+            Some(helper.starts_with("async")),
+            "{helper}"
+        );
+        assert_eq!(
+            crate::analysis::classify::free_helper_call_resolves(caller, helper_fn, &index),
+            call.contains("helper("),
+            "{helper} / {call}"
+        );
+    }
+    Ok(())
+}
+
+/// A free-helper hop resolves against the run's one shared syntax owner, so
+/// repeating it for every (seam, helper) pair never repeats the workspace
+/// trusted-macro scan: a fresh owner per call made tokio's pilot evidence
+/// stage run that scan about 250 times (318 s against 22 s).
+#[test]
+fn free_helper_hops_share_one_workspace_macro_scan() -> Result<(), String> {
+    let (index, _) = receiver_rule_parts(
+        "struct Site;\nimpl Site { fn new() -> Self { Site } fn area(&self) -> u32 { 1 } }\nfn helper() -> u32 { Site::new().area() }",
+        "assert_eq!(helper(), 1);",
+    )?;
+    let helper_fn = index
+        .functions()
+        .iter()
+        .find(|f| f.name == "helper")
+        .ok_or("helper")?;
+    let caller = index.tests().iter().find(|t| t.name == "t").ok_or("test")?;
+    for _ in 0..8 {
+        assert!(crate::analysis::classify::free_helper_call_resolves(
+            caller, helper_fn, &index
+        ));
+    }
+    let passes = index.call_identity_memos.receiver_scan_passes();
+    assert!(
+        (1..=2).contains(&passes),
+        "{passes} workspace macro scans for 8 identical hops"
+    );
     Ok(())
 }
 
@@ -19765,5 +20366,595 @@ fn seam_evidence_keeps_equal_value_facts_from_distinct_test_files() -> Result<()
         "facts: {:?}",
         evidence.observed_values
     );
+    Ok(())
+}
+
+/// Whether the named owner of `source` may name a non-plain `Drop` type.
+fn may_name_non_plain_drop(source: &str, owner: &str, expression: &str) -> Result<bool, String> {
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
+    let function = index
+        .functions()
+        .iter()
+        .find(|function| function.name == owner)
+        .ok_or_else(|| format!("no function `{owner}` indexed"))?;
+    Ok(names_non_plain_drop_type(function, expression, &index))
+}
+
+fn mk_x(source: &str) -> Result<bool, String> {
+    may_name_non_plain_drop(source, "mk", "x")
+}
+
+fn f_x(source: &str) -> Result<bool, String> {
+    may_name_non_plain_drop(source, "f", "x")
+}
+
+fn mk_make(source: &str) -> Result<bool, String> {
+    may_name_non_plain_drop(source, "mk", "make(x)")
+}
+
+#[test]
+fn drop_type_gate_masks_the_corpus_once_across_many_seams() -> Result<(), String> {
+    let index = index_from_files(&[(
+        PathBuf::from("src/lib.rs"),
+        "pub struct Row(pub u32);\npub fn mk(x: u32) -> Row {\n    Row(x)\n}\n",
+    )])?;
+    let function = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "mk")
+        .ok_or_else(|| "no function `mk` indexed".to_string())?;
+    MASK_BUILD_COUNT.with(|count| count.set(0));
+    for _ in 0..25 {
+        if names_non_plain_drop_type(function, "Row(x)", &index) {
+            return Err("a plain Row must not withhold".to_string());
+        }
+    }
+    let builds = MASK_BUILD_COUNT.with(|count| count.get());
+    if builds != 1 {
+        return Err(format!(
+            "expected one masking pass over 25 seams, saw {builds}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn drop_type_facts_are_keyed_by_type_within_one_index() -> Result<(), String> {
+    let source = format!(
+        "pub struct Row(pub u32);\npub struct Loud(pub u32);\n{EXIT_DROP}pub type Al = u32;\n\
+         pub fn mk_row(x: u32) -> Row {{\n    Row(x)\n}}\n\
+         pub fn mk_loud(x: u32) -> Loud {{\n    Loud(x)\n}}\n\
+         pub fn mk_al(x: u32) -> Al {{\n    x\n}}\n"
+    );
+    for order in [
+        [("mk_row", false), ("mk_loud", true), ("mk_al", true)],
+        [("mk_al", true), ("mk_loud", true), ("mk_row", false)],
+        [("mk_loud", true), ("mk_row", false), ("mk_al", true)],
+    ] {
+        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source.as_str())])?;
+        for (name, expected) in order {
+            let function = index
+                .functions()
+                .iter()
+                .find(|function| function.name == name)
+                .ok_or_else(|| format!("no function `{name}` indexed"))?;
+            let got = names_non_plain_drop_type(function, "", &index);
+            if got != expected {
+                return Err(format!("{name}: expected withhold={expected}, got {got}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+const EXIT_DROP: &str =
+    "impl Drop for Loud {\n    fn drop(&mut self) {\n        std::process::exit(0);\n    }\n}\n";
+const PLAIN_DROP: &str = "impl Drop for Loud {\n    fn drop(&mut self) {}\n}\n";
+
+#[test]
+fn self_return_type_resolves_to_the_impl_self_type() -> Result<(), String> {
+    let lib = |drop: &str| {
+        format!(
+            "pub struct Loud(pub u32);\n{drop}impl Loud {{\n    pub fn mk(&self, x: u32) -> Self {{\n        Self(x * 3)\n    }}\n}}\n"
+        )
+    };
+    assert!(may_name_non_plain_drop(
+        &lib(EXIT_DROP),
+        "mk",
+        "Self(x * 3)"
+    )?);
+    assert!(!may_name_non_plain_drop(
+        &lib(PLAIN_DROP),
+        "mk",
+        "Self(x * 3)"
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_type_alias_is_not_resolved_so_it_withholds() -> Result<(), String> {
+    let lib = |alias: &str, ret: &str| {
+        format!(
+            "pub struct Loud(pub u32);\n{PLAIN_DROP}{alias}pub fn mk(x: u32) -> {ret} {{\n    Loud(x)\n}}\n"
+        )
+    };
+    assert!(mk_make(&lib("pub type Out = Loud;\n", "Out"))?);
+    assert!(!mk_make(&lib("", "Loud"))?);
+    Ok(())
+}
+
+#[test]
+fn an_open_workspace_calls_no_type_plain() -> Result<(), String> {
+    let lib = |extra: &str| {
+        format!(
+            "{extra}pub struct Loud(pub u32);\n{PLAIN_DROP}pub fn mk(x: u32) -> Loud {{\n    Loud(x)\n}}\n"
+        )
+    };
+    assert!(!mk_make(&lib(""))?);
+    assert!(mk_make(&lib("use rand::Rng;\n"))?);
+    assert!(mk_make(&lib("extern crate rand;\n"))?);
+    Ok(())
+}
+
+#[test]
+fn a_use_rename_is_followed_to_the_original_type() -> Result<(), String> {
+    let lib = |drop: &str, ret: &str| {
+        format!(
+            "pub struct Loud(pub u32);\n{drop}use crate::Loud as Quiet;\npub fn mk(x: u32) -> {ret} {{\n    make(x)\n}}\n"
+        )
+    };
+    assert!(mk_make(&lib(EXIT_DROP, "Quiet"))?);
+    assert!(!mk_make(&lib(PLAIN_DROP, "Quiet"))?);
+    assert!(!mk_make(&lib(EXIT_DROP, "u32"))?);
+    Ok(())
+}
+
+#[test]
+fn a_wrapper_of_a_non_plain_type_withholds() -> Result<(), String> {
+    let lib = |drop: &str, field: &str, shape: &str| {
+        let definition = match shape {
+            "tuple" => format!("pub struct Wrapper(pub {field});\n"),
+            "record" => format!("pub struct Wrapper {{\n    pub inner: {field},\n}}\n"),
+            _ => format!("pub enum Wrapper {{\n    One({field}),\n    Two,\n}}\n"),
+        };
+        format!(
+            "pub struct Loud(pub u32);\n{drop}{definition}pub fn mk(x: u32) -> Wrapper {{\n    make(x)\n}}\n"
+        )
+    };
+    for shape in ["tuple", "record", "enum"] {
+        assert!(mk_make(&lib(EXIT_DROP, "Loud", shape))?);
+        assert!(!mk_make(&lib(PLAIN_DROP, "Loud", shape))?);
+        assert!(!mk_make(&lib(EXIT_DROP, "u32", shape))?);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_generic_return_type_withholds() -> Result<(), String> {
+    let lib = |signature: &str| format!("pub fn mk{signature} {{\n    x\n}}\n");
+    for generic in [
+        "<T>(x: T) -> T",
+        "<'a, T: Clone>(x: &'a T) -> T",
+        "<T: Fn(u32) -> u32>(x: T) -> T",
+        "<const N: usize, T>(x: [T; N]) -> T",
+        "<T>(x: Vec<T>) -> Option<T>",
+        "<T>(x: T) -> (T, Box<dyn Fn() -> u8>)",
+        "<T>(x: T) -> T\nwhere\n    T: Clone",
+        "<T>(f: fn(T) -> u8, x: T) -> T",
+    ] {
+        assert!(mk_x(&lib(generic))?, "{generic}");
+    }
+    for concrete in [
+        "(x: u32) -> u32",
+        "<T>(x: T) -> u32",
+        "<T>(x: T) -> String where T: Clone",
+        "<T>(x: T) -> String\nwhere\n    T: Clone",
+        "<T>(f: fn(T) -> u8, x: T) -> u8",
+        "(x: Vec<u32>) -> Option<u32>",
+    ] {
+        assert!(!mk_x(&lib(concrete))?, "{concrete}");
+    }
+    Ok(())
+}
+
+#[test]
+fn opaque_dyn_and_impl_returns_withhold() -> Result<(), String> {
+    let lib = |signature: &str| format!("pub fn mk{signature} {{\n    x\n}}\n");
+    for opaque in [
+        "(x: u32) -> impl Iterator<Item = u32>",
+        "(x: u32) -> Box<dyn Fn() -> u8>",
+        "(x: u32) -> &'static dyn std::fmt::Debug",
+    ] {
+        assert!(mk_x(&lib(opaque))?, "{opaque}");
+    }
+    assert!(!mk_x(&lib("(x: u32) -> Box<u32>"))?);
+    Ok(())
+}
+
+#[test]
+fn enclosing_impl_generics_in_the_return_type_withhold() -> Result<(), String> {
+    let lib = |header: &str, signature: &str| {
+        format!(
+            "pub struct S<T>(pub T);\n{header} {{\n    pub fn f{signature} {{\n        x\n    }}\n}}\n"
+        )
+    };
+    for (header, signature) in [
+        ("impl<T> S<T>", "(x: T) -> T"),
+        ("impl<T> S<T>", "(x: T) -> Option<T>"),
+        ("impl<T> S<T>", "(x: T) -> Self"),
+        ("impl<T: Clone> S<T>", "(x: T) -> T"),
+    ] {
+        assert!(f_x(&lib(header, signature))?, "{header} {signature}");
+    }
+    for (header, signature) in [
+        ("impl S<u32>", "(x: u32) -> u32"),
+        ("impl S<u32>", "(x: u32) -> Self"),
+        ("impl<T> S<T>", "(x: u32) -> u32"),
+    ] {
+        assert!(!f_x(&lib(header, signature))?, "{header} {signature}");
+    }
+    let trait_lib = |ret: &str| {
+        format!("pub trait Tr<T> {{\n    fn f(x: T) -> {ret} {{\n        x\n    }}\n}}\n")
+    };
+    assert!(f_x(&trait_lib("T"))?);
+    assert!(!f_x(&trait_lib("u32"))?);
+    Ok(())
+}
+
+#[test]
+fn same_named_types_in_other_modules_are_all_read() -> Result<(), String> {
+    let lib = |drop: &str, second: &str| {
+        format!(
+            "pub struct Loud(pub u32);\n{drop}pub mod a {{\n    pub struct W(pub u8);\n}}\npub mod b {{\n    pub struct W(pub {second});\n}}\npub fn mk(x: u32) -> b::W {{\n    make(x)\n}}\n"
+        )
+    };
+    assert!(mk_make(&lib(EXIT_DROP, "super::Loud"))?);
+    assert!(!mk_make(&lib(PLAIN_DROP, "super::Loud"))?);
+    assert!(!mk_make(&lib(EXIT_DROP, "u8"))?);
+    Ok(())
+}
+
+#[test]
+fn a_self_import_rename_is_followed_to_its_type() {
+    use super::renamed_from;
+    assert!(
+        renamed_from("use crate::Loud::{self as Quiet};", "Quiet").contains(&"Loud".to_string())
+    );
+    assert!(renamed_from("use crate::Loud as Quiet;", "Quiet").contains(&"Loud".to_string()));
+    for grouped in [
+        "use crate::Loud::{Other, self as Quiet};",
+        "use crate::Loud::{Other, nested::{Deep}, self as Quiet, More};",
+    ] {
+        assert!(
+            renamed_from(grouped, "Quiet").contains(&"Loud".to_string()),
+            "{grouped}"
+        );
+    }
+    assert!(renamed_from("use crate::Loud as Other;", "Quiet").is_empty());
+}
+
+#[test]
+fn an_earlier_impl_trait_argument_does_not_hide_the_real_impl_header() -> Result<(), String> {
+    let lib = |earlier: &str, header: &str, signature: &str| {
+        format!(
+            "pub struct S<T>(pub T);\n{earlier}{header} {{\n    pub fn f{signature} {{\n        x\n    }}\n}}\n"
+        )
+    };
+    let earlier_arg = "pub fn a(f: impl Fn()) {\n    f();\n}\n";
+    let earlier_ret = "pub fn r() -> impl Iterator<Item = u32> {\n    0..1\n}\n";
+    for earlier in [earlier_arg, earlier_ret] {
+        assert!(f_x(&lib(earlier, "impl<T> S<T>", "(x: T) -> T"))?);
+        assert!(!f_x(&lib(earlier, "impl S<u32>", "(x: u32) -> u32"))?);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_header_on_the_owners_own_line_is_read() -> Result<(), String> {
+    let impl_lib = |header: &str, signature: &str| {
+        format!("pub struct S<T>(pub T);\n{header} {{ pub fn f{signature} {{ x }} }}\n")
+    };
+    assert!(may_name_non_plain_drop(
+        &impl_lib("impl<T> S<T>", "(x: T) -> T"),
+        "f",
+        "x"
+    )?);
+    assert!(!may_name_non_plain_drop(
+        &impl_lib("impl S<u32>", "(x: u32) -> u32"),
+        "f",
+        "x"
+    )?);
+    let trait_lib = |ret: &str| format!("pub trait Tr<T> {{ fn f(x: T) -> {ret} {{ x }} }}\n");
+    assert!(f_x(&trait_lib("T"))?);
+    assert!(!f_x(&trait_lib("u32"))?);
+    Ok(())
+}
+
+#[test]
+fn a_header_after_an_earlier_fn_on_the_owners_line_is_read() -> Result<(), String> {
+    let lib = |second: &str, signature: &str| {
+        format!(
+            "pub struct S<T>(pub T);\nimpl S<u32> {{ fn g() {{}} }} {second} {{ pub fn f{signature} {{ x }} }}\n"
+        )
+    };
+    assert!(f_x(&lib("impl<T> S<T>", "(x: T) -> T"))?);
+    assert!(!f_x(&lib("impl S<u8>", "(x: u8) -> u8"))?);
+    Ok(())
+}
+
+/// The native truth and static admission are separate axes. In particular an
+/// invoked nested function kills the native mutant but remains unsupported by
+/// this bounded static walk; its declaration must never supply direct credit.
+#[test]
+fn inherent_executable_owner_identity_boundary_matrix() -> Result<(), String> {
+    #[derive(serde::Deserialize)]
+    struct Case {
+        path: String,
+        name: String,
+        relation: Option<RelationReason>,
+    }
+    let cases: Vec<Case> = serde_json::from_str(include_str!(
+        "../../../../../fixtures/inherent_receiver_free_helper_identity/cases.json"
+    ))
+    .map_err(|error| error.to_string())?;
+    assert_eq!(cases.len(), 50, "complete hypothesis-led matrix");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    for case in cases {
+        let source = std::fs::read_to_string(fixtures.join(&case.path))
+            .map_err(|error| error.to_string())?;
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), &source)])?;
+        assert_eq!(index.tests().len(), 1, "{}: one real subject", case.path);
+        let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
+            .into_iter()
+            .filter(|seam| seam.owner() == "src/lib.rs::impl JsonValue::as_object")
+            .collect();
+        assert_eq!(seams.len(), 4, "{}: retain all owner seams", case.path);
+        let context = CompactGripContext::new(&index);
+        for seam in &seams {
+            let full = evidence_for_seam(seam, &index);
+            let compact = find_related_tests_with_context(seam, &context);
+            let full_rows: Vec<_> = full
+                .related_tests
+                .iter()
+                .map(|test| (test.test_name.as_str(), test.relation_reason))
+                .collect();
+            let compact_rows: Vec<_> = compact
+                .iter()
+                .map(|(test, relation)| (test.test.name.as_str(), *relation))
+                .collect();
+            assert_eq!(
+                full_rows, compact_rows,
+                "{}: complete row parity",
+                case.path
+            );
+            assert_eq!(
+                full_rows.len(),
+                1,
+                "{}: retain exactly one subject per seam",
+                case.path
+            );
+            assert_eq!(full_rows[0].0, case.name, "{}", case.path);
+            if let Some(expected) = case.relation {
+                assert_eq!(full_rows[0].1, expected, "{}", case.path);
+                assert_eq!(full.reach.state, StageState::Yes, "{}", case.path);
+            } else {
+                assert!(
+                    !matches!(
+                        full_rows[0].1,
+                        RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall
+                    ),
+                    "{}: wrong execution or identity: {full_rows:?}",
+                    case.path
+                );
+                assert_ne!(full.reach.state, StageState::Yes, "{}", case.path);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Two callers on one line have distinct lexical imports. A cached genuine
+/// caller scope must not authorize its same-line foreign sibling.
+#[test]
+fn same_line_helper_callers_keep_distinct_module_function_identity() -> Result<(), String> {
+    let source = include_str!(
+        "../../../../../fixtures/inherent_receiver_free_helper_identity/controls/same-line-callers.rs"
+    );
+    let path = PathBuf::from("src/lib.rs");
+    let index = index_from_files(&[(path.clone(), source)])?;
+    assert_eq!(index.tests().len(), 2);
+    let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
+        .into_iter()
+        .filter(|seam| seam.owner() == "src/lib.rs::impl JsonValue::as_object")
+        .collect();
+    assert_eq!(seams.len(), 4);
+    let context = CompactGripContext::new(&index);
+    for seam in &seams {
+        let full = evidence_for_seam(seam, &index);
+        let compact = find_related_tests_with_context(seam, &context);
+        let full_rows: BTreeMap<_, _> = full
+            .related_tests
+            .iter()
+            .map(|test| (test.test_name.as_str(), test.relation_reason))
+            .collect();
+        let compact_rows: BTreeMap<_, _> = compact
+            .iter()
+            .map(|(test, relation)| (test.test.name.as_str(), *relation))
+            .collect();
+        assert_eq!(full.related_tests.len(), 2);
+        assert_eq!(compact.len(), 2);
+        assert_eq!(full_rows, compact_rows);
+        assert_eq!(
+            full_rows.get("actual"),
+            Some(&RelationReason::HelperOwnerCall)
+        );
+        assert!(
+            !matches!(
+                full_rows.get("decoy"),
+                Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
+            ),
+            "foreign caller borrowed a cached sibling scope: {full_rows:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Independent review #8004: each source is also a real native mutation control.
+#[test]
+fn inherent_receiver_review_last_hop_and_wrapper_controls() -> Result<(), String> {
+    for (source, name, expected) in [
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_foreign_helper/controls/local-helper.rs"
+            ),
+            "local_helper",
+            Some(RelationReason::HelperOwnerCall),
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_local_wrapper/controls/foreign-entry.rs"
+            ),
+            "wrapper_route",
+            None,
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_local_wrapper/controls/foreign-last-hop.rs"
+            ),
+            "wrapper_route",
+            None,
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_foreign_helper/controls/shadowed-owner-type.rs"
+            ),
+            "foreign_helper",
+            None,
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_macro_discard/controls/standard.rs"
+            ),
+            "evaluated_operand",
+            Some(RelationReason::DirectOwnerCall),
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_macro_discard/controls/sibling-shadow.rs"
+            ),
+            "evaluated_operand",
+            Some(RelationReason::DirectOwnerCall),
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_local_wrapper/input/src/lib.rs"
+            ),
+            "wrapper_route",
+            Some(RelationReason::HelperOwnerCall),
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_foreign_helper/input/src/lib.rs"
+            ),
+            "foreign_helper",
+            None,
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_macro_discard/input/src/lib.rs"
+            ),
+            "ignored_operand",
+            None,
+        ),
+    ] {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
+            .into_iter()
+            .filter(|seam| seam.owner() == "src/lib.rs::impl JsonValue::as_object")
+            .collect();
+        assert_eq!(seams.len(), 4, "all owner seams must exist");
+        let context = CompactGripContext::new(&index);
+        for seam in &seams {
+            let full = evidence_for_seam(seam, &index);
+            let compact = find_related_tests_with_context(seam, &context);
+            let full_rows: BTreeMap<_, _> = full
+                .related_tests
+                .iter()
+                .map(|t| (t.test_name.as_str(), t.relation_reason))
+                .collect();
+            let compact_rows: BTreeMap<_, _> = compact
+                .iter()
+                .map(|(t, r)| (t.test.name.as_str(), *r))
+                .collect();
+            assert_eq!(full_rows, compact_rows);
+            assert_eq!(
+                full.related_tests
+                    .iter()
+                    .filter(|test| test.test_name == name)
+                    .count(),
+                1,
+                "exactly one retained subject per owner seam: {name}"
+            );
+            assert_eq!(
+                compact
+                    .iter()
+                    .filter(|(test, _)| test.test.name == name)
+                    .count(),
+                1,
+                "exactly one compact subject per owner seam: {name}"
+            );
+            assert!(
+                full_rows.contains_key(name),
+                "retain the subject: {name}: {full_rows:?}"
+            );
+            if let Some(expected) = expected {
+                assert_eq!(
+                    full_rows.get(name),
+                    Some(&expected),
+                    "{name}: {full_rows:?}"
+                );
+            } else {
+                assert!(
+                    !matches!(
+                        full_rows.get(name),
+                        Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
+                    ),
+                    "{name}: {full_rows:?}"
+                );
+                assert_ne!(
+                    full.reach.state,
+                    StageState::Yes,
+                    "negative must not reach: {name}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn inherent_helper_declarations_are_not_executable_self_edges() -> Result<(), String> {
+    let declaration =
+        include_str!("../../../../../fixtures/inherent_receiver_foreign_helper/input/src/lib.rs")
+            .replace("fn as_object", "fn\nas_object");
+    let wrapper =
+        include_str!("../../../../../fixtures/inherent_receiver_local_wrapper/input/src/lib.rs");
+    for (source, expected) in [(declaration.as_str(), false), (wrapper, true)] {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let shared = SharedIndexTables::build(&index);
+        let pairs = helper_owner_calls_by_file_with_fanout(&index, &shared, false);
+        let self_edge = pairs
+            .any_spelling
+            .get(&path)
+            .and_then(|helpers| helpers.get("as_object"))
+            .is_some_and(|calls| calls.contains("as_object"));
+        assert_eq!(
+            self_edge, expected,
+            "declarations and real delegation differ"
+        );
+    }
     Ok(())
 }

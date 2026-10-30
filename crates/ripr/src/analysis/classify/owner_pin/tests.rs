@@ -1,6 +1,48 @@
 mod json_construction;
 mod retention_parity;
 #[test]
+fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> {
+    // The owner's nearest enclosing module is the production declaration's
+    // scope and never a shadow; every other module still counts.
+    for (source, expected) in [
+        // Owner and the same-name type share `a`: exempt.
+        (
+            "mod a { struct Widget; fn read() {} #[test] fn subject() {} }",
+            false,
+        ),
+        // The owner sits in `b`; the type declared in the test's own `a` shadows.
+        (
+            "mod a { struct Widget; #[test] fn subject() {} } mod b { fn read() {} }",
+            true,
+        ),
+        // Nested: the owner's nearest module is `inner`, so `outer`'s type counts.
+        (
+            "mod outer { struct Widget; mod inner { fn read() {} #[test] fn subject() {} } }",
+            true,
+        ),
+        // Same-name owner `fn` in two modules on the owner's line: ambiguous, no exemption.
+        (
+            "mod a { struct Widget; fn read() {} #[test] fn subject() {} } mod b { fn read() {} }",
+            true,
+        ),
+    ] {
+        let index = index(&[(LIB, source)]);
+        let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+        let owner = OwnerScope::new("read", 1, Path::new(LIB));
+        assert!(!index.tests().is_empty());
+        for test in index.tests().iter() {
+            assert_eq!(
+                test_module_shadows_type(test, source, "Widget", Some(owner), &index),
+                expected,
+                "{source}"
+            );
+        }
+    }
+    Ok(())
+}
+
+mod shared_target_context;
+#[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
     let source = "mod production {\nstruct Widget;\nimpl Widget { fn read() {} }\n#[test] fn subject() {}\nmod nested { struct Widget; trait Render {}\n#[test] fn subject() {}\n}\n}\nmod peer { struct Widget;\n#[test] fn subject() {}\n}\n";
     let index = index(&[(LIB, source)]);
@@ -204,48 +246,6 @@ fn module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity() -> Res
     }
     Ok(())
 }
-#[test]
-fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> {
-    // The owner's nearest enclosing module is the production declaration's
-    // scope and never a shadow; every other module still counts.
-    for (source, expected) in [
-        // Owner and the same-name type share `a`: exempt.
-        (
-            "mod a { struct Widget; fn read() {} #[test] fn subject() {} }",
-            false,
-        ),
-        // The owner sits in `b`; the type declared in the test's own `a` shadows.
-        (
-            "mod a { struct Widget; #[test] fn subject() {} } mod b { fn read() {} }",
-            true,
-        ),
-        // Nested: the owner's nearest module is `inner`, so `outer`'s type counts.
-        (
-            "mod outer { struct Widget; mod inner { fn read() {} #[test] fn subject() {} } }",
-            true,
-        ),
-        // Same-name owner `fn` in two modules on the owner's line: ambiguous, no exemption.
-        (
-            "mod a { struct Widget; fn read() {} #[test] fn subject() {} } mod b { fn read() {} }",
-            true,
-        ),
-    ] {
-        let index = index(&[(LIB, source)]);
-        let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
-        let owner = OwnerScope::new("read", 1, Path::new(LIB));
-        assert!(!index.tests().is_empty());
-        for test in index.tests().iter() {
-            assert_eq!(
-                test_module_shadows_type(test, source, "Widget", Some(owner), &index),
-                expected,
-                "{source}"
-            );
-        }
-    }
-    Ok(())
-}
-
-mod shared_target_context;
 
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
@@ -7673,6 +7673,71 @@ fn an_out_of_line_parent_module_shadow_of_the_receiver_refuses_the_pin() {
     );
 }
 
+/// #10809: every related test of every probe asks about the same few parent
+/// files, so the owner-independent answer for one (file, name) is computed
+/// once, and a different name is its own entry.
+#[test]
+fn a_parent_root_answer_is_computed_once_per_file_and_name() -> Result<(), String> {
+    let index = index_with_provenance(
+        &[
+            (LIB, LIB_OUT_OF_LINE),
+            (HELPERS, HELPERS_SHADOW),
+            (CHILD, CHILD_TEST),
+        ],
+        &[
+            (
+                HELPERS,
+                SourceRoleProvenance {
+                    edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
+                    earliest_unresolved_reason: None,
+                    ..Default::default()
+                },
+            ),
+            (
+                CHILD,
+                SourceRoleProvenance {
+                    edges: vec![
+                        module_edge(LIB, HELPERS, "helpers", 12, true),
+                        module_edge(HELPERS, CHILD, "stack_tests", 5, false),
+                    ],
+                    earliest_unresolved_reason: None,
+                    ..Default::default()
+                },
+            ),
+        ],
+    );
+    let test = index
+        .tests()
+        .iter()
+        .find(|t| t.file == Path::new(CHILD))
+        .ok_or("child test")?;
+    let owner = OwnerScope::new("depth", 6, Path::new(LIB));
+    for _ in 0..20 {
+        assert!(parent_chain_shadows_type(test, "Stack", owner, &index));
+    }
+    let helpers = index
+        .source_syntax
+        .get(&index, Path::new(HELPERS))
+        .ok_or("helpers snapshot")?;
+    assert_eq!(helpers.root_shadow_computations(), 1);
+    // A name the parent never mentions is answered from the text and creates
+    // no memo entry; a name it mentions without declaring is its own entry.
+    for _ in 0..20 {
+        assert!(!parent_chain_shadows_type(test, "Gauge", owner, &index));
+    }
+    assert_eq!(helpers.root_shadow_computations(), 1);
+    for _ in 0..20 {
+        assert!(!parent_chain_shadows_type(
+            test,
+            "stack_tests",
+            owner,
+            &index
+        ));
+    }
+    assert_eq!(helpers.root_shadow_computations(), 2);
+    Ok(())
+}
+
 /// #6950 precision: the same nested layout without the parent shadow
 /// keeps its pin. The walk skips `helpers` (no declaration) and the
 /// production root stays exempt as the owner's own scope.
@@ -11146,6 +11211,7 @@ fn test_crate_bindings_of_the_root_are_read_from_that_crate_only() {
     }
 }
 
+mod claims_direction;
 mod expect_test_pins;
 mod helper_pins;
 
@@ -12966,4 +13032,42 @@ fn comparison_macro_imports_must_name_the_macro_as_a_direct_item_of_its_crate() 
     assert!(!imported("use float_cmp::approx_eq::other;\n"));
     assert!(!imported("use float_cmp::{inner::approx_eq};\n"));
     assert!(!imported("use float_cmp::{inner::{x, approx_eq, y}};\n"));
+}
+
+/// The memoized rename answer must equal the direct scan for every spelling,
+/// including raw identifiers, casts, qualified paths and macro arguments.
+#[test]
+fn memoized_file_renames_to_matches_the_direct_scan() {
+    let sources = [
+        "use foreign::Other as Widget;",
+        "use a::b as r#Widget; fn f() {}",
+        "extern crate foo as bar;",
+        "fn f(x: u8) -> u32 { x as u32 }",
+        "fn f() { <T as Clone>::clone(&t); }",
+        "import!(other::Fake as u32);",
+        "#[cfg(x)] use a::B as C;",
+        "use a::{B as C, D as r#E};",
+        "// use a::B as Widget;\nfn f() {}",
+        "const S: &str = \"use a::B as Widget;\";",
+        "use a::B as\n    Widget;",
+        "use a::B as Widget2;",
+        "use a::B as Fooé;",
+        "use a::B as ;",
+        "use a::B as r#",
+    ];
+    let names = [
+        "Widget", "r#Widget", "r", "u32", "Clone", "Fake", "bar", "C", "E", "r#E", "Widget2",
+        "Wid", "Missing", "", "Foo", "r#r",
+    ];
+    for source in sources {
+        for name in names {
+            // Twice: the second call answers from the memo.
+            let _ = file_renames_to(source, name);
+            assert_eq!(
+                file_renames_to(source, name),
+                source.contains(name) && file_renames_to_uncached(source, name),
+                "{source:?} / {name:?}"
+            );
+        }
+    }
 }

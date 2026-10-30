@@ -491,7 +491,7 @@ suite('Extension Smoke', () => {
       (entry) => entry.source === 'ripr' && diagnosticCode(entry) === 'ripr-seam-weakly-gripped',
       60000
     );
-    assert.ok(diagnostic.message.includes('Weakly gripped behavioral seam'));
+    assert.ok(diagnostic.message.includes('Tests only loosely check this'));
 
     const hoverPosition = new vscode.Position(
       diagnostic.range.start.line,
@@ -934,7 +934,7 @@ suite('Extension Smoke', () => {
         (entry) => entry.source === 'ripr' && diagnosticCode(entry) === 'ripr-gap-MissingBoundaryAssertion',
         60000
       );
-      assert.ok(diagnostic.message.includes('preview advisory evidence'), diagnostic.message);
+      assert.ok(diagnostic.message.includes('Preview language: advisory'), diagnostic.message);
 
       const hoverPosition = new vscode.Position(
         diagnostic.range.start.line,
@@ -1442,9 +1442,9 @@ suite('Extension Smoke', () => {
             const packet = range.start.line === 5
               ? 'nearest repair packet'
               : 'far repair packet';
-            const action = new vscode.CodeAction('Copy first repair packet', vscode.CodeActionKind.QuickFix);
+            const action = new vscode.CodeAction('Copy repair instructions for an AI agent', vscode.CodeActionKind.QuickFix);
             action.command = {
-              title: 'Copy first repair packet',
+              title: 'Copy repair instructions for an AI agent',
               command: 'ripr.copyContext',
               arguments: [{
                 label: 'first_repair_packet',
@@ -1457,7 +1457,7 @@ suite('Extension Smoke', () => {
       );
 
       await writeClipboardText('start-current-repair-sentinel');
-      await waitForCodeAction(uri, near.range, (action) => action.title === 'Copy first repair packet');
+      await waitForCodeAction(uri, near.range, (action) => action.title === 'Copy repair instructions for an AI agent');
       await vscode.commands.executeCommand('ripr.startCurrentRepair');
 
       const copied = await waitForClipboardText((text) => text === 'nearest repair packet');

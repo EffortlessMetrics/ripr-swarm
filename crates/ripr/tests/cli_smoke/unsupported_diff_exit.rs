@@ -257,3 +257,138 @@ fn diff_discovery_names_unsupported_and_partial_exits() -> TestResult {
     assert!(String::from_utf8_lossy(&help.stdout).contains("`unsupported_input` reports exit 2"));
     Ok(())
 }
+
+#[test]
+fn edited_binary_rename_is_unsupported_for_check_and_diff() -> TestResult {
+    let root = unique_temp_workspace("binary-rename-outcome");
+    init_producer_fixture_repo(&root)?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    run_git(&root, &["config", "diff.renames", "true"])?;
+    let payload: String = (0..128)
+        .map(|row| format!("row-{row:03}:\0{}\n", "a".repeat(80)))
+        .collect();
+    fs::write(root.join("old.bin"), &payload)?;
+    run_git(&root, &["add", "old.bin"])?;
+    commit_fixture(&root)?;
+    fs::rename(root.join("old.bin"), root.join("new.bin"))?;
+    run_git(&root, &["add", "-A"])?;
+    commit_fixture(&root)?;
+    let edited = payload.replace("row-127:\0a", "row-127:\0z");
+    assert_ne!(payload, edited, "binary content change must be real");
+    fs::write(root.join("new.bin"), edited)?;
+    run_git(&root, &["add", "new.bin"])?;
+    commit_fixture(&root)?;
+
+    for (case, head, kind, complete, exit) in [
+        ("pure", "HEAD~1", "no_changed_lines", true, 0),
+        ("edited", "HEAD", "unsupported_input", false, 2),
+    ] {
+        let range = format!("HEAD~2...{head}");
+        let patch = run_command(
+            "git",
+            Some(&root),
+            &[
+                "-c",
+                "core.quotePath=true",
+                "-c",
+                "diff.orderFile=/dev/null",
+                "diff",
+                "--relative",
+                "--find-renames",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--unified=0",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "--inter-hunk-context=0",
+                &range,
+            ],
+        )?;
+        assert!(patch.status.success(), "{case}: Git diff setup failed");
+        let patch_text = String::from_utf8(patch.stdout.clone())?;
+        assert!(patch_text.contains("rename from old.bin\n"), "{patch_text}");
+        assert!(patch_text.contains("rename to new.bin\n"), "{patch_text}");
+        assert!(!patch_text.contains("@@"), "{patch_text}");
+        assert!(!patch_text.contains("deleted file mode"), "{patch_text}");
+        assert_eq!(
+            patch_text.contains("Binary files a/old.bin and b/new.bin differ"),
+            !complete,
+            "{case}: fixture must distinguish rename from content change: {patch_text}"
+        );
+        let patch_path = root.join(format!("{case}.patch"));
+        fs::write(&patch_path, &patch.stdout)?;
+        let patch_arg = patch_path.to_string_lossy().into_owned();
+
+        for command in ["check", "diff"] {
+            let mut args = vec![command, "--root", "."];
+            if command == "check" {
+                args.extend(["--diff", patch_arg.as_str(), "--quiet"]);
+            } else {
+                args.extend(["--base", "HEAD~2", "--head", head]);
+            }
+            args.push("--json");
+            let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args)?;
+            let report: Value = serde_json::from_slice(&output.stdout)?;
+            let outcome = &report["analysis_outcome"]["outcome"];
+            // Establish the registered, nonempty subject before checking the
+            // behavioral discriminator: an empty parse must not pass.
+            assert_eq!(
+                outcome["counts"]["changed_file_count"], 1,
+                "{case}/{command}"
+            );
+            assert_eq!(
+                outcome["counts"]["changed_line_count"], 0,
+                "{case}/{command}"
+            );
+            assert_eq!(outcome["counts"]["probe_count"], 0, "{case}/{command}");
+            assert_eq!(
+                outcome["identity"]["input_identity"],
+                format!("sha256:{:x}", Sha256::digest(&patch.stdout)),
+                "{case}/{command}"
+            );
+            assert_eq!(outcome["kind"], kind, "{case}/{command}");
+            assert_eq!(report["analysis_outcome"]["analysis_complete"], complete);
+            let limitations = outcome["limitations"]
+                .as_array()
+                .ok_or("limitations missing")?;
+            if complete {
+                assert!(limitations.is_empty(), "{case}/{command}: {limitations:?}");
+            } else {
+                let limitation = limitations
+                    .iter()
+                    .find(|item| item["kind"] == "malformed_diff")
+                    .ok_or("binary content must retain the typed non-text limitation")?;
+                assert_eq!(limitation["producer_stage"], "diff_parse");
+                assert_eq!(limitation["recovery"]["kind"], "retry");
+                assert!(limitation["bounded_detail"].as_str().is_some_and(|text| text.contains("well formed") && text.contains("binary")));
+                assert!(
+                    limitation["recovery"]["detail"].as_str().is_some_and(
+                        |text| text.contains("binary and file-mode changes are not analyzed")
+                    )
+                );
+            }
+            assert_eq!(
+                output.status.code(),
+                Some(exit),
+                "{case}/{command}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let _ = args.pop();
+            let human = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args)?;
+            if !complete {
+                let stdout = String::from_utf8(human.stdout)?;
+                assert!(
+                    stdout.contains(if command == "check" {
+                        "the input is not supported"
+                    } else {
+                        "analysis outcome: unsupported_input (analysis incomplete)."
+                    }),
+                    "{command}: {stdout}"
+                );
+            }
+            assert_eq!(human.status.code(), Some(exit), "{case}/{command}/human");
+        }
+    }
+    Ok(())
+}

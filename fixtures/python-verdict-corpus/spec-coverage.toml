@@ -31,7 +31,7 @@ schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
 cell_floor = 21
-trap_floor = 17
+trap_floor = 22
 false_credit_ceiling = 0
 
 # LSP Repair Packet Command
@@ -855,3 +855,18 @@ reason = "Rust source-role composition over cfg(test) module edges; a Python cas
 id = "RIPR-SPEC-0168"
 scope = "out"
 reason = "Rust/Cargo analyzer behavior; a Python case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0361"
+scope = "out"
+reason = "Pipeline diff-scope line-budget guard behavior; not a python verdict example"
+
+[[spec]]
+id = "RIPR-SPEC-0362"
+scope = "out"
+reason = "Gate/ledger refusal-admission behavior; not an exposure-verdict example a Python case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0363"
+scope = "out"
+reason = "TypeScript per-file fact persistence; a cache-admission behavior, not an exposure-verdict example a python case labels"

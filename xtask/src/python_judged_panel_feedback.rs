@@ -162,17 +162,27 @@ fn confirmed_over_credits(report: &Value) -> Result<Vec<Value>, String> {
             },
             "provenance": {
                 "panel_digest": report["as_of"]["panel_digest"].clone(),
+                "replay_binary": report["as_of"]["replay_binary"].clone(),
                 "source_envelope": case["source_envelope"].clone(),
+                "repo": case["repo"].clone(),
+                "base": case["base"].clone(),
+                "head": case["head"].clone(),
+                "anchor": case["anchor"].clone(),
                 "diff_path": case["diff_path"].clone(),
+                "diff_sha256": replay["diff_sha256"].clone(),
+                "row_revision": adjudication["row_revision"]["current"].clone(),
                 "adjudication_record": adjudication["record"].clone(),
                 "replay_record": replay["record"].clone(),
                 "replay_candidate_classification": replay["candidate_classification"].clone(),
+                "source_limit": "repository and revisions are inventory declarations; replay reconstructs retained diff-derived files and does not verify an upstream checkout or rerun its original tests",
+                "judgment_limit": "replay_binary identifies the current reconstruction; it does not establish which binary either adjudicator assessed",
             },
             "promotion_recipe": {
-                "step_1": "extract a minimal REGULAR fixture (with golden expected/check.json) reproducing this row's false-promotion shape; the retained diff at the provenance diff_path is the extraction source — manifest-only fixture dirs are rejected by the SPEC-0108 meta-gate",
+                "step_1": "extract a minimal self-contained REGULAR fixture (with golden expected/check.json) reproducing this row's false-promotion shape; retain origin, available revision, and semantic assumptions, and use the retained diff at provenance diff_path as the extraction source — manifest-only fixture dirs are rejected by the SPEC-0108 meta-gate",
                 "step_2": "add a corpus case as fixtures/evidence-promotion-honesty-corpus/cases/<id>.json with assertions [\"must_not_promote\"] (plus expected_finding_count where the shape pins one)",
                 "step_3": "run cargo xtask check-evidence-promotion-honesty — it must pass; a failing promotion case means the analyzer genuinely over-promotes and the analyzer fix lands in this same PR",
                 "step_4": "re-bless affected goldens in the same PR with zero unexplained drift",
+                "controls": "demonstrate the regression fails before and passes after the repair, with positive and negative controls; add property or metamorphic variants where useful",
             },
         }));
     }
