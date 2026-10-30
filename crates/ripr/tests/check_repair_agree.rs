@@ -335,6 +335,7 @@ fn changed_constant_with_no_seam_does_not_start_repair_elsewhere() -> Result<(),
     );
     assert!(
         !repair.contains("choose the change to repair")
+            && !repair.contains("different repairs")
             && !repair.contains("repair_ready=true")
             && !repair.contains("Repair prepared"),
         "repair must not offer unrelated seams as the change's repair:\n{repair}"
@@ -362,7 +363,9 @@ fn test_only_diff_keeps_the_whole_repository_selection() -> Result<(), String> {
         "several seams still need a choice:\n{repair}"
     );
     assert!(
-        repair.contains("choose the change to repair") && !repair.contains("your changed lines"),
+        repair.contains("ripr can start 2 different repairs")
+            && !repair.contains("your changed lines")
+            && !repair.contains("not offered"),
         "a test-only diff must not scope the selection:\n{repair}"
     );
     Ok(())
