@@ -410,10 +410,11 @@ pub(crate) fn probe_work_tree_root(root: &Path) -> Result<WorkTreeRootProbe, Str
 ///
 /// `Ok(true)` means the enclosing repository ships at least one file there.
 /// `Ok(false)` means no tracked file, or no Git work tree to ship one: a
-/// directory outside any repository, or Git missing from `PATH`, which cannot
-/// be told apart from an extracted archive. `Err` is every other outcome
-/// (dubious ownership, a damaged repository, a deadline, output past the
-/// cap): the caller cannot establish the answer and must not assume `false`.
+/// directory outside any repository, or Git missing from `PATH` with no
+/// validated `.git` marker above it, as in an extracted archive. `Err` is
+/// every other outcome (dubious ownership, a damaged repository, a deadline,
+/// output past the cap, or Git missing inside a marked work tree): the
+/// caller cannot establish the answer and must not assume `false`.
 ///
 /// Answers for the repository containing `dir` itself, not an inherited
 /// `GIT_DIR`, so a hook or wrapper cannot point the probe elsewhere.
@@ -435,7 +436,21 @@ pub(crate) fn tracked_files_under(dir: &Path) -> Result<bool, String> {
         &describe,
     ) {
         Ok(output) => output,
-        Err(error) if is_git_not_found_on_path(&error.to_string()) => return Ok(false),
+        Err(error) if is_git_not_found_on_path(&error.to_string()) => {
+            // Git is missing, so the index cannot be consulted. A validated
+            // `.git` marker above `dir` is still repository evidence: refuse
+            // rather than admit a possibly repository-shipped cache. Plain
+            // directories and extracted archives carry no marker and keep
+            // the warm path (#7780).
+            if git_marker_above(dir).is_some() {
+                return Err(format!(
+                    "git was not found on PATH and {} lies inside a Git work tree, \
+                     so tracked files under it cannot be ruled out",
+                    dir.display()
+                ));
+            }
+            return Ok(false);
+        }
         Err(error) => return Err(error.to_string()),
     };
     if output.status.success() {
@@ -449,6 +464,101 @@ pub(crate) fn tracked_files_under(dir: &Path) -> Result<bool, String> {
         "{describe} failed: {}",
         stderr.lines().next().unwrap_or("no diagnostic").trim()
     ))
+}
+
+/// Nearest validated `.git` marker at or above `dir`, without running Git.
+///
+/// A directory named `.git` is a marker. A regular file named `.git` is a
+/// marker only when it is a gitfile (`gitdir: <path>`), as linked worktrees
+/// and submodules write; a stray file of that name is not authority. Used
+/// only when the git binary itself is missing: presence proves a work tree
+/// exists, never that any particular file is tracked, so callers must fail
+/// closed rather than treat it as a tracked-file answer.
+fn git_marker_above(dir: &Path) -> Option<PathBuf> {
+    for ancestor in dir.ancestors() {
+        let marker = ancestor.join(".git");
+        if marker.is_dir() {
+            return Some(marker);
+        }
+        if marker.is_file()
+            && std::fs::read_to_string(&marker).is_ok_and(|text| text.starts_with("gitdir:"))
+        {
+            return Some(marker);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod missing_git_marker_tests {
+    use super::git_marker_above;
+    use std::path::PathBuf;
+
+    fn scratch(label: &str) -> PathBuf {
+        let name = format!("ripr-missing-git-{label}-{}", std::process::id());
+        let temp = std::env::temp_dir();
+        let candidate = temp.join(&name);
+        if candidate
+            .parent()
+            .is_none_or(|parent| git_marker_above(parent).is_none())
+        {
+            let _ = std::fs::remove_dir_all(&candidate);
+            return candidate;
+        }
+        // The test harness can redirect the temp dir inside a work tree
+        // (this repo's `target/`), where the enclosing marker would defeat
+        // the no-marker cases. Move the scratch beside that work tree: the
+        // first ancestor carrying no marker above it.
+        for ancestor in temp.ancestors() {
+            if git_marker_above(ancestor).is_none() {
+                let dir = ancestor.join(&name);
+                let _ = std::fs::remove_dir_all(&dir);
+                return dir;
+            }
+        }
+        candidate
+    }
+
+    #[test]
+    fn missing_git_dotgit_directory_above_base_is_a_marker() {
+        let root = scratch("dir-marker");
+        let base = root.join("target/ripr/cache");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        assert!(git_marker_above(&base).is_some());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_git_plain_directory_without_marker_stays_admitted() {
+        // Extracted archives and exported trees have this shape.
+        let root = scratch("plain");
+        let base = root.join("cache");
+        std::fs::create_dir_all(&base).unwrap();
+        assert!(git_marker_above(&base).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_git_gitfile_with_gitdir_prefix_is_a_marker() {
+        // Linked worktrees and submodules: `.git` is a file.
+        let root = scratch("gitfile");
+        let base = root.join("cache");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(root.join(".git"), "gitdir: /elsewhere/.git/worktrees/w\n").unwrap();
+        assert!(git_marker_above(&base).is_some());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_git_stray_dotgit_file_is_not_authority() {
+        let root = scratch("stray");
+        let base = root.join("cache");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(root.join(".git"), "not a gitfile\n").unwrap();
+        assert!(git_marker_above(&base).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 
 fn work_tree_root_probe_error(error: CoreError) -> String {
