@@ -29,8 +29,8 @@ use crate::app::repair_card::command_effect_label;
 use crate::config::load_for_root;
 use crate::domain::{
     CanonicalNextActionV1, CommandRole, CommandSpec, NextActionClass, NextActionCurrentness,
-    NextActionDiffSource, NextActionInput, NextActionProducer, current_command_platform,
-    select_canonical_next_action,
+    NextActionDiffSource, NextActionInput, NextActionProducer, NextActionStop,
+    current_command_platform, select_canonical_next_action,
 };
 
 /// What `ripr repair` without an item resolved to: the single seam to
@@ -160,15 +160,32 @@ pub(crate) fn decide_repair_start(
             .ok_or_else(|| "repair-start decision bound no subject".to_string())?;
         return Ok(RepairStartDecision::Start { seam_id });
     }
-    // Describe only the candidates the stop itself lists; its own total and
-    // remainder disclosure covers the rest.
-    let described = facts
-        .candidate_notes
-        .iter()
-        .take(crate::domain::MAX_NEXT_ACTION_STOP_CANDIDATES)
-        .cloned()
-        .collect();
+    // Describe exactly the candidates the stop lists, in the stop's order; its
+    // own total and remainder disclosure covers the rest.
+    let stop_ids: &[String] = match action.stop() {
+        Some(NextActionStop::SelectItem { candidates, .. }) => candidates,
+        _ => &[],
+    };
+    let described = notes_for_stop_ids(stop_ids, facts.eligible_ids, facts.candidate_notes);
     Ok(RepairStartDecision::Action(Box::new(action), described))
+}
+
+/// The description of each id the stop lists, looked up by id in the eligible
+/// inventory (`notes` is aligned with `eligible_ids`) and kept in the stop's
+/// order, so a description can never belong to a different candidate than the
+/// id beside it. An id with no description is skipped.
+fn notes_for_stop_ids(
+    stop_ids: &[String],
+    eligible_ids: &[String],
+    notes: &[String],
+) -> Vec<String> {
+    stop_ids
+        .iter()
+        .filter_map(|id| {
+            let position = eligible_ids.iter().position(|eligible| eligible == id)?;
+            notes.get(position).cloned()
+        })
+        .collect()
 }
 
 /// The one repair-admission gate, shared by the auto selector and the
@@ -1802,15 +1819,25 @@ pub(crate) mod tests {
         };
         match decide_repair_start(&facts)? {
             RepairStartDecision::Action(_, described) => {
-                assert_eq!(
-                    described.len(),
-                    crate::domain::MAX_NEXT_ACTION_STOP_CANDIDATES
-                );
+                // The stop lists at most eight candidates.
+                assert_eq!(described.len(), 8);
                 assert_eq!(described.first().map(String::as_str), Some("note 0"));
                 Ok(())
             }
             _ => Err("ten eligible seams must select".to_string()),
         }
+    }
+
+    /// Descriptions follow the stop's ids and order, not the inventory's.
+    #[test]
+    fn notes_follow_the_stops_ids_and_order() {
+        let eligible: Vec<String> = ["a", "b", "c"].map(String::from).to_vec();
+        let notes: Vec<String> = ["note a", "note b", "note c"].map(String::from).to_vec();
+        let stop: Vec<String> = ["c", "a", "zzz"].map(String::from).to_vec();
+        assert_eq!(
+            notes_for_stop_ids(&stop, &eligible, &notes),
+            vec!["note c".to_string(), "note a".to_string()]
+        );
     }
 
     /// #10978: only a genuinely missing edit target takes the plain refusal;
