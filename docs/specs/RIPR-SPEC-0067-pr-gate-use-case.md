@@ -485,10 +485,31 @@ disclosed and fails closed; it is never treated as a complete causal comparison.
   cases are `static_limitation` because propagation to a side-effect/call-effect
   sink is unknown, so they correctly lack a policy-eligible receipt. PR C must
   not manufacture a blocking call-observation route from that limited evidence.
-- The shared verification-contract validator reads schema `integer` per JSON
-  Schema Draft 2020-12: a whole-valued number such as `1.0` matches, a fraction
-  or a float beyond 2^53 does not (#11009). The xtask unit test
-  `integer_type_follows_json_schema_numeric_semantics` pins both sides.
+- The shared verification-contract validator checks parsed JSON integers and
+  numeric bounds as exact decimals (#11009). Whole-valued forms such as `1.0`
+  match; a fraction cannot become an integer through float rounding. Decimal
+  representations longer than 256 bytes or with an unnormalized scale outside
+  -256..=256 anywhere in the validated input or a numeric bound fail closed,
+  including inside boolean schema combinators. File and sweep validation parse
+  original bytes with a lossless tree after serde_json preflight. The sweep's
+  unbound-producer lookalike check also compares numeric and compound constants
+  exactly; an unsupported comparison that reaches this check is reported.
+  Unbound files rejected by the initial serde_json parse, including numbers
+  outside its finite range, cannot be classified as lookalikes; bound files
+  rejected by that parse fail the sweep. The parser rejects inputs exceeding
+  16 MiB, more than 64 MiB of cumulative subtree scans, or serde_json's nesting and finite-number
+  limits; file bytes are read before the size check. Preflight rejects unresolved
+  or recursive references and caps total schema traversal at 128 levels and
+  50,000 steps; evaluation also has those limits. The serde preflight rejects
+  inputs with more than 100,000 nodes before allocating the exact tree, counting
+  duplicate-key values before the usual last-key-wins collapse. Equality
+  traversal, repeated string scans, object-field checks, and reference decoding
+  consume the relevant budget. Exhaustion is a violation
+  even inside schema combinators. The existing pattern matcher has unbounded
+  match work; this budget does not bound a single pattern match. An
+  already-constructed `f64` cannot recover its source precision. The xtask
+  tests `integer_type_follows_json_schema_numeric_semantics` and
+  `exact_integer_and_bounds_controls` pin the behavior and limits.
 
 ## Implementation Mapping
 

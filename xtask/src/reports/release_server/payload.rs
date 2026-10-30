@@ -424,7 +424,7 @@ fn identity_from_context(
     })
 }
 
-fn payload_file_identities(
+pub(super) fn payload_file_identities(
     payload_dir: &Path,
     executable: &str,
 ) -> Result<Vec<PayloadFileIdentity>, String> {
@@ -469,7 +469,7 @@ fn payload_file_identities(
     Ok(files)
 }
 
-fn verify_payload_files(
+pub(super) fn verify_payload_files(
     payload_dir: &Path,
     identity: &FinalNativePayloadIdentity,
 ) -> Result<(), String> {
@@ -728,7 +728,7 @@ fn compare_field(field: &str, actual: &str, expected: &str, violations: &mut Vec
     }
 }
 
-fn aggregate_payload_digest(files: &[PayloadFileIdentity]) -> Result<String, String> {
+pub(super) fn aggregate_payload_digest(files: &[PayloadFileIdentity]) -> Result<String, String> {
     let mut hasher = Sha256::new();
     for file in files {
         hash_field(&mut hasher, file.path.as_bytes())?;

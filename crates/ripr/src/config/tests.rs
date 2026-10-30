@@ -2170,6 +2170,67 @@ fn an_unknown_language_error_names_only_the_repair() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn javascript_in_languages_enabled_enables_the_typescript_adapter() -> Result<(), String> {
+    let config = parse_config("[languages]\nenabled = [\"javascript\"]\n")?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::TypeScript]
+    );
+    Ok(())
+}
+
+#[test]
+fn javascript_and_typescript_together_are_a_duplicate_alias() -> Result<(), String> {
+    let Err(message) = parse_config("[languages]\nenabled = [\"typescript\", \"javascript\"]\n")
+    else {
+        return Err("typescript plus its javascript alias must be refused".to_string());
+    };
+    assert!(
+        message.contains("`javascript` is an alias for `typescript`"),
+        "expected the alias in the duplicate error, got {message}"
+    );
+    let Err(reversed) = parse_config("[languages]\nenabled = [\"javascript\", \"typescript\"]\n")
+    else {
+        return Err("javascript plus typescript must also be refused".to_string());
+    };
+    assert!(
+        reversed.contains("`javascript` is an alias for `typescript`"),
+        "expected the alias in the reversed duplicate error, got {reversed}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn javascript_twice_is_a_duplicate_and_rust_plus_javascript_parses() -> Result<(), String> {
+    let Err(message) = parse_config("[languages]\nenabled = [\"javascript\", \"javascript\"]\n")
+    else {
+        return Err("javascript listed twice must be refused".to_string());
+    };
+    assert!(
+        message.contains("lists `javascript` more than once"),
+        "expected the generic duplicate error, got {message}"
+    );
+    let config = parse_config("[languages]\nenabled = [\"rust\", \"javascript\"]\n")?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript]
+    );
+    Ok(())
+}
+
+#[cfg(not(feature = "lang-typescript"))]
+#[test]
+fn javascript_without_typescript_feature_names_the_feature() {
+    let result = parse_config("[languages]\nenabled = [\"javascript\"]\n");
+    assert!(
+        matches!(result, Err(ref message) if message.contains("lang-typescript")),
+        "expected missing lang-typescript error, got {result:?}"
+    );
+}
+
 #[test]
 fn bytes_fingerprint_matches_text_fingerprint_and_keeps_invalid_bytes_distinct() {
     // Recorded check artifacts hash `--diff` input bytes; UTF-8 input keeps

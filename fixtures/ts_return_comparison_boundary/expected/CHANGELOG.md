@@ -385,3 +385,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_return_comparison_boundary (29)
+
+Reason:
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
+
+Command:
+`cargo xtask goldens bless ts_return_comparison_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

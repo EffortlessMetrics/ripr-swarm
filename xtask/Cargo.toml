@@ -7,6 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bigdecimal = "0.4"
 home = "=0.5.12"
 num-bigint = "0.4"
 repo-policy = { path = "../tools/repo-policy" }

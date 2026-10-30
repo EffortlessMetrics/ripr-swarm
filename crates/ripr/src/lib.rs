@@ -187,6 +187,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static VERBOSE: AtomicBool = AtomicBool::new(false);
 
+/// Set the process-global verbose flag read by diagnostic output.
+///
+/// This mutates global state shared by the whole process; the binary
+/// entry point sets it once before dispatch. Library embedders that run
+/// multiple analyses concurrently in one process cannot scope verbosity
+/// per call.
 pub fn set_verbose(on: bool) {
     VERBOSE.store(on, Ordering::Relaxed);
 }

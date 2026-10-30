@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "lamp_gives_eight_hundred_lumens glob-imports meter and pins Lamp::lumens() to 800, so either neighbor fails it; spare also defines a free fn lumens, and RIPR-SPEC-0172 refuses a glob import, so ripr may only limit. Spec cells: RIPR-SPEC-0172 (glob-import control).",
+  "reasoning": "lamp_gives_eight_hundred_lumens glob-imports meter and pins Lamp::lumens() to 800, so either neighbor fails it; spare also defines a free fn lumens, and RIPR-SPEC-0172 admits a glob import only as the file's sole glob of the owner's dependency with no other import or local binding naming the type, so ripr may credit the pin or limit. Spec cells: RIPR-SPEC-0172 (glob-import control).",
   "labeling_observation": {
     "ripr_commit": "e19e16c",
     "full_checkout_verdict": "limited",

@@ -16,6 +16,12 @@
       "classification": "reachable_unrevealed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "oracle_below_strong", "summary": "related tests hold no exact-value oracle (weak or smoke assertion)"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_guard.ts:typescript_preview:0e63c99e",
         "family": "return_value",
@@ -143,6 +149,12 @@
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "oracle_below_strong", "summary": "related tests hold no exact-value oracle (weak or smoke assertion)"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_guard.ts:typescript_preview:2fd6b073",
         "family": "return_value",
@@ -306,6 +318,12 @@
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "infection_not_established", "summary": "whether the changed value alters behavior is not established"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether the changed value alters behavior is not established. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_pricing.ts:typescript_preview:b7b2112c",
         "family": "return_value",
@@ -433,6 +451,11 @@
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_pricing.ts:typescript_preview:26f2aacf",
         "family": "return_value",
@@ -553,6 +576,12 @@
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "infection_not_established", "summary": "whether the changed value alters behavior is not established"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether the changed value alters behavior is not established. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_pricing.ts:typescript_preview:1ba7ffcf",
         "family": "return_value",
@@ -680,6 +709,12 @@
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "infection_not_established", "summary": "whether the changed value alters behavior is not established"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether the changed value alters behavior is not established. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_pricing.ts:typescript_preview:7d52efbc",
         "family": "predicate",
@@ -806,6 +841,12 @@
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "infection_not_established", "summary": "whether the changed value alters behavior is not established"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether the changed value alters behavior is not established. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_pricing.ts:typescript_preview:604e2884",
         "family": "return_value",
