@@ -275,6 +275,45 @@ MERGE_BASE     = exact merge base of SOURCE_PARENT and SWARM_PARENT
 JOIN_TREE      = reviewed resolved tree identity from source preflight
 ```
 
+### Reviewed resolution slices
+
+A worker may hand an **unblocked** reviewed resolution slice to the integration
+assembler as an ordinary owned Git branch. This is a carrier for review and
+assembly, not the promotion join or a replacement for its resolution manifest.
+Existing holds still apply; do not use this route to transmit a held payload.
+
+The worker and assembler first agree on an exact base commit available to both,
+its tree, and the slice's path set. Use an independent checkout and a new branch;
+never force-update a shared branch. Commit only the intended slice on that base,
+including deletions. Record the full carrier commit, its parent and tree, the
+base, and the exact changed paths and statuses (`git diff --name-status -z
+--no-renames BASE CARRIER`). Record review and tests against that commit, with
+any missing proof called out. A commit contains a complete tree, not just the
+slice: only the reviewed changes relative to its stated parent are offered.
+Do not interpret unchanged paths in that tree as decisions for the final join.
+
+Push the owned branch through the normal authorized Git route. From a separate
+checkout, fetch the branch and check that the fetched commit equals the recorded
+full SHA, it has exactly one parent equal to the agreed base, and `CARRIER^{tree}` equals the
+recorded tree. Inspect the full NUL-delimited diff, including modes and deletion
+statuses (`git diff --raw -z --no-renames BASE CARRIER`); compare each intended
+path, mode and object type with the reviewed result. For blob entries,
+`git cat-file blob CARRIER:path` reads committed bytes without checkout filters;
+a gitlink names a commit, not a blob. A deleted path must be absent from the
+carrier tree and explicitly listed as deleted relative to the base. A successful
+push alone is not readback. If any identity, path, mode, deletion or byte differs,
+stop and investigate rather than applying a partial slice. If the branch moves,
+fetch and review the new exact commit; do not silently substitute its tip.
+
+The assembler reconciles overlapping slices and both histories on the actual
+integration basis, records path dispositions in the existing resolution manifest,
+and runs combined-tree proof. It must not assume a slice commit's single parent
+preserves the other repository's ancestry. The final join still requires its
+specified ordered parents and separately reviewed full tree; cherry-picking or
+copying a slice alone cannot establish those graph or tree guarantees. A slice
+can be withdrawn by agreement and branch cleanup after its evidence is retained;
+that does not undo an already integrated result.
+
 The source promotion is a history-preserving join, not a tree copy. The
 commands below show the required graph: the source parent first and the
 selected swarm parent second.
