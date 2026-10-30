@@ -486,6 +486,11 @@ fn an_unauthoritative_inherent_factory_declaration_keeps_the_gap() -> Result<(),
         "generic spelled like the owner",
         Shape::items("pub fn seeded<Widget>(v: Widget)->Widget{v}"),
         other,
+    )?;
+    keeps_gap(
+        "higher-order return",
+        Shape::items("pub fn seeded()->impl Fn()->Widget{||Widget}"),
+        seeded,
     )
 }
 

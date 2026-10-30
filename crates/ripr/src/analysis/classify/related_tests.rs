@@ -4220,19 +4220,26 @@ fn free_fn_returns_type(
     if super::owner_pin::function_declaration_is_async(function, index) != Some(false) {
         return FactoryReturn::Future;
     }
-    let masked = mask_comments_and_strings(&function.body);
-    let Some(signature) = masked.split('{').next() else {
-        return FactoryReturn::Other;
-    };
-    let Some((_, returned)) = signature.rsplit_once("->") else {
-        return FactoryReturn::Other;
-    };
-    let returned = returned.split("where").next().unwrap_or(returned).trim();
-    if returned == ty {
+    if declared_return_type(function).as_deref() == Some(ty) {
         FactoryReturn::OwnSync
     } else {
         FactoryReturn::Other
     }
+}
+
+/// The signature's return type; a second `->` (fn-pointer parameter, `impl Fn() -> Self`) fails closed.
+fn declared_return_type(function: &FunctionSummary) -> Option<String> {
+    let masked = mask_comments_and_strings(&function.body);
+    let signature = masked.split('{').next()?;
+    let (_, returned) = signature.split_once("->")?;
+    (!returned.contains("->")).then(|| {
+        returned
+            .split("where")
+            .next()
+            .unwrap_or(returned)
+            .trim()
+            .to_string()
+    })
 }
 
 /// The only indexed `fn name` in an inherent `impl ty` block is a synchronous
@@ -4260,15 +4267,7 @@ fn associated_fn_returns_own_type(index: &RustIndex, ty: &str, name: &str) -> Fa
     if !super::owner_pin::inherent_factory_declaration_is_authoritative(function, ty, index) {
         return FactoryReturn::Other;
     }
-    let masked = mask_comments_and_strings(&function.body);
-    let Some(signature) = masked.split('{').next() else {
-        return FactoryReturn::Other;
-    };
-    let Some((_, returned)) = signature.rsplit_once("->") else {
-        return FactoryReturn::Other;
-    };
-    let returned = returned.split("where").next().unwrap_or(returned).trim();
-    if returned == "Self" || returned == ty {
+    if declared_return_type(function).is_some_and(|returned| returned == "Self" || returned == ty) {
         FactoryReturn::OwnSync
     } else {
         FactoryReturn::Other
