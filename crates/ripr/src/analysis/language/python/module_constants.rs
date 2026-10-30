@@ -215,9 +215,10 @@ impl StableNames {
 /// namespace writer there cannot change what a decorator read at import.
 /// Module scope, class bodies, fixtures, decorated functions and decorator
 /// arguments are untouched, so those writers still count. A module that names
-/// one of those functions outside its own `def` (called at import, aliased,
-/// used as a decorator or argument) keeps the whole-module scan (#11018,
-/// #11144).
+/// a `test*` function outside its own `def` (called at import, aliased, used
+/// as a decorator or argument) keeps the whole-module scan (#11018). A helper
+/// named that way keeps only its own body, and so does any helper that body
+/// names in turn (#11144).
 fn without_test_bodies(source: &str, statements: &[Stmt]) -> String {
     let mut ranges = Vec::new();
     let mut names: Vec<&str> = Vec::new();
