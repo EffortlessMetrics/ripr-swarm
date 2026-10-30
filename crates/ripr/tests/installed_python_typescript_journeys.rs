@@ -2942,3 +2942,104 @@ fn after_preserves_original_when_backup_creation_is_denied() -> Result<(), Strin
     }
     Ok(())
 }
+
+/// Model the durable states observed after killing the CLI immediately after
+/// finish, then immediately after receipt publication. This is a state-based
+/// control; the separate Linux process probe establishes the crash windows.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn pending_terminal_recovery_requires_published_receipt() -> Result<(), String> {
+    let attempt = GapAttempt::start("pending-terminal-recovery")?;
+    attempt.commit_closing_test()?;
+    let finished = attempt.after(true)?;
+    expect_exit(finished.status.success(), true, "finish initial attempt")?;
+    let manifest_path = attempt
+        .root
+        .join("target/ripr/repair-attempts")
+        .join(&attempt.attempt_id)
+        .join("attempt.json");
+    let mut manifest = attempt.manifest_for_only_attempt()?;
+    let roles = manifest["terminal_artifacts"]
+        .as_array()
+        .ok_or("no terminal roles")?
+        .clone();
+    if roles.len() != 3 {
+        return Err(format!("expected three terminal roles: {roles:?}"));
+    }
+    for role in &roles {
+        let path = role["path"].as_str().ok_or("terminal role lacks path")?;
+        std::fs::remove_file(attempt.root.join(path)).map_err(|e| e.to_string())?;
+    }
+    manifest
+        .as_object_mut()
+        .ok_or("manifest is not an object")?
+        .remove("terminal_artifacts");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let receipt = attempt.root.join("target/ripr/reports/agent-receipt.json");
+    let receipt_bytes = std::fs::read(&receipt).map_err(|e| e.to_string())?;
+    std::fs::remove_file(&receipt).map_err(|e| e.to_string())?;
+    let read_row = || -> Result<serde_json::Value, String> {
+        let (ok, text) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "pending status")?;
+        let document: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        document["repair_attempts"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["attempt_id"].as_str() == Some(attempt.attempt_id.as_str()))
+            })
+            .cloned()
+            .ok_or_else(|| format!("attempt missing: {text}"))
+    };
+    let before = read_row()?;
+    if before["disposition"] != "unconfirmed" {
+        return Err(format!("finish without receipt was confirmed: {before}"));
+    }
+    let missing = attempt.after(false)?;
+    expect_exit(
+        missing.status.success(),
+        false,
+        "after without published receipt",
+    )?;
+    let missing_manifest = attempt.manifest_for_only_attempt()?;
+    if missing_manifest
+        .get("terminal_artifacts")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|roles| !roles.is_empty())
+        || read_row()?["disposition"] != "unconfirmed"
+    {
+        return Err("missing receipt was promoted".into());
+    }
+    std::fs::write(&receipt, receipt_bytes).map_err(|e| e.to_string())?;
+    let retried = attempt.after(false)?;
+    expect_exit(
+        retried.status.success(),
+        false,
+        "already-finished retry after receipt",
+    )?;
+    let (_, stderr) = text_of(&retried);
+    need(
+        &stderr,
+        "already finished",
+        "retry completed retention before refusing repeat",
+    )?;
+    let recovered = attempt.manifest_for_only_attempt()?;
+    let recovered_roles = recovered["terminal_artifacts"]
+        .as_array()
+        .ok_or("recovery omitted roles")?;
+    if recovered_roles.len() != 3 || !roles.iter().all(|role| recovered_roles.contains(role)) {
+        return Err(format!("wrong recovered roles: {recovered_roles:?}"));
+    }
+    let after = read_row()?;
+    if after["disposition"] != "finished" || after["head_current"] != true {
+        return Err(format!("recovered receipt is not current: {after}"));
+    }
+    decoy_untouched(&attempt.decoy)
+}
