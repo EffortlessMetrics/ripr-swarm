@@ -208,7 +208,7 @@ Receipt: `<receipt_command>`
 Edit surface: `<test_file>`
 Must not change: <n items>
 Canonical gap: `<canonical_gap_id>`
-Authority: preview_advisory_only
+Authority: preview advisory only
 ```
 
 ### LSP code action
