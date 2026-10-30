@@ -10,6 +10,9 @@ tests = [
 [[extend]]
 id = "RIPR-SPEC-0011"
 tests = [
+  "crates/ripr/tests/agentic_bench_cage.rs::receipt_projection_replacement_requires_an_exact_issued_predecessor",
+  "crates/ripr/src/edit_cage/binding_omission_tests.rs::issued_receipt_replacement_reconstructs_only_the_exact_bound_slot",
+  "crates/ripr/src/edit_cage/binding_omission_tests.rs::receipt_replacement_refuses_unowned_bytes_modes_shapes_and_policy",
   "crates/ripr/src/app/repair_attempt/mod.rs::tests::finished_attempt_currentness_follows_worktree_drift_like_the_receipt",
   "crates/ripr/src/app/repair_attempt/mod.rs::tests::ignored_selected_test_uses_content_identity_for_currentness",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::finished_gap_attempt_detects_changed_bound_test_bytes",

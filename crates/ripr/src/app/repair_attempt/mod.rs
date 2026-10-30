@@ -288,6 +288,17 @@ pub(crate) struct RepairAttemptAfterRefusal {
     pub(crate) recorded_unix_ms: u64,
 }
 
+/// Custody for the one compatibility receipt replaced after the delta bind.
+/// No arbitrary path or directory is accepted. The predecessor is resolved
+/// only in this attempt's store and must retain a valid issued receipt pair.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReceiptProjectionPredecessor {
+    pub(crate) attempt_id: RepairAttemptId,
+    pub(crate) kind: crate::edit_cage::AttemptPathChangeKind,
+    pub(crate) executable: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RepairAttemptAfter {
@@ -298,6 +309,10 @@ pub(crate) struct RepairAttemptAfter {
     /// attempts did not bind the bytes of an already changed path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) delta_binding: Option<String>,
+    /// An already-bound issued receipt that this producer replaces with its
+    /// own receipt. Absent for legacy, unowned, or ineligible projections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) receipt_projection_predecessor: Option<ReceiptProjectionPredecessor>,
     pub(crate) packet_sha256: String,
     pub(crate) current: bool,
     pub(crate) verdict: EditCageVerdict,
@@ -578,7 +593,7 @@ fn recompute_after_verdict_binding(
     // status` write command-owned files under `target/ripr` after the finish
     // bound its verdict. Those later operational writes are not part of the
     // attempt; any other movement still breaks the binding.
-    let delta = crate::edit_cage::without_later_operational_writes(
+    let mut delta = crate::edit_cage::without_later_operational_writes(
         baseline.policy(),
         &delta,
         &after.verdict.changed_paths,
@@ -587,7 +602,110 @@ fn recompute_after_verdict_binding(
     let delta_bytes = serde_json::to_vec(&delta)
         .map_err(|error| format!("serialize repair delta failed: {error}"))?;
     let holds = sha256_bytes(&delta_bytes) == after.delta_sha256 && verdict == after.verdict;
-    Ok((verdict, holds))
+    if holds {
+        return Ok((verdict, true));
+    }
+    let Some(predecessor) = &after.receipt_projection_predecessor else {
+        return Ok((verdict, false));
+    };
+    // Historical pair validation never calls currentness: A may correctly be
+    // stale after B finished, and following currentness would create a cycle.
+    let restore = || -> Result<(Vec<u8>, Vec<u8>), String> {
+        let locator = manifest
+            .store
+            .as_ref()
+            .map(|store| Path::new(&store.locator));
+        let (_, _, prior) = open_attempt(root, locator, &predecessor.attempt_id)?;
+        Ok((
+            issued_terminal_receipt_bytes(root, &prior)?,
+            issued_terminal_receipt_bytes(root, manifest)?,
+        ))
+    };
+    let Ok((prior, issued)) = restore() else {
+        return Ok((verdict, false));
+    };
+    if !crate::edit_cage::reconstruct_receipt_projection(
+        &mut delta,
+        &baseline,
+        predecessor.kind,
+        predecessor.executable,
+        &prior,
+        &issued,
+    ) {
+        return Ok((verdict, false));
+    }
+    let reconstructed = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
+    let bytes = serde_json::to_vec(&delta)
+        .map_err(|error| format!("serialize receipt projection delta failed: {error}"))?;
+    Ok((
+        reconstructed.clone(),
+        sha256_bytes(&bytes) == after.delta_sha256 && reconstructed == after.verdict,
+    ))
+}
+
+/// The retained pair, not a JSON attempt id or canonical pathname, supplies
+/// producer custody. Bound the reads before historical validation.
+fn issued_terminal_receipt_bytes(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> Result<Vec<u8>, String> {
+    for role in [TERMINAL_RECEIPT_ROLE, TERMINAL_VERIFY_ROLE] {
+        let artifact = find_terminal_artifact_by_role(manifest, role)
+            .ok_or("issued receipt pair is missing")?;
+        if artifact.bytes > crate::edit_cage::MAX_CAPTURE_FILE_BYTES {
+            return Err("issued receipt pair exceeds capture limit".to_string());
+        }
+    }
+    if !matches!(
+        load_attempt_terminal_receipt(root, manifest),
+        AttemptTerminalReceipt::Issued { .. }
+    ) {
+        return Err("receipt predecessor is not a validated issued pair".to_string());
+    }
+    let artifact = find_terminal_artifact_by_role(manifest, TERMINAL_RECEIPT_ROLE)
+        .ok_or("issued receipt disappeared")?;
+    read_terminal_artifact_bytes(root, manifest, artifact)
+}
+
+fn receipt_projection_predecessor(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+    baseline: &AttemptBaseline,
+    delta: &crate::edit_cage::AttemptDelta,
+) -> Option<ReceiptProjectionPredecessor> {
+    use std::io::Read as _;
+    let path = root.join(crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT);
+    let file = crate::output::file_write::open_regular_read(&path).ok()?;
+    let mut bytes = Vec::new();
+    file.take(crate::edit_cage::MAX_CAPTURE_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let (kind, executable) =
+        crate::edit_cage::receipt_projection_identity(delta, baseline, &bytes)?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let attempt_id = RepairAttemptId::parse(
+        value
+            .pointer("/repair_attempt/attempt_id")?
+            .as_str()?
+            .to_string(),
+    )
+    .ok()?;
+    if attempt_id == manifest.repair_attempt_id {
+        return None;
+    }
+    let locator = manifest
+        .store
+        .as_ref()
+        .map(|store| Path::new(&store.locator));
+    let (_, _, prior) = open_attempt(root, locator, &attempt_id).ok()?;
+    if issued_terminal_receipt_bytes(root, &prior).ok()? != bytes {
+        return None;
+    }
+    Some(ReceiptProjectionPredecessor {
+        attempt_id,
+        kind,
+        executable,
+    })
 }
 
 fn manifest_relative_path(manifest: &RepairAttemptManifest) -> PathBuf {
@@ -2655,11 +2773,14 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     }
     let delta_bytes = serde_json::to_vec(&delta)
         .map_err(|error| format!("serialize repair delta failed: {error}"))?;
+    let receipt_projection_predecessor =
+        receipt_projection_predecessor(&root, &manifest, &baseline, &delta);
     let after = RepairAttemptAfter {
         attempt_id: manifest.repair_attempt_id.clone(),
         repository_head: current_head,
         delta_sha256: sha256_bytes(&delta_bytes),
         delta_binding: Some("path-state-v1".to_string()),
+        receipt_projection_predecessor,
         packet_sha256,
         current,
         verdict,
@@ -3723,6 +3844,26 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     {
         return Err("repair attempt delta binding version is not recognized".to_string());
     }
+    if let Some(after) = &manifest.after
+        && let Some(predecessor) = &after.receipt_projection_predecessor
+    {
+        RepairAttemptId::parse(predecessor.attempt_id.as_str().to_string())?;
+        if predecessor.attempt_id == manifest.repair_attempt_id
+            || !after
+                .verdict
+                .changed_paths
+                .iter()
+                .any(|path| path == crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT)
+            || after.delta_binding.as_deref() != Some("path-state-v1")
+            || !matches!(
+                predecessor.kind,
+                crate::edit_cage::AttemptPathChangeKind::Added
+                    | crate::edit_cage::AttemptPathChangeKind::Modified
+            )
+        {
+            return Err("repair receipt projection predecessor is invalid".to_string());
+        }
+    }
     if manifest
         .last_after_refusal
         .as_ref()
@@ -4629,6 +4770,7 @@ mod tests {
             delta_sha256: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                 .to_string(),
             delta_binding: None,
+            receipt_projection_predecessor: None,
             packet_sha256:
                 "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                     .to_string(),
@@ -4696,6 +4838,19 @@ mod tests {
             || !versions.iter().any(serde_json::Value::is_null)
         {
             return Err("schema does not admit the current and legacy binding forms".to_string());
+        }
+        let witness =
+            &schema["$defs"]["after"]["properties"]["receipt_projection_predecessor"]["anyOf"][1];
+        if witness["additionalProperties"] != false
+            || witness["properties"]["kind"]["enum"] != serde_json::json!(["added", "modified"])
+            || witness["required"] != serde_json::json!(["attempt_id", "kind", "executable"])
+            || required
+                .iter()
+                .any(|value| value == "receipt_projection_predecessor")
+        {
+            return Err(
+                "schema must carry the optional exact receipt predecessor contract".to_string(),
+            );
         }
         Ok(())
     }
