@@ -268,7 +268,7 @@ mod tests {
         let _ = release.send(());
         watchdog
             .join()
-            .map_err(|_| "watchdog panicked".to_string())?;
+            .map_err(|_panic_payload| "watchdog panicked".to_string())?;
         assert_eq!(worker_done_rx.recv_timeout(CONTAINMENT), Ok(()));
         assert_eq!(
             waits,
