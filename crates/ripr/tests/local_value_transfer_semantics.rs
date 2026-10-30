@@ -440,6 +440,29 @@ fn bounded_local_arithmetic_preserves_the_scalar_width_gate() -> Result<(), Stri
 }
 
 #[test]
+fn mixed_checked_and_plain_local_arithmetic_keeps_the_checked_type_gate() -> Result<(), String> {
+    // Any checked step in the provenance applies the `usize` gate to every
+    // read parameter type (#10278 review): a u32 local is refused where the
+    // same initializer's plain steps alone would credit it. The conservative
+    // whole-provenance refusal is intended for this bounded repair; the
+    // split per-step gate is the recorded optimization/refinement follow-up.
+    let mixed = finding_for("u32", "n.checked_sub(1).map_or(0, |i| i) + 2", "0", "2")?;
+    assert_eq!(mixed["ripr"]["infect"]["state"], "unknown", "{mixed}");
+    assert!(
+        mixed["activation"]["missing_discriminators"]
+            .as_array()
+            .ok_or("missing discriminators")?
+            .is_empty(),
+        "{mixed}"
+    );
+    let plain = finding_for("u32", "n + 2", "0", "2")?;
+    assert_eq!(plain["ripr"]["infect"]["state"], "yes", "{plain}");
+    let wide = finding_for("usize", "n.checked_sub(1).map_or(0, |i| i) + 2", "0", "2")?;
+    assert_eq!(wide["ripr"]["infect"]["state"], "yes", "{wide}");
+    Ok(())
+}
+
+#[test]
 fn comparison_parameter_constrains_unsuffixed_local_arithmetic() -> Result<(), String> {
     for shape in [OperandShape::Local, OperandShape::LocalReversed] {
         for (ty, largest, boundary, state) in [

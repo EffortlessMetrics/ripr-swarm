@@ -11809,6 +11809,7 @@ tests = [
   "crates/ripr/tests/local_value_transfer_semantics.rs::owner_generic_parameters_still_refuse_intrinsic_identity",
   "crates/ripr/tests/local_value_transfer_semantics.rs::descendant_generic_declarations_do_not_escape_into_the_owner",
   "crates/ripr/tests/local_value_transfer_semantics.rs::comparison_parameter_constrains_unsuffixed_local_arithmetic",
+  "crates/ripr/tests/local_value_transfer_semantics.rs::mixed_checked_and_plain_local_arithmetic_keeps_the_checked_type_gate",
   "crates/ripr/tests/local_value_transfer_semantics.rs::comparison_parameter_constrains_literal_arithmetic_in_both_operand_shapes",
   "crates/ripr/tests/local_value_transfer_semantics.rs::counterpart_identity_and_annotation_refusals_remain_conservative",
   "crates/ripr/tests/local_value_transfer_semantics.rs::live_comparison_local_cannot_hide_a_narrow_or_rebound_constraint",
