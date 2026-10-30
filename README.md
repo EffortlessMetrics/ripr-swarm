@@ -50,7 +50,7 @@ Selected lines from the development [boundary example's checked output](fixtures
 
 ```text
   Changed behavior: amount >= discount_threshold
-  Missing discriminator: amount == discount_threshold
+  Missing check: amount == discount_threshold
   Related test (1 of 2 matched rows): tests/pricing.rs:4 below_threshold_has_no_discount (no test input reaches `amount == discount_threshold`)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
 ```
@@ -210,7 +210,7 @@ one module; any other change to the file fails the attempt. Build output under a
 a committed `.gitignore`; changing `.gitignore` mid-attempt is itself refused.
 Redirect ripr output under `target/ripr/` or outside the repository.
 Exit `0` means the command completed and `2` means it could not, which includes
-the file refusal above; `3` means a gate blocked or a typed refusal answered, such
+the file refusal above; `3` means ripr declined: a gate blocked, or it refused a request, such
 as a repair after phase refused for a named cause.
 See [exit codes](docs/EXIT_CODES.md). The
 [LLM operator guide](docs/LLM_OPERATOR_GUIDE.md) covers the full repair loop.

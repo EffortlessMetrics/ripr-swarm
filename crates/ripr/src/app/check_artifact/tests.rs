@@ -221,6 +221,35 @@ fn artifact_round_trip_preserves_full_fidelity_findings() -> Result<(), String> 
 }
 
 #[test]
+fn live_truthiness_admission_cannot_be_reused_from_an_artifact() -> Result<(), String> {
+    let dir = unique_temp_dir("live-truthiness")?;
+    let result = (|| {
+        let (path, input, config, mut findings) = write_sample_artifact(&dir)?;
+        // Ordinary recorded findings retain the existing reuse contract.
+        assert_eq!(
+            load_findings_for_reuse(&path, &input, &config, None)?,
+            findings
+        );
+        let first = findings
+            .first_mut()
+            .ok_or("sample must produce a finding")?;
+        first.alignment_reason = Some(crate::domain::LIVE_PYTHON_TRUTHINESS_ALIGNMENT.to_string());
+        write_check_artifact(&path, &input, &config, &findings, false)?;
+        let error = load_findings_for_reuse_core(&path, &input, &config, None)
+            .err()
+            .ok_or("live admission must refuse artifact reuse")?;
+        assert_eq!(
+            error.check_failure_kind(),
+            Some(crate::core_error::CheckFailureKind::CheckArtifactUnusable)
+        );
+        assert!(error.to_string().contains("without `--from`"));
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
+#[test]
 fn language_metadata_serde_uses_documented_wire_casing() -> Result<(), String> {
     // Enum-level pin for the same wire vocabulary (kept out of
     // domain/language.rs: the domain layer must not reference serde_json —

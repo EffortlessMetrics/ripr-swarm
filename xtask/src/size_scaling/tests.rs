@@ -1,6 +1,8 @@
+#[cfg(unix)]
+use super::build_packet;
 use super::cells::{Cell, cells};
 use super::judge::{Limits, Outcome, Sample, Verdict, judge};
-use super::{build_packet, parse_args};
+use super::parse_args;
 
 type TestResult = Result<(), String>;
 

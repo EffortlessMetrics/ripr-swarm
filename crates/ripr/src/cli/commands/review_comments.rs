@@ -3056,6 +3056,7 @@ mod tests {
         assert_eq!(receipt["status"], "failed");
         assert_eq!(receipt["active_phase"], "language_facts");
         assert_eq!(receipt["last_completed_phase"], "diff_discovery");
+        assert_eq!(receipt["active_step"], "corpus_admission");
         assert_eq!(
             receipt["limitations"][0]["category"],
             "review_guidance_oversized"

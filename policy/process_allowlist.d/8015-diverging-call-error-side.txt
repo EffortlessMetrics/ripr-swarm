@@ -1,0 +1,1 @@
+crates/ripr/tests/diverging_call_error_side.rs|Command::new|1|diverging-call-fixture-text|#8015: the occurrence is analyzer fixture source text (a `.exec()` call written into a temp-dir crate that ripr parses and never compiles or runs). This test spawns no process.

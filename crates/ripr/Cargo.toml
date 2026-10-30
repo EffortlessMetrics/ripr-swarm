@@ -78,7 +78,7 @@ oxc_parser = { version = "0.130", optional = true }
 oxc_span = { version = "0.130", optional = true }
 ra_ap_syntax = { version = "0.0.349", optional = true }
 rayon = "1"
-rmcp = { version = "=3.5.1", default-features = false, features = ["server", "transport-async-rw"] }
+rmcp = { version = "=3.7.0", default-features = false, features = ["server", "transport-async-rw"] }
 # Default features pull `malachite-bigint` (LGPL-3.0-only), which is
 # incompatible with our MIT/Apache-2.0 license posture. Disable the
 # default and select `num-bigint` (MIT/Apache-2.0) for arbitrary-precision
@@ -110,6 +110,13 @@ unicode-ident = { version = "=1.0.24", optional = true }
 [target.'cfg(unix)'.dependencies]
 # Standalone CLI SIGINT observation through safe signal registration.
 signal-hook = { version = "0.3", default-features = false }
+# #9979: safe non-reaping waitid observation pins Unix group identity through
+# cleanup, including macOS (not covered by nix's waitid wrapper). Already
+# locked transitively; the process feature exposes no unsafe product code.
+# The feature set must stay identical to xtask's transitive rustix variant
+# (fs arrives there through tar/xattr) so the ordinary CLI and tool builds
+# share one dependency build (xtask/src/tests/build_feature_reuse.rs).
+rustix = { version = "1.1.5", features = ["process", "event", "fs"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Keep the standard-library flag implementation shared with xtask's archive
@@ -147,7 +154,7 @@ lang-perl = []
 
 [dev-dependencies]
 proptest = "1"
-rmcp = { version = "=3.5.1", default-features = false, features = ["client", "transport-async-rw"] }
+rmcp = { version = "=3.7.0", default-features = false, features = ["client", "transport-async-rw"] }
 serial_test = "4"
 # Dev-only: deterministic initialize-delivery witnesses (#3802) pause tokio
 # time and drive the service layers (tower Service) directly.

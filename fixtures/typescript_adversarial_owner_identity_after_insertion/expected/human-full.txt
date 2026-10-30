@@ -3,12 +3,17 @@ mode: fast
 root: fixtures/typescript_adversarial_owner_identity_after_insertion/input
 config: <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input/ripr.toml
 
-Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Changed file(s) by language: typescript = 1
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 9 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 9 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 WARNING src/pricing.ts:6
   id: probe:src_pricing.ts:typescript_preview:fff3ea84
@@ -16,9 +21,10 @@ WARNING src/pricing.ts:6
 Changed
   after:  export const DEFAULT_FEE_RULE: FeeRule = { bps: 300, cap: 50 };
 
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  typescript:src/pricing.ts::DEFAULT_FEE_RULE
 
 Language
@@ -39,6 +45,7 @@ Preview actionability
 
 Static exposure
   no_static_path (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach no: 0 related test(s) found for owner `DEFAULT_FEE_RULE`
@@ -88,9 +95,10 @@ WARNING src/pricing.ts:14
 Changed
   after:    if (amount >= threshold) {
 
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  typescript:src/pricing.ts::applyDiscount
 
 Language
@@ -111,6 +119,7 @@ Preview actionability
 
 Static exposure
   no_static_path (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach no: 0 related test(s) found for owner `applyDiscount`
@@ -124,7 +133,7 @@ Evidence
   - typescript_package_limitation: typescript_test_runner_unresolved
 
 Weakness
-  - No test references `applyDiscount(` — add a test that calls the changed owner
+  - No statically linked test call to `applyDiscount(` was established; inspect existing test calls and their import/export paths
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
@@ -148,7 +157,7 @@ TypeScript repair packet (advisory)
   next capability needed: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries
 
 Next step
-  TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted
+  TypeScript preview advisory: no statically linked test calls `applyDiscount(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:bd772dc8
   ripr context --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:bd772dc8

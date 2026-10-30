@@ -12,7 +12,7 @@ typechecker or test runner, and they do not make generated CI blocking.
 | Language | Status | Default | Evidence scope |
 | --- | --- | --- | --- |
 | Rust | reference path | enabled | Rust static exposure evidence and the existing CLI, CI, editor, report, and gate surfaces. |
-| TypeScript and JavaScript | preview | detected TypeScript projects (root `tsconfig.json`/`jsconfig.json`, or `.ts`/`.tsx`/`.mts`/`.cts` source under `src/` or `tests/`) without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. |
+| TypeScript and JavaScript | preview | detected TypeScript projects (`tsconfig.json`/`jsconfig.json`, or `.ts`/`.tsx`/`.mts`/`.cts` source under `src/` or `tests/`, at the root, in a directory one level below it, or in `packages/*`, `apps/*`, `libs/*` or `libraries/*`) without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. |
 | Python | preview static facts, plus a scoped repair-routing lane (tier in the registry projection below) | detected Python projects without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, RIPR-stage evidence, selected repair-class missing discriminators, fail-closed static limits, and bounded repair cards/packets for selected pytest/unittest routes. |
 
 ## Capability Registry Projection
@@ -229,6 +229,26 @@ A static limit does not automatically erase a useful related test or strong
 oracle. It means the reviewer should keep the limitation visible while deciding
 the next test change.
 
+## Read Preview Confidence
+
+TypeScript and JavaScript preview findings carry a `confidence` number that is
+a per-class constant (`0.6` exposed, `0.4` weakly exposed or no static path,
+`0.2` static unknown). It is a preview ordinal, not a probability, and it is
+not on the same scale as Rust's `confidence`. The number is unchanged by
+#10700; what the finding adds is the reason it is held there:
+
+- `confidence_basis` in `check` and `context` JSON (`explain` prints the `Why capped:` text line only) is a list of
+  `{code, summary}` capping reasons: `preview_stages_not_modeled`,
+  `syntax_first_no_type_resolution`, and the evidence-specific
+  `infection_not_established`, `propagation_not_established`, `no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
+  `observation_not_confirmed` or `discriminator_not_established`.
+- `confidence_why_capped` is the one plain-English line; human `check` and
+  `explain` print it as `Why capped:` under the confidence.
+- Rust findings carry neither field. The basis explains the score only; it
+  never changes the class, actionability or repair-packet readiness. The
+  reasons live in the shared `ConfidenceCap` domain type so the Python adapter
+  can adopt them without a new wire shape.
+
 ## Read Mixed-Language Reports
 
 In JSON outputs, preview findings remain in the same arrays as Rust findings.
@@ -366,7 +386,10 @@ separate bound), a 16 MiB per-file read cap
 (`RIPR_PYTHON_MAX_FILE_READ_BYTES`), and a 64 MiB per-run workspace read
 budget (`RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES`). Files refused by any bound
 and unreadable changed files are named typed limitations on the diff
-result, never silent skips.
+result, never silent skips. The file-count cap only refuses unchanged context: changed
+`.py` files are kept past it, while the byte budgets still apply (#10461).
+The walk streams each discovered file into a selection bounded by that cap,
+so discovery holds at most the cap plus the changed files in memory (#10594).
 
 | Format | Rust repo | Perl repo | TypeScript repo | Python repo |
 | --- | --- | --- | --- | --- |

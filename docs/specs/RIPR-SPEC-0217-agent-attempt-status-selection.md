@@ -130,7 +130,7 @@ receipt strength, and currentness as separate facts:
   non-claims.
 
 - A restart or fresh-start route is named only when the shared repair
-  eligibility gate admits the seam (#8766): `repair_refusal_reason` (the gate
+  eligibility gate admits the seam (#8766): `repair_refusal` (the gate
   `ripr repair` applies), the recommended-test edit-target predicate and the
   held-inline-target check (the checks the before phase applies to the
   packet). The before phase's dirty-premise check over the rest of the

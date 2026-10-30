@@ -85,6 +85,134 @@ fn callback_parameters_shadow_the_runner_and_inner_rebinds_do_not() {
     }
 }
 
+/// #10987: a renamed require()-namespace pick the imports layer admits
+/// (`const { test: t } = runner`) indexes exactly like the member and
+/// unrenamed forms it is admitted beside, and so does a renamed runner
+/// import (`import { test as t }`). Entity identity, not token coincidence:
+/// the alias is the same registration target as the direct spelling.
+#[test]
+fn a_renamed_registration_alias_indexes_like_the_direct_forms() {
+    let file = Path::new("test/pick.test.ts");
+    let head = "import { inc } from '../src/calc.js';\nconst assert = require('node:assert');\nconst runner = require('node:test');\n";
+    let callback = "() => { assert.strictEqual(inc(1), 2); }";
+    let member =
+        format!("{head}const test = runner.test;\ntest('member pick pins inc', {callback});\n");
+    let unrenamed =
+        format!("{head}const {{ test }} = runner;\ntest('unrenamed pick pins inc', {callback});\n");
+    let renamed =
+        format!("{head}const {{ test: t }} = runner;\nt('renamed pick pins inc', {callback});\n");
+    let renamed_only = format!(
+        "{head}const {{ test: t }} = runner;\nt.only('renamed only pins inc', {callback});\n"
+    );
+    let renamed_import = format!(
+        "import {{ test as t }} from 'node:test';\nimport {{ inc }} from '../src/calc.js';\nconst assert = require('node:assert');\nt('renamed import pins inc', {callback});\n"
+    );
+    for (label, source) in [
+        ("member pick", &member),
+        ("unrenamed pick", &unrenamed),
+        ("renamed pick", &renamed),
+        ("renamed only", &renamed_only),
+        ("renamed import", &renamed_import),
+    ] {
+        let tests = extract_tests(file, source);
+        assert_eq!(
+            tests.len(),
+            1,
+            "{label} must register exactly one test: {source}"
+        );
+        assert_eq!(
+            tests[0].assertions.len(),
+            1,
+            "{label} must keep its assertion: {source}"
+        );
+        assert!(
+            detect_partial_test_extraction(file, source, &tests).is_none(),
+            "{label} must not be disclosed as unextracted: {source}"
+        );
+    }
+}
+
+/// #10987: a renamed `describe` pick walks its suite, so a renamed test pick
+/// inside it keeps its qualified name instead of vanishing with the suite.
+#[test]
+fn a_renamed_describe_pick_walks_its_suite() {
+    let file = Path::new("test/pick.test.ts");
+    let head = "import { inc } from '../src/calc.js';\nconst assert = require('node:assert');\nconst runner = require('node:test');\n";
+    let source = format!(
+        "{head}const {{ describe: d, test: t }} = runner;\nd('renamed suite', () => {{\n  t('pins inc', () => {{ assert.strictEqual(inc(1), 2); }});\n}});\n"
+    );
+    let tests = extract_tests(file, &source);
+    assert_eq!(tests.len(), 1, "{source}");
+    assert_eq!(tests[0].name, "renamed suite pins inc", "{source}");
+    assert_eq!(tests[0].assertions.len(), 1, "{source}");
+    assert!(detect_partial_test_extraction(file, &source, &tests).is_none());
+}
+
+/// #10987 controls: an alias credits only the registration target it names.
+/// `test` picked off node:assert and an alias of a non-runner member are no
+/// runner registrations, however they are spelled, and a local rebinding of
+/// the renamed spelling shadows the import entirely.
+#[test]
+fn a_renamed_alias_credits_only_the_registration_target_it_names() {
+    let file = Path::new("test/pick.test.ts");
+    let head = "import { inc } from '../src/calc.js';\nconst assert = require('node:assert');\nconst other = require('node:assert');\n";
+    let callback = "() => { assert.strictEqual(inc(1), 2); }";
+    for (label, pick, local) in [
+        (
+            "node:assert's `test` member under a renamed pick",
+            "const { test: t } = other;",
+            "t",
+        ),
+        (
+            "a non-runner member alias",
+            "const { deepEqual: eq } = other;",
+            "eq",
+        ),
+    ] {
+        let source = format!("{head}{pick}\n{local}('ties nothing', {callback});\n");
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{label} must register nothing: {source}");
+    }
+    let shadowed = format!(
+        "import {{ test as t }} from 'node:test';\nimport {{ inc }} from '../src/calc.js';\nconst assert = require('node:assert');\ndescribe('suite', () => {{\n  const t = (name, run) => run();\n  t('ties nothing', {callback});\n}});\n"
+    );
+    let tests = extract_tests(file, &shadowed);
+    assert!(
+        tests.is_empty(),
+        "a describe-body rebinding of the renamed spelling is not the runner: {shadowed}"
+    );
+}
+
+/// #10987 review: the literal spellings refuse inactive modifiers
+/// (`t.skip(...)`, `t.todo(...)`) and empty `.each` tables before a callback
+/// can donate assertions, and an aliased `.each` would lose the table-row
+/// fences. An alias must not read as a registration those spellings refuse:
+/// it registers only bare or through an active modifier (`t(...)`,
+/// `t.only(...)`).
+#[test]
+fn a_renamed_alias_owes_the_inactive_and_each_fences() {
+    let file = Path::new("test/pick.test.ts");
+    let head = "import { inc } from '../src/calc.js';\nconst assert = require('node:assert');\nconst runner = require('node:test');\n";
+    let callback = "() => { assert.strictEqual(inc(1), 2); }";
+    for (label, registration) in [
+        ("inactive modifier", format!("const {{ test: t }} = runner;\nt.skip('ties nothing', {callback});\n")),
+        ("todo modifier", format!("const {{ test: t }} = runner;\nt.todo('ties nothing', {callback});\n")),
+        ("empty aliased table", format!("const {{ test: t }} = runner;\nt.each([])('ties nothing', {callback});\n")),
+        (
+            "aliased each table",
+            "const { test: t } = runner;\nt.each([[1, 'gold']])('ties nothing', (n, tier) => { assert.strictEqual(inc(n), 2 + tier.length); });\n"
+                .to_string(),
+        ),
+    ] {
+        let source = format!("{head}{registration}");
+        let tests = extract_tests(file, &source);
+        assert!(
+            tests.is_empty(),
+            "{label} must register nothing through an alias: {source}"
+        );
+    }
+}
+
 #[test]
 fn awaited_mismatched_runner_kinds_keep_partial_extraction_disclosure() {
     let file = Path::new("test/nanoid.test.js");
@@ -600,6 +728,57 @@ test("adds", () => {
         detect_partial_test_extraction(Path::new("test/pricing.test.mjs"), source, &tests)
             .is_none(),
         "tests inside an options-object describe are extracted, not dropped"
+    );
+}
+
+/// AVA's macro form puts a named macro between the title and the callback
+/// (`test('x', withServer, async (t, server) => {})`, #10964); the callback
+/// is argument 2 and its assertions are read. A macro-looking second argument
+/// without a function third argument is not a callback shape and stays
+/// argument 1 (here an identifier body, nothing to read).
+#[test]
+fn reads_callback_after_a_named_macro() {
+    let source = r#"
+import test from "ava";
+test("adds", withServer, async (t, server) => {
+    t.is(add(1, 2), 3);
+});
+test("subtracts", macros.withServer, async (t) => {
+    t.is(subtract(3, 1), 2);
+});
+test("multiplies", runMultiply, 5000);
+"#;
+    let tests = extract_tests(Path::new("test/math.test.ts"), source);
+
+    let names: Vec<&str> = tests.iter().map(|test| test.name.as_str()).collect();
+    assert_eq!(names, vec!["adds", "subtracts", "multiplies"], "{tests:?}");
+    assert_eq!(tests[0].assertions.len(), 1, "{:?}", tests[0].assertions);
+    assert_eq!(tests[0].assertions[0].matcher, "is");
+    assert_eq!(tests[1].assertions.len(), 1, "{:?}", tests[1].assertions);
+    assert_eq!(tests[2].assertions.len(), 0, "{:?}", tests[2].assertions);
+    assert!(
+        detect_partial_test_extraction(Path::new("test/math.test.ts"), source, &tests).is_none(),
+        "macro-form registrations are extracted, not dropped"
+    );
+}
+
+/// Without AVA provenance a named second argument is not a macro: a
+/// `node:test` options object held in a variable may carry `skip`, so its
+/// callback is not credited as running (Devin review on #10966).
+#[test]
+fn a_named_options_object_is_not_read_as_an_ava_macro() {
+    let source = r#"
+import { test } from "node:test";
+const options = { skip: true };
+test("adds", options, (t) => {
+    t.assert.strictEqual(add(1, 2), 3);
+});
+"#;
+    let tests = extract_tests(Path::new("test/math.test.ts"), source);
+
+    assert!(
+        tests.iter().all(|test| test.assertions.is_empty()),
+        "{tests:?}"
     );
 }
 

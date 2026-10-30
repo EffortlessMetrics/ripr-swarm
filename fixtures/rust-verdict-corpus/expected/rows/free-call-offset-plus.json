@@ -1,0 +1,22 @@
+{
+  "case_id": "free-call-offset-plus",
+  "subject_id": "authored-free-call-pin",
+  "origin": "authored",
+  "anchor": "src/lib.rs:9",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "integration_test_free_call_entry_pin",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

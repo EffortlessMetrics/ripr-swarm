@@ -1,0 +1,37 @@
+#[derive(Debug, Clone)]
+pub struct CiLine {
+    pub sku: String,
+    pub qty: u32,
+}
+
+// Hand-written: the sku is compared without regard to case.
+impl PartialEq for CiLine {
+    fn eq(&self, other: &Self) -> bool {
+        self.sku.eq_ignore_ascii_case(&other.sku) && self.qty == other.qty
+    }
+}
+
+#[derive(Default)]
+pub struct CiOrder {
+    pub lines: Vec<CiLine>,
+}
+
+impl CiOrder {
+    pub fn add_ci(&mut self, sku: &str, qty: u32) {
+        self.lines.push(CiLine { sku: sku.to_uppercase(), qty });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_records_the_line_c_ci() {
+        let mut order = CiOrder::default();
+        let mut expected = CiOrder::default();
+        expected.lines.push(CiLine { sku: "BOLT".to_string(), qty: 2 });
+        order.add_ci("bolt", 2);
+        assert_eq!(order.lines, expected.lines);
+    }
+}

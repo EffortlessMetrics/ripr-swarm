@@ -1,0 +1,6 @@
+# Registers the claims payload owner-pin controls (#9619) under RIPR-SPEC-0197.
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/claims_payload_owner_pin.rs::claims_payload_pins_credit_only_on_a_verified_claims_import",
+]

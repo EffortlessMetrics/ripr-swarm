@@ -1,0 +1,6 @@
+# Registers the lossy last-operation pin refusal (#10737) under RIPR-SPEC-0197.
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/lossy_post_operation_pin.rs::a_pin_the_lossy_operation_hides_the_change_from_never_credits_exposed",
+]
