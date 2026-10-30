@@ -60,7 +60,8 @@ pub(super) struct PythonSourceFacts {
     pub(super) foreign_lexes: Option<super::module_value::ForeignLexes>,
     /// The file's star-export answers for its public owners, from the
     /// source-fact parse; set only by [`extract_workspace_source_facts`] on a
-    /// file that parses (#10914).
+    /// non-test file that parses, the files whose owners the workspace keeps
+    /// (#10914).
     pub(super) star_facts: Option<super::reexports::PrimedStarFacts>,
 }
 
@@ -706,12 +707,9 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
         let mut rewritten = extract_source_facts(file, &inlined);
         rewritten.assigned_attributes = snapshot.assigned_attributes;
         // The re-export pass reads the file as written.
+        // Only a test file is inlined, and the workspace keeps a test file's
+        // tests, not its owners: it needs the helper answers alone.
         if workspace {
-            rewritten.star_facts = Some(super::reexports::primed_star_facts_of(
-                source,
-                Some(&module.body),
-                &super::reexports::star_export_names(&rewritten.owners),
-            ));
             super::known_equality_helpers::prove_known_equality_helpers(
                 source,
                 Some(&module.body),
@@ -819,19 +817,24 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
     );
     collect_docstring_line_ranges(source, &module.body, &mut snapshot.docstring_line_ranges);
     collect_import_line_ranges(source, &module.body, &mut snapshot.import_line_ranges);
+    // The workspace keeps a test file's tests and every other file's owners,
+    // so each file answers only the pass that reads what it keeps: star
+    // exports for owners, known-equality helpers for tests. The credit pass
+    // reads helpers from the file as written, and this parse is of that file.
     if workspace {
-        snapshot.star_facts = Some(super::reexports::primed_star_facts_of(
-            written,
-            Some(&module.body),
-            &super::reexports::star_export_names(&snapshot.owners),
-        ));
-        // The credit pass reads helpers from the file as written, and this
-        // parse is of that file.
-        super::known_equality_helpers::prove_known_equality_helpers(
-            written,
-            Some(&module.body),
-            &mut snapshot.tests,
-        );
+        if is_test_file(file) {
+            super::known_equality_helpers::prove_known_equality_helpers(
+                written,
+                Some(&module.body),
+                &mut snapshot.tests,
+            );
+        } else {
+            snapshot.star_facts = Some(super::reexports::primed_star_facts_of(
+                written,
+                Some(&module.body),
+                &super::reexports::star_export_names(&snapshot.owners),
+            ));
+        }
     }
     snapshot
 }

@@ -436,4 +436,18 @@ fn the_workspace_source_fact_parse_answers_each_helper_proof() {
     assert_eq!(answers(credited, true), vec![Some(true)]);
     assert_eq!(answers(refused, true), vec![Some(false)]);
     assert_eq!(answers(credited, false), vec![None]);
+    // A production file's tests never reach the credit pass.
+    let production = source_facts::extract_workspace_source_facts(
+        std::path::Path::new("src/parse.py"),
+        credited,
+    );
+    assert!(
+        production
+            .tests
+            .iter()
+            .flat_map(|test| &test.assertions)
+            .filter_map(|assertion| assertion.known_equality_helper.as_ref())
+            .all(|helper| helper.established.is_none()),
+        "only a test file answers its helpers"
+    );
 }

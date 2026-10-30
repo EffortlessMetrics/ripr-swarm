@@ -904,4 +904,37 @@ fn the_source_fact_parse_answers_the_star_export_questions_as_the_reexport_pass(
         plain.star_facts.is_none(),
         "only the workspace pass computes star facts"
     );
+    // The workspace keeps a test file's tests, not its owners.
+    let test_file = source_facts::extract_workspace_source_facts(
+        Path::new("tests/test_more.py"),
+        "def test_chunked():\n    assert chunked(1) == 1\n",
+    );
+    assert!(
+        test_file.star_facts.is_none(),
+        "a test file's owners never reach the re-export pass"
+    );
+    // The same holds on the path that inlines a same-file assertion helper.
+    let helper_test = "from pkg.more import chunked\n\n\ndef check(value):\n    assert chunked(value) == 1\n\n\ndef test_chunked():\n    check(1)\n";
+    assert!(
+        super::helper_inline::inline_test_helpers(
+            helper_test,
+            &match super::source_facts::parse_module_result(
+                Path::new("tests/test_helper.py"),
+                helper_test
+            ) {
+                Ok(rustpython_parser::ast::Mod::Module(module)) => module.body,
+                _ => Vec::new(),
+            },
+        )
+        .is_some(),
+        "the fixture must take the helper-inlining path"
+    );
+    let inlined = source_facts::extract_workspace_source_facts(
+        Path::new("tests/test_helper.py"),
+        helper_test,
+    );
+    assert!(
+        inlined.star_facts.is_none(),
+        "an inlined test file's owners never reach the re-export pass"
+    );
 }
