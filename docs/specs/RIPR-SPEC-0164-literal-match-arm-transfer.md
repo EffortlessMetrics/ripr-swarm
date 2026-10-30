@@ -74,7 +74,10 @@ related test row pins the exact label per arm.
   `match`, loop, `return`, `?`, `break` or `continue`. Otherwise the
   rows are not credited: the boundary reads unresolved where the row
   would have been credited on the new constant, and as the missing
-  equality for the replaced constant (as before #10304). Corpus cases `eq-divert-*` pin it; evaluating simple
+  equality for the replaced constant (as before #10304). On a match-arm
+  line the one enclosing `match` is not a diversion, but an earlier arm
+  (`=>`) or an earlier statement still is.
+  Corpus cases `eq-divert-*` pin it; evaluating simple
   earlier conditions on the row to recover those credits is future work.
 
 ## Required Evidence

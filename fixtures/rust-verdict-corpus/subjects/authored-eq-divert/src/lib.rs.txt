@@ -37,7 +37,20 @@ mod tests {
     }
 
     #[test]
+    fn five_takes_the_first_arm() {
+        assert_eq!(arm_old(5), 9);
+    }
+
+    #[test]
     fn six_returns_before_the_equality() {
         assert_eq!(early_new(6), 9);
+    }
+}
+
+pub fn arm_old(n: u32) -> u32 {
+    match n {
+        x if x > 3 => 9,
+        x if x == 5 => 1,
+        _ => 0,
     }
 }

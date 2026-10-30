@@ -5789,16 +5789,31 @@ fn equality_line_may_be_diverted(
     let operator = [">=", "<=", "==", "!=", ">", "<"]
         .into_iter()
         .find(|operator| masked.contains(operator));
-    // A match-arm guard (`p if other == 0 =>`) is ordered by the match itself,
-    // not by statements before it; earlier arms are not read here.
+    // A match-arm line (`p if other == 0 =>`) is ordered by its match: the
+    // enclosing `match` before it is not a diversion, but an earlier arm, an
+    // earlier statement or an early return still is. Read on the masked line,
+    // so a `=>` inside a string or comment does not count.
     let on_match_arm = owner_source
         .and_then(|source| source.lines().nth(probe.location.line.saturating_sub(1)))
-        .is_some_and(|line| line.contains("=>"));
+        .is_some_and(|line| {
+            crate::analysis::language::mask_rust_comments_and_strings(line).contains("=>")
+        });
     matches!(operator, Some("==" | "!="))
-        && !on_match_arm
-        && owner_source.is_some_and(|source| {
-            !changed_line_is_first_decision(owner.start_line, source, probe.location.line)
-        })
+        && !first_decision_is_clear(owner, owner_source, probe, on_match_arm)
+}
+
+fn first_decision_is_clear(
+    owner: &FunctionSummary,
+    owner_source: Option<&str>,
+    probe: &Probe,
+    on_match_arm: bool,
+) -> bool {
+    // No source model at all (only unit helpers that build an owner without
+    // its file): nothing to read, so this guard does not apply. Production
+    // owners always come from an indexed file.
+    owner_source.is_none_or(|source| {
+        changed_line_is_first_decision(owner.start_line, source, probe.location.line, on_match_arm)
+    })
 }
 
 /// Whether nothing in `owner` before the changed line can divert a row away
@@ -5806,7 +5821,12 @@ fn equality_line_may_be_diverted(
 /// `continue`. A row that an earlier branch or early return handles never
 /// reaches the changed predicate, so equal-to-a-constant rows prove nothing
 /// about it (#10856). Fails closed on unreadable source.
-fn changed_line_is_first_decision(start_line: usize, source: &str, line: usize) -> bool {
+fn changed_line_is_first_decision(
+    start_line: usize,
+    source: &str,
+    line: usize,
+    on_match_arm: bool,
+) -> bool {
     let head: Vec<&str> = source
         .lines()
         .skip(start_line.saturating_sub(1))
@@ -5824,7 +5844,14 @@ fn changed_line_is_first_decision(start_line: usize, source: &str, line: usize) 
     if body.contains('?') || body.contains("=>") {
         return false;
     }
+    // On a match arm the one enclosing `match` is allowed; every other
+    // decision, and every earlier arm (`=>`, refused above), still diverts.
+    let mut enclosing_match_left = usize::from(on_match_arm);
     !body.split(|ch: char| !is_word(ch)).any(|word| {
+        if word == "match" && enclosing_match_left > 0 {
+            enclosing_match_left -= 1;
+            return false;
+        }
         matches!(
             word,
             "if" | "else" | "match" | "while" | "for" | "loop" | "return" | "break" | "continue"
@@ -5850,7 +5877,7 @@ fn replaced_equality_constant(
     owner: &FunctionSummary,
     owner_source: Option<&str>,
 ) -> Option<ReplacedConstant> {
-    changed_line_is_first_decision(owner.start_line, owner_source?, probe.location.line)
+    changed_line_is_first_decision(owner.start_line, owner_source?, probe.location.line, false)
         .then(|| replaced_literal_swap(probe))
         .flatten()
 }
@@ -9415,7 +9442,7 @@ assert_eq!(input.amount, 100);"#
     /// the changed predicate.
     #[test]
     fn a_row_is_only_credited_when_nothing_decides_before_the_changed_line() {
-        let first = |src: &str, line: usize| changed_line_is_first_decision(1, src, line);
+        let first = |src: &str, line: usize| changed_line_is_first_decision(1, src, line, false);
         let plain = "fn f(n: u32) -> u32 {\n    let m = n + 1;\n    if m == 5 {\n        1\n    } else {\n        0\n    }\n}\n";
         assert!(first(plain, 3));
         let chain = "fn f(n: u32) -> u32 {\n    if n >= 3 {\n        7\n    } else if n == 5 {\n        1\n    } else {\n        0\n    }\n}\n";
@@ -9430,6 +9457,21 @@ assert_eq!(input.amount, 100);"#
         let quoted = "fn f(n: u32) -> u32 {\n    let s = \"if x { return }\"; // else\n    if n == 5 {\n        1\n    } else {\n        0\n    }\n}\n";
         assert!(first(quoted, 3));
         assert!(!first("", 3));
+        // Whole words only: `elsewhere` and `format` are not control flow.
+        let words = "fn f(n: u32) -> u32 {\n    let elsewhere = format!(\"{n}\");\n    if n == 5 {\n        1\n    } else {\n        0\n    }\n}\n";
+        assert!(first(words, 3));
+    }
+
+    /// #10856: on a match arm only the enclosing `match` is not a diversion.
+    #[test]
+    fn a_match_arm_is_diverted_by_an_earlier_arm_or_statement() {
+        let arm = |src: &str, line: usize| changed_line_is_first_decision(1, src, line, true);
+        let first_arm = "fn f(n: u32) -> u32 {\n    match n {\n        x if x == 5 => 1,\n        _ => 0,\n    }\n}\n";
+        assert!(arm(first_arm, 3));
+        let later_arm = "fn f(n: u32) -> u32 {\n    match n {\n        x if x > 3 => 9,\n        x if x == 5 => 1,\n        _ => 0,\n    }\n}\n";
+        assert!(!arm(later_arm, 4));
+        let after_return = "fn f(n: u32) -> u32 {\n    if n > 3 {\n        return 9;\n    }\n    match n {\n        x if x == 5 => 1,\n        _ => 0,\n    }\n}\n";
+        assert!(!arm(after_return, 6));
     }
 
     /// #9116: an explicit `return` normalises only to a top-level comparison.
