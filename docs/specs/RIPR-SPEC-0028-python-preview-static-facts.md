@@ -716,7 +716,10 @@ parameter bound to a literal argument or literal default (positional, keyword,
 import-alias, and method calls after `self`). Literal owner arguments, and the
 boundary equality when observed, are recorded in `observed_values`. Otherwise
 the finding fails closed to `weakly_exposed` and the infection stage reads
-`weak`. A rewrite that keeps the predicate true on exactly the same integers
+`weak`. Boundary equality follows Python's boolean/numeric comparisons:
+`True` is equal to `1` and `False` to `0`, including their decimal forms;
+an unequal boolean/numeric pair does not witness the boundary (#11042).
+A rewrite that keeps the predicate true on exactly the same integers
 (`amount >= 100` -> `amount > 99`, one comparison of a name against an
 integer literal, the rest of the condition unchanged) changes no behavior,
 so a test must notice a wrong version of the new line. Python's mutation

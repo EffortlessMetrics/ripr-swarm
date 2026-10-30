@@ -1,0 +1,6 @@
+# Python boundary comparison follows boolean/numeric equality (#11042).
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/tests/cli_smoke.rs::python_boolean_numeric_boundary_uses_python_equality",
+]

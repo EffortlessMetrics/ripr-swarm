@@ -308,7 +308,7 @@ pub(super) fn python_boundary_evidence(
         if let Some((left_value, right_value)) = left_candidates.iter().find_map(|left_value| {
             right_candidates
                 .iter()
-                .find(|right_value| literals_equal(left_value, right_value))
+                .find(|right_value| boundary_literals_equal(left_value, right_value))
                 .map(|right_value| (left_value, right_value))
         }) {
             observed_new = true;
@@ -332,7 +332,7 @@ pub(super) fn python_boundary_evidence(
             let old_right_value = resolve_operand(old_right, row, &constants);
             if let (Some(old_left_value), Some(old_right_value)) =
                 (&old_left_value, &old_right_value)
-                && literals_equal(old_left_value, old_right_value)
+                && boundary_literals_equal(old_left_value, old_right_value)
             {
                 observed_old = true;
                 observed_values.push(ValueFact {
@@ -370,7 +370,7 @@ pub(super) fn python_boundary_evidence(
             !rows.iter().any(|row| {
                 candidates(&step.variable, row)
                     .iter()
-                    .any(|value| literals_equal(value, &step.value))
+                    .any(|value| boundary_literals_equal(value, &step.value))
             })
         });
     if let Some(step) = step {
@@ -1838,10 +1838,23 @@ pub(super) fn literal_value(text: &str) -> Option<String> {
     None
 }
 
-/// Literal equality as Python compares the scalar values: decimals by value
-/// (`100 == 100.0`), strings by content regardless of quote style, and
-/// `True`/`False`/`None` by identity. Mixed kinds never compare equal here
-/// (for example `True == 1`), which fails closed toward "not observed".
+/// The boundary comparison also respects Python's boolean/numeric equality:
+/// `True == 1` and `False == 0`. Other literal comparisons retain the
+/// shared conservative behavior.
+fn boundary_literals_equal(left: &str, right: &str) -> bool {
+    let bool_number = |value: &str| match value {
+        "True" => Some("1"),
+        "False" => Some("0"),
+        _ => None,
+    };
+    match (bool_number(left), bool_number(right)) {
+        (Some(boolean), None) => canonical_decimal(right).is_some_and(|number| number == boolean),
+        (None, Some(boolean)) => canonical_decimal(left).is_some_and(|number| number == boolean),
+        _ => literals_equal(left, right),
+    }
+}
+
+/// Scalar equality used by other gates; mixed kinds are not equated here.
 pub(super) fn literals_equal(left: &str, right: &str) -> bool {
     match (canonical_decimal(left), canonical_decimal(right)) {
         (Some(left), Some(right)) => return left == right,

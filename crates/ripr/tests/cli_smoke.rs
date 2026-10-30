@@ -19393,6 +19393,81 @@ fn pilot_language_fixture_repo(
     Ok(root)
 }
 
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_boolean_numeric_boundary_uses_python_equality() -> Result<(), String> {
+    for (old, new, input, expected, observed) in [
+        ("x > 1", "x >= 1", "True", "True", true),
+        ("x > 0", "x >= 0", "False", "True", true),
+        ("x > 1.0", "x >= 1.0", "True", "True", true),
+        ("x > 0.0", "x >= 0.0", "False", "True", true),
+        ("1 > x", "1 >= x", "True", "True", true),
+        ("0 > x", "0 >= x", "False", "True", true),
+        ("x > 1", "x >= 1", "False", "False", false),
+        ("x > 0", "x >= 0", "True", "True", false),
+    ] {
+        let source = |predicate: &str| {
+            format!(
+                "def eligible(x):\n    if {predicate}:\n        return True\n    return False\n"
+            )
+        };
+        let tests = format!(
+            "from pricing import eligible\n\ndef test_boundary():\n    assert eligible({input}) == {expected}\n"
+        );
+        let root = pilot_language_fixture_repo(
+            "python-bool-boundary-11042",
+            &[
+                (
+                    "pyproject.toml",
+                    "[project]\nname = \"boundary\"\nversion = \"0.1.0\"\n",
+                ),
+                ("pricing/__init__.py", &source(old)),
+                ("tests/test_pricing.py", &tests),
+            ],
+            ("pricing/__init__.py", &source(new)),
+        )?;
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root.display().to_string(),
+            "--base",
+            "origin/main",
+            "--format",
+            "json",
+        ]);
+        assert_success(&output);
+        let report: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        let findings = report["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{report}");
+        let finding = &findings[0];
+        if observed {
+            assert_eq!(
+                finding["classification"], "exposed",
+                "{old} -> {new}, {input}: {finding}"
+            );
+            assert_eq!(
+                finding["missing_discriminators"].as_array().map(Vec::len),
+                Some(0),
+                "{finding}"
+            );
+            assert!(finding["python_repair_card"].is_null(), "{finding}");
+        } else {
+            assert_eq!(
+                finding["classification"], "weakly_exposed",
+                "{old} -> {new}, {input}: {finding}"
+            );
+            assert_eq!(
+                finding["missing_discriminators"].as_array().map(Vec::len),
+                Some(1),
+                "{finding}"
+            );
+        }
+        ignore_remove_dir_all(&root);
+    }
+    Ok(())
+}
+
 /// #4216 row 1: the onboarding re-walk's `pyapp` shape. A named module
 /// constant threshold leaves the boundary operand unresolved, so the Python
 /// preview finding is weakly exposed with no repair card. `check` used to
