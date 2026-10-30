@@ -5894,6 +5894,7 @@ mod tests {
     /// language run. The process survives, the sibling language's findings are
     /// intact, and the failed adapter contributes nothing, so nothing from it
     /// can be an actionable repair signal.
+    #[cfg(feature = "lang-python")]
     #[test]
     fn diff_pipeline_contains_a_preview_adapter_panic() -> Result<(), String> {
         let (root, diff_file) = mixed_panic_workspace("adapter-panic-preview-diff")?;
