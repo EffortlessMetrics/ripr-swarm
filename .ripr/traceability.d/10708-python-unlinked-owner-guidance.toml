@@ -1,0 +1,24 @@
+# Registers the #10708 generic with-no-static-link next-step advice (distinct
+# from actionable repair guidance, which stays suppressed for no-path
+# findings) under RIPR-SPEC-0028.
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/tests.rs::classify_change_returns_no_static_path_without_related_test",
+  "crates/ripr/src/analysis/language/python/tests.rs::classify_change_ignores_unrelated_text_mentions",
+  "crates/ripr/src/analysis/language/python/tests.rs::transitive_reach_witness_silences_with_no_link_guidance",
+  "crates/ripr/src/analysis/language/python/tests.rs::typer_sibling_helper_keeps_guidance_but_registered_command_stays_silent",
+  "crates/ripr/src/analysis/language/python/tests.rs::classify_change_suppresses_repair_guidance_for_non_actionable_python_cases",
+]
+code = [
+  "crates/ripr/src/analysis/language/python.rs",
+  "crates/ripr/src/analysis/language/python/classify.rs",
+]
+fixtures = [
+  "fixtures/python_unrelated_test_mention",
+  "fixtures/python_adversarial_free_function_module_collision",
+  "fixtures/python_mixed_language_no_cross_route",
+  "fixtures/python_ranking_noise_control",
+  "fixtures/python_same_stem_sibling_owner_not_related",
+  "fixtures/python_src_layout_package_import",
+]

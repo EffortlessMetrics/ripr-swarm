@@ -34,9 +34,15 @@ this repository's license, one per test library or library feature:
   boundaries, `assume`, a reference-implementation oracle and a no-assertion
   property (derandomized in `tests/conftest.py`).
 - `authored-py-pytest-numpy`: RIPR-SPEC-0238 example 10, an owner whose
-  only test asserts through `np.testing.assert_array_equal`. It is a
-  subject of its own so the other subjects' tests still run without
-  numpy; its truth was recorded with numpy 2.1.3.
+  only test asserts through `np.testing.assert_array_equal`, and the rule 28
+  cases beside it (`src/extra.py`): an assertpy `is_equal_to` chain and a
+  `from numpy.testing import assert_equal` call, both credited, and five
+  false-credit traps that stay non-credited (an `assert_allclose` tolerance, a
+  helper under `pytest.raises(AssertionError)`, a test-local `np` with no
+  numpy import, a monkeypatched helper, an owner compared with itself). It is
+  a subject of its own so the other subjects' tests still run without numpy
+  or assertpy; example 10's truth was recorded with numpy 2.1.3 and the rule 28
+  cases with numpy 2.4.6, assertpy 1.1 and pytest 9.2.0.
 - `authored-py-pytest-blocks`: multi-line replacement blocks, where the
   behavior change is the second line of a block that also rewrites the
   comment above it (#7556).

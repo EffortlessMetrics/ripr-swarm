@@ -973,6 +973,223 @@ fn the_target_assertion_is_identified_before_crediting_its_line() -> Check {
 }
 
 #[test]
+fn a_write_shared_with_another_file_survives_excluding_one_of_them() {
+    // #10857: the index counts the sources behind each write and subtracts
+    // the excluded file, so a write that file shares with another stays.
+    let sources = [
+        (Path::new("a.py"), "import c\nc.LIMIT = 1\n"),
+        (Path::new("b.py"), "import c\nc.LIMIT = 2\nc.RATE = 3\n"),
+        (Path::new("c.py"), "LIMIT = 10\nRATE = 5\n"),
+    ];
+    let index = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let module = Path::new("c.py");
+    let without_b = index.excluding(Path::new("b.py"));
+    assert!(without_b.may_rebind("LIMIT", module));
+    assert!(!without_b.may_rebind("RATE", module));
+    let without_a = index.excluding(Path::new("a.py"));
+    assert!(without_a.may_rebind("LIMIT", module));
+    assert!(without_a.may_rebind("RATE", module));
+    let without_c = index.excluding(module);
+    assert!(without_c.may_rebind("LIMIT", module) && without_c.may_rebind("RATE", module));
+}
+
+#[test]
+fn subtracting_the_excluded_file_matches_rebuilding_every_write_set() {
+    // #10857: an independent oracle for all five write sets, not just
+    // attributes. Each file shares some writes with another and holds some
+    // alone, and excluding each file (or none) must match the per-file
+    // rebuild the subtraction replaced.
+    let sources = [
+        (Path::new("c.py"), "RATES = {\"a\": 1}\nLIMIT = 10\n"),
+        (
+            Path::new("a.py"),
+            "import c\nc.LIMIT = 1\nc.RATES[\"b\"] = 2\nsetattr(c, \"LIMIT\", 3)\n",
+        ),
+        (
+            Path::new("b.py"),
+            "import c\nc.LIMIT = 2\nc.RATE = 3\nvalue = getattr(c, \"RATES\")\nc.RATES.clear()\n",
+        ),
+        (
+            Path::new("d.py"),
+            "import c\nimport b\nnames = dir(c)\nsetattr(c, \"RATE\", 4)\n",
+        ),
+    ];
+    let index = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let all = index.excluding(Path::new("absent.py"));
+    assert_eq!(all.written_sets(), [true; 5], "{all:?}");
+    for own in ["absent.py", "a.py", "b.py", "c.py", "d.py"] {
+        let own = Path::new(own);
+        assert_eq!(
+            index.excluding(own),
+            index.rebuilt_excluding(own),
+            "{own:?}"
+        );
+    }
+}
+
+#[test]
+fn the_source_fact_parse_gives_the_foreign_index_the_same_attribute_writes() -> Check {
+    // #10914: the workspace pass hands the index each file's assigned
+    // attributes from its source-fact parse instead of parsing again. A test
+    // file whose helper is inlined, and a file that does not parse, must give
+    // the same foreign writes as the index's own parse.
+    let sources = [
+        (
+            Path::new("a.py"),
+            "import b\nb.LIMIT = 1\nb.other.depth += 2\n",
+        ),
+        (Path::new("b.py"), "LIMIT = 10\nRATE = {\"x\": 1}\n"),
+        (
+            Path::new("tests/test_b.py"),
+            "import b\n\nb.RATE = 3\n\n\ndef check(value):\n    assert value == 3\n\n\ndef test_limit():\n    check(3)\n",
+        ),
+        (Path::new("broken.py"), "def (:\n"),
+    ];
+    let assigned: std::collections::BTreeMap<std::path::PathBuf, Option<Vec<String>>> = sources
+        .iter()
+        .map(|(file, source)| {
+            (
+                file.to_path_buf(),
+                super::source_facts::extract_source_facts(file, source).assigned_attributes,
+            )
+        })
+        .collect();
+    let a_writes = assigned
+        .get(Path::new("a.py"))
+        .cloned()
+        .flatten()
+        .ok_or("a.py parses")?;
+    if !a_writes.iter().any(|name| name == "LIMIT") {
+        return Err(format!("a.py assigns LIMIT: {a_writes:?}"));
+    }
+    // The test file takes the helper-inlining branch, and its writes still
+    // come from the file as written.
+    let test_file = Path::new("tests/test_b.py");
+    let test_source = sources
+        .iter()
+        .find(|(file, _)| *file == test_file)
+        .map(|(_, source)| *source)
+        .ok_or("test file fixture")?;
+    let Ok(rustpython_parser::ast::Mod::Module(test_module)) =
+        super::source_facts::parse_module_result(test_file, test_source)
+    else {
+        return Err("test file parses".to_string());
+    };
+    if super::helper_inline::inline_test_helpers(test_source, &test_module.body).is_none() {
+        return Err("the test file's helper call is inlined".to_string());
+    }
+    if assigned.get(test_file) != Some(&Some(vec!["RATE".to_string()])) {
+        return Err(format!("test file assigns RATE: {assigned:?}"));
+    }
+    if assigned.get(Path::new("broken.py")) != Some(&None) {
+        return Err(format!("broken.py does not parse: {assigned:?}"));
+    }
+    let parsed = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let prior = assigned
+        .iter()
+        .map(|(file, assigned)| {
+            (
+                file.clone(),
+                super::module_value::PriorFileFacts {
+                    assigned: assigned.clone(),
+                    lexes: None,
+                },
+            )
+        })
+        .collect();
+    let shared =
+        super::module_value::ForeignIndex::build_with_prior(sources.iter().copied(), false, &prior);
+    for (own, _) in &sources {
+        if shared.excluding(own) != parsed.excluding(own) {
+            return Err(format!(
+                "{own:?}: shared {:?} != parsed {:?}",
+                shared.excluding(own),
+                parsed.excluding(own)
+            ));
+        }
+    }
+    // The workspace pass also hands over its lexes of each file (dict-literal
+    // names, import words), which a warm run serves from the fact store.
+    let lexed_prior: std::collections::BTreeMap<_, _> = sources
+        .iter()
+        .map(|(file, source)| {
+            let facts = super::source_facts::extract_workspace_source_facts(file, source);
+            (
+                file.to_path_buf(),
+                super::module_value::PriorFileFacts {
+                    assigned: facts.assigned_attributes,
+                    lexes: facts.foreign_lexes,
+                },
+            )
+        })
+        .collect();
+    if lexed_prior.values().any(|prior| prior.lexes.is_none()) {
+        return Err("every workspace file carries its lexes".to_string());
+    }
+    let b_lexes = lexed_prior
+        .get(Path::new("b.py"))
+        .and_then(|prior| prior.lexes.as_ref())
+        .ok_or("b.py lexes")?;
+    if b_lexes.dict_literal_names != ["RATE"] {
+        return Err(format!("b.py binds the RATE table: {b_lexes:?}"));
+    }
+    let lexed = super::module_value::ForeignIndex::build_with_prior(
+        sources.iter().copied(),
+        false,
+        &lexed_prior,
+    );
+    for (own, _) in &sources {
+        if lexed.excluding(own) != parsed.excluding(own) {
+            return Err(format!(
+                "{own:?}: lexed {:?} != parsed {:?}",
+                lexed.excluding(own),
+                parsed.excluding(own)
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn the_foreign_index_reads_supplied_attribute_writes_instead_of_parsing() {
+    // The supplied writes are what the index uses: a.py's text assigns
+    // nothing, but its recorded parse says it rebinds LIMIT.
+    let sources = [
+        (Path::new("a.py"), "import b\nx = 1\n"),
+        (Path::new("b.py"), "LIMIT = 10\n"),
+    ];
+    let assigned = std::collections::BTreeMap::from([(
+        std::path::PathBuf::from("a.py"),
+        Some(vec!["LIMIT".to_string()]),
+    )]);
+    let parsed = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let prior = assigned
+        .iter()
+        .map(|(file, assigned)| {
+            (
+                file.clone(),
+                super::module_value::PriorFileFacts {
+                    assigned: assigned.clone(),
+                    lexes: None,
+                },
+            )
+        })
+        .collect();
+    let shared =
+        super::module_value::ForeignIndex::build_with_prior(sources.iter().copied(), false, &prior);
+    assert!(
+        !parsed
+            .excluding(Path::new("b.py"))
+            .may_rebind("LIMIT", Path::new("b.py"))
+    );
+    assert!(
+        shared
+            .excluding(Path::new("b.py"))
+            .may_rebind("LIMIT", Path::new("b.py"))
+    );
+}
+
+#[test]
 fn one_workspace_index_gives_each_changed_file_its_own_foreign_view() {
     // #10125: the index is built once; each changed file sees every other
     // file's writes and none of its own.
@@ -2315,5 +2532,59 @@ fn multiline_imports_and_evaluated_code_withhold_credit() -> Check {
             TABLE_NEW,
         )?);
     }
+    Ok(())
+}
+
+// Class-creation and construction effects the model does not evaluate (#9619).
+#[test]
+fn a_dataclass_whose_creation_or_construction_may_raise_is_not_credited() -> Check {
+    let base = dc_default();
+    let factory = "from dataclasses import dataclass, field\n\n\n@dataclass\nclass Invoice:\n    amount: int\n    tax_rate: float = 0.25\n    tags: list = field(default_factory=fail)\n\n    def total(self):\n        return round(self.amount * (1 + self.tax_rate))\n";
+    for (label, source, test) in [
+        ("failing default_factory", factory.to_string(), DC_TEST),
+        (
+            "call default on an async method",
+            format!("{base}\n    async def other(self, extra=boom()):\n        return 1\n"),
+            DC_TEST,
+        ),
+        (
+            "call evaluated at class creation as a parameter default",
+            format!("{base}\n    def other(self, extra=boom()):\n        return 1\n"),
+            DC_TEST,
+        ),
+        (
+            "builtin annotation rebound to a marker",
+            base.replace("\n\n\n@dataclass", "\nfloat = ClassVar\n\n\n@dataclass"),
+            DC_TEST,
+        ),
+        (
+            "unknown decorator on another method",
+            format!("{base}\n    @tweak\n    def other(self):\n        return 1\n"),
+            DC_TEST,
+        ),
+        (
+            "test takes a fixture that may patch the class",
+            base.clone(),
+            "from hostile.settings import Invoice\n\n\ndef test_it(rate):\n    assert Invoice(100).total() == 120\n",
+        ),
+    ] {
+        let finding = classify_dc(&source, DC_NEW, &[], test)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    // A directly parametrized argument is not a fixture request.
+    let parametrized = "import pytest\nfrom hostile.settings import Invoice\n\n\n@pytest.mark.parametrize(\"case\", [1])\ndef test_it(case):\n    assert Invoice(100).total() == 120\n";
+    let finding = classify_dc(&base, DC_NEW, &[], parametrized)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // Builtin descriptors and `list`/`dict` factories keep the credit.
+    let plain = format!(
+        "{}\n    @property\n    def big(self):\n        return self.amount >= 1000\n",
+        base.replace(
+            "    amount: int\n",
+            "    amount: int\n    tags: list = field(default_factory=list)\n"
+        )
+        .replace("import dataclass", "import dataclass, field")
+    );
+    let finding = classify_dc(&plain, DC_NEW, &[], DC_TEST)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }

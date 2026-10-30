@@ -1,0 +1,13 @@
+# Registers the tuple-argname unpack reading of parametrize rows (#10832) under RIPR-SPEC-0028.
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::a_leading_unpack_of_a_tuple_argname_reads_its_rows",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/param_fixtures.rs",
+  "crates/ripr/src/analysis/language/python/owners_tests.rs",
+]
+fixtures = [
+  "fixtures/python_parametrize_tuple_unpack",
+]

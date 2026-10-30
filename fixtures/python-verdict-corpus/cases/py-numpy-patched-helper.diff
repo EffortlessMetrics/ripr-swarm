@@ -1,0 +1,12 @@
+diff --git a/src/extra.py b/src/extra.py
+--- a/src/extra.py
++++ b/src/extra.py
+@@ -19,7 +19,7 @@
+ 
+ 
+ def patched(text):
+-    return [int(text) + 1]
++    return [int(text) + 2]
+ 
+ 
+ def mirror(text):

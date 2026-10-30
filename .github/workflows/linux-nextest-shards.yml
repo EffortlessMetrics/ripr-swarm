@@ -40,7 +40,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Install CI tools
-        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: nextest
 
@@ -53,6 +53,7 @@ jobs:
         run: |
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
       # The policy tests spawn `cargo test --no-run -p xtask` themselves; warming
       # it here keeps that build out of the measured test time, as the required

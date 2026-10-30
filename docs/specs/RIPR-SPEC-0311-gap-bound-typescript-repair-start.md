@@ -22,6 +22,7 @@ Linked issues:
 
 - #9103
 - #10373 (Python gap-bound start, item 9)
+- #10698 (commit step before a start a dirty tree would refuse, item 10)
 
 Linked PRs:
 
@@ -137,6 +138,16 @@ existed with no way to begin the attempt.
    repair` and `agent repair --seam-id` given a Python gap still state the
    Rust-only seam reason and point at the gap-bound start; `agent status`
    after a pilot names the start check prints.
+10. Commit Step Before A Dirty Start (#10698): the start refuses to begin
+    while tracked files outside the packet's allowed edit surface differ from
+    HEAD. When `ripr check` analyzed such a tree, it prints
+    `git -C ROOT --literal-pathspecs commit -m "<message>" -- FILES` before
+    the start, naming exactly the files the start's own premise check refuses,
+    shell-quoted and spelled relative to ROOT, so the command works from any
+    working directory and treats a name like `src/[ab].py` literally. The
+    pilot-routing warnings in `agent status` name the same step. On a clean
+    tree, or when the packet, policy, HEAD or Git cannot answer, the start
+    prints bare and its own refusal stays the backstop.
 
 ## Required Evidence
 
@@ -212,6 +223,15 @@ existed with no way to begin the attempt.
   `python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start`,
   `python_status_after_pilot_names_the_gap_bound_start`,
   `python_refused_variant_is_offered_no_gap_bound_start`.
+- `crates/ripr/src/app/navigation.rs`:
+  `commit_prerequisite_commits_literal_paths_from_a_decoy_directory`;
+  `crates/ripr/src/app/task_first.rs`:
+  `dirty_paths_outside_surface_mirror_the_start_premise_check`,
+  `commit_hint_paths_are_relative_to_the_analyzed_root`;
+  `crates/ripr/src/app/agent_status.rs`:
+  `pilot_routing_messages_name_the_commit_before_a_start_on_a_dirty_tree`;
+  `crates/ripr/src/output/human.rs`:
+  `gap_bound_start_names_the_commit_first_on_a_dirty_tree`.
 - `crates/ripr/src/app/gap_bound_repair.rs` unit tests
   `python_gap_subjects_need_a_printable_tail` and
   `a_python_lookup_fails_closed_without_one_validated_record`,

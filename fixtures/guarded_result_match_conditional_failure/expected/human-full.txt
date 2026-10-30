@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/guarded_result_match_conditional_failure/input
 
-Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 WARNING ./src/lib.rs:18
   id: probe:src_lib.rs:error_path:cbbe6663
@@ -14,9 +19,10 @@ Changed
   before: return Err(ParseError::UnexpectedEof);
   after:  return Err(ParseError::InvalidData);
 
-Probe
+Change type
+  error handling changed
   family: error_path
-  delta:  value
+  delta:  value (changes a computed value)
 
 Static exposure
   no_static_path (warning, confidence 0.40)
@@ -34,7 +40,7 @@ Weakness
   - missing discriminator ParseError::InvalidData: No exact error variant assertion for ParseError::InvalidData
 
 Stop reasons:
-  - no_changed_rust_line — ripr could not place the changed line inside a Rust function it analyzes
+  - ripr could not place the changed line inside a Rust function it analyzes (no_changed_rust_line)
     Next: Make sure the changed line sits inside a function (not a macro body or item attribute); if it does, report the shape in an issue.
 
 Next step
@@ -50,9 +56,10 @@ Changed
   before: return Err(ParseError::UnexpectedEof);
   after:  return Err(ParseError::InvalidData);
 
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
 
 Static exposure
   no_static_path (warning, confidence 0.40)
@@ -69,7 +76,7 @@ Weakness
   - missing discriminator ParseError::InvalidData: No exact error variant assertion for ParseError::InvalidData
 
 Stop reasons:
-  - no_changed_rust_line — ripr could not place the changed line inside a Rust function it analyzes
+  - ripr could not place the changed line inside a Rust function it analyzes (no_changed_rust_line)
     Next: Make sure the changed line sits inside a function (not a macro body or item attribute); if it does, report the shape in an issue.
 
 Next step

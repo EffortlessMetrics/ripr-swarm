@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/effect_assertion_after_return/input
 
-Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 2 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 2 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id
@@ -24,11 +29,12 @@ Finding 1: WARNING ./src/lib.rs:18
 Changed
   before: notifier.send("static_msg")
   after:  notifier.send(order_id)
-Probe
+Change type
+  a call was removed
   family: call_deletion
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/lib.rs::process_order
-  canonical gap: gap:rust:src/lib.rs:process_order:call_deletion:call_deletion:notifier.send_order_id
+  gap id (for scripts): gap:rust:src/lib.rs:process_order:call_deletion:call_deletion:notifier.send_order_id
 Static exposure
   reachable_unrevealed (warning, confidence 0.79)
 Evidence
@@ -47,11 +53,12 @@ Finding 2: WARNING ./src/lib.rs:18
 Changed
   before: notifier.send("static_msg")
   after:  notifier.send(order_id)
-Probe
+Change type
+  a side effect changed
   family: side_effect
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/lib.rs::process_order
-  canonical gap: gap:rust:src/lib.rs:process_order:side_effect:side_effect:notifier.send_order_id
+  gap id (for scripts): gap:rust:src/lib.rs:process_order:side_effect:side_effect:notifier.send_order_id
 Static exposure
   reachable_unrevealed (warning, confidence 0.79)
 Evidence

@@ -398,9 +398,8 @@ struct WorkspaceListing {
 /// a Rust file or manifest that exists only at `HEAD` is missing from the
 /// working-tree listing.
 fn list_workspace(workspace_root: &Path) -> Option<WorkspaceListing> {
-    if crate::analysis::committed_source::committed_paths_missing_on_disk(workspace_root)
-        .iter()
-        .any(|path| path.ends_with(".rs") || path.ends_with("Cargo.toml"))
+    if !crate::analysis::committed_source::committed_workspace_paths_missing_on_disk(workspace_root)
+        .is_empty()
     {
         return None;
     }

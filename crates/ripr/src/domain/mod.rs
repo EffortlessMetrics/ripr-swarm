@@ -41,8 +41,8 @@ pub(crate) use classification::{
     ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP, BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP,
     BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP, CALLEE_ONLY_REACH_PREFIX,
     LIMITATION_ANALYZER_ROUTE_PREFIX, LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX,
-    LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX, LIMITATION_NON_CLAIM_PREFIX, NO_STATIC_PATH_NEXT_STEP,
-    TRANSITIVE_REACH_WITNESS_PREFIX,
+    LIMITATION_HELPER_BOUNDARY_PREFIX, LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
+    LIMITATION_NON_CLAIM_PREFIX, NO_STATIC_PATH_NEXT_STEP, TRANSITIVE_REACH_WITNESS_PREFIX,
 };
 pub(crate) use command_spec::command_tokens;
 pub use command_spec::{
@@ -130,6 +130,7 @@ pub use repair_card::{
 };
 // Internal formatting convention, not library API: `lib.rs` re-exports
 // `pub mod domain`, so this stays crate-private.
+pub(crate) use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub(crate) use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
 pub(crate) use probe::boundary_input_observed_with_weak_oracle;
 pub use summary::{LanguageFileCount, Summary};

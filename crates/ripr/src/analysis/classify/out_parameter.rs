@@ -375,8 +375,9 @@ fn plain_literal(text: &str) -> bool {
     true
 }
 
-/// `lit`, `&lit` or `&format!(template, ..)` that certainly yields text, or
-/// a plain identifier (data-dependent: a named limit).
+/// `lit`, `&lit` or `&format!(template, ..)` within the non-empty text
+/// allowlist. A plain identifier does not establish non-emptiness; local
+/// value propagation is outside this helper's boundary (#10058).
 fn nonempty_text_argument(argument: &ast::Expr) -> bool {
     let mut expression = argument.clone();
     while let ast::Expr::RefExpr(reference) = &expression {
@@ -395,7 +396,6 @@ fn nonempty_text_argument(argument: &ast::Expr) -> bool {
             }
             _ => false,
         },
-        ast::Expr::PathExpr(path) => is_plain_ident(&compact(&path.syntax().text().to_string())),
         ast::Expr::MacroExpr(mac) => mac.macro_call().is_some_and(|mac| {
             mac.path()
                 .is_some_and(|path| compact(&path.syntax().text().to_string()) == "format")

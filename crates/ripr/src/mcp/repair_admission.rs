@@ -41,6 +41,10 @@ pub(crate) const SEAM_NOT_FOUND: &str = "seam_not_found";
 /// could not be established. The CLI errors before resolving any item in
 /// that state, so no item may be repair-ready (#9108).
 pub(crate) const SEAM_INVENTORY_TRUNCATED: &str = "seam_inventory_truncated";
+/// #7357: a saved tracked-worktree snapshot carries no consumed-source
+/// commitment spanning its findings and the live seam inventory, so repair
+/// readiness is refused rather than claimed current.
+pub(crate) const SEAM_WORKTREE_SOURCE: &str = "worktree_source_not_committed";
 
 /// Whether the repo-wide seam inventory that `ripr repair` resolves against
 /// is complete. The MCP admission resolves over a diff-scoped inventory that
@@ -120,6 +124,28 @@ impl SeamAdmission {
     #[cfg(test)]
     pub(crate) fn unevaluated() -> Self {
         Self::default()
+    }
+
+    /// Refuse every finding with one typed reason without consulting any
+    /// seam inventory (#7357): a saved tracked-worktree snapshot gathers no
+    /// inventory, so no verdict can be derived from it.
+    pub(crate) fn withheld(findings: &[Finding], code: &'static str, detail: &str) -> Self {
+        let by_finding = findings
+            .iter()
+            .map(|finding| {
+                (
+                    finding.id.clone(),
+                    SeamVerdict::Refused {
+                        code,
+                        detail: detail.to_string(),
+                    },
+                )
+            })
+            .collect();
+        Self {
+            evaluated: true,
+            by_finding,
+        }
     }
 
     /// Run the shared repair-subject resolver for every finding over the

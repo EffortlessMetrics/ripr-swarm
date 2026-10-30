@@ -8,6 +8,7 @@
 //!
 //! - every shard retained a status of `0`, a run context naming this repository,
 //!   checkout, run, attempt, profile, partition and command with `nextest_exit=0`,
+//!   with input blobs resolved independently from that expected checkout commit,
 //!   and a JUnit report that is complete, reports no failure or error, and whose
 //!   declared test count equals its testcase elements;
 //! - every shard's JUnit testcase identities (`classname name`, the binary id and
@@ -57,7 +58,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             Err(err) => return Err(format!("cannot clear {}: {err}", path.display())),
         }
     }
-    let outcome = verify(&options);
+    let expected_blobs = expected_input_blobs(Path::new("."), &options.sha);
+    let outcome = verify(&options, expected_blobs);
     write(&options.out.join("shards-summary.txt"), &outcome.summary)?;
     println!("{}", outcome.summary);
     if outcome.problems.is_empty() {
@@ -135,26 +137,45 @@ struct Outcome {
     context: String,
 }
 
-fn verify(options: &Options) -> Outcome {
+fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Outcome {
     let mut problems = Vec::new();
+    let expected_blobs = match expected_blobs {
+        Ok(blobs) => Some(blobs),
+        Err(why) => {
+            problems.push(format!("expected checkout input blobs: {why}"));
+            None
+        }
+    };
     let mut summary = String::from("### Shard cover\n");
     let mut suites = String::new();
     let mut union: Vec<String> = Vec::new();
     let mut total_tests = 0u64;
     let mut first_context = String::new();
     let mut first_environment = String::new();
+    let mut first_dir = None;
     let mut used_attempts = BTreeSet::new();
 
     for shard in 1..=options.shards {
         let tag = format!("shard {shard}");
-        let Some((dir, shard_attempt)) = select_shard_dir(options, shard) else {
-            problems.push(format!(
-                "{tag}: artifact is missing for attempts 1..={}",
-                options.attempt
-            ));
-            summary.push_str(&format!("{tag}: no artifact\n"));
-            continue;
+        let (dir, shard_attempt) = match select_shard_dir(options, shard) {
+            Ok(Some(selected)) => selected,
+            Ok(None) => {
+                problems.push(format!(
+                    "{tag}: artifact is missing for attempts 1..={}",
+                    options.attempt
+                ));
+                summary.push_str(&format!("{tag}: no artifact\n"));
+                continue;
+            }
+            Err(why) => {
+                problems.push(format!("{tag}: {why}"));
+                summary.push_str(&format!("{tag}: ambiguous artifact attempt\n"));
+                continue;
+            }
         };
+        if shard == 1 {
+            first_dir = Some(dir.clone());
+        }
         used_attempts.insert(shard_attempt);
         let list = read_named(&dir, &format!("list-{shard}.txt"), &tag, &mut problems);
         let list_lines: BTreeSet<String> = list
@@ -175,7 +196,7 @@ fn verify(options: &Options) -> Outcome {
         if let Some(context) = read_named(&dir, "run-context.txt", &tag, &mut problems) {
             check_context(&context, options, shard, shard_attempt, &tag, &mut problems);
             let environment = environment_of(&context);
-            check_environment(&environment, &tag, &mut problems);
+            check_environment(&environment, expected_blobs.as_deref(), &tag, &mut problems);
             if shard == 1 {
                 first_context = context;
                 first_environment = environment;
@@ -203,22 +224,29 @@ fn verify(options: &Options) -> Outcome {
         ));
     }
 
-    let all_dir = select_shard_dir(options, 1).map_or_else(
-        || {
-            options.dir.join(format!(
-                "{}-nextest-shard-1-{}",
-                options.artifact, options.attempt
-            ))
-        },
-        |(dir, _attempt)| dir,
-    );
+    let all_dir = first_dir.unwrap_or_else(|| {
+        options.dir.join(format!(
+            "{}-nextest-shard-1-{}",
+            options.artifact, options.attempt
+        ))
+    });
     let all_lines: BTreeSet<String> = match read_named(
         &all_dir,
         "list-all.txt",
         "full workspace list",
         &mut problems,
     ) {
-        Some(text) => lines_of(&text).collect(),
+        Some(text) => {
+            let mut lines = BTreeSet::new();
+            for line in lines_of(&text) {
+                if !lines.insert(line.clone()) {
+                    problems.push(format!(
+                        "full workspace list repeats test identity `{line}`"
+                    ));
+                }
+            }
+            lines
+        }
         None => BTreeSet::new(),
     };
     if all_lines.is_empty() {
@@ -278,12 +306,18 @@ fn verify(options: &Options) -> Outcome {
 /// A partial "re-run failed jobs" uploads fresh artifacts only for the
 /// re-run shards (#10605), so a shard's evidence is its latest artifact for
 /// this run at or before the verifying attempt. Suffixes that are not
-/// attempts, or name a future attempt, are not evidence.
-fn select_shard_dir(options: &Options, shard: u32) -> Option<(PathBuf, u32)> {
-    let current: u32 = options.attempt.parse().ok()?;
+/// attempts, or name a future attempt, are not evidence. Eligible numeric
+/// suffixes must use canonical decimal spelling: aliases would make selection
+/// depend on directory enumeration order or permit fallback past newer evidence.
+fn select_shard_dir(options: &Options, shard: u32) -> Result<Option<(PathBuf, u32)>, String> {
+    let Ok(current) = options.attempt.parse::<u32>() else {
+        return Ok(None);
+    };
     let prefix = format!("{}-nextest-shard-{shard}-", options.artifact);
     let mut best: Option<(PathBuf, u32)> = None;
-    let entries = fs::read_dir(&options.dir).ok()?;
+    let Ok(entries) = fs::read_dir(&options.dir) else {
+        return Ok(None);
+    };
     for entry in entries.filter_map(Result::ok) {
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
@@ -298,6 +332,11 @@ fn select_shard_dir(options: &Options, shard: u32) -> Option<(PathBuf, u32)> {
         if attempt == 0 || attempt > current {
             continue;
         }
+        if suffix != attempt.to_string() {
+            return Err(format!(
+                "noncanonical artifact attempt suffix `{suffix}` for attempt {attempt}"
+            ));
+        }
         if best
             .as_ref()
             .is_none_or(|(_, best_attempt)| attempt > *best_attempt)
@@ -305,7 +344,7 @@ fn select_shard_dir(options: &Options, shard: u32) -> Option<(PathBuf, u32)> {
             best = Some((entry.path(), attempt));
         }
     }
-    best
+    Ok(best)
 }
 
 /// List lines with terminal colour escapes removed: the hosted job sets
@@ -378,15 +417,6 @@ fn find_files(dir: &Path, name: &str, found: &mut Vec<PathBuf>) {
     }
 }
 
-fn context_value<'a>(context: &'a str, key: &str) -> Option<&'a str> {
-    context
-        .lines()
-        .filter_map(|line| line.split_once('='))
-        .filter(|(name, _)| *name == key)
-        .map(|(_, value)| value.trim())
-        .next_back()
-}
-
 const PARTITION_KEYS: [&str; 8] = [
     "repository=",
     "checkout_sha=",
@@ -407,9 +437,83 @@ fn environment_of(context: &str) -> String {
         .collect()
 }
 
-/// A run context without tool versions and the four input blobs would not say
-/// what produced the results, so it is not a receipt.
-fn check_environment(environment: &str, tag: &str, problems: &mut Vec<String>) {
+const INPUT_PATHS: [&str; 4] = [
+    "Cargo.lock",
+    ".config/nextest.toml",
+    ".github/workflows/rust-gates.yml",
+    ".github/workflows/rust-test-shards.yml",
+];
+const INPUT_HEADER: &str =
+    "input_blobs (Cargo.lock, nextest.toml, rust-gates.yml, rust-test-shards.yml):";
+
+fn is_blob_id(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Resolve the immutable expected inputs independently of the shard receipts.
+/// The workflow supplies its checkout SHA; dirty files, the index and receipt
+/// consensus cannot replace the four ordinary files at that commit.
+fn expected_input_blobs(root: &Path, sha: &str) -> Result<Vec<String>, String> {
+    if !is_blob_id(sha) {
+        return Err("--sha must name a full 40-hex checkout commit".to_string());
+    }
+    let git = |args: Vec<String>| crate::run::run_output_owned_in("git", &args, root);
+    let commit = git(vec![
+        "--no-replace-objects".to_string(),
+        "rev-parse".to_string(),
+        "--verify".to_string(),
+        format!("{sha}^{{commit}}"),
+    ])?;
+    if commit.trim() != sha {
+        return Err("--sha does not name the expected checkout commit".to_string());
+    }
+    let mut args = vec![
+        "--no-replace-objects".to_string(),
+        "ls-tree".to_string(),
+        "--full-tree".to_string(),
+        "-r".to_string(),
+        sha.to_string(),
+        "--".to_string(),
+    ];
+    args.extend(INPUT_PATHS.map(str::to_string));
+    let tree = git(args)?;
+    parse_input_tree(&tree)
+}
+
+fn parse_input_tree(tree: &str) -> Result<Vec<String>, String> {
+    let mut blobs = BTreeMap::new();
+    for row in tree.lines() {
+        let (metadata, path) = row.split_once('\t').ok_or("malformed input tree row")?;
+        let fields: Vec<&str> = metadata.split_whitespace().collect();
+        if fields.len() != 3
+            || !matches!(fields[0], "100644" | "100755")
+            || fields[1] != "blob"
+            || !is_blob_id(fields[2])
+            || !INPUT_PATHS.contains(&path)
+            || blobs.insert(path, fields[2]).is_some()
+        {
+            return Err(format!("expected an ordinary input blob at `{path}`"));
+        }
+    }
+    INPUT_PATHS
+        .iter()
+        .map(|path| {
+            blobs
+                .get(path)
+                .map(|blob| (*blob).to_string())
+                .ok_or_else(|| format!("checkout has no input blob at `{path}`"))
+        })
+        .collect()
+}
+
+/// Require the producer's exact ordered block, anchored to the expected commit.
+/// Agreement between shards remains necessary, but is not input authority.
+fn check_environment(
+    environment: &str,
+    expected_blobs: Option<&[String]>,
+    tag: &str,
+    problems: &mut Vec<String>,
+) {
     for tool in ["cargo-nextest ", "rustc ", "cargo "] {
         if !environment.lines().any(|line| line.starts_with(tool)) {
             problems.push(format!(
@@ -418,16 +522,39 @@ fn check_environment(environment: &str, tag: &str, problems: &mut Vec<String>) {
             ));
         }
     }
-    let blobs = environment
-        .lines()
-        .skip_while(|line| !line.starts_with("input_blobs"))
-        .skip(1)
-        .filter(|line| line.len() == 40 && line.bytes().all(|b| b.is_ascii_hexdigit()))
-        .count();
-    if blobs < 4 {
+    let lines: Vec<&str> = environment.lines().collect();
+    let headers: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| line.starts_with("input_blobs").then_some(index))
+        .collect();
+    let [header] = headers.as_slice() else {
         problems.push(format!(
-            "{tag}: run-context names {blobs} input blobs, expected 4"
+            "{tag}: run-context must have one input_blobs header"
         ));
+        return;
+    };
+    if lines[*header] != INPUT_HEADER {
+        problems.push(format!(
+            "{tag}: run-context input_blobs header is not canonical"
+        ));
+        return;
+    }
+    let blobs = &lines[*header + 1..];
+    if blobs.len() != INPUT_PATHS.len() || blobs.iter().any(|blob| !is_blob_id(blob)) {
+        problems.push(format!(
+            "{tag}: run-context must name exactly four ordered input blobs"
+        ));
+        return;
+    }
+    if let Some(expected) = expected_blobs {
+        for ((path, got), want) in INPUT_PATHS.iter().zip(blobs).zip(expected) {
+            if got != want {
+                problems.push(format!(
+                    "{tag}: input blob `{path}` is `{got}`, expected `{want}`"
+                ));
+            }
+        }
     }
 }
 
@@ -439,6 +566,34 @@ fn check_context(
     tag: &str,
     problems: &mut Vec<String>,
 ) {
+    // Check the original receipt before environment_of removes partition keys.
+    // Every scalar assignment is a singleton, including extension keys and
+    // identical duplicates. Tool-version prose and verbose colon metadata are
+    // not assignments; values may themselves contain '='.
+    let mut values = BTreeMap::new();
+    for (name, value) in context.lines().filter_map(|line| line.split_once('=')) {
+        let key = name.trim();
+        if !key.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+            || !key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            continue;
+        }
+        if name != key {
+            problems.push(format!("{tag}: run-context key `{name}` is not canonical"));
+        }
+        if values.insert(key, value.trim()).is_some() {
+            problems.push(format!("{tag}: run-context has duplicate key `{key}`"));
+        }
+    }
+    for key in ["shards", "verified_attempts"] {
+        if values.contains_key(key) {
+            problems.push(format!(
+                "{tag}: run-context key `{key}` is reserved for the combined receipt"
+            ));
+        }
+    }
     let command = format!(
         "cargo nextest run --workspace --profile ci --partition count:{shard}/{}",
         options.shards
@@ -454,7 +609,7 @@ fn check_context(
         ("nextest_exit", "0".to_string()),
     ];
     for (key, want) in expected {
-        match context_value(context, key) {
+        match values.get(key).copied() {
             Some(got) if got == want => {}
             Some(got) => problems.push(format!(
                 "{tag}: run-context {key} is `{got}`, expected `{want}`"
@@ -465,13 +620,14 @@ fn check_context(
 }
 
 struct Suite {
-    tag: String,
+    tag: BTreeMap<String, String>,
     cases: u64,
 }
 
 struct Parsed {
-    root: String,
+    root: BTreeMap<String, String>,
     suites: Vec<Suite>,
+    body: String,
     identities: Vec<String>,
     forbidden: BTreeSet<String>,
 }
@@ -485,98 +641,74 @@ const OUTCOME_ELEMENTS: [&str; 5] = [
     "skipped",
 ];
 
-/// Walks the report as XML: comments, CDATA and declarations are skipped, tags
-/// must nest and close, `testsuite` sits in the one `testsuites` root and
-/// `testcase` in a `testsuite` with no testcase inside another.
+/// Validate XML before extracting parser-bounded direct-child suites. Keeping
+/// each suite's original bytes preserves its properties, stdout and CDATA;
+/// tokens inside comments or attributes cannot become extraction boundaries.
 fn parse_junit(junit: &str) -> Result<Parsed, String> {
-    let mut stack: Vec<String> = Vec::new();
+    let document = roxmltree::Document::parse(junit).map_err(|err| err.to_string())?;
+    let root = document.root_element();
+    if root.tag_name().name() != "testsuites" {
+        return Err("expected one `<testsuites>` root".to_string());
+    }
+    let attributes = |node: roxmltree::Node<'_, '_>| {
+        node.attributes()
+            .map(|attribute| (attribute.name().to_string(), attribute.value().to_string()))
+            .collect()
+    };
     let mut parsed = Parsed {
-        root: String::new(),
+        root: attributes(root),
         suites: Vec::new(),
+        body: String::new(),
         identities: Vec::new(),
         forbidden: BTreeSet::new(),
     };
-    let mut roots = 0;
-    let mut pos = 0;
-    while let Some(offset) = junit[pos..].find('<') {
-        let start = pos + offset;
-        let rest = &junit[start..];
-        if rest.starts_with("<!--") {
-            let end = rest.find("-->").ok_or("unterminated comment")?;
-            pos = start + end + 3;
+    for node in root.descendants().filter(roxmltree::Node::is_element) {
+        // The native nextest vocabulary has no namespaces. A detached suite
+        // must not depend on namespace or xml:* declarations at the old root.
+        if node.tag_name().namespace().is_some()
+            || node
+                .attributes()
+                .any(|attribute| attribute.namespace().is_some())
+        {
+            return Err("namespaced JUnit is unsupported".to_string());
+        }
+        if node == root {
             continue;
         }
-        if rest.starts_with("<![CDATA[") {
-            let end = rest.find("]]>").ok_or("unterminated CDATA")?;
-            pos = start + end + 3;
-            continue;
-        }
-        if rest.starts_with("<?") || rest.starts_with("<!") {
-            let end = rest.find('>').ok_or("unterminated declaration")?;
-            pos = start + end + 1;
-            continue;
-        }
-        let end = tag_end(junit, start).ok_or("unterminated tag")?;
-        let text = &junit[start..=end];
-        pos = end + 1;
-        if let Some(closing) = text.strip_prefix("</") {
-            let name = closing.trim_end_matches('>').trim();
-            if stack.pop().as_deref() != Some(name) {
-                return Err(format!("`</{name}>` does not close the open element"));
+        let name = node.tag_name().name();
+        let parent = node.parent_element().map(|parent| parent.tag_name().name());
+        match (name, parent) {
+            ("testsuites", _) => return Err("nested `<testsuites>` root".to_string()),
+            ("testsuite", Some("testsuites")) => {
+                parsed.suites.push(Suite {
+                    tag: attributes(node),
+                    cases: node
+                        .children()
+                        .filter(|child| child.has_tag_name("testcase"))
+                        .count() as u64,
+                });
+                parsed.body.push_str(&junit[node.range()]);
+                parsed.body.push('\n');
             }
-            continue;
-        }
-        let self_closing = text.ends_with("/>");
-        let name: String = text[1..]
-            .chars()
-            .take_while(|c| !c.is_whitespace() && *c != '>' && *c != '/')
-            .collect();
-        let parent = stack.last().map(String::as_str);
-        match (name.as_str(), parent) {
-            ("testsuites", None) => {
-                roots += 1;
-                parsed.root = text.to_string();
-            }
-            ("testsuites", _) | (_, None) => {
-                return Err(format!("`<{name}>` outside the report root"));
-            }
-            ("testsuite", Some("testsuites")) => parsed.suites.push(Suite {
-                tag: text.to_string(),
-                cases: 0,
-            }),
             ("testsuite", _) => return Err("`<testsuite>` outside `<testsuites>`".to_string()),
-            ("testcase", Some("testsuite")) => {
-                if let Some(suite) = parsed.suites.last_mut() {
-                    suite.cases += 1;
-                }
-                parsed.identities.push(format!(
-                    "{} {}",
-                    attribute(text, "classname").unwrap_or_default(),
-                    attribute(text, "name").unwrap_or_default()
-                ));
-            }
+            ("testcase", Some("testsuite")) => parsed.identities.push(format!(
+                "{} {}",
+                node.attribute("classname").unwrap_or_default(),
+                node.attribute("name").unwrap_or_default()
+            )),
             ("testcase", _) => return Err("`<testcase>` outside a `<testsuite>`".to_string()),
             (other, _) if OUTCOME_ELEMENTS.contains(&other) => {
                 parsed.forbidden.insert(other.to_string());
             }
             _ => {}
         }
-        if !self_closing {
-            stack.push(name);
-        }
-    }
-    if !stack.is_empty() {
-        return Err(format!("`<{}>` is never closed", stack.join(">, <")));
-    }
-    if roots != 1 {
-        return Err(format!("expected one `<testsuites>` root, found {roots}"));
     }
     Ok(parsed)
 }
 
 /// A count attribute that is present must be a number; absent is `None`.
-fn count_attribute(tag: &str, name: &str) -> Result<Option<u64>, String> {
-    match attribute(tag, name) {
+fn count_attribute(tag: &BTreeMap<String, String>, name: &str) -> Result<Option<u64>, String> {
+    match tag.get(name) {
         None => Ok(None),
         Some(value) => value
             .parse::<u64>()
@@ -661,45 +793,7 @@ fn check_junit(
     if !problems.is_empty() {
         return Err(problems);
     }
-    let start = junit.find("<testsuite ").unwrap_or(0);
-    let close = junit.rfind("</testsuites>").unwrap_or(junit.len());
-    Ok((
-        cases,
-        format!("{}\n", junit[start..close].trim_matches('\n')),
-    ))
-}
-
-/// Index of the `>` closing the tag that starts at `start`, skipping quoted
-/// attribute values.
-fn tag_end(text: &str, start: usize) -> Option<usize> {
-    let mut quote: Option<char> = None;
-    for (offset, ch) in text[start..].char_indices() {
-        match (quote, ch) {
-            (Some(open), c) if c == open => quote = None,
-            (Some(_), _) => {}
-            (None, '"' | '\'') => quote = Some(ch),
-            (None, '>') => return Some(start + offset),
-            _ => {}
-        }
-    }
-    None
-}
-
-/// The unescaped value of ` name="..."` in one start tag.
-fn attribute(tag: &str, name: &str) -> Option<String> {
-    let needle = format!(" {name}=\"");
-    let from = tag.find(&needle)? + needle.len();
-    let len = tag[from..].find('"')?;
-    Some(unescape(&tag[from..from + len]))
-}
-
-fn unescape(value: &str) -> String {
-    value
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
+    Ok((cases, parsed.body))
 }
 
 /// The unpartitioned step's `run-context.txt` shape, from shard 1's tool
@@ -779,7 +873,7 @@ mod tests {
 
     fn context_attempt(shard: u32, shards: u32, attempt: u32) -> String {
         format!(
-            "repository=o/r\ncheckout_sha={SHA}\nrun_id=7\nrun_attempt={attempt}\nprofile=ci\nshard={shard}/{shards}\ncommand=cargo nextest run --workspace --profile ci --partition count:{shard}/{shards}\ncargo-nextest 0.9\nrustc 1.95.0\ncargo 1.95.0\ninput_blobs (a, b, c, d):\n{BLOB}\n{BLOB}\n{BLOB}\n{BLOB}\nnextest_exit=0\n"
+            "repository=o/r\ncheckout_sha={SHA}\nrun_id=7\nrun_attempt={attempt}\nprofile=ci\nshard={shard}/{shards}\ncommand=cargo nextest run --workspace --profile ci --partition count:{shard}/{shards}\ncargo-nextest 0.9\nrustc 1.95.0\ncargo 1.95.0\n{INPUT_HEADER}\n{BLOB}\n{BLOB}\n{BLOB}\n{BLOB}\nnextest_exit=0\n"
         )
     }
 
@@ -834,7 +928,7 @@ mod tests {
         let root = crate::tests::temp_dir(&format!("verify-shards-{label}"));
         lay_out(&root, nested)?;
         tweak(&root);
-        let outcome = verify(&options(&root, 2));
+        let outcome = verify(&options(&root, 2), Ok(vec![BLOB.to_string(); 4]));
         let _ = fs::remove_dir_all(&root);
         Ok(outcome.problems)
     }
@@ -861,7 +955,10 @@ mod tests {
         lay_out_shard(&root, false, 2, 2, 1, &["b three"])?;
         let _ = fs::write(shard_dir(&root, 2).join("shard-2.status"), "1\n");
         lay_out_shard(&root, false, 2, 2, 2, &["b three"])?;
-        let outcome = verify(&options_attempt(&root, 2, "2"));
+        let outcome = verify(
+            &options_attempt(&root, 2, "2"),
+            Ok(vec![BLOB.to_string(); 4]),
+        );
         assert!(outcome.problems.is_empty(), "{:?}", outcome.problems);
         assert!(
             outcome
@@ -894,7 +991,10 @@ mod tests {
         let root = crate::tests::temp_dir("verify-shards-future-attempt");
         lay_out_shard(&root, false, 1, 2, 1, &["b one", "b two"])?;
         lay_out_shard(&root, false, 2, 2, 3, &["b three"])?;
-        let outcome = verify(&options_attempt(&root, 2, "2"));
+        let outcome = verify(
+            &options_attempt(&root, 2, "2"),
+            Ok(vec![BLOB.to_string(); 4]),
+        );
         assert!(
             outcome
                 .problems
@@ -916,7 +1016,10 @@ mod tests {
         let root = crate::tests::temp_dir("verify-shards-reused-single-attempt");
         lay_out_shard(&root, false, 1, 2, 1, &["b one", "b two"])?;
         lay_out_shard(&root, false, 2, 2, 1, &["b three"])?;
-        let outcome = verify(&options_attempt(&root, 2, "2"));
+        let outcome = verify(
+            &options_attempt(&root, 2, "2"),
+            Ok(vec![BLOB.to_string(); 4]),
+        );
         assert!(outcome.problems.is_empty(), "{:?}", outcome.problems);
         assert!(
             outcome.context.contains("run_attempt=2"),
@@ -936,7 +1039,7 @@ mod tests {
     fn combined_artifacts_keep_the_unpartitioned_shape() -> Result<(), String> {
         let root = crate::tests::temp_dir("verify-shards-combined");
         lay_out(&root, false)?;
-        let outcome = verify(&options(&root, 2));
+        let outcome = verify(&options(&root, 2), Ok(vec![BLOB.to_string(); 4]));
         let _ = fs::remove_dir_all(&root);
         assert!(outcome.problems.is_empty(), "{:?}", outcome.problems);
         assert!(
@@ -1132,9 +1235,42 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_full_workspace_identity_is_rejected() -> Result<(), String> {
+        let problems = problems_for("duplicate-full", false, |r| {
+            rewrite(r, 1, "list-all.txt", "b one\nb three\nb two\nb three\n");
+        })?;
+        assert!(
+            problems
+                .iter()
+                .any(|p| p == "full workspace list repeats test identity `b three`"),
+            "{problems:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn a_rejected_run_clears_the_previous_accepted_receipts() -> Result<(), String> {
+        let _cwd_guard = crate::acquire_test_cwd_read_guard();
         let root = crate::tests::temp_dir("verify-shards-supersede");
         lay_out(&root, false)?;
+        let sha = crate::run::run_output_owned_in(
+            "git",
+            &["rev-parse".to_string(), "HEAD".to_string()],
+            Path::new("."),
+        )?
+        .trim()
+        .to_string();
+        let blobs = expected_input_blobs(Path::new("."), &sha)?.join("\n") + "\n";
+        for shard in 1..=2 {
+            rewrite(
+                &root,
+                shard,
+                "run-context.txt",
+                &context(shard, 2)
+                    .replace(SHA, &sha)
+                    .replace(&format!("{BLOB}\n").repeat(4), &blobs),
+            );
+        }
         let args: Vec<String> = [
             "--dir",
             "in",
@@ -1145,7 +1281,7 @@ mod tests {
             "--repository",
             "o/r",
             "--sha",
-            SHA,
+            &sha,
             "--run-id",
             "7",
             "--shards",
@@ -1167,6 +1303,17 @@ mod tests {
         assert!(root.join("out/run-context.txt").exists());
         rewrite(&root, 1, "shard-1.status", "100\n");
         assert!(run(&args).is_err());
+        assert!(!root.join("out/junit.xml").exists());
+        assert!(!root.join("out/run-context.txt").exists());
+        rewrite(&root, 1, "shard-1.status", "0\n");
+        run(&args)?;
+        let mut unknown_commit = args.clone();
+        for value in &mut unknown_commit {
+            if value == &sha {
+                *value = "f".repeat(40);
+            }
+        }
+        assert!(run(&unknown_commit).is_err());
         let left = ["junit.xml", "run-context.txt"]
             .iter()
             .filter(|name| root.join("out").join(name).exists())
@@ -1184,11 +1331,11 @@ mod tests {
     }
 
     #[test]
-    fn xml_escapes_in_identities_are_resolved() {
-        let tag = "<testcase name=\"a &lt;b&gt; &amp; c\" classname=\"x::y/z\" time=\"1\"";
-        assert_eq!(attribute(tag, "name").as_deref(), Some("a <b> & c"));
-        assert_eq!(attribute(tag, "classname").as_deref(), Some("x::y/z"));
-        assert_eq!(attribute(tag, "missing"), None);
+    fn xml_escapes_in_identities_are_resolved() -> Result<(), String> {
+        let xml = junit(&["b a &lt;b&gt; &amp; c &#x31;"]);
+        let parsed = parse_junit(&xml)?;
+        assert_eq!(parsed.identities, ["b a <b> & c 1"]);
+        Ok(())
     }
 
     #[test]
@@ -1197,3 +1344,7 @@ mod tests {
         assert!(parse_options(&["--bogus".to_string(), "x".to_string()]).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "verify_test_shards/tests.rs"]
+mod contract_tests;

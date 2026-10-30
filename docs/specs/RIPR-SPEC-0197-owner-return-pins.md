@@ -89,6 +89,14 @@ wrong in three shapes, each of which an earlier candidate credited:
 
 ## Behavior
 
+The bounded provider-backed proptest profile in RIPR-SPEC-0117 (#10839) may
+supply a generated test with a receipt for an ordinary-assertion interpretation.
+Only the exact generation-owned TestFact borrows that short source and its line
+mapping. Its provider, Cargo registration, source/configuration and callback
+failure premises are proved before registration; ordinary owner/operand and
+discriminator rules below still apply. This does not add `prop_assert*` to the
+non-returning trusted macro set or establish model/helper failure propagation.
+
 An `assert_eq!` confirms a `return_value` probe's discriminator (or an
 `error_path` probe's, for a changed early `return Err(..)`; rule 3) when all
 of the following hold. Each rule fails closed: when ripr cannot establish it,
@@ -709,6 +717,30 @@ wrong credits.
      bare call (#7082): with the cfg off, `T::name` can reach a trait
      default the index never sees. A bare `name(..)` still never names the
      associated owner (shape 1 above).
+Bounded Result.map rewrite (#9870). A changed return tail whose whole owner
+body rewrites `Ok(f(self.read(args)?, rest))` to
+`self.read(args).map(|v| f(v, rest))` completes its forwarding witness. The
+same-file `self.read` declaration must be uniquely established and synchronous,
+in the owner's exact lexical impl or trait block with the same plain receiver
+form (`self`, `&self` or `&mut self`). Conditional declarations or enclosing
+scopes, typed or mismatched receivers and separate impl blocks refuse this
+bounded identity rule. It and the owner must return standard `Result`;
+rebound `Result`, `Ok`, `Err`, `std` or `core` names and opaque imports refuse.
+The callback must use
+one plain binding exactly once in one unconditional expression, optionally in
+a block with no statements. Replacing that binding by the exact receiver plus
+`?` must reconstruct the former `Ok` payload token for token. A matching `Ok`
+owner-return pin establishes callback execution separately for each observing
+test; an `Err`-only assertion, a reach-only sibling or a deferred assertion
+cannot borrow that provenance. An unrelated assertion on a helper named in the
+callback cannot confirm aggregate discrimination either. This rule requires the
+direct owner-return Ok pin; generic helper-entry pins do not establish callback
+execution. Unknown declaration provenance, including same-line ambiguity, refuses. Discarded, recomputed or constant callback
+results, changed payloads, multiple binding reads, `move`/async callbacks,
+chained adaptors, aliases, `map_err` and unpaired rewrites retain the previous
+reading. This bounded rule does not change base-deleted findings or establish
+general combinator, callback or mutation adequacy.
+
 3. Return path. The changed expression must be the owner body's tail (or
    its final `return <expr>;`), and it must evaluate all of its parts on
    every input: no closure, `|=` or non-binary `|`, no `&&`/`||` (except
@@ -931,13 +963,62 @@ wrong credits.
    cannot notice the field replaced by one of its operands when, for the
    pinned input, the field equals that operand. The changed initializer is
    `f: a <op> b` with two distinct plain identifier operands and one binary
-   operator, and both operands are established primitive, so the dropped
+   operator. Whitespace around that operator does not change the rule:
+   `a + b`, `a+b`, `a+ b`, and `a +b` have the same operand discriminator.
+   This does not admit compound operators, comments, calls, paths, unary
+   operands or parentheses. Both operands are established primitive, so the dropped
    operator is a built-in one: a parameter of a primitive type, a `let`
    annotated with one, a numeric or bool literal, an arithmetic
    combination of established names and literals with the accepted operators
    and `as` casts to primitives, or a call whose every same-named
    function in the index is a free function without a self parameter and
    declares one bare primitive return (optionally behind one reference).
+   Primitive spelling alone is insufficient: the declaration's actual source
+   scope must not bind that type name through a generic parameter, nominal
+   type, alias or unresolved import. Value parameters, locals, functions,
+   constants and statics of the same name do not rebind the type namespace.
+   Nested function/module declarations do not contaminate the owner's scope.
+   Local value-binding evidence comes only from plain direct owner-body lets
+   completed before the actual field. The currently initialized pattern and
+   later lets cannot lend their types to that initializer. A let dependency
+   requires a completed earlier binding or an established primitive parameter;
+   the existing requirement that every relevant rebind prove primitive remains.
+   Hoisted direct functions, constants, statics, unit/tuple constructors and
+   unresolved matching imports or globs unsettle parameter-value evidence,
+   including evidence borrowed through another let. Type-only aliases, traits,
+   modules, enums and record structs do not rebind values. Established supported
+   standard primitive imports retain their type-only identity. Unmodeled
+   extern blocks and opaque item expansion refuse this proof. Thus
+   nested functions, disjoint blocks and unused closures cannot establish or
+   veto an outer value. Unread direct patterns, declaration-only bindings,
+   let-else and attributed lets refuse this proof instead of silently keeping
+   a parameter's earlier type.
+   The constructed field must have the owner's direct statement-list context.
+   A nested block, closure, match arm or binding-control expression can
+   replace a value at that sink. This includes condition-side `if`/`while`
+   let chains, before entering their body. Those contexts refuse this operand
+   proof, including genuinely primitive nested constructions, rather than
+   borrowing outer primitive evidence.
+   Direct-body return, let and call wrappers introduce no additional binding
+   scope and remain eligible. This is not general lexical value resolution.
+   An annotation or cast uses only the lexical scopes enclosing its parsed
+   type occurrence. A binding inside a disjoint block or unused closure cannot
+   rebind that type; direct items in an applicable scope remain hoisted even
+   when declared after the use. Callee returns use the callee's declaring
+   signature scope. Opaque macros and attributes refuse this proof. A bare
+   standard derive recognized by the shared attribute authority preserves it
+   only with established same-file target-root and standard-root identity, no
+   scoped rebinding of `derive` or its derive names, and no unresolved macro
+   prelude or glob in the attribute's enclosing scopes. Custom, qualified or
+   shadowed derives remain opaque; this does not evaluate macro expansion.
+   A standard primitive import requires the
+   existing closed manifest proof for its standard root, established target-root
+   context in the declaring file, and source-scope refusal of root rebinding.
+   Out-of-line files cannot establish the crate-root bindings of Rust 2015
+   import paths and refuse this import proof. Arbitrary aliases (including genuine primitive
+   alias chains), re-exports, opaque absolute imports and qualified type
+   annotations remain unestablished; no alias-terminal or general type
+   resolution is claimed.
    An unqualified call must be a direct function-body let initializer.
    Parameters, preceding destructured/raw/declaration-only lets, hoisted
    local items and imports of its name (or globs) refuse primitive proof.
@@ -1450,6 +1531,40 @@ taken any other exit, because the unwrap panics on `Err`/`None`.
    written file refuses. `assert_ne!`, a different owner and a discarded
    unwrap do not pin.
 
+### Claims payload pins (#9619)
+
+claims' `assert_ok!(call)` and `assert_some!(call)` evaluate `call` once, panic
+unless it has the named variant, and yield the payload, so
+`let q = assert_ok!(owner(..)); assert_eq!(q, literal)` reads as the unwrapped
+`Ok`/`Some` pin above (`let q = owner(..).unwrap();`).
+
+1. Trusted import. `assert_ok`, `assert_err`, `assert_some` and `assert_none`
+   are trusted test-scoped macros (like `expect!`): trusted only through a
+   `use claims::{..}` import under their own name that the test's file carries
+   and whose `claims` package is a plain registry requirement on the same
+   manifest terms as `pretty_assertions` (Required Evidence below). A rename,
+   another crate's import, a local `macro_rules!`, a `path`, `git` or
+   `package` dependency or a missing dependency leaves the macro opaque, as
+   any unknown macro is.
+2. The owner call. An owner call inside a verified claims macro binds nothing,
+   so it does not trip the bare-call rebinding refusal that other macros'
+   arguments do.
+3. The payload. Only `assert_ok!`/`assert_some!` holding exactly the owner call
+   as their whole operand read as the unwrap; `assert_some!(call.ok())`, an
+   operand with anything around the call, and `assert_err!`/`assert_none!`
+   (which yield the other side) pin nothing. The binding, expected value and
+   exit-gate rules are the unwrapped pin's.
+4. Direction. The macro must match the pin's wrapper: `assert_ok!` reads only
+   an `Ok` pin and `assert_some!` only a `Some` pin. A pin on the `Err` exit
+   (`ErrVariant`, or a field gate wrapped in `Err`) is the opposite direction,
+   since the macro panics on that exit before any comparison.
+
+Accepted limitation: the import is read at file granularity, as `expect!`'s is.
+A `use claims::assert_ok;` inside one inner module admits the name for a test
+elsewhere in the file that has no such import in scope; such a subject does not
+compile, so the credit is for a test that cannot run. Scoping the import to the
+asserting test's module chain is a follow-up.
+
 ### Bool-owner pins
 
 An owner whose signature declares `-> bool` has two values, so a bare
@@ -1502,6 +1617,30 @@ owner call, so `let got = gate(10); assert!(gate(50));` on one line does
 not pair either. An owner call or binding spelled only inside a comment or
 string literal is not a call or a reference. These rules hold for
 `assert_eq!` as well.
+
+#### Repo repair boundary evidence (#8610)
+
+The repo-seam producer also consumes this pin for a `predicate_boundary`
+that is the boolean owner's whole tail. Both full and compact evidence,
+related-test ranking and repair receipts use the same admitted strength;
+the extracted `relational_check` / weak fact remains unchanged.
+
+This first repo slice admits direct bare owner calls with literal integer
+arguments. The owner must declare `-> bool`, its parameters must be known
+fixed-width primitive integers, and its statement-free tail must compare
+only those parameters and integer literals. The existing evaluator must
+complete and agree with the assertion's true or false expectation. An
+unknown or contradicted fold supplies no new credit. Arithmetic, casts,
+overloaded operands, pointer-sized types, earlier statements, qualified
+calls and let-bound results retain their prior reading in this slice.
+
+Owner and assertion execution admission still run through `OwnerReturnPin`.
+The existing boundary-pairing authority must pair the selected assertion
+with the same test's exact boundary call, using that test's actual
+activation facts and preserving its complete assertion set. An unasserted
+`is_adult(18)` beside `assert!(is_adult(30))`, an early-return mask, a
+deciding disjunction or an assertion on another owner cannot borrow this
+credit. Static movement remains independent of focused test execution.
 
 ### Lone-equality pins
 
@@ -2523,6 +2662,36 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Test Mapping
 
+- Claims payload pins (#9619): `crates/ripr/tests/claims_payload_owner_pin.rs`
+  (single and grouped import, trailing `assert_err!`, `assert_some!`
+  positives; missing, foreign, renamed, locally redefined import, `mut`,
+  owner-derived expected value, wrapped operand, method use, converted
+  `assert_some!` operand, `path`/`package`/absent dependency and opposite-exit
+  binding negatives); verdict-corpus case `lib-claims-assert-ok-unwrap-then-eq`.
+
+- `crates/ripr/tests/result_map_callback.rs`: exact and block-tail forwarding;
+  discard/recompute/constant and changed-payload refusals; receiver, binding,
+  conditional, chained-adaptor and alias boundaries; per-test Ok/Err, reach-only
+  and deferred-observer provenance (#9870). Inactive and receiver-mismatched
+  inherent readers must not borrow identity from an async trait reader whose
+  Future.map ignores the callback; external globs and shadowed qualified Result
+  roots must not establish standard identity. The inherent-entry control pairs an
+  Err-only constructed-receiver entry with a direct Ok observer and an ordinary
+  non-map method-entry positive. The typed-parameter entry establishes reach but
+  is outside the existing helper forwarding/pin shapes; it cannot validate this
+  map-only exclusion. Removing the direct-only map guard must reject the
+  inherent-entry control without changing helper admission.
+
+- `operand_whitespace.rs`: `established_standard_derives_keep_the_missing_discriminator`
+  retains genuine primitive pins beside established standard derives;
+  `pricing_corpus_keeps_its_accepted_missing_discriminator` checks the unchanged
+  accepted pricing corpus subject and class.
+  `derive_and_attribute_expansion_cannot_hide_operator_effects` retains the
+  shadowed/custom derive, opaque attribute, item-macro and out-of-line macro
+  prelude refusals. Inputs in `tests/fixtures/operand_attributes/` also retain
+  the native Add-effect counter controls. The standard-derived primitive input
+  is compiled directly by the integration suite; native proc-macro removal
+  controls are separate engineering evidence, not claimed by the API assertions.
 - Unwrapped `Ok`/`Some` pins (#9619):
   `crates/ripr/tests/unwrapped_ok_owner_pin.rs` (direct, reversed, `expect`,
   bound and `Option` positives; `mut`, shadowing, method use, owner-derived
@@ -2934,26 +3103,70 @@ unmet condition keeps today's reading:
 
 1. The owner is a free function the integer constant fold can evaluate (the
    #6026 fold, which also evaluates `.pow(n)`, `.min(n)` and `.max(n)` on
-   integer values), the probe carries its `before` text, and that text
-   replaces the current text exactly once in the owner's body.
+   integer values, and, since #10737, the bitwise operators `& | ^`, the
+   shifts `<< >>`, `.clamp(lo, hi)` and `.saturating_add`/`.saturating_sub`
+   through the declared return width), the probe carries its `before` text,
+   and that text replaces the current text exactly once in the owner's body.
 2. No other function calls the owner by name (the same guard the `&&`/`||`
    skipped-operand reading uses).
 3. At least one related test names the owner, and every such test is a plain
    test (no case table, no local shadow of the owner's name) whose
    assertions are all equality assertions whose first operand is one bare
-   owner call with literal arguments that fold.
+   owner call with literal arguments that fold, or relational assertions
+   (`assert!(left > right)` with `<`, `<=`, `>`, `>=` or `!=`, no `&&`/`||`)
+   whose sides are each a literal expression or one bare owner call with
+   literal arguments that fold, and whose comparison has the same truth value
+   under the current and the baseline body (`backoff_ms(3, 100) >
+   backoff_ms(1, 100)` is true for `2^n` and `3^n`; `backoff_ms(3, 100) >
+   1000` is not, so that test keeps the credit).
 4. At every such call the owner folds to the same value under the current and
-   the baseline body, while a small grid of integer arguments (each parameter
-   over `0, 1, 2, 3, 5, 6, 7, 10`, at most three parameters) finds a call at
+   the baseline body, while a grid of integer arguments (each parameter over
+   `0, 1, 2, 3, 5, 6, 7, 10`, at most three parameters; a single-parameter
+   owner also tries `16, 31, 64, 100, 255, 1000, 4096, 65536`, so a divisor or
+   saturation point above ten still separates the versions) finds a call at
    which the two bodies fold to different values. An equivalent rewrite
    (`x * 3` to `3 * x`) has no such call and keeps today's reading: asking for
    a test that tells the versions apart would name one that cannot exist.
+5. The workspace does not rebind `assert`, `debug_assert`, `assert_eq` or
+   `assert_ne` (the #10386 parser-backed binding scan): both reasons read
+   assertion macros and comparison tokens by name, and a rebound `assert!`
+   may expand to an exact-value check its written relational tokens never
+   show (`assert!(owner(3) > owner(1))` expanding to
+   `assert_eq!(owner(3), 9)` distinguishes `2 * n` from `3 * n`), so a
+   workspace that may rebind any of them keeps today's reading.
+
+The summary names the reason instead of one blanket wording (#10916): an
+equality-only reading says every related test calls the owner with literal
+inputs at which the changed expression and its baseline evaluate to the same
+value; a reading that admitted a relational assertion says every related
+test's assertions hold with the same truth value on the baseline and the
+change, because the asserted inputs may still evaluate differently
+(`backoff_ms(3, 100)` is 800 before and 2700 after).
 
 A related test that never names the owner is ignored: a helper that calls the
 owner would already make condition 2 fail. The reading only downgrades; a
 fold that fails, overflows the declared width or meets a float, an unsupported
 method or a `let` is not evaluable and changes nothing. It asks nothing of
 the oracle's strength and is not a runtime claim.
+
+### A partly changed struct literal confirms only through its changed fields (#10916)
+
+A probe on a returned struct literal (`Request { url: self.url, timeout_ms:
+self.timeout_ms.unwrap_or(3_000) }`) confirms observation and discrimination
+through tokens of the whole literal, so an assertion on an untouched field
+(`assert_eq!(build().url, ..)`) used to credit a change that only moved
+`timeout_ms`. When the probe carries its `before` text and the baseline and
+the current literal are the same struct literal (the same type or variant
+path, the same field names in the same order, no `..base` spread) with a
+proper, non-empty subset of the initializers differing (compared by non-trivia
+tokens, so formatting and comments are not a change while whitespace inside a
+string literal is), the confirming tokens and the builder-override fields
+(RIPR-SPEC-0040, #6613) are those fields' names and initializer text alone.
+A test that reads the changed default keeps the credit; one that sets the
+field through a verified setter before reading it does not. Any other shape
+(no `before`, a different path or field list, a spread, every field changed,
+a non-literal) keeps today's reading. The rule only downgrades and is not a
+runtime claim.
 
 ### A returned bare comparison is read at its boundary (#9094)
 
@@ -3014,6 +3227,23 @@ same value and keeps its credit.
 Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted by this path, and helper-transferred rows are not read (#9147). The shared producer's resolver (#9218, below) is more permissive for equality-boundary inputs; this path keeps its stricter rule.
 
 The shared owner call-value producer (`call_values_for_owner`, which feeds the equality-boundary reading `equality_observed`/`exact_rows` and the helper-transferred entry rows) reads a module-qualified free call of the owner's name only when its spelled path settles on the owner: through the same-named-rival call identity when the owner has rivals, otherwise through the owner-alone identity, which reads `crate`/`self`/`super`, in-file `mod` names, `use`-bound modules (`use crate::pricing; pricing::thr(..)`, renames included) and the owner crate's own name from another crate's test, and finally a path anchored at the owner's crate whose target module re-exports the owner through a top-level `pub use` item of the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file never counts), whose leaf is not renamed and whose path resolves to the owner's own module (`pub use internal::inner;`, `pub use crate::internal::*;`). Explicit leaves take precedence over globs (an explicit dependency export beats an owner glob and an explicit owner export beats a dependency glob), a dependency glob beside an owner glob is ambiguous and declines, and a leading `::`, an undeclared first segment, a nested-scope `use` or an unreadable tree does not qualify (`pub use other_dep::thr;`, `pub use other_dep::*;`). A `crate::` qualifier counts only from a test in the owner's own crate target. A bare call, a type-path call and a method call keep their reading; any other qualified spelling (`rival::thr(101)`, a module bound to something else, a dependency path, a glob-bound or unreadable qualifier, a `#[path]`-remapped package) supplies no input row (#9218).
+
+Grouped re-exports recurse through syntax-tree use groups, including nested
+`crate::{internal::{thr}}` leaves. A leading `::` belongs only to its leaf and
+descendants; an unrelated absolute sibling cannot invalidate a local owner leaf.
+Renames are read from syntax, including intervening newlines and `as _`, and never
+turn into unrenamed owner credit. A `cfg`/`cfg_attr`-gated use remains a possible
+binding that cannot establish owner credit, so it cannot silently reveal an owner
+glob underneath it (#10047). The nested positive and dependency-glob, renamed-leaf
+and cfg controls are pinned in `returned_comparison_boundary` and the
+`rust_nested_use_*` fixtures; the conservative fixtures also join RIPR-SPEC-0108.
+These controls assert the infection-stage boundary summary and presence or absence
+of the exact `x == 101` input row, independently of final gap admission. On the
+current integrated main, the same-name path-qualifier false refusal (#10604)
+leaves all four fixture return-value findings `static_unknown` before and after
+the re-export repair and clears final missing-discriminator arrays. The fixtures
+use direct calls, not function values; their retained limitation is a known
+independent defect, not evidence that the qualifier names a function value.
 
 Accepted tradeoff: a genuine owner call spelled through a path ripr cannot resolve is declined, so its input is not read and a missing-equality gap can stay open although a test exercises the boundary. That direction was chosen because crediting an unresolved qualified call lets another function's input suppress the gap and reads `Exposed` wrongly. The filter covers the direct owner calls and the helper-transferred entry rows (`chain_entry_rows`). It does not cover the computed-input continuation (`computed_input_parameters`), which reads calls by name and stays unfiltered because it is conservative (it only ever unresolves a boundary), nor the adaptor element-run reader (`sequence_runs`): dropping only some of its calls could remove the discriminating element and create an actionable gap. The call-value producer and the chain entry rows are the only consumers filtered. A re-export counts only from the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file is another crate) and only from a top-level `pub use` item whose leaf is not renamed; a `use` inside a nested module binds there and never counts.
 

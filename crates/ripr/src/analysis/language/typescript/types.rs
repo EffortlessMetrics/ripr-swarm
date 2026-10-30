@@ -5,7 +5,12 @@ use super::*;
 /// Owner extracted from a TypeScript / JavaScript source file.
 ///
 /// Covers the syntax-first owner kinds accepted for the preview surface.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// The serialized field spellings are on-disk cache identity (#10725): the
+/// per-file fact store persists owners across runs, so any field rename or
+/// type change is a schema change. Bump
+/// `TYPESCRIPT_FILE_FACT_SCHEMA_VERSION` in `fact_store.rs` with any edit.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptOwner {
     pub(crate) name: String,
     pub(crate) file: PathBuf,
@@ -84,7 +89,18 @@ pub(crate) struct TypeScriptOwner {
 }
 
 /// Syntactic method-shape refinement recorded during owner extraction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub(crate) enum TypeScriptMethodKind {
     /// An ordinary callable method — invoked only by member CALLS.
     #[default]
@@ -113,7 +129,7 @@ impl TypeScriptOwner {
 /// Covers syntax-first Jest/Vitest `test('name', fn)`, `it('name', fn)`,
 /// and array-form `.each(...)('name', fn)` expression statements, including
 /// nested `describe(...)` blocks.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptTest {
     /// Qualified display name. Nested `describe(...)` names are joined with the
     /// local `test(...)` / `it(...)` name so user surfaces can show context.
@@ -237,7 +253,7 @@ impl TypeScriptTest {
 }
 
 /// One name an enclosing test scope binds, resolved to its innermost scope.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptScopeBinding {
     pub(crate) name: String,
     /// The constructor (`Cart`, `shop.Cart`) `name` holds when a test in the
@@ -254,6 +270,10 @@ pub(crate) struct TypeScriptScopeBinding {
     /// loop header, a hook write, a test callback parameter) shadows an
     /// import or owner of the same name for the test.
     pub(crate) file_level: bool,
+    /// Where the callback's parameter list ends in the test's `body_text`,
+    /// when `name` is a destructured fixture parameter. The destructuring is
+    /// the binding itself, so a shadow scan of the body starts after it.
+    pub(crate) parameter_end: Option<usize>,
 }
 
 /// A list several tests of one file hold in common. A file with thousands of
@@ -262,9 +282,66 @@ pub(crate) struct TypeScriptScopeBinding {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Shared<T>(std::sync::Arc<Vec<T>>);
 
+impl<T: serde::Serialize> serde::Serialize for Shared<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.iter())
+    }
+}
+
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Shared<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self(std::sync::Arc::new(Vec::deserialize(deserializer)?)))
+    }
+}
+
 impl<T> Default for Shared<T> {
     fn default() -> Self {
         Self(std::sync::Arc::new(Vec::new()))
+    }
+}
+
+impl<T: PartialEq> Shared<T> {
+    /// Point at `previous`'s list when it holds the same items. Serialization
+    /// writes each test's copy, so a decoded file would otherwise hold one
+    /// list per test again.
+    fn share_with(&mut self, previous: &Self) {
+        if !std::sync::Arc::ptr_eq(&self.0, &previous.0) && self.0 == previous.0 {
+            self.0 = std::sync::Arc::clone(&previous.0);
+        }
+    }
+}
+
+/// Restore the sharing of one file's file-wide lists after decoding its
+/// tests: each list is compared with the previous test's only, so the pass is
+/// linear in the file's tests.
+pub(crate) fn reshare_file_lists(tests: &mut [TypeScriptTest]) {
+    let mut tests = tests.iter_mut();
+    let Some(mut previous) = tests.next() else {
+        return;
+    };
+    for test in tests {
+        test.mocks_in_file.share_with(&previous.mocks_in_file);
+        test.imports_in_file.share_with(&previous.imports_in_file);
+        test.unstable_member_roots_in_file
+            .share_with(&previous.unstable_member_roots_in_file);
+        test.identity_helpers_in_file
+            .share_with(&previous.identity_helpers_in_file);
+        test.default_member_only_locals_in_file
+            .share_with(&previous.default_member_only_locals_in_file);
+        test.written_locals_in_file
+            .share_with(&previous.written_locals_in_file);
+        test.mock_factories_in_file
+            .share_with(&previous.mock_factories_in_file);
+        test.mock_spread_sources_in_file
+            .share_with(&previous.mock_spread_sources_in_file);
+        previous = test;
+    }
+}
+
+#[cfg(test)]
+impl<T> Shared<T> {
+    pub(crate) fn same_list(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
@@ -325,7 +402,7 @@ impl<T: Clone> Shared<T> {
 /// list.
 pub(crate) type ScopeBindings = Shared<TypeScriptScopeBinding>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptImport {
     pub(crate) source: String,
     pub(crate) imported: Option<String>,
@@ -385,7 +462,7 @@ pub(crate) struct TypeScriptOwnerExtractionGap {
 /// Classification-neutral, additive disclosure only: the branch recursion is
 /// deliberate, and this record carries the caveat so a credited oracle is
 /// known to possibly never execute.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptConditionalCreditGap {
     pub(crate) file: PathBuf,
     pub(crate) sample_line: usize,
@@ -649,7 +726,7 @@ impl<'a> TypeScriptRelatedCandidate<'a> {
 ///   expected value is a concrete literal.
 /// - `raw_evidence_ref` — `file:line` back to the `expect(...)` call site,
 ///   i.e. `<file>:<assertion_line>`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptAssertion {
     pub(crate) matcher: String,
     pub(crate) argument_count: usize,
@@ -726,7 +803,7 @@ impl TypeScriptAssertion {
 
 /// Oracle confidence level derived from `oracle_strength` plus whether the
 /// expected value is a concrete literal (RIPR-SPEC-0085 §PR5).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum OracleConfidence {
     /// Strong oracle strength with a concrete literal expected value.
     High,
@@ -749,7 +826,7 @@ impl OracleConfidence {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptMockPayload {
     pub(crate) target: String,
     pub(crate) expected: String,
@@ -775,13 +852,13 @@ impl TypeScriptMockPayload {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum TypeScriptMockPayloadKind {
     CalledWith,
     CalledTimes,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptErrorPayload {
     pub(crate) expected: String,
     pub(crate) kind: TypeScriptErrorPayloadKind,
@@ -830,7 +907,7 @@ impl TypeScriptErrorPayload {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum TypeScriptErrorPayloadKind {
     /// `.toThrow("exact message")` — string literal payload.
     ThrowsLiteral,

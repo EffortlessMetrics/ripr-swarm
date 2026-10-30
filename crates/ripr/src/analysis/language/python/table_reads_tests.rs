@@ -1,4 +1,4 @@
-use super::{dict_literal_names, unsafe_table_uses};
+use super::{LexedSource, dict_literal_names, unsafe_table_uses, unsafe_table_uses_lexed};
 use std::collections::BTreeSet;
 
 type Check = Result<(), String>;
@@ -166,4 +166,38 @@ fn an_import_prefix_or_a_module_attribute_does_not_make_a_write_safe() -> Check 
     assert_unsafe("import settings\nsettings.RATES[\"k\"] = 1\n")?;
     assert_unsafe("import settings\nsettings.RATES.update({})\n")?;
     assert_unsafe("import settings\nalias = settings.RATES\n")
+}
+
+#[test]
+fn every_name_filtered_to_a_watched_set_matches_watching_that_set() {
+    // The foreign index persists one file's unsafe uses of every name and
+    // filters them to the workspace's tables (#10914), which holds only if a
+    // name's verdict reads its own tokens alone.
+    let sources = [
+        "from .t import RATES, LIMITS as L\nRATES.update(x)\nL[k] = 1\nprint(RATES.get(k))\n",
+        "x = f\"{RATES} {OTHER}\"\nreturn LIMITS[k]\nfor v in LIMITS[k].items(): pass\n",
+        "RATES = {\"gold\": 10}\nx = \"unterminated\n",
+        "def f():\n    alias = RATES\n    return OTHER[0]\n",
+    ];
+    for source in sources {
+        let every: BTreeSet<String> =
+            unsafe_table_uses_lexed(source, &LexedSource::new(source), &|_| true, None);
+        for watched in [
+            &["RATES"][..],
+            &["LIMITS", "OTHER"],
+            &["RATES", "LIMITS", "L"],
+        ] {
+            let filtered: BTreeSet<String> = every
+                .iter()
+                .filter(|name| watched.contains(&name.as_str()))
+                .cloned()
+                .collect();
+            let direct = unsafe_table_uses(source, &|word| watched.contains(&word), None);
+            assert_eq!(filtered, direct, "{source:?} watching {watched:?}");
+        }
+    }
+    assert!(
+        dict_literal_names("RATES = {\"gold\": 10}\nx = \"unterminated\n").contains("RATES"),
+        "a lexing error keeps the names before it"
+    );
 }

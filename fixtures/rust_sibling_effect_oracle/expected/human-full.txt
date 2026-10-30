@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_sibling_effect_oracle/input
 
-Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 2 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed (1 base-side evidence, not candidate edit targets)
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 2 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed (1 base-side evidence, not candidate edit targets)
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 NOTE ./src/sensors/ripr_limits.rs:137
   id: probe:src_sensors_ripr_limits.rs:call_deletion:11a3eb55
@@ -15,11 +20,12 @@ Changed
   expr:   .or_insert_with(BTreeSet::new)
   source:  base_deleted — base-side evidence, not a candidate edit target
 
-Probe
+Change type
+  a call was removed
   family: call_deletion
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/sensors/ripr_limits.rs::module_limit_evidence
-  canonical gap: gap:rust:src/sensors/ripr_limits.rs:module_limit_evidence:call_deletion:call_deletion:.or_insert_with_btreeset_new
+  gap id (for scripts): gap:rust:src/sensors/ripr_limits.rs:module_limit_evidence:call_deletion:call_deletion:.or_insert_with_btreeset_new
 
 Static exposure
   reachable_unrevealed (note, confidence 0.79)
@@ -64,11 +70,12 @@ Changed
   before: .or_insert_with(BTreeSet::new)
   after:  .or_default()
 
-Probe
+Change type
+  a side effect changed
   family: side_effect
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/sensors/ripr_limits.rs::module_limit_evidence
-  canonical gap: gap:rust:src/sensors/ripr_limits.rs:module_limit_evidence:side_effect:side_effect:.or_default
+  gap id (for scripts): gap:rust:src/sensors/ripr_limits.rs:module_limit_evidence:side_effect:side_effect:.or_default
 
 Static exposure
   reachable_unrevealed (warning, confidence 0.79)
