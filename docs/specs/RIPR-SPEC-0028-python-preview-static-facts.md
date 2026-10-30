@@ -350,7 +350,10 @@ literal `CliRunner()` fixture that nothing else rewrites. A different module's
 parameter-shadowed name, a fixture with arguments or extra statements, an
 undecorated function and a command reached only by a group's subcommand name
 make no edge. The relation is uncertain, carries no oracle and never reaches
-`exposed`: the command's output is not credited.
+`exposed`: the command's output is not credited, and a helper reached through
+the command is reach-only too (the invoke may never run the body, e.g.
+`--help`). `import click as c`, `from click import command` and group
+subcommands are not recognised.
 
 Known limits, all weak-only: a module-level rebinding such as
 `helper = wrap(helper)` is not detected, and a call inside a nested `def` or

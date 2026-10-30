@@ -3848,6 +3848,9 @@ tests = [
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_runner_fixture_that_is_not_a_bare_literal_construction_is_not_trusted",
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::shapes_that_do_not_prove_the_invoke_keep_no_static_path",
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::an_undecorated_function_passed_to_invoke_is_not_a_command",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::text_that_only_spells_the_runner_or_the_invoke_is_not_an_invoke",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::spellings_the_relation_accepts",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_decorator_argument_call_is_not_a_helper_edge",
   "crates/ripr/src/analysis/language/python/effect_order_tests.rs",
 ]
 fixtures = [

@@ -11,7 +11,10 @@
 //! literal `CliRunner` fixture. Reach evidence only: the relation carries no
 //! oracle, so it never earns `exposed`.
 
-use super::related_tests::{owner_module_callees, test_body_binds_local};
+use super::related_tests::{
+    owner_module_callees, python_text_hides_code, test_body_binds_local,
+    text_binds_beyond_assignment,
+};
 use super::{PythonImport, PythonOwner, PythonTest};
 use crate::domain::OwnerKind;
 
@@ -60,7 +63,14 @@ fn runner_alias(imports: &[PythonImport]) -> Option<&str> {
 fn runner_receivers(test: &PythonTest) -> Vec<String> {
     let mut receivers = Vec::new();
     if let Some(alias) = runner_alias(&test.imports) {
-        for line in test.body_text.lines() {
+        let mut offset = 0;
+        for line in test.body_text.split_inclusive('\n') {
+            let start = offset;
+            offset += line.len();
+            let indent = line.len() - line.trim_start().len();
+            if python_text_hides_code(&test.body_text, start + indent) {
+                continue;
+            }
             let Some((name, rhs)) = line.trim().split_once('=') else {
                 continue;
             };
@@ -107,7 +117,7 @@ fn bound_beyond_one_assignment(test: &PythonTest, name: &str) -> bool {
     assignments != 1
         || test.fixtures.iter().any(|fixture| fixture == name)
         || test.imports.iter().any(|import| import.alias == name)
-        || test.body_text.contains(&format!(" as {name}"))
+        || text_binds_beyond_assignment(&test.body_text, name)
 }
 
 /// `<receiver>.invoke(<callee>` followed by `,` or `)`: the command object
@@ -115,10 +125,11 @@ fn bound_beyond_one_assignment(test: &PythonTest, name: &str) -> bool {
 fn invokes_command(body: &str, receiver: &str, callee: &str) -> bool {
     let needle = format!("{receiver}.invoke(");
     body.match_indices(&needle).any(|(index, _)| {
-        let boundary = body[..index]
-            .chars()
-            .next_back()
-            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
+        let boundary = !python_text_hides_code(body, index)
+            && body[..index]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
         let rest = body[index + needle.len()..].trim_start();
         boundary
             && rest

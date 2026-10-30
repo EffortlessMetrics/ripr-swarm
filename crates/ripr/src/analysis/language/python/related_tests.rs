@@ -3288,6 +3288,13 @@ pub(super) fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool 
         || keyword_or_operator_binds_text(&test.body_text, alias, false)
 }
 
+/// Whether `name` is bound by anything other than a plain `name = ...`
+/// assignment: a loop or `with` target, `def`, `class`, walrus, augmented
+/// assignment, import or `nonlocal`.
+pub(super) fn text_binds_beyond_assignment(text: &str, name: &str) -> bool {
+    keyword_or_operator_binds_text(text, name, true)
+}
+
 fn keyword_or_operator_binds_text(body: &str, name: &str, import_as_binds: bool) -> bool {
     augmented_assignment(body, name)
         || walrus_binds(body, name)

@@ -170,3 +170,73 @@ fn an_undecorated_function_passed_to_invoke_is_not_a_command() -> Result<(), Str
     );
     Ok(())
 }
+
+#[test]
+fn text_that_only_spells_the_runner_or_the_invoke_is_not_an_invoke() -> Result<(), String> {
+    for tests in [
+        LOCAL_RUNNER.replace(
+            "    result = runner.invoke",
+            "    # runner.invoke(hello, [])\n    result = other.invoke",
+        ),
+        LOCAL_RUNNER.replace(
+            "    result = runner.invoke(hello, ['--name', 'x'])",
+            "    print(\"runner.invoke(hello, [])\")",
+        ),
+        LOCAL_RUNNER.replace(
+            "    runner = CliRunner()\n",
+            "    \"\"\"\n    runner = CliRunner()\n    \"\"\"\n",
+        ),
+        LOCAL_RUNNER.replace(
+            "    result =",
+            "    for runner in make_runners():\n        pass\n    result =",
+        ),
+    ] {
+        stays_unreached(&tests)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn spellings_the_relation_accepts() -> Result<(), String> {
+    for tests in [
+        LOCAL_RUNNER.replace("invoke(hello,", "invoke(\n        hello,"),
+        LOCAL_RUNNER
+            .replace("import CliRunner", "import CliRunner as CR")
+            .replace("CliRunner()", "CR()"),
+        LOCAL_RUNNER.replace("from click.testing", "from typer.testing"),
+        LOCAL_RUNNER
+            .replace("from src.app import hello", "import src.app as app")
+            .replace("invoke(hello,", "invoke(app.hello,"),
+    ] {
+        let finding = finding_at(7, "    click.echo(greeting(name))", &tests)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::NoStaticPath,
+            "{tests}: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_decorator_argument_call_is_not_a_helper_edge() -> Result<(), String> {
+    let source = "import click\n\n\ndef make_default():\n    return 'x'\n\n\n@click.command()\n@click.option('--name', default=make_default())\ndef hello(name):\n    click.echo(name)\n";
+    let owners = extract_owners(Path::new("src/app.py"), source);
+    let tests = extract_tests(Path::new("tests/test_commands.py"), LOCAL_RUNNER);
+    let finding = classify_change(
+        Path::new("src/app.py"),
+        5,
+        "    return 'y'",
+        &owners,
+        &tests,
+    )
+    .ok_or("expected a finding")?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::NoStaticPath,
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
