@@ -106,8 +106,9 @@ rules above:
   trait object); lexical-fallback owners never take this route;
 - `T` must be imported at file level from the edge's declared dependency
   name (`use dependency_name::...::T;`), or the call spelled through it;
-  renamed and glob imports do not count, and a declared name with `-`
-  matches its `_` spelling;
+  renamed imports do not count, and glob imports do not count except under
+  "Sole-glob admission" below; a declared name with `-` matches its `_`
+  spelling;
 - the type path is read from the comment- and string-masked call line, so
   a quoted `T::owner()` beside a real same-named call is not the call;
 - every other same-named definition that a `T::owner(` call could reach
@@ -142,7 +143,9 @@ a free function of the same name never competes with that pin either.
 Sole-glob admission (#9619, #10479). A `T::name(..)` call also admits when the
 test file's only glob import is rooted at the owner's declared dependency
 (`use meter::*;`), nothing else in the file names or binds `T`, no competing
-definition of `T` exists and the owner crate imports nothing foreign. A second
+definition of `T` exists and the owner crate imports nothing foreign. The
+check on the rest of the file is scope-blind: an import naming `T` or a second
+glob in a function or nested module refuses the admission too. A second
 glob, a glob of another crate, a rename (`as`) and any ambiguous spelling leave
 the call unadmitted, and a rename stays uncreditable even with reach because
 the owner pin refuses `use .. as T` rebinds (#7067). The admission adds reach

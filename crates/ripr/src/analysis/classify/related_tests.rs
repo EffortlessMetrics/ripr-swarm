@@ -1968,14 +1968,26 @@ fn sole_glob_import_is_dependency(
             // owner-crate import checks.
             !rest.contains(['{', '}', ',']) && rest.trim_end().ends_with('*')
         });
-    let other_statement_names_type = statements.iter().any(|statement| {
+    // Scope-blind on purpose: a function-local or nested-module `use` can
+    // shadow the glob for the call (`use other::LevelFilter;` inside the
+    // test), and which scope the call sits in is not resolved here. Any
+    // other glob or any import naming the type anywhere in the file refuses
+    // the admission; over-refusal only withholds the relation.
+    let every_statement = use_statement_paths(stripped_file);
+    let other_statement_names_type = every_statement.iter().any(|statement| {
         !statement.contains('*')
             && statement
                 .split(|character: char| !is_ident_char(character))
                 .any(|word| word == self_type)
     });
+    let another_glob_anywhere = every_statement
+        .iter()
+        .filter(|statement| statement.contains('*'))
+        .count()
+        > 1;
     rooted_at_dependency
         && !other_statement_names_type
+        && !another_glob_anywhere
         && !file_may_bind_name(stripped_file, self_type)
 }
 
@@ -11748,6 +11760,11 @@ fn crate_c_score_test() {
             "use crate_a::*;\nuse\tcrate_b::*; LevelFilter::current()",
             // The glob belongs to a dependency that is not the owner's.
             "use crate_b::*; LevelFilter::current()",
+            // A function-local or nested-module import can shadow the glob.
+            "use crate_a::*; fn t() { use other::LevelFilter; LevelFilter::current() }",
+            "use crate_a::*; mod inner { use other::LevelFilter; } LevelFilter::current()",
+            // A function-local glob could supply the type as well.
+            "use crate_a::*; fn t() { use crate_b::*; LevelFilter::current() }",
             // A brace glob hides a second path.
             "use crate_a::{metadata::*}; LevelFilter::current()",
             // No glob and no import at all.
