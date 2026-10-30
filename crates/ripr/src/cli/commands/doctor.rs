@@ -494,10 +494,6 @@ fn tool_probe_renderer_fix(evidence: &str) -> Option<&'static str> {
     })
 }
 
-/// Plain wording for the analysis-profile cargo/rustc notes on the compact
-/// screen (#10696). The JSON evidence keeps the producer string; this only
-/// rewrites the two known `<state>; <effect>; project verification ...`
-/// shapes and passes anything else through unchanged.
 /// The shared reason of a skipped Rust check whose root is not a Rust
 /// project (`<tool> check skipped: Rust not detected ...` or `Rust is not
 /// enabled ...`), so the printer can say it once. Other skip reasons (an
@@ -508,6 +504,10 @@ fn rust_scope_skip_reason(evidence: &str) -> Option<&str> {
         .then_some(reason)
 }
 
+/// Plain wording for the analysis-profile cargo/rustc notes on the compact
+/// screen (#10696). The JSON evidence keeps the producer string; this only
+/// rewrites the two known `<state>; <effect>; project verification ...`
+/// shapes and passes anything else through unchanged.
 fn plain_toolchain_note(text: &str) -> String {
     const BUILD_TAIL: &str = "; project verification and source builds require their own toolchain";
     let Some(head) = text.strip_suffix(BUILD_TAIL) else {
@@ -3728,6 +3728,9 @@ fn format_bytes(bytes: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::{args, unique_command_test_dir};
+    use super::*;
+
     #[test]
     fn rust_scope_skip_reason_matches_only_non_rust_scope_reasons() {
         let reason =
@@ -3763,9 +3766,6 @@ mod tests {
         assert!(!pytest_runtime_probe(&probe("python", "python3")));
         assert!(!pytest_runtime_probe(&probe("typescript", "pnpm")));
     }
-
-    use super::super::tests::{args, unique_command_test_dir};
-    use super::*;
 
     fn quiet_binary() -> output::doctor_binary::DoctorBinaryIdentity {
         output::doctor_binary::DoctorBinaryIdentity {
