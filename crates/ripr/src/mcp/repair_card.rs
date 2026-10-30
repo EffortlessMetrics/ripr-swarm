@@ -57,10 +57,10 @@ pub(crate) const REPAIR_CARD_TEMPLATE: &str = "ripr://repair-card/{canonical_id}
 /// Typed failure codes this slice adds to the shared wire vocabulary. The
 /// spellings are the [`AgentCardRefusalKind`] wire spellings the CLI
 /// `agent_card_refusal` envelope already pins, so one machine state names
-/// one refusal on every transport. `policy_omitted` and
-/// `witness_unavailable` stay named for wire stability even though this
-/// slice cannot reach them (project-local policy is never loaded and the
-/// witness binds from committed findings without a failing producer call).
+/// one refusal on every transport. `policy_omitted` is reached through the
+/// refresh-time configuration (#10718); `witness_unavailable` stays named for
+/// wire stability even though this slice cannot reach it (the witness binds
+/// from committed findings without a failing producer call).
 pub(crate) const CODE_SEAM_NOT_FOUND: &str = "seam_not_found";
 pub(crate) const CODE_POLICY_OMITTED: &str = "policy_omitted";
 pub(crate) const CODE_WITNESS_UNAVAILABLE: &str = "witness_unavailable";
