@@ -2071,6 +2071,20 @@ mod evidence_path_separator_tests {
     };
     use std::path::PathBuf;
 
+    #[test]
+    fn finding_serde_skips_an_empty_confidence_basis_and_round_trips_a_set_one()
+    -> Result<(), String> {
+        let mut finding = finding_with_related("src/lib.rs");
+        let empty = serde_json::to_value(&finding).map_err(|e| e.to_string())?;
+        assert!(empty.get("confidence_basis").is_none());
+        finding.confidence_basis = vec![crate::domain::ConfidenceCap::NoRelatedTest];
+        let set = serde_json::to_value(&finding).map_err(|e| e.to_string())?;
+        assert_eq!(set["confidence_basis"][0], "no_related_test");
+        let back: Finding = serde_json::from_value(set).map_err(|e| e.to_string())?;
+        assert_eq!(back.confidence_basis, finding.confidence_basis);
+        Ok(())
+    }
+
     fn finding_with_related(file: &str) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,

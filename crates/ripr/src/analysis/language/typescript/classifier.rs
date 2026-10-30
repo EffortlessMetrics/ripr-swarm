@@ -7490,6 +7490,7 @@ pub(crate) fn classify_resolved_owner(
     } else {
         0.4
     };
+
     let mut evidence = vec![format!("owner: {}", owner.name)];
     if !probe_shape.specific {
         evidence.push("probe_fact: ambiguous_fallback".to_string());
