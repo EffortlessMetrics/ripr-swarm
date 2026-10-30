@@ -28,6 +28,8 @@ use super::{
     route,
 };
 mod admission;
+#[cfg(test)]
+mod assertion_helper_tests;
 mod assertion_selection;
 mod bounded_read;
 mod fact_serde;
@@ -530,6 +532,26 @@ struct PythonImport {
     source_module: String,
 }
 
+/// A helper's comparison is retained even when its execution/bindings cannot
+/// establish effect credit. Named states prevent fallback from laundering it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum PythonHelperOrigin {
+    Inline,
+    ValueHelper,
+    FieldHelperSupported,
+    FieldHelperRefused,
+}
+
+impl PythonHelperOrigin {
+    fn is_helper(self) -> bool {
+        self != Self::Inline
+    }
+
+    fn effect_only(self) -> bool {
+        matches!(self, Self::FieldHelperSupported | Self::FieldHelperRefused)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonAssertion {
     text: String,
@@ -544,7 +566,7 @@ struct PythonAssertion {
     callable_call: Option<String>,
     /// The existing helper-resolution pass supplied this assertion. Its
     /// comparison alone does not establish a deferred owner's execution.
-    helper_derived: bool,
+    helper_origin: PythonHelperOrigin,
     /// Native assertion/call span, relative to the containing test body.
     #[serde(with = "fact_serde::option_range")]
     source_range: Option<rustpython_parser::text_size::TextRange>,

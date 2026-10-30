@@ -210,7 +210,7 @@ one module; any other change to the file fails the attempt. Build output under a
 a committed `.gitignore`; changing `.gitignore` mid-attempt is itself refused.
 Redirect ripr output under `target/ripr/` or outside the repository.
 Exit `0` means the command completed and `2` means it could not, which includes
-the file refusal above; `3` means a gate blocked or a typed refusal answered, such
+the file refusal above; `3` means ripr declined: a gate blocked, or it refused a request, such
 as a repair after phase refused for a named cause.
 See [exit codes](docs/EXIT_CODES.md). The
 [LLM operator guide](docs/LLM_OPERATOR_GUIDE.md) covers the full repair loop.

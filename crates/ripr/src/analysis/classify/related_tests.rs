@@ -37,7 +37,7 @@ pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
 pub(in crate::analysis) use fmt_dispatch::{
-    assertion_pins_display_string, changes_only_string_literals,
+    assertion_pins_display_string, changes_only_string_literals, is_display_fmt_owner,
 };
 
 /// Per-pass workspace dependency context for the #2972 cross-crate admit.
@@ -144,6 +144,9 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Tests the diff adds or changes (#8387). Ranking only; see
     /// [`super::DiffTouchedTests`].
     diff_touched: super::DiffTouchedTests,
+    /// Changed single-line constants with their old and new declarations
+    /// (RIPR-SPEC-0048), for the value-flow check.
+    changed_consts: super::ChangedConsts,
 }
 
 impl RelatedTestCandidateIndex {
@@ -299,6 +302,19 @@ impl RelatedTestCandidateIndex {
 
     pub(in crate::analysis) fn diff_touched(&self) -> &super::DiffTouchedTests {
         &self.diff_touched
+    }
+
+    /// Record the diff's changed constants for the value-flow check.
+    pub(in crate::analysis) fn with_changed_consts(
+        mut self,
+        changed_consts: super::ChangedConsts,
+    ) -> Self {
+        self.changed_consts = changed_consts;
+        self
+    }
+
+    pub(in crate::analysis) fn changed_consts(&self) -> &super::ChangedConsts {
+        &self.changed_consts
     }
 
     /// Fold in the macro bindings of files a narrowed diff index withheld
@@ -1711,8 +1727,8 @@ struct SameNameDefinitions<'s> {
 ///   qualified call `dependency_name::owner(`, or a bare call whose
 ///   stripped body imports the owner from the declared dependency name
 ///   (`use dependency_name::...owner;`, including nested paths and brace
-///   lists). Aliased (`as`) and glob (`*`) imports prove nothing and are
-///   refused; another dependency supplying the same name defeats the
+///   lists). Aliased (`as`) and glob (`*`) imports prove nothing for a
+///   bare call and are refused; another dependency supplying the same name defeats the
 ///   admit (#2972 review round 3).
 /// - a type-path call `T::name(` (#4558) is admitted before the shadow
 ///   checks when `T` is the owner's impl self type and is imported from
@@ -1783,7 +1799,7 @@ fn dependency_edge_admits_owner_call(
             owner,
             test,
             &callable_dependency_names,
-            &file_level_imports,
+            &stripped_file,
             same_name.definitions,
         )
     {
@@ -1876,16 +1892,22 @@ fn type_path_index_covers_competitors(
 /// not. Any competitor refuses, wherever it lives: this rule does not
 /// resolve which `T` the import names, it only rules out definitions no
 /// `T::name` call could reach. Renamed (`as`) and glob imports never
-/// count, and neither does a type alias spelling.
+/// count, and neither does a type alias spelling; the one exception is
+/// the file's only glob import, rooted at the dependency, with nothing
+/// else naming or binding `T` (#9619, [`sole_glob_import_is_dependency`]).
+/// A rename stays refused because the owner pin refuses `use .. as T`
+/// rebinds (#7067), so a relation through one could not be credited.
 fn type_path_call_admits_owner(
     context: &DependencyEdgeContext<'_>,
     owner_manifest: &str,
     owner: &FunctionSummary,
     test: &TestSummary,
     callable_dependency_names: &BTreeSet<String>,
-    file_level_imports: &str,
+    stripped_file: &str,
     same_name_definitions: &[&FunctionSummary],
 ) -> bool {
+    let file_level_imports = file_level_use_text(stripped_file);
+    let file_level_imports = file_level_imports.as_str();
     let FunctionImplContext::Impl { self_type } = &owner.impl_context else {
         return false;
     };
@@ -1917,9 +1939,72 @@ fn type_path_call_admits_owner(
         captured(&format!("{dependency_name}::{type_path}"))
             || (imported_type_call
                 && imports_owner_from_dependency(file_level_imports, dependency_name, self_type))
+            || (imported_type_call
+                && sole_glob_import_is_dependency(
+                    file_level_imports,
+                    stripped_file,
+                    dependency_name,
+                    self_type,
+                ))
     });
     spelled_through_dependency
         && !owner_crate_imports_type_name(context, owner_manifest, &owner.file, self_type)
+}
+
+/// #9619: whether the file's one glob import is rooted at `dependency_name`
+/// and nothing else in the file can supply a type named `self_type`: no
+/// other glob (of any root), no other `use` statement naming the type, and
+/// no item, `let` or parameter binding of the name. `T::owner(` then names
+/// the type the glob brings in from the owner's dependency, or fails to
+/// compile; a competing definition anywhere in the workspace is refused by
+/// [`type_path_call_admits_owner`] either way.
+fn sole_glob_import_is_dependency(
+    file_level_imports: &str,
+    stripped_file: &str,
+    dependency_name: &str,
+    self_type: &str,
+) -> bool {
+    let statements = use_statement_paths(file_level_imports);
+    let globs: Vec<&&str> = statements
+        .iter()
+        .filter(|statement| statement.contains('*'))
+        .collect();
+    let [glob] = globs.as_slice() else {
+        return false;
+    };
+    let rooted_at_dependency = glob
+        .strip_prefix(dependency_name)
+        .and_then(|rest| rest.trim_start().strip_prefix("::"))
+        .is_some_and(|rest| {
+            // A path of plain segments ending in `*` (`dep::*` or
+            // `dep::module::*`), no brace group: a brace group could hide a
+            // second glob or a rename. Which module the glob names does not
+            // matter here; a type of that name reaching the call from outside
+            // the owner's workspace is refused by the competitor and
+            // owner-crate import checks.
+            !rest.contains(['{', '}', ',']) && rest.trim_end().ends_with('*')
+        });
+    // Scope-blind on purpose: a function-local or nested-module `use` can
+    // shadow the glob for the call (`use other::LevelFilter;` inside the
+    // test), and which scope the call sits in is not resolved here. Any
+    // other glob or any import naming the type anywhere in the file refuses
+    // the admission; over-refusal only withholds the relation.
+    let every_statement = use_statement_paths(stripped_file);
+    let other_statement_names_type = every_statement.iter().any(|statement| {
+        !statement.contains('*')
+            && statement
+                .split(|character: char| !is_ident_char(character))
+                .any(|word| word == self_type)
+    });
+    let another_glob_anywhere = every_statement
+        .iter()
+        .filter(|statement| statement.contains('*'))
+        .count()
+        > 1;
+    rooted_at_dependency
+        && !other_statement_names_type
+        && !another_glob_anywhere
+        && !file_may_bind_name(stripped_file, self_type)
 }
 
 /// Whether any library source of the owner's crate brings a type named
@@ -1995,17 +2080,22 @@ fn use_statement_paths(stripped: &str) -> Vec<&str> {
     let bytes = stripped.as_bytes();
     let mut paths = Vec::new();
     let mut search_from = 0usize;
-    while let Some(relative) = stripped[search_from..].find("use ") {
+    while let Some(relative) = stripped[search_from..].find("use") {
         let at = search_from + relative;
-        search_from = at + 4;
-        if at > 0
-            && bytes
+        search_from = at + 3;
+        // The keyword ends at any non-identifier character, as in
+        // `file_level_use_text`, so a tab- or newline-separated `use` is seen.
+        let starts_word = at == 0
+            || bytes
                 .get(at - 1)
-                .is_some_and(|byte| is_ident_char(char::from(*byte)))
-        {
+                .is_some_and(|byte| !is_ident_char(char::from(*byte)));
+        let ends_word = bytes
+            .get(at + 3)
+            .is_some_and(|byte| !is_ident_char(char::from(*byte)));
+        if !(starts_word && ends_word) {
             continue;
         }
-        let rest = &stripped[at + 4..];
+        let rest = &stripped[at + 3..];
         paths.push(rest.split(';').next().unwrap_or(rest).trim());
     }
     paths
@@ -11874,6 +11964,78 @@ fn crate_c_score_test() {
         assert!(level_filter_related(&index, &owner).is_empty());
     }
 
+    /// #9619: the file's one glob of the owner's dependency spells the same
+    /// type-path call.
+    #[test]
+    fn type_path_call_admits_the_sole_glob_of_the_owner_dependency() {
+        let owner = impl_method("crates/crate_a/src/metadata.rs", "LevelFilter", "current");
+        for body in [
+            "use crate_a::*; LevelFilter::current()",
+            "use crate_a::metadata::*; LevelFilter::current()",
+        ] {
+            let index = level_filter_index(body, Vec::new());
+            assert_eq!(
+                level_filter_related(&index, &owner),
+                vec![RelationReason::DirectOwnerCall],
+                "{body}: must relate"
+            );
+        }
+    }
+
+    /// #9619 negatives: each leaves the alias or glob unresolved.
+    #[test]
+    fn type_path_call_refuses_renames_and_ambiguous_glob_spellings() {
+        let owner = impl_method("crates/crate_a/src/metadata.rs", "LevelFilter", "current");
+        for body in [
+            // A rename stays refused: the owner pin refuses `use .. as T`.
+            "use crate_a::LevelFilter as Filter; Filter::current()",
+            "use crate_a::{Level, LevelFilter as Filter}; Filter::current()",
+            // A second glob could supply the type.
+            "use crate_a::*; use crate_b::*; LevelFilter::current()",
+            "use crate_a::*; use std::collections::*; LevelFilter::current()",
+            // A local type shadows the globbed name.
+            "use crate_a::*; struct LevelFilter; LevelFilter::current()",
+            // Another import names the type.
+            "use crate_a::*; use other::LevelFilter; LevelFilter::current()",
+            // Tab- and newline-separated `use` keywords are still statements.
+            "use crate_a::*;\nuse\tother::LevelFilter; LevelFilter::current()",
+            "use crate_a::*;\nuse\nother::LevelFilter; LevelFilter::current()",
+            "use crate_a::*;\nuse\tcrate_b::*; LevelFilter::current()",
+            // The glob belongs to a dependency that is not the owner's.
+            "use crate_b::*; LevelFilter::current()",
+            // A function-local or nested-module import can shadow the glob.
+            "use crate_a::*; fn t() { use other::LevelFilter; LevelFilter::current() }",
+            "use crate_a::*; mod inner { use other::LevelFilter; } LevelFilter::current()",
+            // A function-local glob could supply the type as well.
+            "use crate_a::*; fn t() { use crate_b::*; LevelFilter::current() }",
+            // A brace glob hides a second path.
+            "use crate_a::{metadata::*}; LevelFilter::current()",
+            // No glob and no import at all.
+            "LevelFilter::current()",
+        ] {
+            let index = level_filter_index(body, Vec::new());
+            assert!(
+                level_filter_related(&index, &owner).is_empty(),
+                "{body}: must not relate"
+            );
+        }
+        // The owner's crate bringing in a foreign type of the same name still
+        // refuses the glob spelling.
+        {
+            let body = "use crate_a::*; LevelFilter::current()";
+            let mut index = level_filter_index(body, Vec::new());
+            with_source(
+                &mut index,
+                "crates/crate_a/src/other.rs",
+                "pub use external::LevelFilter;\n",
+            );
+            assert!(
+                level_filter_related(&index, &owner).is_empty(),
+                "{body}: foreign import in owner crate must not relate"
+            );
+        }
+    }
+
     /// #4558 fail-closed rows: each keeps the call from reaching the owner.
     #[test]
     fn type_path_call_fails_closed_without_owner_identity() {
@@ -11891,8 +12053,8 @@ fn crate_c_score_test() {
                 Vec::new(),
             ),
             (
-                "glob import",
-                "use crate_a::*; LevelFilter::current()",
+                "glob import beside another glob",
+                "use crate_a::*; use crate_b::*; LevelFilter::current()",
                 Vec::new(),
             ),
             (
@@ -12030,6 +12192,16 @@ fn crate_c_score_test() {
             narrowed_gauge_related(&owner, DIRECT_IMPORT, Vec::new(), &[SPARE], false),
             vec![RelationReason::DirectOwnerCall]
         );
+        // #9619: the file's one glob of the owner's dependency spells the
+        // same type.
+        {
+            let body = "use crate_a::*; assert_eq!(Gauge::reading(), 42)";
+            assert_eq!(
+                narrowed_gauge_related(&owner, body, Vec::new(), &[SPARE], false),
+                vec![RelationReason::DirectOwnerCall],
+                "{body}: must relate"
+            );
+        }
         // An indexed free `reading` in the sibling crate cannot be the
         // target of `Gauge::reading()` either.
         assert_eq!(
@@ -12057,8 +12229,8 @@ fn crate_c_score_test() {
                 vec![SPARE],
             ),
             (
-                "glob import",
-                "use crate_a::*; assert_eq!(Gauge::reading(), 42)",
+                "glob import beside the other dependency's glob",
+                "use crate_a::*; use crate_b::*; assert_eq!(Gauge::reading(), 42)",
                 Vec::new(),
                 vec![SPARE],
             ),

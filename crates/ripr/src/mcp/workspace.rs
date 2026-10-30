@@ -1753,55 +1753,82 @@ pub(crate) fn run_check(
     base: Option<&str>,
     source: RefreshSource,
 ) -> Result<Snapshot, AttemptFailure> {
-    let config = crate::config::load_for_root(root).map_err(|error| {
-        AttemptFailure::new(
-            CODE_CONFIG_INVALID,
-            format!("the workspace configuration could not be loaded: {error}"),
-            format!(
-                "address the configuration error above (the detail names the cause), then {}",
-                check_retry_recovery(root, base, source)
-            ),
-        )
-    })?;
-    let input = crate::app::CheckInput {
-        root: PathBuf::from(root),
-        base: base.map(str::to_string),
-        git_timeout: Some(crate::app::default_cli_git_timeout()),
-        ..Default::default()
+    // Config refusal is a terminal attempt too: install its context before
+    // loading configuration so a pending signal cannot poison later retries.
+    let attempt = || -> Result<Snapshot, AttemptFailure> {
+        let config = crate::config::load_for_root(root).map_err(|error| {
+            AttemptFailure::new(
+                CODE_CONFIG_INVALID,
+                format!("the workspace configuration could not be loaded: {error}"),
+                format!(
+                    "address the configuration error above (the detail names the cause), then {}",
+                    check_retry_recovery(root, base, source)
+                ),
+            )
+        })?;
+        let input = crate::app::CheckInput {
+            root: PathBuf::from(root),
+            base: base.map(str::to_string),
+            git_timeout: Some(crate::app::default_cli_git_timeout()),
+            ..Default::default()
+        };
+        if source == RefreshSource::Worktree {
+            return run_worktree_check(input, &config, root_identity, base);
+        }
+        let (output, language_view) = crate::app::check_workspace_with_config_typed(input, &config)
+            .map_err(|error| check_failure(&error, root, base, RefreshSource::Committed))?;
+        // The seam inventory is gathered once inside this bounded attempt and
+        // feeds both consumers: the shared repair validator that decides each
+        // item's repair readiness (#8717) and the repair-card seam bindings
+        // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
+        // is computed, so the identity binds the admission decision.
+        let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
+        let admission = super::repair_admission::SeamAdmission::evaluate(
+            &output.findings,
+            &inventory.candidate_seams,
+            crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
+            &inventory.completeness,
+        );
+        let mut snapshot = Snapshot::from_output_admitted(
+            &output,
+            root_identity,
+            &admission,
+            RefreshSource::Committed,
+        )?;
+        snapshot.base = base.map(str::to_string);
+        snapshot.language_view = language_view;
+        // Bind the repair-card producers inside the same bounded attempt, after
+        // the shared check authority completed: the snapshot commits complete —
+        // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
+        // The card producers consume the same resolved workspace configuration
+        // as the findings (#6825 review), so one committed snapshot cannot
+        // disagree with itself across the two producers.
+        super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
+        Ok(snapshot)
     };
-    if source == RefreshSource::Worktree {
-        return run_worktree_check(input, &config, root_identity, base);
+    #[cfg(unix)]
+    if let Some(interrupted) = crate::cli::interrupt::server_interrupt_flag() {
+        use crate::analysis::cancellation::{
+            self, AnalysisAbortKind, AnalysisCancellation, AnalysisCancellationToken,
+        };
+        let token = AnalysisCancellationToken::with_server_interrupt(interrupted.clone());
+        let result = cancellation::with_token(&token, attempt);
+        // This exchange is the terminal boundary. A signal observed even after
+        // the final child/checkpoint refuses success; a later signal remains
+        // pending for the next attempt. Preserve a prior diagnostic on errors.
+        return crate::cli::interrupt::settle_server_attempt(&interrupted, result, || {
+            check_failure(
+                &AnalysisCancellation {
+                    kind: AnalysisAbortKind::Cancelled,
+                }
+                .into(),
+                root,
+                base,
+                source,
+            )
+        });
     }
-    let (output, language_view) = crate::app::check_workspace_with_config_typed(input, &config)
-        .map_err(|error| check_failure(&error, root, base, RefreshSource::Committed))?;
-    // The seam inventory is gathered once inside this bounded attempt and
-    // feeds both consumers: the shared repair validator that decides each
-    // item's repair readiness (#8717) and the repair-card seam bindings
-    // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
-    // is computed, so the identity binds the admission decision.
-    let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
-    let admission = super::repair_admission::SeamAdmission::evaluate(
-        &output.findings,
-        &inventory.candidate_seams,
-        crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
-        &inventory.completeness,
-    );
-    let mut snapshot = Snapshot::from_output_admitted(
-        &output,
-        root_identity,
-        &admission,
-        RefreshSource::Committed,
-    )?;
-    snapshot.base = base.map(str::to_string);
-    snapshot.language_view = language_view;
-    // Bind the repair-card producers inside the same bounded attempt, after
-    // the shared check authority completed: the snapshot commits complete —
-    // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
-    // The card producers consume the same resolved workspace configuration
-    // as the findings (#6825 review), so one committed snapshot cannot
-    // disagree with itself across the two producers.
-    super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
-    Ok(snapshot)
+    attempt()
 }
 
 /// The saved tracked-worktree refresh (#7357): the shared worktree check
