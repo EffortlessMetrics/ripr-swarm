@@ -43,12 +43,6 @@ pub(super) fn join_language_labels(labels: &[String]) -> String {
     }
 }
 
-/// The no-evidence hover, aware of whether any analysis has committed and
-/// which languages the workspace analyzes (#9604 finding 32). Before the
-/// first successful analysis the generic "run the CLI" pointer names the
-/// wrong recovery — the `ripr.refresh` editor command is the route that
-/// populates this server — and the language list comes from the session
-/// configuration instead of a hardcoded `Rust`.
 /// What the server knows when a hover has no evidence to show.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum NoEvidenceState {
@@ -89,7 +83,7 @@ pub(super) fn hover_response_without_evidence(
                 |base| format!("the base ref `{base}`"),
             );
             format!(
-                "**ripr** found no changed behavior against {base_text}, so there is nothing to grade. ripr estimates static RIPR exposure for changed {language_text} behavior; findings appear here after a change against the base is saved and analyzed."
+                "**ripr** found no changed lines against {base_text} at its last analysis, so there is nothing to grade. ripr estimates static RIPR exposure for changed {language_text} behavior; findings appear here after a change against the base is saved and analyzed."
             )
         }
         NoEvidenceState::Analyzing => format!(

@@ -13874,10 +13874,24 @@ mod pull_disclosure_dedup_tests {
         commit(backend, no_changes_snapshot()?)?;
         let clean = rendered(backend)?;
         assert!(
-            clean.contains("found no changed behavior against the base ref `origin/main`"),
+            clean.contains(
+                "found no changed lines against the base ref `origin/main` at its last analysis"
+            ),
             "{clean}"
         );
         assert!(clean.contains("nothing to grade"), "{clean}");
+        // A committed snapshot outranks an attempt in flight or a failed one;
+        // the statement is scoped to the last analysis.
+        for state in [
+            AnalysisAttemptState::Queued,
+            AnalysisAttemptState::Running,
+            AnalysisAttemptState::Failed,
+        ] {
+            backend.set_analysis_attempt_state_for_test(state);
+            let text = rendered(backend)?;
+            assert!(text.contains("at its last analysis"), "{text}");
+            assert!(!text.contains("in progress"), "{text}");
+        }
 
         let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
         let backend = service.inner();

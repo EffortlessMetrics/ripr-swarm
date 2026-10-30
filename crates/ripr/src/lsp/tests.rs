@@ -2434,7 +2434,7 @@ fn hover_without_evidence_states_are_distinct_and_static() -> Result<(), String>
     assert!(analyzing.contains("analysis is in progress"));
     assert!(analyzing.contains("will appear"));
     assert!(!analyzing.contains("ripr.refresh"));
-    assert!(clean.contains("found no changed behavior against the base ref, so"));
+    assert!(clean.contains("found no changed lines against the base ref at its last analysis, so"));
     assert!(clean.contains("nothing to grade"));
     assert!(not_analyzed.contains("has not analyzed this workspace yet"));
     assert!(!not_analyzed.contains("in progress"));

@@ -80,9 +80,12 @@ the pending/clean condition the same way the pending marker does, and never
 asks for an action that is already underway (#11253):
 
 - A committed snapshot whose typed `analysis_outcome.kind` is
-  `no_changed_lines` renders "found no changed behavior against the base ref"
+  `no_changed_lines` renders "found no changed lines against the base ref at its last analysis"
   (naming the snapshot's base when known) and says there is nothing to grade.
-  Any other committed snapshot keeps the generic static-exposure text.
+  Any other committed snapshot keeps the generic static-exposure text. A
+  committed snapshot takes precedence over a queued or running attempt: the
+  clean statement is scoped to "its last analysis", so it stays true (and
+  honest about its age) while a refresh runs or after one failed.
 - With no committed snapshot, a `queued` or `running` analysis attempt renders
   "analysis is in progress" and says the result will appear; it does not
   request `ripr.refresh`.
@@ -137,7 +140,7 @@ they make no runtime-outcome or test-sufficiency claim.
   covers the emission site itself: a gap record whose kind is not a governed
   code produces no diagnostic, while a registered kind still emits one.
 - `lsp/tests.rs::hover_without_evidence_states_are_distinct_and_static` and
-  the two `backend.rs::tests::no_evidence_hover_*` tests pin the in-progress
+  the two `backend.rs::pull_disclosure_dedup_tests::no_evidence_hover_*` tests pin the in-progress
   and clean-workspace hover states against their discriminating negatives
   (idle session, snapshot without `no_changed_lines`).
 - The existing LSP diagnostic unit tests continue to pass unchanged, pinning
