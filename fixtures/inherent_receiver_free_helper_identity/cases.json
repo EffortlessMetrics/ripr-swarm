@@ -230,7 +230,7 @@
   {
     "path": "inherent_receiver_async_function/controls/sync-chain.rs",
     "name": "subject",
-    "relation": "helper_owner_call",
+    "relation": null,
     "native_reaches": true
   },
   {
