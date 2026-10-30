@@ -1580,6 +1580,52 @@ fn skipped_suite_bindings_retain_opaque_runner_escapes() {
     }
 }
 
+/// #10169: an ordinary ambient global-object write targets one unrelated
+/// property. It must not strip dormancy from every skipped suite in the
+/// file, while a write to a runner name must still retain the notice.
+#[test]
+fn skipped_suite_bindings_treat_ambient_global_writes_precisely() {
+    let file = Path::new("test/binding.test.ts");
+    for prelude in [
+        "globalThis.fetch = mock;",
+        "window.matchMedia = () => false;",
+        "global.foo = 1;",
+        "globalThis['probe'] = 1;",
+        "const toTitle = (name) => name; toTitle('x');",
+    ] {
+        let source =
+            format!("{prelude} describe.skip('off', () => {{ it('dormant', () => {{}}); }});");
+        let parsed_allocator = Allocator::default();
+        let parsed = Parser::new(&parsed_allocator, &source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_none(),
+            "{source}"
+        );
+    }
+    for prelude in [
+        "globalThis.describe = custom;",
+        "global['describe'] = custom;",
+        "const get = () => describe; get().skip = custom;",
+    ] {
+        let source =
+            format!("{prelude} describe.skip('runs', () => {{ it('live', () => {{}}); }});");
+        let parsed_allocator = Allocator::default();
+        let parsed = Parser::new(&parsed_allocator, &source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+}
+
 #[test]
 fn skipped_suite_bindings_keep_invocation_shadows_and_dormant_values_separate() {
     let file = Path::new("test/binding.test.ts");

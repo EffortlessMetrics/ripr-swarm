@@ -297,6 +297,15 @@ impl DeclarationBindings {
             {
                 self.global_members
                     .push((path.clone(), property.map(ToString::to_string)));
+                // An unshadowed global-object write targets exactly one
+                // property; the of-program pass records that property as an
+                // unavailable runner name. Only a shadowed local of the same
+                // name (a possible runner alias) stays a whole-file mutation
+                // risk. An ordinary `globalThis.fetch = mock` must not strip
+                // dormancy from every skipped suite in the file.
+                if self.binding_scope(&path.name, path.at).is_none() {
+                    return;
+                }
             }
             self.member_writes.push(path);
         }
@@ -460,6 +469,15 @@ impl<'a> Visit<'a> for DeclarationBindings {
                 }
             }
             AstKind::ArrowFunctionExpression(arrow) => {
+                // An expression-bodied arrow returns its operand; the operand
+                // can surface later through a computed call target that the
+                // assignment walker cannot resolve. Record it as an escape.
+                if arrow.expression
+                    && let Some(oxc_ast::ast::Statement::ExpressionStatement(returned)) =
+                        arrow.body.statements.first()
+                {
+                    self.escape_value(&returned.expression);
+                }
                 self.push(arrow.span, &arrow.body.statements);
                 self.variable_scopes.extend(self.stack.last().copied());
             }
