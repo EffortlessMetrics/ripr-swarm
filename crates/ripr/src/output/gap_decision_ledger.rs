@@ -2290,24 +2290,10 @@ fn gap_record_from_python_no_repair_card_finding(
     // #11103: the boundary decline already names the equality in the Missing
     // check but cannot bind one operand to a test input, so no repair card
     // exists. Name that operand instead of the generic line; routing stays
-    // fail-closed (no gap id, no card).
-    let unresolved_operand = string_array_at(finding, &["missing"])
-        .into_iter()
-        .find_map(|line| {
-            if !line.contains("changed predicate boundary") {
-                return None;
-            }
-            line.split("; ").find_map(|segment| {
-                segment
-                    .strip_prefix("observed ")
-                    // The Missing check is prose: the final segment ends with
-                    // a sentence period after `unresolved`.
-                    .map(|rest| rest.trim_end_matches('.'))
-                    .and_then(|rest| rest.strip_suffix("values: unresolved"))
-                    .map(|operand| operand.trim().to_string())
-                    .filter(|operand| !operand.is_empty())
-            })
-        });
+    // fail-closed (no gap id, no card). The extraction is shared with the
+    // human triage surface so the two wordings cannot drift.
+    let unresolved_operand =
+        crate::output::human::unresolved_boundary_operand(&string_array_at(finding, &["missing"]));
     let reason = if let Some(repo_reason) = repo_reason.as_deref() {
         repo_reason.to_string()
     } else if let Some(operand) = unresolved_operand {
