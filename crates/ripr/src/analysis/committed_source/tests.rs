@@ -635,3 +635,31 @@ fn ignored_source_paths_name_files_and_directories_but_not_tracked_or_untracked(
     );
     Ok(())
 }
+
+/// The non-UTF-8 path refusal must name the recovery without announcing every
+/// record class as tracked: the same `utf8_path` message covers ignored,
+/// untracked, snapshot-input and rename-original paths, so the prefix may not
+/// claim a class the caller never passed (#10568). This contract is on the
+/// byte-level function, so the assertion runs on every host.
+#[test]
+fn non_utf8_path_refusal_names_recovery_without_claiming_tracked() -> Result<(), String> {
+    let error = match utf8_path(b"\xff\xfe_bad.rs") {
+        Ok(named) => return Err(format!("expected a refusal, got a UTF-8 path `{named}`")),
+        Err(error) => error,
+    };
+    for needle in [
+        "is not valid UTF-8",
+        "`git mv` and commit the rename",
+        "plain filesystem rename",
+    ] {
+        assert!(
+            error.contains(needle),
+            "refusal is missing `{needle}`: {error}"
+        );
+    }
+    assert!(
+        !error.contains("tracked path"),
+        "the shared refusal must not announce every record class as tracked: {error}"
+    );
+    Ok(())
+}

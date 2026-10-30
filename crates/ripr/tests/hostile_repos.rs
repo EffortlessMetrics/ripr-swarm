@@ -464,10 +464,27 @@ fn assert_non_utf8_refusal(ran: &Ran, what: &str) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 fn assert_lib_finding(ran: &Ran, what: &str) -> Result<(), String> {
     assert_sane(ran, what)?;
-    if ran.code != Some(0) || !ran.stdout.contains("src/lib.rs") {
+    if ran.code != Some(0) {
+        return Err(format!("{what}: expected exit 0\n{}", ran.stderr));
+    }
+    // A stdout substring could name `src/lib.rs` inside a hint or diagnostic
+    // instead of a real finding, so require the parsed `probe.file` (the same
+    // oracle `awkward_file_names_each_produce_a_probe` uses).
+    let report: serde_json::Value = serde_json::from_str(&ran.stdout)
+        .map_err(|e| format!("{what}: invalid JSON from check: {e}\n{}", ran.stdout))?;
+    let findings = report["findings"]
+        .as_array()
+        .ok_or_else(|| format!("{what}: check JSON is missing findings\n{}", ran.stdout))?;
+    let hit = findings.iter().any(|finding| {
+        finding["probe"]["file"]
+            .as_str()
+            .map(|file| file.strip_prefix("./").unwrap_or(file) == "src/lib.rs")
+            .unwrap_or(false)
+    });
+    if !hit {
         return Err(format!(
-            "{what}: expected the src/lib.rs finding\n{}\n{}",
-            ran.stdout, ran.stderr
+            "{what}: expected a probe.file finding for src/lib.rs\n{}",
+            ran.stdout
         ));
     }
     Ok(())
@@ -491,6 +508,8 @@ fn non_utf8_tracked_path_recovery_works_in_every_mode() -> Result<(), String> {
         let root = non_utf8_repo(&scratch, &format!("tracked-{index}"), true)?;
         let mut args = vec!["check", "--base", "main"];
         args.extend(mode);
+        let mut json_args = args.clone();
+        json_args.extend(["--format", "json"]);
         let what = format!("tracked, mode {mode:?}");
         // `--committed` reads history, where the dirty edit is irrelevant but
         // the committed path is still byte-invalid.
@@ -518,7 +537,7 @@ fn non_utf8_tracked_path_recovery_works_in_every_mode() -> Result<(), String> {
         assert_non_utf8_refusal(&staged, &format!("{what}, rename staged"))?;
 
         git(&root, &["commit", "-q", "-m", "rename"])?;
-        let fixed = ripr(&root, &args, &[])?;
+        let fixed = ripr(&root, &json_args, &[])?;
         assert_lib_finding(&fixed, &format!("{what}, rename committed"))?;
     }
     Ok(())
@@ -536,8 +555,36 @@ fn non_utf8_untracked_path_recovery_is_a_filesystem_rename() -> Result<(), Strin
     assert_non_utf8_refusal(&refused, "untracked")?;
     let from = root.join("src").join(OsStr::from_bytes(b"\xff\xfe_bad.rs"));
     fs::rename(&from, root.join("src/good.rs")).map_err(|e| format!("rename failed: {e}"))?;
-    let fixed = ripr(&root, &["check", "--base", "main"], &[])?;
+    let fixed = ripr(&root, &["check", "--base", "main", "--format", "json"], &[])?;
     assert_lib_finding(&fixed, "untracked, renamed")
+}
+
+/// An ignored byte-invalid routed file is refused with the same message
+/// (`committed_source.rs` pushes ignored routed files through `utf8_path`)
+/// and is repaired by the plain filesystem rename the refusal names. The
+/// journeys demonstrate the default mode; the refusal itself comes from the
+/// status parse every selection mode shares.
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_ignored_path_recovery_is_a_filesystem_rename() -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let scratch = Scratch::new("nonutf8-ignored")?;
+    let root = scratch.path.join("ignored");
+    let bad = root.join("src").join(OsStr::from_bytes(b"\xff\xfe_bad.rs"));
+    repo(&root, |root| {
+        fs::write(root.join(".gitignore"), b"*_bad.rs\n")
+            .map_err(|e| format!("write failed: {e}"))?;
+        change_lib(root)
+    })?;
+    // Written after the commit and matched by the committed `.gitignore`, so
+    // the record arrives as an ignored routed path, not `??`.
+    fs::write(&bad, b"pub fn z() {}\n").map_err(|e| format!("write failed: {e}"))?;
+    let refused = ripr(&root, &["check", "--base", "main"], &[])?;
+    assert_non_utf8_refusal(&refused, "ignored")?;
+    fs::rename(&bad, root.join("src/good.rs")).map_err(|e| format!("rename failed: {e}"))?;
+    let fixed = ripr(&root, &["check", "--base", "main", "--format", "json"], &[])?;
+    assert_lib_finding(&fixed, "ignored, renamed")
 }
 
 /// A byte-invalid file *name* that no analyzer routes is not an overbroad
@@ -561,7 +608,7 @@ fn non_utf8_unrouted_bin_does_not_refuse() -> Result<(), String> {
                 .map_err(|e| format!("write failed: {e}"))
         })?;
         fs::write(&bin, b"\x01").map_err(|e| format!("write failed: {e}"))?;
-        let mut args = vec!["check", "--base", "main"];
+        let mut args = vec!["check", "--base", "main", "--format", "json"];
         args.extend(mode);
         let ran = ripr(&root, &args, &[])?;
         assert_lib_finding(&ran, &format!("unrouted byte-named .bin, mode {mode:?}"))?;
