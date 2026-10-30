@@ -35,4 +35,5 @@ Infer polling, general type/value flow or macro expansion. The explicitly polled
 native-positive control remains statically unsupported by this bounded traversal.
 Native execution and static admission are independent axes. Preserve every existing
 matrix entry and its truth label; diff helper evidence
-remains conservative. This fixture makes no performance claim for #8005.
+remains conservative, with one explicit exception: the sync-chain diff-path credit
+(`helper_owner_call` / high), which the repository walk leaves `null`. This fixture makes no performance claim for #8005.

@@ -5,6 +5,9 @@ relations. `native_reaches` records the independent one-arm mutation result;
 `relation` records bounded static admission. Neither rewrites the other.
 `native_reaches` is evidence-packet documentation: no gate reads it, so a changed
 value is reviewed against the native replay and is not checked mechanically.
+`cases.json` also references controls and inputs in the `module_type_shadow`,
+`dormant_body`, `async_operand` and `async_operand_helper` fixture directories;
+those are delivered by the sibling fixtures slice (PR #11030), not this PR.
 
 | Hypothesis / controls | Native owner mutant | Repository full / compact | Diff |
 | --- | --- | --- | --- |
@@ -46,7 +49,8 @@ run the original, replace only `Self::Object(value) => Some(*value),` with
 `Self::Object(value) => None,`, then compile/run the mutant. Keep native sources
 and executables outside CLI input roots. All originals must pass; the matrix
 records which mutants fail. Raw argv, digests, exits and CLI JSON are retained in
-the PR evidence packet. No existing fixture golden is re-blessed for this wave.
+the PR evidence packet. Goldens re-blessed in this slice are recorded in each fixture's
+`expected/CHANGELOG.md`.
 
 Same-file helper entry reuses lexical binding and call identity without requiring
 the production owner pin's Cargo/cfg provenance. In particular a helper declared
@@ -75,4 +79,5 @@ unpolled async/async-move bodies, dormant closures and nested item bodies with
 actual outer calls and outer calls beside a discarded future. They use the same
 executable-node boundary in the original function and the synthetic operand
 parser. Native originals all pass; four genuine outer/mixed mutants fail while
-eight dormant mutants survive. No existing golden is re-blessed.
+eight dormant mutants survive. Goldens re-blessed in this slice are recorded in each fixture's
+`expected/CHANGELOG.md`.
