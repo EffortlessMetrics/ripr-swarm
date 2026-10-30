@@ -503,6 +503,10 @@ struct PythonFixtureDef {
     /// The class the fixture returns a fresh literal-built instance of
     /// (`return Account(100)`), when that is its whole shape (#9619).
     literal_construction: Option<String>,
+    /// The inert test-support class (`CliRunner`) the fixture returns a fresh
+    /// literal-built instance of, when that is its whole shape; the
+    /// fixture may take a lone unused `request` (#11016).
+    inert_tool: Option<String>,
     /// The literal `params=` rows a fixture returning `request.param` hands
     /// the test, one run per row (#9619, `param_fixtures.rs`).
     literal_params: Option<Vec<param_fixtures::FixtureParamRow>>,
@@ -1759,6 +1763,8 @@ mod deleted_lines_tests;
 #[cfg(test)]
 mod fixtures_tests;
 
+#[cfg(test)]
+mod inert_tool_fixture_tests;
 #[cfg(test)]
 mod literal_fixture_tests;
 

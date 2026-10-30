@@ -604,31 +604,125 @@ pub(super) fn assigned_attributes(source: &str) -> Option<Vec<String>> {
 }
 
 pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
+    assigned_attribute_targets(statements, &|attribute| Some(attribute.attr.to_string()))
+}
+
+/// The names the module uses other than to import them or to construct them
+/// (`CliRunner(...)`): `CliRunner.invoke = fake`, `setattr(CliRunner, ...)`,
+/// `Runner = CliRunner` and a string such as `"click.testing.CliRunner.invoke"`
+/// all name a class in a way that can change what it builds. A module the
+/// lexer rejects names every identifier it contains, so nothing is hidden.
+pub(super) fn names_used_beyond_construction(source: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut tokens = Vec::new();
+    for result in lex(source, Mode::Module) {
+        match result {
+            Ok((token, _)) => tokens.push(token),
+            Err(_) => {
+                return source
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .filter(|word| !word.is_empty())
+                    .map(str::to_string)
+                    .collect();
+            }
+        }
+    }
+    let mut in_import = false;
+    let mut line_start = true;
+    for (index, token) in tokens.iter().enumerate() {
+        match token {
+            Tok::Newline => {
+                in_import = false;
+                line_start = true;
+                continue;
+            }
+            Tok::Semi => {
+                in_import = false;
+                line_start = true;
+                continue;
+            }
+            Tok::Indent | Tok::Dedent => continue,
+            Tok::Import | Tok::From if line_start => in_import = true,
+            // `def CliRunner(...)` and `class CliRunner(...)` redefine the
+            // name; only a call constructs it.
+            Tok::Name { name }
+                if !in_import
+                    && (!matches!(tokens.get(index + 1), Some(Tok::Lpar))
+                        || index
+                            .checked_sub(1)
+                            .and_then(|before| tokens.get(before))
+                            .is_some_and(|before| matches!(before, Tok::Def | Tok::Class))) =>
+            {
+                names.push(name.to_string());
+            }
+            Tok::String { value, .. } => names.extend(
+                value
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .filter(|word| !word.is_empty())
+                    .map(str::to_string),
+            ),
+            _ => {}
+        }
+        line_start = false;
+    }
+    names
+}
+
+/// The dotted modules a file imports, at any nesting depth: `import a.b` names
+/// `a.b`, `from a import b` names `a` and `a.b`. A relative import names the
+/// written module and each imported name, which only over-matches.
+pub(super) fn imported_module_names(statements: &[Stmt]) -> Vec<String> {
+    let mut modules = Vec::new();
+    visit_statements(statements, &mut |stmt| match stmt {
+        Stmt::Import(import) => {
+            modules.extend(import.names.iter().map(|alias| alias.name.to_string()));
+        }
+        Stmt::ImportFrom(import) => {
+            let module = import.module.as_ref().map(|module| module.to_string());
+            if let Some(module) = &module {
+                modules.push(module.clone());
+            }
+            for alias in &import.names {
+                modules.push(match &module {
+                    Some(module) => format!("{module}.{}", alias.name),
+                    None => alias.name.to_string(),
+                });
+            }
+        }
+        _ => {}
+    });
+    modules
+}
+
+fn assigned_attribute_targets(
+    statements: &[Stmt],
+    pick: &dyn Fn(&ast::ExprAttribute) -> Option<String>,
+) -> Vec<String> {
     let mut attributes = Vec::new();
     visit_statements(statements, &mut |stmt| match stmt {
         Stmt::Assign(assign) => {
             for target in &assign.targets {
-                attribute_target_names(target, &mut attributes);
+                attribute_target_names(target, pick, &mut attributes);
             }
         }
         Stmt::AnnAssign(assign) if assign.value.is_some() => {
-            attribute_target_names(&assign.target, &mut attributes);
+            attribute_target_names(&assign.target, pick, &mut attributes);
         }
-        Stmt::AugAssign(assign) => attribute_target_names(&assign.target, &mut attributes),
+        Stmt::AugAssign(assign) => attribute_target_names(&assign.target, pick, &mut attributes),
         Stmt::Delete(delete) => {
             for target in &delete.targets {
-                attribute_target_names(target, &mut attributes);
+                attribute_target_names(target, pick, &mut attributes);
             }
         }
-        Stmt::For(stmt) => attribute_target_names(&stmt.target, &mut attributes),
-        Stmt::AsyncFor(stmt) => attribute_target_names(&stmt.target, &mut attributes),
+        Stmt::For(stmt) => attribute_target_names(&stmt.target, pick, &mut attributes),
+        Stmt::AsyncFor(stmt) => attribute_target_names(&stmt.target, pick, &mut attributes),
         Stmt::With(stmt) => {
             for target in stmt
                 .items
                 .iter()
                 .filter_map(|item| item.optional_vars.as_deref())
             {
-                attribute_target_names(target, &mut attributes);
+                attribute_target_names(target, pick, &mut attributes);
             }
         }
         Stmt::AsyncWith(stmt) => {
@@ -637,7 +731,7 @@ pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
                 .iter()
                 .filter_map(|item| item.optional_vars.as_deref())
             {
-                attribute_target_names(target, &mut attributes);
+                attribute_target_names(target, pick, &mut attributes);
             }
         }
         _ => {}
@@ -647,21 +741,25 @@ pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
     attributes
 }
 
-fn attribute_target_names(target: &Expr, out: &mut Vec<String>) {
+fn attribute_target_names(
+    target: &Expr,
+    pick: &dyn Fn(&ast::ExprAttribute) -> Option<String>,
+    out: &mut Vec<String>,
+) {
     match target {
-        Expr::Attribute(attribute) => out.push(attribute.attr.to_string()),
+        Expr::Attribute(attribute) => out.extend(pick(attribute)),
         Expr::Tuple(tuple) => {
             for element in &tuple.elts {
-                attribute_target_names(element, out);
+                attribute_target_names(element, pick, out);
             }
         }
         Expr::List(list) => {
             for element in &list.elts {
-                attribute_target_names(element, out);
+                attribute_target_names(element, pick, out);
             }
         }
-        Expr::Starred(starred) => attribute_target_names(&starred.value, out),
-        Expr::Subscript(subscript) => attribute_target_names(&subscript.value, out),
+        Expr::Starred(starred) => attribute_target_names(&starred.value, pick, out),
+        Expr::Subscript(subscript) => attribute_target_names(&subscript.value, pick, out),
         _ => {}
     }
 }
