@@ -24839,7 +24839,10 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
             "the empty working-tree read must not describe `main...HEAD` or advise `--worktree`; got:\n{empty_worktree}"
         ));
     }
-    if empty_worktree.contains("\nuntracked: ") {
+    if empty_worktree
+        .lines()
+        .any(|line| line.starts_with("untracked:"))
+    {
         return Err(format!(
             "a working-tree read must not print the committed-history untracked header line; got:\n{empty_worktree}"
         ));

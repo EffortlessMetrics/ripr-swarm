@@ -4097,7 +4097,9 @@ mod tests {
         let mut worktree = empty_live_output(false);
         worktree.untracked_working_tree_source_paths = vec!["tests/new.rs".to_string()];
         assert!(
-            !render(&worktree).contains("\nuntracked:"),
+            !render(&worktree)
+                .lines()
+                .any(|line| line.starts_with("untracked:")),
             "a working-tree read carries its own disclosure"
         );
     }

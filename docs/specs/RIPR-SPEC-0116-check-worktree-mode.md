@@ -102,7 +102,7 @@ head it analyzed.
   output is unchanged; badge and repo-scope formats have no diff header.
   When a committed-history run leaves untracked routed files out
   (`unanalyzed_working_tree` with untracked paths), the human header adds one
-  `untracked: N file(s) not analyzed (<up to three paths and N more>); run
+  `untracked: N file(s) not analyzed (<up to three paths, then `and N more`>); run
   `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH``
   line directly after `head:` (#11159). It is display-only and absent on a
   working-tree read and when no untracked routed file was left out.
