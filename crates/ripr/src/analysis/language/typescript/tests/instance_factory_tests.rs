@@ -465,3 +465,122 @@ fn classes_with_other_instance_sources_record_no_entry() {
     let proto = format!("{CACHE}const shape = {{ __proto__: null }};\n");
     assert!(factory_entry_names(&proto).is_empty(), "__proto__");
 }
+
+fn inject_after_receiver(snippet: &str) -> String {
+    READ_TEST.replace("  expect(runs).toBe(0);", &format!("  {snippet}"))
+}
+
+#[test]
+fn closed_rule_refuses_indirection_shapes() -> Result<(), String> {
+    for (label, snippet) in [
+        (
+            "define-properties",
+            "Object.defineProperties(box, { value: { get: () => 1 } });",
+        ),
+        (
+            "reflect-define",
+            "Reflect.defineProperty(box, 'value', { get: () => 1 });",
+        ),
+        (
+            "variable-key-spy",
+            "const k = 'value';\n  vi.spyOn(Object.getPrototypeOf(box), k, 'get').mockReturnValue(1);",
+        ),
+        (
+            "spaced-define",
+            "Object.defineProperty (box, 'value', { get: () => 1 });",
+        ),
+        ("newline-spy", "vi.spyOn\n(box, 'value', 'get');"),
+        (
+            "aliased-spy",
+            "const s = vi.spyOn;\n  s(box, 'value', 'get');",
+        ),
+        ("computed-assignment", "(box as any)['val' + 'ue'] = 1;"),
+        ("set-prototype", "Object.setPrototypeOf(box, {});"),
+        (
+            "mocked-computed",
+            "vi.mocked(m['ca' + 'ched']).mockReturnValueOnce({ value: 1 } as never);",
+        ),
+    ] {
+        let test = inject_after_receiver(snippet);
+        assert_no_static_path(label, CACHE, &test)?;
+    }
+    for (label, prelude) in [
+        (
+            "helper-tamper",
+            "function tamper(o: object, k: string, d: PropertyDescriptor) {\n  Object.defineProperty(o, k, d);\n}\n",
+        ),
+        (
+            "replace-property",
+            "jest.replaceProperty(globalThis, 'x', 1);\n",
+        ),
+    ] {
+        let test = format!("{prelude}{READ_TEST}");
+        assert_no_static_path(label, CACHE, &test)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn oversized_argument_lists_refuse() -> Result<(), String> {
+    let prelude = format!(
+        "vi.mock('../src/other', () => ({{ pad: '{}' }}));\n",
+        "x".repeat(9000)
+    );
+    let test = format!("{prelude}{READ_TEST}");
+    assert_no_static_path("oversized-arguments", CACHE, &test)
+}
+
+#[test]
+fn method_parameters_shadow_the_receiver() -> Result<(), String> {
+    for (label, body) in [
+        (
+            "object-method",
+            "  const box = cached(() => 1);\n  const h = {\n    m(box: { value: number }) {\n      expect(box.value).toBe(1);\n    },\n  };\n  h.m({ value: 1 });",
+        ),
+        (
+            "class-method",
+            "  const box = cached(() => 1);\n  class H {\n    run(box: { value: number }): void {\n      expect(box.value).toBe(1);\n    }\n  }\n  new H().run({ value: 1 });",
+        ),
+    ] {
+        let test = format!(
+            "import {{ cached }} from '../src/cache';\n\ntest('t', () => {{\n{body}\n}});\n"
+        );
+        assert_no_static_path(label, CACHE, &test)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn ordinary_spies_and_destructuring_do_not_over_refuse() -> Result<(), String> {
+    let test = format!("vi.spyOn(console, 'log');\n{READ_TEST}").replace(
+        "  expect(runs).toBe(0);",
+        "  const [first] = [1];\n  expect(first).toBe(1);",
+    );
+    assert_related("ordinary-spy-and-destructuring", CACHE, &test)
+}
+
+#[test]
+fn owner_side_casts_and_decorators_record_no_entry() {
+    let class_cast = format!("{CACHE}(Cached as any) = null;\n");
+    assert!(factory_entry_names(&class_cast).is_empty(), "class cast");
+    let factory_cast = format!("{CACHE}(cached as any) = null;\n");
+    assert!(
+        factory_entry_names(&factory_cast).is_empty(),
+        "factory cast"
+    );
+    let bang = format!("{CACHE}cached! = null;\n");
+    assert!(factory_entry_names(&bang).is_empty(), "non-null target");
+    let decorated_class = CACHE.replace(
+        "export class Cached<T> {",
+        "@seal\nexport class Cached<T> {",
+    );
+    assert!(
+        factory_entry_names(&decorated_class).is_empty(),
+        "decorated class"
+    );
+    let decorated_getter = CACHE.replace("  get value(): T {", "  @memo\n  get value(): T {");
+    assert!(
+        factory_entry_names(&decorated_getter).is_empty(),
+        "decorated getter"
+    );
+}

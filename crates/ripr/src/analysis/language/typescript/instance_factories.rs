@@ -87,11 +87,13 @@ pub(crate) fn assign_instance_factories(
         );
     }
     let class_member_sources = class_member_sources(owners);
+    let (supers, decorated_classes) = class_supers(program);
     let facts = ClassFacts {
         file_text: text,
         instance_fields,
         member_sources: &class_member_sources,
-        supers: &class_supers(program),
+        supers: &supers,
+        decorated_classes: &decorated_classes,
         repeated_names,
     };
     let mut additions: Vec<(usize, Vec<TypeScriptModuleEntry>)> = Vec::new();
@@ -105,7 +107,8 @@ pub(crate) fn assign_instance_factories(
         if repeated_names.contains(class_name)
             || !is_safe_javascript_identifier(&owner.name)
             || text.contains("__proto__")
-            || super::tests_extract::identifier_written_in(text, class_name)
+            || super::tests_extract::identifier_written_strictly(text, class_name)
+            || owner.decorated
             || owners
                 .iter()
                 .filter(|other| {
@@ -152,12 +155,19 @@ pub(crate) fn assign_instance_factories(
 /// `class name -> extends`: `None` for a class with no `extends` clause,
 /// `Some(base)` for `extends Base`, `Some("")` for any other heritage
 /// expression (a call, a member, a mixin).
-fn class_supers(program: &oxc_ast::ast::Program<'_>) -> BTreeMap<String, Option<String>> {
+fn class_supers(
+    program: &oxc_ast::ast::Program<'_>,
+) -> (BTreeMap<String, Option<String>>, BTreeSet<String>) {
     let mut out = BTreeMap::new();
+    let mut decorated = BTreeSet::new();
     let mut visit = |class: &Class<'_>| {
         let Some(id) = class.id.as_ref() else {
             return;
         };
+        // A class decorator can return a replacement class.
+        if !class.decorators.is_empty() {
+            decorated.insert(id.name.as_str().to_string());
+        }
         let base = class
             .super_class
             .as_ref()
@@ -183,7 +193,7 @@ fn class_supers(program: &oxc_ast::ast::Program<'_>) -> BTreeMap<String, Option<
             _ => {}
         }
     }
-    out
+    (out, decorated)
 }
 
 type MemberSources<'a> = BTreeMap<(PathBuf, String), Vec<(TypeScriptMethodKind, &'a str)>>;
@@ -194,6 +204,7 @@ struct ClassFacts<'a> {
     instance_fields: &'a BTreeMap<String, BTreeSet<String>>,
     member_sources: &'a MemberSources<'a>,
     supers: &'a BTreeMap<String, Option<String>>,
+    decorated_classes: &'a BTreeSet<String>,
     repeated_names: &'a BTreeSet<String>,
 }
 
@@ -213,6 +224,7 @@ fn class_chain_cannot_replace_getter(
             .member_sources
             .get(&(file.to_path_buf(), current.clone()));
         if facts.repeated_names.contains(&current)
+            || facts.decorated_classes.contains(&current)
             || !class_cannot_replace_getter(
                 &current,
                 name,
@@ -402,7 +414,7 @@ fn collect_function<'a>(
     *declared_counts.entry(name).or_default() += 1;
     let class_name = function_factory_class(func, text, wanted)
         // A reassigned function declaration is some other value at the call.
-        .filter(|_| !super::tests_extract::identifier_written_in(text, name));
+        .filter(|_| !super::tests_extract::identifier_written_strictly(text, name));
     let qualifies = class_name.is_some();
     declarations.push(FactoryDeclaration {
         local: name,

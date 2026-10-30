@@ -18401,6 +18401,11 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::receiver_identity_shapes_are_no_static_path",
   "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::file_level_replacements_are_no_static_path",
   "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::classes_with_other_instance_sources_record_no_entry",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::closed_rule_refuses_indirection_shapes",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::oversized_argument_lists_refuse",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::method_parameters_shadow_the_receiver",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::ordinary_spies_and_destructuring_do_not_over_refuse",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::owner_side_casts_and_decorators_record_no_entry",
 ]
 fixtures = [
   "fixtures/typescript_call_removal_throwing_method",

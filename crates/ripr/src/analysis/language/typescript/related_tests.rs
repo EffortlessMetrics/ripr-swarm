@@ -2021,12 +2021,10 @@ fn factory_built_getter_read(
     // `Object.defineProperty(Class.prototype, ...)`) may replace the getter or
     // the factory, and `__proto__` can rewire any instance.
     let replaced = |name: &str| test.member_replacements_in_file.iter().any(|n| n == name);
-    if replaced(&owner.name)
-        || replaced("__proto__")
+    if replaced(super::tests_extract::MEMBER_REPLACEMENT_ANY)
+        || replaced(&owner.name)
         || test_spies_owner_with_fabrication_for_owner(test, &owner.name, false)
         || class_entries::assigns_member_named(body, &owner.name)
-        || body.contains("defineProperty")
-        || body.contains("setPrototypeOf")
         || spies_on_member_named(&test.body_text, &owner.name)
     {
         return false;
@@ -2079,6 +2077,7 @@ fn factory_built_getter_read(
         .any(|receiver| {
             !enclosing_scope_shadows(test, receiver)
                 && !body_binds_shadow_identifier(&test.body_text, receiver)
+                && !method_parameter_binds(body, receiver)
                 && expect_actual_references_member(body, receiver, &owner.name)
         })
 }
@@ -2142,6 +2141,69 @@ fn factory_receiver_names(body: &str, callees: &[String]) -> Vec<String> {
         }
     }
     receivers
+}
+
+/// `true` when a method definition inside `body` (an object-literal or class
+/// method `m(box) { ... }`, with an optional return type) takes `name` among
+/// its parameters, so a read inside it is another binding. Control statements
+/// (`if (...) {`) and `function`/`catch` heads are not methods.
+fn method_parameter_binds(body: &str, name: &str) -> bool {
+    const NOT_METHODS: [&str; 8] = [
+        "if", "for", "while", "switch", "catch", "with", "function", "return",
+    ];
+    body.match_indices(')').any(|(close, _)| {
+        let rest = &body[close + 1..];
+        let Some(brace) = rest.find('{') else {
+            return false;
+        };
+        let between = rest[..brace].trim();
+        if !(between.is_empty()
+            || (between.starts_with(':') && !between.contains([';', '=', '(', ')'])))
+        {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut open = None;
+        for (at, ch) in body[..=close].char_indices().rev() {
+            match ch {
+                ')' => depth += 1,
+                '(' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        open = Some(at);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(open) = open else {
+            return true;
+        };
+        let head = body[..open].trim_end();
+        let word: String = head
+            .chars()
+            .rev()
+            .take_while(|ch| is_javascript_identifier_char(*ch))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if NOT_METHODS.contains(&word.as_str()) {
+            return false;
+        }
+        let params = &body[open + 1..close];
+        params.match_indices(name).any(|(idx, _)| {
+            params[..idx]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+                && params[idx + name.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !is_javascript_identifier_char(ch))
+        })
+    })
 }
 
 /// `true` when every mention of `name` in `body` lies inside the innermost

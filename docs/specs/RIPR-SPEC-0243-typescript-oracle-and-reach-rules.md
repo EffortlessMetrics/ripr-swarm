@@ -1554,10 +1554,14 @@ the masker.
     the receiver is declared twice, written again, bound by a catch, function,
     arrow or loop parameter, or mentioned outside the block that declares it;
     when the factory call is not the whole initializer; when the read is not
-    the subject of an `expect(...)`; when any spy, mock, `defineProperty`,
-    `setPrototypeOf`, `__proto__` or member assignment anywhere in the test
-    file (hooks and top-level statements included) names the getter or the
-    factory, whatever its fabrication form; when the owner module is mocked;
+    the subject of an `expect(...)`; when the test file mentions `defineProperty`,
+    `defineProperties`, `setPrototypeOf`, `replaceProperty` or `__proto__`
+    at all, contains a `spyOn` that is not a call with a plain string-literal
+    member name, a `mocked` of anything but an identifier path, an index
+    assignment, or an argument list past the scan bound (the closed rule
+    refuses every name); when any other spy, mock or `.name =` assignment
+    names the getter or the factory, whatever its fabrication form; when the
+    owner module is mocked;
     and for computed access. The relation reads like a constructed receiver
     (`receiver_owner_call`), so it lends reach and the assertion's oracle, and
     the classifier then decides the class exactly as it does for
@@ -1567,7 +1571,8 @@ the masker.
     subclass or a union, crediting a receiver declared outside the test body,
     and crediting a call of the factory without a getter read. Known limit: an
     `expect(...)` on a different object elsewhere in the same test can still
-    donate its oracle, as for a constructed receiver.
+    donate its oracle, as for a constructed receiver. A class or accessor
+    decorator refuses; a decorator on another declaration is not examined.
 
 ### Counted removal receiver witness (#10157)
 

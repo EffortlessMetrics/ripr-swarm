@@ -5813,29 +5813,43 @@ fn find_conditional_assertion_credit_in_expression(
     }
 }
 
-/// Identifier tokens a test file hands to a replacement call or assigns as a
-/// member, for the factory-built getter relation (#10402): every identifier
-/// inside the argument list of `spyOn(`, `mock(`, `doMock(`, `mocked(`,
-/// `defineProperty(`, `defineProperties(`, `setPrototypeOf(`,
-/// `replaceProperty(` and `stubGlobal(` (quoted names included, so
-/// `vi.spyOn(m, 'cached')` names `cached`), every `.name =` assignment target,
-/// and `__proto__` when the file mentions it. A raw-text superset: a name that
-/// is only mentioned near such a call is listed too, which can only withhold a
-/// relation.
+/// Marker in [`member_replacement_names`]: the file does something to member
+/// definitions the scan cannot attribute to a name, so every name is replaced.
+pub(crate) const MEMBER_REPLACEMENT_ANY: &str = "*";
+
+/// Names a test file may replace, for the factory-built getter relation
+/// (#10402). A closed, fail-closed rule over the raw text (whitespace before
+/// `(` is tolerated; comments, strings and templates are not skipped, which
+/// can only withhold a relation):
+///
+/// - the file mentions `defineProperty`, `defineProperties`, `setPrototypeOf`,
+///   `replaceProperty` or `__proto__` anywhere: every name is replaced
+///   ([`MEMBER_REPLACEMENT_ANY`]);
+/// - each `spyOn` must be a call whose second argument is a plain string
+///   literal, which is recorded (every identifier of the arguments is recorded
+///   too); any other `spyOn` (an alias, a variable or computed key, an
+///   unparsed call) replaces every name;
+/// - each `mocked` must be a call of a plain identifier path, which is
+///   recorded; anything else replaces every name;
+/// - `mock`, `doMock` and `stubGlobal` calls record every identifier of their
+///   arguments, and one that is not a call replaces every name;
+/// - every `.name =` target is recorded, and an index assignment
+///   (`target[key] = ...`) replaces every name;
+/// - an argument list longer than the scan bound replaces every name.
 pub(crate) fn member_replacement_names(source: &str) -> Vec<String> {
-    const TRIGGERS: [&str; 9] = [
-        "spyOn(",
-        "mock(",
-        "doMock(",
-        "mocked(",
-        "defineProperty(",
-        "defineProperties(",
-        "setPrototypeOf(",
-        "replaceProperty(",
-        "stubGlobal(",
+    const ANY_MENTION: [&str; 5] = [
+        "defineProperty",
+        "defineProperties",
+        "setPrototypeOf",
+        "replaceProperty",
+        "__proto__",
     ];
     const MAX_ARGUMENT_BYTES: usize = 8192;
     let mut names = std::collections::BTreeSet::new();
+    if ANY_MENTION.iter().any(|word| source.contains(word)) {
+        return vec![MEMBER_REPLACEMENT_ANY.to_string()];
+    }
+    let refuse_all = || vec![MEMBER_REPLACEMENT_ANY.to_string()];
     let mut add_tokens = |text: &str| {
         for token in text.split(|ch: char| !is_javascript_identifier_char(ch)) {
             if !token.is_empty() {
@@ -5843,15 +5857,46 @@ pub(crate) fn member_replacement_names(source: &str) -> Vec<String> {
             }
         }
     };
-    for trigger in TRIGGERS {
-        for (idx, _) in source.match_indices(trigger) {
-            let args = &source[idx + trigger.len()..];
-            let mut end = super::classifier::balanced_close_offset(args).unwrap_or(args.len());
-            end = end.min(MAX_ARGUMENT_BYTES);
-            while !args.is_char_boundary(end) {
-                end -= 1;
+    for word in ["spyOn", "mocked", "mock", "doMock", "stubGlobal"] {
+        for (idx, _) in source.match_indices(word) {
+            let before = source[..idx].chars().next_back();
+            let after = source[idx + word.len()..].chars().next();
+            if before.is_some_and(is_javascript_identifier_char)
+                || after.is_some_and(is_javascript_identifier_char)
+            {
+                continue;
             }
-            add_tokens(&args[..end]);
+            let rest = &source[idx + word.len()..];
+            let Some(args) = rest.trim_start().strip_prefix('(') else {
+                return refuse_all();
+            };
+            let Some(end) = super::classifier::balanced_close_offset(args) else {
+                return refuse_all();
+            };
+            if end > MAX_ARGUMENT_BYTES {
+                return refuse_all();
+            }
+            let args = &args[..end];
+            match word {
+                "spyOn" => {
+                    let Some(member) = second_argument_literal(args) else {
+                        return refuse_all();
+                    };
+                    add_tokens(member);
+                }
+                "mocked" => {
+                    let path = args.trim();
+                    if path.is_empty()
+                        || !path
+                            .chars()
+                            .all(|ch| is_javascript_identifier_char(ch) || ch == '.')
+                    {
+                        return refuse_all();
+                    }
+                }
+                _ => {}
+            }
+            add_tokens(args);
         }
     }
     for (idx, _) in source.match_indices('.') {
@@ -5864,13 +5909,85 @@ pub(crate) fn member_replacement_names(source: &str) -> Vec<String> {
         if len == 0 {
             continue;
         }
-        let after = rest[len..].trim_start();
-        if after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>") {
+        if assignment_follows(&rest[len..]) {
             add_tokens(&rest[..len]);
         }
     }
-    if source.contains("__proto__") {
-        names.insert("__proto__".to_string());
+    for (idx, _) in source.match_indices(']') {
+        if !assignment_follows(&source[idx + 1..]) {
+            continue;
+        }
+        // `const [a] = x` destructures; `target[key] = x` assigns a member.
+        let mut depth = 0usize;
+        let mut open = None;
+        for (at, ch) in source[..=idx].char_indices().rev() {
+            match ch {
+                ']' => depth += 1,
+                '[' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        open = Some(at);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let indexes_a_value = open
+            .and_then(|at| source[..at].chars().next_back())
+            .is_none_or(|ch| is_javascript_identifier_char(ch) || ch == ')' || ch == ']');
+        if indexes_a_value {
+            return refuse_all();
+        }
     }
     names.into_iter().collect()
+}
+
+/// `true` when `after` (the text following a target) starts a plain or
+/// compound assignment rather than a comparison or an arrow.
+fn assignment_follows(after: &str) -> bool {
+    let after = after.trim_start();
+    let compound = [
+        "+=", "-=", "*=", "/=", "%=", "**=", "||=", "&&=", "??=", "<<=", ">>=", "&=", "|=", "^=",
+    ];
+    (after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>"))
+        || compound.iter().any(|op| after.starts_with(op))
+}
+
+/// The content of the second top-level argument of `args` when it is a plain
+/// string literal (no template interpolation), else `None`.
+fn second_argument_literal(args: &str) -> Option<&str> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut starts = vec![0usize];
+    for (offset, ch) in args.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => starts.push(offset + 1),
+            _ => {}
+        }
+    }
+    let start = *starts.get(1)?;
+    let end = starts.get(2).map_or(args.len(), |next| next - 1);
+    let argument = args.get(start..end)?.trim();
+    let quote = argument
+        .chars()
+        .next()
+        .filter(|ch| matches!(ch, '"' | '\'' | '`'))?;
+    let inner = argument.strip_prefix(quote)?.strip_suffix(quote)?;
+    let interpolated = quote == '`' && inner.contains("${");
+    (!inner.contains(quote) && !inner.contains('\\') && !interpolated).then_some(inner)
 }
