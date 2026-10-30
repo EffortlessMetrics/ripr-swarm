@@ -4,6 +4,7 @@ use super::mask_pin::MASK_BITS_UNEXERCISED;
 use super::operand_pin::FIELD_PINNED_EQUAL_TO_OPERAND;
 use super::reveal::wrapper_error_seam_expression;
 use crate::domain::*;
+use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 
 pub(in crate::analysis) fn ensure_unknown_stop_reason(
     class: &ExposureClass,
@@ -235,6 +236,28 @@ pub(in crate::analysis) fn recommended_next_step(
     owner_assertion_shaped: bool,
     stop_reasons: &[StopReason],
 ) -> Option<String> {
+    recommended_next_step_with_boundary(probe, class, owner_assertion_shaped, stop_reasons, false)
+}
+
+/// Next-step guidance when the caller knows whether a related test already
+/// supplies the changed boundary input (infection `yes`, #10622). For a weak
+/// predicate that means the input exists and only the oracle is weak, so the
+/// "add boundary tests" template would be misleading. Guidance only: repair
+/// eligibility is decided elsewhere.
+pub(in crate::analysis) fn recommended_next_step_with_boundary(
+    probe: &Probe,
+    class: &ExposureClass,
+    owner_assertion_shaped: bool,
+    stop_reasons: &[StopReason],
+    boundary_input_observed: bool,
+) -> Option<String> {
+    if boundary_input_observed
+        && !owner_assertion_shaped
+        && *class == ExposureClass::WeaklyExposed
+        && matches!(probe.family, ProbeFamily::Predicate)
+    {
+        return Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP.to_string());
+    }
     // RIPR-SPEC-0133: an assertion-shaped owner is the oracle, not the code
     // under test, so the standard code-under-test advice is incoherent for it.
     // The exposure class is unchanged; only the guidance is reframed.
@@ -289,9 +312,9 @@ pub(in crate::analysis) fn recommended_next_step(
 /// may not have — "instead of only is_err()" when no `is_err()` exists, or
 /// "replace broad assertions" when the related test already is an
 /// `assert_eq!`. When the strongest reach-establishing related oracle is
-/// already exact, name what is actually missing (a boundary input, an
-/// error-arm input), the way the predicate probe's missing-discriminator
-/// evidence does.
+/// already exact, avoid presuming a broad assertion. Error-path advice names
+/// the missing arm input; return-value advice first asks whether the change
+/// can affect the return, since an exact effect assertion cannot establish it.
 ///
 /// The caller annotates each row's miss reason first, so this selection
 /// reads the same final rows the JSON/human projections render. A row is
@@ -300,8 +323,7 @@ pub(in crate::analysis) fn recommended_next_step(
 /// token-coincidence row never dictates the owner finding's advice) and its
 /// annotated miss is not `missing_exact_assertion` (there the assertion
 /// shape IS the gap). An observation-unconfirmed row stays eligible: the
-/// suite's exact assertion exists and the step names the input, which is
-/// honester than presuming a broad assertion. The oracle must also be
+/// suite's exact assertion exists, but it may observe a different sink. The oracle must also be
 /// admitted as strong: a syntactic `assert_eq!` the classifier downgraded
 /// (for example a self-computed expected value) does not establish an
 /// independent exact discriminator, so "keep the exact assertion" would be
@@ -323,7 +345,7 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
         return None;
     }
     let candidates = related.iter().filter(|test| {
-        !test.is_unmatched()
+        test.is_contributing()
             && test
                 .relation_reason
                 .is_none_or(|reason| reason.establishes_reach(owner_is_function))
@@ -352,7 +374,7 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
             "Add a test input that executes the changed error arm and assert the exact variant or payload it produces"
         }
         ProbeFamily::ReturnValue => {
-            "Add a test input where the changed branch behaves differently and keep the exact assertion"
+            "Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns"
         }
         _ => return None,
     };
@@ -360,8 +382,13 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
         .first()
         .map(|fact| format!(" Missing discriminator: `{}`.", fact.value))
         .unwrap_or_default();
+    let oracle_context = if probe.family == ProbeFamily::ReturnValue {
+        "already has an exact assertion; this does not establish observation of the returned value"
+    } else {
+        "already asserts an exact value; the gap is not the assertion shape"
+    };
     Some(format!(
-        "The related test `{}` already asserts an exact value; the gap is not the assertion shape. {family_gap}.{missing_value}",
+        "The related test `{}` {oracle_context}. {family_gap}.{missing_value}",
         strongest.name,
     ))
 }
@@ -400,7 +427,7 @@ fn uncertainty_next_step(
         crate::domain::ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP.to_string()
     } else {
         match class {
-            ExposureClass::InfectionUnknown => "Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings.",
+            ExposureClass::InfectionUnknown => "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings.",
             ExposureClass::PropagationUnknown => "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes.",
             _ => "Inspect the changed behavior and its existing tests; ripr has not established a test gap.",
         }.to_string()
@@ -525,6 +552,44 @@ mod tests {
         );
     }
 
+    // #9244 item 5: the infection_unknown next step names a concrete action
+    // (open the test, find the side of the condition it exercises, name an
+    // input for the other side) instead of an open-ended "trace" instruction.
+    #[test]
+    fn infection_unknown_next_step_names_a_concrete_action() {
+        let step = recommended_next_step(
+            &probe(ProbeFamily::Predicate, "amount >= threshold"),
+            &ExposureClass::InfectionUnknown,
+            false,
+            &[],
+        )
+        .unwrap_or_default();
+        assert!(
+            step.starts_with("Open the related test, check whether it reaches the changed code"),
+            "{step}"
+        );
+        assert!(
+            step.contains("then name an input that would exercise the other side"),
+            "{step}"
+        );
+        assert!(
+            !step.contains("to check whether the change matters"),
+            "{step}"
+        );
+        // The assertion-shaped owner reframing is unchanged.
+        let shaped = recommended_next_step(
+            &probe(ProbeFamily::Predicate, "amount >= threshold"),
+            &ExposureClass::InfectionUnknown,
+            true,
+            &[],
+        )
+        .unwrap_or_default();
+        assert!(
+            shaped.starts_with("The changed owner is an assertion helper"),
+            "{shaped}"
+        );
+    }
+
     #[test]
     fn recommended_next_step_covers_side_effect_and_default_weak_guidance() {
         let side_effect = recommended_next_step(
@@ -549,6 +614,64 @@ mod tests {
         assert_eq!(
             match_arm.as_deref(),
             Some("Strengthen the related assertion so it discriminates the changed behavior.")
+        );
+    }
+
+    #[test]
+    fn boundary_observed_weak_predicate_guidance_targets_the_oracle() {
+        let predicate = probe(ProbeFamily::Predicate, "qty > 10");
+        let observed = recommended_next_step_with_boundary(
+            &predicate,
+            &ExposureClass::WeaklyExposed,
+            false,
+            &[],
+            true,
+        );
+        assert_eq!(
+            observed.as_deref(),
+            Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP)
+        );
+        // Discriminating negative: boundary input not observed keeps the
+        // boundary-test template.
+        let unobserved = recommended_next_step_with_boundary(
+            &predicate,
+            &ExposureClass::WeaklyExposed,
+            false,
+            &[],
+            false,
+        );
+        assert_eq!(
+            unobserved.as_deref(),
+            Some(
+                "Add boundary tests for below, equal, and above the changed threshold with exact assertions."
+            )
+        );
+        // The observed-boundary wording is specific to weak predicates.
+        let other_family = recommended_next_step_with_boundary(
+            &probe(ProbeFamily::ReturnValue, "value + 1"),
+            &ExposureClass::WeaklyExposed,
+            false,
+            &[],
+            true,
+        );
+        assert_ne!(
+            other_family.as_deref(),
+            Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP)
+        );
+    }
+
+    #[test]
+    fn boundary_observed_does_not_override_assertion_shaped_owner_guidance() {
+        let step = recommended_next_step_with_boundary(
+            &probe(ProbeFamily::Predicate, "qty > 10"),
+            &ExposureClass::WeaklyExposed,
+            true,
+            &[],
+            true,
+        );
+        assert_eq!(
+            step.as_deref(),
+            Some(crate::domain::ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP)
         );
     }
 
@@ -965,6 +1088,8 @@ mod tests {
             relation_reason: Some(relation_reason),
             relation_confidence: Some(RelationConfidence::High),
             miss,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
@@ -1003,8 +1128,8 @@ mod tests {
     }
 
     // #7393: the return_value family template presumes a broad assertion;
-    // an exact `assert_eq!` related test keeps its shape and the step names
-    // the missing discriminating input instead.
+    // an exact `assert_eq!` may observe a different sink. Establish return
+    // sensitivity before recommending a separating input.
     #[test]
     fn exact_related_oracle_names_the_missing_input_for_return_value() {
         let step = exact_oracle_gap_next_step(
@@ -1019,12 +1144,15 @@ mod tests {
             true,
         );
         let step = step.as_deref().unwrap_or("");
-        assert!(step.contains("already asserts an exact value"), "{step}");
+        assert!(step.contains("already has an exact assertion"), "{step}");
         assert!(
-            step.contains("where the changed branch behaves differently"),
+            step.contains("Check whether the change can affect the returned value"),
             "{step}"
         );
         assert!(!step.contains("broad assertions"), "{step}");
+        assert!(step.contains("If it can"), "{step}");
+        assert!(step.contains("If it cannot"), "{step}");
+        assert!(!step.contains("gap is not the assertion shape"), "{step}");
     }
 
     // Controls: a broad related oracle, a stronger broad oracle outranking
@@ -1102,9 +1230,9 @@ mod tests {
             true,
         );
         let step = step.as_deref().unwrap_or("");
-        assert!(step.contains("already asserts an exact value"), "{step}");
+        assert!(step.contains("already has an exact assertion"), "{step}");
         assert!(
-            step.contains("where the changed branch behaves differently"),
+            step.contains("Check whether the change can affect the returned value"),
             "{step}"
         );
     }
@@ -1128,7 +1256,7 @@ mod tests {
             true,
         );
         let step = step.as_deref().unwrap_or("");
-        assert!(step.contains("already asserts an exact value"), "{step}");
+        assert!(step.contains("already has an exact assertion"), "{step}");
     }
 
     // A syntactic assert_eq! the classifier downgraded (a self-computed

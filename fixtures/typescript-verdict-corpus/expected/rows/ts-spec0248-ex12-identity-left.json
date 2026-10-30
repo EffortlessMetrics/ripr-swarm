@@ -1,0 +1,22 @@
+{
+  "case_id": "ts-spec0248-ex12-identity-left",
+  "subject_id": "authored-ts-grid-arithmetic-left",
+  "origin": "authored",
+  "anchor": "src/arithmetic.ts:2",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "nodetest_identity_on_left_operand",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

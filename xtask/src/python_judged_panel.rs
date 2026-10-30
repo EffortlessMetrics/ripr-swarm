@@ -62,7 +62,7 @@ pub(crate) const KNOWN_LIMITATION_QUALITIES: [&str; 4] =
 /// The product-contract StaticLimitKind vocabulary, mirrored exactly from
 /// `crates/ripr/src/domain/language.rs` (`StaticLimitKind::as_str`). Do not
 /// invent kinds here; extend the product enum first, then this mirror.
-const KNOWN_STATIC_LIMIT_KINDS: [&str; 27] = [
+const KNOWN_STATIC_LIMIT_KINDS: [&str; 29] = [
     "dynamic_dispatch",
     "metaprogramming",
     "missing_import_graph",
@@ -90,6 +90,8 @@ const KNOWN_STATIC_LIMIT_KINDS: [&str; 27] = [
     "rust_implicit_call_unresolved",
     "rust_caller_loop_selector_unresolved",
     "rust_debug_assertion_profile_unresolved",
+    "rust_pinned_shape_unresolved",
+    "rust_indirect_owner_call_unresolved",
 ];
 /// Historical sweep renditions are hand-trimmed; a retained anchor line within
 /// this distance of the rendition's changed position is disclosed as a warning.
@@ -140,9 +142,9 @@ pub(crate) struct PythonJudgedPanelItem {
     pub(crate) id: String,
     pub(crate) repo: String,
     #[serde(default)]
-    base: Nullable<String>,
+    pub(crate) base: Nullable<String>,
     #[serde(default)]
-    head: Nullable<String>,
+    pub(crate) head: Nullable<String>,
     pub(crate) diff_path: String,
     pub(crate) shape: Vec<String>,
     pub(crate) expected_direction: String,

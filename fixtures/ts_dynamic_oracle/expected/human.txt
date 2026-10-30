@@ -3,28 +3,41 @@ mode: fast
 root: fixtures/ts_dynamic_oracle/input
 config: <cwd>/fixtures/ts_dynamic_oracle/input/ripr.toml
 
-Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 1
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: preview-language evidence is advisory; no repair packet is emitted because of the named static limitation: typescript_dynamic_assertion_unresolved — the matcher `.toBe(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior; `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  Safe next action: ripr cannot tell whether the test at `tests/pricing.test.ts:5` covers this change: its `.toBe(...)` compares against a variable or computed value, not a literal; replace that expected value with a literal, or check by hand that the test covers this change, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it
   File: src/pricing.ts:2
   Language: typescript
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (base >= 0) {
-  Missing discriminator (1 of 2): Related tests reach `computePrice` with a strong oracle, but no strong assertion observes a `computePrice(...)` call at the changed predicate boundary `base == 0`; inputs on one…
-  Related test: tests/pricing.test.ts:3 computePrice returns expected
+  Missing check (1 of 2): Related tests reach `computePrice` with a strong oracle, but no strong
+    assertion observes a `computePrice(...)` call at the changed predicate boundary `base == 0`;
+    inputs on one side of the boundary do not discriminate the changed comparison
+  Related test: tests/pricing.test.ts:3 computePrice returns expected (ripr could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `base == 0`; no actionable repair packet is emitted until verify, receipt, and
     edit-boundary fields are available
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related test(s) found for owner `computePrice`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 4 more detail line(s) in --format human-full
@@ -32,7 +45,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_dynamic_oracle/input --diff <cwd>/fixtures/ts_dynamic_oracle/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:0335115b
   ripr context --root <cwd>/fixtures/ts_dynamic_oracle/input --diff <cwd>/fixtures/ts_dynamic_oracle/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:0335115b
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_pricing.ts:typescript_preview:0335115b --root <cwd>/fixtures/ts_dynamic_oracle/input` for the full gate's answer
+  no repair start offered: ripr has no complete repair packet for this TypeScript finding (ripr cannot tell whether the test at `tests/pricing.test.ts:5` covers this change: its `.toBe(...)` compares against a variable or computed value, not a literal); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`
 
 More:
   Full evidence: rerun with --format human-full

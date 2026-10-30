@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr pilot` now prints the commit-or-stash precondition before the repair steps when the inline repair target differs from HEAD only in the index (staged), not just in the worktree: the line is decided from the target file's own state through the same predicate `ripr agent repair --phase before` enforces, instead of from pilot's worktree-diff change state. The pilot summary JSON is unchanged (#9553).

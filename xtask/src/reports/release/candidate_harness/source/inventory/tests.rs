@@ -20,7 +20,8 @@ impl Repo {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         std::fs::create_dir(&root).map_err(|e| e.to_string())?;
-        let repo = Self(root);
+        // Production canonicalizes the source root; Windows spells it `\\?\` (#9660).
+        let repo = Self(root.canonicalize().map_err(|e| e.to_string())?);
         git(&repo.0, &["init", "--quiet", "--template="])?;
         for (key, value) in [
             ("user.name", "RIPR fixture"),

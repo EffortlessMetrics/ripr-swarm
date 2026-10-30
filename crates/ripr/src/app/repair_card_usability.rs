@@ -1,6 +1,6 @@
 //! RepairCard usability measurement and budget-ratification evidence producer
 //! (RIPR-SPEC-0196, #4669): measures the normalized wire size of
-//! [`RepairCardV1`] cards against the complete canonical packet envelope for
+//! [`crate::domain::RepairCardV1`] cards against the complete canonical packet envelope for
 //! the same seam, over deterministic synthetic fixture profiles, and accounts
 //! governed real repair opportunities from the shared #1702/#1579 counting
 //! authority without creating a new denominator.
@@ -158,6 +158,7 @@ fn measurement_attempt(
         repository_head: repository_head.to_string(),
         producer_version: "measurement".to_string(),
         seam_id: seam_id.to_string(),
+        gap_binding: None,
         created_unix_ms: 0,
         artifacts: Vec::new(),
         next_command: "ripr agent repair --root . --seam-id seam-a --phase after".to_string(),

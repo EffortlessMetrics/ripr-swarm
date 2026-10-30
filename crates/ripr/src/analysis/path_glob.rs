@@ -15,6 +15,31 @@
 //! the match runs in `O(pattern * subject)` steps per level instead of the
 //! exponential time of naive recursive backtracking.
 
+// Test-only observation of actual matcher state transitions. This excludes
+// normalization/allocation and does not estimate elapsed time.
+#[cfg(test)]
+thread_local! {
+    static MATCHER_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn count_matcher_step() {
+    MATCHER_STEPS.with(|steps| {
+        let before = steps.get();
+        assert!(before < usize::MAX, "matcher step counter overflow");
+        steps.set(before + 1);
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn matcher_steps(work: impl FnOnce()) -> usize {
+    MATCHER_STEPS.with(|steps| {
+        let before = steps.get();
+        work();
+        steps.get() - before
+    })
+}
+
 /// Returns whether `path` matches the `/`-separated glob `pattern`.
 pub(crate) fn path_glob_matches(pattern: &str, path: &str) -> bool {
     let pattern_segments: Vec<Vec<char>> = normalized_segments(pattern)
@@ -47,6 +72,8 @@ fn segments_match(pattern: &[Vec<char>], path: &[Vec<char>]) -> bool {
     // (pattern index just after the latest `**`, path index it resumes at)
     let mut backtrack: Option<(usize, usize)> = None;
     while path_index < path.len() {
+        #[cfg(test)]
+        count_matcher_step();
         match pattern.get(pattern_index) {
             Some(segment) if is_double_star(segment) => {
                 pattern_index += 1;
@@ -78,6 +105,8 @@ fn chars_match(pattern: &[char], segment: &[char]) -> bool {
     // (pattern index just after the latest `*`, segment index it resumes at)
     let mut backtrack: Option<(usize, usize)> = None;
     while let Some(&actual) = segment.get(segment_index) {
+        #[cfg(test)]
+        count_matcher_step();
         match pattern.get(pattern_index) {
             Some('*') => {
                 pattern_index += 1;
@@ -106,7 +135,6 @@ fn chars_match(pattern: &[char], segment: &[char]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{path_glob_matches, segment_glob_matches};
-    use std::time::{Duration, Instant};
 
     /// The pre-fix recursive matcher, kept only as a differential oracle on
     /// inputs small enough for its exponential worst case to stay cheap.
@@ -270,21 +298,29 @@ mod tests {
 
     #[test]
     fn pathological_star_patterns_finish_quickly() {
-        let started = Instant::now();
-        let char_pattern = format!("src/{}b.rs", "*a".repeat(20) + "*");
-        let long_name = format!("src/{}.rs", "a".repeat(40));
-        assert!(!path_glob_matches(&char_pattern, &long_name));
+        // Count the actual matcher loops, including nested character scans.
+        // O(pattern * subject) allows 4x growth when both dimensions double.
+        // Normalization/allocation and nontermination are outside this count.
+        let steps = |k| {
+            super::matcher_steps(|| {
+                let char_pattern = format!("src/{}b.rs", "*a".repeat(k) + "*");
+                let long_name = format!("src/{}.rs", "a".repeat(2 * k));
+                assert!(!path_glob_matches(&char_pattern, &long_name));
 
-        let segment_pattern = format!("{}/b.rs", "**/a".repeat(20));
-        let long_path = format!("{}/c.rs", vec!["a"; 40].join("/"));
-        assert!(!path_glob_matches(&segment_pattern, &long_path));
+                let segment_pattern = format!("{}/b.rs", "**/a".repeat(k));
+                let long_path = format!("{}/c.rs", vec!["a"; 2 * k].join("/"));
+                assert!(!path_glob_matches(&segment_pattern, &long_path));
 
-        let name_pattern = "*a".repeat(20) + "*b";
-        assert!(!segment_glob_matches(&name_pattern, &"a".repeat(40)));
+                let name_pattern = "*a".repeat(k) + "*b";
+                assert!(!segment_glob_matches(&name_pattern, &"a".repeat(2 * k)));
+            })
+        };
+        let (small, large) = (steps(300), steps(600));
+        eprintln!("pathological globs: matcher steps {small} -> {large}");
+        assert!(small > 0 && large > 0);
         assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "pathological globs took {:?}",
-            started.elapsed()
+            large <= small * 6,
+            "pathological globs: matcher steps {small} -> {large}"
         );
     }
 }

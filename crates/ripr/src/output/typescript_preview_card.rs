@@ -1765,6 +1765,8 @@ mod tests {
 
     fn sample_finding(oracle_kind: OracleKind, oracle_strength: OracleStrength) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_pricing.ts:2:typescript_preview".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -1820,6 +1822,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: Some(LanguageId::TypeScript),

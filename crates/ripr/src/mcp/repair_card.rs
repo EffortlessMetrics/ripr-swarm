@@ -31,9 +31,13 @@ use crate::agent::artifact::git_output;
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::repair_route::repair_packet_eligibility;
+use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::repair_card_handoff::{
     AgentCardError, SeamCardFacts, assemble_repair_card, bound_finding_gap_id, card_packet_json,
     finding_for_seam, latest_attempt_for_seam, witness_from_findings, workspace_identity_for,
+};
+use crate::app::task_first::{
+    RepairSubjectOutcome, resolve_repair_subject_in, unknown_repair_item_reason,
 };
 use crate::config::RiprConfig;
 use crate::domain::{AgentCardRefusalKind, Finding, RepairCardSnapshotCurrentness};
@@ -53,19 +57,18 @@ pub(crate) const REPAIR_CARD_TEMPLATE: &str = "ripr://repair-card/{canonical_id}
 /// Typed failure codes this slice adds to the shared wire vocabulary. The
 /// spellings are the [`AgentCardRefusalKind`] wire spellings the CLI
 /// `agent_card_refusal` envelope already pins, so one machine state names
-/// one refusal on every transport. `policy_omitted` and
-/// `witness_unavailable` stay named for wire stability even though this
-/// slice cannot reach them (project-local policy is never loaded and the
-/// witness binds from committed findings without a failing producer call).
+/// one refusal on every transport. `policy_omitted` is reached through the
+/// refresh-time configuration (#10718); `witness_unavailable` stays named for
+/// wire stability even though this slice cannot reach it (the witness binds
+/// from committed findings without a failing producer call).
 pub(crate) const CODE_SEAM_NOT_FOUND: &str = "seam_not_found";
 pub(crate) const CODE_POLICY_OMITTED: &str = "policy_omitted";
 pub(crate) const CODE_WITNESS_UNAVAILABLE: &str = "witness_unavailable";
 pub(crate) const CODE_IDENTITY_UNNAMEABLE: &str = "identity_unnameable";
 pub(crate) const CODE_BUDGET_OVERFLOW: &str = "budget_overflow";
-/// Named for wire stability only: the card producer's diff-scoped inventory
-/// is uncapped by construction (every scoped seam is classified; the
-/// no-impact fast path declines on any owner name), so this slice never
-/// raises the truncated-inventory refusal.
+/// Raised when the repo-wide seam inventory is truncated by the seam limit or
+/// its completeness cannot be established (#9231), mirroring `ripr agent
+/// card`'s own incomplete-inventory refusal.
 pub(crate) const CODE_INCOMPLETE_INVENTORY: &str = "incomplete_inventory";
 
 /// The repair-card producer facts bound when one bounded analysis attempt
@@ -85,6 +88,17 @@ pub(crate) struct SnapshotCardProducers {
     /// The candidate seams discovered during commit, used for most-specific
     /// span selection (#7179).
     pub(crate) candidate_seams: Vec<ClassifiedSeam>,
+    /// Whether the repo-wide seam inventory `ripr agent card` consults was
+    /// complete when this snapshot committed (#9231). A card read refuses
+    /// with `incomplete_inventory` unless it is `Complete`, exactly like the
+    /// CLI, so a truncated or unverified inventory never reports a ready card.
+    pub(crate) completeness: super::repair_admission::InventoryCompleteness,
+    /// The resolved workspace configuration the refresh ran under. The card
+    /// read applies the same agent-policy omission gate `ripr agent card`
+    /// applies before it assembles a card (#10718), so a class the policy
+    /// omits refuses here with the CLI's own typed `policy_omitted` instead
+    /// of projecting a card the CLI would refuse.
+    pub(crate) config: RiprConfig,
 }
 
 /// One seam bound to one snapshot canonical item at commit time.
@@ -101,10 +115,15 @@ pub(crate) struct SeamCardBinding {
 /// Extract the canonical item id from a `ripr://repair-card/{id}` resource
 /// URI. The canonical id embeds a workspace-relative path (Python, and
 /// since #5268 Rust), so the suffix is read whole: the `ripr://repair-card/`
-/// prefix alone routes the URI, and only an empty suffix fails.
+/// prefix alone routes the URI, and only an empty suffix fails. One
+/// trailing slash is normalized away (#9895, `trim_one_trailing_slash`).
 pub(crate) fn repair_card_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://repair-card/")
-        .filter(|id| !id.is_empty())
+        .map(super::gaps::trim_one_trailing_slash)
+        // A residual trailing slash means the URI carried more than one —
+        // that id does not exist. Canonical ids embed workspace-relative
+        // paths, so only the trailing position is rejected.
+        .filter(|id| !id.is_empty() && !id.ends_with('/'))
 }
 
 /// Changed-file scope for the card inventory, in the inventory's own
@@ -137,6 +156,8 @@ pub(crate) struct SeamInventory {
     /// Whether the repo-wide inventory `ripr repair` consults is complete
     /// (#9108); the diff-scoped `candidate_seams` carry no seam-limit fact.
     pub(crate) completeness: super::repair_admission::InventoryCompleteness,
+    /// The configuration the inventory ran under, carried to the card read.
+    pub(crate) config: RiprConfig,
 }
 
 /// Gather the refresh's seam inventory. This runs inside the refresh attempt
@@ -208,6 +229,7 @@ pub(crate) fn gather_seam_inventory(
         repository_head,
         candidate_seams,
         completeness,
+        config: config.clone(),
     })
 }
 
@@ -224,7 +246,8 @@ pub(crate) fn bind_snapshot_card_producers(
     let SeamInventory {
         repository_head,
         candidate_seams,
-        completeness: _,
+        completeness,
+        config,
     } = inventory;
     let mut bindings = Vec::new();
     let mut all_candidate_seams = Vec::new();
@@ -269,6 +292,8 @@ pub(crate) fn bind_snapshot_card_producers(
         repository_head,
         bindings,
         candidate_seams: all_candidate_seams,
+        completeness,
+        config,
     });
     Ok(())
 }
@@ -319,6 +344,59 @@ fn retain_unambiguous_item_bindings(bindings: &mut Vec<SeamCardBinding>) {
     });
 }
 
+/// The typed `policy_omitted` refusal for a seam the agent policy omits, in
+/// the CLI's words (`agent card seam_id <id> <reason>`) minus the root-bound
+/// remedy command, which this root-relative adapter words as a repository
+/// command instead (#10718).
+fn policy_omitted_failure(seam_id: &str, reason: &str) -> AttemptFailure {
+    agent_card_failure(AgentCardError::refusal(
+        AgentCardRefusalKind::PolicyOmitted,
+        format!(
+            "agent card seam_id {seam_id} {reason}. Inspect the agent policy with `ripr agent brief --seam-id {seam_id} --json` in the repository; re-listing cannot change this policy decision."
+        ),
+    ))
+}
+
+/// Why a listed item binds no card seam, answered by the same shared
+/// resolver and policy `ripr agent card` / `ripr repair` use rather than a
+/// bare `seam_not_found` for an id the server itself listed (#10718): a seam
+/// the policy omits (an already-gripped seam) is `policy_omitted`; an item
+/// the inventory resolves to no seam keeps `seam_not_found` but carries the
+/// CLI's own cause text; only a seam that resolves yet cannot be joined to
+/// the item (or an ambiguous join) keeps the binding-failure wording.
+fn unbound_item_refusal(item: &GapItem, producers: &SnapshotCardProducers) -> AttemptFailure {
+    let policy = AgentBriefPolicy::from_config(&producers.config);
+    let unbound = || {
+        AttemptFailure::new(
+            CODE_SEAM_NOT_FOUND,
+            format!(
+                "no classified seam owner-discriminated binds canonical item {} in this snapshot",
+                item.canonical_id
+            ),
+            "read the item's evidence with ripr_get_gap, or run `ripr agent card` in the repository",
+        )
+    };
+    match resolve_repair_subject_in(&producers.candidate_seams, policy, &item.finding_id, None) {
+        RepairSubjectOutcome::Seam(seam_id) | RepairSubjectOutcome::Ineligible { seam_id, .. } => {
+            producers
+                .candidate_seams
+                .iter()
+                .find(|entry| entry.seam.id().as_str() == seam_id)
+                .and_then(|entry| policy.omission_reason_for_class(entry.class))
+                .map_or_else(unbound, |reason| policy_omitted_failure(&seam_id, &reason))
+        }
+        RepairSubjectOutcome::Unknown => agent_card_failure(AgentCardError::refusal(
+            AgentCardRefusalKind::SeamNotFound,
+            format!(
+                "agent card cannot name a seam for canonical item {}: {}",
+                item.canonical_id,
+                unknown_repair_item_reason(None, &item.finding_id)
+            ),
+        )),
+        RepairSubjectOutcome::Ambiguous(_) => unbound(),
+    }
+}
+
 /// Map one card-assembly failure onto the typed wire vocabulary. Refusal
 /// kinds travel under their pinned spellings so a loop driver branches on
 /// the same machine state on every transport; operational failures stay
@@ -331,19 +409,19 @@ fn agent_card_failure(error: AgentCardError) -> AttemptFailure {
                     "list the current canonical ids with ripr_list_gaps, then retry"
                 }
                 AgentCardRefusalKind::PolicyOmitted => {
-                    "project-local policy is not loaded by this server; run `ripr agent card` in the repository for the policy-aware card"
+                    "the repository's agent policy omits this seam's class from agent results; inspect it with `ripr agent brief --seam-id <seam> --json` in the repository, since re-listing cannot change a policy decision"
                 }
                 AgentCardRefusalKind::WitnessUnavailable => {
                     "run `ripr check --format json` in the repository, then re-run ripr_refresh"
                 }
                 AgentCardRefusalKind::IdentityUnnameable => {
-                    "run `ripr agent packet --seam-id <seam> --json` in the repository for the full evidence packet"
+                    "run `ripr agent packet --seam-id <seam> --json` in the repository for the full evidence packet, or read the item's finding-level evidence with ripr_get_gap"
                 }
                 AgentCardRefusalKind::BudgetOverflow => {
-                    "run `ripr agent packet --seam-id <seam> --json` in the repository for the unbounded packet"
+                    "run `ripr agent packet --seam-id <seam> --json` in the repository for the unbounded packet; ripr_get_gap carries the finding-level evidence over MCP"
                 }
                 AgentCardRefusalKind::IncompleteInventory => {
-                    "run `ripr agent packet --seam-id <seam> --json` in the repository for the full evidence packet"
+                    "run `ripr agent packet --seam-id <seam> --json` in the repository for the full evidence packet, or read the item's finding-level evidence with ripr_get_gap"
                 }
             };
             AttemptFailure::new(kind.as_str(), message, recovery)
@@ -376,6 +454,16 @@ impl WorkspaceSession {
                 "list the current canonical ids with ripr_list_gaps, then retry",
             ));
         };
+        if snapshot.source == super::workspace::RefreshSource::Worktree {
+            return Err(agent_card_failure(AgentCardError::refusal(
+                AgentCardRefusalKind::IncompleteInventory,
+                format!(
+                    "repair card for canonical item {} is unavailable: {}",
+                    item.canonical_id,
+                    super::workspace::WORKTREE_CARD_WITHHELD_DETAIL
+                ),
+            )));
+        }
         let Some(producers) = &snapshot.card_producers else {
             return Err(AttemptFailure::new(
                 CODE_NO_SNAPSHOT,
@@ -383,21 +471,35 @@ impl WorkspaceSession {
                 "re-run ripr_refresh to commit a complete snapshot, then retry",
             ));
         };
+        // The CLI refuses a card before it resolves any seam while the repo
+        // seam inventory is truncated; the same shared completeness fact
+        // refuses here, ahead of every binding lookup, so a truncated or
+        // unverified inventory can never project `readiness.repair_ready`.
+        if let Some(detail) = producers.completeness.refusal_detail() {
+            return Err(agent_card_failure(AgentCardError::refusal(
+                AgentCardRefusalKind::IncompleteInventory,
+                format!(
+                    "repair card for canonical item {} was refused: {detail}",
+                    item.canonical_id
+                ),
+            )));
+        }
         let Some(binding) = producers
             .bindings
             .iter()
             .find(|binding| binding.item_canonical_id == item.canonical_id)
         else {
-            return Err(AttemptFailure::new(
-                CODE_SEAM_NOT_FOUND,
-                format!(
-                    "no classified seam owner-discriminated binds canonical item {} in this snapshot",
-                    item.canonical_id
-                ),
-                "read the item's evidence with ripr_get_gap, or run `ripr agent card` in the repository",
-            ));
+            return Err(unbound_item_refusal(item, producers));
         };
         let entry = &binding.seam;
+        // `ripr agent card` applies the agent policy to the seam's class
+        // before it assembles a card (#5007/#7736); the same gate, the same
+        // typed `policy_omitted`, refuses here (#10718).
+        if let Some(reason) =
+            AgentBriefPolicy::from_config(&producers.config).omission_reason_for_class(entry.class)
+        {
+            return Err(policy_omitted_failure(entry.seam.id().as_str(), &reason));
+        }
         // The bind-time join is re-verified against the committed findings on
         // every read by re-running the shared bind rule itself: the retained
         // binding is honored only while this seam still binds this item. A
@@ -448,7 +550,7 @@ impl WorkspaceSession {
             AttemptFailure::new(
                 CODE_IDENTITY_UNNAMEABLE,
                 message,
-                "run `ripr agent packet --seam-id <seam> --json` in the repository for the full evidence packet",
+                "run `ripr agent packet --seam-id <seam> --json` in the repository for the full evidence packet, or read the item's finding-level evidence with ripr_get_gap",
             )
         })?;
         // The durable attempt store is filesystem state, not analysis: the
@@ -503,7 +605,15 @@ impl WorkspaceSession {
             ),
             None => (None, None),
         };
-        let document = json!({
+        // #11213: the card names CLI routes (`ripr agent packet`, `ripr
+        // explain`, `ripr check --json`) that an MCP-only agent cannot run.
+        // The CLI strings stay verbatim; `mcp_detail_routes` adds the MCP
+        // tool carrying the finding-level detail, and a not-ready card
+        // carries the finding's `missing`/`recommended_next_step`.
+        let mcp_detail_routes = mcp_detail_routes(&card_value, &item_canonical_id);
+        let finding_guidance =
+            card_is_not_ready(&card_value).then(|| super::gaps::finding_guidance(item));
+        let mut document = json!({
             "schema_version": REPAIR_CARD_SCHEMA_VERSION,
             "snapshot_id": snapshot_id,
             "requested_snapshot_id": requested,
@@ -530,8 +640,59 @@ impl WorkspaceSession {
                 "receipt": receipt,
             },
         });
+        if let Some(guidance) = finding_guidance {
+            document["finding_guidance"] = guidance;
+        }
+        if !mcp_detail_routes.is_empty() {
+            document["mcp_detail_routes"] = Value::Array(mcp_detail_routes);
+        }
         bounded_document(document, RECOVERY_REPAIR_TOO_LARGE)
     }
+}
+
+/// Fail-closed: only an explicit `repair_ready: true` suppresses guidance.
+fn card_is_not_ready(card: &Value) -> bool {
+    card.pointer("/readiness/repair_ready")
+        .and_then(Value::as_bool)
+        != Some(true)
+}
+
+/// The CLI routes a card names whose finding-level detail `ripr_get_gap`
+/// carries (evidence, related tests, `missing`, `recommended_next_step`).
+/// `ripr_get_gap` is not the unbounded agent packet; the CLI route string is
+/// preserved unchanged for that.
+fn mcp_detail_routes(card: &Value, canonical_id: &str) -> Vec<Value> {
+    let mut cli_routes: Vec<&str> = Vec::new();
+    if let Some(route) = card
+        .pointer("/canonical_next_action/stop/detail_route")
+        .and_then(Value::as_str)
+    {
+        cli_routes.push(route);
+    }
+    if let Some(references) = card.get("detail_references").and_then(Value::as_array) {
+        cli_routes.extend(
+            references
+                .iter()
+                .filter_map(|reference| reference.get("route").and_then(Value::as_str)),
+        );
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    cli_routes
+        .into_iter()
+        .filter(|route| {
+            route.starts_with("ripr agent packet")
+                || route.starts_with("ripr explain")
+                || route.starts_with("ripr check")
+        })
+        .filter(|route| seen.insert(*route))
+        .map(|route| {
+            json!({
+                "cli_route": route,
+                "mcp_tool": "ripr_get_gap",
+                "canonical_id": canonical_id,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -620,6 +781,7 @@ mod tests {
             Vec::new(),
         )?;
         Ok(crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
@@ -648,6 +810,16 @@ mod tests {
     fn session_with_card_producers(
         binding: Option<SeamCardBinding>,
     ) -> Result<WorkspaceSession, String> {
+        session_with_completeness(
+            binding,
+            crate::mcp::repair_admission::InventoryCompleteness::Complete,
+        )
+    }
+
+    fn session_with_completeness(
+        binding: Option<SeamCardBinding>,
+        completeness: crate::mcp::repair_admission::InventoryCompleteness,
+    ) -> Result<WorkspaceSession, String> {
         let output = output(std::slice::from_ref(&super::super::gaps::test_finding()?))?;
         let mut snapshot = Snapshot::from_output(&output, Some("root:sha256:a"))
             .map_err(|failure| failure.detail)?;
@@ -656,9 +828,11 @@ mod tests {
             .map(|b| vec![b.seam.clone()])
             .unwrap_or_default();
         snapshot.card_producers = Some(SnapshotCardProducers {
+            config: RiprConfig::default(),
             repository_head: "abc123".to_string(),
             bindings: binding.into_iter().collect(),
             candidate_seams,
+            completeness,
         });
         Ok(WorkspaceSession {
             in_flight: false,
@@ -668,6 +842,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -681,9 +856,11 @@ mod tests {
             .map_err(|failure| failure.detail)?;
         let candidate_seams = vec![binding.seam.clone()];
         snapshot.card_producers = Some(SnapshotCardProducers {
+            config: RiprConfig::default(),
             repository_head: "abc123".to_string(),
             bindings: vec![binding],
             candidate_seams,
+            completeness: crate::mcp::repair_admission::InventoryCompleteness::Complete,
         });
         Ok(WorkspaceSession {
             in_flight: false,
@@ -693,6 +870,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -759,6 +937,59 @@ mod tests {
     }
 
     #[test]
+    fn guidance_is_withheld_only_for_an_explicitly_ready_card() {
+        // Negative control: a ready card carries no finding_guidance.
+        assert!(!card_is_not_ready(
+            &json!({ "readiness": { "repair_ready": true } })
+        ));
+        // Not ready, false, or malformed readiness all keep guidance (fail-closed).
+        assert!(card_is_not_ready(
+            &json!({ "readiness": { "repair_ready": false } })
+        ));
+        assert!(card_is_not_ready(&json!({ "readiness": {} })));
+        assert!(card_is_not_ready(&json!({})));
+        // mcp_detail_routes is independent of readiness: a ready card that
+        // names a CLI route still gets its MCP twin.
+        let ready = json!({
+            "readiness": { "repair_ready": true },
+            "detail_references": [{ "route": "ripr explain probe:x" }],
+        });
+        assert_eq!(mcp_detail_routes(&ready, "gap:x").len(), 1);
+    }
+
+    #[test]
+    fn mcp_detail_routes_twin_only_cli_routes_once() {
+        let card = json!({
+            "canonical_next_action": { "stop": { "detail_route": "ripr agent packet --seam-id s --json" } },
+            "detail_references": [
+                { "route": "ripr agent packet --seam-id s --json" },
+                { "route": "ripr explain probe:x" },
+                { "route": null },
+                { "route": "cargo test" },
+            ],
+        });
+        let routes = mcp_detail_routes(&card, "gap:x");
+        let cli: Vec<&str> = routes
+            .iter()
+            .filter_map(|r| r.get("cli_route").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            cli,
+            [
+                "ripr agent packet --seam-id s --json",
+                "ripr explain probe:x"
+            ]
+        );
+        assert!(
+            routes
+                .iter()
+                .all(|r| r["mcp_tool"] == "ripr_get_gap" && r["canonical_id"] == "gap:x")
+        );
+        // Negative control: a card that names no CLI route gains no twin.
+        assert!(mcp_detail_routes(&json!({ "detail_references": [] }), "gap:x").is_empty());
+    }
+
+    #[test]
     fn repair_card_resource_uri_parsing_is_strict() {
         assert_eq!(
             repair_card_resource_id("ripr://repair-card/gap:test:1"),
@@ -772,6 +1003,16 @@ mod tests {
             ),
             Some("gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount==fee")
         );
+        // #9895: one trailing slash normalizes away; a second one misses.
+        assert_eq!(
+            repair_card_resource_id("ripr://repair-card/gap:test:1/"),
+            Some("gap:test:1")
+        );
+        assert_eq!(
+            repair_card_resource_id("ripr://repair-card/gap:test:1//"),
+            None
+        );
+        assert_eq!(repair_card_resource_id("ripr://repair-card//"), None);
         for other in [
             "ripr://workspace/status",
             "ripr://repair-card/",
@@ -817,6 +1058,29 @@ mod tests {
             Ok(value) => return Err(format!("unknown item must fail closed: {value}")),
             Err(failure) if failure.code == CODE_ITEM_NOT_FOUND => {}
             Err(failure) => return Err(format!("unexpected code: {}", failure.code)),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn card_read_refuses_truncated_or_unverified_inventory() -> Result<(), String> {
+        use crate::mcp::repair_admission::InventoryCompleteness;
+        // #9231: even with the item bound to a seam, a truncated or
+        // unverifiable repo inventory refuses with `incomplete_inventory`
+        // (the `ripr agent card` kind), ahead of the binding lookup.
+        for completeness in [
+            InventoryCompleteness::Truncated {
+                analyzed: 1,
+                total: 5,
+            },
+            InventoryCompleteness::Unverified("inventory failed".to_string()),
+        ] {
+            let session = session_with_completeness(None, completeness.clone())?;
+            match session.repair_card_document("gap:test:1", None, Some(Path::new("."))) {
+                Ok(value) => return Err(format!("{completeness:?} must refuse: {value}")),
+                Err(failure) if failure.code == CODE_INCOMPLETE_INVENTORY => {}
+                Err(failure) => return Err(format!("unexpected code: {}", failure.code)),
+            }
         }
         Ok(())
     }
@@ -896,6 +1160,38 @@ mod tests {
         {
             return Err("the witness-bound card must name the finding identity".to_string());
         }
+        // #11213: the not-ready card carries the finding's own guidance, equal
+        // to what ripr_get_gap serves, and names the MCP tool beside every
+        // CLI route without rewriting the CLI string.
+        let guidance = document
+            .get("finding_guidance")
+            .ok_or_else(|| format!("a not-ready card must carry finding_guidance: {document}"))?;
+        if guidance.pointer("/gap_route/tool").and_then(Value::as_str) != Some("ripr_get_gap") {
+            return Err(format!("guidance must route to ripr_get_gap: {guidance}"));
+        }
+        let gap = session.get_gap(&canonical_id, None).map_err(|f| f.detail)?;
+        for field in ["missing", "recommended_next_step"] {
+            let served = gap.pointer(&format!("/item/{field}"));
+            if served.is_none() || guidance.get(field) != served {
+                return Err(format!(
+                    "guidance {field} must equal ripr_get_gap: {guidance} vs {served:?}"
+                ));
+            }
+        }
+        let routes = document
+            .get("mcp_detail_routes")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("CLI-only detail routes need MCP twins: {document}"))?;
+        let stop_route = document
+            .pointer("/card/canonical_next_action/stop/detail_route")
+            .and_then(Value::as_str);
+        if let Some(stop_route) = stop_route
+            && !routes
+                .iter()
+                .any(|r| r.get("cli_route").and_then(Value::as_str) == Some(stop_route))
+        {
+            return Err(format!("stop route lacks its MCP twin: {routes:?}"));
+        }
         // The weakly-gripped fixture never exposes a route: the gate stays
         // closed and the wire card carries the typed none, never a weakened
         // or invented next action.
@@ -958,9 +1254,9 @@ mod tests {
                     AgentCardRefusalKind::IncompleteInventory,
                     "the candidate inventory was truncated".to_string(),
                 ),
-                // Wire stability only: the uncapped diff-scoped card path
-                // never raises this refusal, but a kind must map to the same
-                // machine state on every transport.
+                // A truncated or unverified repo-wide seam inventory raises
+                // this refusal on the card read (#9231); a kind must map to
+                // the same machine state on every transport.
                 CODE_INCOMPLETE_INVENTORY,
             ),
             (
@@ -1001,9 +1297,11 @@ mod tests {
         // (`pricing::discounted_total`), so no committed finding names this
         // item with the bound seam's owner.
         snapshot.card_producers = Some(SnapshotCardProducers {
+            config: RiprConfig::default(),
             repository_head: "abc123".to_string(),
             bindings: vec![binding_for(&entry, "gap:test:1")],
             candidate_seams: vec![entry.clone()],
+            completeness: crate::mcp::repair_admission::InventoryCompleteness::Complete,
         });
         let session = WorkspaceSession {
             last_good: Some(Arc::new(snapshot)),
@@ -1280,9 +1578,11 @@ mod tests {
         // outer fails closed with seam_not_found.
         let mut session_snapshot = snapshot;
         session_snapshot.card_producers = Some(SnapshotCardProducers {
+            config: RiprConfig::default(),
             repository_head: "abc123".to_string(),
             bindings: vec![binding_for(&inner, producer_id)],
             candidate_seams: candidates.to_vec(),
+            completeness: crate::mcp::repair_admission::InventoryCompleteness::Complete,
         });
         let session = WorkspaceSession {
             last_good: Some(Arc::new(session_snapshot)),
@@ -1303,9 +1603,11 @@ mod tests {
             Snapshot::from_output(&matched_output, Some("root:sha256:a"))
                 .map_err(|failure| failure.detail)?;
         outer_session_snapshot.card_producers = Some(SnapshotCardProducers {
+            config: RiprConfig::default(),
             repository_head: "abc123".to_string(),
             bindings: vec![binding_for(&outer, producer_id)],
             candidate_seams: candidates.to_vec(),
+            completeness: crate::mcp::repair_admission::InventoryCompleteness::Complete,
         });
         let outer_session = WorkspaceSession {
             last_good: Some(Arc::new(outer_session_snapshot)),

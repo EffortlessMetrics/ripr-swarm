@@ -1,0 +1,13 @@
+# Registers the `#[test_case(.. => literal)]` harness-compared return controls (#9619) under RIPR-SPEC-0231 rule 9.
+[[extend]]
+id = "RIPR-SPEC-0231"
+tests = [
+  "crates/ripr/tests/test_case_arrow_expected_value.rs::a_literal_row_compared_with_the_returned_owner_value_is_credited",
+  "crates/ripr/tests/test_case_arrow_expected_value.rs::a_matcher_or_predicate_expectation_is_not_a_literal_comparison",
+  "crates/ripr/tests/test_case_arrow_expected_value.rs::a_function_with_one_unreadable_row_reads_none_of_its_rows",
+  "crates/ripr/tests/test_case_arrow_expected_value.rs::every_plain_literal_spelling_is_credited",
+  "crates/ripr/tests/test_case_arrow_expected_value.rs::a_character_expectation_is_not_read",
+]
+code = [
+  "crates/ripr/src/analysis/extract/test_case_arrow.rs",
+]

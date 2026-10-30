@@ -3,40 +3,53 @@ mode: fast
 root: fixtures/typescript_rejects_literal_equality/input
 config: <cwd>/fixtures/typescript_rejects_literal_equality/input/ripr.toml
 
-Summary: 2 probes (1 exposed, 1 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+Summary: 2 changed behaviors checked: 1 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 2 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 1
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
   File: src/load.ts:5
   Language: typescript
   Language status: preview
-  Static exposure: weak (severity: warning, confidence 0.40)
-  Why weak: a related test reaches this change but does not observe the exact changed value
+  Static exposure: unknown (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether the changed value alters behavior is not established. Preview score, not on the same scale as Rust confidence.
+  Why unknown: ripr could not tell which inputs would trigger the change, and could not follow it to something a test can check
   Changed behavior: return "ready";
-  Missing discriminator (1 of 2): Related test reaches `load` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form…
+  Missing check: The change to `load` is a `literal_return` edit: the edit changes a literal return
+    value, and the adapter does not model whether any test input reaches this return. No assertion
+    is requested until a test input is shown to change the behavior
   Related test: tests/load.test.ts:4 missing token rejects with the required literal
-  Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
-    discriminator `return value == "ready"`; no actionable repair packet is emitted until verify,
-    receipt, and edit-boundary fields are available
-  Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
+  Next step — TypeScript preview advisory: infection is not established for this edit shape, so no
+    assertion is requested and no repair packet is emitted; show a test input that changes the
+    behavior first
+  Evidence: reach yes · infection unknown · propagation unknown · observation unknown · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related test(s) found for owner `load`
-    - infection unknown: TypeScript preview adapter does not yet model infection
+    - infection unknown: TypeScript preview adapter does not model infection for this `literal_return` edit: the edit changes a literal return value, and the adapter does not model…
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_rejects_literal_equality/input --diff <cwd>/fixtures/typescript_rejects_literal_equality/diff.patch --mode fast probe:src_load.ts:typescript_preview:2209cfc8
   ripr context --root <cwd>/fixtures/typescript_rejects_literal_equality/input --diff <cwd>/fixtures/typescript_rejects_literal_equality/diff.patch --mode fast --at probe:src_load.ts:typescript_preview:2209cfc8
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_load.ts:typescript_preview:2209cfc8 --root <cwd>/fixtures/typescript_rejects_literal_equality/input` for the full gate's answer
+  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
-    - src/load.ts:3 (exposed)
+    - src/load.ts:3 (exposed); kind: error_path; reason: Related test reaches `load` with an `exact_error_variant` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

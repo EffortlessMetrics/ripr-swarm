@@ -124,6 +124,38 @@ pub(crate) fn repair_attempt_state_for_finish(after: &RepairAttemptAfter) -> Rep
     }
 }
 
+/// The additive marker of a gap-bound attempt (#9103, RIPR-SPEC-0311): the
+/// manifest's `seam_id` slot holds the canonical TypeScript gap id and this
+/// marker records the diff base the gap's findings were produced against,
+/// which the later after phase must re-analyze. Absent on seam-bound
+/// attempts, so their manifest bytes are unchanged and the schema version is
+/// not bumped.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RepairAttemptGapBinding {
+    /// The base as the caller spelled it (`--base`), shown in restart text.
+    pub(crate) base: String,
+    /// The full commit that spelling resolved to at the before phase. The
+    /// after phase re-analyzes against this commit, never the spelling: a
+    /// relative base such as `HEAD~1` names a different commit once the
+    /// focused test is committed, which would shrink the diff and make the
+    /// gap vanish.
+    ///
+    /// Absent on a marker written by the C2a build, which recorded only the
+    /// symbolic spelling. That ref is never re-resolved as if it were the
+    /// original immutable base: such an attempt's after phase refuses with a
+    /// fresh-start recipe instead (see [`Self::is_legacy`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) base_commit: Option<String>,
+}
+
+impl RepairAttemptGapBinding {
+    /// A C2a-era marker without the resolved base commit.
+    pub(crate) fn is_legacy(&self) -> bool {
+        self.base_commit.is_none()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RepairAttemptArtifact {
@@ -144,6 +176,10 @@ pub(crate) struct RepairAttemptManifest {
     pub(crate) repository_head: String,
     pub(crate) producer_version: String,
     pub(crate) seam_id: String,
+    /// Present only on a gap-bound attempt, where `seam_id` holds the
+    /// canonical gap id (#9103). Part of the before commitment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) gap_binding: Option<RepairAttemptGapBinding>,
     pub(crate) created_unix_ms: u64,
     pub(crate) artifacts: Vec<RepairAttemptArtifact>,
     pub(crate) next_command: String,
@@ -252,12 +288,31 @@ pub(crate) struct RepairAttemptAfterRefusal {
     pub(crate) recorded_unix_ms: u64,
 }
 
+/// Custody for the one compatibility receipt replaced after the delta bind.
+/// No arbitrary path or directory is accepted. The predecessor is resolved
+/// only in this attempt's store and must retain a valid issued receipt pair.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReceiptProjectionPredecessor {
+    pub(crate) attempt_id: RepairAttemptId,
+    pub(crate) kind: crate::edit_cage::AttemptPathChangeKind,
+    pub(crate) executable: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RepairAttemptAfter {
     pub(crate) attempt_id: RepairAttemptId,
     pub(crate) repository_head: String,
     pub(crate) delta_sha256: String,
+    /// Version of the delta's post-change identity commitment. Older
+    /// attempts did not bind the bytes of an already changed path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) delta_binding: Option<String>,
+    /// An already-bound issued receipt that this producer replaces with its
+    /// own receipt. Absent for legacy, unowned, or ineligible projections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) receipt_projection_predecessor: Option<ReceiptProjectionPredecessor>,
     pub(crate) packet_sha256: String,
     pub(crate) current: bool,
     pub(crate) verdict: EditCageVerdict,
@@ -467,7 +522,7 @@ pub(crate) fn receipt_binding_from(
         &manifest.repository_head,
     )?;
     let manifest_path = display_path(&manifest_path);
-    Ok(serde_json::json!({
+    let mut binding = serde_json::json!({
         "attempt_id": after.attempt_id.as_str(),
         "manifest": manifest_path,
         "seam_id": manifest.seam_id,
@@ -477,7 +532,28 @@ pub(crate) fn receipt_binding_from(
         "delta_sha256": after.delta_sha256,
         "current": after.current,
         "edit_cage_verdict": after.verdict,
-    }))
+    });
+    // A gap-bound attempt (#9103) records the diff base it was analyzed
+    // against; seam-bound receipts omit the member, so their bytes are unchanged.
+    if let (Some(gap), Some(object)) = (&manifest.gap_binding, binding.as_object_mut()) {
+        object.insert(
+            "gap_binding".to_string(),
+            serde_json::json!({ "base": gap.base, "base_commit": gap.base_commit }),
+        );
+    }
+    Ok(binding)
+}
+
+/// The recorded gap binding of the named attempt (#9103); `None` for a
+/// seam-bound attempt.
+pub(crate) fn attempt_gap_binding_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &str,
+) -> Result<Option<RepairAttemptGapBinding>, String> {
+    let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
+    let (_, _, manifest) = open_attempt(root, store, &attempt_id)?;
+    Ok(manifest.gap_binding)
 }
 
 /// Recompute the edit-cage delta from the live worktree under the admitting
@@ -490,6 +566,9 @@ fn recompute_after_verdict_binding(
     manifest: &RepairAttemptManifest,
     after: &RepairAttemptAfter,
 ) -> Result<(crate::edit_cage::EditCageVerdict, bool), String> {
+    if after.delta_binding.as_deref() != Some("path-state-v1") {
+        return Err("repair attempt has no post-change path identity binding; currentness cannot be established".to_string());
+    }
     let baseline_artifact = find_manifest_artifact(manifest, "edit_cage_baseline")?;
     let baseline_bytes = std::fs::read(root.join(&baseline_artifact.path))
         .map_err(|error| format!("read staged edit-cage baseline failed: {error}"))?;
@@ -501,15 +580,20 @@ fn recompute_after_verdict_binding(
     // Recomputed under the admitting rule: for an attempt whose head did not
     // move it is identical to the exact-head rule, and an attempt whose finish
     // required the exact head and saw it move is already refused as stale.
-    let (delta, _) = evaluate_repository_edit_cage_with_head_movement(
+    let (mut delta, _) = evaluate_repository_edit_cage_with_head_movement(
         &baseline,
         HeadMovement::AdmitDescendantCommits,
+    )?;
+    crate::edit_cage::omit_attempt_manifest_identity(
+        &mut delta,
+        &baseline,
+        &manifest_relative_path(manifest),
     )?;
     // The after phase, a rerun of `ripr agent receipt`, and `ripr agent
     // status` write command-owned files under `target/ripr` after the finish
     // bound its verdict. Those later operational writes are not part of the
     // attempt; any other movement still breaks the binding.
-    let delta = crate::edit_cage::without_later_operational_writes(
+    let mut delta = crate::edit_cage::without_later_operational_writes(
         baseline.policy(),
         &delta,
         &after.verdict.changed_paths,
@@ -518,7 +602,121 @@ fn recompute_after_verdict_binding(
     let delta_bytes = serde_json::to_vec(&delta)
         .map_err(|error| format!("serialize repair delta failed: {error}"))?;
     let holds = sha256_bytes(&delta_bytes) == after.delta_sha256 && verdict == after.verdict;
-    Ok((verdict, holds))
+    if holds {
+        return Ok((verdict, true));
+    }
+    let Some(predecessor) = &after.receipt_projection_predecessor else {
+        return Ok((verdict, false));
+    };
+    // Historical pair validation never calls currentness: A may correctly be
+    // stale after B finished, and following currentness would create a cycle.
+    let restore = || -> Result<(Vec<u8>, Vec<u8>), String> {
+        let locator = manifest
+            .store
+            .as_ref()
+            .map(|store| Path::new(&store.locator));
+        let (_, _, prior) = open_attempt(root, locator, &predecessor.attempt_id)?;
+        Ok((
+            issued_terminal_receipt_bytes(root, &prior)?,
+            issued_terminal_receipt_bytes(root, manifest)?,
+        ))
+    };
+    let Ok((prior, issued)) = restore() else {
+        return Ok((verdict, false));
+    };
+    if !crate::edit_cage::reconstruct_receipt_projection(
+        &mut delta,
+        &baseline,
+        predecessor.kind,
+        predecessor.executable,
+        &prior,
+        &issued,
+    ) {
+        return Ok((verdict, false));
+    }
+    let reconstructed = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
+    let bytes = serde_json::to_vec(&delta)
+        .map_err(|error| format!("serialize receipt projection delta failed: {error}"))?;
+    Ok((
+        reconstructed.clone(),
+        sha256_bytes(&bytes) == after.delta_sha256 && reconstructed == after.verdict,
+    ))
+}
+
+/// The retained pair, not a JSON attempt id or canonical pathname, supplies
+/// producer custody. Bound the reads before historical validation.
+fn issued_terminal_receipt_bytes(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> Result<Vec<u8>, String> {
+    for role in [TERMINAL_RECEIPT_ROLE, TERMINAL_VERIFY_ROLE] {
+        let artifact = find_terminal_artifact_by_role(manifest, role)
+            .ok_or("issued receipt pair is missing")?;
+        if artifact.bytes > crate::edit_cage::MAX_CAPTURE_FILE_BYTES {
+            return Err("issued receipt pair exceeds capture limit".to_string());
+        }
+    }
+    if !matches!(
+        load_attempt_terminal_receipt(root, manifest),
+        AttemptTerminalReceipt::Issued { .. }
+    ) {
+        return Err("receipt predecessor is not a validated issued pair".to_string());
+    }
+    let artifact = find_terminal_artifact_by_role(manifest, TERMINAL_RECEIPT_ROLE)
+        .ok_or("issued receipt disappeared")?;
+    read_terminal_artifact_bytes(root, manifest, artifact)
+}
+
+fn receipt_projection_predecessor(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+    baseline: &AttemptBaseline,
+    delta: &crate::edit_cage::AttemptDelta,
+) -> Option<ReceiptProjectionPredecessor> {
+    use std::io::Read as _;
+    let path = root.join(crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT);
+    let file = crate::output::file_write::open_regular_read(&path).ok()?;
+    let mut bytes = Vec::new();
+    file.take(crate::edit_cage::MAX_CAPTURE_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let (kind, executable) =
+        crate::edit_cage::receipt_projection_identity(delta, baseline, &bytes)?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let attempt_id = RepairAttemptId::parse(
+        value
+            .pointer("/repair_attempt/attempt_id")?
+            .as_str()?
+            .to_string(),
+    )
+    .ok()?;
+    if attempt_id == manifest.repair_attempt_id {
+        return None;
+    }
+    let locator = manifest
+        .store
+        .as_ref()
+        .map(|store| Path::new(&store.locator));
+    let (_, _, prior) = open_attempt(root, locator, &attempt_id).ok()?;
+    if issued_terminal_receipt_bytes(root, &prior).ok()? != bytes {
+        return None;
+    }
+    Some(ReceiptProjectionPredecessor {
+        attempt_id,
+        kind,
+        executable,
+    })
+}
+
+fn manifest_relative_path(manifest: &RepairAttemptManifest) -> PathBuf {
+    Path::new(
+        manifest
+            .store
+            .as_ref()
+            .map_or(REPAIR_ATTEMPT_DIRECTORY, |store| store.locator.as_str()),
+    )
+    .join(manifest.repair_attempt_id.as_str())
+    .join(REPAIR_ATTEMPT_MANIFEST)
 }
 
 /// Resolve the retained before snapshot a verify document must name, and read
@@ -533,7 +731,14 @@ fn read_retained_before_snapshot(
     verify_before_path: &str,
 ) -> Result<String, String> {
     let attempt_id = manifest.repair_attempt_id.as_str();
-    let expected = find_manifest_artifact(manifest, "before_snapshot")?;
+    // A gap-bound attempt (#9103) retains a check-findings before snapshot
+    // under its own role; a seam-bound attempt retains the repo-exposure one.
+    let before_role = if manifest.gap_binding.is_some() {
+        crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_ROLE
+    } else {
+        "before_snapshot"
+    };
+    let expected = find_manifest_artifact(manifest, before_role)?;
     let expected_path = root
         .join(&expected.path)
         .canonicalize()
@@ -545,14 +750,14 @@ fn read_retained_before_snapshot(
     if actual_path != expected_path {
         return Err(format!(
             "verify before snapshot {} is not the retained snapshot for attempt {}",
-            actual_path.display(),
+            crate::output::path::human_path(&actual_path),
             attempt_id
         ));
     }
     std::fs::read_to_string(&expected_path).map_err(|error| {
         format!(
             "read retained before snapshot {} failed: {error}",
-            expected_path.display()
+            crate::output::path::human_path(&expected_path)
         )
     })
 }
@@ -570,10 +775,13 @@ pub(crate) fn validate_verify_binding_from(
     let (store, _, manifest) = open_attempt(root, store, &attempt_id)?;
     let root = store.canonical_root().to_path_buf();
     let before_snapshot = read_retained_before_snapshot(&root, &manifest, verify_before_path)?;
-    let validated = crate::agent::artifact::validate_repo_exposure_artifact(
+    // The retained snapshot's declared kind selects its validator, so a
+    // gap-bound attempt's check-findings before snapshot is validated as the
+    // findings artifact it is.
+    let validated = crate::agent::artifact::validate_verify_snapshot(
         &root,
         &before_snapshot,
-        "repair attempt before",
+        crate::agent::artifact::RETAINED_BEFORE_SUBJECT,
     )?;
     if verify_before_sha256 != validated.content_sha256 {
         return Err(format!(
@@ -680,6 +888,14 @@ pub(crate) fn validate_issued_receipt_evidence(
             ));
         }
     }
+    // A gap-bound attempt's receipt is evidence only of the gap its verify
+    // document closed (#9103).
+    validate_gap_bound_receipt_closure(
+        manifest.gap_binding.is_some(),
+        &manifest.seam_id,
+        &verify,
+        receipt,
+    )?;
     let input_paths =
         crate::output::agent_receipt::agent_receipt_input_paths_from_value(&verify)
             .map_err(|error| format!("repair attempt verify document is malformed: {error}"))?;
@@ -758,6 +974,35 @@ pub(crate) fn validate_issued_receipt_evidence(
             "repair attempt receipt status `{}` does not match its recorded analysis outcome status `{}`",
             field("/status").unwrap_or("<missing>"),
             projection.unwrap_or("<missing>")
+        ));
+    }
+    Ok(())
+}
+
+/// The closure half of a gap-bound attempt's receipt binding (#9103): the
+/// verify document must carry `bound_gap` for the attempt's gap with
+/// `closed: true`, and the receipt must repeat it exactly. A receipt over a
+/// verify document with no closure evidence is a binding failure, never an
+/// issued reading. A seam-bound attempt (`gap_bound == false`) is unaffected.
+fn validate_gap_bound_receipt_closure(
+    gap_bound: bool,
+    seam_id: &str,
+    verify: &serde_json::Value,
+    receipt: &serde_json::Value,
+) -> Result<(), String> {
+    if !gap_bound {
+        return Ok(());
+    }
+    let closure = crate::output::agent_receipt::bound_gap_for_seam(verify, seam_id).ok_or_else(
+        || {
+            format!(
+                "repair attempt verify document carries no closed bound_gap for gap `{seam_id}`; a gap-bound receipt needs positive closure evidence"
+            )
+        },
+    )?;
+    if receipt.get("bound_gap") != Some(&closure) {
+        return Err(format!(
+            "repair attempt receipt bound_gap does not equal the verify document's closure of gap `{seam_id}`"
         ));
     }
     Ok(())
@@ -934,6 +1179,14 @@ pub(crate) struct ResolvedRepairAttempt {
     pub(crate) manifest_path: PathBuf,
     pub(crate) before_snapshot_path: PathBuf,
     pub(crate) packet_path: PathBuf,
+    /// The recorded diff base of a gap-bound attempt (#9103, RIPR-SPEC-0311);
+    /// `None` for a seam-bound attempt. Its `before_snapshot_path` is then the
+    /// check-findings snapshot, and `seam_id` holds the canonical gap id.
+    pub(crate) gap_base: Option<String>,
+    /// The full commit `gap_base` resolved to at the before phase (see
+    /// [`RepairAttemptGapBinding::base_commit`]); `None` for a seam-bound
+    /// attempt and for a legacy (C2a) gap-bound marker that never recorded it.
+    pub(crate) gap_base_commit: Option<String>,
 }
 
 /// Inputs of one durable before-phase attempt publication.
@@ -1028,6 +1281,25 @@ pub(crate) fn begin_repair_attempt_with_identity(
     options: BeginRepairAttemptOptions<'_>,
     identity: &BeforeRepairAttemptIdentity,
 ) -> Result<BeginRepairAttemptResult, String> {
+    begin_repair_attempt_inner(options, identity, None)
+}
+
+/// Publish a gap-bound attempt (#9103, RIPR-SPEC-0311): the same transaction
+/// as [`begin_repair_attempt_with_identity`], with `options.seam_id` holding
+/// the canonical gap id and the additive gap marker recorded in the manifest.
+pub(crate) fn begin_gap_bound_repair_attempt_with_identity(
+    options: BeginRepairAttemptOptions<'_>,
+    identity: &BeforeRepairAttemptIdentity,
+    gap_binding: RepairAttemptGapBinding,
+) -> Result<BeginRepairAttemptResult, String> {
+    begin_repair_attempt_inner(options, identity, Some(gap_binding))
+}
+
+fn begin_repair_attempt_inner(
+    options: BeginRepairAttemptOptions<'_>,
+    identity: &BeforeRepairAttemptIdentity,
+    gap_binding: Option<RepairAttemptGapBinding>,
+) -> Result<BeginRepairAttemptResult, String> {
     let BeginRepairAttemptOptions {
         root,
         root_argument,
@@ -1088,6 +1360,7 @@ pub(crate) fn begin_repair_attempt_with_identity(
             repair_attempt_id,
             sources,
             next_command_suffix,
+            gap_binding,
         },
     )
 }
@@ -1106,6 +1379,8 @@ struct AttemptPublication<'a> {
     repair_attempt_id: RepairAttemptId,
     sources: &'a [BeforeArtifactSource<'a>],
     next_command_suffix: Option<&'a str>,
+    /// The additive gap marker of a gap-bound attempt (#9103).
+    gap_binding: Option<RepairAttemptGapBinding>,
 }
 
 /// Stage artifacts and publish the manifest inside a reserved attempt
@@ -1120,6 +1395,9 @@ fn complete_repair_attempt(
     let result = stage_before_artifacts(canonical_root, attempt_directory, publication.sources)
         .and_then(|artifacts| {
             let store_flag = store.quoted_store_flag();
+            // A gap-bound attempt (#9103) finishes through the same
+            // `--phase after` command: the manifest carries the gap id and its
+            // diff base, so the command needs no extra flag.
             let next_command = format!(
                 "ripr agent repair --root {}{store_flag} --attempt {} --phase after{}",
                 shell_arg(&bound_root(&publication.root_argument.to_string_lossy())),
@@ -1211,6 +1489,7 @@ fn complete_repair_attempt(
                 repository_head: publication.repository_identity.head.clone(),
                 producer_version: env!("CARGO_PKG_VERSION").to_string(),
                 seam_id: publication.seam_id.to_string(),
+                gap_binding: publication.gap_binding.clone(),
                 created_unix_ms: publication.created_unix_ms,
                 artifacts,
                 next_command,
@@ -1621,7 +1900,7 @@ pub(crate) fn retain_terminal_evidence_from(
             .ok_or_else(|| {
                 format!(
                     "repair attempt terminal artifact has no file name: {}",
-                    source_path.display()
+                    crate::output::path::human_path(&source_path)
                 )
             })?
             .to_owned();
@@ -1631,8 +1910,12 @@ pub(crate) fn retain_terminal_evidence_from(
                 file_name.to_string_lossy()
             ));
         }
-        let bytes = std::fs::read(&source_path)
-            .map_err(|error| format!("read {} failed: {error}", source_path.display()))?;
+        let bytes = std::fs::read(&source_path).map_err(|error| {
+            format!(
+                "read {} failed: {error}",
+                crate::output::path::human_path(&source_path)
+            )
+        })?;
         let digest = sha256_bytes(&bytes);
         let size = u64::try_from(bytes.len()).map_err(|error| {
             format!("repair attempt terminal artifact size does not fit u64: {error}")
@@ -1936,8 +2219,9 @@ pub(crate) fn edit_cage_policy_from_packet(
     packet: &str,
     seam_id: &str,
 ) -> Result<EditCagePolicy, String> {
-    let value: serde_json::Value = serde_json::from_str(packet)
-        .map_err(|error| format!("decode repair packet for edit cage failed: {error}"))?;
+    let value: serde_json::Value = serde_json::from_str(packet).map_err(|error| {
+        format!("decode repair packet for the allowed-files check failed: {error}")
+    })?;
     if value.get("packets").is_none()
         && value.get("seam_id").and_then(serde_json::Value::as_str) != Some(seam_id)
     {
@@ -2010,7 +2294,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         && is_inline_test_module_candidate(selected_target_text);
     if !is_test_surface_path(selected_target_text) && !inline_test_module_target {
         return Err(format!(
-            "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a production file is never the authored edit target and no edit cage is constructed",
+            "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never the test to edit, so no allowed-files list is built",
             test_surface_requirement()
         ));
     }
@@ -2076,7 +2360,9 @@ pub(crate) fn edit_cage_policy_from_packet(
     // paths there, every rule path named here (including `target/ripr`), and
     // every other ignored path. Other languages keep observing every ignored
     // path: the trust-bound Python verify phase executes tests and retains
-    // its full ignored-path guard.
+    // its ignored-path guard. A Python repair only exempts untracked or
+    // ignored interpreter and test-runner caches (`EditCagePolicy::
+    // expects_python_tool_caches`, #10699), never a tracked path.
     let ignored_build_output =
         if Path::new(selected_target.path()).extension() == Some(std::ffi::OsStr::new("rs")) {
             Some(crate::edit_cage::CagePathRule::subtree(
@@ -2244,8 +2530,24 @@ pub(crate) fn resolve_awaiting_repair_attempt_from(
             &manifest,
         ));
     }
+    // #9103 (RIPR-SPEC-0311): a gap-bound attempt retains the check-findings
+    // before snapshot under its own role, so the after phase compares like
+    // kinds; a seam-bound attempt keeps the repo-exposure snapshot.
+    let gap_base = manifest
+        .gap_binding
+        .as_ref()
+        .map(|binding| binding.base.clone());
+    let gap_base_commit = manifest
+        .gap_binding
+        .as_ref()
+        .and_then(|binding| binding.base_commit.clone());
+    let before_role = if gap_base.is_some() {
+        crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_ROLE
+    } else {
+        "before_snapshot"
+    };
     let before_snapshot_path =
-        canonical_root.join(&find_manifest_artifact(&manifest, "before_snapshot")?.path);
+        canonical_root.join(&find_manifest_artifact(&manifest, before_role)?.path);
     let packet_path = canonical_root.join(&find_manifest_artifact(&manifest, "agent_packet")?.path);
     Ok(ResolvedRepairAttempt {
         attempt_id: manifest.repair_attempt_id,
@@ -2254,6 +2556,8 @@ pub(crate) fn resolve_awaiting_repair_attempt_from(
         manifest_path,
         before_snapshot_path,
         packet_path,
+        gap_base,
+        gap_base_commit,
     })
 }
 
@@ -2382,6 +2686,24 @@ pub(crate) fn finish_repair_attempt_from(
     packet_path: &Path,
     movement: HeadMovement,
 ) -> Result<RepairAttemptAfter, String> {
+    finish_repair_attempt_with_workflow_backups_from(
+        root,
+        store,
+        attempt_id,
+        packet_path,
+        movement,
+        &[],
+    )
+}
+
+pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    packet_path: &Path,
+    movement: HeadMovement,
+    backups: &[(PathBuf, String, bool)],
+) -> Result<RepairAttemptAfter, String> {
     let root_argument = root;
     let (store, manifest_path, base_bytes, mut manifest) =
         open_attempt_with_bytes(root, store, attempt_id)?;
@@ -2409,7 +2731,7 @@ pub(crate) fn finish_repair_attempt_from(
     let packet = std::fs::read(&retained_packet_path).map_err(|error| {
         format!(
             "read repair packet {} failed: {error}",
-            retained_packet_path.display()
+            crate::output::path::human_path(&retained_packet_path)
         )
     })?;
     let packet_sha256 = sha256_bytes(&packet);
@@ -2437,8 +2759,14 @@ pub(crate) fn finish_repair_attempt_from(
     // swap inside the window is undetectable by commit comparison alone,
     // so the reflog fingerprint makes `current` robust to it (#5930).
     let before = crate::agent::artifact::current_git_head_identity(&root)?;
-    let (delta, mut verdict) =
-        evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
+    let (mut delta, _) = evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
+    crate::edit_cage::omit_attempt_manifest_identity(
+        &mut delta,
+        &baseline,
+        &manifest_relative_path(&manifest),
+    )?;
+    crate::edit_cage::omit_owned_workflow_backups(&mut delta, &baseline, backups)?;
+    let mut verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
     let (current, current_head) =
         after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
     if !current {
@@ -2446,10 +2774,14 @@ pub(crate) fn finish_repair_attempt_from(
     }
     let delta_bytes = serde_json::to_vec(&delta)
         .map_err(|error| format!("serialize repair delta failed: {error}"))?;
+    let receipt_projection_predecessor =
+        receipt_projection_predecessor(&root, &manifest, &baseline, &delta);
     let after = RepairAttemptAfter {
         attempt_id: manifest.repair_attempt_id.clone(),
         repository_head: current_head,
         delta_sha256: sha256_bytes(&delta_bytes),
+        delta_binding: Some("path-state-v1".to_string()),
+        receipt_projection_predecessor,
         packet_sha256,
         current,
         verdict,
@@ -2838,13 +3170,14 @@ impl DivergedHeadRecovery {
     pub(crate) fn lines(&self) -> Vec<String> {
         vec![
             self.cause.clone(),
-            "the attempt was not finished and is still awaiting the focused test edit.".to_string(),
+            "the attempt was not finished and is still waiting for your test.".to_string(),
             self.reset.clone(),
             self.restart.clone(),
         ]
     }
 }
 
+#[cfg(test)]
 pub(crate) fn diverged_head_recovery(
     root_display: &str,
     attempt_id: &str,
@@ -2853,20 +3186,51 @@ pub(crate) fn diverged_head_recovery(
     current_head: &str,
     store_flag: &str,
 ) -> DivergedHeadRecovery {
+    diverged_head_recovery_for_subject(
+        root_display,
+        attempt_id,
+        seam_id,
+        prepared_head,
+        current_head,
+        store_flag,
+        None,
+    )
+}
+
+/// [`diverged_head_recovery`] for an attempt that may be gap-bound (#9103):
+/// `gap_base` is the recorded diff base of a gap-bound attempt, whose restart
+/// names `--gap-id`/`--base` instead of `--seam-id`.
+pub(crate) fn diverged_head_recovery_for_subject(
+    root_display: &str,
+    attempt_id: &str,
+    seam_id: &str,
+    prepared_head: &str,
+    current_head: &str,
+    store_flag: &str,
+    gap_base: Option<&str>,
+) -> DivergedHeadRecovery {
     let root_arg = shell_arg(root_display);
     let attempt_arg = shell_arg(attempt_id);
-    let seam_arg = shell_arg(seam_id);
+    let start = crate::app::gap_bound_repair::repair_start_command(
+        root_display,
+        store_flag,
+        seam_id,
+        gap_base,
+    );
     DivergedHeadRecovery {
         cause: format!(
             "HEAD {} does not descend from {}, the head attempt `{attempt_id}` was prepared at (for example after `git commit --amend`, a rebase, a reset, or a checkout); commits made on top of that head are accepted, other history changes are not.",
             short_head(current_head),
             short_head(prepared_head),
         ),
+        // The gap-bound after phase takes the same `--attempt ... --phase
+        // after` rerun as the seam branch (#9103 C2b); `start` above is the
+        // gap-aware restart.
         reset: format!(
             "to recover when only your own test commit was rewritten: `git reset --soft {prepared_head}` restores the prepared head and keeps your edit staged; then rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after`."
         ),
         restart: format!(
-            "otherwise, prepare a new attempt at the current HEAD: set your test edit aside, run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the edit, then run the new --attempt command it prints."
+            "otherwise, prepare a new attempt at the current HEAD: set your test edit aside, run `{start}` while the gap still exists, restore the edit, then run the new --attempt command it prints."
         ),
     }
 }
@@ -2885,9 +3249,14 @@ fn after_phase_not_awaiting_error(root_display: &str, manifest: &RepairAttemptMa
     let seam_id = &manifest.seam_id;
     let store_flag = quoted_store_flag_from_identity(manifest.store.as_ref());
     let status = format!("ripr agent status --root {root_arg}{store_flag}");
-    let restart = format!(
-        "ripr agent repair --root {root_arg}{store_flag} --seam-id {} --phase before",
-        shell_arg(seam_id)
+    let restart = crate::app::gap_bound_repair::repair_start_command(
+        root_display,
+        &store_flag,
+        seam_id,
+        manifest
+            .gap_binding
+            .as_ref()
+            .map(|binding| binding.base.as_str()),
     );
     let after_head = manifest
         .after
@@ -3022,9 +3391,7 @@ fn select_awaiting_repair_attempt_by_seam(
             .collect::<Vec<_>>()
             .join(", ");
         let detail = if matches.is_empty() {
-            format!(
-                "no awaiting repair attempt exists for seam `{seam_id}`; start one with `{restart}`"
-            )
+            format!("no repair is in progress for this gap; start one with `{restart}`")
         } else {
             format!(
                 "found {}: {ids}; pass --attempt <id> to select the prepared work exactly",
@@ -3032,7 +3399,7 @@ fn select_awaiting_repair_attempt_by_seam(
             )
         };
         return Err(format!(
-            "expected exactly one awaiting repair attempt for seam `{seam_id}`: {detail}"
+            "expected exactly one repair in progress for gap `{seam_id}`: {detail}"
         ));
     }
     matches.pop().ok_or_else(|| "missing attempt".to_string())
@@ -3334,7 +3701,7 @@ fn stage_sources(
             .ok_or_else(|| {
                 format!(
                     "repair attempt artifact has no file name: {}",
-                    source_path.display()
+                    crate::output::path::human_path(&source_path)
                 )
             })?
             .to_owned();
@@ -3345,8 +3712,12 @@ fn stage_sources(
             ));
         }
         let read_started = Instant::now();
-        let bytes = std::fs::read(&source_path)
-            .map_err(|error| format!("read {} failed: {error}", source_path.display()))?;
+        let bytes = std::fs::read(&source_path).map_err(|error| {
+            format!(
+                "read {} failed: {error}",
+                crate::output::path::human_path(&source_path)
+            )
+        })?;
         if trace_spans {
             crate::edit_cage::trace_persist_latency(
                 &format!("attempt_stage_source_read:{}", source.role),
@@ -3423,6 +3794,24 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     {
         return Err("repair attempt manifest is incomplete or malformed".to_string());
     }
+    if let Some(binding) = &manifest.gap_binding {
+        if binding.base.trim().is_empty() {
+            return Err("repair attempt gap binding base is empty".to_string());
+        }
+        // An absent `base_commit` is a legacy C2a marker and stays readable;
+        // a present one must be a full lowercase commit id.
+        if binding.base_commit.as_deref().is_some_and(|commit| {
+            commit.len() != 40
+                || !commit
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        }) {
+            return Err(
+                "repair attempt gap binding base_commit is not a 40-character lowercase hex commit id"
+                    .to_string(),
+            );
+        }
+    }
     if let Some(store) = &manifest.store {
         if store.schema_version != store::REPAIR_ATTEMPT_STORE_SCHEMA_VERSION {
             return Err(format!(
@@ -3445,6 +3834,34 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     );
     if has_after != state_requires_after {
         return Err("repair attempt state/after boundary is inconsistent".to_string());
+    }
+    if manifest
+        .after
+        .as_ref()
+        .and_then(|after| after.delta_binding.as_deref())
+        .is_some_and(|binding| binding != "path-state-v1")
+    {
+        return Err("repair attempt delta binding version is not recognized".to_string());
+    }
+    if let Some(after) = &manifest.after
+        && let Some(predecessor) = &after.receipt_projection_predecessor
+    {
+        RepairAttemptId::parse(predecessor.attempt_id.as_str().to_string())?;
+        if predecessor.attempt_id == manifest.repair_attempt_id
+            || !after
+                .verdict
+                .changed_paths
+                .iter()
+                .any(|path| path == crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT)
+            || after.delta_binding.as_deref() != Some("path-state-v1")
+            || !matches!(
+                predecessor.kind,
+                crate::edit_cage::AttemptPathChangeKind::Added
+                    | crate::edit_cage::AttemptPathChangeKind::Modified
+            )
+        {
+            return Err("repair receipt projection predecessor is invalid".to_string());
+        }
     }
     if manifest
         .last_after_refusal
@@ -3831,6 +4248,7 @@ mod tests {
             repository_head: "0123456789abcdef0123456789abcdef01234567".to_string(),
             producer_version: env!("CARGO_PKG_VERSION").to_string(),
             seam_id: "seam:sample".to_string(),
+            gap_binding: None,
             created_unix_ms: 1,
             artifacts: vec![RepairAttemptArtifact {
                 role: "before_snapshot".to_string(),
@@ -3942,6 +4360,186 @@ mod tests {
         Ok(())
     }
 
+    const TS_GAP: &str = "gap:typescript:typescript_preview:1a2b3c4d";
+
+    fn typescript_gap_packet(edit_target: &str) -> Result<String, String> {
+        serde_json::to_string(&serde_json::json!({
+            "packets": [{
+                "seam_id": TS_GAP,
+                "allowed_edit_surface": [edit_target],
+                "forbidden_files": ["src/pricing.ts"],
+                "recommended_test": {"file": edit_target, "name": "test/pricing.test.ts::discounts"}
+            }]
+        }))
+        .map_err(|error| error.to_string())
+    }
+
+    /// #9103: a gap-bound TypeScript packet names the canonical gap as its
+    /// seam id; the cage binds to exactly that packet and its test file.
+    #[test]
+    fn cage_policy_binds_a_typescript_gap_packet_to_its_test_file() -> Result<(), String> {
+        // The `.spec.ts` file-name convention is a test surface only when
+        // the TypeScript adapter is compiled in.
+        let mut targets = vec!["test/pricing.test.ts"];
+        #[cfg(feature = "lang-typescript")]
+        targets.push("src/pricing.spec.ts");
+        for target in targets {
+            let policy = edit_cage_policy_from_packet(&typescript_gap_packet(target)?, TS_GAP)?;
+            if policy.selected_target.path() != target || policy.inline_test_module_target {
+                return Err(format!("cage did not bind {target}: {policy:?}"));
+            }
+        }
+        // A different gap id selects no packet.
+        if edit_cage_policy_from_packet(
+            &typescript_gap_packet("test/pricing.test.ts")?,
+            "gap:typescript:typescript_preview:ffffffff",
+        )
+        .is_ok()
+        {
+            return Err("a foreign gap id selected the packet".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cage_policy_refuses_typescript_gap_packets_aimed_at_production_or_non_test_files()
+    -> Result<(), String> {
+        for target in ["src/pricing.ts", "docs/pricing.md", "package.json"] {
+            let error = match edit_cage_policy_from_packet(&typescript_gap_packet(target)?, TS_GAP)
+            {
+                Err(error) => error,
+                Ok(_) => return Err(format!("{target} constructed a cage policy")),
+            };
+            if !error.contains("is not a test surface") {
+                return Err(format!("{target}: unexpected refusal: {error}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// #9103: the gap marker is additive. A seam-bound manifest keeps its
+    /// exact bytes (no `gap_binding` key); a gap-bound one round-trips it.
+    #[test]
+    fn gap_binding_is_additive_and_round_trips_in_the_manifest() -> Result<(), String> {
+        let root = test_repo_root("gap-binding-round-trip")?;
+        let seam_bound = sample_manifest(&root)?;
+        let seam_json =
+            serde_json::to_string_pretty(&seam_bound).map_err(|error| error.to_string())?;
+        if seam_json.contains("gap_binding") {
+            return Err(format!(
+                "a seam-bound manifest grew a gap marker:\n{seam_json}"
+            ));
+        }
+        let reread: RepairAttemptManifest =
+            serde_json::from_str(&seam_json).map_err(|error| error.to_string())?;
+        if reread != seam_bound {
+            return Err("seam-bound manifest did not round-trip".to_string());
+        }
+
+        let mut gap_bound = seam_bound.clone();
+        gap_bound.seam_id = TS_GAP.to_string();
+        gap_bound.gap_binding = Some(RepairAttemptGapBinding {
+            base: "HEAD~1".to_string(),
+            base_commit: Some("a".repeat(40)),
+        });
+        let gap_json =
+            serde_json::to_string_pretty(&gap_bound).map_err(|error| error.to_string())?;
+        if !gap_json.contains("\"gap_binding\": {\n    \"base\": \"HEAD~1\",\n    \"base_commit\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n  }") {
+            return Err(format!("gap marker not serialized:\n{gap_json}"));
+        }
+        let reread: RepairAttemptManifest =
+            serde_json::from_str(&gap_json).map_err(|error| error.to_string())?;
+        if reread != gap_bound {
+            return Err("gap-bound manifest did not round-trip".to_string());
+        }
+        // The marker is part of the immutable before commitment.
+        if manifest_before_bytes(&seam_bound)? == manifest_before_bytes(&gap_bound)? {
+            return Err("the before commitment ignores the gap marker".to_string());
+        }
+        // Unknown marker fields stay refused.
+        let forged = gap_json.replace("\"base\"", "\"base\": \"HEAD~1\", \"extra\"");
+        if serde_json::from_str::<RepairAttemptManifest>(&forged).is_ok() {
+            return Err("an unknown gap marker field was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    /// #9103 review: a gap marker needs a non-empty base and, when present, a
+    /// full lowercase `base_commit`; an absent one stays valid (legacy C2a).
+    #[test]
+    fn gap_binding_validation_refuses_malformed_base_and_commit() -> Result<(), String> {
+        let root = test_repo_root("gap-binding-validation")?;
+        let mut manifest = sample_manifest(&root)?;
+        manifest.seam_id = TS_GAP.to_string();
+        let check = |manifest: &mut RepairAttemptManifest, base: &str, commit: Option<&str>| {
+            manifest.gap_binding = Some(RepairAttemptGapBinding {
+                base: base.to_string(),
+                base_commit: commit.map(str::to_string),
+            });
+            validate_manifest(manifest).is_ok()
+        };
+        if !check(&mut manifest, "HEAD~1", Some(&"a".repeat(40))) {
+            return Err("a well-formed gap binding was refused".to_string());
+        }
+        if !check(&mut manifest, "HEAD~1", None) {
+            return Err("a legacy gap binding without base_commit was refused".to_string());
+        }
+        for (base, commit) in [
+            ("", Some("a".repeat(40))),
+            ("  ", None),
+            ("HEAD~1", Some("a".repeat(39))),
+            ("HEAD~1", Some("A".repeat(40))),
+            ("HEAD~1", Some("g".repeat(40))),
+            ("HEAD~1", Some(String::new())),
+        ] {
+            if check(&mut manifest, base, commit.as_deref()) {
+                return Err(format!(
+                    "malformed gap binding accepted: {base:?} {commit:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #9103: recovery narration for a gap-bound attempt names `--gap-id` and
+    /// `--base`, never a `--seam-id` the Rust inventory cannot resolve.
+    #[test]
+    fn gap_bound_recovery_text_names_the_gap_start_not_a_seam() -> Result<(), String> {
+        let recovery = diverged_head_recovery_for_subject(
+            ".",
+            "attempt-1",
+            TS_GAP,
+            "aaaa",
+            "bbbb",
+            "",
+            Some("HEAD~1"),
+        );
+        let text = recovery.lines().join("\n");
+        if text.contains("--seam-id")
+            || !text.contains(&format!(
+                "--gap-id {TS_GAP} --base {} --root",
+                shell_arg("HEAD~1")
+            ))
+        {
+            return Err(format!("recovery is not gap-bound: {text}"));
+        }
+        // The gap-bound reset reruns the real after phase; the stale "not
+        // available yet" manual-verify wording is gone.
+        if text.contains("not available yet")
+            || text.contains("ripr agent verify --gap-id")
+            || !text.contains("--attempt attempt-1 --phase after")
+            || text.contains("--store")
+        {
+            return Err(format!("gap-bound reset is not the real rerun: {text}"));
+        }
+        // Seam-bound recovery is unchanged.
+        let seam = diverged_head_recovery(".", "attempt-1", "seam-1", "aaaa", "bbbb", "");
+        if !seam.restart.contains("--seam-id seam-1") || seam.restart.contains("--gap-id") {
+            return Err(format!("seam recovery changed: {}", seam.restart));
+        }
+        Ok(())
+    }
+
     #[test]
     fn cage_policy_refuses_a_non_test_selected_edit_target_before_any_cage() -> Result<(), String> {
         // A gap route's path-shaped `target_file` (`src/...`) can arrive as
@@ -3966,7 +4564,7 @@ mod tests {
         for needle in [
             "src/production.py",
             "is not a test surface",
-            "no edit cage is constructed",
+            "no allowed-files list is built",
         ] {
             if !error.contains(needle) {
                 return Err(format!("refusal did not name `{needle}`: {error}"));
@@ -4170,6 +4768,8 @@ mod tests {
             repository_head: manifest.repository_head.clone(),
             delta_sha256: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                 .to_string(),
+            delta_binding: None,
+            receipt_projection_predecessor: None,
             packet_sha256:
                 "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                     .to_string(),
@@ -4229,6 +4829,27 @@ mod tests {
             .ok_or_else(|| "schema after required list missing".to_string())?;
         if !required.iter().any(|value| value == "attempt_id") {
             return Err("schema after omitted durable attempt_id".to_string());
+        }
+        let versions = schema["$defs"]["after"]["properties"]["delta_binding"]["enum"]
+            .as_array()
+            .ok_or_else(|| "schema delta binding enum missing".to_string())?;
+        if !versions.iter().any(|value| value == "path-state-v1")
+            || !versions.iter().any(serde_json::Value::is_null)
+        {
+            return Err("schema does not admit the current and legacy binding forms".to_string());
+        }
+        let witness =
+            &schema["$defs"]["after"]["properties"]["receipt_projection_predecessor"]["anyOf"][1];
+        if witness["additionalProperties"] != false
+            || witness["properties"]["kind"]["enum"] != serde_json::json!(["added", "modified"])
+            || witness["required"] != serde_json::json!(["attempt_id", "kind", "executable"])
+            || required
+                .iter()
+                .any(|value| value == "receipt_projection_predecessor")
+        {
+            return Err(
+                "schema must carry the optional exact receipt predecessor contract".to_string(),
+            );
         }
         Ok(())
     }
@@ -4585,6 +5206,7 @@ mod tests {
                     path: &source,
                 }],
                 next_command_suffix: None,
+                gap_binding: None,
             },
         );
         let attempt_remaining = attempt_directory.exists();
@@ -4652,6 +5274,7 @@ mod tests {
                     path: &source,
                 }],
                 next_command_suffix: None,
+                gap_binding: None,
             },
         );
         let attempt_remaining = attempt_directory.exists();
@@ -5921,6 +6544,9 @@ mod tests {
         let root = test_repo_root("worktree-drift-currentness")?;
         let result = (|| -> Result<(), String> {
             let prepared = prepare_sample_attempt(&root, "seam:sample", "drift")?;
+            let unrelated = root.join("target/ripr/unrelated.txt");
+            std::fs::write(&unrelated, "prior unrelated bytes\n")
+                .map_err(|error| error.to_string())?;
             let finished = finish_sample_attempt(&root, &prepared)?;
             if finished.state != RepairAttemptState::ReadyToFinish {
                 return Err(format!("expected a finished attempt: {:?}", finished.state));
@@ -5931,6 +6557,128 @@ mod tests {
                 return Err(format!(
                     "undrifted finished attempt must read current: {reading:?}"
                 ));
+            }
+
+            std::fs::write(&unrelated, "different unrelated bytes\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("changed unrelated operational path remained current".to_string());
+            }
+            std::fs::write(&unrelated, "prior unrelated bytes\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err(
+                    "restored unrelated operational path did not recover currentness".to_string(),
+                );
+            }
+
+            let mut legacy = finished.clone();
+            if let Some(after) = legacy.after.as_mut() {
+                after.delta_binding = None;
+            }
+            let legacy_reading = repair_attempt_head_reading(&root, &legacy, Some(&head));
+            if legacy_reading.head_current.is_some() {
+                return Err(format!(
+                    "legacy path-only binding must be unknown: {legacy_reading:?}"
+                ));
+            }
+            let mut invalid = legacy.clone();
+            if let Some(after) = invalid.after.as_mut() {
+                after.delta_binding = Some("unknown-version".to_string());
+            }
+            if validate_manifest(&invalid).is_ok() {
+                return Err("unknown delta binding version was accepted".to_string());
+            }
+            let manifest_bytes =
+                std::fs::read(&prepared.manifest_path).map_err(|error| error.to_string())?;
+            let mut legacy_json: serde_json::Value =
+                serde_json::from_slice(&manifest_bytes).map_err(|error| error.to_string())?;
+            legacy_json["after"]
+                .as_object_mut()
+                .ok_or("missing after")?
+                .remove("delta_binding");
+            let mut null_json = legacy_json.clone();
+            null_json["after"]["delta_binding"] = serde_json::Value::Null;
+            let null_manifest: RepairAttemptManifest =
+                serde_json::from_value(null_json).map_err(|error| error.to_string())?;
+            validate_manifest(&null_manifest)?;
+            if repair_attempt_head_reading(&root, &null_manifest, Some(&head))
+                .head_current
+                .is_some()
+            {
+                return Err("null delta binding must remain unknown".to_string());
+            }
+            std::fs::write(
+                &prepared.manifest_path,
+                serde_json::to_vec(&legacy_json).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            let packet = root.join(&find_manifest_artifact(&finished, "agent_packet")?.path);
+            let attempt = finished.repair_attempt_id.as_str();
+            match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
+                Err(error) if error.contains("no post-change path identity binding") => {}
+                other => return Err(format!("legacy receipt must be unavailable: {other:?}")),
+            }
+            std::fs::write(&prepared.manifest_path, manifest_bytes)
+                .map_err(|error| error.to_string())?;
+
+            // The selected path already appears in the finished delta. A
+            // second edit keeps its kind (Added) but changes its identity.
+            let selected = root.join("tests/target.rs");
+            let original = std::fs::read(&selected).map_err(|error| error.to_string())?;
+            std::fs::write(&selected, b"#[test]\nfn focused() { assert!(false); }\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("second edit to bound selected path remained current".to_string());
+            }
+            match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
+                Err(error) if error.contains("tampered or stale") => {}
+                other => return Err(format!("receipt must refuse changed test bytes: {other:?}")),
+            }
+            std::fs::write(&selected, original).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("restored selected path did not recover currentness".to_string());
+            }
+
+            run_git(&root, &["add", "tests/target.rs"])?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("staging the selected path remained current".to_string());
+            }
+            run_git(&root, &["reset", "-q", "HEAD", "--", "tests/target.rs"])?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("restoring the index did not recover currentness".to_string());
+            }
+            let selected_bytes = std::fs::read(&selected).map_err(|error| error.to_string())?;
+            std::fs::remove_file(&selected).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("deleting the selected path remained current".to_string());
+            }
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink("../README.md", &selected)
+                    .map_err(|error| error.to_string())?;
+                if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current
+                    == Some(true)
+                {
+                    return Err(
+                        "replacing the selected path with a symlink remained current".to_string(),
+                    );
+                }
+                std::fs::remove_file(&selected).map_err(|error| error.to_string())?;
+            }
+            std::fs::write(&selected, selected_bytes).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err(
+                    "restoring the deleted selected path did not recover currentness".to_string(),
+                );
             }
 
             // Drift: an uncommitted production edit outside the allowed
@@ -5949,8 +6697,6 @@ mod tests {
             }
             // The authority path refuses the same state, and issues the
             // receipt before the drift.
-            let packet = root.join(&find_manifest_artifact(&finished, "agent_packet")?.path);
-            let attempt = finished.repair_attempt_id.as_str();
             match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
                 Err(error) if error.contains("tampered or stale") => {}
                 other => return Err(format!("receipt must refuse drift: {other:?}")),
@@ -5964,6 +6710,40 @@ mod tests {
                 ));
             }
             receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt))?;
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn ignored_selected_test_uses_content_identity_for_currentness() -> Result<(), String> {
+        let root = test_repo_root("ignored-bound-test")?;
+        let result = (|| -> Result<(), String> {
+            std::fs::write(root.join(".gitignore"), "tests/target.rs\n")
+                .map_err(|error| error.to_string())?;
+            run_git(&root, &["add", ".gitignore"])?;
+            run_git(&root, &["commit", "-q", "-m", "ignore selected test"])?;
+            let prepared = prepare_sample_attempt(&root, "seam:sample", "ignored")?;
+            let finished = finish_sample_attempt(&root, &prepared)?;
+            let head = crate::agent::artifact::current_git_head(&root)?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("ignored selected test was not initially current".to_string());
+            }
+            let selected = root.join("tests/target.rs");
+            let original = std::fs::read(&selected).map_err(|error| error.to_string())?;
+            std::fs::write(&selected, b"#[test]\nfn changed() {}\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("changed ignored selected test remained current".to_string());
+            }
+            std::fs::write(&selected, original).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("restored ignored test did not recover currentness".to_string());
+            }
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);
@@ -7656,6 +8436,61 @@ mod tests {
 
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn gap_bound_receipt_closure_needs_a_closed_bound_gap_in_verify_and_receipt()
+    -> Result<(), String> {
+        let gap = "gap:typescript:typescript_preview:1a2b3c4d";
+        let bound = serde_json::json!({
+            "gap_id": gap, "before_classification": "weakly_exposed",
+            "after_classification": "exposed", "file": "src/a.ts", "line": 5, "closed": true
+        });
+        let verify = serde_json::json!({ "bound_gap": bound });
+        let receipt = serde_json::json!({ "bound_gap": bound });
+        // Positive: closed in both documents, identical.
+        validate_gap_bound_receipt_closure(true, gap, &verify, &receipt)?;
+        // A seam-bound attempt is not subject to the gap rule.
+        validate_gap_bound_receipt_closure(false, gap, &serde_json::json!({}), &receipt)?;
+
+        let mut open = bound.clone();
+        open["closed"] = serde_json::json!(false);
+        let mut other_gap = bound.clone();
+        other_gap["gap_id"] = serde_json::json!("gap:typescript:typescript_preview:ffff");
+        let mut edited = bound.clone();
+        edited["after_classification"] = serde_json::json!("reachable_unrevealed");
+        for (label, verify, receipt) in [
+            (
+                "verify has no bound_gap",
+                serde_json::json!({}),
+                receipt.clone(),
+            ),
+            (
+                "verify bound_gap is not closed",
+                serde_json::json!({ "bound_gap": open }),
+                receipt.clone(),
+            ),
+            (
+                "verify bound_gap names another gap",
+                serde_json::json!({ "bound_gap": other_gap }),
+                receipt.clone(),
+            ),
+            (
+                "receipt omits bound_gap",
+                verify.clone(),
+                serde_json::json!({}),
+            ),
+            (
+                "receipt bound_gap differs from the verify closure",
+                verify.clone(),
+                serde_json::json!({ "bound_gap": edited }),
+            ),
+        ] {
+            if validate_gap_bound_receipt_closure(true, gap, &verify, &receipt).is_ok() {
+                return Err(format!("{label}: a gap-bound receipt was accepted"));
+            }
+        }
         Ok(())
     }
 }

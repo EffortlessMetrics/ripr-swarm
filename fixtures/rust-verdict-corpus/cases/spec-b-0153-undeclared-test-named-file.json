@@ -1,0 +1,55 @@
+{
+  "case_id": "spec-b-0153-undeclared-test-named-file",
+  "subject_id": "authored-spec-b-layout",
+  "diff": "cases/spec-b-0153-undeclared-test-named-file.diff",
+  "anchor": {
+    "file": "src/l_unconfirmed_test.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "undeclared_test_suffix_file_edit",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base + 10",
+        "mutated_line": "base + 10",
+        "outcome": "tests_failed",
+        "failing_test": "l_unconfirmed_test::tests::the_unconfirmed_shift_is_eleven_l_unconfirmed",
+        "equivalence_review": "not equivalent: l_unconfirmed_test::tests::the_unconfirmed_shift_is_eleven_l_unconfirmed fails on it"
+      },
+      {
+        "replacement": "base + 12",
+        "mutated_line": "base + 12",
+        "outcome": "tests_failed",
+        "failing_test": "l_unconfirmed_test::tests::the_unconfirmed_shift_is_eleven_l_unconfirmed",
+        "equivalence_review": "not equivalent: l_unconfirmed_test::tests::the_unconfirmed_shift_is_eleven_l_unconfirmed fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The file ends in _test.rs but no manifest target declares it, so it stays production and the edited line is a probe. Its own unit test pins shifted_unconfirmed(1) == 12, so either neighbor fails. Spec cells: RIPR-SPEC-0153#5.",
+  "labeling_observation": {
+    "ripr_commit": "5fc9de08",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0153#5"
+  ]
+}

@@ -206,8 +206,17 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
     // canonical paths below serve only filesystem confinement and relocation.
     let source = cache_base_dir(root);
     refuse_links(&source)?;
-    let source =
-        fs::canonicalize(&source).map_err(|error| format!("resolve source cache: {error}"))?;
+    // A missing cache is the expected state before any repo exposure or repo
+    // badge analysis has run; name the recovery route in plain words instead
+    // of leaking the raw OS errno (#9851), in the vocabulary the empty-cache
+    // refusal below already uses.
+    let source = fs::canonicalize(&source).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "source cache not found; run repo exposure or repo badge analysis first".to_owned()
+        } else {
+            format!("resolve source cache: {error}")
+        }
+    })?;
     let output = if output.is_absolute() {
         output.to_path_buf()
     } else {
@@ -371,6 +380,26 @@ mod tests {
             crate::git::run_git(root, &["add", "-f", "--", "source"])
                 .map_err(|err| format!("git add: {err}"))?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn export_current_missing_cache_names_recovery_route_without_os_errno() -> Result<(), String> {
+        // #9851: a root that never ran repo exposure or repo badge analysis
+        // has no cache directory yet; the failure must read `not found` in
+        // plain words and name the producing analysis, never a raw OS errno.
+        let root = isolated_dir("export-current-missing-cache");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let err = export_current(&root, &root.join("export"))
+            .err()
+            .ok_or("missing source cache must fail")?;
+        ignore_remove_dir_all(&root);
+        assert!(err.contains("not found"), "{err}");
+        assert!(
+            err.contains("run repo exposure or repo badge analysis first"),
+            "error should name the recovery route, got: {err}"
+        );
+        assert!(!err.contains("os error"), "{err}");
         Ok(())
     }
 

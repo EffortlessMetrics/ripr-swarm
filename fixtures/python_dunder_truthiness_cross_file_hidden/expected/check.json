@@ -1,0 +1,89 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_dunder_truthiness_cross_file_hidden/input",
+  "config_path": "<cwd>/fixtures/python_dunder_truthiness_cross_file_hidden/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:9ed7e48590fd4835b71d47eb756836ec6c1766d0fba59793a4b6dbd4f09b50b1","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_shapes_money.py:python_preview:aacb327b",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.20,
+      "probe": {
+        "id": "probe:src_shapes_money.py:python_preview:aacb327b",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/shapes/money.py",
+        "line": 6,
+        "expression": "        return self.cents > 0",
+        "owner": "python:src/shapes/money.py::Money.__bool__"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 heuristic Python test link(s) found for owner `__bool__`; relation is uncertain"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Static limit `dynamic_dispatch` prevents a safe Python infection claim."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Static limit `dynamic_dispatch` prevents a safe Python propagation claim."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 1)"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"Static limit `dynamic_dispatch` prevents a safe Python discriminator claim."}
+       },
+      "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `__bool__`; relation is uncertain", "infection unknown: Static limit `dynamic_dispatch` prevents a safe Python infection claim.", "propagation unknown: Static limit `dynamic_dispatch` prevents a safe Python propagation claim.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator unknown: Static limit `dynamic_dispatch` prevents a safe Python discriminator claim.", "related test tests/test_money.py:4 test_truthiness uses no oracle"],
+      "flow_sinks": [
+      ],
+      "evidence": ["owner: Money.__bool__", "owner_kind: method", "static_limit dynamic_dispatch: dunder method `Money.__bool__` is invoked implicitly by Python syntax on a constructed instance", "test_framework: pytest (test_truthiness)", "test_verify_command: python -m pytest tests/test_money.py::test_truthiness (test_truthiness)", "related_test_relation: dunder_protocol (test_truthiness)", "related_test_uncertain: dunder_protocol (test_truthiness)"],
+      "missing": ["Static limit `dynamic_dispatch`: `Money.__bool__` is a dunder method Python invokes through operator or `with` syntax; related tests build `Money` instances, but the preview adapter does not bind the syntax to the instance or evaluate the assertion against the dunder's result, so it does not grade this edit as a gap."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_truthiness",
+          "file": "tests/test_money.py",
+          "line": 4,
+          "oracle_strength": "unknown",
+          "oracle_kind": "unknown",
+          "oracle": ""
+        }
+      ],
+      "stop_reasons": ["dynamic_dispatch_unresolved"],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "method",
+      "static_limit_kind": "dynamic_dispatch",
+      "changed_sink": "cents",
+      "oracle_alignment": "unknown",
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/shapes/money.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/shapes/money.py","digest":"sha256:d9074631b8986693ce9501fb6602b394d7d79a23c5e384a56e7dde5e11008b4e"}]}
+}

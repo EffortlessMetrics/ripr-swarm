@@ -1,0 +1,12 @@
+diff --git a/src/c_key.rs b/src/c_key.rs
+--- a/src/c_key.rs
++++ b/src/c_key.rs
+@@ -18,7 +18,7 @@
+ 
+ impl KeyOrder {
+     pub fn add_key(&mut self, sku: &str, qty: u32) {
+-        self.lines.push(KeyLine { sku: sku.to_uppercase(), qty });
++        self.lines.push(KeyLine { sku: str::to_uppercase(sku), qty });
+     }
+ }
+ 

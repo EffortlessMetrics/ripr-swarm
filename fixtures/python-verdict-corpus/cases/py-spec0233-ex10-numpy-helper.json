@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "RIPR-SPEC-0238 example 10: `np.testing.assert_array_equal(parse(\"1\"), [2])` is the test's only assertion, so `+ 2` fails it. The spec reads numpy's helper as an unknown helper: static_unknown with opaque_custom_assertion_helper (limited, acceptable), unchanged from today. The subject needs numpy to run its tests; the corpus check never runs them. This reasoning describes ripr at labeling (commit 872eb81); the current verdict is the row under expected/rows/.",
+  "reasoning": "RIPR-SPEC-0238 example 10: `np.testing.assert_array_equal(parse(\"1\"), [2])` is the test's only assertion, so `+ 2` fails it. Rule 28 reads numpy's helper as the equality it runs, because the test file imports `numpy as np` and nothing rebinds it: exposed (credited). Before rule 28 the spec read it as an unknown helper (static_unknown, limited). The subject needs numpy to run its tests; the corpus check never runs them. This reasoning describes ripr at labeling (commit 872eb81); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "872eb81",
     "full_checkout_verdict": "limited",

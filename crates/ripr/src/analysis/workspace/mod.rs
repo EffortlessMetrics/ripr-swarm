@@ -10,7 +10,8 @@ mod source_role;
 
 pub(crate) use assertion_dependency::{
     AnyhowIdentity, LiteralJsonIdentity, config_snapshot_identity, eligible_json_root,
-    eligible_manifest, verified_anyhow_identity, verified_json_identity,
+    eligible_manifest, eligible_proptest_root, verified_anyhow_identity, verified_json_identity,
+    verified_proptest_identity,
 };
 pub(crate) use cargo_input_identity::cargo_input_identity;
 pub(crate) use cargo_targets::{
@@ -29,11 +30,12 @@ pub(crate) use source_role::{
 pub(crate) use classify::{normalize_path, package_root};
 pub(crate) use discover::UnlinkedPythonTests;
 pub use discover::discover_rust_files;
+pub(crate) use discover::path_enters_ignored_dir;
 pub(crate) use discover::{
     changed_source_files_absent_from_worktree, discover_preview_language_files,
-    discover_python_test_files, discover_unanalyzed_source_files,
-    limitations_for_absent_changed_files, supplement_absent_file_limitations,
-    worktree_contains_regular_source_file,
+    discover_python_test_files, discover_routed_language_files, discover_unanalyzed_source_files,
+    has_inspectable_source_file, limitations_for_absent_changed_files,
+    supplement_absent_file_limitations, worktree_contains_regular_source_file,
 };
 pub(crate) use select::{
     select_rust_files_for_mode_with_dependent_packages, with_module_context_files,

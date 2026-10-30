@@ -1,3 +1,0 @@
-case = "idiom-fixture-builder-total"
-issue = 9609
-reason = "A method pinned on a fixture-built receiver reads as a weak gap (#9609)."

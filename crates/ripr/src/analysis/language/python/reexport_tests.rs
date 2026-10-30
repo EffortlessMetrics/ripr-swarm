@@ -388,6 +388,40 @@ fn all_mentioned_only_in_a_docstring_does_not_filter_star_exports() -> Result<()
 }
 
 #[test]
+fn package_star_export_is_not_credited_when_the_module_rebinds_the_name() -> Result<(), String> {
+    let dynamic = "globals()['one'] = lambda items: 0\n";
+    let star = "from other import *\n";
+    for (extra, why) in [
+        (dynamic, "globals() write"),
+        (star, "module-side star import"),
+    ] {
+        let more = format!(
+            "def one(items):\n    if len(items) != 1:\n        raise ValueError('one')\n    return items[0]\n\n\n{extra}"
+        );
+        let finding = analyze_one_line(
+            "rebound-by-module",
+            &[
+                ("pkg/more.py", more.as_str()),
+                ("pkg/__init__.py", "from .more import *\n"),
+                (
+                    "tests/test_more.py",
+                    "import pkg\n\n\ndef test_one():\n    assert pkg.one([7]) == 7\n",
+                ),
+            ],
+            "pkg/more.py",
+            3,
+        )?;
+        if finding.class != ExposureClass::NoStaticPath {
+            return Err(format!(
+                "`pkg.one` may be rebound by a {why}; got {:?}",
+                finding.class
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn quoted_name_outside_all_does_not_satisfy_all() -> Result<(), String> {
     let finding = analyze_one_line(
         "quoted-elsewhere",
@@ -821,4 +855,86 @@ fn same_named_src_package_in_another_project_lends_no_exposure() -> Result<(), S
         }
     }
     Ok(())
+}
+
+#[test]
+fn the_source_fact_parse_answers_the_star_export_questions_as_the_reexport_pass() {
+    // The workspace fact pass answers the re-export pass's star-export
+    // questions from its own parse, and the fact store persists them (#10914);
+    // they must equal what the pass would compute from the file.
+    let cases = [
+        (
+            "pkg/more.py",
+            "__all__ = ['chunked']\n\n\ndef chunked(x):\n    return x\n\n\ndef hidden(x):\n    return x\n",
+        ),
+        (
+            "pkg/twice.py",
+            "def rate(x):\n    return x\n\n\ndef rate(x):\n    return x + 1\n\n\nclass Box:\n    def size(self):\n        return 1\n",
+        ),
+        (
+            "pkg/dynamic.py",
+            "def rate(x):\n    return x\n\n\nglobals()['rate'] = rate\n",
+        ),
+        (
+            "pkg/starred.py",
+            "from .more import *\n\n\ndef rate(x):\n    return x\n",
+        ),
+        (
+            "pkg/built.py",
+            "__all__ = [name for name in ('rate',)]\n\n\ndef rate(x):\n    return x\n",
+        ),
+        ("pkg/broken.py", "def rate(x:\n"),
+    ];
+    for (file, source) in cases {
+        let file = Path::new(file);
+        let facts = source_facts::extract_workspace_source_facts(file, source);
+        let names = reexports::star_export_names(&facts.owners);
+        let fresh = reexports::primed_star_facts(file, source, &names);
+        match &facts.star_facts {
+            Some(served) => assert_eq!(served, &fresh, "{}", file.display()),
+            None => assert!(
+                facts.owners.is_empty(),
+                "{}: only an unparsed file goes without star facts",
+                file.display()
+            ),
+        }
+    }
+    let plain = source_facts::extract_source_facts(Path::new("pkg/more.py"), cases[0].1);
+    assert!(
+        plain.star_facts.is_none(),
+        "only the workspace pass computes star facts"
+    );
+    // The workspace keeps a test file's tests, not its owners.
+    let test_file = source_facts::extract_workspace_source_facts(
+        Path::new("tests/test_more.py"),
+        "def test_chunked():\n    assert chunked(1) == 1\n",
+    );
+    assert!(
+        test_file.star_facts.is_none(),
+        "a test file's owners never reach the re-export pass"
+    );
+    // The same holds on the path that inlines a same-file assertion helper.
+    let helper_test = "from pkg.more import chunked\n\n\ndef check(value):\n    assert chunked(value) == 1\n\n\ndef test_chunked():\n    check(1)\n";
+    assert!(
+        super::helper_inline::inline_test_helpers(
+            helper_test,
+            &match super::source_facts::parse_module_result(
+                Path::new("tests/test_helper.py"),
+                helper_test
+            ) {
+                Ok(rustpython_parser::ast::Mod::Module(module)) => module.body,
+                _ => Vec::new(),
+            },
+        )
+        .is_some(),
+        "the fixture must take the helper-inlining path"
+    );
+    let inlined = source_facts::extract_workspace_source_facts(
+        Path::new("tests/test_helper.py"),
+        helper_test,
+    );
+    assert!(
+        inlined.star_facts.is_none(),
+        "an inlined test file's owners never reach the re-export pass"
+    );
 }

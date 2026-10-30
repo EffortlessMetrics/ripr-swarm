@@ -107,7 +107,13 @@ read-only and without execution authority (ADR 0022):
   `missing_discriminator`,
   `discriminator_not_populated_for_language`, `static_limitation`,
   `fix_site_not_established`,
-  `fix_site_not_test_surface`). A producer that names its missing
+  `fix_site_not_test_surface`). A fix site on the seam's own production file
+  is not a test surface; it lifts `fix_site_not_test_surface` only when the
+  shared seam validator admitted that seam with exactly that file's one
+  governed inline `#[cfg(test)]` module as the edit target (#5516). The
+  packet then states the module confinement (`inline_test_module`,
+  `must_not_change`) using the same wording as the CLI before phase, and
+  MCP-ready never exceeds `ripr repair`. A producer that names its missing
   discriminators (activation `missing_discriminators`, or a
   `Missing discriminator value:` entry in `missing`) on any class other
   than `weakly_exposed` refuses as `missing_discriminator`; on a
@@ -188,11 +194,17 @@ read-only and without execution authority (ADR 0022):
   restart authority. A restart display string is not parsed into typed
   command authority. Historical or unknown HEAD still offers no command or
   routes. Receipt classification, identity and retained bytes are unchanged.
-  The restart display's executable `--root` argument preserves the selected
-  filesystem path: a Unix backslash is a filename character, while Windows
-  separators retain their existing normalization. Generic report/artifact
-  display text must not define executable root identity. These advisory
-  strings remain separate from typed `CommandSpec` execution authority.
+  The decision is shared with the CLI, but the rendered root binding is not
+  (#10009): the CLI display binds the selected repository path — a Unix
+  backslash is a filename character, while Windows separators retain their
+  existing normalization — so a pasted command runs from any working
+  directory, while this bounded projection renders the same actions with the
+  portable root `.`, exactly like the repair card's next-action display: the
+  host-local root path stays unprojected and the display is never execution
+  authority. Trust-bound or store-qualified continuations keep the persisted
+  advanced spelling on both surfaces. Generic report/artifact display text
+  must not define executable root identity. These advisory strings remain
+  separate from typed `CommandSpec` execution authority.
 - `ripr_get_receipt_status` and the `ripr://receipt/{receipt_id}` resource
   project the current receipt state for one attempt identity (receipt ids
   are attempt-bound). The status vocabulary is `awaiting_edit`,
@@ -381,6 +393,12 @@ read-only and without execution authority (ADR 0022):
   `mcp_ready_item_is_the_item_the_cli_repair_gate_admits` — real-stdio
   parity of list, get_gap and prepare readiness against `ripr repair`
   (#8717).
+- `crates/ripr/tests/mcp_stdio.rs`
+  `mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams` and
+  `crates/ripr/src/mcp/gaps.rs::tests::inline_admission_lifts_only_the_matching_non_surface_fix_site`
+  — one governed inline module is repair-ready with the module confinement
+  stated, two candidate modules stay refused, and the lift needs the exact
+  admitted file (#5516).
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptors, vocabulary, instructions, dispatch-edge rejections, and
   pre-refresh typed failures.

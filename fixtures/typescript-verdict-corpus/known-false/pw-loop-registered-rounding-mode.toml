@@ -1,3 +1,0 @@
-case = "pw-loop-registered-rounding-mode"
-issue = 9653
-reason = "Exact-oracle credit for a rounding swap the test rows cannot tell apart (#9653)."

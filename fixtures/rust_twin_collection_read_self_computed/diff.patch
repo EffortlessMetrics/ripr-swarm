@@ -1,0 +1,8 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,3 +9,3 @@ impl Bag {
+     pub fn add(&mut self, x: u32) {
+-        self.items.push(x + 1);
++        self.items.push(x);
+     }

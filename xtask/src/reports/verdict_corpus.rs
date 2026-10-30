@@ -2527,8 +2527,8 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
     Ok((check, anchor_line))
 }
 
-/// Parse one case's `ripr check --json` output. A packet case whose Perl run
-/// is `unavailable` is refused here, before any row can be scored.
+/// Parse one case's `ripr check --json` output. Refuse a failed Perl packet
+/// run before any row can be scored.
 pub(crate) fn case_check_output(stdout: &str, case: &Case, binary: &str) -> Result<Value, String> {
     let check: Value = serde_json::from_str(stdout).map_err(|err| {
         format!(
@@ -2537,37 +2537,46 @@ pub(crate) fn case_check_output(stdout: &str, case: &Case, binary: &str) -> Resu
         )
     })?;
     if case.perl_facts.is_some() {
-        refuse_unavailable_perl(&check, &case.case_id, binary)?;
+        refuse_incomplete_perl_run(&check, &case.case_id, binary)?;
     }
     Ok(check)
 }
 
-/// A Perl run reported `unavailable` exits 0 with no findings, which would
-/// score the packet case as silent. Refuse the run instead, so it is a named
-/// error, never a verdict. Two causes report `unavailable`: a binary without
-/// `lang-perl` (another build replaced it before the copy), or a packet ripr
-/// could not read or accept. The run's own reason says which.
-pub(crate) fn refuse_unavailable_perl(
+/// A non-aborting Perl failure can exit zero with no findings. It is a failed
+/// measurement, not a silent verdict. Successful runs may omit language_runs.
+/// A partial packet is separate from an incomplete language run and may still
+/// produce a bounded finding under the existing corpus limitation rules.
+pub(crate) fn refuse_incomplete_perl_run(
     check: &Value,
     case_id: &str,
     binary: &str,
 ) -> Result<(), String> {
-    let unavailable = check
-        .get("language_runs")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .find(|run| {
-            run.get("language").and_then(Value::as_str) == Some("perl")
-                && run.get("status").and_then(Value::as_str) == Some("unavailable")
-        });
-    if let Some(run) = unavailable {
+    let Some(runs) = check.get("language_runs") else {
+        return Ok(());
+    };
+    let runs = runs
+        .as_array()
+        .ok_or_else(|| format!("case `{case_id}`: {binary} emitted malformed language_runs"))?;
+    for run in runs {
+        let language = run.get("language").and_then(Value::as_str).ok_or_else(|| {
+            format!("case `{case_id}`: {binary} emitted a language run without a language")
+        })?;
+        if language != "perl" {
+            continue;
+        }
+        let status = run
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("missing");
+        if status == "ok" {
+            continue;
+        }
         let reason = run
             .get("reason")
             .and_then(Value::as_str)
             .unwrap_or("no reason given");
         return Err(format!(
-            "case `{case_id}`: {binary} reported the Perl language run `unavailable`: {reason}. If the reason says Perl is not available, the binary is not the lang-perl build (another build may have replaced it before the copy), so rerun the corpus check; otherwise ripr refused the case's packet"
+            "case `{case_id}`: {binary} reported the Perl language run `{status}`: {reason}; the packet case cannot be scored"
         ));
     }
     Ok(())
@@ -3087,11 +3096,11 @@ fn score_loaded_corpus(
     );
     if let Some(coverage) = &report.spec_example_coverage {
         println!(
-            "verdict-corpus: spec examples covered {} ({}/{}), floor {}",
+            "verdict-corpus: spec examples covered {} ({}/{}), locked {}",
             coverage.coverage.rate,
             coverage.coverage.numerator,
             coverage.coverage.denominator,
-            coverage.floor
+            coverage.locked_examples
         );
     }
     if let Some(note) = coverage::axis_note(dir, &corpus, cases.is_some())? {
@@ -3155,6 +3164,7 @@ fn score_loaded_corpus(
     };
     let gate_failure =
         known_false::apply_known_false_gate(dir, cases.is_some(), &report.rows, gate_failure)?;
+    let gate_failure = known_false::apply_growth_gate(dir, cases.is_some(), gate_failure)?;
     let drift = expected_drift(&expected_dir, &report, cases.is_none())?;
     if drift.is_empty() {
         return gate_failure.map_or(Ok(()), Err);
@@ -3327,12 +3337,12 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                     // that calls `validate` enforces it too.
                     let floor_note = coverage::floor_gate(&coverage)?;
                     println!(
-                        "verdict-corpus: {} cases across {} subjects are valid; spec examples covered {}/{} (floor {})",
+                        "verdict-corpus: {} cases across {} subjects are valid; spec examples covered {}/{} (locked {})",
                         corpus.cases.len(),
                         corpus.subjects.len(),
                         coverage.coverage.numerator,
                         coverage.coverage.denominator,
-                        coverage.floor
+                        coverage.locked_examples
                     );
                     if let Some(note) = floor_note {
                         println!("{note}");

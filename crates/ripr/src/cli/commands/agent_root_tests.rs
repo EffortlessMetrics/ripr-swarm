@@ -267,8 +267,11 @@ fn cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy() -> Res
         analyzed_diff.contains("src/lib.rs"),
         "complete outcome must analyze the committed source change"
     );
-    write_agent_analysis_outcome(&root)?;
+    let rendered_analysis = render_agent_analysis_outcome(&root)?;
     let analysis_path = root.join("target/ripr/workflow/analysis-outcome.json");
+    let mut workflow = SharedWorkflowArtifacts::track(&root, false)?;
+    workflow.write(&analysis_path, &rendered_analysis)?;
+    workflow.resolve(true, false, true)?;
     let analysis_text = std::fs::read_to_string(&analysis_path).map_err(|e| e.to_string())?;
     let analysis: serde_json::Value =
         serde_json::from_str(&analysis_text).map_err(|e| e.to_string())?;
@@ -733,7 +736,9 @@ fn cli_unborn_git_patch_brief_and_snapshot_disclose_missing_revision() -> Result
     let artifact: serde_json::Value =
         serde_json::from_str(&raw).map_err(|error| error.to_string())?;
     assert_eq!(artifact["artifact"]["repository"]["head"], "unavailable");
-    assert_eq!(artifact["artifact"]["analysis"]["worktree"], "clean");
+    // Every source is untracked in an unborn repository, so the producer
+    // honestly discloses a dirty worktree rather than "clean".
+    assert_eq!(artifact["artifact"]["analysis"]["worktree"], "dirty");
     let refusal = crate::agent::artifact::validate_repo_exposure_artifact(root, &raw, "unborn")
         .err()
         .ok_or("unborn snapshot was admitted")?;

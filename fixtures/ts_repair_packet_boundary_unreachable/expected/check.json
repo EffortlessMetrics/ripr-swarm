@@ -12,9 +12,16 @@
   "findings": [
     {
       "id": "probe:src_auth.ts:typescript_preview:23e9836b",
+      "canonical_gap_id": "gap:typescript:typescript_preview:23e9836b",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "oracle_below_strong", "summary": "related tests hold no exact-value oracle (weak or smoke assertion)"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_auth.ts:typescript_preview:23e9836b",
         "family": "predicate",
@@ -68,7 +75,9 @@
           "oracle_kind": "relational_check",
           "oracle": "expect(...).toBeGreaterThan(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "typescript_preview_card": {

@@ -14,6 +14,9 @@
 //! - No parallel TypeScript-specific completeness validator is introduced.
 //!   The only flip gate is `validate_agent_gap_record_packet(..) == Ok(())`.
 
+use crate::domain::language_capability::{
+    CapabilityFamily, cell_state, state_establishes_capability,
+};
 use crate::domain::{Finding, OracleStrength, ProbeFamily, StageState};
 use crate::output::gap_decision_ledger::{
     GapAnchor, GapRecord, GapRepairRoute, ProjectionEligibility, preview_receipt_write_command,
@@ -86,6 +89,18 @@ pub(crate) enum TargetAssertionShape {
         discriminator: String,
         operand: String,
         value: i64,
+    },
+    /// The discriminator is a `typeof` kind test (`typeof input == "function"`,
+    /// #11196): the missing assertion calls the owner with a value OF that
+    /// kind. The observed input is never reused (a repeat of it is the call
+    /// the finding is weak on), and the kind's name as a string is not a value
+    /// of the kind it names. `shape` states the kind with an example in place
+    /// of the argument, and the packet stays delegatable.
+    KindInput {
+        shape: String,
+        observed_call: String,
+        discriminator: String,
+        kind: String,
     },
 }
 
@@ -223,7 +238,8 @@ impl TargetAssertionShape {
             Self::Unreachable { shape, .. }
             | Self::UnresolvedBoundary { shape, .. }
             | Self::UnboundOperand { shape, .. }
-            | Self::DerivedBoundary { shape, .. } => shape,
+            | Self::DerivedBoundary { shape, .. }
+            | Self::KindInput { shape, .. } => shape,
         }
     }
 
@@ -232,7 +248,7 @@ impl TargetAssertionShape {
     /// eligible through the normal complete-contract projection.
     fn packet_ineligibility_reason(&self) -> Option<String> {
         match self {
-            Self::Observed { .. } | Self::DerivedBoundary { .. } => None,
+            Self::Observed { .. } | Self::DerivedBoundary { .. } | Self::KindInput { .. } => None,
             Self::Unreachable {
                 observed_call,
                 discriminator,
@@ -293,6 +309,17 @@ impl TargetAssertionShape {
                      re-run `ripr check` before writing the assertion."
                 ))
             }
+            Self::KindInput {
+                observed_call,
+                discriminator,
+                kind,
+                ..
+            } => Some(format!(
+                "Do not reuse the observed call `{observed_call}` or pass the string \"{kind}\"; \
+                 the missing discriminator `{discriminator}` is met by a value whose typeof is \
+                 \"{kind}\", written as that value in the call (a type assertion is allowed, \
+                 a variable is not). Pass it at the position of the parameter the guard reads."
+            )),
             Self::Unreachable { discriminator, .. } => Some(format!(
                 "Do not reuse the observed call input; it cannot reach the missing \
                  discriminator `{discriminator}`. Derive an input that hits the \
@@ -421,6 +448,21 @@ pub(crate) fn typescript_target_assertion_shape_with_boundary_facts(
     else {
         return observed_shape;
     };
+    // A `typeof` kind test is met by a value of that kind at the guard's
+    // parameter, whatever the observed oracle looks like (#11196).
+    if let Some(kind) = typeof_kind_of_discriminator(discriminator)
+        && let Some(owner) = owner_name.map(str::trim).filter(|owner| !owner.is_empty())
+    {
+        return TargetAssertionShape::KindInput {
+            shape: format!(
+                "expect({owner}(/* {} */)){expected_clause}",
+                typeof_kind_example(kind)
+            ),
+            observed_call: observed.to_string(),
+            discriminator: discriminator.to_string(),
+            kind: kind.to_string(),
+        };
+    }
     let Some(call) = parse_static_call_expression(observed) else {
         return observed_shape;
     };
@@ -497,6 +539,38 @@ pub(crate) fn typescript_target_assertion_shape_with_boundary_facts(
             discriminator: discriminator.to_string(),
             operand,
         },
+    }
+}
+
+/// The kind a `typeof <operand> == "<kind>"` discriminator tests.
+fn typeof_kind_of_discriminator(discriminator: &str) -> Option<&str> {
+    let rest = discriminator.trim().strip_prefix("typeof ")?;
+    let (operand, kind) = rest.split_once(" == ")?;
+    // Only a plain identifier (a parameter of the owner) can be witnessed by
+    // an argument; a member read or a local is never credited, so it must not
+    // be offered a kind-input shape that no test can close.
+    let mut chars = operand.trim().chars();
+    let plain = chars
+        .next()
+        .is_some_and(|ch| ch.is_alphabetic() || matches!(ch, '_' | '$'))
+        && chars.all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '$'));
+    if !plain {
+        return None;
+    }
+    let kind = kind.trim().strip_prefix('"')?.strip_suffix('"')?;
+    (!kind.is_empty() && kind.chars().all(|ch| ch.is_ascii_alphabetic())).then_some(kind)
+}
+
+/// The argument placeholder for a value of a `typeof` kind, with an example.
+fn typeof_kind_example(kind: &str) -> String {
+    match kind {
+        "function" => "a function value, e.g. () => value".to_string(),
+        "string" => "a string value, e.g. 'value'".to_string(),
+        "number" => "a number value, e.g. 1".to_string(),
+        "boolean" => "a boolean value, e.g. true".to_string(),
+        "object" => "an object value, e.g. {}".to_string(),
+        "undefined" => "undefined".to_string(),
+        other => format!("a value whose typeof is \"{other}\""),
     }
 }
 
@@ -1150,6 +1224,17 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     if !finding.is_candidate_actionable() {
         return None;
     }
+    // G-0 (#5531): the capability table is the authority for whether this
+    // finding's analysis scope may route repair. A repo-mode run has no
+    // `repair_routing` cell for TypeScript/JavaScript (absent = `not_proven`),
+    // so a repo-scoped finding never becomes a repair packet, however complete
+    // the diff-shaped evidence looks.
+    let mode = finding.analysis_mode()?;
+    // A finding with no language cannot be matched to a cell: fail closed.
+    let language = finding.language?;
+    if !state_establishes_capability(cell_state(language, mode, CapabilityFamily::RepairRouting)) {
+        return None;
+    }
     // G-A: only the terminal `incomplete_repair_packet` branch is eligible.
     let category = evidence_value(finding, "actionability_category: ")?;
     if category != "incomplete_repair_packet" {
@@ -1166,6 +1251,17 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     // and verify command below are chosen by row strength. Fail closed so no
     // card becomes agent-packet eligible because of family selection.
     if has_moved_assertion_selection(finding) {
+        return None;
+    }
+
+    // #10704: infection the classifier did not establish (`unknown` / `no`)
+    // never yields a delegatable packet; the shared validator below stays the
+    // only flip authority.
+    if finding
+        .evidence
+        .iter()
+        .any(|line| line.starts_with("typescript_infection: "))
+    {
         return None;
     }
 
@@ -1449,8 +1545,86 @@ fn has_moved_assertion_selection(finding: &Finding) -> bool {
         .any(|line| line.starts_with("typescript_assertion_selection: "))
 }
 
+/// Plain-words account of a dynamic-assertion block (limit from RIPR-SPEC-0085
+/// §PR5; wording under RIPR-SPEC-0122) for the human surfaces: which test line holds the unresolved expected value and
+/// which matcher receives it. The raw limitation id stays in evidence only.
+pub(crate) fn typescript_dynamic_assertion_blocker(finding: &Finding) -> Option<String> {
+    let sample = finding.evidence.iter().find_map(|line| {
+        line.strip_prefix(
+            "typescript_limitation_sample: typescript_dynamic_assertion_unresolved at ",
+        )
+    })?;
+    let matcher = finding.evidence.iter().find_map(|line| {
+        let why = line.strip_prefix(
+            "typescript_limitation_why: typescript_dynamic_assertion_unresolved \u{2014} the matcher `.",
+        )?;
+        why.split_once("(...)`").map(|(name, _)| name.to_string())
+    });
+    Some(match matcher {
+        Some(name) => format!(
+            "ripr cannot tell whether the test at `{}` covers this change: its `.{name}(...)` compares against a variable or computed value, not a literal",
+            sample.trim()
+        ),
+        None => format!(
+            "ripr cannot tell whether the test at `{}` covers this change: it compares against a variable or computed value, not a literal",
+            sample.trim()
+        ),
+    })
+}
+
+/// Plain-words account of the moved-assertion-selection refusal (guard from
+/// RIPR-SPEC-0224; wording under RIPR-SPEC-0122): related tests whose assertions all check other behavior
+/// make the target test ambiguous, so no packet is projected.
+pub(crate) fn typescript_moved_selection_blocker(finding: &Finding) -> Option<String> {
+    // A named limitation refuses projection before the selection guard, so it
+    // is the first cause; do not name the later guard in its place.
+    if has_named_typescript_limitation(finding) || !is_incomplete_repair_packet(finding) {
+        return None;
+    }
+    let names: Vec<&str> = finding
+        .evidence
+        .iter()
+        .filter_map(|line| line.strip_prefix("typescript_assertion_selection: "))
+        .filter_map(|rest| {
+            let (_, name) = rest.split_once(" (")?;
+            name.strip_suffix(')')
+        })
+        .collect();
+    let first = names.first()?;
+    let (more, verb) = if names.len() > 1 {
+        let verb = if names.len() == 2 {
+            "asserts"
+        } else {
+            "assert"
+        };
+        (format!(" and {} more", names.len() - 1), verb)
+    } else {
+        (String::new(), "asserts")
+    };
+    Some(format!(
+        "related test `{first}`{more} {verb} a different kind of behavior than this change, so ripr cannot safely choose which test to edit"
+    ))
+}
+
+/// The plain reason a TypeScript/JavaScript preview finding has no repair
+/// packet, when a guard above names one; `None` keeps the caller's wording.
+pub(crate) fn typescript_advisory_blocker(finding: &Finding) -> Option<String> {
+    // Both blockers explain an `incomplete_repair_packet` finding; a finding
+    // in another actionability category (for example `missing_target_shape`)
+    // keeps its own cause and route.
+    if !is_incomplete_repair_packet(finding) {
+        return None;
+    }
+    typescript_dynamic_assertion_blocker(finding)
+        .or_else(|| typescript_moved_selection_blocker(finding))
+}
+
+fn is_incomplete_repair_packet(finding: &Finding) -> bool {
+    evidence_value(finding, "actionability_category: ") == Some("incomplete_repair_packet")
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     // ──────────────────────────────────────────────────────────────────────
@@ -1469,8 +1643,10 @@ mod tests {
     };
     use std::path::PathBuf;
 
-    fn complete_finding() -> Finding {
+    pub(crate) fn complete_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_discount.ts:typescript_preview:a1b2c3d4".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -1556,6 +1732,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: Some(LanguageId::TypeScript),
@@ -1568,6 +1746,71 @@ mod tests {
             alignment_reason: None,
             source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
+    }
+
+    /// #5531: the capability table has no repo-mode `repair_routing` cell for
+    /// TypeScript or JavaScript, so a repo-scoped finding projects no gap
+    /// record even though the identical diff-scoped finding does.
+    #[test]
+    fn repo_scoped_finding_projects_no_gap_record() {
+        for language in [LanguageId::TypeScript, LanguageId::JavaScript] {
+            let mut diff = complete_finding();
+            diff.language = Some(language);
+            assert!(
+                typescript_gap_record_for(&diff).is_some(),
+                "{language:?} diff control must keep its record"
+            );
+            let mut repo = diff.clone();
+            repo.mark_repo_scoped();
+            assert!(
+                typescript_gap_record_for(&repo).is_none(),
+                "{language:?} repo-scoped finding must fail closed"
+            );
+        }
+        let mut unlabeled = complete_finding();
+        unlabeled.language = None;
+        assert!(
+            typescript_gap_record_for(&unlabeled).is_none(),
+            "a finding with no language must fail closed"
+        );
+    }
+
+    /// #5531 negative experiments: the typed scope alone drives the gate. A
+    /// typed `Repo` finding with the evidence line removed still projects
+    /// nothing, and a legacy `analysis_scope: repo` evidence line on a finding
+    /// whose typed scope is `Diff` (contradictory) fails closed too.
+    #[test]
+    fn typed_scope_is_authority_and_contradiction_fails_closed() {
+        use crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE;
+        let mut typed_only = complete_finding();
+        typed_only.analysis_scope = crate::domain::AnalysisScope::Repo;
+        assert!(
+            typed_only
+                .evidence
+                .iter()
+                .all(|l| l != REPO_SCOPE_EVIDENCE_LINE)
+        );
+        assert!(typescript_gap_record_for(&typed_only).is_none());
+
+        let mut legacy_line_only = complete_finding();
+        legacy_line_only
+            .evidence
+            .push(REPO_SCOPE_EVIDENCE_LINE.to_string());
+        assert!(legacy_line_only.analysis_mode().is_none());
+        assert!(typescript_gap_record_for(&legacy_line_only).is_none());
+
+        let mut marked = complete_finding();
+        marked.mark_repo_scoped();
+        marked.mark_repo_scoped();
+        assert_eq!(
+            marked
+                .evidence
+                .iter()
+                .filter(|l| *l == REPO_SCOPE_EVIDENCE_LINE)
+                .count(),
+            1,
+            "the compatibility evidence line is derived once"
+        );
     }
 
     /// #7689: a deleted or moved line is base-side evidence, so the same
@@ -1649,6 +1892,90 @@ mod tests {
                     "`{disclosure}` must keep the finding non-delegatable"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    fn incomplete_packet_finding() -> Finding {
+        complete_finding()
+    }
+
+    /// The plain blockers name the test line, the matcher and the test that
+    /// moved, never the raw limitation id, and stay absent on a clean finding.
+    #[test]
+    fn plain_blockers_name_the_test_and_hide_the_limit_id() -> Result<(), String> {
+        let clean = complete_finding();
+        if typescript_advisory_blocker(&clean).is_some() {
+            return Err("a clean finding has no advisory blocker".to_string());
+        }
+        let mut dynamic = incomplete_packet_finding();
+        dynamic.evidence.push(
+            "typescript_limitation_sample: typescript_dynamic_assertion_unresolved at tests/a.test.ts:12"
+                .to_string(),
+        );
+        dynamic.evidence.push(
+            "typescript_limitation_why: typescript_dynamic_assertion_unresolved \u{2014} the matcher `.deepEqual(...)` receives a non-literal dynamic argument; x"
+                .to_string(),
+        );
+        let text = typescript_advisory_blocker(&dynamic)
+            .ok_or_else(|| "dynamic limitation must read a blocker".to_string())?;
+        if !text.contains("`tests/a.test.ts:12`")
+            || !text.contains("`.deepEqual(...)`")
+            || text.contains("typescript_dynamic_assertion_unresolved")
+        {
+            return Err(format!("unexpected dynamic blocker: {text}"));
+        }
+        let mut moved = incomplete_packet_finding();
+        moved.evidence.push(
+            "typescript_assertion_selection: no_predicate_relevant_assertion (throws on bad input)"
+                .to_string(),
+        );
+        moved.evidence.push(
+            "typescript_assertion_selection: no_predicate_relevant_assertion (other)".to_string(),
+        );
+        let text = typescript_advisory_blocker(&moved)
+            .ok_or_else(|| "moved selection must read a blocker".to_string())?;
+        if !text.contains("`throws on bad input` and 1 more")
+            || !text.contains(" 1 more asserts a different")
+            || text.contains("no_predicate")
+        {
+            return Err(format!("unexpected moved blocker: {text}"));
+        }
+        moved.evidence.push(
+            "typescript_assertion_selection: no_predicate_relevant_assertion (third)".to_string(),
+        );
+        let three = typescript_advisory_blocker(&moved)
+            .ok_or_else(|| "three moved selections must read a blocker".to_string())?;
+        if !three.contains(" 2 more assert a different") {
+            return Err(format!("plural group must use `assert`: {three}"));
+        }
+        let mut single = incomplete_packet_finding();
+        single.evidence.push(
+            "typescript_assertion_selection: no_predicate_relevant_assertion (only one)"
+                .to_string(),
+        );
+        let text = typescript_advisory_blocker(&single)
+            .ok_or_else(|| "single moved selection must read a blocker".to_string())?;
+        if !text.contains("`only one` asserts a different") {
+            return Err(format!("singular wording must use `asserts`: {text}"));
+        }
+        // A different actionability category keeps its own cause.
+        let mut other = complete_finding();
+        other
+            .evidence
+            .retain(|l| !l.starts_with("actionability_category: "));
+        other
+            .evidence
+            .push("actionability_category: missing_target_shape".to_string());
+        other.evidence.push(
+            "typescript_assertion_selection: no_predicate_relevant_assertion (x)".to_string(),
+        );
+        if typescript_advisory_blocker(&other).is_some() {
+            return Err("another category must not read a moved-selection blocker".to_string());
+        }
+        // The blocker is wording only: the guard still refuses the packet.
+        if typescript_gap_record_for(&moved).is_some() {
+            return Err("moved selection must stay non-delegatable".to_string());
         }
         Ok(())
     }
@@ -2049,6 +2376,85 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn typeof_kind_discriminator_never_reuses_the_observed_input_or_the_kind_name() {
+        for (observed, discriminator, example) in [
+            (
+                "resolveValue(42)",
+                "typeof input == \"function\"",
+                "a function value, e.g. () => value",
+            ),
+            // An observed local binding is not a call this projection can
+            // read; the kind test still asks for a value of the kind.
+            (
+                "result",
+                "typeof input == \"string\"",
+                "a string value, e.g. 'value'",
+            ),
+        ] {
+            let shape = typescript_target_assertion_shape(
+                &ProbeFamily::Predicate,
+                observed,
+                Some(discriminator),
+                Some("resolveValue"),
+            );
+            assert!(
+                matches!(shape, TargetAssertionShape::KindInput { .. }),
+                "expected a kind-input shape for {discriminator}, got {shape:?}"
+            );
+            let shape = shape.shape();
+            assert_eq!(
+                shape,
+                format!("expect(resolveValue(/* {example} */)).toBe(expected)")
+            );
+            assert!(
+                !shape.contains("42") && !shape.contains("as any"),
+                "{shape}"
+            );
+        }
+    }
+
+    #[test]
+    fn typeof_kind_shape_keeps_the_packet_delegatable_and_forbids_the_name_string() {
+        let shape = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "resolveValue(42)",
+            Some("typeof input == \"function\""),
+            Some("resolveValue"),
+        );
+        assert_eq!(shape.packet_ineligibility_reason(), None);
+        let stop = shape.boundary_stop_condition().unwrap_or_default();
+        assert!(
+            stop.contains("resolveValue(42)") && stop.contains("the string \"function\""),
+            "{stop}"
+        );
+    }
+
+    #[test]
+    fn a_non_typeof_discriminator_is_not_read_as_a_kind_test() {
+        for discriminator in [
+            "kind == \"function\"",
+            "typeof input == function",
+            "typeof input == \"\"",
+            "typeof input == \"two words\"",
+            // A member read or a local is never credited by an argument, so
+            // no kind-input shape may be offered for it.
+            "typeof opts.cb == \"function\"",
+            "typeof opts[0] == \"function\"",
+        ] {
+            let shape = typescript_target_assertion_shape(
+                &ProbeFamily::Predicate,
+                "resolveValue(42)",
+                Some(discriminator),
+                Some("resolveValue"),
+            );
+            assert!(
+                !matches!(shape, TargetAssertionShape::KindInput { .. }),
+                "{discriminator}: {shape:?}"
+            );
+        }
     }
 
     #[test]

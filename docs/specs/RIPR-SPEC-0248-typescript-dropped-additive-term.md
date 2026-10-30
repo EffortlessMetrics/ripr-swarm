@@ -150,6 +150,18 @@ related test whose owner calls it cannot enumerate (a local shadow, a helper
 or hook that names the owner, an owner reference that is not a call), an
 instance method owner, or no readable call at all. Static methods are read
 through the class name the test imports (`Temperature.fromFahrenheit(212)`).
+A test registered inside `for (const [a, b] of rows) { ... }` runs once per
+row: when `rows` is a file-local `const` array of arrays of literals that
+nothing else in the file references, and the pattern is a plain array
+destructuring of identifiers, each owner call whose argument is a loop
+variable folds once for every row (#9653). A computed row, a second
+reference to the table, a nested or defaulted pattern or any other
+statement outside the test keeps the pre-rule credit. A spread argument
+(`owner(...xs, 4, 5)`) can supply any number of values, so the arguments
+after it sit at unknown positions and are not bound to parameters; every
+reader of an owner call's arguments (this rule, rule 1 and the other
+position-binding guards) reads each position from the first spread on as
+unreadable, neither a later argument nor an absent one (#9645).
 
 ### Decisions
 
@@ -275,7 +287,8 @@ Known limits of rules 2 and 3:
 
 - The rule only moves `exposed` to `weakly_exposed`.
 - Rule 2: on the TypeScript verdict corpus, `shape-static-factory-rounding`
-  moves from `credited` to `gap` (#9437), and no other row moves.
+  moves from `credited` to `gap` (#9437), `pw-loop-registered-rounding-mode`
+  moves from `credited` to `gap` (#9653), and no other row moves.
 - On the TypeScript verdict corpus, `ts-nodetest-quote-shipping-term`
   moves from `credited` to `gap` (false verdicts 10/101 to 9/101, false
   exposed 1/39 to 0/39), and no other row moves.

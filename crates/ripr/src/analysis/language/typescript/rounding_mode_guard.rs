@@ -10,6 +10,7 @@
 //! unless some observed owner call folds the operand to a value where the two
 //! functions differ, or some call cannot be folded at all.
 
+use super::loop_rows::{LoopRows, ts_enclosing_loop_rows};
 use super::*;
 
 const ROUNDING_FUNCTIONS: [&str; 4] = ["round", "floor", "ceil", "trunc"];
@@ -160,6 +161,40 @@ fn witness_or_keep(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Option<RoundingWitness> {
+    let mut all_whole = true;
+    for bindings in observed_numeric_calls(owner, candidates, all_tests, alias_map, workspace_root)?
+    {
+        let value = fold_numeric_expression(&swap.operand, &bindings)?;
+        if !value.is_finite() {
+            return None;
+        }
+        let old = apply_rounding(swap.old_function, value)?;
+        let new = apply_rounding(swap.new_function, value)?;
+        if (old - new).abs() >= 0.5 {
+            return Some(RoundingWitness::Discriminates);
+        }
+        all_whole &= value.fract() == 0.0;
+    }
+    Some(if all_whole {
+        RoundingWitness::AllWhole
+    } else {
+        RoundingWitness::SameResult
+    })
+}
+
+/// The numeric-literal arguments of every owner call in every related test,
+/// one binding list per call (a parameter whose argument is not a plain
+/// signed numeric literal has no binding). `None` when any piece cannot be
+/// read: an unmapped relation, an unstable parameter, a test file that feeds
+/// the owner an input this reader never sees, or no call at all. Callers keep
+/// the ladder verdict on `None`.
+pub(crate) fn observed_numeric_calls(
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    all_tests: &[TypeScriptTest],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<Vec<Vec<(String, f64)>>> {
     let root = workspace_root?;
     let source = owner.source_text.as_deref()?;
     if candidates.is_empty()
@@ -178,8 +213,7 @@ fn witness_or_keep(
     {
         return None;
     }
-    let mut calls = 0usize;
-    let mut all_whole = true;
+    let mut observed = Vec::new();
     for candidate in candidates {
         if !candidate.relation.uses_oracle() {
             continue;
@@ -214,7 +248,17 @@ fn witness_or_keep(
             .collect();
         // No hook, file-level helper or other test-file code may feed the
         // owner an input this reader never sees.
-        if !test_file_names_owner_only_in_test_bodies(test, all_tests, &file_names, root) {
+        let loop_rows = std::fs::read_to_string(root.join(&test.file))
+            .ok()
+            .and_then(|file| ts_enclosing_loop_rows(&file, &test.body_text));
+        let inert_text = loop_rows.as_ref().map_or(&[][..], LoopRows::inert_text);
+        if !test_file_names_owner_only_outside_inert_text(
+            test,
+            all_tests,
+            &file_names,
+            root,
+            inert_text,
+        ) {
             return None;
         }
         let masked_body = ts_mask_literals_and_comments(&test.body_text);
@@ -223,7 +267,6 @@ fn witness_or_keep(
                 return None;
             }
             for arguments in owner_call_arguments(&test.body_text, name, &receivers) {
-                calls += 1;
                 let arguments = substitute_constant_arguments(
                     arguments,
                     test,
@@ -231,34 +274,25 @@ fn witness_or_keep(
                     alias_map,
                     workspace_root,
                 );
-                let mut bindings = Vec::new();
-                for (index, param) in owner.params.iter().enumerate() {
-                    if let Some(value) = arguments
-                        .get(index)
-                        .and_then(|a| signed_literal_argument(a))
-                    {
-                        bindings.push((param.clone(), value));
+                // A call fed by loop variables runs once per table row.
+                let argument_sets = match &loop_rows {
+                    Some(rows) => rows.expand(&arguments),
+                    None => vec![arguments],
+                };
+                for arguments in argument_sets {
+                    let mut bindings = Vec::new();
+                    for (index, param) in owner.params.iter().enumerate() {
+                        if let Some(value) = arguments
+                            .get(index)
+                            .and_then(|a| signed_literal_argument(a))
+                        {
+                            bindings.push((param.clone(), value));
+                        }
                     }
+                    observed.push(bindings);
                 }
-                let value = fold_numeric_expression(&swap.operand, &bindings)?;
-                if !value.is_finite() {
-                    return None;
-                }
-                let old = apply_rounding(swap.old_function, value)?;
-                let new = apply_rounding(swap.new_function, value)?;
-                if (old - new).abs() >= 0.5 {
-                    return Some(RoundingWitness::Discriminates);
-                }
-                all_whole &= value.fract() == 0.0;
             }
         }
     }
-    if calls == 0 {
-        return None;
-    }
-    Some(if all_whole {
-        RoundingWitness::AllWhole
-    } else {
-        RoundingWitness::SameResult
-    })
+    (!observed.is_empty()).then_some(observed)
 }

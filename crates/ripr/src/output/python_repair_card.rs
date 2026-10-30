@@ -1,5 +1,168 @@
+use crate::domain::language_capability::{CapabilityFamily, family_established_for_any_framework};
 use crate::domain::{ExposureClass, Finding, LanguageId, ProbeFamily, RelatedTest};
 use serde_json::{Map, Value, json};
+use std::path::{Component, Path};
+
+struct NativePytestRoute<'a> {
+    program: &'static str,
+    args: [&'a str; 3],
+    cwd: &'static str,
+}
+
+/// Build only from the producer's declared file and pytest node, never by
+/// parsing an arbitrary user-authored shell command.
+fn native_pytest_route(finding: &Finding) -> Option<NativePytestRoute<'_>> {
+    if finding.language != Some(LanguageId::Python)
+        || finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("suggested_test_line: "))
+    {
+        return None;
+    }
+    let unique = |prefix: &str| {
+        let mut values = finding
+            .evidence
+            .iter()
+            .filter_map(|s| s.strip_prefix(prefix));
+        let value = values.next()?;
+        (values.next().is_none() && !value.is_empty()).then_some(value)
+    };
+    let file = unique("suggested_test_file: ")?;
+    let node = unique("suggested_test_node_id: ")?;
+    let raw = unique("suggested_verify_command: ")?;
+    let selected = crate::domain::python_suggested_related_test(finding)?;
+    native_pytest_route_parts(file, node, raw, &selected.name, cfg!(windows), false)
+}
+
+fn native_pytest_route_parts<'a>(
+    file: &str,
+    node: &'a str,
+    raw: &str,
+    selected: &str,
+    windows: bool,
+    allow_qualified: bool,
+) -> Option<NativePytestRoute<'a>> {
+    let name = node.strip_prefix(file)?.strip_prefix("::")?;
+    if !safe_qualified_name(&name.replace("::", "."))
+        || (!allow_qualified && name.contains("::"))
+        || name.rsplit("::").next()? != selected
+        || crate::domain::python_pytest_verify_display(file, name, windows).as_deref() != Some(raw)
+        || file.chars().chain(node.chars()).any(char::is_control)
+        || Path::new(file)
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+    {
+        return None;
+    }
+    Some(NativePytestRoute {
+        program: "python",
+        args: ["-m", "pytest", node],
+        cwd: ".",
+    })
+}
+
+fn safe_qualified_name(name: &str) -> bool {
+    name.split('.').all(|part| {
+        let mut chars = part.chars();
+        matches!(chars.next(), Some(c) if c == '_' || identifier_start(c))
+            && chars.all(|c| c == '_' || identifier_continue(c))
+    })
+}
+
+#[cfg(any(feature = "lang-python", feature = "lang-rust"))]
+fn identifier_start(c: char) -> bool {
+    unicode_ident::is_xid_start(c)
+}
+#[cfg(any(feature = "lang-python", feature = "lang-rust"))]
+fn identifier_continue(c: char) -> bool {
+    unicode_ident::is_xid_continue(c)
+}
+#[cfg(not(any(feature = "lang-python", feature = "lang-rust")))]
+fn identifier_start(c: char) -> bool {
+    c.is_ascii_alphabetic()
+}
+#[cfg(not(any(feature = "lang-python", feature = "lang-rust")))]
+fn identifier_continue(c: char) -> bool {
+    c.is_ascii_alphanumeric()
+}
+
+pub(crate) fn manual_python_raw(finding: &Finding) -> Option<&str> {
+    if finding.language != Some(LanguageId::Python) {
+        return None;
+    }
+    let unique = |prefix: &str| {
+        let mut values = finding
+            .evidence
+            .iter()
+            .filter_map(|s| s.strip_prefix(prefix));
+        let value = values.next()?;
+        (values.next().is_none() && !value.is_empty()).then_some(value)
+    };
+    let selected = crate::domain::python_suggested_related_test(finding)?;
+    let file = unique("suggested_test_file: ")?;
+    let raw = unique("suggested_verify_command: ")?;
+    if raw.chars().any(char::is_control) {
+        return None;
+    }
+    if let Some(node) = unique("suggested_test_node_id: ") {
+        native_pytest_route_parts(file, node, raw, &selected.name, cfg!(windows), true)?;
+        let name = node.strip_prefix(file)?.strip_prefix("::")?;
+        if name.contains("::") {
+            let qualified = unique("suggested_test_qualified_name: ")?;
+            if !safe_qualified_name(qualified) || qualified.replace('.', "::") != name {
+                return None;
+            }
+        }
+    } else {
+        let qualified = unique("suggested_test_qualified_name: ")?;
+        if !safe_qualified_name(qualified)
+            || qualified.rsplit('.').next()? != selected.name
+            || file.chars().any(char::is_control)
+            || Path::new(file)
+                .components()
+                .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+            || crate::domain::python_unittest_verify_display(file, qualified, cfg!(windows))
+                .as_deref()
+                != Some(raw)
+        {
+            return None;
+        }
+    }
+    Some(raw)
+}
+
+/// Render the producer's pytest selector as a Bash action at the selected root.
+/// The compatibility command remains unchanged for framework/ledger consumers.
+pub(crate) fn rooted_pytest_action(finding: &Finding, root: &Path) -> Option<String> {
+    if cfg!(windows) {
+        return None;
+    }
+    let route = native_pytest_route(finding)?;
+    let root = if root.is_absolute() {
+        root.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(root)
+    };
+    let root = if route.cwd == "." {
+        root
+    } else {
+        root.join(route.cwd)
+    };
+    let root = root.to_str()?;
+    if root.chars().any(char::is_control) {
+        return None;
+    }
+    let quote = |s: &str| crate::agent::loop_commands::shell_arg_for(s, false);
+    Some(format!(
+        "(cd -P -- {} && {} {} {} {})",
+        quote(root),
+        quote(route.program),
+        quote(route.args[0]),
+        quote(route.args[1]),
+        quote(route.args[2])
+    ))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PythonRepairCard {
@@ -31,6 +194,18 @@ pub(crate) struct PythonRepairCard {
 pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> {
     if finding.language != Some(LanguageId::Python) || finding.class != ExposureClass::WeaklyExposed
     {
+        return None;
+    }
+    // Capability gate (#5531): repo-mode Python findings are shaped like
+    // diff-mode ones, but the capability table registers Python
+    // `repair_routing` for diff mode only (absent repo cell = `not_proven`),
+    // so a repo-scoped finding never becomes a repair card.
+    let mode = finding.analysis_mode()?;
+    if !family_established_for_any_framework(
+        LanguageId::Python,
+        mode,
+        CapabilityFamily::RepairRouting,
+    ) {
         return None;
     }
     // A deleted or moved line is base-side evidence, never a repair target
@@ -153,7 +328,7 @@ fn changed_behavior(finding: &Finding, behavior_kind: &str) -> String {
         .trim();
     format!(
         "{behavior_kind} changed at {}:{}: `{expression}`",
-        finding.probe.location.file.display(),
+        crate::output::path::display_path(&finding.probe.location.file),
         finding.probe.location.line
     )
 }
@@ -166,7 +341,7 @@ fn current_test_evidence(test: &RelatedTest) -> String {
         .unwrap_or_default();
     format!(
         "{}:{} {} currently has oracle_strength={}, oracle_kind={}{}",
-        test.file.display(),
+        crate::output::path::display_path(&test.file),
         test.line,
         test.name,
         test.oracle_strength.as_str(),
@@ -490,6 +665,99 @@ mod tests {
         recommended_test_shape, stop_conditions, suggested_assertion,
     };
     use crate::domain::ProbeFamily;
+
+    #[test]
+    fn native_route_refuses_disagreeing_or_escaping_test_identity() {
+        let route = super::native_pytest_route_parts;
+        let file = "tests/test_order.py";
+        let node = "tests/test_order.py::test_total";
+        let raw = "python -m pytest tests/test_order.py::test_total";
+        #[cfg(any(feature = "lang-python", feature = "lang-rust"))]
+        assert!(
+            route(
+                "tests/test_order.py",
+                "tests/test_order.py::test_café",
+                "python -m pytest tests/test_order.py::test_café",
+                "test_café",
+                false,
+                false
+            )
+            .is_some()
+        );
+        #[cfg(not(any(feature = "lang-python", feature = "lang-rust")))]
+        assert!(
+            route(
+                "tests/test_order.py",
+                "tests/test_order.py::test_café",
+                "python -m pytest tests/test_order.py::test_café",
+                "test_café",
+                false,
+                false
+            )
+            .is_none()
+        );
+        assert!(
+            route(
+                file,
+                "tests/test_order.py::$(touch x)::test_total",
+                "python -m pytest tests/test_order.py::$(touch x)::test_total",
+                "test_total",
+                false,
+                true
+            )
+            .is_none()
+        );
+        assert!(route(file, node, raw, "test_total", false, false).is_some());
+        assert!(route(file, node, raw, "test_other", false, false).is_none());
+        assert!(
+            route(
+                file,
+                node,
+                "python -m pytest tests/test_order.py::test_other",
+                "test_total",
+                false,
+                false
+            )
+            .is_none()
+        );
+        assert!(
+            route(
+                file,
+                "tests/test_other.py::test_total",
+                raw,
+                "test_total",
+                false,
+                false
+            )
+            .is_none()
+        );
+        assert!(
+            route(
+                "../test_order.py",
+                "../test_order.py::test_total",
+                "python -m pytest ../test_order.py::test_total",
+                "test_total",
+                false,
+                false
+            )
+            .is_none()
+        );
+        let class_node = "tests/test_order.py::TestOther::test_total";
+        let class_raw = "python -m pytest tests/test_order.py::TestOther::test_total";
+        assert!(route(file, class_node, class_raw, "test_total", false, false).is_none());
+        assert!(route(file, class_node, class_raw, "test_total", false, true).is_some());
+        assert!(
+            route(
+                "tests/my file.py",
+                "tests/my file.py::test_total",
+                r#"python -m pytest "tests/my file.py::test_total""#,
+                "test_total",
+                true,
+                true
+            )
+            .is_some()
+        );
+    }
 
     #[test]
     fn exception_assertion_uses_matching_message_when_available() {

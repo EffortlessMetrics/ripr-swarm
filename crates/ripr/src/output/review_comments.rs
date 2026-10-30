@@ -192,6 +192,13 @@ pub(crate) fn render_review_comments_json_with_scope(
         }
     }
 
+    let mut scope_json = analysis_scope_json(analysis_scope);
+    // Seams dropped by the brief cap are absent from this document without
+    // being evaluated as resolved (#9301).
+    // Always emitted (0 when none) so a consumer can tell "nothing omitted"
+    // from a producer that predates the disclosure.
+    scope_json["cap_omitted_seams"] = json!(selection.omitted_by_cap);
+    scope_json["omitted_by_policy"] = json!(selection.omitted_by_policy);
     let value = json!({
         "schema_version": REVIEW_COMMENTS_SCHEMA_VERSION,
         "tool": "ripr",
@@ -204,7 +211,7 @@ pub(crate) fn render_review_comments_json_with_scope(
         "base": context.base,
         "head": context.head,
         "mode": context.mode.as_str(),
-        "analysis_scope": analysis_scope_json(analysis_scope),
+        "analysis_scope": scope_json,
         "rendering_limits": {
             "max_inline_comments": DEFAULT_REVIEW_MAX_INLINE_COMMENTS,
             "max_summary_items": DEFAULT_REVIEW_MAX_SUMMARY_ITEMS,
@@ -1208,6 +1215,38 @@ fn unresolved_source_location_json() -> Value {
     })
 }
 
+/// Scope disclosure for a gate decision built from a gap ledger (issue #9301
+/// F2): the same shape review-comments emits for a ledger artifact.
+///
+/// With a verified producer `coverage` (a complete whole-Rust-workspace
+/// repo-exposure run whose record set is intact, #9599) the scope is
+/// `rust_workspace_complete`; otherwise the record-derived
+/// `gap_ledger_artifact` scope, which baseline resolution never trusts.
+pub(crate) fn gap_ledger_analysis_scope_json(
+    records: &[crate::output::gap_decision_ledger::GapRecord],
+    coverage: Option<&Value>,
+    refusal: &[String],
+) -> Value {
+    if let Some(coverage) = coverage {
+        return json!({
+            "scope": "rust_workspace_complete",
+            "run_status": "complete",
+            "basis": "repo_exposure_complete_run",
+            "corpus": coverage.get("corpus").cloned().unwrap_or(Value::Null),
+            "records_total": records.len(),
+            "records_digest": coverage.get("records_digest").cloned().unwrap_or(Value::Null),
+            "downstream_consumable": true,
+        });
+    }
+    let mut scope = analysis_scope_json(&ReviewCommentsAnalysisScope::gap_ledger_artifact(records));
+    // Why a disclosed workspace coverage was refused (additive, inert to
+    // consumers): the input classes that differ from the ledger's disclosure.
+    if !refusal.is_empty() {
+        scope["coverage_refused"] = json!(refusal);
+    }
+    scope
+}
+
 fn analysis_scope_json(scope: &ReviewCommentsAnalysisScope) -> Value {
     let mut value = json!({
         "scope": scope.scope,
@@ -1231,6 +1270,9 @@ fn analysis_scope_json(scope: &ReviewCommentsAnalysisScope) -> Value {
     // can tell `classified_seams_considered` is not the whole scope.
     if scope.unevaluated_seams > 0 {
         value["unevaluated_seams"] = json!(scope.unevaluated_seams);
+    }
+    if !scope.parser_declined_files.is_empty() {
+        value["parser_declined_files"] = json!(scope.parser_declined_files);
     }
     if !scope.absent_changed_files.is_empty() {
         value["absent_changed_files"] = json!(scope.absent_changed_files);
@@ -1588,6 +1630,25 @@ fn push_analysis_scope_summary(lines: &mut Vec<String>, value: Option<&Value>) {
                 .to_string(),
         );
     }
+    if let Some(declined) = scope
+        .get("parser_declined_files")
+        .and_then(Value::as_array)
+        .filter(|files| !files.is_empty())
+    {
+        let listed = declined
+            .iter()
+            .filter_map(Value::as_str)
+            .map(code_span)
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!(
+            "- limitation: `parser_declined_files`; no seams were extracted from: {listed}, so a baselined gap in them is not evaluated, not resolved"
+        ));
+        lines.push(
+            "- repair: split the file below the Rust parse budget, fix the parse error or save it as UTF-8, then re-run"
+                .to_string(),
+        );
+    }
     if let (Some(limitation), Some(route)) = (
         scope.get("limitation").and_then(Value::as_str),
         scope.get("repair_route").and_then(Value::as_str),
@@ -1723,6 +1784,47 @@ mod tests {
             !rendered.contains("dropped file(s): src/@octocat/"),
             "raw path must not appear outside a code span:\n{rendered}"
         );
+    }
+
+    /// #9734: parser-declined files are listed as a limitation (markup kept
+    /// inert) and the line is absent when none were declined, so existing
+    /// fixtures stay byte-stable.
+    #[test]
+    fn parser_declined_files_markdown_names_the_limitation_and_stays_inert() {
+        let scope = json!({
+            "scope": "diff_scoped_changed_files",
+            "run_status": "limited_diff_scope",
+            "production_files_considered": 1,
+            "classified_seams_considered": 0,
+            "parser_declined_files": ["src/@octocat/`deep`.rs", "src/b.rs"]
+        });
+        let mut lines = Vec::new();
+        push_analysis_scope_summary(&mut lines, Some(&scope));
+        let rendered = lines.join("\n");
+        assert!(
+            rendered.contains(&format!(
+                "- limitation: `parser_declined_files`; no seams were extracted from: {}, {}, so a baselined gap in them is not evaluated, not resolved",
+                code_span("src/@octocat/`deep`.rs"),
+                code_span("src/b.rs")
+            )),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("- repair: split the file below the Rust parse budget"),
+            "{rendered}"
+        );
+
+        let mut none = Vec::new();
+        for empty in [json!([]), json!(null)] {
+            let mut scope = scope.clone();
+            scope["parser_declined_files"] = empty;
+            none.clear();
+            push_analysis_scope_summary(&mut none, Some(&scope));
+            assert!(
+                !none.join("\n").contains("parser_declined_files"),
+                "{none:?}"
+            );
+        }
     }
 
     use crate::analysis::ClassifiedSeam;
@@ -1956,6 +2058,8 @@ mod tests {
                 })
                 .collect(),
             warnings: Vec::new(),
+            omitted_by_cap: 0,
+            omitted_by_policy: 0,
         }
     }
 
@@ -2787,6 +2891,8 @@ mod tests {
                 },
             }],
             warnings: Vec::new(),
+            omitted_by_cap: 0,
+            omitted_by_policy: 0,
         };
 
         let rendered = render_review_comments_json(
@@ -4140,6 +4246,8 @@ mod tests {
                 "seam {} at src/pricing.rs:88 is configured off for weakly_gripped seams and is not included in agent brief results",
                 exact_seams[0].seam.id().as_str()
             )],
+            omitted_by_cap: 0,
+            omitted_by_policy: 0,
         };
         assert_json_fixture(
             "configured-off",

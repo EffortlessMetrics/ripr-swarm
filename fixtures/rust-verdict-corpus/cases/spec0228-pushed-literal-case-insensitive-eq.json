@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0228-pushed-literal-case-insensitive-eq",
+  "subject_id": "authored-spec0228-customeq-expected",
+  "diff": "cases/spec0228-pushed-literal-case-insensitive-eq.diff",
+  "anchor": {
+    "file": "src/c_ci.rs",
+    "line": 21
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "owner_call_then_assert_eq_whole_collection_with_handwritten_partial_eq",
+  "hard_case": "the whole-collection equality runs a hand-written PartialEq that compares the pushed sku ignoring case, so a lowercase sku passes",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.lines.push(CiLine { sku: sku.to_lowercase(), qty });",
+        "mutated_line": "self.lines.push(CiLine { sku: sku.to_lowercase(), qty });",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the recorded sku is lowercase, but CiLine::eq compares it ignoring case so the test still passes"
+      },
+      {
+        "replacement": "self.lines.push(CiLine { sku: String::new(), qty });",
+        "mutated_line": "self.lines.push(CiLine { sku: String::new(), qty });",
+        "outcome": "tests_failed",
+        "failing_test": "c_ci::tests::add_records_the_line_c_ci",
+        "equivalence_review": "not equivalent: c_ci::tests::add_records_the_line_c_ci fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "add_records_the_line_c_ci compares order.lines with a hand-built expected collection, but CiLine has a hand-written eq that ignores sku case, so the lowercase mutant survives; ripr cannot evaluate eq and must keep the gap.",
+  "labeling_observation": {
+    "ripr_commit": "0f73182cd3",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0228#24"
+  ]
+}

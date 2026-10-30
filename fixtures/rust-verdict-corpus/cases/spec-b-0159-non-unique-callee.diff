@@ -1,0 +1,12 @@
+diff --git a/src/h_nonunique.rs b/src/h_nonunique.rs
+--- a/src/h_nonunique.rs
++++ b/src/h_nonunique.rs
+@@ -1,7 +1,7 @@
+ //! The helper's name is not unique in the workspace.
+ 
+ fn wide_nu(input: &str) -> bool {
+-    input.len() > 3
++    3 < input.len()
+ }
+ 
+ pub mod other {

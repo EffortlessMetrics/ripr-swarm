@@ -7,7 +7,7 @@
 //!
 //! Unlike the xtask, this command does NOT shell out to `cargo run -p ripr --
 //! check ...`. It calls [`crate::check_workspace`] directly and renders the
-//! resulting [`crate::CheckOutput`] as JSON via [`crate::app::render_check_json_unbounded`].
+//! resulting [`crate::CheckOutput`] as JSON via `crate::app::render_check_json_unbounded`.
 //! This avoids recompilation and keeps the analysis in-process.
 
 use crate::app::{CheckInput, Mode, OutputFormat, check_workspace};
@@ -119,7 +119,10 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 }
 
 fn print_help() {
-    println!("{PR_EVIDENCE_HELP}");
+    println!(
+        "{}",
+        crate::cli::help::render_command_help(PR_EVIDENCE_HELP, &[])
+    );
 }
 
 /// Help body for `ripr pr-evidence`. Also the flag source for unknown-argument

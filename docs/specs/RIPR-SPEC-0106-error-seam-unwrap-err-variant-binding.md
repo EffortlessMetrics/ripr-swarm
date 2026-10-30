@@ -348,7 +348,9 @@ Tests in `crates/ripr/src/analysis/extract/oracles/` and
 
 ## Acceptance Examples
 
-### Before (incorrect — weakly_exposed even with exact variant test)
+Before shows the behavior this spec corrects. It is not an example.
+
+Before (incorrect — weakly_exposed even with exact variant test):
 
 ```
 Probe
@@ -363,20 +365,20 @@ Evidence
   - related test tests/errors.rs:4 uses medium exact error variant oracle: assert_eq!(err, CalcError::Negative);
 ```
 
-### After (correct — exposed, strong discriminator)
+1. After (correct — exposed, strong discriminator):
 
-```
-Probe
-  family: error_path
-  delta:  value
+   ```
+   Probe
+     family: error_path
+     delta:  value
 
-Static exposure
-  exposed (info, confidence 1.00)
+   Static exposure
+     exposed (info, confidence 1.00)
 
-Evidence
-  - discriminator yes: Strong oracle found: exact error variant assertion
-  - related test tests/errors.rs:4 uses strong exact error variant oracle: assert_eq!(err, CalcError::Negative);
-```
+   Evidence
+     - discriminator yes: Strong oracle found: exact error variant assertion
+     - related test tests/errors.rs:4 uses strong exact error variant oracle: assert_eq!(err, CalcError::Negative);
+   ```
 
 ## Implementation Mapping
 

@@ -235,3 +235,188 @@ fn a_module_function_with_a_non_literal_input_keeps_the_credit() -> Result<(), S
     assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())
 }
+
+fn loop_scale_test(table: &str, extra: &str) -> String {
+    format!(
+        "import {{ expect, it }} from \"vitest\";\nimport {{ scale }} from \"../src/subject\";\n\nconst rows: Array<[number, number]> = [{table}];\n{extra}\nfor (const [input, expected] of rows) {{\n  it(`scales ${{input}}`, () => {{\n    expect(scale(input)).toBe(expected);\n  }});\n}}\n"
+    )
+}
+
+fn loop_scale(label: &str, test: &str) -> Result<Finding, String> {
+    rounding_finding(
+        label,
+        SCALE,
+        SCALE_OLD,
+        &SCALE_OLD.replace("Math.round", "Math.floor"),
+        2,
+        test,
+    )
+}
+
+#[test]
+fn loop_registered_whole_rows_leave_the_rounding_mode_unreached() -> Result<(), String> {
+    let finding = loop_scale("loop-whole", &loop_scale_test("[4, 2], [-8, -4]", ""))?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    // 3 / 2 = 1.5: round gives 2, floor 1.
+    let finding = loop_scale("loop-fraction", &loop_scale_test("[4, 2], [3, 2]", ""))?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_loop_table_that_is_touched_or_computed_keeps_the_credit() -> Result<(), String> {
+    let touched = loop_scale_test("[4, 2]", "rows.push([3, 2]);");
+    assert_eq!(
+        loop_scale("loop-pushed", &touched)?.class,
+        ExposureClass::Exposed
+    );
+    let computed = loop_scale_test("[4, 2], [half, 2]", "");
+    assert_eq!(
+        loop_scale("loop-computed", &computed)?.class,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_rows_resolve_only_a_single_untouched_literal_table() {
+    use super::super::loop_rows::ts_enclosing_loop_rows;
+    let body = "it(\"x\", () => {\n  expect(f(a)).toBe(b);\n});";
+    let file = |header: &str, table: &str| format!("{table}\n{header} {{\n  {body}\n}}\n");
+    let table = "const rows = [[1, 100], [2.5, 250],];";
+    let rows = ts_enclosing_loop_rows(&file("for (const [a, b] of rows)", table), body);
+    assert_eq!(
+        rows.as_ref().map(|r| r.expand(&["a".to_string()])),
+        Some(vec![vec!["1".to_string()], vec!["2.5".to_string()]])
+    );
+    for (header, table) in [
+        ("for (const [a, b] of rows)", "let rows = [[1, 100]];"),
+        ("for (const [a, b] of other)", table),
+        ("for (const {a, b} of rows)", table),
+        ("for (let [a, b] of rows)", table),
+        ("for (const [a, b] of rows.slice())", table),
+        ("for (const [a = 1, b] of rows)", table),
+        (
+            "for (const [a, b] of rows)",
+            "const rows = [[1, 100], row];",
+        ),
+        ("for (const [a, b] of rows)", "const rows = [[1]];"),
+    ] {
+        assert_eq!(
+            ts_enclosing_loop_rows(&file(header, table), body),
+            None,
+            "{header} / {table}"
+        );
+    }
+    assert_eq!(
+        ts_enclosing_loop_rows(&format!("{table}\n{body}\n"), body),
+        None
+    );
+}
+
+const HALF: &str =
+    "export function half(a: number, b: number): number {\n  return Math.round(b / 2);\n}\n";
+const HALF_OLD: &str = "  return Math.round(b / 2);";
+
+fn half(label: &str, call: &str) -> Result<Finding, String> {
+    rounding_finding(
+        label,
+        HALF,
+        HALF_OLD,
+        &HALF_OLD.replace("Math.round", "Math.floor"),
+        2,
+        &format!(
+            "import {{ expect, it }} from \"vitest\";\nimport {{ half }} from \"../src/subject\";\n\nit(\"halves\", () => {{\n  expect({call}).toBe(3);\n}});\n"
+        ),
+    )
+}
+
+#[test]
+fn a_spread_argument_leaves_later_positions_unread() -> Result<(), String> {
+    // Without the spread, `half(4, 5)` binds b = 5: 2.5 rounds to 3 and floors
+    // to 2, so the call tells the functions apart.
+    let plain = half("round-plain", "half(4, 5)")?;
+    assert_eq!(plain.class, ExposureClass::Exposed);
+    // An empty spread shifts `4` into `a` and `5` into `b`, but by position
+    // alone `4` would bind `b` (2, whole) and withdraw the credit.
+    let spread = half("round-spread", "half(...[], 4, 5)")?;
+    assert_eq!(spread.class, ExposureClass::Exposed, "{:?}", spread.missing);
+    Ok(())
+}
+
+#[test]
+fn every_positional_reader_marks_positions_after_a_spread_unreadable() {
+    // `owner_call_arguments`, the whole-call reader and the member-call reader
+    // feed the rounding, dropped-term, boundary, boolean-pin, lookup-table and
+    // object-argument guards (#9645).
+    let unreadable_after = |prefix: &[&str]| {
+        let mut arguments: Vec<String> = prefix.iter().map(|a| a.to_string()).collect();
+        let start = arguments.len();
+        arguments.extend((start..16).map(|position| format!("...#{position}")));
+        arguments
+    };
+    let calls = owner_call_arguments(
+        "half(1, 2) + half(...xs, 4, 5) + half(1, ...xs, 5)",
+        "half",
+        &[],
+    );
+    assert_eq!(
+        calls,
+        vec![
+            vec!["1".to_string(), "2".to_string()],
+            unreadable_after(&[]),
+            unreadable_after(&["1"]),
+        ]
+    );
+    assert_eq!(
+        positional_prefix(vec![
+            "1".to_string(),
+            " ...rest".to_string(),
+            "3".to_string()
+        ]),
+        unreadable_after(&["1"])
+    );
+    assert_eq!(
+        positional_prefix(vec!["a".to_string(), "b".to_string()]),
+        vec!["a".to_string(), "b".to_string()]
+    );
+}
+
+#[test]
+fn unreadable_spread_positions_never_witness_equal_arguments() {
+    // `isAllowed(...xs)` may pass any values, so no two of its positions are
+    // known to be equal (#10476 review); a real duplicate before the spread is.
+    let params = vec!["count".to_string(), "limit".to_string()];
+    let spread = positional_prefix(vec!["...xs".to_string()]);
+    assert!(!call_has_identical_arguments(&spread, &params));
+    let after = positional_prefix(vec!["5".to_string(), "...xs".to_string()]);
+    assert!(!call_has_identical_arguments(&after, &params));
+    let before = positional_prefix(vec!["5".to_string(), "5".to_string(), "...xs".to_string()]);
+    assert!(call_has_identical_arguments(&before, &params));
+}
+
+#[test]
+fn a_spread_past_the_fixed_count_still_reads_as_unreadable() {
+    let mut arguments: Vec<String> = (0..20).map(|n| n.to_string()).collect();
+    arguments.push("...xs".to_string());
+    let got = positional_prefix(arguments);
+    assert_eq!(got.len(), 21);
+    assert_eq!(got[20], "...#20");
+}
+
+#[test]
+fn a_comment_before_the_spread_does_not_hide_it() {
+    for spread in [
+        "/* items */ ...xs",
+        "// items\n...xs",
+        " /* a */ /* b */ ...xs",
+    ] {
+        let got = positional_prefix(vec!["1".to_string(), spread.to_string(), "5".to_string()]);
+        assert_eq!(got[0], "1", "{spread}");
+        assert_eq!(got[1], "...#1", "{spread}");
+        assert_eq!(got[2], "...#2", "{spread}");
+    }
+    // A comment alone, or around a plain argument, is not a spread.
+    let plain = positional_prefix(vec!["/* x */ 4".to_string(), "5".to_string()]);
+    assert_eq!(plain, vec!["/* x */ 4".to_string(), "5".to_string()]);
+}

@@ -19,25 +19,50 @@ fn classify(
     old_line: &str,
     test_source: &str,
 ) -> Result<ExposureClass, String> {
+    classify_finding(owner, line, old_line, test_source).map(|finding| finding.class)
+}
+
+fn classify_finding(
+    owner: &str,
+    line: usize,
+    old_line: &str,
+    test_source: &str,
+) -> Result<crate::domain::Finding, String> {
+    classify_finding_with_delta(owner, line, old_line, test_source, false)
+}
+
+fn classify_finding_with_delta(
+    owner: &str,
+    line: usize,
+    old_line: &str,
+    test_source: &str,
+    sole_line_replacement: bool,
+) -> Result<crate::domain::Finding, String> {
     let mut owners = extract_owners(Path::new(OWNER_FILE), owner);
     // The workspace pass fills the star-export fact from the module source.
-    reexports::apply_package_reexports(&mut owners, |file| {
-        (file == Path::new(OWNER_FILE)).then_some(owner)
-    });
+    reexports::apply_package_reexports(
+        &mut owners,
+        |file| (file == Path::new(OWNER_FILE)).then_some(owner),
+        &|_| None,
+    );
     let tests = extract_tests(Path::new(TEST_FILE), test_source);
     let new_line = owner
         .lines()
         .nth(line - 1)
         .ok_or_else(|| format!("owner has no line {line}"))?;
-    classify_change_with_old(
+    classify::classify_change_with_context(
         Path::new(OWNER_FILE),
         line,
         new_line,
         Some(old_line),
         &owners,
         &tests,
+        classify::PythonNoBehaviorContext {
+            sole_line_replacement,
+            ..Default::default()
+        },
+        None,
     )
-    .map(|finding| finding.class)
     .ok_or_else(|| "changed line should classify".to_string())
 }
 
@@ -1966,5 +1991,491 @@ fn star_import_honors_the_module_all_declaration() -> Result<(), String> {
         ExposureClass::WeaklyExposed,
         "fee comes from src.other, not the starred module"
     );
+    Ok(())
+}
+
+/// A star import does not bind the owner when something else may win the name:
+/// the module rebinds it, or the test aliases another symbol (even from the
+/// starred module) to it.
+#[test]
+fn star_import_fails_closed_when_another_binding_may_win_the_name() -> Result<(), String> {
+    let body = "def test_fee():\n    assert fee(2) == 6\n";
+    let rebound = format!("{FEE}\n\nfee = lambda amount: amount + 4\n");
+    assert_eq!(
+        classify(
+            &rebound,
+            2,
+            FEE_OLD,
+            &test_module("from src.shop import *", body)
+        )?,
+        ExposureClass::WeaklyExposed,
+        "the module rebinds fee"
+    );
+    let conditional = format!("{FEE}\n\nif DEBUG:\n    fee = lambda amount: amount + 4\n");
+    assert_eq!(
+        classify(
+            &conditional,
+            2,
+            FEE_OLD,
+            &test_module("from src.shop import *", body)
+        )?,
+        ExposureClass::WeaklyExposed,
+        "the module conditionally rebinds fee"
+    );
+    for (extra, why) in [
+        (
+            "globals()[\"fee\"] = lambda amount: amount + 4",
+            "module writes globals() dynamically",
+        ),
+        (
+            "globals().update(fee=lambda amount: amount + 4)",
+            "module updates globals()",
+        ),
+        (
+            "exec(\"fee = lambda amount: amount + 4\")",
+            "module execs a rebind",
+        ),
+        ("from src.other import *", "module-side star import"),
+        (
+            "globals ()[\"fee\"] = lambda amount: amount + 4",
+            "whitespace before the call",
+        ),
+        (
+            "try:\n    import fast\nexcept ImportError:\n    from src.other import *",
+            "star import in an except handler",
+        ),
+        (
+            "for _ in range(1):\n    from src.other import *",
+            "star import in a loop",
+        ),
+    ] {
+        let module = format!("{FEE}\n\n{extra}\n");
+        assert_eq!(
+            classify(
+                &module,
+                2,
+                FEE_OLD,
+                &test_module("from src.shop import *", body)
+            )?,
+            ExposureClass::WeaklyExposed,
+            "{why}"
+        );
+    }
+    for (import, why) in [
+        (
+            "from src.shop import *\nfrom src.shop import charge as fee",
+            "same-module alias of another symbol",
+        ),
+        (
+            "from src.shop import *\nfrom src.other import fee",
+            "named import from another module",
+        ),
+        (
+            "from src.shop import *\nfrom src.other import *",
+            "second star import",
+        ),
+    ] {
+        assert_eq!(
+            classify(FEE, 2, FEE_OLD, &test_module(import, body))?,
+            ExposureClass::WeaklyExposed,
+            "{why}"
+        );
+    }
+    Ok(())
+}
+
+const AREA: &str = "def area(a, b):\n    return b * a\n";
+const AREA_TABLE: &str = "import pytest\nfrom src.shop import area\n\n\n@pytest.mark.parametrize(\"a,b,want\", [(3, 7, 21)])\ndef test_area(a, b, want):\n    assert area(a, b) == want\n";
+
+#[test]
+fn untyped_factor_reorder_keeps_the_unvaried_table_reading() -> Result<(), String> {
+    // Integer test rows do not establish the production function's operand
+    // types: the same function accepts noncommutative __mul__/__rmul__ objects.
+    assert_eq!(
+        classify(AREA, 2, "    return a * b", AREA_TABLE)?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
+fn annotated_factor_reorder_keeps_the_unvaried_table_reading() -> Result<(), String> {
+    // An annotation does not reject a custom __mul__/__rmul__ argument at
+    // runtime. Defaults and one typed operand do not establish numerics either.
+    for signature in [
+        "a: int, b: int",
+        "a: float, b: float",
+        "a: int, b",
+        "a=3, b=7",
+    ] {
+        let owner = format!("def area({signature}):\n    return b * a\n");
+        assert_eq!(
+            classify(&owner, 2, "    return a * b", AREA_TABLE)?,
+            ExposureClass::WeaklyExposed,
+            "{signature}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn factor_reorder_guidance_requires_order_sensitive_operands() -> Result<(), String> {
+    for (owner, old) in [
+        (AREA, "    return a * b"),
+        ("def area(a, b):\n    return 7 * a\n", "    return a * 7"),
+    ] {
+        let finding = classify_finding(owner, 2, old, AREA_TABLE)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        assert!(finding.missing.iter().any(|text| {
+            text.contains("Add a table row whose operands distinguish multiplication order.")
+        }));
+        assert!(
+            finding
+                .activation
+                .missing_discriminators
+                .iter()
+                .any(|fact| {
+                    fact.value == "a table row whose operands distinguish multiplication order"
+                })
+        );
+        assert!(
+            !finding
+                .missing
+                .iter()
+                .any(|text| text.contains("varies") || text.contains("do not vary"))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn reordered_factors_are_not_an_unvaried_table_operand() -> Result<(), String> {
+    // Actual numeric literals establish the equivalence; parameter names do
+    // not. The table still has a strong exact-value oracle for this product.
+    assert_eq!(
+        classify(
+            "def area(a, b):\n    return 7 * 3\n",
+            2,
+            "    return 3 * 7",
+            AREA_TABLE
+        )?,
+        ExposureClass::Exposed
+    );
+    // A sum reorders strings, so it keeps the unvaried-operand reading.
+    assert_ne!(
+        classify(
+            "def area(a, b):\n    return b + a\n",
+            2,
+            "    return a + b",
+            AREA_TABLE
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_factor_reorder_guidance_requires_order_sensitive_operands() -> Result<(), String> {
+    let table = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(3,7,(21,)), (4,8,(32,))])\ndef test_area(a,b,want):\n    assert area(a,b) == want\n";
+    let finding = classify_finding(
+        "def area(a,b):\n    return (b * a,)\n",
+        2,
+        "    return (a * b,)",
+        table,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|text| text.contains("operands distinguish multiplication order"))
+    );
+    assert!(
+        !finding
+            .missing
+            .iter()
+            .any(|text| text.contains("varies") || text.contains("do not vary"))
+    );
+    Ok(())
+}
+
+#[test]
+fn float_table_factor_reorder_does_not_gain_static_credit() -> Result<(), String> {
+    let table = AREA_TABLE.replace("[(3, 7, 21)]", "[(1.5, 2.0, 3.0), (-4.0, 2.0, -8.0)]");
+    let finding = classify_finding(AREA, 2, "    return a * b", &table)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|text| text.contains("operands distinguish multiplication order"))
+    );
+    Ok(())
+}
+
+#[test]
+fn quoted_hash_does_not_mask_a_factor_reorder() -> Result<(), String> {
+    let table = AREA_TABLE.replace("[(3, 7, 21)]", "[(3, 7, (21, '#'))]");
+    let finding = classify_finding(
+        "def area(a,b):\n    return b * a, '#'\n",
+        2,
+        "    return a * b, '#'",
+        &table,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|text| text.contains("operands distinguish multiplication order"))
+    );
+    Ok(())
+}
+
+#[test]
+fn factor_reorder_preserves_literal_and_grouping_boundaries() -> Result<(), String> {
+    for row in [
+        "[(3, 2.0, 6.0)]",
+        "[(-170141183460469231731687303715884105728, 0, 0)]",
+    ] {
+        let table = AREA_TABLE.replace("[(3, 7, 21)]", row);
+        assert_eq!(
+            classify(AREA, 2, "    return a * b", &table)?,
+            ExposureClass::WeaklyExposed,
+            "{row}"
+        );
+    }
+    let table = AREA_TABLE.replace("[(3, 7, 21)]", "[(2, 7, 3.0)]");
+    let finding = classify_finding(
+        "def area(a,b):\n    return 1.5 * a # a real comment\n",
+        2,
+        "    return a * 1.5 # a real comment",
+        &table,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(finding.activation.missing_discriminators.iter().any(|fact| fact.value == "a table row whose operands distinguish multiplication order"));
+    assert_eq!(
+        classify(
+            "def area(a,b):\n    return 2.0 * 1.5\n",
+            2,
+            "    return 1.5 * 2.0",
+            &table
+        )?,
+        ExposureClass::Exposed
+    );
+    let table = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,c,want\", [(1e308,1e-308,1e-308,1e-308)])\ndef test_area(a,b,c,want):\n    assert area(a,b,c) == want\n";
+    assert_eq!(
+        classify(
+            "def area(a,b,c):\n    return a * (b * c)\n",
+            2,
+            "    return (a * b) * c",
+            table
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_changed_factor_still_reads_an_unvaried_table_operand() -> Result<(), String> {
+    // Row (3, 7): `a * b` and `b * 3` agree only because a is 3, so the table
+    // does not vary the changed operand and must not credit.
+    assert_ne!(
+        classify(
+            "def area(a, b):\n    return b * 3\n",
+            2,
+            "    return a * b",
+            AREA_TABLE
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+const SCALE: &str = "def scale(a, b):\n    return b * a\n";
+const SCALE_OLD: &str = "    return a * b";
+const SCALE_IMPORT: &str = "from src.shop import scale";
+
+fn scale_class(body: &str) -> Result<ExposureClass, String> {
+    classify(SCALE, 2, SCALE_OLD, &test_module(SCALE_IMPORT, body))
+}
+
+#[test]
+fn an_owner_called_in_a_lambda_over_unresolved_code_abstains() -> Result<(), String> {
+    assert_eq!(
+        scale_class(
+            "def must_equal(got, want):\n    assert got == want\n\n\ndef test_scale():\n    run(lambda: must_equal(scale(3, 7), 21))\n"
+        )?,
+        ExposureClass::StaticUnknown
+    );
+    // The same helper called directly, and an unassertive bare call, keep
+    // their ordinary readings: only a lambda hides the assertion.
+    assert_ne!(
+        scale_class("def test_scale():\n    scale(3, 7)\n")?,
+        ExposureClass::StaticUnknown
+    );
+    // An unrelated lambda, a sort key, and a lambda inside a string do not
+    // hide an assertion, even beside unresolved code.
+    for body in [
+        "def test_scale(client):\n    f = lambda: 0; scale(3, 7)\n",
+        "def test_scale(client):\n    sorted(xs, key=lambda x: scale(x, 2))\n",
+        "def test_scale(client):\n    note = \"lambda: \"; scale(3, 7)\n",
+    ] {
+        assert_ne!(scale_class(body)?, ExposureClass::StaticUnknown, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn factor_swap_with_observed_float_sibling_edit_keeps_exact_oracle() -> Result<(), String> {
+    let owner = "def area(a, b):\n    return (b * a, 2)\n";
+    let table = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(1.5, 2.0, (3.0, 1))])\ndef test_area(a, b, want):\n    assert area(a, b) == want\n";
+    let finding = classify_finding_with_delta(owner, 2, "    return (a * b, 1)", table, true)?;
+    assert_ne!(
+        classify(owner, 2, "    return (a * b, 1)", table)?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert!(
+        !finding
+            .missing
+            .iter()
+            .any(|text| text.contains("multiplication order"))
+    );
+    Ok(())
+}
+
+#[test]
+fn factor_swap_sibling_proof_refuses_unobserved_or_uncertain_rows() -> Result<(), String> {
+    let owner = "def area(a, b):\n    return (b * a, 2)\n";
+    let prefix = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(1.5, 2.0, (3.0, 1))])\ndef test_area(a, b, want):\n";
+    let classify_proven = |test: &str| {
+        classify_finding_with_delta(owner, 2, "    return (a * b, 1)", test, true)
+            .map(|finding| finding.class)
+    };
+    for body in [
+        "    assert area(a, b)[0] == want[0]\n",
+        "    a = 9\n    assert area(a, b) == want\n",
+        "    assert area(a, b, 5) == want\n",
+        "    assert False and area(a, b) == want\n",
+    ] {
+        assert_ne!(
+            classify_proven(&format!("{prefix}{body}"))?,
+            ExposureClass::Exposed,
+            "{body}"
+        );
+    }
+    let wrong_expected = format!(
+        "{}    assert area(a, b) == want\n",
+        prefix.replace("(3.0, 1)", "(4.0, 1)")
+    );
+    assert_ne!(classify_proven(&wrong_expected)?, ExposureClass::Exposed);
+    for signature in ["a, b", "a, b, want=None", "a, b, want, /"] {
+        let test = format!(
+            "{}    assert area(a, b) == want\n",
+            prefix.replace(
+                "def test_area(a, b, want):",
+                &format!("def test_area({signature}):")
+            )
+        );
+        assert_ne!(
+            classify_proven(&test)?,
+            ExposureClass::Exposed,
+            "{signature}"
+        );
+    }
+    let extra_option = format!(
+        "{}    assert area(a, b) == want\n",
+        prefix.replace("(3.0, 1))])", "(3.0, 1))], scope=\"invalid\")")
+    );
+    assert_ne!(classify_proven(&extra_option)?, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn rebound_factor_table_does_not_hide_independent_strong_test() -> Result<(), String> {
+    let owner = "def area(a, b):\n    return (b * a, 2)\n";
+    let tests = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(1.5, 2.0, (3.0, 1))])\ndef test_table(a, b, want):\n    a = 9\n    assert area(a, b) == want\n\ndef test_independent():\n    assert area(1.5, 2.0) == (3.0, 1)\n";
+    assert_eq!(
+        classify(owner, 2, "    return (a * b, 1)", tests)?,
+        ExposureClass::Exposed
+    );
+    let same_test = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(1.5, 2.0, (18.0, 1))])\ndef test_table(a, b, want):\n    a = 9\n    assert area(a, b) == want\n    assert area(1.5, 2.0) == (3.0, 1)\n";
+    assert_eq!(
+        classify(owner, 2, "    return (a * b, 1)", same_test)?,
+        ExposureClass::Exposed
+    );
+    let mixed = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,want\", [(1.5, (3.0, 1))])\ndef test_table(a, want):\n    a = 9\n    assert area(a, 2.0) == want\n";
+    assert_ne!(
+        classify(owner, 2, "    return (a * b, 1)", mixed)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_reorder_beside_a_sibling_edit_is_not_a_pure_reorder() -> Result<(), String> {
+    let owner = "def area(a, b, c):\n    return b * a, d\n";
+    let table = "import pytest\nfrom src.shop import area\n\n\n@pytest.mark.parametrize(\"a,b,c,want\", [(3, 7, 1, (21, 1))])\ndef test_area(a, b, c, want):\n    assert area(a, b, c) == want\n";
+    assert_ne!(
+        classify(owner, 2, "    return a * b, c", table)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+const ROUTE_OWNER: &str = "from flask import Flask\n\napp = Flask(__name__)\n\n\n@app.route(\"/b\")\ndef f():\n    return 1\n";
+
+#[test]
+fn a_route_decorator_edit_needs_a_client_call_to_the_route() -> Result<(), String> {
+    let direct = "from src.shop import f\n\n\ndef test_f():\n    assert f() == 1\n";
+    assert_eq!(
+        classify(ROUTE_OWNER, 6, "@app.route(\"/a\")", direct)?,
+        ExposureClass::StaticUnknown
+    );
+    // A body edit on the same handler keeps its ordinary reading.
+    assert_eq!(
+        classify(ROUTE_OWNER, 8, "    return 2", direct)?,
+        ExposureClass::Exposed
+    );
+    let client = "from starlette.testclient import TestClient\nfrom src.shop import app\n\n\ndef test_f():\n    client = TestClient(app)\n    assert client.get(\"/b\").json == 1\n";
+    assert_ne!(
+        classify(ROUTE_OWNER, 6, "@app.route(\"/a\")", client)?,
+        ExposureClass::StaticUnknown
+    );
+    // A client whose application is not resolved reaches the route too, but
+    // reads as the unresolved-application limit rather than a gap.
+    let unresolved = "def test_f(client):\n    assert client.get(\"/b\").json == 1\n";
+    assert_eq!(
+        classify(ROUTE_OWNER, 6, "@app.route(\"/a\")", unresolved)?,
+        ExposureClass::StaticUnknown
+    );
+    Ok(())
+}
+
+#[test]
+fn a_decorator_argument_edit_abstains_through_the_diff_path() -> Result<(), String> {
+    // Stacked and multi-line decorators route to the decorated function, so
+    // its decorator-indirection limit applies (#9756).
+    let test = "from src.shop import flaky\n\n\ndef test_flaky():\n    assert flaky() == 1\n";
+    for (owner, line, old) in [
+        ("@retry(2)\ndef flaky():\n    return 1\n", 1, "@retry(3)"),
+        (
+            "@cache\n@retry(2)\ndef flaky():\n    return 1\n",
+            2,
+            "@retry(3)",
+        ),
+        (
+            "@retry(\n    2,\n)\ndef flaky():\n    return 1\n",
+            2,
+            "    3,",
+        ),
+    ] {
+        assert_eq!(
+            classify(owner, line, old, test)?,
+            ExposureClass::StaticUnknown,
+            "{owner}"
+        );
+    }
     Ok(())
 }

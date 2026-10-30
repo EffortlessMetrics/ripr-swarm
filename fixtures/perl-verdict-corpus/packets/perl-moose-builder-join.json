@@ -1,0 +1,601 @@
+{
+  "changes": [
+    {
+      "behavior_hint": "return_value",
+      "change_id": "change:file:lib/Profile.pm:13:13",
+      "changed_observable": "join(' ', $self->first_name, $self->last_name)",
+      "changed_text_digest": "fnv64:6e2e20ae6db01cbf",
+      "file_id": "file:lib/Profile.pm",
+      "missing_discriminator": null,
+      "owner_id": "owner:lib/Profile.pm:sub:Profile::_build_full_name:327-431",
+      "provenance_refs": [],
+      "range": {
+        "end_column": 58,
+        "end_line": 13,
+        "start_column": 0,
+        "start_line": 13
+      }
+    }
+  ],
+  "dynamic_boundaries": [],
+  "files": [
+    {
+      "digest": "sha256:ea873886d870a07f8adfe103f8085e65fbbb440c29221166d0a017309a0ac660",
+      "file_id": "file:lib/Counter.pm",
+      "package_names": [
+        "Counter"
+      ],
+      "path": "lib/Counter.pm",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Counter.pm"
+      ],
+      "role": [
+        "source"
+      ]
+    },
+    {
+      "digest": "sha256:dabc864b6e4b186a64300435d56ef30a5e2dc650fb3a096a7c735a48d1d1ad8e",
+      "file_id": "file:lib/Profile.pm",
+      "package_names": [
+        "Profile"
+      ],
+      "path": "lib/Profile.pm",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Profile.pm"
+      ],
+      "role": [
+        "source"
+      ]
+    },
+    {
+      "digest": "sha256:8ed5ef6c654427789a974cd4ea1700798b8de0a78ba0f57a3cecbe5e44558fe3",
+      "file_id": "file:t/counter.t",
+      "package_names": [],
+      "path": "t/counter.t",
+      "provenance_refs": [
+        "prov:syntax:file:t/counter.t"
+      ],
+      "role": [
+        "test"
+      ]
+    },
+    {
+      "digest": "sha256:99f5ca76f29e7897c655beab47c8e40204f354942dcffdc6c8b0f999e2ecec37",
+      "file_id": "file:t/profile.t",
+      "package_names": [],
+      "path": "t/profile.t",
+      "provenance_refs": [
+        "prov:syntax:file:t/profile.t"
+      ],
+      "role": [
+        "test"
+      ]
+    }
+  ],
+  "input": {
+    "base": "base",
+    "diff_id": null,
+    "head": "HEAD",
+    "requested_fact_classes": [
+      "files",
+      "owners",
+      "changes",
+      "tests",
+      "oracles",
+      "relations",
+      "dynamic_boundaries",
+      "verify_commands",
+      "limitations",
+      "provenance"
+    ]
+  },
+  "limitations": [
+    {
+      "evidence_refs": [],
+      "kind": "partial_emitter",
+      "limitation_id": "emitter-partial",
+      "message": "Parser-backed tests/oracles, relations/discriminators (incl. a parser-backed direct_owner_call), boundaries/commands, files/owners, (when a diff is supplied) diff-owned changes, and a deterministic packet_fingerprint are emitted. Export-aware relation reachability and the managed-producer diff source land in later slices."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "narrowed_representation",
+      "limitation_id": "oracle-representation",
+      "message": "oracle facts locate the whole assertion call range; the ripr-perl-facts-v1 schema has no observed/expected expression sub-range fields, so those are conveyed as string expressions only."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "unverified_provenance",
+      "limitation_id": "diff-provenance-unverified",
+      "message": "base/head/diff are caller-asserted and not verified against a repository; this packet does not confirm the supplied diff is the actual base->head diff."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "range_precision",
+      "limitation_id": "change-range-imprecise",
+      "message": "change ranges are line-granular with best-effort column data derived from the diff, not the byte-accurate LineIndex ranges used for owners."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "partial_inference",
+      "limitation_id": "change-behavior-hint-partial",
+      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped and single-line \"...\" / '...' literal contents cannot drive classification, but tokens inside heredocs, multi-line strings, q{}/qq{} and other quote-like operators, regex literals, or trailing comments are still scanned as code and can be misclassified."
+    }
+  ],
+  "oracles": [
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is($c->inc(2), 2, 'first increment')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/counter.t:is:78-114",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/counter.t"
+      ],
+      "range": {
+        "end_column": 36,
+        "end_line": 6,
+        "start_column": 0,
+        "start_line": 6
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/counter.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is($c->inc(3), 5, 'second increment accumulates')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/counter.t:is:116-165",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/counter.t"
+      ],
+      "range": {
+        "end_column": 49,
+        "end_line": 7,
+        "start_column": 0,
+        "start_line": 7
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/counter.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is($c->value, 5, 'value reads the total')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/counter.t:is:167-208",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/counter.t"
+      ],
+      "range": {
+        "end_column": 41,
+        "end_line": 8,
+        "start_column": 0,
+        "start_line": 8
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/counter.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is($s->value, 10, 'start is honoured')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/counter.t:is:246-284",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/counter.t"
+      ],
+      "range": {
+        "end_column": 38,
+        "end_line": 11,
+        "start_column": 0,
+        "start_line": 11
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/counter.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is($p->full_name, 'Ada Lovelace', 'builder joins the names')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/profile.t:is:136-196",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/profile.t"
+      ],
+      "range": {
+        "end_column": 60,
+        "end_line": 7,
+        "start_column": 0,
+        "start_line": 7
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/profile.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "ok($p->is_adult, 'thirty is an adult')",
+      "kind": "smoke_ok",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/profile.t:ok:199-237",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/profile.t"
+      ],
+      "range": {
+        "end_column": 38,
+        "end_line": 9,
+        "start_column": 0,
+        "start_line": 9
+      },
+      "strength": "weak_smoke",
+      "target_owner_id": null,
+      "test_id": "test:t/profile.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "ok(!$kid->is_adult, 'five is not an adult')",
+      "kind": "smoke_ok",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/profile.t:ok:317-360",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/profile.t"
+      ],
+      "range": {
+        "end_column": 43,
+        "end_line": 12,
+        "start_column": 0,
+        "start_line": 12
+      },
+      "strength": "weak_smoke",
+      "target_owner_id": null,
+      "test_id": "test:t/profile.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "ok($p->birthday, 'birthday returns the new age')",
+      "kind": "smoke_ok",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/profile.t:ok:363-411",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/profile.t"
+      ],
+      "range": {
+        "end_column": 48,
+        "end_line": 14,
+        "start_column": 0,
+        "start_line": 14
+      },
+      "strength": "weak_smoke",
+      "target_owner_id": null,
+      "test_id": "test:t/profile.t"
+    }
+  ],
+  "owners": [
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Counter.pm",
+      "kind": "package",
+      "name": "Counter",
+      "owner_id": "owner:lib/Counter.pm:package:Counter:0-15",
+      "package": "main",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Counter.pm"
+      ],
+      "range": {
+        "end_column": 15,
+        "end_line": 0,
+        "start_column": 0,
+        "start_line": 0
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Counter.pm",
+      "kind": "sub",
+      "name": "new",
+      "owner_id": "owner:lib/Counter.pm:sub:Counter::new:45-160",
+      "package": "Counter",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Counter.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 9,
+        "start_column": 0,
+        "start_line": 5
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Counter.pm",
+      "kind": "sub",
+      "name": "inc",
+      "owner_id": "owner:lib/Counter.pm:sub:Counter::inc:162-245",
+      "package": "Counter",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Counter.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 15,
+        "start_column": 0,
+        "start_line": 11
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Counter.pm",
+      "kind": "sub",
+      "name": "value",
+      "owner_id": "owner:lib/Counter.pm:sub:Counter::value:247-304",
+      "package": "Counter",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Counter.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 20,
+        "start_column": 0,
+        "start_line": 17
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Profile.pm",
+      "kind": "package",
+      "name": "Profile",
+      "owner_id": "owner:lib/Profile.pm:package:Profile:0-15",
+      "package": "main",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Profile.pm"
+      ],
+      "range": {
+        "end_column": 15,
+        "end_line": 0,
+        "start_column": 0,
+        "start_line": 0
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Profile.pm",
+      "kind": "sub",
+      "name": "_build_full_name",
+      "owner_id": "owner:lib/Profile.pm:sub:Profile::_build_full_name:327-431",
+      "package": "Profile",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Profile.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 14,
+        "start_column": 0,
+        "start_line": 11
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Profile.pm",
+      "kind": "sub",
+      "name": "is_adult",
+      "owner_id": "owner:lib/Profile.pm:sub:Profile::is_adult:433-507",
+      "package": "Profile",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Profile.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 19,
+        "start_column": 0,
+        "start_line": 16
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Profile.pm",
+      "kind": "sub",
+      "name": "birthday",
+      "owner_id": "owner:lib/Profile.pm:sub:Profile::birthday:509-601",
+      "package": "Profile",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Profile.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 25,
+        "start_column": 0,
+        "start_line": 21
+      }
+    }
+  ],
+  "packet_fingerprint": "sha256:ee757a63fd2c532535d3c46c420c1409ce8d7af77d1de9158f8248912b8ffcd3",
+  "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
+  "packet_status": "partial",
+  "producer": {
+    "capabilities": [
+      "files",
+      "owners",
+      "changes",
+      "tests",
+      "oracles",
+      "relations",
+      "dynamic_boundaries",
+      "verify_commands",
+      "limitations",
+      "provenance",
+      "test_facts"
+    ],
+    "name": "perl-lsp",
+    "version": "0.17.0"
+  },
+  "provenance": [
+    {
+      "confidence": "high",
+      "provenance_id": "cli-surface",
+      "source": "operator_config"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/counter.t",
+      "provenance_id": "prov:test_discovery:file:t/counter.t",
+      "range": "2:0-2:14",
+      "source": "test_discovery"
+    },
+    {
+      "confidence": "medium",
+      "file_id": "file:t/counter.t",
+      "provenance_id": "prov:oracle_extraction:file:t/counter.t",
+      "range": null,
+      "source": "oracle_extraction"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/profile.t",
+      "provenance_id": "prov:test_discovery:file:t/profile.t",
+      "range": "2:0-2:14",
+      "source": "test_discovery"
+    },
+    {
+      "confidence": "medium",
+      "file_id": "file:t/profile.t",
+      "provenance_id": "prov:oracle_extraction:file:t/profile.t",
+      "range": null,
+      "source": "oracle_extraction"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Counter.pm",
+      "provenance_id": "prov:syntax:file:lib/Counter.pm",
+      "source": "syntax"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Profile.pm",
+      "provenance_id": "prov:syntax:file:lib/Profile.pm",
+      "source": "syntax"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/counter.t",
+      "provenance_id": "prov:syntax:file:t/counter.t",
+      "source": "syntax"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/profile.t",
+      "provenance_id": "prov:syntax:file:t/profile.t",
+      "source": "syntax"
+    }
+  ],
+  "relations": [
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Counter.pm:package:Counter:0-15",
+      "provenance_refs": [],
+      "reachability_hint": "weakly_reachable",
+      "relation_id": "relation:file:t/counter.t:lib/Counter.pm:owner_lib/Counter.pm_package_Counter_0-15",
+      "relation_kind": "file_proximity",
+      "test_id": "test:t/counter.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Profile.pm:package:Profile:0-15",
+      "provenance_refs": [],
+      "reachability_hint": "weakly_reachable",
+      "relation_id": "relation:file:t/profile.t:lib/Profile.pm:owner_lib/Profile.pm_package_Profile_0-15",
+      "relation_kind": "file_proximity",
+      "test_id": "test:t/profile.t"
+    }
+  ],
+  "root": {
+    "path_style": "posix",
+    "repo_relative": "s",
+    "vcs_head": "HEAD"
+  },
+  "schema_version": "ripr-perl-facts-v1",
+  "tests": [
+    {
+      "confidence": "high",
+      "file_id": "file:t/counter.t",
+      "framework": "Test::More",
+      "name": "t/counter.t",
+      "provenance_refs": [
+        "prov:test_discovery:file:t/counter.t"
+      ],
+      "range": {
+        "end_column": 0,
+        "end_line": 14,
+        "start_column": 0,
+        "start_line": 0
+      },
+      "runner_hints": [
+        "prove"
+      ],
+      "test_id": "test:t/counter.t"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/profile.t",
+      "framework": "Test::More",
+      "name": "t/profile.t",
+      "provenance_refs": [
+        "prov:test_discovery:file:t/profile.t"
+      ],
+      "range": {
+        "end_column": 0,
+        "end_line": 17,
+        "start_column": 0,
+        "start_line": 0
+      },
+      "runner_hints": [
+        "prove"
+      ],
+      "test_id": "test:t/profile.t"
+    }
+  ],
+  "verify_commands": [
+    {
+      "argv": [
+        "prove",
+        "t/counter.t"
+      ],
+      "command_id": "verify_cmd:t/counter.t:1",
+      "confidence": "high",
+      "preconditions": [],
+      "provenance_refs": [],
+      "runner": "prove",
+      "scope": "test",
+      "test_id": "test:t/counter.t"
+    },
+    {
+      "argv": [
+        "prove",
+        "t/profile.t"
+      ],
+      "command_id": "verify_cmd:t/profile.t:2",
+      "confidence": "high",
+      "preconditions": [],
+      "provenance_refs": [],
+      "runner": "prove",
+      "scope": "test",
+      "test_id": "test:t/profile.t"
+    }
+  ]
+}

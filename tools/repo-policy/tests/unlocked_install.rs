@@ -248,10 +248,19 @@ fn unlocked_prerequisite_failure_unavailable_and_timeout_never_reach_later_comma
             let fixture = Fixture::new(case)?;
             let output = fixture.run(&script, case, pipefail)?;
             let trace = fixture.trace()?;
-            assert_eq!(
-                output.status.code(),
-                Some(exit),
-                "case={case}, pipefail={pipefail}, trace={trace:?}, {output:?}"
+            // A missing shebang interpreter exits 127 or 126 depending on the
+            // Bash build ("bad interpreter" is 126 on hosted runners).
+            let accepted: &[i32] = if case == "unavailable" {
+                &[126, 127]
+            } else {
+                &[exit]
+            };
+            assert!(
+                output
+                    .status
+                    .code()
+                    .is_some_and(|code| accepted.contains(&code)),
+                "case={case}, pipefail={pipefail}, accepted={accepted:?}, trace={trace:?}, {output:?}"
             );
             let commands: Vec<_> = trace
                 .iter()

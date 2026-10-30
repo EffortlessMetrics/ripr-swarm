@@ -72,6 +72,8 @@ pub(crate) enum DoctorFirstCommand {
     /// has no commit to diff against, so every diff-scoped first command
     /// fails; name the commit-first path and keep pilot exploration.
     UnbornHead,
+    /// Git can read the work tree, but HEAD's metadata needs repair.
+    DamagedRefs,
     /// The `config` check failed: `ripr check` loads the same `ripr.toml`
     /// and would hit the same error. Name the config correction, not a
     /// check command (#8168).
@@ -157,6 +159,12 @@ impl DoctorFirstCommand {
         } else if report
             .checks
             .iter()
+            .any(|check| check.name == "git_head" && check.status == DoctorCheckStatus::Fail)
+        {
+            Self::DamagedRefs
+        } else if report
+            .checks
+            .iter()
             .any(|check| check.name == "git_head" && check.status == DoctorCheckStatus::Advisory)
         {
             // #5259: the work tree is real but `HEAD` is unborn, so no base
@@ -183,6 +191,7 @@ impl DoctorFirstCommand {
             Self::MissingRoot
             | Self::OutsideGit
             | Self::UnbornHead
+            | Self::DamagedRefs
             | Self::InvalidConfig
             | Self::FailedPrerequisites => None,
         }
@@ -235,6 +244,10 @@ impl DoctorFirstCommand {
             ],
             Self::FailedPrerequisites => vec![
                 "- Recommended first command: fix the `!` checks above, then rerun `ripr doctor`"
+                    .to_string(),
+            ],
+            Self::DamagedRefs => vec![
+                "- Recommended first command: correct or restore the ref metadata and its read access using the Git check above, then rerun `ripr doctor`"
                     .to_string(),
             ],
             Self::OutsideGit => {
@@ -593,7 +606,8 @@ pub(crate) struct DoctorCheck {
     /// How long the check's own computation took, in milliseconds
     /// (additive, #8540). Measured at the production site; `None` for
     /// skipped checks and for checks produced without a timer, so an absent
-    /// value never reads as a zero measurement.
+    /// value never reads as a zero measurement. Volatile: omitted from the
+    /// default `--json` document (#9807); `--timings` restores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) elapsed_ms: Option<u64>,
 }
@@ -717,8 +731,10 @@ pub(crate) enum DoctorArtifactIgnore {
     NoArtifacts,
     /// Git ignore rules cover the artifact root.
     Ignored,
-    /// The artifact root exists and git positively reports it as not
-    /// ignored. `warning` is the exact line the human screen prints.
+    /// Git positively reports the artifact root as not ignored. On a first
+    /// run in a non-Cargo project the root may not exist yet; the warning
+    /// wording then says ripr *will write* there (#9858). `warning` is the
+    /// exact line the human screen prints.
     Unignored {
         /// The actionable warning, including the exact `.gitignore` entry.
         warning: String,
@@ -844,7 +860,9 @@ pub(crate) struct DoctorRuntimeProbe {
     pub(crate) evidence: String,
     pub(crate) required: bool,
     pub(crate) hint: String,
-    /// How long the probe took, in milliseconds (additive, #8540).
+    /// How long the probe took, in milliseconds (additive, #8540). Volatile:
+    /// omitted from the default `--json` document (#9807); `--timings`
+    /// restores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) elapsed_ms: Option<u64>,
 }
@@ -958,13 +976,15 @@ pub(crate) struct DoctorReport {
     /// How long the whole doctor run took, in milliseconds (additive,
     /// #8540). Measured by the command adapter around the same computation
     /// both surfaces render, so the human screen and the JSON document
-    /// report one number. Core evaluation leaves it unset.
+    /// report one number. Core evaluation leaves it unset. Volatile: omitted
+    /// from the default `--json` document (#9807); `--timings` restores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) elapsed_ms: Option<u64>,
     /// Named segment timings for work the total covers that is neither a
     /// check nor a runtime probe (additive, #8540 follow-up). Omitted when
     /// no segment was measured, so an un-timed report serializes exactly as
-    /// before.
+    /// before. Volatile: omitted from the default `--json` document (#9807);
+    /// `--timings` restores it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) segments: Vec<DoctorSegmentTiming>,
 }
@@ -1096,6 +1116,22 @@ impl DoctorReport {
         });
     }
 
+    /// Record the `.mcp.json` verdict (#10347): `pass` when the `ripr` server
+    /// entry matches what `ripr init --mcp` writes, `advisory` otherwise. It
+    /// never changes the overall status.
+    pub(crate) fn add_mcp_config_check(&mut self, ok: bool, evidence: String) {
+        self.checks.push(DoctorCheck {
+            name: "mcp_config".to_string(),
+            status: if ok {
+                DoctorCheckStatus::Pass
+            } else {
+                DoctorCheckStatus::Advisory
+            },
+            evidence: Some(evidence),
+            elapsed_ms: None,
+        });
+    }
+
     /// Add a runtime probe and fail the report only when a required probe
     /// fails. Optional preview/tooling probes remain visible in JSON without
     /// turning a Rust-only or otherwise advisory setup into a false failure.
@@ -1159,10 +1195,41 @@ impl DoctorReport {
         out
     }
 
-    /// Render the report as JSON.
+    /// Render the report as JSON, including every measured timing field.
+    /// This is the projection `ripr doctor --json --timings` prints (#9807):
+    /// no two runs measure the same durations, so these bytes are not stable.
     pub(crate) fn render_json(&self) -> Result<String, String> {
         serde_json::to_string_pretty(self)
             .map_err(|error| format!("failed to serialize doctor report: {error}"))
+    }
+
+    /// Render the report as JSON without the volatile timing fields, so a
+    /// machine consumer can diff or snapshot the document across runs that
+    /// changed nothing (#9807). Every omitted field is one the published
+    /// schema already treats as optional, so a timed document stays legal;
+    /// `--timings` restores the full projection.
+    pub(crate) fn render_json_stable(&self) -> Result<String, String> {
+        self.without_volatile_timings().render_json()
+    }
+
+    /// A copy of the report with every volatile timing field cleared: the
+    /// run total (`elapsed_ms`), the named `segments`, and each check and
+    /// runtime-probe `elapsed_ms`. Clearing uses the existing
+    /// `skip_serializing_if` attributes, so the stable document carries no
+    /// zero-valued placeholder and key order matches the full projection.
+    /// The human screen never reads this copy: it renders the original
+    /// report, whose in-memory timings still drive the ` in …` suffix.
+    pub(crate) fn without_volatile_timings(&self) -> Self {
+        let mut report = self.clone();
+        report.elapsed_ms = None;
+        report.segments = Vec::new();
+        for check in &mut report.checks {
+            check.elapsed_ms = None;
+        }
+        for probe in &mut report.runtime_probes {
+            probe.elapsed_ms = None;
+        }
+        report
     }
 }
 
@@ -1316,6 +1383,10 @@ pub(crate) fn doctor_recovery_for_first_command(
             "config".to_string(),
             "correct `ripr.toml` so it loads, then rerun `ripr doctor`".to_string(),
         ),
+        DoctorFirstCommand::DamagedRefs => (
+            "git_head".to_string(),
+            "correct or restore the ref metadata and its read access using the Git check, then rerun `ripr doctor`".to_string(),
+        ),
         DoctorFirstCommand::FailedPrerequisites => {
             let failed_check = report
                 .checks
@@ -1435,6 +1506,12 @@ pub(crate) fn safe_next_action_recovery_line(
     })
 }
 
+/// Why a root-dependent check is skipped, or `None` for a usable directory.
+/// Shares the typed classification so human lines agree with `root_directory`.
+pub(crate) fn root_unusable_skip_reason(root: &Path) -> Option<&'static str> {
+    DoctorRootPath::classify(root).unusable_skip_reason()
+}
+
 /// Evaluate the doctor core checks (root, Cargo.toml, config, tool
 /// availability) and return just the typed report.
 #[cfg(test)]
@@ -1547,32 +1624,6 @@ pub(crate) fn work_tree_probe(root: &Path) -> Option<WorkTreeProbe> {
             WorkTreeProbe::Outside
         },
     )
-}
-
-/// #5259: whether `HEAD` is unborn (the repository has no commits yet).
-/// Call only after [`work_tree_probe`] reported `Inside`: there, a
-/// `rev-parse --verify` that exits nonzero is git answering "no such
-/// revision", which is the unborn state. `false` when git could not answer
-/// (missing or timed-out git proves nothing, so doctor claims nothing) —
-/// the probe's absence must not read as "unborn" (#5398 review).
-fn unborn_head(root: &Path) -> bool {
-    probe_says_unborn(
-        crate::git::run_git_output_with_deadline(
-            root,
-            &["rev-parse", "--verify", "--quiet", "HEAD"],
-            Some(DOCTOR_TOOL_TIMEOUT),
-        )
-        .ok()
-        .map(|output| output.status.success()),
-    )
-}
-
-/// Pure three-arm verdict for [`unborn_head`]: `Some(true)` is git running
-/// and resolving HEAD (born), `Some(false)` is git running and refusing the
-/// revision (unborn), and `None` is a probe that never answered (spawn
-/// failure or deadline). Only the second arm claims unborn.
-fn probe_says_unborn(head_resolves: Option<bool>) -> bool {
-    head_resolves == Some(false)
 }
 
 /// Evaluate the doctor core checks and also return the raw config load
@@ -1890,21 +1941,21 @@ fn evaluate_doctor_core_with_probe_for_profile(
                     DoctorStatus::Pass,
                     Some(format!("inside a Git work tree at {}", human_path(root))),
                 );
-                // #5259: an unborn HEAD is a work tree that cannot produce a
-                // diff base, so the workspace is not ready for the default
-                // first command. Advisory (the work-tree check itself is
-                // true), and the evidence reuses the commit-first repair the
-                // check-time default-base error names. Only a `rev-parse`
-                // that ran and answered "no" proves unborn: inside a
-                // confirmed work tree that is exactly what nonzero means.
-                if unborn_head(root) {
-                    report.add_advisory_check(
+                // The shared discriminator keeps damaged refs distinct from
+                // a genuine unborn branch, even after a successful root probe.
+                match crate::analysis::probe_head_ref_state(root, Some(DOCTOR_TOOL_TIMEOUT)) {
+                    crate::analysis::HeadRefState::Unborn => report.add_advisory_check(
                         "git_head",
                         "this repository has no commits yet (unborn HEAD); `ripr check` has \
                          no base to diff — commit once first, then analyze uncommitted edits \
                          with `ripr check`"
                             .to_string(),
-                    );
+                    ),
+                    crate::analysis::HeadRefState::Unreadable(message) => {
+                        report.add_check("git_head", DoctorStatus::Fail, Some(message));
+                    }
+                    crate::analysis::HeadRefState::Resolved
+                    | crate::analysis::HeadRefState::Unknown => {}
                 }
             }
             Some(WorkTreeProbe::Refused(message)) => {
@@ -2822,6 +2873,55 @@ mod tests {
     }
 
     #[test]
+    fn stable_json_omits_volatile_timings_at_every_level() -> Result<(), String> {
+        // #9807: the default `ripr doctor --json` document must not carry a
+        // field whose value changes on every run, or diff/snapshot consumers
+        // see a full-field diff from a run that changed nothing.
+        let mut report = DoctorReport::new("/workspace");
+        report.add_check(
+            "tool_cargo",
+            DoctorStatus::Pass,
+            Some("cargo 1.0".to_string()),
+        );
+        report.mark_check_elapsed("tool_cargo", std::time::Duration::from_millis(300));
+        report.add_runtime_probe("rust", "cargo", DoctorStatus::Pass, "ok", true, "hint");
+        report
+            .runtime_probes
+            .last_mut()
+            .ok_or("probe must exist")?
+            .elapsed_ms = Some(450);
+        report.elapsed_ms = Some(900);
+        report.segments = vec![DoctorSegmentTiming {
+            name: "language_detection".to_string(),
+            elapsed_ms: 120,
+        }];
+
+        let full = report.render_json()?;
+        assert!(full.contains("\"elapsed_ms\": 900"), "{full}");
+        assert!(full.contains("\"elapsed_ms\": 300"), "{full}");
+        assert!(full.contains("\"elapsed_ms\": 450"), "{full}");
+        assert!(full.contains("\"segments\""), "{full}");
+
+        let stable = report.render_json_stable()?;
+        assert!(!stable.contains("elapsed_ms"), "{stable}");
+        assert!(!stable.contains("\"segments\""), "{stable}");
+        // The volatile strip must not touch the semantic fields.
+        assert!(stable.contains("\"status\": \"pass\""), "{stable}");
+        assert!(stable.contains("tool_cargo"), "{stable}");
+        // And it must be a projection, not a mutation: the human screen still
+        // reads the measured timings from the original report.
+        assert_eq!(report.elapsed_ms, Some(900));
+        assert_eq!(report.slowest_measured(), Some(("cargo".to_string(), 450)));
+
+        // An already un-timed report renders byte-identically through both
+        // projections, so the stable path adds no shape of its own.
+        let mut bare = DoctorReport::new("/workspace");
+        bare.add_check("root_directory", DoctorStatus::Pass, None);
+        assert_eq!(bare.render_json()?, bare.render_json_stable()?);
+        Ok(())
+    }
+
+    #[test]
     fn failed_check_flips_overall_status() {
         let mut report = DoctorReport::new("/workspace");
         report.add_check(
@@ -3444,6 +3544,74 @@ mod tests {
         } else {
             Err(failures.join("; "))
         }
+    }
+
+    #[test]
+    fn cache_skip_reason_follows_the_typed_root_classification() -> Result<(), String> {
+        let dir = unique_test_dir("skip-reason");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let file = dir.join("a-file");
+        std::fs::write(&file, "x").map_err(|err| format!("write file: {err}"))?;
+        let mut cases = vec![
+            ("directory", dir.clone(), None),
+            (
+                "missing",
+                dir.join("no-such-root"),
+                Some("the root directory does not exist"),
+            ),
+            ("file", file, Some("the root is not a directory")),
+        ];
+        push_symlink_root_cases(&dir, &mut cases)?;
+        let failures: Vec<String> = cases
+            .iter()
+            .filter_map(|(name, root, expected)| {
+                let actual = root_unusable_skip_reason(root);
+                (actual != *expected).then(|| format!("{name}: {actual:?}, expected {expected:?}"))
+            })
+            .collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+
+    /// Symlinked roots are unix-only. The unconditional call plus the
+    /// `not(unix)` stub keep `cases` mutably borrowed on every platform, so
+    /// the shared vec needs no lint suppression to stay clippy-clean on
+    /// Windows (`unused_mut` fired when the pushes were an inline
+    /// `#[cfg(unix)]` block, #9926 follow-up).
+    #[cfg(unix)]
+    fn push_symlink_root_cases(
+        dir: &Path,
+        cases: &mut Vec<(&'static str, PathBuf, Option<&'static str>)>,
+    ) -> Result<(), String> {
+        let dangling = dir.join("dangling");
+        std::os::unix::fs::symlink(dir.join("no-such-target"), &dangling)
+            .map_err(|err| format!("dangling symlink: {err}"))?;
+        cases.push((
+            "dangling symlink",
+            dangling,
+            Some("the root is not a directory"),
+        ));
+        let looped = dir.join("looped");
+        std::os::unix::fs::symlink(&looped, &looped)
+            .map_err(|err| format!("self symlink: {err}"))?;
+        cases.push((
+            "self-referencing symlink",
+            looped,
+            Some("the root directory cannot be read"),
+        ));
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn push_symlink_root_cases(
+        _dir: &Path,
+        _cases: &mut Vec<(&'static str, PathBuf, Option<&'static str>)>,
+    ) -> Result<(), String> {
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -4924,42 +5092,68 @@ mod tests {
         // the probe terminates it at the deadline and names the timeout. Run
         // the materialization and probe repeatedly to catch visibility and
         // cleanup races under full-suite parallelism.
-        for attempt in 0..100 {
-            let dir = unique_test_dir("timeout");
-            std::fs::create_dir(&dir).map_err(|err| format!("create dir: {err}"))?;
-            let sleep = ["/usr/bin/sleep", "/bin/sleep"]
+        // Ten threads of ten attempts: the same 100 probes, but each waits out
+        // its 250ms deadline concurrently, so the race window is wider and the
+        // test takes about a tenth of the wall time.
+        let attempts: Vec<Result<(), String>> = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..10)
+                .map(|worker| {
+                    scope.spawn(move || {
+                        for step in 0..10 {
+                            hanging_tool_attempt(worker * 10 + step)?;
+                        }
+                        Ok(())
+                    })
+                })
+                .collect();
+            workers
                 .into_iter()
-                .find(|candidate| std::path::Path::new(candidate).is_file())
-                .ok_or("no portable Unix sleep utility found")?;
-            let script = format!("#!/bin/sh\nexec {sleep} 60\n");
-            let shim = publish_doctor_test_tool(&dir, "ripr-hanging-probe-tool", &script)?;
+                .map(|worker| {
+                    worker
+                        .join()
+                        .unwrap_or_else(|_| Err("probe worker panicked".to_string()))
+                })
+                .collect()
+        });
+        attempts.into_iter().collect()
+    }
 
-            let start = std::time::Instant::now();
-            let shim_text = shim.to_str().ok_or("shim path is not utf-8")?;
-            // #2242/#2378: publish the executable pathname only after the
-            // writer is closed. The bounded retry for independent host-level
-            // exec contention now lives in `probe_published_tool`, shared with
-            // the atomic-publication test (#2441); a real timeout result is
-            // still never retried.
-            let (status, evidence) = probe_published_tool(shim_text, Duration::from_millis(250));
-            let elapsed = start.elapsed();
+    #[cfg(unix)]
+    fn hanging_tool_attempt(attempt: usize) -> Result<(), String> {
+        let dir = unique_test_dir("timeout");
+        std::fs::create_dir(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let sleep = ["/usr/bin/sleep", "/bin/sleep"]
+            .into_iter()
+            .find(|candidate| std::path::Path::new(candidate).is_file())
+            .ok_or("no portable Unix sleep utility found")?;
+        let script = format!("#!/bin/sh\nexec {sleep} 60\n");
+        let shim = publish_doctor_test_tool(&dir, "ripr-hanging-probe-tool", &script)?;
 
-            std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
-            if status != DoctorStatus::Fail {
-                return Err(format!(
-                    "attempt {attempt}: hanging tool unexpectedly passed"
-                ));
-            }
-            if evidence != format!("{shim_text} timed out after 250ms") {
-                return Err(format!(
-                    "attempt {attempt}: expected a 250ms timeout, got: {evidence}"
-                ));
-            }
-            if elapsed >= std::time::Duration::from_secs(30) {
-                return Err(format!(
-                    "attempt {attempt}: hanging tool was not terminated: {elapsed:?}"
-                ));
-            }
+        let start = std::time::Instant::now();
+        let shim_text = shim.to_str().ok_or("shim path is not utf-8")?;
+        // #2242/#2378: publish the executable pathname only after the
+        // writer is closed. The bounded retry for independent host-level
+        // exec contention now lives in `probe_published_tool`, shared with
+        // the atomic-publication test (#2441); a real timeout result is
+        // still never retried.
+        let (status, evidence) = probe_published_tool(shim_text, Duration::from_millis(250));
+        let elapsed = start.elapsed();
+
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
+        if status != DoctorStatus::Fail {
+            return Err(format!(
+                "attempt {attempt}: hanging tool unexpectedly passed"
+            ));
+        }
+        if evidence != format!("{shim_text} timed out after 250ms") {
+            return Err(format!(
+                "attempt {attempt}: expected a 250ms timeout, got: {evidence}"
+            ));
+        }
+        if elapsed >= std::time::Duration::from_secs(30) {
+            return Err(format!(
+                "attempt {attempt}: hanging tool was not terminated: {elapsed:?}"
+            ));
         }
         Ok(())
     }
@@ -5697,24 +5891,17 @@ mod tests {
         Ok(())
     }
 
-    /// #5259 review: only a probe that RAN and answered "no" may claim
-    /// unborn; a probe that never answered (spawn failure, deadline) must
-    /// claim nothing, or a slow host would add a false `git_head` advisory
-    /// and reroute the first command in a healthy repository.
+    /// An unanswered probe must not add a false unborn advisory.
     #[test]
-    fn unborn_head_verdict_claims_nothing_when_the_probe_never_answered() {
-        assert!(
-            !probe_says_unborn(Some(true)),
-            "a resolving HEAD is born, not unborn"
-        );
-        assert!(
-            probe_says_unborn(Some(false)),
-            "git refusing the revision is the unborn state"
-        );
-        assert!(
-            !probe_says_unborn(None),
-            "a probe that never answered must not claim unborn"
-        );
+    fn unborn_head_verdict_claims_nothing_when_the_probe_never_answered() -> Result<(), String> {
+        let root = doctor_scope_root("unanswered-head", &[])?;
+        git_in(&root, &["init", "."])?;
+        let state = crate::analysis::probe_head_ref_state(&root, Some(Duration::ZERO));
+        let _ = std::fs::remove_dir_all(&root);
+        if !matches!(state, crate::analysis::HeadRefState::Unknown) {
+            return Err("an unanswered probe must not claim an unborn HEAD".to_string());
+        }
+        Ok(())
     }
 
     /// #5259: the UnbornHead recommendation names the commit-first repair

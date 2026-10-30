@@ -324,6 +324,247 @@ fn repair_without_actionable_item_creates_no_attempt() -> Result<(), String> {
     Ok(())
 }
 
+/// An explicit check base is not retained by bare repair. A clean main branch
+/// can therefore have a real diff gap even when the seam inventory is empty.
+#[cfg(feature = "lang-python")]
+#[test]
+fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(), String> {
+    let fixture = Fixture::dir("repair-explicit-check-base")?;
+    let root = &fixture.root;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("pricing.py"),
+        "def price(amount):\n    return amount - 10 if amount >= 100 else amount\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import price\n\ndef test_below():\n    assert price(99) == 99\n\ndef test_above():\n    assert price(101) == 91\n").map_err(|e| e.to_string())?;
+    init_repo(root)?;
+    run_git(root, &["branch", "-M", "main"])?;
+    run_git(root, &["add", "."])?;
+    git_commit(root, "base")?;
+    std::fs::write(
+        root.join("pricing.py"),
+        "def price(amount):\n    return amount - 10 if amount > 100 else amount\n",
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "pricing.py"])?;
+    git_commit(root, "change")?;
+
+    let check = run_ripr(root, &["check", "--base", "HEAD^"])?;
+    assert_exit(&check, 0, "explicit-base check");
+    let check_out = stdout_text(&check);
+    let gap = "gap:python:pricing.py:price:predicate_boundary:predicate:amount-10_if_amount>100_else_amount";
+    assert!(
+        check_out.contains("amount == 100"),
+        "check must name the missing boundary:\n{check_out}"
+    );
+    let start_line = check_out
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ripr agent repair --gap-id "))
+        .ok_or_else(|| format!("check printed no gap-bound start:\n{check_out}"))?;
+    assert!(
+        start_line.contains(gap)
+            && start_line.contains("--base")
+            && start_line.contains("HEAD^")
+            && start_line.contains("--phase before"),
+        "start must bind the selected gap and base: {start_line}"
+    );
+    let repair = run_ripr(root, &["repair"])?;
+    assert_exit(&repair, 3, "bare repair");
+    let stderr = stderr_text(&repair);
+    assert!(
+        stderr.contains("does not reuse the diff or base")
+            && stderr.contains("start printed by that check")
+            && stderr.contains("original --base"),
+        "repair must preserve the original diff route:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("analyze the workspace before starting"),
+        "must not claim analysis is missing:\n{stderr}"
+    );
+    assert!(
+        stdout_text(&repair).is_empty() && attempt_ids(root).is_empty(),
+        "bare repair must not start an inferred gap"
+    );
+
+    let start = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            gap,
+            "--base",
+            "HEAD^",
+            "--root",
+            &root.to_string_lossy(),
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&start, 0, "printed gap start");
+    assert_eq!(
+        attempt_ids(root).len(),
+        1,
+        "the exact check subject must start"
+    );
+    Ok(())
+}
+
+/// #10682: when the changed code is Python or TypeScript, `ripr repair` says
+/// repair start covers Rust only and points at `ripr check`'s manual route
+/// instead of looping through `ripr pilot`.
+#[test]
+fn repair_with_changed_non_rust_code_says_rust_only() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-nonrust")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(root.join("pricing.ts"), "export const t = 10;\n").map_err(|e| e.to_string())?;
+    std::fs::write(root.join("pricing.py"), "T = 10\n").map_err(|e| e.to_string())?;
+    run_git(root, &["add", "pricing.ts", "pricing.py"])?;
+    git_commit(root, "add non-rust sources")?;
+    std::fs::write(root.join("pricing.ts"), "export const t = 11;\n").map_err(|e| e.to_string())?;
+    std::fs::write(root.join("pricing.py"), "T = 11\n").map_err(|e| e.to_string())?;
+    let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&repair, 3, "repair with changed non-Rust code");
+    let stderr = stderr_text(&repair);
+    assert!(
+        stderr.contains("is Python and TypeScript, and `ripr repair` works from Rust seams only"),
+        "must say plainly that repair start is Rust only:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("`ripr check --root")
+            && stderr.contains("verify command")
+            && stderr.contains("--phase before"),
+        "must point at the check finding's route:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("analyze the workspace") && !stderr.contains("ripr pilot"),
+        "must not loop back through pilot:\n{stderr}"
+    );
+    Ok(())
+}
+
+/// Shared setup for the #10682 non-Rust guidance tests: a base branch, then a
+/// feature branch the test commits to.
+fn nonrust_repair_stderr(root: &Path, root_arg: &str) -> Result<String, String> {
+    let repair = run_ripr(root, &["repair", "--root", root_arg])?;
+    assert_exit(&repair, 3, "repair with non-Rust change");
+    Ok(stderr_text(&repair))
+}
+
+/// #10682: a clean branch whose change is committed (no dirty tree) reads the
+/// same committed diff `ripr check` analyzes, not just `git diff HEAD`.
+#[test]
+fn repair_with_committed_only_non_rust_change_says_rust_only() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-nonrust-committed")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(root.join("pricing.ts"), "export const t = 10;\n").map_err(|e| e.to_string())?;
+    run_git(root, &["add", "pricing.ts"])?;
+    git_commit(root, "add ts")?;
+    run_git(root, &["branch", "base-for-10682"])?;
+    run_git(root, &["checkout", "-q", "-b", "feature"])?;
+    std::fs::write(root.join("pricing.ts"), "export const t = 11;\n").map_err(|e| e.to_string())?;
+    run_git(root, &["add", "pricing.ts"])?;
+    git_commit(root, "change ts")?;
+    let stderr = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        stderr.contains("is TypeScript, and `ripr repair` works from Rust seams only"),
+        "committed-only change must be named:\n{stderr}"
+    );
+    assert!(!stderr.contains("ripr pilot"), "no pilot loop:\n{stderr}");
+    Ok(())
+}
+
+/// #10682: a C-quoted (non-ASCII) filename is still recognised by extension.
+#[test]
+fn repair_with_quoted_non_rust_filename_says_rust_only() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-nonrust-quoted")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(root.join("café.ts"), "export const t = 10;\n").map_err(|e| e.to_string())?;
+    run_git(root, &["add", "."])?;
+    git_commit(root, "add quoted ts")?;
+    std::fs::write(root.join("café.ts"), "export const t = 11;\n").map_err(|e| e.to_string())?;
+    let stderr = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        stderr.contains("is TypeScript, and `ripr repair` works from Rust seams only"),
+        "quoted filename must still be recognised:\n{stderr}"
+    );
+    Ok(())
+}
+
+/// #10682: a sibling package's edit is not this root's change.
+#[test]
+fn repair_ignores_non_rust_change_in_a_sibling_package() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-nonrust-sibling")?;
+    let root = &fixture.root;
+    std::fs::create_dir_all(root.join("sibling")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("sibling/pricing.ts"), "export const t = 10;\n")
+        .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "."])?;
+    git_commit(root, "add sibling ts")?;
+    std::fs::write(root.join("sibling/pricing.ts"), "export const t = 11;\n")
+        .map_err(|e| e.to_string())?;
+    let package_root = root.to_string_lossy().into_owned();
+    // Explicit root is the Rust package dir; the ts edit lives outside it.
+    std::fs::create_dir_all(root.join("pkg/src")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("pkg/Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("pkg/src/lib.rs"), "// none\n").map_err(|e| e.to_string())?;
+    run_git(root, &["add", "pkg"])?;
+    git_commit(root, "add pkg")?;
+    std::fs::write(root.join("sibling/pricing.ts"), "export const t = 12;\n")
+        .map_err(|e| e.to_string())?;
+    let pkg = format!("{package_root}/pkg");
+    let stderr = nonrust_repair_stderr(root, &pkg)?;
+    assert!(
+        !stderr.contains("TypeScript"),
+        "sibling package edit must not be attributed to this root:\n{stderr}"
+    );
+    Ok(())
+}
+
+/// #10682: a deletion-only change gets no `check` finding, so the message
+/// does not promise one.
+#[test]
+fn repair_with_deletion_only_non_rust_change_does_not_promise_a_finding() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-nonrust-deletion")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("pricing.ts"),
+        "export const a = 1;\nexport const b = 2;\n",
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "pricing.ts"])?;
+    git_commit(root, "add ts")?;
+    std::fs::write(root.join("pricing.ts"), "export const a = 1;\n").map_err(|e| e.to_string())?;
+    let stderr = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        stderr.contains("only removes code") && !stderr.contains("verify command"),
+        "deletion-only must not promise a finding:\n{stderr}"
+    );
+    Ok(())
+}
+
+/// #10682 negative control: a Rust-only change keeps the generic message.
+#[test]
+fn repair_with_rust_only_change_keeps_the_generic_message() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-rust-only")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(root.join("src/lib.rs"), "// still no public behavior\n")
+        .map_err(|e| e.to_string())?;
+    let stderr = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        stderr.contains("no seams visible") && !stderr.contains("Rust seams only"),
+        "Rust-only change must keep the generic message:\n{stderr}"
+    );
+    Ok(())
+}
+
 /// Control 2: exactly one current actionable item — `ripr repair` creates
 /// exactly one attempt and returns the same card as the canonical route.
 #[test]
@@ -479,7 +720,7 @@ fn repair_explicit_ineligible_seam_refuses_without_attempt_or_lock() -> Result<(
         "refusal must name the seam:\n{stderr}"
     );
     assert!(
-        stderr.contains("not a headline repair target"),
+        stderr.contains("its existing tests already grip it (exposed)"),
         "refusal must name the ineligibility reason:\n{stderr}"
     );
     assert_no_repair_attempt_side_effects(root);
@@ -1269,7 +1510,7 @@ fn explain_names_truncation_when_seam_reverse_cannot_check() -> Result<(), Strin
 }
 
 /// #7882: display narration must never feed stable text back into identity.
-/// #8166: the `Canonical gap:` line `ripr check` prints for a Rust finding is
+/// #8166: the `Gap ID (for scripts):` line `ripr check` prints for a Rust finding is
 /// the producer gap ID, not the seam-derived `gap:<hash>`. It must start the
 /// same attempt as the seam ID, and only for the seam it names.
 #[test]
@@ -1830,7 +2071,7 @@ fn check_drill_down_omits_repair_for_a_static_limited_finding() -> Result<(), St
     let check = run_ripr(root, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
     let stdout = stdout_text(&check);
     assert!(
-        stdout.contains("limited by static analysis"),
+        stdout.contains("ripr cannot tell from reading the code whether tests would notice this"),
         "the finding must be static-limited:\n{stdout}"
     );
     assert!(
@@ -1855,6 +2096,20 @@ fn repair_human_paths_preserve_percent_root_identity() -> Result<(), String> {
 #[test]
 fn repair_human_paths_preserve_literal_backslash_root_identity() -> Result<(), String> {
     repair_human_path_identity_journey(r"repo\literal", "repo/literal")
+}
+
+/// How the product spells a root it prints or persists: slash-unified on
+/// Windows, and a drive-letter verbatim prefix (`//?/D:/`) folded to its plain
+/// spelling (#9660). Elsewhere the text is unchanged.
+fn product_root_spelling(text: &str) -> String {
+    if !cfg!(windows) {
+        return text.to_string();
+    }
+    let unified = text.replace('\\', "/");
+    match unified.strip_prefix("//?/") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => rest.to_string(),
+        _ => unified,
+    }
 }
 
 fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), String> {
@@ -1889,11 +2144,7 @@ fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), S
             .map_err(|e| e.to_string())?,
         canonical
     );
-    let expected_persisted = if cfg!(windows) {
-        canonical.to_string_lossy().replace('\\', "/")
-    } else {
-        canonical.to_string_lossy().into_owned()
-    };
+    let expected_persisted = product_root_spelling(&canonical.to_string_lossy());
     assert_eq!(
         persisted_root, expected_persisted,
         "canonical identity spelling must stay unchanged"
@@ -2001,6 +2252,136 @@ fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), S
     Ok(())
 }
 
+/// #11111: one changed line that ripr can repair two ways (the condition's
+/// boundary and the returned value) must not print two identical choices.
+/// The change is named once, each choice says what a test must check, the
+/// command `ripr check` printed is named as the recommended pick, and the
+/// prompt carries no internal terms or a PowerShell line about a placeholder.
+/// No attempt starts without an explicit pick.
+#[test]
+fn repair_same_line_candidates_are_told_apart_in_plain_words() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-same-line")?;
+    let root = &fixture.root;
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("tests/t.rs"),
+        "use boundary_gap_fixture::is_adult;\n\n#[test]\nfn adult_far_above() {\n    assert!(is_adult(40));\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(root)?;
+    run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
+    git_commit(root, "same-line fixture source")?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&repair, 3, "repair with two candidates on one line");
+    assert!(
+        stdout_text(&repair).is_empty(),
+        "selection must leave stdout empty"
+    );
+    let stderr = stderr_text(&repair);
+    assert!(
+        stderr.contains(
+            "ripr can start a repair for the change at src/lib.rs:2 `age >= 18` in 2 ways"
+        ),
+        "must name the one change once:\n{stderr}"
+    );
+    assert_eq!(
+        stderr.matches("`age >= 18`").count(),
+        1,
+        "the shared change must not repeat per choice:\n{stderr}"
+    );
+    for need in [
+        "a test must use an input right at the edge of this condition and check the result",
+        "a test must check the exact value returned",
+    ] {
+        assert!(stderr.contains(need), "must say `{need}`:\n{stderr}");
+    }
+    let choice_lines: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.trim_start().starts_with(['1', '2']))
+        .collect();
+    assert_eq!(choice_lines.len(), 2, "{stderr}");
+    assert_ne!(
+        choice_lines[0], choice_lines[1],
+        "choices must read differently"
+    );
+    assert_eq!(
+        stderr.matches("ripr repair ").count(),
+        2,
+        "exactly the two start commands:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "If `ripr check` printed a `ripr repair` command for this change, run that one"
+        ),
+        "must point at the command check printed:\n{stderr}"
+    );
+    for jargon in [
+        "choose_item",
+        "select_item",
+        "producer:",
+        "<seam-id>",
+        "PowerShell",
+    ] {
+        assert!(
+            !stderr.contains(jargon),
+            "selection must not print `{jargon}`:\n{stderr}"
+        );
+    }
+    assert!(
+        attempt_ids(root).is_empty(),
+        "no attempt may be created before selection"
+    );
+    Ok(())
+}
+
+/// #11111 review: the candidate commands carry a concrete `--root`, so a root
+/// with an apostrophe (Bash `'\''`, PowerShell `''`) must print each command's
+/// PowerShell spelling instead of leaving a PowerShell reader with silent Bash.
+#[test]
+fn repair_choice_commands_pair_powershell_form_for_apostrophe_root() -> Result<(), String> {
+    let fixture = Fixture::two_seam("facade-o'neil")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    assert!(
+        root_arg.contains('\''),
+        "fixture root must carry an apostrophe"
+    );
+    let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&repair, 3, "repair with two actionable items");
+    assert!(
+        stdout_text(&repair).is_empty(),
+        "selection must leave stdout empty"
+    );
+    let stderr = stderr_text(&repair);
+    let lines: Vec<&str> = stderr.lines().collect();
+    for seam in [FIXTURE_SEAM, SECOND_SEAM] {
+        assert!(
+            lines.windows(2).any(|pair| {
+                pair[0]
+                    .trim_start()
+                    .starts_with(&format!("ripr repair {seam} --root "))
+                    && pair[0].contains("'\\''")
+                    && pair[1]
+                        .trim_start()
+                        .starts_with(&format!("(PowerShell) ripr repair {seam} --root '"))
+                    && pair[1].contains("''")
+                    && !pair[1].contains("'\\''")
+            }),
+            "candidate {seam} must pair its PowerShell form:\n{stderr}"
+        );
+    }
+    assert!(attempt_ids(root).is_empty(), "no attempt before selection");
+    Ok(())
+}
+
 /// Control 3: two actionable items — no attempt is created until the user
 /// selects one; never an implicit first/newest pick.
 #[test]
@@ -2015,25 +2396,59 @@ fn repair_two_items_requires_explicit_selection() -> Result<(), String> {
         "selection must leave stdout empty"
     );
     let stderr = stderr_text(&repair);
-    assert!(
-        stderr.contains("next action: choose_item"),
-        "must decide an explicit item selection:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("stop [select_item]"),
-        "must name the typed selection stop:\n{stderr}"
-    );
     for seam in [FIXTURE_SEAM, SECOND_SEAM] {
         assert!(stderr.contains(seam), "must list seam {seam}:\n{stderr}");
     }
     assert!(
-        stderr.contains("select one of 2"),
+        stderr.contains("ripr can start 2 different repairs"),
         "must bound the selection to both candidates:\n{stderr}"
     );
-    assert!(
-        stderr.contains("ripr repair "),
-        "must name the retry command:\n{stderr}"
-    );
+    // #10978: each candidate says where the change is and what it is, with
+    // the exact command that picks it on the next line, instead of a bare hash.
+    let lines: Vec<&str> = stderr.lines().collect();
+    for (location, code, seam) in [
+        (
+            "src/lib.rs:2",
+            "`amount >= discount_threshold`",
+            FIXTURE_SEAM,
+        ),
+        ("src/lib.rs:10", "`items >= free_threshold`", SECOND_SEAM),
+    ] {
+        assert!(
+            lines.windows(2).any(|pair| pair[0].contains(location)
+                && pair[0].contains(code)
+                && pair[1].contains(&format!("ripr repair {seam}"))),
+            "candidate {seam} must show {location} and {code}:\n{stderr}"
+        );
+    }
+    // #11111: plain words only, and no PowerShell disclosure about a
+    // placeholder.
+    for jargon in [
+        "choose_item",
+        "select_item",
+        "producer:",
+        "<seam-id>",
+        "PowerShell",
+    ] {
+        assert!(
+            !stderr.contains(jargon),
+            "selection must not print `{jargon}`:\n{stderr}"
+        );
+    }
+    // From another directory the printed candidate commands must still select
+    // this workspace, so each carries the bound root.
+    let elsewhere = Fixture::dir("facade-two-elsewhere")?;
+    let remote = run_ripr(&elsewhere.root, &["repair", "--root", &root_arg])?;
+    let remote_stderr = stderr_text(&remote);
+    for seam in [FIXTURE_SEAM, SECOND_SEAM] {
+        assert!(
+            remote_stderr.lines().any(|line| {
+                line.contains(&format!("ripr repair {seam} --root "))
+                    && line.contains(root_arg.as_str())
+            }),
+            "candidate {seam} must carry the bound root:\n{remote_stderr}"
+        );
+    }
     assert!(
         attempt_ids(root).is_empty(),
         "no attempt may be created before selection"
@@ -2044,6 +2459,100 @@ fn repair_two_items_requires_explicit_selection() -> Result<(), String> {
     let ids = attempt_ids(root);
     assert_eq!(ids.len(), 1, "selection starts exactly one attempt");
     assert_eq!(read_manifest(root, &ids[0])?["seam_id"], FIXTURE_SEAM);
+    Ok(())
+}
+
+/// Populate a committed workspace whose only test is an assertion-free
+/// `#[should_panic]` test and whose changed guard (`b == 0` becomes `b == 1`)
+/// decides the panic it expects (#10703).
+fn populate_should_panic_fixture(root: &Path, extra_test: &str) -> Result<(), String> {
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    let lib = |guard: &str| {
+        format!(
+            "pub fn div(a: i32, b: i32) -> i32 {{\n    if {guard} {{\n        panic!(\"zero\");\n    }}\n    a / b\n}}\n"
+        )
+    };
+    std::fs::write(root.join("src/lib.rs"), lib("b == 0")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("tests/t.rs"),
+        format!(
+            "use boundary_gap_fixture::div;\n\n#[test]\n#[should_panic]\nfn t() {{\n    div(1, 0);\n}}\n{extra_test}"
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(root)?;
+    run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
+    git_commit(root, "should_panic base")?;
+    std::fs::write(root.join("src/lib.rs"), lib("b == 1")).map_err(|e| e.to_string())?;
+    run_git(root, &["add", "src"])?;
+    git_commit(root, "change the guard")?;
+    Ok(())
+}
+
+/// #10703: `check` names a `#[should_panic]`-only finding a limitation with no
+/// gap, and `repair` consumes the same predicate, so it declines with the same
+/// named limitation instead of starting an attempt. Both read the same
+/// binary, tree, base and diff (`--base HEAD~1` on both).
+#[test]
+fn repair_declines_the_should_panic_limitation_check_names() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-should-panic")?;
+    let root = &fixture.root;
+    populate_should_panic_fixture(root, "")?;
+    let root_arg = root.to_string_lossy().into_owned();
+
+    let check = run_ripr(root, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    let check_out = stdout_text(&check);
+    assert!(
+        check_out.contains("named limitation") && check_out.contains("should_panic"),
+        "check must name the should_panic limitation:\n{check_out}"
+    );
+    assert!(
+        check_out.contains("no repair start offered"),
+        "check must offer no repair start:\n{check_out}"
+    );
+
+    let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
+    let stderr = stderr_text(&repair);
+    assert_ne!(
+        repair.status.code(),
+        Some(0),
+        "repair must not start for a named limitation:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("should_panic") && stderr.contains("ripr check"),
+        "repair must decline with the same named limitation:\n{stderr}"
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "no attempt may start for a named limitation"
+    );
+    Ok(())
+}
+
+/// #10703 discriminating negative: the same changed guard with a weak
+/// asserting test beside the `#[should_panic]` test is a plain weak-grip gap
+/// for `check`, so the named-limitation predicate does not apply and `repair`
+/// still starts, exactly as it did before the limitation was shared.
+#[test]
+fn repair_still_starts_when_a_weak_asserting_test_sits_beside_should_panic() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-should-panic-weak")?;
+    let root = &fixture.root;
+    populate_should_panic_fixture(
+        root,
+        "\n#[test]\nfn ok() {\n    assert!(div(4, 2) > 0);\n}\n",
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let check = run_ripr(root, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    let check_out = stdout_text(&check);
+    assert!(
+        !check_out.contains("named limitation"),
+        "a weak asserting test keeps the plain gap:\n{check_out}"
+    );
+    let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&repair, 0, "repair starts for the plain weak gap");
+    assert_eq!(attempt_ids(root).len(), 1, "one attempt starts");
     Ok(())
 }
 
@@ -2360,6 +2869,88 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
     Ok(())
 }
 
+/// #11111 review: `ripr continue` shares only the retry template with the
+/// repair selection; its choices stay the bare current attempt ids (an
+/// attempt has no separate change description to show). With a root that
+/// quotes differently in PowerShell, the retry keeps its `<attempt-id>`
+/// placeholder in both spellings and prints the PowerShell form instead of a
+/// disclosure about the placeholder. No attempt advances without a pick.
+#[test]
+fn continue_selection_retry_pairs_powershell_form_for_apostrophe_root() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-continue-o'neil")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    assert!(
+        root_arg.contains('\''),
+        "fixture root must carry an apostrophe"
+    );
+    for _ in 0..2 {
+        let before = run_ripr(
+            root,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                FIXTURE_SEAM,
+                "--phase",
+                "before",
+            ],
+        )?;
+        assert_exit(&before, 0, "advanced before phase");
+    }
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 2, "two current attempts must exist");
+    assert_ne!(ids[0], ids[1], "the two attempts must be distinct");
+    let continued = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&continued, 3, "continue with two current attempts");
+    assert!(
+        stdout_text(&continued).is_empty(),
+        "selection must leave stdout empty"
+    );
+    let stderr = stderr_text(&continued);
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert!(
+        lines
+            .first()
+            .is_some_and(|line| line.starts_with("ripr: 2 current attempts under ")),
+        "must state the bounded choice:\n{stderr}"
+    );
+    for id in &ids {
+        assert_eq!(
+            lines.iter().filter(|line| line.trim() == id).count(),
+            1,
+            "attempt {id} must be listed once as its own choice:\n{stderr}"
+        );
+    }
+    assert!(
+        lines.windows(2).any(|pair| {
+            pair[0].starts_with("retry: ripr continue --attempt <attempt-id> --root ")
+                && pair[0].contains("'\\''")
+                && pair[1].starts_with(
+                    "retry (PowerShell): ripr continue --attempt <attempt-id> --root '",
+                )
+                && pair[1].contains("''")
+                && !pair[1].contains("'\\''")
+        }),
+        "retry must pair its PowerShell form around the placeholder:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("PowerShell form unavailable"),
+        "the placeholder must not trigger the no-form disclosure:\n{stderr}"
+    );
+    for id in &ids {
+        assert_eq!(
+            read_manifest(root, id)?["state"],
+            "awaiting_edit",
+            "no attempt may move before selection"
+        );
+    }
+    assert_eq!(attempt_ids(root), ids, "no attempt may be created");
+    Ok(())
+}
+
 /// #8726: once an attempt spent its after-phase retry budget it refuses its
 /// after phase, so a repeated `ripr repair` must start a fresh attempt (the
 /// shared repair-start gate still admits the seam) instead of resuming the
@@ -2531,7 +3122,8 @@ fn repeated_repair_resumes_the_awaiting_attempt_instead_of_duplicating() -> Resu
     );
     assert!(
         stderr.contains(&format!(
-            "ripr continue --root {root_arg} --attempt {}",
+            "ripr continue --root {} --attempt {}",
+            product_root_spelling(&root_arg),
             ids[0]
         )),
         "must print the continue command for the existing attempt:\n{stderr}"

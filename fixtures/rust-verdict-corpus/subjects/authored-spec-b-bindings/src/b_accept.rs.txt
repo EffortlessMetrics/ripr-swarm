@@ -1,0 +1,19 @@
+//! The accept shape: a changed rfind/map_or binding and a later equality on it.
+
+pub fn cut_matches(input: &str, delim: char, start: usize) -> bool {
+    let end = input.rfind(delim).map_or(0, |idx| idx);
+    end == start
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_last_delimiter_is_the_cut_b_accept() {
+        assert!(cut_matches("a.b.c", '.', 3));
+        assert!(!cut_matches("a.b.c", '.', 1));
+        assert!(cut_matches("abc", '.', 0));
+        assert!(!cut_matches("abc", '.', 2));
+    }
+}

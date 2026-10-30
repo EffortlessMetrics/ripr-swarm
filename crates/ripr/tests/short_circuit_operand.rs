@@ -413,3 +413,29 @@ fn a_macro_that_only_comments_on_the_owner_keeps_the_short_circuit_reading() -> 
     );
     Ok(())
 }
+
+#[test]
+fn a_test_that_aliases_the_owner_still_evaluates_the_changed_operand() -> Result<(), String> {
+    // The direct call short-circuits on `x == 0`; the aliased call does not,
+    // so the changed `y == 1` is evaluated and infection must not read weak.
+    let both = "use short_circuit::either;\n\n#[test]\nfn direct() {\n    assert_eq!(either(0, 3), true);\n}\n\n#[test]\nfn via_alias() {\n    let call = either;\n    assert_eq!(call(1, 1), true);\n}\n";
+    let source = lib("||", "y == 1");
+    let findings = findings_on_changed_line(
+        &source,
+        "    x == 0 || y == 1",
+        "    x == 0 || y == 0",
+        both,
+    )?;
+    let predicates = findings
+        .into_iter()
+        .filter(|finding| finding.probe.family.as_str() == "predicate")
+        .collect::<Vec<_>>();
+    assert!(!predicates.is_empty(), "no predicate finding");
+    assert!(
+        predicates
+            .iter()
+            .all(|finding| !finding.ripr.infect.summary.contains("short-circuits")),
+        "{predicates:?}"
+    );
+    Ok(())
+}

@@ -8,13 +8,13 @@ Primary workflow:
 
 Advanced and compatibility workflows:
   start      Write a source-edit-free workflow manifest for one seam.
-  brief      Rank a working-set brief for the agent-active router.
+  brief      Rank the seams in a working set so an agent starts at the strongest one.
   packet     Expand one visible seam into the existing agent seam packet JSON.
   card       Hand off one visible seam as the compact default repair card.
   stub       Write a compiling Rust test stub for one gap, ready to fill and run.
   verify     Compare before/after repo-exposure JSON for agent verification.
   verify-execute
-             Execute one validated producer-owned direct verify route.
+             Run the one validated, bounded, read-only verify command that a packet names.
   receipt    Summarize one seam from agent verify JSON for review handoff.
   review-summary
              Join agent-loop artifacts into a compact review packet.
@@ -29,7 +29,7 @@ The same transaction with explicit phases:
   # edit one focused test outside RIPR
   ripr agent repair --attempt ID --phase after
 
-From a `ripr check` finding, `ripr agent stub --at FILE:LINE` (the location
+From a Rust `ripr check` finding, `ripr agent stub --at FILE:LINE` (the location
 the finding prints) gives a ready-to-run test for that gap in one step.
 
 `--seam-id` takes a seam ID from `ripr pilot --root .` or `ripr agent status`,
@@ -89,7 +89,7 @@ falls back to all repo-actionable seams. This scope-widening is disclosed in
 the warnings[] field of the JSON output — check warnings[] to confirm whether
 you received a scoped result or a repo-wide fallback.
 
-This parser is the first implementation seam for RIPR-SPEC-0010. The brief
+This parser is the agent-brief router's first implementation seam. The brief
 router remains advisory and static; it does not run mutation testing, generate
 tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 "#;
@@ -168,14 +168,29 @@ Options:
   --write          Apply the stub: insert it into the owner file's inline
                    `#[cfg(test)]` module (or a new one), or create the
                    proposed `tests/` file. Refuses when the file changed
-                   since the stub was computed or the new file exists.
+                   since the stub was computed or the new file exists. A
+                   second --write for the same seam reports the stub already
+                   written instead of suffixing a `_2` duplicate.
   --json           Emit one `rust_test_stub` JSON document (schema_version
-                   `0.2`) with the placement, test name, exact text, the
+                   `0.4`) with the placement, test name, exact text, the
                    `todo!()` fill-ins, derived inputs, run command, and
                    inventory `grip_class` plus check `classification`
                    when known. A strongly_gripped seam stays `state:
-                   ready` (exit 0) and discloses the packet/repair
-                   omission reason in `warnings` and human output.
+                   ready` (exit 0) and discloses the real reason in
+                   `warnings` and human output: its tests already
+                   discriminate it. When the seam's repair route is
+                   established, the ready document also carries
+                   `next_repair`: the `ripr agent repair --seam-id <id>`
+                   start command, the repair packet's admitted edit
+                   surface, and — when the stub's placement differs from
+                   that surface — a `placement_divergence` naming both
+                   files.
+
+Stub generation supports Rust `.rs` paths only. Other --at paths receive
+`unsupported_language` (exit `3`), including with --write. For a reported
+gap, use the `ripr check` finding's test file/node and verify command when
+available: edit the test by hand, run the native test command, then refresh
+with `ripr check`. No stub is written for an unsupported language.
 
 The stub calls the changed function with its real receiver and parameters,
 fills a boundary input when the changed comparison names one, and stops at a
@@ -184,10 +199,12 @@ fails until that value is written; ripr never invents the expected value.
 `--at --kind` still selects from that one file's seams without using
 classification to pick the seam; after selection it looks up the inventory
 grip so the stub can disclose it. A strongly_gripped seam is still a
-scaffold (`state: ready`, exit 0) and reuses the packet/repair wording
-("configured off for strongly_gripped seams and is not included in agent
-results"). Side-effect and call-presence gaps, async, unsafe, and generic
-owners are refused with a named reason (exit `3`); under `--json` stdout
+scaffold (`state: ready`, exit 0): nothing is "configured off" — the seam is
+exposed because existing tests already discriminate it, so the disclosure
+says the stub is an optional scaffold, not evidence of a missing discriminator (only a class a user severity actually
+disables is described as "configured off"). Side-effect and call-presence
+gaps, async, unsafe, and generic owners are refused with a named reason
+(exit `3`); under `--json` stdout
 carries the `rust_test_stub` document with `state: refused` and stderr carries
 the prose; without `--json` stdout stays empty on a refusal.
 "#;
@@ -220,7 +237,7 @@ LSP/MCP surfaces.
 Refusal contract: a typed verify refusal — drifted analysis inputs
 (`analysis input identities differ`) or no repository movement between the
 artifacts — names the cause on stderr, exits `3`, and leaves stdout empty
-(RIPR-SPEC-0134). Other rejections (unreadable or invalid artifacts, lineage
+. Other rejections (unreadable or invalid artifacts, lineage
 or metadata mismatches) exit `2`.
 
 Movement vocabulary (#2648): the JSON output uses two related fields:
@@ -228,6 +245,10 @@ Movement vocabulary (#2648): the JSON output uses two related fields:
   - `gap_movement` (per-item): closed | persisted | new
 Precedence: `change: improved` means the grip class moved up; `gap_movement: closed`
 means the gap disappeared entirely. A gap can persist even when grip improves.
+
+The stdout document is the artifact `ripr agent receipt --verify-json` reads;
+save it in the verify loop, for example:
+  ripr agent verify --before before.repo-exposure.json --after after.repo-exposure.json --json > agent-verify.json
 "#;
 pub(super) const AGENT_VERIFY_EXECUTE_HELP: &str = r#"Execute one validated producer-owned verification route.
 
@@ -244,7 +265,11 @@ Options:
                        refused. A relative path resolves against the resolved
                        root, not the current directory.
   --authorize          Required explicit authorization for process execution.
-  --cancel-after-ms N  Optional bounded cancellation request.
+  --cancel-after-ms N  Optional operator deadline: kill the verify process N
+                       milliseconds after it starts, before the packet's own
+                       timeout. A hit is a bounded observation, not an error:
+                       the result records the `cancelled` disposition and the
+                       exit status stays 0.
   --json               Required machine-readable output.
 
 Only the exact direct, no-network, no-write `ripr agent verify` route is
@@ -350,6 +375,7 @@ tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 pub(super) const AGENT_REPAIR_HELP: &str = r#"Run the before/edit/after repair transaction and its verification phase for one named gap.
 
 Usage: ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase before [--json]
+       ripr agent repair [--root PATH] [--store PATH] --gap-id ID --base REF --phase before [--json]
        ripr agent repair [--root PATH] [--store PATH] (--attempt ID|--seam-id ID) --phase after [--json]
        ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify [--json]
            [--verify-authorized --verify-authority ID] [--verify-rollback]
@@ -377,13 +403,30 @@ Options:
                        resolves to that seam. `--phase after` keeps exact seam
                        IDs. An unmapped ID refuses with the `ripr pilot`
                        recovery route.
+  --gap-id ID          Start a repair for one canonical TypeScript preview gap
+                       (`gap:typescript:typescript_preview:...`) printed by
+                       `ripr check`; exclusive with `--seam-id` and requires
+                       `--base`. The before phase re-runs the diff-scoped
+                       check, refuses unless the finding's repair packet is
+                       ready, and records the check-findings snapshot. Run
+                       `--attempt ID --phase after` after committing the
+                       focused test: it re-runs the check against the recorded
+                       base commit, reports the gap closed only when it reads
+                       exposed (otherwise it refuses and the attempt stays
+                       retryable), then enforces the edit cage. It issues no
+                       receipt; the closure rides the verify result. Python
+                       gaps are not repairable here.
+  --base REF           The Git base the diff-scoped check compares against;
+                       required with, and valid only for, `--gap-id`.
   --attempt ID         Select one durable repair attempt; valid for `after`
                        and `verify` (verify accepts only `--attempt`).
   --phase before|after|verify
-                       Which phase of the repair loop to run.
+                       Which phase of the repair loop to run. Defaults to
+                       `before` (start a new attempt); `after` and `verify`
+                       require an existing repair attempt.
   --python-repair-trust-manifest PATH
                        Bind this attempt to an accepted Python repair-trust
-                       selection manifest (RIPR-SPEC-0176); `before` only.
+                       selection manifest; `before` only.
   --python-repair-trust-attempt ID
                        The selection attempt identity to bind; requires the
                        manifest flag.

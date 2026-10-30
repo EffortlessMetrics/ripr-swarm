@@ -1,3 +1,0 @@
-case = "ts-grid-delete-table"
-issue = 9534
-reason = "False actionable: field update read through a literal table is not credited (#9534)."

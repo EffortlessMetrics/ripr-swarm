@@ -14,12 +14,17 @@ pub(crate) use generated_rust_corpus::{
     absent_changed_rust_file_limitations, generated_rust_recovery,
 };
 pub(crate) mod harness_projection;
-mod language;
+pub(crate) mod language;
 pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
+pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
+pub(crate) use pipeline::{
+    DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+};
+mod probe_read_trace;
 mod probes;
 pub(crate) mod repair_route;
 /// Process CPU time and peak resident memory observability (#5213). One
@@ -39,6 +44,7 @@ mod summary;
 mod sync_memo;
 mod syntax;
 mod test_changes;
+mod trybuild_fixtures;
 pub(crate) use test_changes::{DiffTestChanges, diff_test_changes};
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;
@@ -60,13 +66,13 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    AnalyzedRevisions, another_base_candidate, artifact_root_gitignore_entry,
-    artifact_root_pathspec, load_diff, load_diff_core, load_diff_range_with_deadline_core,
-    load_diff_with_effective_base_core, load_worktree_diff,
+    AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
+    artifact_root_gitignore_entry, artifact_root_pathspec, load_diff, load_diff_core,
+    load_diff_range_with_deadline_core, load_diff_with_effective_base_core, load_worktree_diff,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
-    probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
-    resolve_effective_base_core, ripr_artifact_roots, working_tree_has_tracked_changes,
-    working_tree_has_uncommitted_changes,
+    probe_head_ref_state, probe_working_tree_tracked_changes_within, resolve_base_commit,
+    resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
+    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -98,6 +104,16 @@ pub(crate) use probes::{
 pub(crate) use rust_index::DeclinedRustFile;
 #[cfg(test)]
 pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
+/// Parser-backed related-test retention fixture for consumer tests (#9175);
+/// a narrow cfg(test) entry so output tests need no analysis internals.
+#[cfg(test)]
+pub(crate) fn retention_fixture_finding(
+    docs: usize,
+    demoted_call: &str,
+    demoted_asserts: usize,
+) -> crate::domain::Finding {
+    classifier::tests::retention_finding(docs, demoted_call, demoted_asserts)
+}
 pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
@@ -121,7 +137,8 @@ pub(crate) use seam_inventory::{
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config, pilot_seam_budget,
-    repo_exposure_seam_limit, scoped_file_seams, seam_kind_for_probe_family,
+    probe_family_for_seam_kind, repo_exposure_seam_limit, scoped_file_seams,
+    seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
     workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
@@ -137,6 +154,7 @@ pub(crate) use workspace::apply_module_graph_evidence;
 pub(crate) use workspace::classify_with;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
+pub(crate) use workspace::path_enters_ignored_dir;
 pub(crate) use workspace::seeds_diff_probes;
 pub(crate) use workspace::{UnlinkedPythonTests, discover_python_test_files};
 
@@ -157,6 +175,13 @@ pub(crate) fn workspace_unanalyzed_source_languages(root: &Path) -> Vec<(&'stati
         *counts.entry(language).or_default() += 1;
     }
     counts.into_iter().collect()
+}
+
+/// Whether the root holds any regular source file ripr reads, routes to a
+/// preview adapter or names as an unanalyzed language, in one short-circuiting
+/// walk; see `workspace::has_inspectable_source_file`.
+pub(crate) fn workspace_has_inspectable_source(root: &Path) -> bool {
+    workspace::has_inspectable_source_file(root)
 }
 
 /// Re-export workspace Rust file discovery for the output layer so it can
@@ -320,6 +345,9 @@ pub(crate) fn detect_typescript_test_framework(root: &Path) -> Option<&'static s
 #[cfg(feature = "lang-python")]
 pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
     language::detect_python_test_frameworks(root)
+        .into_iter()
+        .map(|framework| framework.as_str())
+        .collect()
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -945,6 +973,7 @@ impl LanguageRunStatus {
 
 #[derive(Clone, Debug)]
 pub struct AnalysisResult {
+    pub(crate) value_origins: crate::value_origins::ValueOrigins,
     /// Test-harness registry projections (#3532): what each exact
     /// registration established for this run — harness kind, provenance,
     /// subject identity, selector capability, and typed limitations.
@@ -1006,6 +1035,16 @@ pub struct AnalysisResult {
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     /// Raw per-path Rust producer observations, separate from decoded geometry.
     pub(crate) rust_consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
+    /// Crate-private mixed-language completeness view of this run's sealed
+    /// aggregate (#6475). A sidecar for in-process consumers (the editor);
+    /// never serialized and not part of the public output contract.
+    pub(crate) language_view: Option<language_outcome::LanguageCompletenessView>,
+    /// Per-language persistent fact-cache admissions for this run (#10725),
+    /// collected from each adapter's `LanguageDiffResult`. Rendered into the
+    /// verbose disclosure line by `app::check`; empty when no adapter did
+    /// cache work.
+    pub(crate) preview_fact_caches:
+        Vec<(crate::domain::LanguageId, language::PreviewFactCacheStats)>,
 }
 
 /// Default language list when callers do not pass `[languages]` config.
@@ -1983,5 +2022,7 @@ mod git_candidate_entry_tests {
 pub(crate) mod input_boundary;
 #[cfg(test)]
 pub(crate) use pipeline::diff_pipeline_entry_count;
+#[cfg(test)]
+pub(crate) use pipeline::injected_adapter_panic;
 
 pub(crate) use workspace::cargo_input_identity;

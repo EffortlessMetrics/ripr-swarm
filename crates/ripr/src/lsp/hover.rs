@@ -12,6 +12,7 @@ use crate::output::agent_seam_packets::{
 };
 use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
+use crate::output::human::plain_observation_wording;
 use crate::output::preview_actionability::{PreviewActionability, preview_actionability_for};
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use serde_json::Value;
@@ -20,8 +21,51 @@ use tower_lsp_server::ls_types::{
     Diagnostic, Hover, HoverContents, MarkupContent, MarkupKind, NumberOrString, Position, Range,
 };
 
-pub(super) fn hover_response() -> Hover {
-    markdown_hover(HOVER_TEXT.to_string())
+/// Join configured language labels for prose: `Rust`, `Rust and Python`,
+/// `Rust, Python, and TypeScript`.
+pub(super) fn join_language_labels(labels: &[String]) -> String {
+    match labels {
+        [] => "Rust".to_string(),
+        [only] => only.clone(),
+        [first, second] => format!("{first} and {second}"),
+        [first, rest @ ..] => {
+            let mut text = first.clone();
+            for (index, label) in rest.iter().enumerate() {
+                if index + 1 == rest.len() {
+                    text.push_str(", and ");
+                } else {
+                    text.push_str(", ");
+                }
+                text.push_str(label);
+            }
+            text
+        }
+    }
+}
+
+/// The no-evidence hover, aware of whether any analysis has committed and
+/// which languages the workspace analyzes (#9604 finding 32). Before the
+/// first successful analysis the generic "run the CLI" pointer names the
+/// wrong recovery — the `ripr.refresh` editor command is the route that
+/// populates this server — and the language list comes from the session
+/// configuration instead of a hardcoded `Rust`.
+pub(super) fn hover_response_without_evidence(has_analyzed: bool, languages: &[String]) -> Hover {
+    // The analyzed, Rust-only workspace renders the exact legacy text so the
+    // long-standing generic hover stays byte-identical.
+    if has_analyzed && languages.len() == 1 && languages[0] == "Rust" {
+        return markdown_hover(HOVER_TEXT.to_string());
+    }
+    let language_text = join_language_labels(languages);
+    let value = if has_analyzed {
+        format!(
+            "ripr estimates static RIPR exposure for changed {language_text} behavior. Run `ripr check --format json` for current findings."
+        )
+    } else {
+        format!(
+            "ripr estimates static RIPR exposure for changed {language_text} behavior, but has not analyzed this workspace yet. Run the `ripr.refresh` editor command (or `ripr check --format json`) to obtain findings."
+        )
+    };
+    markdown_hover(value)
 }
 
 pub(super) fn markdown_hover(value: String) -> Hover {
@@ -62,7 +106,7 @@ const MAX_LINE_HOVER_FINDINGS: usize = 5;
 /// server key `diagnosticProfile` (initializationOptions or the pulled
 /// `ripr` configuration section) and `diagnostic_profile` under the `lsp`
 /// table in `ripr.toml`. `ripr.diagnosticProfile` is the VS Code settings-UI name.
-const ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE: &str = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing discriminator and a fix site), so these are not diagnostics. Set `diagnosticProfile` to `full` (VS Code setting `ripr.diagnosticProfile`) or `[lsp] diagnostic_profile = \"full\"` in `ripr.toml` to publish them with their Inspect finding quick fix.";
+const ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE: &str = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing value or check and a fix site), so these are not diagnostics. Set `diagnosticProfile` to `full` (VS Code setting `ripr.diagnosticProfile`) or `[lsp] diagnostic_profile = \"full\"` in `ripr.toml` to publish them with their Inspect finding quick fix.";
 
 /// Hover for a position with no published diagnostic but with snapshot
 /// findings on its line — the findings the code lens on that line shows.
@@ -325,10 +369,11 @@ mod gap_hover {
     use super::{
         Diagnostic, Value, push_gap_evidence_boundary, push_gap_hover_limits,
         push_gap_repair_route, push_gap_verify_and_receipt, push_optional_data_line,
+        push_optional_spoken_line,
     };
 
     pub(super) fn render(diagnostic: &Diagnostic, data: &Value) -> String {
-        let mut lines = vec!["**ripr** gap decision".to_string(), String::new()];
+        let mut lines = vec!["**ripr** test gap".to_string(), String::new()];
         push_gap_evidence_boundary(&mut lines, data);
         push_state_section(&mut lines, diagnostic, data);
         push_why_this_matters(&mut lines);
@@ -342,11 +387,11 @@ mod gap_hover {
         lines.extend([
             diagnostic.message.clone(),
             String::new(),
-            "## Gap state".to_string(),
+            "## Gap".to_string(),
         ]);
-        push_optional_data_line(lines, "canonical gap", data, &["canonical_gap_id"]);
+        push_optional_data_line(lines, "gap ID (for scripts)", data, &["canonical_gap_id"]);
         push_optional_data_line(lines, "gap", data, &["gap_id"]);
-        push_optional_data_line(lines, "kind", data, &["gap_kind"]);
+        push_optional_spoken_line(lines, "kind", data, &["gap_kind"]);
         push_optional_data_line(lines, "state", data, &["gap_state"]);
         push_optional_data_line(lines, "policy", data, &["policy_state"]);
         push_optional_data_line(lines, "repairability", data, &["repairability"]);
@@ -357,7 +402,7 @@ mod gap_hover {
         lines.push(String::new());
         lines.push("## Why this matters".to_string());
         lines.push(
-            "This diagnostic maps to a validated gap-decision ledger record. Use the bounded route below as local repair guidance; the editor is projecting existing RIPR artifacts."
+            "This diagnostic comes from a validated ripr gap record. Use the route below as local repair guidance; the editor only shows what ripr already found."
                 .to_string(),
         );
     }
@@ -414,7 +459,7 @@ fn push_gap_repair_route(lines: &mut Vec<String>, data: &Value) {
     };
     lines.push(String::new());
     lines.push("## Repair route".to_string());
-    push_optional_data_line(lines, "route", route, &["route_kind"]);
+    push_optional_spoken_line(lines, "route", route, &["route_kind"]);
     push_optional_data_line(lines, "changed behavior", route, &["changed_behavior"]);
     if let Some(target) = value_at(route, &["target_file"]).and_then(string_value) {
         let mut target = target.to_string();
@@ -526,6 +571,18 @@ fn push_optional_data_line(lines: &mut Vec<String>, label: &str, value: &Value, 
     }
 }
 
+/// Like `push_optional_data_line`, but a CamelCase machine name is spoken as
+/// words (`AddBoundaryAssertion` -> `Add boundary assertion`); the raw name
+/// stays in the diagnostic `data` (#10695).
+fn push_optional_spoken_line(lines: &mut Vec<String>, label: &str, value: &Value, path: &[&str]) {
+    if let Some(text) = value_at(value, path).and_then(string_value) {
+        lines.push(format!(
+            "- {label}: `{}`",
+            super::diagnostics::camel_case_words(text)
+        ));
+    }
+}
+
 fn value_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
     let mut current = value;
     for key in path {
@@ -555,7 +612,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
     ]);
     if let Some(gap) = &finding.canonical_gap {
         lines.push(String::new());
-        lines.push("## Canonical Gap".to_string());
+        lines.push("## Gap ID".to_string());
         lines.push(format!("ID: `{}`", gap.id));
     }
     if let Some(mut witness) = DiagnosticWitness::from_finding(finding) {
@@ -585,7 +642,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
             // listing a `none` oracle grade.
             let why = crate::output::related_test_miss::related_test_miss_reason(
                 test,
-                &finding.activation.missing_discriminators,
+                &finding.probe.family,
             );
             // #5927: only an unmatched row uses the `misses/checked` form, as
             // in human output; a matched row keeps its oracle kind and
@@ -594,7 +651,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
             // reason, so hover never grades an oracle that does not exist.
             let label = crate::output::related_test_miss::related_test_miss_label(test);
             let oracle_text = match (&why, &test.oracle) {
-                (Some(why), Some(oracle)) if test.is_unmatched() => format!(
+                (Some(why), Some(oracle)) if test.is_examined_only() => format!(
                     " {label}: {why}; checked `{}`",
                     crate::output::related_test_miss::checked_assertion_text(oracle)
                 ),
@@ -631,7 +688,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         lines.push(String::new());
         lines.push("## Weakness".to_string());
         for item in &finding.missing {
-            lines.push(format!("- {item}"));
+            lines.push(format!("- {}", plain_observation_wording(item)));
         }
     }
 
@@ -656,7 +713,7 @@ fn fix_instruction_label(summary: &crate::domain::FixInstructionSummary) -> Stri
 
 fn push_diagnostic_witness(lines: &mut Vec<String>, witness: &DiagnosticWitness) {
     lines.push(String::new());
-    lines.push("## Discriminator witness".to_string());
+    lines.push("## Missing check details".to_string());
     lines.push(format!("- kind: `{}`", witness.kind));
     lines.push(format!("- probe family: `{}`", witness.probe_family));
     lines.push(format!(
@@ -674,8 +731,9 @@ fn push_diagnostic_witness(lines: &mut Vec<String>, witness: &DiagnosticWitness)
     }
     for missing in &witness.missing_discriminators {
         lines.push(format!(
-            "- missing discriminator: `{}` — {}",
-            missing.value, missing.reason
+            "- missing value or check: `{}` — {}",
+            missing.value,
+            plain_observation_wording(&missing.reason)
         ));
     }
     if let Some(fix_site) = &witness.fix_site {
@@ -757,7 +815,7 @@ fn push_preview_actionability(lines: &mut Vec<String>, finding: &Finding) {
         actionability.actionability_category
     ));
     lines.push(format!(
-        "Repair packet: {}",
+        "Repair instructions for an AI agent: {}",
         if actionability.repair_packet_ready {
             "ready"
         } else {
@@ -796,13 +854,13 @@ fn push_preview_actionability(lines: &mut Vec<String>, finding: &Finding) {
     }
 }
 
-/// Push a `## Repair packet (TypeScript preview, advisory)` hover section for
+/// Push a `## Repair instructions (TypeScript preview, advisory)` hover section for
 /// an actionable TypeScript finding (RIPR-SPEC-0088 §PR8).
 fn push_ts_repair_packet_section(lines: &mut Vec<String>, finding: &Finding) {
     let Some(record) = typescript_gap_record_for(finding) else {
         return;
     };
-    lines.push("## Repair packet (TypeScript preview, advisory)".to_string());
+    lines.push("## Repair instructions (TypeScript preview, advisory)".to_string());
     if let Some(verify) = record.verification_commands.first() {
         lines.push(format!("Verify: `{verify}`"));
     }
@@ -820,7 +878,7 @@ fn push_ts_repair_packet_section(lines: &mut Vec<String>, finding: &Finding) {
     if !record.canonical_gap_id.trim().is_empty() {
         lines.push(format!("Canonical gap: `{}`", record.canonical_gap_id));
     }
-    lines.push("Authority: preview_advisory_only".to_string());
+    lines.push("Authority: preview advisory only".to_string());
     lines.push(String::new());
 }
 
@@ -837,8 +895,15 @@ fn push_missing_actionability_fields(
     ));
 }
 
+/// #9929: the hover is prose for a person, so the producer's machine marker
+/// `observation_unverified` is spelled in words here; the structured stage
+/// summary (JSON, diagnostic `data`) keeps the machine value.
 fn stage_line(name: &str, stage: &StageEvidence) -> String {
-    format!("* {name} {}: {}", stage.state.as_str(), stage.summary)
+    format!(
+        "* {name} {}: {}",
+        stage.state.as_str(),
+        plain_observation_wording(&stage.summary)
+    )
 }
 
 /// The producer's `discriminate` stage grades the strongest related oracle.
@@ -862,13 +927,13 @@ fn discriminator_stage_line(finding: &Finding) -> String {
         format!(
             "* discriminator not established ({}); related oracle: {}",
             finding.class.as_str(),
-            stage.summary
+            plain_observation_wording(&stage.summary)
         )
     } else {
         format!(
             "* discriminator missing: {}; related oracle: {}",
             missing.join(", "),
-            stage.summary
+            plain_observation_wording(&stage.summary)
         )
     }
 }
@@ -911,19 +976,15 @@ fn classified_seam_hover_markdown(
     let evidence = &entry.evidence;
     let next_step = seam_next_step_for(entry);
     let mut lines = vec![
-        format!("**ripr** behavioral seam"),
+        "**ripr** changed behavior".to_string(),
         String::new(),
         format!("`{}`", seam.expression()),
         String::new(),
-        format!("## Grip"),
-        format!("`{}`", entry.class.as_str()),
+        "## How well tests check this".to_string(),
+        super::diagnostics::seam_class_phrase(entry.class).to_string(),
         String::new(),
         "## Why this diagnostic?".to_string(),
-        format!(
-            "Grip class: `{}` — {}",
-            entry.class.as_str(),
-            seam_class_reason(entry)
-        ),
+        seam_class_reason(entry).to_string(),
     ];
     push_classification_explanation(&mut lines, entry, &next_step);
     lines.extend([
@@ -946,9 +1007,13 @@ fn classified_seam_hover_markdown(
 
     if !evidence.missing_discriminators.is_empty() {
         lines.push(String::new());
-        lines.push("## Missing discriminator".to_string());
+        lines.push("## Missing value or check".to_string());
         for missing in &evidence.missing_discriminators {
-            lines.push(format!("- `{}` — {}", missing.value, missing.reason));
+            lines.push(format!(
+                "- `{}` — {}",
+                missing.value,
+                plain_observation_wording(&missing.reason)
+            ));
         }
     }
 
@@ -1022,10 +1087,10 @@ fn push_first_useful_action(lines: &mut Vec<String>, first_action: &FirstUsefulA
     lines.push(format!("- action: `{}`", first_action.action_kind));
     lines.push(format!("- title: {}", first_action.title));
     if let Some(location) = &first_action.selected_location {
-        lines.push(format!("- seam: `{location}`"));
+        lines.push(format!("- location: `{location}`"));
     }
     if let Some(missing) = &first_action.missing_discriminator {
-        lines.push(format!("- missing discriminator: `{missing}`"));
+        lines.push(format!("- missing value or check: `{missing}`"));
     }
     if let Some(target) = &first_action.target {
         lines.push(format!("- target: `{target}`"));
@@ -1276,7 +1341,7 @@ fn normalize_path(path: &Path) -> String {
 }
 
 fn seam_stage_line(name: &str, stage: &StageEvidence) -> String {
-    format!("* {name} {}: {}", stage.state.as_str(), stage.summary)
+    stage_line(name, stage)
 }
 
 fn push_classification_explanation(
@@ -1299,7 +1364,10 @@ fn push_classification_explanation(
     for (name, stage) in stages {
         if stage.state == StageState::Yes {
             has_strong_evidence = true;
-            lines.push(format!("- {name} yes: {}", stage.summary));
+            lines.push(format!(
+                "- {name} yes: {}",
+                plain_observation_wording(&stage.summary)
+            ));
         }
     }
     if !has_strong_evidence {
@@ -1315,15 +1383,16 @@ fn push_classification_explanation(
             lines.push(format!(
                 "- {name} {}: {}",
                 stage.state.as_str(),
-                stage.summary
+                plain_observation_wording(&stage.summary)
             ));
         }
     }
     for missing in &evidence.missing_discriminators {
         has_gap_evidence = true;
         lines.push(format!(
-            "- missing discriminator `{}`: {}",
-            missing.value, missing.reason
+            "- missing value or check `{}`: {}",
+            missing.value,
+            plain_observation_wording(&missing.reason)
         ));
     }
     if !has_gap_evidence {
@@ -1338,22 +1407,30 @@ fn seam_class_reason(entry: &ClassifiedSeam) -> &'static str {
     use crate::analysis::seams::SeamGripClass;
     match entry.class {
         SeamGripClass::StronglyGripped => {
-            "all RIPR stages are yes and no missing discriminator is recorded."
+            "every step from the changed code to a test check is established and no missing value or check is recorded."
         }
         SeamGripClass::WeaklyGripped => {
-            "the current static evidence has a weak discriminator or a named missing discriminator."
+            "the tests found check this loosely, or a specific value or check is missing."
         }
-        SeamGripClass::Ungripped => "reach evidence is missing for this seam.",
+        SeamGripClass::Ungripped => "no test path to this code was detected.",
         SeamGripClass::ReachableUnrevealed => {
-            "reach evidence exists, but discriminator evidence is absent."
+            "tests appear to reach this code, but no check that would notice a change was found."
         }
-        SeamGripClass::ActivationUnknown => "activation evidence is unknown.",
-        SeamGripClass::PropagationUnknown => "propagation evidence is unknown.",
-        SeamGripClass::ObservationUnknown => "observation evidence is unknown.",
-        SeamGripClass::DiscriminationUnknown => "discriminator evidence is unknown.",
-        SeamGripClass::Opaque => "static evidence hit an opacity limit.",
-        SeamGripClass::Intentional => "declared test intent marks this seam as intentional.",
-        SeamGripClass::Suppressed => "a suppression marks this seam as intentionally hidden.",
+        SeamGripClass::ActivationUnknown => {
+            "ripr cannot tell whether a test runs this with a changed value."
+        }
+        SeamGripClass::PropagationUnknown => {
+            "ripr cannot tell whether a change here reaches anything a test checks."
+        }
+        SeamGripClass::ObservationUnknown => {
+            "ripr cannot tell whether a test observes the changed result."
+        }
+        SeamGripClass::DiscriminationUnknown => {
+            "ripr cannot tell whether the test's check would notice the change."
+        }
+        SeamGripClass::Opaque => "ripr's static reading hit a limit it could not see past.",
+        SeamGripClass::Intentional => "declared test intent marks this as intentionally light.",
+        SeamGripClass::Suppressed => "a suppression marks this as intentionally hidden.",
     }
 }
 
@@ -1450,13 +1527,15 @@ mod seam_hover_tests {
             propagate: stage(StageState::Yes, "Seam flows to return_value"),
             observe: stage(StageState::Yes, "Exact value assertion exists"),
             discriminate: stage(StageState::Weak, "Equality boundary missing"),
-            observed_values: vec![ValueFact {
-                file: None,
-                line: 12,
-                text: "discounted_total(50, 100)".to_string(),
-                value: "50".to_string(),
-                context: ValueContext::FunctionArgument,
-            }],
+            observed_values: vec![
+                ValueFact {
+                    line: 12,
+                    text: "discounted_total(50, 100)".to_string(),
+                    value: "50".to_string(),
+                    context: ValueContext::FunctionArgument,
+                }
+                .into(),
+            ],
             missing_discriminators: vec![MissingDiscriminatorFact {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values do not include the equality-boundary case".to_string(),
@@ -1490,7 +1569,7 @@ mod seam_hover_tests {
             )),
             code_description: None,
             source: Some("ripr".to_string()),
-            message: "Weakly gripped behavioral seam".to_string(),
+            message: "Tests only loosely check this".to_string(),
             related_information: None,
             tags: None,
             data: Some(serde_json::json!({"seam_id": "f3c9e4d21a0b7c88"})),
@@ -1583,6 +1662,7 @@ mod seam_hover_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         }
     }
 
@@ -1592,7 +1672,7 @@ mod seam_hover_tests {
         let hover = diagnostic_hover_response(&sample_gap_diagnostic());
         let md = extract_markup(&hover)?;
         for needle in [
-            "**ripr** gap decision",
+            "**ripr** test gap",
             "## Evidence boundary",
             "- Language: `python`",
             "- Status: `preview`",
@@ -1600,14 +1680,14 @@ mod seam_hover_tests {
             "Static limit: missing_import_graph",
             "Static limit detail: Imported owner targets were not resolved in preview mode.",
             "Action: advisory only",
-            "## Gap state",
-            "- canonical gap: `gap:py:pricing:threshold`",
+            "## Gap",
+            "- gap ID (for scripts): `gap:py:pricing:threshold`",
             "- state: `actionable`",
             "- authority: `advisory`",
             "## Why this matters",
-            "validated gap-decision ledger record",
+            "validated ripr gap record",
             "## Repair route",
-            "- route: `AddBoundaryAssertion`",
+            "- route: `Add boundary assertion`",
             "- changed behavior: `amount >= threshold`",
             "- target: `tests/test_pricing.py:33`",
             "- related test: `tests/test_pricing.py::test_discount_boundary`",
@@ -1647,7 +1727,7 @@ mod seam_hover_tests {
     fn generic_diagnostic_hover_still_renders_non_gap_diagnostic_data() -> Result<(), String> {
         let hover = diagnostic_hover_response(&sample_diagnostic());
         let md = extract_markup(&hover)?;
-        if md.contains("## Repair route") || md.contains("gap decision") {
+        if md.contains("## Repair route") || md.contains("test gap") {
             return Err(format!(
                 "non-gap diagnostic should not render gap hover:\n{md}"
             ));
@@ -1847,6 +1927,97 @@ mod seam_hover_tests {
         }
     }
 
+    // #9929: the seam hover's Strong/Weak evidence lists, evidence stage lines
+    // and missing-discriminator reasons spell the producer marker in words;
+    // embedded source text with the token is left alone.
+    #[test]
+    fn reachable_unrevealed_hover_states_reach_conservatively() -> Result<(), String> {
+        let mut seam = weakly_gripped_classified();
+        seam.class = SeamGripClass::ReachableUnrevealed;
+        let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);
+        let md = extract_markup(&hover)?;
+        for needle in [
+            "Tests appear to reach this code, but nothing found would notice a change",
+            "tests appear to reach this code, but no check that would notice a change was found.",
+        ] {
+            if !md.contains(needle) {
+                return Err(format!("missing {needle:?} in:\n{md}"));
+            }
+        }
+        if md.contains("Tests run this code") || md.contains("tests reach this code") {
+            return Err(format!("hover states reach as fact:\n{md}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn seam_hover_labels_an_error_variant_as_a_value_or_check_not_an_input() -> Result<(), String> {
+        let mut seam = weakly_gripped_classified();
+        seam.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "PricingError::Boundary".to_string(),
+            reason: "no test asserts this error variant".to_string(),
+            flow_sink: None,
+        }];
+        let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);
+        let md = extract_markup(&hover)?;
+        for needle in [
+            "## Missing value or check",
+            "- `PricingError::Boundary` \u{2014} no test asserts this error variant",
+            "- missing value or check `PricingError::Boundary`:",
+        ] {
+            if !md.contains(needle) {
+                return Err(format!("missing {needle:?} in:\n{md}"));
+            }
+        }
+        if md.contains("test input") {
+            return Err(format!("an error variant is not a test input:\n{md}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn seam_hover_spells_the_unconfirmed_observation_in_words() -> Result<(), String> {
+        let mut seam = weakly_gripped_classified();
+        seam.evidence.observe = stage(
+            StageState::Yes,
+            "assertion reads the value (observation_unverified)",
+        );
+        seam.evidence.discriminate = stage(
+            StageState::Weak,
+            "changed value never named (observation_unverified)",
+        );
+        seam.evidence.missing_discriminators = vec![
+            MissingDiscriminatorFact {
+                value: "a".to_string(),
+                reason: "input unexecuted (observation_unverified)".to_string(),
+                flow_sink: None,
+            },
+            MissingDiscriminatorFact {
+                value: "b".to_string(),
+                reason: "missing proof: `raise ValueError(\"observation_unverified\")`."
+                    .to_string(),
+                flow_sink: None,
+            },
+        ];
+        let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);
+        let md = extract_markup(&hover)?;
+        if md.contains("(observation_unverified)") {
+            return Err(format!("seam hover kept the producer marker:\n{md}"));
+        }
+        for needle in [
+            "- observation yes: assertion reads the value\n",
+            "- discrimination weak: changed value never named\n",
+            "* observation yes: assertion reads the value\n",
+            "- missing value or check `a`: input unexecuted\n",
+            "`raise ValueError(\"observation_unverified\")`.",
+        ] {
+            if !md.contains(needle) {
+                return Err(format!("missing {needle:?} in:\n{md}"));
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn given_seam_diagnostic_when_hover_is_requested_then_hover_renders_grip_evidence_path()
     -> Result<(), String> {
@@ -1855,12 +2026,12 @@ mod seam_hover_tests {
         let hover = classified_seam_hover_response(&seam, &diagnostic, None);
         let md = extract_markup(&hover)?;
         for needle in [
-            "behavioral seam",
+            "changed behavior",
             "amount >= discount_threshold",
-            "## Grip",
-            "weakly_gripped",
+            "## How well tests check this",
+            "Tests only loosely check this",
             "## Why this diagnostic?",
-            "Grip class: `weakly_gripped`",
+            "the tests found check this loosely, or a specific value or check is missing.",
             "Strong evidence:",
             "Weak / missing evidence:",
             "Recommended next move:",
@@ -1875,6 +2046,23 @@ mod seam_hover_tests {
                 return Err(format!("missing {needle:?} in:\n{md}"));
             }
         }
+        // #10695: static evidence is not stated as a test outcome.
+        if md.contains("would not notice") {
+            return Err(format!("hover predicts a test outcome:\n{md}"));
+        }
+        // #10695: no internal jargon or machine class names in hover prose.
+        for banned in [
+            "Grip",
+            "grip class",
+            "behavioral seam",
+            "weakly_gripped",
+            "Missing discriminator",
+            "missing discriminator",
+        ] {
+            if md.contains(banned) {
+                return Err(format!("hover prose leaks {banned:?}:\n{md}"));
+            }
+        }
         Ok(())
     }
 
@@ -1885,13 +2073,13 @@ mod seam_hover_tests {
         let diagnostic = sample_diagnostic();
         let hover = classified_seam_hover_response(&seam, &diagnostic, None);
         let md = extract_markup(&hover)?;
-        if !md.contains("## Missing discriminator") {
+        if !md.contains("## Missing value or check") {
             return Err(format!("missing section header in:\n{md}"));
         }
         if !md.contains("discount_threshold (equality boundary)") {
             return Err(format!("missing boundary value in:\n{md}"));
         }
-        if !md.contains("missing discriminator `discount_threshold (equality boundary)`") {
+        if !md.contains("missing value or check `discount_threshold (equality boundary)`") {
             return Err(format!("missing classification explanation in:\n{md}"));
         }
         if !md.contains("## Next step") {
@@ -2025,8 +2213,8 @@ mod seam_hover_tests {
             "- status: `actionable`",
             "- action: `write_focused_test`",
             "- title: Add equality-boundary discriminator test",
-            "- seam: `src/pricing.rs:88`",
-            "- missing discriminator: `discount_threshold (equality boundary)`",
+            "- location: `src/pricing.rs:88`",
+            "- missing value or check: `discount_threshold (equality boundary)`",
             "- target: `tests/pricing.rs`",
             "- related test: `tests/pricing.rs::below_threshold_has_no_discount`",
             "- verify: `ripr agent verify --root . --json`",

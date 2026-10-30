@@ -3445,6 +3445,168 @@ mod tests {
         Ok(())
     }
 
+    fn python_ledger_panel(records: Vec<Value>, with_path: bool) -> PrReviewFrontPanelReport {
+        let mut input = blank_panel_input();
+        if with_path {
+            input.ledger_path = Some("target/ripr/reports/gap-ledger.json".to_string());
+        }
+        input.ledger_json = Some(Ok(serde_json::json!({ "records": records }).to_string()));
+        build_pr_review_front_panel_report(input)
+    }
+
+    fn python_record(state: &str, repairability: &str) -> Value {
+        serde_json::json!({
+            "language": "python",
+            "language_status": "preview",
+            "gap_state": state,
+            "repairability": repairability,
+            "gap_id": "gap-1",
+            "anchor": { "file": "pkg/mod.py", "line": 7 }
+        })
+    }
+
+    #[test]
+    fn python_no_action_states_render_their_own_vocabulary_without_a_repair_route()
+    -> Result<(), String> {
+        let cases = [
+            (
+                "already_observed",
+                "Python evidence is already observed; no repair packet emitted.",
+                "Current Python test evidence already observes the changed behavior.",
+            ),
+            (
+                "no_related_test",
+                "Python evidence has no safe related-test route.",
+                "No related static Python test path was found for the changed owner.",
+            ),
+            (
+                "heuristic_only",
+                "Python evidence is heuristic-only; no repair packet emitted.",
+                "Only heuristic Python related-test proximity was found.",
+            ),
+            (
+                "static_limitation",
+                "Python repair routing stopped at a static limitation.",
+                "Python preview hit static limitation `unknown`.",
+            ),
+        ];
+        for (state, headline, evidence) in cases {
+            let report = python_ledger_panel(vec![python_record(state, "no_action")], true);
+            assert_eq!(report.summary.top_issue_state, state);
+            assert_eq!(report.summary.headline, headline);
+            assert_eq!(report.summary.placement, "not_available");
+            let issue = report
+                .top_issue
+                .as_ref()
+                .ok_or_else(|| format!("{state}: top issue missing"))?;
+            assert_eq!(issue.source, "gap_decision_ledger");
+            assert_eq!(issue.classification.as_deref(), Some(state));
+            assert_eq!(issue.current_evidence_strength.as_deref(), Some(evidence));
+            assert_eq!(issue.path.as_deref(), Some("pkg/mod.py"));
+            assert_eq!(issue.line, Some(7));
+            assert_eq!(issue.repair_command, None);
+            assert_eq!(issue.agent_command, None);
+            assert_eq!(issue.receipt.status, RECEIPT_NOT_APPLICABLE);
+            let json = render_pr_review_front_panel_json(&report)?;
+            let markdown = render_pr_review_front_panel_markdown(&report);
+            assert_no_repair_loop_command(&json, &markdown);
+            assert!(
+                markdown.contains("- Why not actionable: "),
+                "{state}: {markdown}"
+            );
+            assert!(
+                report
+                    .artifacts
+                    .iter()
+                    .any(|artifact| artifact.label == "Gap decision ledger"),
+                "{state}: ledger artifact must be listed"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_static_limitation_reason_names_the_limit_and_defaults_the_detail()
+    -> Result<(), String> {
+        let mut record = python_record("static_limitation", "analyzer_limitation");
+        record["static_limit_kind"] = serde_json::json!("dynamic_dispatch");
+        let report = python_ledger_panel(vec![record.clone()], true);
+        let issue = report
+            .top_issue
+            .as_ref()
+            .ok_or_else(|| "top issue missing".to_string())?;
+        assert_eq!(
+            issue.current_evidence_strength.as_deref(),
+            Some("Python preview hit static limitation `dynamic_dispatch`.")
+        );
+        assert_eq!(
+            issue.no_action_reason.as_deref(),
+            Some(
+                "static limit `dynamic_dispatch` prevents a safe repair packet: \
+                 syntax-first Python preview evidence cannot route this shape safely"
+            )
+        );
+
+        record["static_limit_detail"] = serde_json::json!("decorator rewrites the callee");
+        let report = python_ledger_panel(vec![record], true);
+        let issue = report
+            .top_issue
+            .as_ref()
+            .ok_or_else(|| "top issue missing".to_string())?;
+        assert_eq!(
+            issue.no_action_reason.as_deref(),
+            Some(
+                "static limit `dynamic_dispatch` prevents a safe repair packet: \
+                 decorator rewrites the callee"
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn python_no_action_ledger_fails_closed_on_ineligible_records() {
+        let mut stable = python_record("heuristic_only", "no_action");
+        stable["language_status"] = serde_json::json!("stable");
+        let mut rust = python_record("heuristic_only", "no_action");
+        rust["language"] = serde_json::json!("rust");
+        let repairable = python_record("heuristic_only", "repairable");
+        let unknown_state = python_record("brand_new_state", "no_action");
+        let mut no_state = python_record("heuristic_only", "no_action");
+        if let Some(object) = no_state.as_object_mut() {
+            object.remove("gap_state");
+        }
+        for record in [stable, rust, repairable, unknown_state, no_state] {
+            let report = python_ledger_panel(vec![record.clone()], true);
+            assert!(report.top_issue.is_none(), "must not promote: {record}");
+            assert_eq!(report.summary.top_issue_state, "no_actionable_seam");
+            assert_eq!(
+                report.summary.headline,
+                "No actionable PR-local RIPR guidance."
+            );
+        }
+    }
+
+    #[test]
+    fn python_no_action_ledger_requires_its_path_and_skips_to_first_eligible_record() {
+        // Loaded ledger text without a ledger path cannot name a source artifact.
+        let report =
+            python_ledger_panel(vec![python_record("no_related_test", "no_action")], false);
+        assert!(report.top_issue.is_none());
+        assert_eq!(report.summary.top_issue_state, "no_actionable_seam");
+
+        // An ineligible leading record is skipped; the first eligible one wins.
+        let mut skipped = python_record("heuristic_only", "repairable");
+        skipped["gap_id"] = serde_json::json!("skipped");
+        let mut wanted = python_record("no_related_test", "analyzer_limitation");
+        wanted["gap_id"] = serde_json::json!("wanted");
+        let mut later = python_record("already_observed", "no_action");
+        later["gap_id"] = serde_json::json!("later");
+        let report = python_ledger_panel(vec![skipped, wanted, later], true);
+        let seam = report.top_issue.as_ref().and_then(|i| i.seam_id.as_deref());
+        assert_eq!(seam, Some("wanted"));
+        assert_eq!(report.summary.top_issue_state, "no_related_test");
+    }
+
     fn path_from_inputs(inputs: &Value, key: &str) -> Option<String> {
         inputs.get(key).and_then(value_as_string)
     }

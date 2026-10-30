@@ -16,6 +16,7 @@ use crate::agent::command_specs::{command_display_is_nonblank, command_displays_
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisCancellationToken;
 use crate::analysis::inventory_classified_seams_at_with_config;
+use crate::analysis::language_outcome::LanguageCompletenessView;
 use crate::analysis::seams::SeamGripClass;
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
@@ -221,7 +222,7 @@ pub(super) fn add_canonical_group_data(
                         "miss": test.miss.map(|miss| miss.as_str()),
                         "why": crate::output::related_test_miss::related_test_miss_reason(
                             test,
-                            &finding.activation.missing_discriminators,
+                            &finding.probe.family,
                         ),
                     }))
                     .collect::<Vec<_>>(),
@@ -666,7 +667,41 @@ pub(super) fn delivered_diagnostics_for_uri(
     {
         diagnostics.push(delivery_omission_diagnostic(omission));
     }
+    push_unlisted_language_not_analyzed(snapshot, uri, &mut diagnostics);
     diagnostics
+}
+
+/// The producer names at most three changed files per disabled language, so
+/// the stored batches mark only those. A document it did not name but whose
+/// language the run reports as not analyzed with an incomplete listing
+/// (`incomplete_languages`) still must not read as clean (#10715): mark it at
+/// serve time, once, like the budget omission above.
+fn push_unlisted_language_not_analyzed(
+    snapshot: &AnalysisSnapshot,
+    uri: &Uri,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let marked = diagnostics.iter().any(|diagnostic| {
+        diagnostic.code
+            == Some(NumberOrString::String(
+                super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+            ))
+    });
+    if marked {
+        return;
+    }
+    let Some(relative) = super::uri::file_uri_relative_to_root(&snapshot.root, uri) else {
+        return;
+    };
+    if let Some(language) = snapshot
+        .unavailable_adapter
+        .not_enabled_language(&relative, snapshot.language_view.as_ref())
+    {
+        diagnostics.push(language_not_analyzed_diagnostic(
+            language,
+            &relative.to_string_lossy().replace('\\', "/"),
+        ));
+    }
 }
 
 /// One visible summary of the same budget omission the selection and log
@@ -1202,7 +1237,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // client has persisted, through the same canonical path as
     // `ripr check --worktree`. Document quarantine remains the independent
     // authority that prevents unsaved buffers from being served as current.
-    let (output, origins, consumed_sources) =
+    let (output, origins, consumed_sources, language_view) =
         match check_workspace_worktree_with_sources_open_rust_paths_and_progress(
             input,
             config.repo_config(),
@@ -1470,6 +1505,19 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         );
     }
 
+    // A changed file of a language whose adapter is not enabled was never
+    // analyzed; say so on the file itself rather than leaving an empty list
+    // that reads as clean (#10715).
+    let unavailable_adapter = super::state::UnavailableAdapterCoverage::from_preview_advisories(
+        &output.preview_language_advisories,
+    );
+    append_unavailable_language_diagnostics(
+        &root,
+        &unavailable_adapter,
+        language_view.as_ref(),
+        &mut grouped,
+    );
+
     let batches = canonicalize_diagnostic_batches(
         grouped
             .into_iter()
@@ -1502,11 +1550,66 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         partial_scope,
         component_outcomes,
         out_of_scope_test_file_findings,
-        unavailable_adapter: super::state::UnavailableAdapterCoverage::from_preview_advisories(
-            &output.preview_language_advisories,
-        ),
+        unavailable_adapter,
+        language_view,
     };
     Ok(WorkspaceDiagnostics { snapshot, batches })
+}
+
+/// One Information diagnostic on each changed file whose language adapter is
+/// not enabled (#10715). The file was not analyzed, so the editor must not
+/// end on an empty list that reads as a clean file; the message says so and
+/// names the recovery. The typed reason stays in `data`, matching the
+/// `language_adapter_unavailable` limitation `check` and MCP report.
+fn append_unavailable_language_diagnostics(
+    root: &Path,
+    coverage: &super::state::UnavailableAdapterCoverage,
+    view: Option<&LanguageCompletenessView>,
+    grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
+) {
+    for path in &coverage.named_paths {
+        let Some(language) = coverage.not_enabled_language(Path::new(path), view) else {
+            continue;
+        };
+        let Ok(uri) = file_uri_for_path(&root.join(path)) else {
+            continue;
+        };
+        grouped
+            .entry(uri)
+            .or_default()
+            .push(language_not_analyzed_diagnostic(language, path));
+    }
+}
+
+/// The marker for one changed file of a language whose adapter is not enabled.
+pub(super) fn language_not_analyzed_diagnostic(language: LanguageId, path: &str) -> Diagnostic {
+    let recovery = super::backend::language_adapter_not_enabled_recovery(language);
+    let name = language.as_str();
+    Diagnostic {
+        range: Range::default(),
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!(
+            "ripr did not analyze this file: the {name} adapter is not enabled, so having no \
+             findings here does not mean it is clean. Fix: {recovery}."
+        ),
+        data: Some(serde_json::json!({
+            // Producer delivery stamp (#4325 model): the governed code is an
+            // identity, not an eligibility authority, so without this the
+            // delivery budget profile-filters the marker out of push and pull.
+            "delivery_eligible": true,
+            "kind": "language_not_analyzed",
+            "limitation": "language_adapter_unavailable",
+            "not_analyzed_reason": "language_adapter_not_enabled",
+            "language": name,
+            "recovery": recovery,
+            "path": path,
+        })),
+        ..Default::default()
+    }
 }
 
 /// Decide whether the validated gap ledger is safe to project into the editor.
@@ -1707,6 +1810,7 @@ fn git_timeout_limited_diagnostics(
         component_outcomes,
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -1812,6 +1916,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         component_outcomes,
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
     WorkspaceDiagnostics { snapshot, batches }
 }
@@ -2779,29 +2884,77 @@ fn gap_record_diagnostic_severity(record: &GapRecord) -> DiagnosticSeverity {
 }
 
 fn gap_record_diagnostic_message(record: &GapRecord) -> String {
-    let kind = non_empty(&record.kind).unwrap_or("Unknown");
-    let route = record
-        .repair_route
-        .as_ref()
-        .and_then(|route| non_empty(&route.route_kind))
-        .unwrap_or("InspectGap");
-    let mut message = if route == "InspectGap" {
-        format!("ripr gap: {kind}; Hover the highlighted code to inspect the static evidence.")
-    } else {
-        format!("ripr gap: {kind}; repair route: {route}")
+    // The Problems panel reads plain words: the CamelCase gap kind is spoken
+    // as a phrase, and the repair route stays machine-side in the diagnostic
+    // `data` payload (#10695).
+    let kind = camel_case_words(non_empty(&record.kind).unwrap_or("Unknown"));
+    let route = record.repair_route.as_ref();
+    let changed = route
+        .and_then(|route| route.changed_behavior.as_deref())
+        .and_then(non_empty);
+    let assertion = route
+        .and_then(|route| route.assertion_shape.as_deref())
+        .and_then(non_empty);
+    let mut message = match changed {
+        Some(changed) => format!("{kind}: {changed}."),
+        None => format!("{kind}."),
     };
-    if let Some(route) = &record.repair_route {
-        if let Some(changed) = route.changed_behavior.as_deref().and_then(non_empty) {
-            message.push_str(&format!("; changed behavior: {changed}"));
-        }
-        if let Some(assertion) = route.assertion_shape.as_deref().and_then(non_empty) {
-            message.push_str(&format!("; suggested check: {assertion}"));
-        }
+    if let Some(assertion) = assertion {
+        message.push_str(&format!(" Suggested check: {assertion}."));
+    }
+    if changed.is_none() && assertion.is_none() {
+        message.push_str(" Hover for details.");
     }
     if record.language_status == "preview" {
-        message.push_str("; preview advisory evidence");
+        message.push_str(" (Preview language: advisory.)");
     }
     message
+}
+
+/// `MissingBoundaryAssertion` -> `Missing boundary assertion`: split a
+/// CamelCase identifier into a sentence-case phrase. An acronym run stays
+/// together (`HTTPError` -> `HTTP error`), `_` reads as a space, and digits
+/// stay attached to their word. Anything that is not a plain identifier (a
+/// path, `Type::Variant`, free text) comes back unchanged so it is never
+/// mangled.
+pub(super) fn camel_case_words(identifier: &str) -> String {
+    if identifier.is_empty()
+        || !identifier
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || ch == '_')
+    {
+        return identifier.to_string();
+    }
+    let chars = identifier.chars().collect::<Vec<_>>();
+    let mut words = String::with_capacity(identifier.len() + 4);
+    for (index, &ch) in chars.iter().enumerate() {
+        if ch == '_' {
+            if !words.ends_with(' ') && !words.is_empty() {
+                words.push(' ');
+            }
+            continue;
+        }
+        let prev = index.checked_sub(1).map(|at| chars[at]);
+        let next = chars.get(index + 1).copied();
+        let starts_word = ch.is_uppercase()
+            && prev.is_some_and(|prev| {
+                prev != '_'
+                    && (prev.is_lowercase()
+                        || prev.is_ascii_digit()
+                        || (prev.is_uppercase() && next.is_some_and(char::is_lowercase)))
+            });
+        if starts_word && !words.ends_with(' ') {
+            words.push(' ');
+        }
+        if words.is_empty() {
+            words.extend(ch.to_uppercase());
+        } else if starts_word && !next.is_some_and(char::is_uppercase) {
+            words.extend(ch.to_lowercase());
+        } else {
+            words.push(ch);
+        }
+    }
+    words
 }
 
 /// FIX (round-2 review): a serialization failure must not collapse into an
@@ -3044,26 +3197,44 @@ fn diagnostic_for_classified_seam_with_causal(
     })
 }
 
+/// Plain-English phrase for a seam's grip class, shared by the Problems-panel
+/// message and the hover. The class token itself stays in the diagnostic code
+/// and `data`.
+pub(super) fn seam_class_phrase(class: SeamGripClass) -> &'static str {
+    match class {
+        SeamGripClass::Opaque => "ripr cannot fully determine how tests exercise this",
+        SeamGripClass::Ungripped => "No test path detected for this",
+        SeamGripClass::WeaklyGripped => "Tests only loosely check this",
+        SeamGripClass::ReachableUnrevealed => {
+            "Tests appear to reach this code, but nothing found would notice a change"
+        }
+        SeamGripClass::ActivationUnknown => {
+            "ripr cannot tell whether a test runs this with a changed value"
+        }
+        SeamGripClass::PropagationUnknown => {
+            "ripr cannot tell whether a change here reaches anything a test checks"
+        }
+        SeamGripClass::ObservationUnknown => {
+            "ripr cannot tell whether a test observes the changed result"
+        }
+        SeamGripClass::DiscriminationUnknown => {
+            "ripr cannot tell whether the test's check notices the change"
+        }
+        // Filtered earlier; included for exhaustiveness.
+        SeamGripClass::StronglyGripped => "Tests check this well",
+        SeamGripClass::Intentional => "Intentionally lightly tested",
+        SeamGripClass::Suppressed => "Suppressed",
+    }
+}
+
 fn lsp_seam_message(entry: &ClassifiedSeam) -> String {
     let seam = &entry.seam;
-    let head = match entry.class {
-        SeamGripClass::Opaque => "Opaque static evidence",
-        SeamGripClass::Ungripped => "No detected test grip",
-        SeamGripClass::WeaklyGripped => "Weakly gripped behavioral seam",
-        SeamGripClass::ReachableUnrevealed => "Test reaches seam but does not reveal it",
-        SeamGripClass::ActivationUnknown => "Activation evidence is unclear",
-        SeamGripClass::PropagationUnknown => "Propagation to sink is unclear",
-        SeamGripClass::ObservationUnknown => "Sink observation is unclear",
-        SeamGripClass::DiscriminationUnknown => "Oracle specificity is unclear",
-        // Filtered earlier; included for exhaustiveness.
-        SeamGripClass::StronglyGripped => "Strongly gripped",
-        SeamGripClass::Intentional => "Intentional low-grip",
-        SeamGripClass::Suppressed => "Suppressed",
-    };
+    // Plain English for the Problems panel (#10695): no "grip", "seam" or
+    // internal kind. The seam kind and grip class stay machine-side in the
+    // diagnostic code and `data`.
+    let head = seam_class_phrase(entry.class);
     format!(
-        "{} ({}): {}",
-        head,
-        seam.kind().as_str(),
+        "{head}: {}",
         seam.expression()
             .lines()
             .next()
@@ -3138,7 +3309,7 @@ fn diagnostic_for_finding_with_causal(
         "probe_id": finding.probe.id.to_string(),
         "classification": finding.class.as_str(),
         "probe_family": finding.probe.family.as_str(),
-        "confidence": finding.confidence,
+        "confidence": crate::domain::contract_confidence(finding.confidence),
         "source_range": {
             "file": file,
             "line": finding.probe.location.line,
@@ -3189,6 +3360,12 @@ fn diagnostic_for_finding_with_causal(
                 "explain_command".to_string(),
                 serde_json::Value::String(witness.explain_command.clone()),
             );
+            let mut value = value;
+            if let Some(confidence) = witness.confidence.value
+                && let Some(slot) = value.pointer_mut("/confidence/value")
+            {
+                *slot = serde_json::json!(crate::domain::contract_confidence(confidence));
+            }
             obj.insert("witness".to_string(), value);
             let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
             if let Ok(summary_value) = serde_json::to_value(&summary) {
@@ -3370,7 +3547,7 @@ fn examined_test_related_information(
         .filter_map(|test| {
             let why = crate::output::related_test_miss::related_test_miss_reason(
                 test,
-                &finding.activation.missing_discriminators,
+                &finding.probe.family,
             )?;
             related_information_row(
                 root,
@@ -3982,10 +4159,14 @@ mod seam_diagnostic_tests {
             Some(NumberOrString::String(code)) if code == "ripr-gap-MissingBoundaryAssertion" => {}
             other => return Err(format!("unexpected diagnostic code: {other:?}")),
         }
+        // #10695: plain words in the Problems panel; the CamelCase kind and
+        // route stay in the code and `data` payload asserted below.
         if !diagnostic
             .message
-            .contains("repair route: AddBoundaryAssertion")
-            || !diagnostic.message.contains("amount >= threshold")
+            .starts_with("Missing boundary assertion: amount >= threshold.")
+            || !diagnostic.message.contains("Suggested check:")
+            || diagnostic.message.contains("AddBoundaryAssertion")
+            || diagnostic.message.contains("MissingBoundaryAssertion")
             || diagnostic.message.contains("confidence")
         {
             return Err(format!(
@@ -4291,10 +4472,10 @@ mod seam_diagnostic_tests {
                 diagnostic.severity
             ));
         }
-        if !diagnostic.message.contains("Hover the highlighted code")
+        if !diagnostic.message.contains("Hover for details.")
             || diagnostic.message.contains("code action")
-            || diagnostic.message.contains("repair route: InspectGap")
-            || !diagnostic.message.contains("preview advisory evidence")
+            || diagnostic.message.contains("InspectGap")
+            || !diagnostic.message.contains("(Preview language: advisory.)")
         {
             return Err(format!(
                 "unexpected preview gap diagnostic message: {}",
@@ -4692,15 +4873,59 @@ mod seam_diagnostic_tests {
     }
 
     #[test]
-    fn diagnostic_message_names_seam_kind_and_expression() -> Result<(), String> {
+    fn diagnostic_message_is_plain_words_for_every_class() -> Result<(), String> {
+        // #10695: every class reads as plain words, with conservative static
+        // wording (an absent detected path is not "no test checks this").
+        let expected = [
+            (
+                SeamGripClass::Opaque,
+                "ripr cannot fully determine how tests exercise this",
+            ),
+            (SeamGripClass::Ungripped, "No test path detected for this"),
+            (
+                SeamGripClass::WeaklyGripped,
+                "Tests only loosely check this",
+            ),
+            (
+                SeamGripClass::ReachableUnrevealed,
+                "Tests appear to reach this code, but nothing found would notice a change",
+            ),
+            (
+                SeamGripClass::ActivationUnknown,
+                "ripr cannot tell whether a test runs this with a changed value",
+            ),
+            (
+                SeamGripClass::PropagationUnknown,
+                "ripr cannot tell whether a change here reaches anything a test checks",
+            ),
+            (
+                SeamGripClass::ObservationUnknown,
+                "ripr cannot tell whether a test observes the changed result",
+            ),
+            (
+                SeamGripClass::DiscriminationUnknown,
+                "ripr cannot tell whether the test's check notices the change",
+            ),
+        ];
+        for (class, phrase) in expected {
+            let message = lsp_seam_message(&classified(class));
+            if message != format!("{phrase}: amount >= discount_threshold") {
+                return Err(format!("unexpected message for {class:?}: {message}"));
+            }
+            let lowered = message.to_lowercase();
+            if lowered.contains("predicate_boundary")
+                || lowered.contains("grip")
+                || lowered.contains("seam")
+            {
+                return Err(format!("jargon in seam message: {message}"));
+            }
+        }
         let entry = classified(SeamGripClass::WeaklyGripped);
         let diag = diagnostic_for_classified_seam(Path::new("/repo"), &entry)
             .ok_or_else(|| "expected diagnostic".to_string())?;
-        if !diag.message.contains("predicate_boundary") {
-            return Err(format!("message missing kind: {}", diag.message));
-        }
-        if !diag.message.contains("amount >= discount_threshold") {
-            return Err(format!("message missing expression: {}", diag.message));
+        let data = diag.data.as_ref().ok_or("missing diagnostic data")?;
+        if data["seam_kind"] != "predicate_boundary" {
+            return Err(format!("seam kind left the data payload: {data}"));
         }
         Ok(())
     }
@@ -5217,6 +5442,8 @@ mod seam_diagnostic_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
 
         let path = absolute_related_test_path(Path::new("/repo"), &test);
@@ -5235,6 +5462,8 @@ mod seam_diagnostic_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
 
         let path = absolute_related_test_path(Path::new("/repo"), &test);
@@ -5316,6 +5545,8 @@ mod diagnostic_policy_tests {
 
     fn policy_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:pricing:42:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -5571,6 +5802,8 @@ mod diagnostic_policy_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let message = lsp_message(&finding);
@@ -5602,6 +5835,8 @@ mod diagnostic_policy_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let grouped = finding_diagnostics_by_uri_with_profile(
@@ -5631,6 +5866,117 @@ mod diagnostic_policy_tests {
         Ok(())
     }
 
+    /// #10714: the actionable profile predicate is one language-neutral rule. A weak
+    /// finding is published only when the shared witness names a missing
+    /// discriminator and a fix-site test; without a related test it is
+    /// route-less and hidden. Rust and Python must get the same disposition
+    /// in both shapes, so no language looks more "alive" in the editor.
+    #[test]
+    fn actionable_profile_predicate_is_language_neutral_for_gap_classes() -> Result<(), String> {
+        let weak_test = || RelatedTest {
+            name: "checks_boundary".to_string(),
+            file: std::path::PathBuf::from("tests/pricing"),
+            line: 12,
+            oracle: Some("assert discount(2, 10) is not None".to_string()),
+            oracle_kind: OracleKind::SmokeOnly,
+            oracle_strength: OracleStrength::Smoke,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        };
+        // The three gap classes `hidden_gaps` covers: a class-specific
+        // language branch would diverge in exactly one of them.
+        for class in [
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+            ExposureClass::NoStaticPath,
+        ] {
+            let mut dispositions = Vec::new();
+            for language in [LanguageId::Rust, LanguageId::Python] {
+                for with_fix_site in [false, true] {
+                    let mut finding = policy_finding();
+                    finding.class = class.clone();
+                    finding.language = Some(language);
+                    finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+                        value: "amount == threshold".to_string(),
+                        reason: "exact boundary is not observed".to_string(),
+                        flow_sink: None,
+                    }];
+                    if with_fix_site {
+                        finding.related_tests.push(weak_test());
+                    }
+                    let visible =
+                        finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, &finding);
+                    if visible != with_fix_site {
+                        return Err(format!(
+                            "{class:?}/{language:?} (fix site: {with_fix_site}) disposition was visible={visible}"
+                        ));
+                    }
+                    if !finding_is_visible_in_profile(LspDiagnosticProfile::Full, &finding) {
+                        return Err(format!(
+                            "full profile dropped a {class:?}/{language:?} finding"
+                        ));
+                    }
+                    dispositions.push((with_fix_site, visible));
+                }
+            }
+            if dispositions[..2] != dispositions[2..] {
+                return Err(format!("{class:?}: languages diverged: {dispositions:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// #10714: the predicate is neutral but its fix-site input is not. A
+    /// Python finding that declares a suggested test (`suggested_test_file:`
+    /// evidence) resolves its fix site only through that declaration, with no
+    /// fallback to the best related test (`python_suggested_related_test`);
+    /// an unmatched declaration therefore leaves the finding route-less and
+    /// hidden, while the same Rust shape falls back to the related test and
+    /// is published. This pins current behavior, not a ruling that it is
+    /// right.
+    #[test]
+    fn unmatched_suggested_test_declaration_hides_python_but_not_rust() {
+        let visible = |language| {
+            let mut finding = policy_finding();
+            finding.class = ExposureClass::WeaklyExposed;
+            finding.language = Some(language);
+            finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+                value: "amount == threshold".to_string(),
+                reason: "exact boundary is not observed".to_string(),
+                flow_sink: None,
+            }];
+            finding.evidence = vec![
+                "suggested_test_file: tests/other_test".to_string(),
+                "suggested_test_name: test_other".to_string(),
+            ];
+            finding.related_tests.push(RelatedTest {
+                name: "checks_boundary".to_string(),
+                file: std::path::PathBuf::from("tests/pricing"),
+                line: 12,
+                oracle: Some("assert discount(2, 10) is not None".to_string()),
+                oracle_kind: OracleKind::SmokeOnly,
+                oracle_strength: OracleStrength::Smoke,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
+            });
+            finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, &finding)
+        };
+        assert!(
+            visible(LanguageId::Rust),
+            "Rust falls back to the related test"
+        );
+        assert!(
+            !visible(LanguageId::Python),
+            "Python has no fallback past an unmatched declaration"
+        );
+    }
+
     #[test]
     fn actionable_profile_excludes_base_side_evidence() {
         // RIPR-SPEC-0152: the actionable profile is an obligation surface;
@@ -5654,6 +6000,8 @@ mod diagnostic_policy_tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
             finding
         };
@@ -6307,7 +6655,10 @@ mod diagnostic_policy_tests {
         // message names the current profile, so the agent can see it is not
         // "full".
         let outcome = seam_inventory_not_enabled_outcome(&LspAnalysisConfig::default());
-        let payload = outcome.status_payload(Some("snapshot:1"));
+        let payload = outcome.status_payload(
+            Some("snapshot:1"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         if payload["state"].as_str() != Some("unavailable")
             || payload["kind"].as_str() != Some("seam_diagnostics_not_enabled")
         {
@@ -6342,7 +6693,10 @@ mod diagnostic_policy_tests {
             enable_seam_diagnostics: false,
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:2"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:2"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("seam_diagnostics = true") {
             return Err(format!(
@@ -6358,7 +6712,10 @@ mod diagnostic_policy_tests {
             ..LspAnalysisConfig::default()
         };
         config.repo_config.languages.enabled = vec![LanguageId::TypeScript];
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:3"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:3"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("rust") {
             return Err(format!(
@@ -6373,7 +6730,10 @@ mod diagnostic_policy_tests {
             session_options: Some(serde_json::json!({ "diagnosticProfile": "actionable" })),
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:4"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:4"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("session setting") || !recovery.contains("ripr.diagnosticProfile") {
             return Err(format!(
@@ -6400,7 +6760,10 @@ mod diagnostic_policy_tests {
             session_options: Some(serde_json::json!({ "seamDiagnostics": false })),
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:5"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:5"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("session setting") || !recovery.contains("ripr.seamDiagnostics") {
             return Err(format!(
@@ -6431,6 +6794,8 @@ mod lsp_next_step_parity_tests {
 
     fn complete_ts_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_discount.ts:typescript_preview:2396aec1".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -6513,6 +6878,8 @@ mod lsp_next_step_parity_tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: Some(
                 "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.".to_string(),
@@ -6598,13 +6965,41 @@ mod lsp_next_step_parity_tests {
         let finding = complete_ts_finding();
         let message = lsp_message(&finding);
         assert!(
-            message.contains("the repair packet is complete and delegatable (advisory)"),
+            message.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "LSP diagnostic must contain reconciled next-step for complete packet; got: {message}"
         );
         assert!(
             !message.contains("no actionable repair packet is emitted until"),
             "LSP diagnostic must NOT contain blocked-case tail for complete packet; got: {message}"
         );
+    }
+
+    /// #10717: the diagnostic `data` carries the two-decimal contract value
+    /// that `ripr check` prints, not the widened `f32` (`0.4000000059604645`),
+    /// both for the finding and for its witness.
+    #[test]
+    fn lsp_diagnostic_data_confidence_uses_contract_precision() -> Result<(), String> {
+        for (stored, printed) in [
+            (0.4_f32, "0.4"),
+            (0.92, "0.92"),
+            (0.6, "0.6"),
+            (0.75, "0.75"),
+        ] {
+            let mut finding = complete_ts_finding();
+            finding.confidence = stored;
+            let diagnostic =
+                super::diagnostic_for_finding(std::path::Path::new("/workspace"), &finding);
+            let data = diagnostic.data.ok_or("diagnostic must carry data")?;
+            let top = serde_json::to_string(&data["confidence"]).map_err(|e| e.to_string())?;
+            let witness = serde_json::to_string(&data["witness"]["confidence"]["value"])
+                .map_err(|e| e.to_string())?;
+            if top != printed || witness != printed {
+                return Err(format!(
+                    "stored {stored}: data.confidence {top}, witness value {witness}; want {printed}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// PARITY: blocked packet → LSP diagnostic message must STILL contain the
@@ -6618,7 +7013,7 @@ mod lsp_next_step_parity_tests {
             "LSP diagnostic must preserve blocked-case disclosure for incomplete packet; got: {message}"
         );
         assert!(
-            !message.contains("the repair packet is complete and delegatable"),
+            !message.contains("the repair packet is complete (advisory"),
             "LSP diagnostic must NOT say actionable for blocked packet; got: {message}"
         );
     }
@@ -6711,6 +7106,7 @@ mod delivery_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         })
     }
 
@@ -6888,5 +7284,30 @@ mod delivery_tests {
             "gap_ledger": root.join("target/ripr/reports/gap.json"),
         }));
         Ok(diagnostic)
+    }
+}
+
+#[cfg(test)]
+mod camel_case_words_tests {
+    use super::camel_case_words;
+
+    /// #10695: spoken gap/route names keep acronyms and digits intact and
+    /// never mangle values that are not plain identifiers.
+    #[test]
+    fn handles_acronyms_digits_and_non_identifiers() {
+        for (input, want) in [
+            ("MissingBoundaryAssertion", "Missing boundary assertion"),
+            ("AddBoundaryAssertion", "Add boundary assertion"),
+            ("HTTPError", "HTTP error"),
+            ("ParseJSONBody", "Parse JSON body"),
+            ("Add2Assertion", "Add2 assertion"),
+            ("missing_value_assertion", "Missing value assertion"),
+            ("Unknown", "Unknown"),
+            ("PricingError::Boundary", "PricingError::Boundary"),
+            ("tests/pricing.rs", "tests/pricing.rs"),
+            ("", ""),
+        ] {
+            assert_eq!(camel_case_words(input), want, "input {input:?}");
+        }
     }
 }

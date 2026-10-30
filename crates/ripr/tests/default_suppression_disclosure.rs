@@ -110,7 +110,8 @@ impl Fixture {
             .env("RIPR_CACHE_DIR", self.scratch.path().join("cache"))
             .args(["check", "--root"])
             .arg(&self.root)
-            .args(["--base", "HEAD~1", "--format", format])
+            // Both runs compare byte for byte; pin the first-run legend.
+            .args(["--base", "HEAD~1", "--format", format, "--legend"])
             .stdin(Stdio::null())
             .stdout(std::fs::File::create(&stdout).map_err(|e| e.to_string())?)
             .stderr(std::fs::File::create(&stderr).map_err(|e| e.to_string())?);

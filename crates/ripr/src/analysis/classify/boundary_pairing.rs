@@ -12,7 +12,7 @@ use super::super::rust_index::{
 use super::activation::{
     call_arguments, comparison_operands, function_parameters, owner_argument_values,
 };
-use super::helper_transfer::{HelperChain, chain_forwards_owner_result};
+use super::helper_transfer::{HelperChain, asserting_method_entry, chain_forwards_owner_result};
 use super::owner_pin::closure_adaptor::{
     AdaptorTail, admitted_owner_adaptor_tail, argument_sequences, owner_adaptor_tail,
 };
@@ -21,6 +21,11 @@ use super::slice_boundary::literal_slice_length;
 use super::text::delimited_contents_at;
 use crate::analysis::syntax::HelperLoan;
 use crate::domain::*;
+use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
+#[cfg(test)]
+use crate::value_origins::LocatedValueFact as ValueFact;
+
+mod bound_result;
 
 /// Token carried in the discriminate summary when a predicate would otherwise
 /// read `exposed` without an admitted oracle on the boundary call.
@@ -44,6 +49,46 @@ pub(in crate::analysis) type TestActivation<'a> = &'a dyn Fn(&TestSummary) -> Ac
 pub(in crate::analysis) struct WrapperEntryPairing<'a> {
     pub(in crate::analysis) chain: &'a HelperChain,
     pub(in crate::analysis) test_activation: TestActivation<'a>,
+    /// The check helper an admitted assertion is borrowed from, without the
+    /// owner-call identity gate of `helper_loan`: a method-hop chain's
+    /// asserting entry (#9329) reaches the owner through the method, so the
+    /// helper never names the owner. See [`entry_loan_pairs_boundary_call`].
+    pub(in crate::analysis) entry_loan: &'a dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
+}
+
+/// #9849: confirmation for the return-value twin of a whole boolean tail.
+/// The caller establishes that owner shape and assertion execution. Keep the
+/// legacy predicate's broader subject matcher out of this new credit path:
+/// the wrapper call must be one whole compared operand, and the expectation
+/// an independent numeric or boolean literal. In particular `entry(10) * 0`
+/// and a name bound from `entry(10)` do not observe the helper's result.
+pub(in crate::analysis) fn wrapper_return_boundary_pinned(
+    owner: &FunctionSummary,
+    assertion: &OracleFact,
+    chain: &HelperChain,
+    activation: &ActivationEvidence,
+    test: &TestSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    let scope = super::argument_fold::FoldScope::of_test(test, index);
+    let Some(hop) = chain.hops.last() else {
+        return false;
+    };
+    let name = hop.caller.name.as_str();
+    let literal = |text: &str| {
+        matches!(text.trim(), "true" | "false") || argument_is_whole_numeric_literal(text.trim())
+    };
+    let whole_call = assertion_comparison_operands(&assertion.text).is_some_and(|[left, right]| {
+        (super::owner_pin::direct_call_name(left) == Some(name) && literal(right))
+            || (super::owner_pin::direct_call_name(right) == Some(name) && literal(left))
+    });
+    assertion.text.trim_start().starts_with("assert_eq!")
+        && assertion.kind == OracleKind::ExactValue
+        && assertion.strength == OracleStrength::Strong
+        && whole_call
+        && chain_forwards_owner_result(&owner.name, chain)
+        && assertion_names_one_entry_call(owner, name, assertion, Some((test, scope)))
+        && assertion_observes_boundary_entry_call(owner, name, assertion, activation)
 }
 
 /// True when some related test both feeds a boundary input to the owner and
@@ -112,6 +157,7 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
                 assertion_admitted,
                 owner_pinned,
                 helper_loan,
+                index,
             )
         });
     }
@@ -127,6 +173,12 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
                 .last()
                 .map(|hop| (hop.caller.name.as_str(), entry.test_activation))
         });
+    // #9329: a method-hop chain whose top hop is the check helper asserting
+    // the method's result, with every hop below forwarding the owner's.
+    let asserting_entry = wrapper_entry.and_then(|entry| {
+        asserting_method_entry(&owner.name, &entry.chain.hops, index)
+            .map(|top| (top.caller.name.as_str(), entry))
+    });
     related_tests.iter().any(|test| {
         test_pairs_boundary_input_with_oracle(
             probe,
@@ -134,9 +186,11 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
             test,
             activation,
             forwarding_entry,
+            asserting_entry,
             assertion_admitted,
             owner_pinned,
             helper_loan,
+            index,
         )
     })
 }
@@ -151,11 +205,16 @@ fn test_pairs_boundary_input_with_oracle(
     test: &TestSummary,
     activation: &ActivationEvidence,
     forwarding_entry: Option<(&str, TestActivation<'_>)>,
+    asserting_entry: Option<(&str, WrapperEntryPairing<'_>)>,
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     helper_loan: &dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
+    index: &RustIndex,
 ) -> bool {
-    let bound_names = boundary_bound_locals(probe, owner, test, activation);
+    let scope = super::argument_fold::FoldScope::of_test(test, index);
+    let calls_resolve =
+        |text: &str| super::call_identity::boundary_owner_calls_resolve(index, owner, test, text);
+    let bound_names = boundary_bound_locals(probe, owner, test, activation, scope, &calls_resolve);
     // Computed at most once per test, and only when the entry path is live.
     let own_rows: std::cell::OnceCell<ActivationEvidence> = std::cell::OnceCell::new();
     test.assertions.iter().any(|assertion| {
@@ -174,18 +233,33 @@ fn test_pairs_boundary_input_with_oracle(
         if !(test.start_line..=test.end_line).contains(&assertion.line) {
             return helper_loan(test, assertion).is_some_and(|loan| {
                 loan_pairs_boundary_call(owner, test, &loan, &assertion.text, activation)
-            });
+            }) || (assertion_is_discriminating(assertion)
+                && asserting_entry.is_some_and(|(helper, entry)| {
+                    (entry.entry_loan)(test, assertion).is_some_and(|loan| {
+                        loan.name == helper
+                            && loan.helper.contains(&assertion.text)
+                            && entry_loan_pairs_boundary_call(
+                                owner,
+                                test,
+                                &loan,
+                                own_rows.get_or_init(|| (entry.test_activation)(test)),
+                            )
+                    })
+                }));
         }
         let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
             .unwrap_or_else(|| assertion.text.clone());
-        assertion_observes_boundary_owner_call(probe, owner, test, assertion, &operands, activation)
+        (calls_resolve(&operands)
+            && assertion_observes_boundary_owner_call(
+                probe, owner, test, assertion, &operands, activation, scope,
+            ))
             || assertion_observes_bound_name(&operands, &bound_names)
             // The wrapper entry path keeps the strict discriminating-oracle
             // rule: the owner-return pin judges the owner's own call, never
             // a wrapper's.
             || (assertion_is_discriminating(assertion)
                 && forwarding_entry.is_some_and(|(entry, test_activation)| {
-                    assertion_names_one_entry_call(owner, entry, assertion)
+                    assertion_names_one_entry_call(owner, entry, assertion, Some((test, scope)))
                         && assertion_observes_boundary_entry_call(
                             owner,
                             entry,
@@ -203,6 +277,7 @@ fn assertion_names_one_entry_call(
     owner: &FunctionSummary,
     entry: &str,
     assertion: &OracleFact,
+    test: Option<(&TestSummary, super::argument_fold::FoldScope<'_>)>,
 ) -> bool {
     let subject = assertion_subject(&assertion.text);
     let entry_calls = owner_call_argument_lists(&subject, entry);
@@ -211,10 +286,16 @@ fn assertion_names_one_entry_call(
     // `order_discount(10 * 2)`), so every entry argument must be a whole
     // literal, identifier or path, as on the owner-call path.
     entry_calls.len() == 1
-        && entry_calls[0]
-            .1
-            .iter()
-            .all(|argument| argument_is_activation_fallback_shape(argument.trim()))
+        && entry_calls[0].1.iter().all(|argument| {
+            let argument = argument.trim();
+            argument_is_activation_fallback_shape(argument)
+                    // RIPR-SPEC-0158 #21: activation binds the folded value,
+                    // not a scalar buried in the arithmetic.
+                    || test.is_some_and(|(test, scope)| {
+                        super::argument_fold::folded_argument(&test.body, argument, scope)
+                            .is_some()
+                    })
+        })
         && owner_call_count(&assertion.text, entry) == 1
         && owner_call_count(&assertion.text, &owner.name) == 0
 }
@@ -356,6 +437,54 @@ fn loan_pairs_boundary_call(
     })
 }
 
+/// #9329: an assertion borrowed from the asserting entry of a method-hop
+/// chain pairs with a boundary input the test passes through that helper.
+/// The helper's body is one assertion whose operand is the method call, and
+/// the chain below it forwards the owner's result unchanged
+/// ([`asserting_method_entry`]), so the compared value is the owner's result.
+/// Activation's transferred `==` row on the line of an eager call to the
+/// helper (recomputed from this test alone) says that call carries the
+/// boundary into the owner. Fail closed as [`loan_pairs_boundary_call`]: the
+/// helper call must be the only call expression on its line, and the row's
+/// terms must name owner parameters only.
+fn entry_loan_pairs_boundary_call(
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    loan: &HelperLoan,
+    own_rows: &ActivationEvidence,
+) -> bool {
+    let owner_parameters = function_parameters(owner);
+    loan.eager_call_lines.iter().any(|line| {
+        if crate::analysis::extract::line_at_call_budget(test.calls.iter(), *line) {
+            return false;
+        }
+        // One call of the helper on the line; any other call there sits
+        // inside that call's own arguments (`Size::kib(1)`), so the line's
+        // activation row still describes this one call.
+        let mut on_line = test.calls.iter().filter(|call| call.line == *line);
+        let mut helper_calls = on_line.clone().filter(|call| call.name == loan.name);
+        let (Some(helper_call), None) = (helper_calls.next(), helper_calls.next()) else {
+            return false;
+        };
+        if on_line.any(|call| call.name != loan.name && !helper_call.text.contains(&*call.text))
+            || owner_call_count(&helper_call.text, &loan.name) != 1
+        {
+            return false;
+        }
+        own_rows.observed_values.iter().any(|fact| {
+            let call_line = fact.text.split(" | ").next().unwrap_or_default();
+            fact.line == *line
+                && call_line.contains(&*helper_call.text)
+                && !fact.value.contains("||")
+                && fact.value.split(" && ").all(|term| {
+                    term.split_once(" == ").is_some_and(|(parameter, _)| {
+                        owner_parameters.iter().any(|name| name == parameter.trim())
+                    })
+                })
+        })
+    })
+}
+
 /// RIPR-SPEC-0265 rule 1 pairing: the admitted adaptor tail whose closure
 /// body is the changed comparison, and the literal boundary the closure
 /// binding is compared with.
@@ -383,6 +512,7 @@ fn test_pairs_boundary_element(
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     helper_loan: &dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
+    index: &RustIndex,
 ) -> bool {
     test.assertions.iter().any(|assertion| {
         if !assertion_admitted(test, assertion)
@@ -394,6 +524,11 @@ fn test_pairs_boundary_element(
             return helper_loan(test, assertion).is_some_and(|loan| {
                 loan_pairs_boundary_element(owner, test, &loan, &assertion.text, element)
             });
+        }
+        let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
+            .unwrap_or_else(|| assertion.text.clone());
+        if !super::call_identity::boundary_owner_calls_resolve(index, owner, test, &operands) {
+            return false;
         }
         whole_owner_call_operands(test, &assertion.text, owner)
             .iter()
@@ -606,12 +741,13 @@ fn assertion_observes_boundary_owner_call(
     assertion: &OracleFact,
     operands: &str,
     activation: &ActivationEvidence,
+    scope: super::argument_fold::FoldScope<'_>,
 ) -> bool {
     let subject = assertion_subject(operands);
     let lists = owner_call_sites(&subject, owner);
     if lists
         .iter()
-        .any(|arguments| argument_list_activates_boundary(probe, owner, test, arguments))
+        .any(|arguments| argument_list_activates_boundary(probe, owner, test, arguments, scope))
     {
         return true;
     }
@@ -676,6 +812,8 @@ fn boundary_bound_locals(
     owner: &FunctionSummary,
     test: &TestSummary,
     activation: &ActivationEvidence,
+    scope: super::argument_fold::FoldScope<'_>,
+    calls_resolve: &dyn Fn(&str) -> bool,
 ) -> Vec<String> {
     // Last binding of a name wins so `let got = gate(10); let got = gate(100)`
     // does not keep the shadowed boundary result. A post-let mutation
@@ -698,12 +836,26 @@ fn boundary_bound_locals(
         let bound = let_binding_name(masked_line).and_then(|_| let_binding_name(original_line));
         if let Some(name) = bound.as_deref() {
             let line_number = test.start_line + offset;
+            // Only this binding's initializer supplies its result. An
+            // unrelated sibling call later on the same physical line must
+            // not defeat an otherwise established owner boundary binding.
+            // Identity and activation must read the same balanced span: a
+            // semicolon inside a block or array is not its statement end.
+            let statement_end = crate::analysis::value_resolution::top_level_semicolon(masked_line)
+                .unwrap_or(original_line.len());
+            let binding = original_line.get(..statement_end).unwrap_or(original_line);
             let call = CallFact {
                 line: line_number,
                 name: owner.name.clone(),
-                text: original_line.trim().to_string().into(),
+                text: binding.trim().to_string().into(),
             };
-            let is_boundary = owner_call_activates_boundary(probe, owner, test, &call, activation);
+            let is_boundary =
+                bound_result::boundary_call(binding, owner, &test.body).is_some_and(|result| {
+                    calls_resolve(&result.text)
+                        && owner_call_activates_boundary(
+                            probe, owner, test, &call, activation, scope, &result,
+                        )
+                });
             if let Some(existing) = last.iter_mut().find(|(tracked, _)| tracked == name) {
                 existing.1 = is_boundary;
             } else {
@@ -853,20 +1005,25 @@ fn owner_call_activates_boundary(
     test: &TestSummary,
     call: &CallFact,
     activation: &ActivationEvidence,
+    scope: super::argument_fold::FoldScope<'_>,
+    result: &bound_result::BoundResult<'_>,
 ) -> bool {
     if call.name != owner.name {
         return false;
     }
-    let sites = owner_call_sites(&call.text, owner);
+    let sites = owner_call_sites(&result.text, owner);
     if let Some(arguments) = sites.first() {
-        if argument_list_activates_boundary(probe, owner, test, arguments) {
+        if argument_list_activates_boundary(probe, owner, test, arguments, scope) {
             return true;
         }
         if !owner_call_arguments_admit_activation_fallback(probe, owner, arguments) {
             return false;
         }
     }
-    sites.len() == 1 && activation_marks_boundary_call(activation, call)
+    // A projected block tail cannot borrow an earlier discarded call's
+    // line-level activation. Keep the original binding fact for the
+    // unchanged nonblock fallback, never the shortened result text.
+    !result.block_tail && sites.len() == 1 && activation_marks_boundary_call(activation, call)
 }
 
 fn argument_list_activates_boundary(
@@ -874,10 +1031,11 @@ fn argument_list_activates_boundary(
     owner: &FunctionSummary,
     test: &TestSummary,
     arguments: &[String],
+    scope: super::argument_fold::FoldScope<'_>,
 ) -> bool {
     let arg_values: Vec<Vec<String>> = arguments
         .iter()
-        .map(|argument| pairing_argument_values(test, argument))
+        .map(|argument| pairing_argument_values(test, argument, scope))
         .collect();
     let Some((left, right)) = comparison_operands(&probe.expression) else {
         return false;
@@ -1047,12 +1205,20 @@ fn find_marker(text: &str, marker: &str) -> Option<usize> {
 /// rstest binding. Compound expressions that merely contain a boundary
 /// token are empty; infection `==` facts remain the call-level path for
 /// named constants whose arguments are themselves identifiers.
-fn pairing_argument_values(test: &TestSummary, argument: &str) -> Vec<String> {
+fn pairing_argument_values(
+    test: &TestSummary,
+    argument: &str,
+    scope: super::argument_fold::FoldScope<'_>,
+) -> Vec<String> {
     let trimmed = argument.trim();
     if argument_is_direct_pairing_shape(trimmed) {
         return owner_argument_values(test, trimmed);
     }
-    Vec::new()
+    // RIPR-SPEC-0158 #21: arithmetic over the test's own literal bindings is
+    // the whole argument's value, exactly as the literal it computes would be.
+    super::argument_fold::folded_argument(&test.body, trimmed, scope)
+        .into_iter()
+        .collect()
 }
 
 fn argument_is_direct_pairing_shape(argument: &str) -> bool {
@@ -1277,6 +1443,7 @@ mod tests {
         chain.map(|chain| WrapperEntryPairing {
             chain,
             test_activation: rows,
+            entry_loan: &|_, _| None,
         })
     }
 
@@ -2491,19 +2658,36 @@ mod tests {
             &["10"],
         );
         assert_eq!(
-            pairing_argument_values(&local, "10"),
+            pairing_argument_values(
+                &local,
+                "10",
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            ),
             vec!["10".to_string()]
         );
         assert_eq!(
-            pairing_argument_values(&local, "10u32"),
+            pairing_argument_values(
+                &local,
+                "10u32",
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            ),
             vec!["10".to_string()]
         );
         assert_eq!(
-            pairing_argument_values(&local, "-10"),
+            pairing_argument_values(
+                &local,
+                "-10",
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            ),
             vec!["-10".to_string()]
         );
         assert!(
-            pairing_argument_values(&local, "10-offset").is_empty(),
+            pairing_argument_values(
+                &local,
+                "10-offset",
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            )
+            .is_empty(),
             "subtraction of a local is not the boundary literal"
         );
         assert!(argument_is_whole_numeric_literal("1.5e-3"));
@@ -2512,23 +2696,47 @@ mod tests {
         assert!(!argument_is_whole_numeric_literal("10-offset"));
         assert!(!argument_is_whole_numeric_literal("10+1"));
         assert_eq!(
-            pairing_argument_values(&local, "threshold"),
+            pairing_argument_values(
+                &local,
+                "threshold",
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            ),
             vec!["10".to_string()]
         );
         assert!(
-            pairing_argument_values(&local, "if false { 10 } else { 50 }").is_empty(),
+            pairing_argument_values(
+                &local,
+                "if false { 10 } else { 50 }",
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            )
+            .is_empty(),
             "an if-expression that mentions 10 is not the boundary input"
         );
         assert!(
-            pairing_argument_values(&local, "std::cmp::max(10, 50)").is_empty(),
+            pairing_argument_values(
+                &local,
+                "std::cmp::max(10, 50)",
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            )
+            .is_empty(),
             "a call that mentions 10 is not the boundary input"
         );
         assert!(
-            pairing_argument_values(&local, "LIMIT").is_empty(),
+            pairing_argument_values(
+                &local,
+                "LIMIT",
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            )
+            .is_empty(),
             "an unresolved name is not a pairing argument; infection == facts cover named constants"
         );
         assert!(
-            pairing_argument_values(&local, "parcels::BULK_ITEMS").is_empty(),
+            pairing_argument_values(
+                &local,
+                "parcels::BULK_ITEMS",
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            )
+            .is_empty(),
             "a path-qualified constant is not a pairing argument value; infection == facts cover it"
         );
         assert!(argument_is_path_identifier("parcels::BULK_ITEMS"));
@@ -2679,6 +2887,9 @@ mod tests {
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                module_qualified: false,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
             }],
             stop_above: None,
         }
@@ -3194,13 +3405,21 @@ mod tests {
             "fn t() {\n    for (left, right) in [(100, 99), (99, 100)] {\n        assert!(!gate(left, right));\n    }\n}",
         );
         assert!(!argument_list_activates_boundary(
-            &probe, &owner, &across, &arguments
+            &probe,
+            &owner,
+            &across,
+            &arguments,
+            crate::analysis::classify::argument_fold::FoldScope::default()
         ));
         let within = call(
             "fn t() {\n    for (left, right) in [(100, 99), (100, 100)] {\n        assert!(gate(left, right) == (left == right));\n    }\n}",
         );
         assert!(argument_list_activates_boundary(
-            &probe, &owner, &within, &arguments
+            &probe,
+            &owner,
+            &within,
+            &arguments,
+            crate::analysis::classify::argument_fold::FoldScope::default()
         ));
         // An rstest case column beside a table column: each case runs every
         // row, so `left = 100` meets the `right = 100` row.
@@ -3213,7 +3432,11 @@ mod tests {
             "#[case(99)]".to_string(),
         ];
         assert!(argument_list_activates_boundary(
-            &probe, &owner, &crossed, &arguments
+            &probe,
+            &owner,
+            &crossed,
+            &arguments,
+            crate::analysis::classify::argument_fold::FoldScope::default()
         ));
     }
 
@@ -3262,6 +3485,7 @@ mod tests {
             helper: helper.to_string(),
             parameters: vec!["input".to_string(), "want".to_string()],
             call_lines: vec![2],
+            eager_call_lines: Vec::new(),
         };
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {

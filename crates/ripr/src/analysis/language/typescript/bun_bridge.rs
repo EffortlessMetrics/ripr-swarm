@@ -595,6 +595,8 @@ pub(crate) fn related_profile_bun_tests(
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }
         })
         .collect::<Vec<_>>();
@@ -1302,6 +1304,8 @@ pub(crate) fn bun_cross_language_finding_for_changed_rust_line_with_profile(
     let (reach_state, observe_state, discriminate_state) =
         bun_cross_language_stage_states(hint.verdict);
     Some(Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: bridge_confidence_basis(hint.verdict),
         id: probe.id.0.clone(),
         canonical_gap: None,
         probe,
@@ -1453,6 +1457,22 @@ pub(crate) fn typescript_bun_cross_language_actionability(
             evidence_needed: "configured bridge hint or generated bridge fact plus raw evidence refs",
         },
     }
+}
+
+/// Capping reasons for a bridge finding (#10700). The bridge maps a configured
+/// Rust owner to a TypeScript integration test, so a related test exists; the
+/// oracle is strong only when the bridge verdict is `ts_discriminated`.
+fn bridge_confidence_basis(
+    verdict: TypeScriptBunBridgeVerdict,
+) -> Vec<crate::domain::ConfidenceCap> {
+    crate::domain::ConfidenceCap::for_preview(
+        &verdict.exposure_class(),
+        &crate::domain::ConfidenceBasisInputs {
+            has_related_test: true,
+            strong_oracle_present: verdict == TypeScriptBunBridgeVerdict::TsDiscriminated,
+            boundary_input_matched: true,
+        },
+    )
 }
 
 pub(crate) fn bun_cross_language_stage_states(
@@ -1925,5 +1945,30 @@ pub(crate) fn bun_cross_language_unlock_condition(
         TypeScriptBunBridgeVerdict::BridgeUnknown => Some(
             "name the binding or FFI edge from the Rust seam to the external test before crediting external discriminators".to_string(),
         ),
+    }
+}
+
+#[cfg(test)]
+mod bridge_basis_tests {
+    use super::*;
+    use crate::domain::ConfidenceCap;
+
+    #[test]
+    fn a_discriminated_bridge_is_not_capped_on_the_oracle() {
+        let discriminated = bridge_confidence_basis(TypeScriptBunBridgeVerdict::TsDiscriminated);
+        assert_eq!(
+            discriminated,
+            vec![
+                ConfidenceCap::PreviewStagesNotModeled,
+                ConfidenceCap::SyntaxFirstNoTypeResolution
+            ],
+            "an Exposed (ts_discriminated) bridge must not be capped on the oracle"
+        );
+        let missing = bridge_confidence_basis(TypeScriptBunBridgeVerdict::TsMissingResizable);
+        assert_eq!(
+            missing.last(),
+            Some(&ConfidenceCap::DiscriminatorNotEstablished)
+        );
+        assert_ne!(discriminated, missing);
     }
 }

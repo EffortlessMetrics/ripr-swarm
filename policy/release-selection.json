@@ -739,20 +739,28 @@
       "owner_issue": 4510,
       "materiality": "release_required",
       "resolution": "final_candidate_execution_only",
-      "candidate_effect": "The termination harness is on main with exact-binary snapshot and hash, deadline and process-group custody, per-row cleanup and the instrument, repeat and removal controls (#9411, #9425); it runs on the cut binary at the candidate.",
+      "candidate_effect": "The termination harness is on main with exact-binary snapshot and hash, deadline and process-group custody, per-row cleanup, bounded child output, and the instrument, repeat, removal and execution controls (scrubbed PATH, owned cwd, stale artifact, snapshot isolation, cleanup failure, decoy repository), with scripted repairs-disabled builds and a commit bind to the #1609 manifest. A release-profile rehearsal on main c501b853 passed (62 rows, 17/17 controls); it runs on the cut binary at the candidate.",
       "related_issues": [
         4522
       ],
       "implementation_refs": [
         "pr:9411",
-        "pr:9425"
+        "pr:9425",
+        "pr:9535",
+        "pr:9671",
+        "pr:9724",
+        "pr:9725",
+        "pr:9728",
+        "pr:9753",
+        "pr:9757",
+        "pr:9759"
       ],
       "execution_refs": [
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/4510#issuecomment-6333565475",
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/1609",
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/9480"
       ],
-      "non_claim": "The release does not claim the #1609 manifest binding, the ambient or stale-binary and decoy-CWD execution controls, or blind rows for the harness, and nothing has run on the cut binary until repairs-disabled builds exist for all four families; gaps are tracked in #9480 and #4510 stays open."
+      "non_claim": "The release does not claim that the harness runs the #1609 manifest admission checks (it reads candidate.sha only, and a test requires that to agree with the admitted manifest), a decoy in a caller directory (the child always runs in the owned case root; the decoy control plants one above it), a per-path generated-exclusion cause in ripr output (attributed by a paired nonmatching-pattern run instead), an end-to-end observation of a spawned child's Git environment (the removal list is pinned), or blind rows for the harness. Nothing has run on the cut binary: the main rehearsal is not the cut packet. Gaps are tracked in #9480 and #4510 stays open."
     }
   ],
   "outside_selection": [

@@ -51,14 +51,34 @@ pub(crate) fn is_git_not_found_on_path(error: &str) -> bool {
     error == GIT_NOT_FOUND_ON_PATH_MESSAGE
 }
 
+/// Displayed character cap for each output stream in the unified failure
+/// message, after terminal escaping. Matches the documented contract
+/// ("stdout: <first 500 chars>"); stderr gets the same bound so a chatty or
+/// hostile git cannot flood the terminal (#9604 batch E).
+const GIT_OUTPUT_DISPLAY_MAX_CHARS: usize = 500;
+
+/// Bound and terminal-escape one git output stream for the unified failure
+/// message. Control characters are escaped before the cap so the displayed
+/// prefix is exactly what is limited.
+fn bounded_git_output(bytes: &[u8], max_chars: usize) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let escaped = crate::terminal_text::terminal_safe(text.trim().to_string());
+    if escaped.chars().count() <= max_chars {
+        return escaped;
+    }
+    let mut bounded: String = escaped.chars().take(max_chars).collect();
+    bounded.push('…');
+    bounded
+}
+
 /// Run `git -C <root> <args...>` with no deadline and return trimmed stdout
 /// on success.
 ///
 /// Returns a unified error on failure:
 /// ```text
 /// git -C <root> <args...> failed
-/// stdout: <first 500 chars>
-/// stderr: <trimmed>
+/// stdout: <first 500 chars, terminal-escaped>
+/// stderr: <first 500 chars, terminal-escaped>
 /// ```
 pub(crate) fn run_git(root: &Path, args: &[&str]) -> Result<String, CoreError> {
     let output = run_git_output_with_deadline(root, args, None)?;
@@ -67,20 +87,18 @@ pub(crate) fn run_git(root: &Path, args: &[&str]) -> Result<String, CoreError> {
             .map(|value| value.trim().to_string())
             .map_err(|err| {
                 CoreError::message(format!(
-                    "git -C {} {:?} produced non-UTF-8 output: {err}",
+                    "git -C {} {} produced non-UTF-8 output: {err}",
                     root.display(),
-                    args
+                    args.join(" ")
                 ))
             })
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
         Err(CoreError::message(format!(
-            "git -C {} {:?} failed\nstdout: {}\nstderr: {}",
+            "git -C {} {} failed\nstdout: {}\nstderr: {}",
             root.display(),
-            args,
-            stdout.trim(),
-            stderr.trim()
+            args.join(" "),
+            bounded_git_output(&output.stdout, GIT_OUTPUT_DISPLAY_MAX_CHARS),
+            bounded_git_output(&output.stderr, GIT_OUTPUT_DISPLAY_MAX_CHARS),
         )))
     }
 }
@@ -108,7 +126,10 @@ pub(crate) fn run_git_output_with_deadline(
     args: &[&str],
     timeout: Option<Duration>,
 ) -> Result<Output, CoreError> {
-    let describe = format!("git -C {} {:?}", root.display(), args);
+    // Space-joined argv, not `{:?}` debug: this string reaches users in
+    // spawn-failure and timeout messages, and a debug list reads as an
+    // internal leak (#9604 batch E).
+    let describe = format!("git -C {} {}", root.display(), args.join(" "));
     let command = git_command(root, args);
     // `current_dir(root)`, not `git -C <root>`: for a missing/unusable root
     // the spawn itself fails, preserving the established
@@ -389,10 +410,11 @@ pub(crate) fn probe_work_tree_root(root: &Path) -> Result<WorkTreeRootProbe, Str
 ///
 /// `Ok(true)` means the enclosing repository ships at least one file there.
 /// `Ok(false)` means no tracked file, or no Git work tree to ship one: a
-/// directory outside any repository, or Git missing from `PATH`, which cannot
-/// be told apart from an extracted archive. `Err` is every other outcome
-/// (dubious ownership, a damaged repository, a deadline, output past the
-/// cap): the caller cannot establish the answer and must not assume `false`.
+/// directory outside any repository, or Git missing from `PATH` with no
+/// validated `.git` marker above it, as in an extracted archive. `Err` is
+/// every other outcome (dubious ownership, a damaged repository, a deadline,
+/// output past the cap, or Git missing inside a marked work tree): the
+/// caller cannot establish the answer and must not assume `false`.
 ///
 /// Answers for the repository containing `dir` itself, not an inherited
 /// `GIT_DIR`, so a hook or wrapper cannot point the probe elsewhere.
@@ -414,7 +436,21 @@ pub(crate) fn tracked_files_under(dir: &Path) -> Result<bool, String> {
         &describe,
     ) {
         Ok(output) => output,
-        Err(error) if is_git_not_found_on_path(&error.to_string()) => return Ok(false),
+        Err(error) if is_git_not_found_on_path(&error.to_string()) => {
+            // Git is missing, so the index cannot be consulted. A validated
+            // `.git` marker above `dir` is still repository evidence: refuse
+            // rather than admit a possibly repository-shipped cache. Plain
+            // directories and extracted archives carry no marker and keep
+            // the warm path (#7780).
+            if git_marker_above(dir).is_some() {
+                return Err(format!(
+                    "git is unavailable and {} lies inside a Git work tree, \
+                     so tracked files under it cannot be ruled out",
+                    dir.display()
+                ));
+            }
+            return Ok(false);
+        }
         Err(error) => return Err(error.to_string()),
     };
     if output.status.success() {
@@ -428,6 +464,134 @@ pub(crate) fn tracked_files_under(dir: &Path) -> Result<bool, String> {
         "{describe} failed: {}",
         stderr.lines().next().unwrap_or("no diagnostic").trim()
     ))
+}
+
+/// Nearest validated `.git` marker at or above `dir`, without running Git.
+///
+/// A directory named `.git` is a marker. A regular file named `.git` is a
+/// marker only when it is a gitfile (`gitdir: <path>`), as linked worktrees
+/// and submodules write; a stray file of that name is not authority. Used
+/// only when the git binary itself is missing: presence proves a work tree
+/// exists, never that any particular file is tracked, so callers must fail
+/// closed rather than treat it as a tracked-file answer.
+fn git_marker_above(dir: &Path) -> Option<PathBuf> {
+    // Resolve symlinks first: a cache dir linked into a work tree carries
+    // the tree's marker only on its canonical path, not its lexical one.
+    let canonical;
+    let start: &Path = match std::fs::canonicalize(dir) {
+        Ok(path) => {
+            canonical = path;
+            &canonical
+        }
+        Err(_) => dir,
+    };
+    for ancestor in start.ancestors() {
+        let marker = ancestor.join(".git");
+        if marker.is_dir() {
+            return Some(marker);
+        }
+        if marker.is_file()
+            && std::fs::read_to_string(&marker).is_ok_and(|text| text.starts_with("gitdir:"))
+        {
+            return Some(marker);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod missing_git_marker_tests {
+    use super::git_marker_above;
+    use std::path::PathBuf;
+
+    fn scratch(label: &str) -> PathBuf {
+        let name = format!("ripr-missing-git-{label}-{}", std::process::id());
+        let temp = std::env::temp_dir();
+        let candidate = temp.join(&name);
+        if candidate
+            .parent()
+            .is_none_or(|parent| git_marker_above(parent).is_none())
+        {
+            let _ = std::fs::remove_dir_all(&candidate);
+            return candidate;
+        }
+        // The test harness can redirect the temp dir inside a work tree
+        // (this repo's `target/`), where the enclosing marker would defeat
+        // the no-marker cases. Move the scratch beside that work tree: the
+        // first ancestor carrying no marker above it.
+        for ancestor in temp.ancestors() {
+            if git_marker_above(ancestor).is_none() {
+                let dir = ancestor.join(&name);
+                let _ = std::fs::remove_dir_all(&dir);
+                return dir;
+            }
+        }
+        candidate
+    }
+
+    fn setup(label: &str, base_rel: &str) -> Result<(PathBuf, PathBuf), String> {
+        let root = scratch(label);
+        let base = root.join(base_rel);
+        std::fs::create_dir_all(&base)
+            .map_err(|err| format!("create scratch base {}: {err}", base.display()))?;
+        Ok((root, base))
+    }
+
+    #[test]
+    fn missing_git_dotgit_directory_above_base_is_a_marker() -> Result<(), String> {
+        let (root, base) = setup("dir-marker", "target/ripr/cache")?;
+        std::fs::create_dir_all(root.join(".git"))
+            .map_err(|err| format!("create .git marker: {err}"))?;
+        assert!(git_marker_above(&base).is_some());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_git_plain_directory_without_marker_stays_admitted() -> Result<(), String> {
+        // Extracted archives and exported trees have this shape.
+        let (root, base) = setup("plain", "cache")?;
+        assert!(git_marker_above(&base).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_git_gitfile_with_gitdir_prefix_is_a_marker() -> Result<(), String> {
+        // Linked worktrees and submodules: `.git` is a file.
+        let (root, base) = setup("gitfile", "cache")?;
+        std::fs::write(root.join(".git"), "gitdir: /elsewhere/.git/worktrees/w\n")
+            .map_err(|err| format!("write gitfile: {err}"))?;
+        assert!(git_marker_above(&base).is_some());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_git_stray_dotgit_file_is_not_authority() -> Result<(), String> {
+        let (root, base) = setup("stray", "cache")?;
+        std::fs::write(root.join(".git"), "not a gitfile\n")
+            .map_err(|err| format!("write stray .git: {err}"))?;
+        assert!(git_marker_above(&base).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_git_symlinked_base_resolves_to_marked_tree() -> Result<(), String> {
+        // A cache dir linked into a work tree: the marker exists only on
+        // the canonical path, so the lexical walk must not miss it.
+        let (root, _base) = setup("symlink", "tree/cache")?;
+        std::fs::create_dir_all(root.join(".git"))
+            .map_err(|err| format!("create .git marker: {err}"))?;
+        let link = root.join("link");
+        std::os::unix::fs::symlink(root.join("tree"), &link)
+            .map_err(|err| format!("link cache base: {err}"))?;
+        assert!(git_marker_above(&link.join("cache")).is_some());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
 }
 
 fn work_tree_root_probe_error(error: CoreError) -> String {
@@ -467,7 +631,10 @@ pub(crate) fn run_git_output_with_deadline_and_env(
     envs: &[(&str, &std::ffi::OsStr)],
     timeout: Option<Duration>,
 ) -> Result<Output, CoreError> {
-    let describe = format!("git -C {} {:?}", root.display(), args);
+    // Space-joined argv, not `{:?}` debug: this string reaches users in
+    // spawn-failure and timeout messages, and a debug list reads as an
+    // internal leak (#9604 batch E).
+    let describe = format!("git -C {} {}", root.display(), args.join(" "));
     let mut command = git_command(root, args);
     for (key, value) in envs {
         command.env(key, value);
@@ -493,7 +660,10 @@ pub(crate) fn run_git_output_with_deadline_and_limit(
             "git output limit must be greater than zero",
         ));
     }
-    let describe = format!("git -C {} {:?}", root.display(), args);
+    // Space-joined argv, not `{:?}` debug: this string reaches users in
+    // spawn-failure and timeout messages, and a debug list reads as an
+    // internal leak (#9604 batch E).
+    let describe = format!("git -C {} {}", root.display(), args.join(" "));
     collect_output_with_deadline_and_limit(
         git_command(root, args),
         timeout,
@@ -561,13 +731,31 @@ pub(crate) fn run_git_output_with_optional_deadline_and_limit(
             "git output limit must be greater than zero",
         ));
     }
-    let describe = format!("git -C {} {:?}", root.display(), args);
+    // Space-joined argv, not `{:?}` debug: this string reaches users in
+    // spawn-failure and timeout messages, and a debug list reads as an
+    // internal leak (#9604 batch E).
+    let describe = format!("git -C {} {}", root.display(), args.join(" "));
     collect_output_with_optional_deadline_and_limit(
         git_command(root, args),
         timeout,
         max_output_bytes,
         &describe,
     )
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_PROCESS_SPAWNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Successful subprocess spawns through this module's deadline-limited output
+/// collectors (`collect_output_with_optional_deadline_and_limit` and
+/// `collect_output_with_deadline`) on this test thread. The long-lived
+/// `CatFileBatch` session is not counted. Snapshots exclude concurrent tests
+/// without changing process-wide environment or Git behavior.
+#[cfg(test)]
+pub(crate) fn test_process_spawns() -> usize {
+    TEST_PROCESS_SPAWNS.with(std::cell::Cell::get)
 }
 
 fn collect_output_with_optional_deadline_and_limit(
@@ -586,6 +774,8 @@ fn collect_output_with_optional_deadline_and_limit(
     let spawn_site = SpawnSite::of(&command);
     let mut child =
         OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
+    #[cfg(test)]
+    TEST_PROCESS_SPAWNS.with(|count| count.set(count.get() + 1));
     let stdout_reader = child
         .stdout_pipe()
         .take()
@@ -1178,6 +1368,8 @@ fn collect_output_with_deadline(
     let spawn_site = SpawnSite::of(&command);
     let mut child =
         OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
+    #[cfg(test)]
+    TEST_PROCESS_SPAWNS.with(|count| count.set(count.get() + 1));
     let stdout_reader = child.stdout_pipe().take().map(spawn_pipe_reader);
     let stderr_reader = child.stderr_pipe().take().map(spawn_pipe_reader);
 
@@ -1367,11 +1559,54 @@ fn drain_pipe_reader(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "The failure-path tests assert an expected `Err` via `.expect_err(\"why\")`, making the expected failure mode part of the assertion message."
+)]
 mod tests {
 
     use super::*;
     use crate::analysis::cancellation::{AnalysisAbortKind, AnalysisCancellationToken, with_token};
     use serial_test::serial;
+
+    #[test]
+    fn bounded_git_output_escapes_controls_and_marks_the_cap() {
+        let escaped = bounded_git_output(b"fatal: bad \x07bell\n", 500);
+        assert!(
+            !escaped.contains('\x07'),
+            "control characters must be escaped before display: {escaped:?}"
+        );
+        let long = "x".repeat(600);
+        let capped = bounded_git_output(long.as_bytes(), 500);
+        assert_eq!(capped.chars().count(), 501, "cap plus one ellipsis char");
+        assert!(capped.ends_with('…'), "the cap must be marked: {capped:?}");
+    }
+
+    #[test]
+    fn run_git_failure_uses_plain_argv_and_bounds_streams() {
+        // `rev-parse --verify --quiet` with an absurdly long bogus ref name
+        // fails with exit 128 and a stderr reason; any failing git argv works
+        // for the format assertions.
+        let root = std::env::temp_dir();
+        let err = run_git(
+            &root,
+            &["rev-parse", "--verify", "refs/heads/ripr-format-probe"],
+        )
+        .expect_err("a missing ref must fail");
+        let message = err.to_string();
+        assert!(
+            message.contains("git -C ") && message.contains("rev-parse --verify"),
+            "the command line must read as typed, got: {message}"
+        );
+        assert!(
+            !message.contains("[\"") && !message.contains(", \""),
+            "debug-format argv must not reach the user: {message}"
+        );
+        assert!(
+            message.contains("stderr: fatal:"),
+            "the failure must still name git's own reason: {message}"
+        );
+    }
 
     #[test]
     fn work_tree_root_timeout_omits_inapplicable_deadline_guidance() {

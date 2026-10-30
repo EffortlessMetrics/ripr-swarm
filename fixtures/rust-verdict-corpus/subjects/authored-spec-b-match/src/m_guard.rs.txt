@@ -1,0 +1,29 @@
+//! A guard arm in the helper's match.
+
+pub fn label_guard(kind: &str) -> &'static str {
+    match kind {
+        "word" if kind.len() > 2 => "alpha",
+        "text" => "beta",
+        _ => "other",
+    }
+}
+
+pub fn classify_guard(input: &str) -> &'static str {
+    let final_label = label_guard(input);
+    if final_label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_arm_has_its_own_label_m_guard() {
+        assert_eq!(classify_guard("word"), "word");
+        assert_eq!(classify_guard("text"), "blank");
+    }
+}

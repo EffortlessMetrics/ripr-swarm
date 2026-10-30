@@ -1,0 +1,13 @@
+diff --git a/lib/Forms.pm b/lib/Forms.pm
+index a64ea0b..3c6d2ef 100644
+--- a/lib/Forms.pm
++++ b/lib/Forms.pm
+@@ -41,7 +41,7 @@ sub eval_like {
+ 
+ sub lives_weak {
+     my ($n) = @_;
+-    return $n * 3;
++    return 3 * $n;
+ }
+ 
+ sub eval_ok {

@@ -12,11 +12,11 @@ use crate::app::CheckOutput;
 use crate::config::{ConfigSeverity, RiprConfig};
 use crate::domain::{
     ExposureClass, Finding, LanguageId, LanguageStatus, MissingDiscriminatorFact, RelatedTest,
-    StageEvidence, ValueFact,
+    StageEvidence,
 };
 use crate::output::next_step::reconcile_next_step;
 use crate::output::observed_values::{bounded_observed_values, elided_observed_values_total};
-use crate::output::path::{display_path_text, repository_relative_path};
+use crate::output::path::{display_path_text, path_display_lossy, repository_relative_path};
 use crate::output::perl_preview_card::perl_preview_card_json;
 use crate::output::preview_actionability::{
     preview_actionability_for, preview_actionability_json_value,
@@ -277,7 +277,10 @@ pub(crate) fn render_refusal_sarif(
     properties.insert("run_status".to_string(), json!("refused"));
     properties.insert("refusal_identity".to_string(), json!(notice.identity));
     properties.insert("repair_route".to_string(), json!(notice.repair_route));
-    properties.insert("root".to_string(), json!(root.display().to_string()));
+    properties.insert(
+        "root".to_string(),
+        json!(crate::output::path::display_path(root)),
+    );
     if let Some(base) = base {
         properties.insert("base".to_string(), json!(base));
     }
@@ -852,20 +855,10 @@ fn related_test_properties(test: &RelatedTest) -> Value {
 
 /// The bounded observed-value projection (`output::observed_values`); the
 /// call site discloses `observed_values_total` when the cap drops values.
-fn value_facts(values: &[ValueFact]) -> Value {
-    json!(
-        bounded_observed_values(values)
-            .into_iter()
-            .map(|value| {
-                json!({
-                    "line": value.line,
-                    "text": value.text.as_str(),
-                    "value": value.value.as_str(),
-                    "context": value.context.as_str()
-                })
-            })
-            .collect::<Vec<_>>()
-    )
+fn value_facts<T: crate::output::observed_values::SourceValue + serde::Serialize>(
+    values: &[T],
+) -> Value {
+    json!(bounded_observed_values(values))
 }
 
 fn missing_discriminators(missing: &[MissingDiscriminatorFact]) -> Value {
@@ -1146,7 +1139,7 @@ fn sarif_uri_reference(path: &str) -> String {
 }
 
 fn normalize_path(path: &Path) -> String {
-    let raw = path.to_string_lossy().replace('\\', "/");
+    let raw = path_display_lossy(path);
     raw.strip_prefix("./").unwrap_or(&raw).to_string()
 }
 
@@ -1170,6 +1163,7 @@ mod tests {
         AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
     };
     use crate::app::{CheckOutput, Mode};
+    use crate::domain::ValueFact;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
         LanguageId, LanguageStatus, OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily,
@@ -1410,6 +1404,7 @@ mod tests {
             base_ref: "origin/main".to_string(),
             base_commit: Some("1a2b3c4d5e6f".to_string()),
             merge_base_commit: Some("9f8e7d6c5b4a".to_string()),
+            loaded_diff_origin: None,
             head_commit: Some("5d6e7f8a9b0c".to_string()),
             working_tree: true,
         });
@@ -1567,6 +1562,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
 
         let rendered = render_findings_sarif(&output, &RiprConfig::default(), &[]);
@@ -1632,6 +1629,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
 
         let rendered = render_findings_sarif(&output, &RiprConfig::default(), &[]);
@@ -2056,7 +2055,6 @@ weakly_gripped = "note"
     fn assertion_values(count: usize) -> Vec<ValueFact> {
         (1..=count)
             .map(|line| ValueFact {
-                file: None,
                 line,
                 text: format!("assert_eq!(value, {line});"),
                 value: format!("value_{line}"),
@@ -2080,7 +2078,7 @@ weakly_gripped = "note"
         assert_eq!(props["observed_values_total"], 500);
 
         let mut seam = weakly_gripped_classified();
-        seam.evidence.observed_values = assertion_values(500);
+        seam.evidence.observed_values = assertion_values(500).into_iter().map(Into::into).collect();
         let sarif = parse_json(&render_repo_seams_sarif(
             &[seam],
             None,
@@ -2382,6 +2380,8 @@ weakly_gripped = "note"
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
         finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
         finding.language = Some(LanguageId::Perl);
@@ -2390,6 +2390,7 @@ weakly_gripped = "note"
 
     fn sample_output() -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2462,6 +2463,8 @@ weakly_gripped = "note"
 
     fn sample_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "finding:discount".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -2497,7 +2500,6 @@ weakly_gripped = "note"
             }],
             activation: ActivationEvidence {
                 observed_values: vec![ValueFact {
-                    file: None,
                     line: 12,
                     text: "discounted_total(50, 100)".to_string(),
                     value: "amount = 50".to_string(),
@@ -2521,6 +2523,8 @@ weakly_gripped = "note"
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: Some("Add an equality-boundary assertion".to_string()),
             language: None,
@@ -2580,13 +2584,15 @@ weakly_gripped = "note"
             propagate: stage(StageState::Yes, "return value sink reached"),
             observe: stage(StageState::Yes, "returned value asserted"),
             discriminate: stage(StageState::Weak, "equality boundary absent"),
-            observed_values: vec![ValueFact {
-                file: None,
-                line: 12,
-                text: "discounted_total(50, 100)".to_string(),
-                value: "amount = 50".to_string(),
-                context: ValueContext::FunctionArgument,
-            }],
+            observed_values: vec![
+                ValueFact {
+                    line: 12,
+                    text: "discounted_total(50, 100)".to_string(),
+                    value: "amount = 50".to_string(),
+                    context: ValueContext::FunctionArgument,
+                }
+                .into(),
+            ],
             missing_discriminators: vec![MissingDiscriminatorFact {
                 value: "amount == discount_threshold".to_string(),
                 reason: "observed values do not include equality boundary".to_string(),
@@ -2807,6 +2813,27 @@ weakly_gripped = "note"
             props["omitted_not_current"], 1,
             "the not-current sibling still counts: {props}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn refusal_sarif_root_renders_through_display_path() -> Result<(), String> {
+        // #9806: `properties.root` uses the check-JSON renderer, which escapes
+        // `%` on every host, so the raw `display()` spelling fails here.
+        let notice = crate::core_error::CoreError::base_unresolvable(
+            "the base `deadbeef` does not resolve to a commit",
+        )
+        .refusal_notice();
+        let rendered = render_refusal_sarif(&notice, std::path::Path::new("repo%41"), None);
+        let sarif = parse_json(&rendered)?;
+        let root = sarif
+            .pointer("/runs/0/properties/root")
+            .and_then(Value::as_str);
+        if root != Some("repo%2541") {
+            return Err(format!(
+                "refusal SARIF root must use display_path spelling, got {root:?}"
+            ));
+        }
         Ok(())
     }
 }

@@ -1,0 +1,4 @@
+[package]
+name = "lossy_post_operation_pin"
+version = "0.0.0"
+edition = "2024"

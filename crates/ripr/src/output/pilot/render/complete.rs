@@ -1,6 +1,6 @@
 use super::render_helpers::{
-    NO_REPAIR_TARGET_FOCUSED_TEST, no_repair_target_hand_step, push_markdown_recommendation,
-    push_path_field, push_top_seam_json, yes_no,
+    no_repair_target_hand_step, push_markdown_recommendation, push_path_field, push_top_seam_json,
+    yes_no,
 };
 use super::why_line;
 use crate::agent::loop_commands::shell_path;
@@ -13,7 +13,8 @@ use crate::output::json::escape as json_escape;
 use crate::output::markdown::{PowershellForm, code_span, powershell_form};
 use crate::output::path::{display_path, display_path_text, human_path};
 use crate::output::pilot::commands::{
-    PilotCommands, python_card_first_pr_command, repair_edit_scope, repair_start_command,
+    PilotCommands, python_card_first_pr_command, repair_edit_scope, repair_inline_target_file,
+    repair_start_command,
 };
 use crate::output::pilot::ranking::{
     actionable_in_change, actionable_in_owner, actionable_total, top_actionable_seams,
@@ -228,12 +229,43 @@ pub(crate) fn render_pilot_summary_json(
     out
 }
 
+/// Render both human surfaces from one observation of the inline target.
+/// The CLI always writes Markdown and renders the terminal, even for JSON stdout.
+pub(crate) fn render_pilot_human_summaries(
+    classified: &[ClassifiedSeam],
+    context: PilotSummaryContext<'_>,
+) -> (String, String) {
+    let top = top_actionable_seams(classified, context.max_seams.max(1), context.current_change);
+    let terminal_top = &top[..top.len().min(1)];
+    let markdown_top = &top[..top.len().min(context.max_seams)];
+    let target = terminal_top
+        .first()
+        .and_then(|entry| uncommitted_inline_target(context.root, entry));
+    (
+        render_pilot_summary_md_with_target(classified, context, markdown_top, target.as_deref()),
+        render_pilot_terminal_with_target(classified, context, terminal_top, target.as_deref()),
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn render_pilot_summary_md(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> String {
-    let actionable_total = actionable_total(classified);
     let top = top_actionable_seams(classified, context.max_seams, context.current_change);
+    let target = top
+        .first()
+        .and_then(|entry| uncommitted_inline_target(context.root, entry));
+    render_pilot_summary_md_with_target(classified, context, &top, target.as_deref())
+}
+
+fn render_pilot_summary_md_with_target(
+    classified: &[ClassifiedSeam],
+    context: PilotSummaryContext<'_>,
+    top: &[&ClassifiedSeam],
+    uncommitted_inline_target: Option<&str>,
+) -> String {
+    let actionable_total = actionable_total(classified);
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
@@ -250,7 +282,8 @@ pub(crate) fn render_pilot_summary_md(
         Some(path) => out.push_str(&format!("- Config: loaded `{}`\n", human_path(path))),
         None => out.push_str("- Config: missing; using built-in defaults\n"),
     }
-    if let Some(scope) = scope_line(context, true) {
+    let ranked = scope_rank_label(context, top.is_empty());
+    if let Some(scope) = scope_line(context, true, ranked) {
         out.push_str(&format!("- Scope: {scope}\n"));
     }
     push_changed_file_limitations(&mut out, context.current_change, true);
@@ -451,8 +484,13 @@ pub(crate) fn render_pilot_summary_md(
                 .first()
                 .map(|entry| repair_edit_scope(entry))
                 .unwrap_or_default();
+            if let Some(file) = uncommitted_inline_target {
+                out.push_str(&format!(
+                    "Before starting the repair: if `{file}` has uncommitted edits, commit or stash them; the repair start refuses a target file that differs from HEAD.\n\n",
+                ));
+            }
             out.push_str(&format!(
-                "Start the repair transaction for the top seam, add one focused test {scope}, then run the `--attempt ... --phase after` command it prints:\n\n",
+                "Start the repair transaction for the top seam, add one focused test {scope}, then run the `continue --attempt ...` command it prints:\n\n",
             ));
             vec![command]
         }
@@ -580,11 +618,24 @@ pub(crate) fn render_pilot_summary_md(
     out
 }
 
+#[cfg(test)]
 pub(crate) fn render_pilot_terminal(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> String {
     let top = top_actionable_seams(classified, 1, context.current_change);
+    let target = top
+        .first()
+        .and_then(|entry| uncommitted_inline_target(context.root, entry));
+    render_pilot_terminal_with_target(classified, context, &top, target.as_deref())
+}
+
+fn render_pilot_terminal_with_target(
+    classified: &[ClassifiedSeam],
+    context: PilotSummaryContext<'_>,
+    top: &[&ClassifiedSeam],
+    uncommitted_inline_target: Option<&str>,
+) -> String {
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
@@ -599,7 +650,8 @@ pub(crate) fn render_pilot_terminal(
         None => out.push_str("  config: missing, using built-in defaults\n"),
     }
     out.push_str(&format!("  timeout: {} ms\n", context.timeout_ms));
-    if let Some(scope) = scope_line(context, false) {
+    let ranked = terminal_rank_label(scope_rank_label(context, top.is_empty()));
+    if let Some(scope) = scope_line(context, false, ranked) {
         out.push_str(&format!("  scope: {scope}\n"));
     }
     push_changed_file_limitations(&mut out, context.current_change, false);
@@ -607,7 +659,7 @@ pub(crate) fn render_pilot_terminal(
     // states the seam limit too; a gap past the cut was never classified.
     if let Some(limit) = context.seam_limit {
         out.push_str(&format!(
-            "  seam limit: ranked {} of {} seams\n",
+            "  limit reached: checked {} of {} spots in the code\n",
             limit.analyzed, limit.total
         ));
     }
@@ -622,15 +674,16 @@ pub(crate) fn render_pilot_terminal(
         let totals = if context.seam_limit.is_some() || !declined_rust_files(context).is_empty() {
             format!("at least {actionable}")
         } else {
-            format!("{actionable} total")
+            format!("{actionable}")
         };
+        let noun = if actionable == 1 { "gap" } else { "gaps" };
         if actionable > 1 {
             out.push_str(&format!(
-                "  actionable seams: {totals}, showing 1 (more ranked in {brief}; pass --max-seams N to rank more)\n",
+                "  {totals} {noun} to fix; showing the top 1 (more are in {brief}; --max-seams N shows more)\n",
                 brief = display_path(&context.artifacts.pilot_summary_md)
             ));
         } else {
-            out.push_str(&format!("  actionable seams: {totals}, showing 1\n"));
+            out.push_str(&format!("  {totals} {noun} to fix; showing it\n"));
         }
     }
     let withheld = withheld_static_limitations(classified);
@@ -650,8 +703,13 @@ pub(crate) fn render_pilot_terminal(
     let no_repair_target = if let Some(entry) = top.first() {
         let outline = targeted_test_brief_outline_for_classified_seam(entry);
         out.push_str("Top recommendation:\n");
-        out.push_str(&format!("  {RANKING_ORDER_NOTE}\n"));
-        if let Some(label) = current_change_label(context, entry) {
+        let change_label = current_change_label(context, entry);
+        let in_change = matches!(change_label, Some(CurrentChangeLabel::PartOfChange { .. }));
+        out.push_str(&format!(
+            "  {}\n",
+            terminal_pick_note(entry.class, in_change)
+        ));
+        if let Some(label) = change_label {
             out.push_str(&format!("  current change: {}\n", label.terminal()));
         }
         // The id leads the line, as it does in the Markdown sibling
@@ -661,22 +719,22 @@ pub(crate) fn render_pilot_terminal(
         // had no way to reach `ripr agent repair --seam-id <id>` — the step the
         // README names next — without opening a written artifact.
         out.push_str(&format!(
-            "  inspected seam: {} {}:{} {} in {} ({})\n",
+            "  gap {}: {}:{} {} ({}; {})\n",
             entry.seam.id().as_str(),
             display_path(entry.seam.file()),
             entry.seam.display_line(),
-            entry.seam.kind().as_str(),
-            entry.seam.owner(),
-            entry.class.human_label()
+            terminal_owner(entry),
+            terminal_kind_label(entry.seam.kind()),
+            terminal_grip_phrase(entry.class)
         ));
-        out.push_str(&format!("  why it matters: {}\n", why_line(entry)));
+        out.push_str(&format!("  why it matters: {}\n", terminal_why_line(entry)));
         if outline.is_not_applicable() {
             out.push_str(&format!(
-                "  focused test: {NO_REPAIR_TARGET_FOCUSED_TEST}\n"
+                "  test to add: {TERMINAL_NO_REPAIR_TARGET_TEST}\n"
             ));
         } else {
             out.push_str(&format!(
-                "  focused test: add {} in {}\n",
+                "  test to add: a test such as {} in {}\n",
                 outline.suggested_name,
                 display_path_text(&outline.suggested_file)
             ));
@@ -684,14 +742,14 @@ pub(crate) fn render_pilot_terminal(
         if let Some(value) = outline.candidate_value.as_ref() {
             out.push_str(&format!("  candidate value: {value}\n"));
         }
-        out.push_str(&format!("  assertion: {}\n", outline.assertion_shape));
+        push_assertion_shape(&mut out, &outline.assertion_shape);
         // Only a seam that passes the fail-closed repair-packet flip gets the
         // paste-ready command. Route readiness alone is weaker: a ready seam
         // can still be ineligible, and offering a repair transaction there
         // would promise a target `agent repair` refuses. The closing block
         // uses the same builder, so the two lines cannot disagree (#3906).
         if let Some(command) = repair_start_command(context.root, entry) {
-            out.push_str(&format!("  repair this seam: {command}\n"));
+            out.push_str(&format!("  repair this gap: {command}\n"));
             if let Some(form) = crate::output::markdown::powershell_text_variant(&command) {
                 out.push_str(&format!("  (PowerShell) {form}\n"));
             }
@@ -700,7 +758,9 @@ pub(crate) fn render_pilot_terminal(
             // so on the screen, so the README's "run the `ripr agent repair`
             // command pilot prints" is not left waiting for a command that
             // will never appear.
-            out.push_str(&format!("  repair this seam: {NO_REPAIR_START_LINE}\n"));
+            out.push_str(&format!(
+                "  repair this gap: {TERMINAL_NO_REPAIR_START_LINE}\n"
+            ));
         }
         out.push('\n');
         outline.is_not_applicable()
@@ -714,21 +774,21 @@ pub(crate) fn render_pilot_terminal(
         // the routed-languages pointer; those sections still render below.
         out.push_str("Top recommendation:\n");
         out.push_str(&format!(
-            "  none: pilot ranks Rust seams, but Rust is not enabled in ripr.toml [languages] ({} not analyzed); see the excluded scope below\n\n",
+            "  none: pilot scans Rust, but Rust is turned off in ripr.toml [languages] ({} not scanned); see below\n\n",
             file_count_label(excluded)
         ));
         false
     } else if let Some((route, command)) = supported_headline_route(context) {
         out.push_str("Top recommendation:\n");
         out.push_str(&format!(
-            "  analyze the {} diff: {command}\n  (pilot ranks Rust seams and found none here; see the languages below)\n\n",
+            "  analyze the {} diff: {command}\n  (pilot found no gaps in the Rust code it checked; see the other languages below)\n\n",
             route.language.display_name(),
         ));
         false
     } else if required_routes(context).is_some() {
         out.push_str("Top recommendation:\n");
         out.push_str(
-            "  none: pilot ranks Rust seams and found none here; see the languages below\n\n",
+            "  none: pilot found no gaps in the Rust code it checked; see the other languages below\n\n",
         );
         false
     } else if let Some(unanalyzed) = unanalyzed_only(context) {
@@ -764,12 +824,12 @@ pub(crate) fn render_pilot_terminal(
         push_language_routes_terminal(&mut out, routes);
     }
 
-    out.push_str("Detailed brief:\n");
+    out.push_str("Full report (Markdown):\n");
     out.push_str(&format!(
         "  {}\n",
         display_path(&context.artifacts.pilot_summary_md)
     ));
-    out.push_str("Structured packet:\n");
+    out.push_str("Machine-readable (JSON):\n");
     out.push_str(&format!(
         "  {}\n\n",
         display_path(&context.artifacts.agent_seam_packets_json)
@@ -779,6 +839,10 @@ pub(crate) fn render_pilot_terminal(
         .and_then(|entry| repair_start_command(context.root, entry))
     {
         out.push_str("Next, in order:\n");
+        if let Some(file) = uncommitted_inline_target {
+            out.push_str(&dirty_target_precondition(file));
+            out.push('\n');
+        }
         out.push_str(&format!("  1. {command}\n"));
         if let Some(form) = crate::output::markdown::powershell_text_variant(&command) {
             out.push_str(&format!("     (PowerShell) {form}\n"));
@@ -789,9 +853,9 @@ pub(crate) fn render_pilot_terminal(
                 .map(|entry| repair_edit_scope(entry))
                 .unwrap_or_default()
         ));
-        out.push_str("  3. run the `--attempt ... --phase after` command that step 1 prints\n");
+        out.push_str("  3. run the `continue --attempt ...` command that step 1 prints\n");
         out.push_str(
-            "  (do not redirect these commands' output into the checkout, for example `> packet.json`: the edit cage counts that file as an edit; use target/ripr/ or a directory outside the repository)\n",
+            "  (write these commands' output outside the repo, for example under target/ripr/: a file inside the repo counts as an edit and fails the repair, so do not use `> packet.json`)\n",
         );
         return out;
     }
@@ -828,7 +892,7 @@ pub(crate) fn render_pilot_terminal(
     // Routing to `ripr check` would loop (check honors the same config);
     // the only unblock is the config edit.
     if rust_excluded(context).is_some() {
-        out.push_str("Next, to rank Rust seams:\n");
+        out.push_str("Next, to scan Rust code:\n");
         out.push_str(&format!("  {}\n", capitalized(RUST_EXCLUDED_GUIDANCE)));
         return out;
     }
@@ -867,9 +931,21 @@ pub(crate) fn render_pilot_terminal(
     } else {
         // #8766: nothing was ranked, so no focused test was named and there
         // is nothing to run "after adding" yet.
-        out.push_str(
-            "No seam was ranked, so there is no focused test to add; rerun `ripr pilot` after the code or its tests change.\n",
-        );
+        match context.seam_limit {
+            // A limit cut the list, so the unchecked spots may hold gaps.
+            Some(limit) => out.push_str(&format!(
+                "No gap was found in the {} spots checked, but {} of {} were not checked and may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun `ripr pilot`.\n",
+                limit.analyzed,
+                limit.total.saturating_sub(limit.analyzed),
+                limit.total
+            )),
+            None if !declined_rust_files(context).is_empty() => out.push_str(
+                "No gap was found in the files ripr could read, but the Rust files listed above were not checked and may hold gaps: split them as described, then rerun `ripr pilot`.\n",
+            ),
+            None => out.push_str(
+                "No gap was found, so there is no test to add; rerun `ripr pilot` after the code or its tests change.\n",
+            ),
+        }
         return out;
     }
     out.push_str(&format!("  {}\n", commands.after_snapshot));
@@ -877,30 +953,62 @@ pub(crate) fn render_pilot_terminal(
     out
 }
 
-/// Terminal note for a top seam whose focused test is named but that fails the
-/// repair-packet eligibility flip, so no `ripr agent repair` command is printed.
-const NO_REPAIR_START_LINE: &str = "not available for this seam (static evidence does not admit a repair target); add the focused test by hand";
+/// The inline repair target file whose copy differs from HEAD in the index or
+/// the worktree, when the top seam's repair edits an inline test module (#9553).
+/// The decision reads the file's own state through the edit cage's predicate,
+/// the same one the repair start's baseline capture enforces, so a staged-only
+/// difference is named too and pilot does not fork its own check. The predicate
+/// fails open (`None`) whenever the answer is not positively established.
+fn uncommitted_inline_target(root: &std::path::Path, entry: &ClassifiedSeam) -> Option<String> {
+    repair_start_command(root, entry)?;
+    repair_inline_target_file(entry)
+        .filter(|file| crate::edit_cage::inline_target_is_uncommitted(root, file))
+}
+
+/// Precondition printed ahead of the repair steps when `file`, the inline test
+/// module the repair edits, differs from HEAD: the repair start refuses that
+/// file when its worktree or index copy differs.
+fn dirty_target_precondition(file: &str) -> String {
+    format!(
+        "  Before step 1: if `{file}` has uncommitted edits, commit or stash them; the repair start refuses a target file that differs from HEAD."
+    )
+}
 
 /// What pilot's ranking covers: change-first when there is a current change,
 /// else the whole repository (with the reason when the change could not be
-/// loaded). `None` when change data was not collected.
-fn scope_line(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
+/// loaded). `None` when change data was not collected. `ranked` names the
+/// seam owners the scope line claims were ranked; it must match what the
+/// recommendation below actually is (#9857).
+fn scope_line(context: PilotSummaryContext<'_>, code: bool, ranked: &str) -> Option<String> {
     let change = context.current_change?;
     Some(if change.is_changed() {
         match change.base() {
             Some(base) if code => {
-                format!("change-first (Rust seams on lines changed since `{base}` rank first)")
+                format!("change-first ({ranked} on lines changed since `{base}` rank first)")
             }
             Some(base) => {
-                format!("change-first (Rust seams on lines changed since {base} rank first)")
+                format!("change-first ({ranked} on lines changed since {base} rank first)")
             }
-            None => "change-first (Rust seams on changed lines rank first)".to_string(),
+            None => format!("change-first ({ranked} on changed lines rank first)"),
         }
     } else if let Some(reason) = change.unavailable_reason() {
         format!("whole repository (current change unavailable: {reason})")
     } else {
         "whole repository".to_string()
     })
+}
+
+/// The seam owners the scope line names. Pilot's Rust seam ranking owns the
+/// recommendation whenever it ranked anything; its Python first-use card
+/// leads only when the Rust ranking is empty, and only then is Python what
+/// this run ranked. Every other empty ranking keeps the historical "Rust
+/// seams" wording, which the none-explanation lines below still use.
+fn scope_rank_label(context: PilotSummaryContext<'_>, rust_ranking_empty: bool) -> &'static str {
+    if rust_ranking_empty && python_top_repair_card(context.python_first_use).is_some() {
+        "python (preview) seams"
+    } else {
+        "Rust seams"
+    }
 }
 
 /// Whether the top recommendation is part of the current change.
@@ -1137,7 +1245,7 @@ impl CurrentChangeLabel {
     fn terminal(&self) -> String {
         match self {
             Self::PartOfChange { base } => format!(
-                "part of it (this seam is on {})",
+                "part of it (this gap is on {})",
                 Self::changed_line(base.as_ref(), false)
             ),
             Self::Elsewhere {
@@ -1429,6 +1537,103 @@ fn route_status_label(route: &PilotLanguageRoute) -> &'static str {
     }
 }
 
+/// The scope line's subject in plain words: the markdown label names seam
+/// owners, the screen names gaps in the code.
+fn terminal_rank_label(label: &str) -> &'static str {
+    if label.starts_with("python") {
+        "gaps in python (preview) code"
+    } else {
+        "gaps in Rust code"
+    }
+}
+
+fn terminal_route_status_label(route: &PilotLanguageRoute) -> &'static str {
+    match (route.available, route.enabled) {
+        (false, _) => "not available in this build",
+        (true, true) => "preview; run the command below to check the diff",
+        (true, false) => "preview; turn it on in ripr.toml [languages] to check it",
+    }
+}
+
+/// Terminal-only plain wording (#10694). The Markdown summary and the JSON
+/// keep the schema vocabulary; the screen a first-time user reads does not
+/// name seams, grip classes or discriminators.
+fn terminal_grip_phrase(class: crate::analysis::seams::SeamGripClass) -> &'static str {
+    use crate::analysis::seams::SeamGripClass as Class;
+    match class {
+        Class::StronglyGripped => "tests check this",
+        Class::WeaklyGripped => "tests only loosely check this",
+        Class::Ungripped => "ripr found no test that reaches this",
+        Class::ReachableUnrevealed => {
+            "tests reach this, but ripr found nothing that would notice a change"
+        }
+        Class::ActivationUnknown
+        | Class::PropagationUnknown
+        | Class::ObservationUnknown
+        | Class::DiscriminationUnknown
+        | Class::Opaque => "ripr cannot tell whether tests check this",
+        Class::Intentional => "marked intentional",
+        Class::Suppressed => "suppressed in your settings",
+    }
+}
+
+fn terminal_kind_label(kind: crate::analysis::seams::SeamKind) -> &'static str {
+    use crate::analysis::seams::SeamKind as Kind;
+    match kind {
+        Kind::PredicateBoundary => "comparison",
+        Kind::ErrorVariant => "error value",
+        Kind::ReturnValue => "return value",
+        Kind::FieldConstruction => "struct field",
+        Kind::SideEffect => "side effect",
+        Kind::MatchArm => "match branch",
+        Kind::CallPresence => "call",
+    }
+}
+
+/// The owning function without its `file::` prefix, which the line already
+/// shows.
+fn terminal_owner(entry: &ClassifiedSeam) -> String {
+    let owner = entry.seam.owner();
+    let file = display_path(entry.seam.file());
+    owner
+        .strip_prefix(&format!("{file}::"))
+        .unwrap_or(owner)
+        .to_string()
+}
+
+fn terminal_pick_note(class: crate::analysis::seams::SeamGripClass, in_change: bool) -> String {
+    let because = if in_change {
+        format!(
+            "it is on a line you changed and {}",
+            terminal_grip_phrase(class)
+        )
+    } else {
+        terminal_grip_phrase(class).to_string()
+    };
+    format!(
+        "Picked first because {because}. This is a reading of the code, not a measured result: treat it as a place to look."
+    )
+}
+
+fn terminal_why_line(entry: &ClassifiedSeam) -> String {
+    if let Some(missing) = entry.evidence.missing_discriminators.first() {
+        return format!(
+            "the tests we looked at do not check {} ({})",
+            missing.value, missing.reason
+        );
+    }
+    let summary = entry.evidence.discriminate.summary.trim();
+    if !summary.is_empty() {
+        return format!("ripr's reading of the code: {summary}");
+    }
+    terminal_grip_phrase(entry.class).to_string()
+}
+
+const TERMINAL_NO_REPAIR_TARGET_TEST: &str = "none: `ripr agent repair` has no test file to use for this gap (for example, the only tests are inline `#[cfg(test)]` in a file outside the test paths, or live in another crate), so it will not start a repair here";
+
+const TERMINAL_NO_REPAIR_START_LINE: &str =
+    "not available for this gap (ripr did not start a repair here); add the test by hand";
+
 fn file_count_label(count: usize) -> String {
     if count == 1 {
         "1 file".to_string()
@@ -1438,13 +1643,13 @@ fn file_count_label(count: usize) -> String {
 }
 
 fn push_language_routes_terminal(out: &mut String, routes: &[PilotLanguageRoute]) {
-    out.push_str("Languages outside pilot's Rust seam scan:\n");
+    out.push_str("Not scanned by pilot (it scans Rust):\n");
     for route in routes {
         out.push_str(&format!(
             "  {}: {} ({})\n",
             route.language.as_str(),
             file_count_label(route.file_count),
-            route_status_label(route)
+            terminal_route_status_label(route)
         ));
         // One label for every language: the guidance category id stays in
         // `pilot-summary.json` and the Markdown guidance line, not the label.
@@ -1458,9 +1663,9 @@ fn push_language_routes_terminal(out: &mut String, routes: &[PilotLanguageRoute]
 }
 
 fn push_rust_exclusion_terminal(out: &mut String, file_count: usize) {
-    out.push_str("Excluded from pilot's Rust seam scan:\n");
+    out.push_str("Not scanned by pilot:\n");
     out.push_str(&format!(
-        "  rust: {} (not enabled in ripr.toml [languages])\n",
+        "  rust: {} (turned off in ripr.toml [languages])\n",
         file_count_label(file_count)
     ));
     out.push_str(&format!("    {RUST_EXCLUDED_GUIDANCE}\n\n"));
@@ -1936,5 +2141,45 @@ fn repair_action_label(action: &str) -> &'static str {
     match action {
         "strengthen_existing_test" => "strengthen",
         _ => "add or strengthen",
+    }
+}
+
+/// #9244 item 3: the suggested assertion carries `/* ... */` placeholders for
+/// the values only the developer knows. Labelled "assertion:" they read like
+/// unfilled template text, so a shape with a placeholder names itself a shape
+/// and says what to do with it; any other assertion text keeps its label.
+fn push_assertion_shape(out: &mut String, shape: &str) {
+    if shape.contains("/*") {
+        out.push_str(&format!("  assertion shape: {shape}\n"));
+        out.push_str(
+            "    (replace each /* ... */ comment with a real value from your test before using it)\n",
+        );
+    } else {
+        out.push_str(&format!("  assertion: {shape}\n"));
+    }
+}
+
+#[cfg(test)]
+mod assertion_shape_tests {
+    use super::push_assertion_shape;
+
+    #[test]
+    fn placeholder_shape_is_labelled_a_shape_with_a_fill_in_note() {
+        let mut out = String::new();
+        push_assertion_shape(
+            &mut out,
+            "assert_eq!(total(/* boundary input where a >= b */), /* expected */)",
+        );
+        assert_eq!(
+            out,
+            "  assertion shape: assert_eq!(total(/* boundary input where a >= b */), /* expected */)\n    (replace each /* ... */ comment with a real value from your test before using it)\n"
+        );
+    }
+
+    #[test]
+    fn concrete_assertion_keeps_its_label_and_gets_no_note() {
+        let mut out = String::new();
+        push_assertion_shape(&mut out, "assert!(quote.total > Money::zero())");
+        assert_eq!(out, "  assertion: assert!(quote.total > Money::zero())\n");
     }
 }

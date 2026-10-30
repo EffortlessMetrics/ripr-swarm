@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0197-ex01-trait-default-buf-exact-ok",
+  "subject_id": "authored-spec0197-1",
+  "diff": "cases/spec0197-ex01-trait-default-buf-exact-ok.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "ok_payload_value",
+  "test_shape": "trait_default_slice_impl_exact_ok",
+  "hard_case": "Spec example 1: a trait default reached through `impl Buf for &[u8]` and pinned by `assert_eq!(a.try_get_int(3), Ok(-1))`.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Ok(sign_extend(0, nbytes * 1))",
+        "mutated_line": "Ok(sign_extend(0, nbytes * 1))",
+        "outcome": "tests_failed",
+        "failing_test": "tests::three_ff_bytes_are_minus_one",
+        "equivalence_review": "not equivalent: the pinned -1 turns 0"
+      },
+      {
+        "replacement": "Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes * 2))",
+        "mutated_line": "Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes * 2))",
+        "outcome": "tests_failed",
+        "failing_test": "tests::three_ff_bytes_are_minus_one",
+        "equivalence_review": "not equivalent: 0xffffff is not sign extended to -1 at width 6"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "three_ff_bytes_are_minus_one pins Ok(-1) through the slice impl, so removing the sign extension or zeroing the value fails. Spec cells: RIPR-SPEC-0197 example 1.",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0197#1"
+  ]
+}

@@ -53,8 +53,8 @@ pub(super) fn validate_agent_receipt_verify_path(
     if !candidate.starts_with(&root) {
         return Err(format!(
             "agent receipt --verify-json {} must stay under root {}",
-            path.display(),
-            root.display()
+            crate::output::path::human_path(path),
+            crate::output::path::human_path(&root)
         ));
     }
 
@@ -150,8 +150,8 @@ fn validate_agent_receipt_artifact_path(
     if !candidate.starts_with(&root) {
         return Err(format!(
             "agent receipt {role} {} must stay under root {}",
-            path.display(),
-            root.display()
+            crate::output::path::human_path(path),
+            crate::output::path::human_path(&root)
         ));
     }
 
@@ -198,17 +198,40 @@ pub(super) fn validate_agent_verify_snapshot_path(
         root.join(path)
     };
     let candidate = candidate.canonicalize().map_err(|err| {
-        format!(
-            "canonicalize agent verify {flag} {} failed: {err}",
+        // #9855: name the unreadable input and the recovery route, not the
+        // internal `canonicalize` operation (the same failure class `explain
+        // --diff` already phrases in user vocabulary). The producer command
+        // is only named for the workflow snapshot pair the dispatch loop
+        // owns: a custom --before/--after path's producing run is unknowable
+        // here, so it gets the shared producer shape without a fabricated
+        // command (mirrors the #4307 receipt anchoring).
+        let failure = format!(
+            "failed to read agent verify {flag} snapshot {}: {err}",
             path.display()
-        )
+        );
+        let workflow_artifact = if flag == "--before" {
+            crate::agent::loop_commands::WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT
+        } else {
+            crate::agent::loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT
+        };
+        if candidate != root.join(workflow_artifact) {
+            return format!(
+                "{failure}; produce it with: ripr check --format repo-exposure-json > <path> (see `ripr agent verify --help`)"
+            );
+        }
+        let producer = crate::agent::loop_commands::check_repo_exposure_command(
+            &crate::agent::loop_commands::root_path_display(&root),
+            "draft",
+            workflow_artifact,
+        );
+        format!("{failure}; produce it with: {producer}")
     })?;
 
     if !candidate.starts_with(&root) {
         return Err(format!(
             "agent verify {flag} {} must stay under root {}",
-            path.display(),
-            root.display()
+            crate::output::path::human_path(path),
+            crate::output::path::human_path(&root)
         ));
     }
 
@@ -286,16 +309,22 @@ fn validate_agent_brief_diff_path(root: &Path, path: &Path) -> Result<PathBuf, S
         root.join(path)
     };
     let candidate = candidate.canonicalize().map_err(|err| {
+        // #9855: the same failure class `explain --diff` phrases as
+        // "failed to read diff file …; pass the path of an existing unified
+        // diff file": name the input and the recovery route, not the
+        // internal `canonicalize` operation. The brief names its working set
+        // several ways, so the route points at --help rather than one
+        // producer command.
         format!(
-            "canonicalize agent brief diff {} failed: {err}",
+            "failed to read agent brief --diff file {}: {err}; pass the path of an existing unified diff file, or name the working set with --base or --files (see `ripr agent brief --help`)",
             path.display()
         )
     })?;
     if !candidate.starts_with(&root) {
         return Err(format!(
             "agent brief --diff {} must stay under root {}",
-            path.display(),
-            root.display()
+            crate::output::path::human_path(path),
+            crate::output::path::human_path(&root)
         ));
     }
     Ok(candidate)
@@ -417,8 +446,8 @@ fn confine_agent_brief_file_path(root: &Path, path: &Path) -> Result<PathBuf, St
             | std::path::Component::Prefix(_) => {
                 return Err(format!(
                     "agent brief --files {} must stay under root {}",
-                    path.display(),
-                    root.display()
+                    crate::output::path::human_path(path),
+                    crate::output::path::human_path(root)
                 ));
             }
         }

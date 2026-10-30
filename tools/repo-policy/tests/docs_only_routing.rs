@@ -29,8 +29,19 @@ fn job(name: &str) -> TestResult<&str> {
     Ok(&tail[..end])
 }
 
+fn result_step() -> TestResult<&'static str> {
+    let (_, step) = job("result")?
+        .split_once("      - name: Summarize routed result\n")
+        .ok_or("production summary step exists")?;
+    Ok(step)
+}
+
 fn shell(name: &str) -> TestResult<String> {
-    let source = job(name)?;
+    let source = if name == "result" {
+        result_step()?
+    } else {
+        job(name)?
+    };
     assert_eq!(source.matches("        run: |\n").count(), 1);
     let (_, body) = source.split_once("        run: |\n").ok_or("shell block")?;
     let script = body
@@ -44,6 +55,247 @@ fn shell(name: &str) -> TestResult<String> {
         "production script must be nonempty"
     );
     Ok(script)
+}
+
+fn capability_shell() -> TestResult<String> {
+    let source = job("docs-gate")?;
+    let marker = "      - name: Capability registry checks (SUPPORT_TIERS.md, preview guide or spec change)\n";
+    assert_eq!(source.matches(marker).count(), 1);
+    let (_, tail) = source.split_once(marker).ok_or("capability step")?;
+    let step = tail.split("\n      - ").next().ok_or("step body")?;
+    for binding in [
+        "          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
+        "          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}",
+    ] {
+        assert_eq!(step.lines().filter(|line| *line == binding).count(), 1);
+    }
+    let (_, body) = step.split_once("        run: |\n").ok_or("step shell")?;
+    let script = body
+        .lines()
+        .map(|line| line.strip_prefix("          ").ok_or("shell indentation"))
+        .collect::<Result<Vec<_>, _>>()?
+        .join("\n");
+    assert!(!script.trim().is_empty());
+    Ok(script)
+}
+
+const CAPABILITY_CALLS: &str = "xtask capability-docs --check\nxtask check-capability-producers\n";
+
+fn capability_calls(
+    fixture: &Fixture,
+    script: &str,
+    base: &str,
+    head: &str,
+    cargo_exit: &str,
+) -> TestResult<(Output, String)> {
+    let calls = fixture.root.join(".git/capability-calls");
+    fs::write(&calls, "")?;
+    let temporary = fixture.root.join(".git/selector-temp");
+    fs::create_dir_all(&temporary)?;
+    // Retain the production selector and command order, but record Cargo argv:
+    // this is applicability evidence, not execution of either Rust gate.
+    let script = format!(
+        "cargo() {{ printf '%s\\n' \"$*\" >> .git/capability-calls; return \"$CARGO_EXIT\"; }}\n{script}"
+    );
+    let output = fixture.run(
+        &script,
+        &[
+            ("BASE_SHA", base),
+            ("HEAD_SHA", head),
+            ("CARGO_EXIT", cargo_exit),
+            ("TMPDIR", ".git/selector-temp"),
+        ],
+        None,
+    )?;
+    let calls = fs::read_to_string(calls)?;
+    assert_eq!(fs::read_dir(temporary)?.count(), 0, "selector temp cleanup");
+    Ok((output, calls))
+}
+
+#[test]
+fn capability_selector_runs_both_checks_for_docs_only_add_edit_delete() -> TestResult {
+    let script = capability_shell()?;
+    let detector = shell("detect-docs-only")?;
+    for path in [
+        "docs/status/SUPPORT_TIERS.md",
+        "docs/LANGUAGE_ADAPTER_PREVIEW.md",
+        "docs/specs/RIPR-SPEC-9999-selector.md",
+        "docs/specs/nested/café with spaces.md",
+    ] {
+        let fixture = Fixture::new()?;
+        let mut base = fixture.git(&["rev-parse", "HEAD"])?;
+        for content in [Some("added\n"), Some("edited\n"), None] {
+            match content {
+                Some(text) => fixture.write(path, text)?,
+                None => fs::remove_file(fixture.root.join(path))?,
+            }
+            let head = fixture.commit()?;
+            assert!(fixture.detect(&detector, "pull_request", &base, &head, None)?);
+            let (output, calls) = capability_calls(&fixture, &script, &base, &head, "0")?;
+            assert!(output.status.success(), "{path:?}: {output:?}");
+            assert_eq!(calls, CAPABILITY_CALLS, "{path:?}, {content:?}");
+            base = head;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn capability_selector_rejects_unrelated_and_hostile_path_records() -> TestResult {
+    let script = capability_shell()?;
+    for path in [
+        "README.md",
+        "docs/other.md",
+        "docs/status/SUPPORT_TIERS.md.bak",
+        "docs/LANGUAGE_ADAPTER_PREVIEW.md.backup",
+        "docs/specs-neighbor/ordinary.md",
+        "other/docs/specs/ordinary.md",
+        "docs/status/support_tiers.md",
+        "other/café.md",
+        "other/quote\".md",
+        "other/tab\tname.md",
+        "other/slash\\name.md",
+        "other/line\ndocs/specs/forged.md",
+    ] {
+        let fixture = Fixture::new()?;
+        let base = fixture.git(&["rev-parse", "HEAD"])?;
+        fixture.write(path, "unrelated\n")?;
+        let head = fixture.commit()?;
+        let (output, calls) = capability_calls(&fixture, &script, &base, &head, "0")?;
+        assert!(output.status.success(), "{path:?}: {output:?}");
+        assert!(calls.is_empty(), "unrelated {path:?} selected: {calls}");
+    }
+    Ok(())
+}
+
+#[test]
+fn capability_selector_uses_nul_records_independent_of_quote_path() -> TestResult {
+    let fixture = Fixture::new()?;
+    fixture.git(&["config", "core.quotePath", "true"])?;
+    let base = fixture.git(&["rev-parse", "HEAD"])?;
+    fixture.write("docs/specs/café.md", "unicode\n")?;
+    let head = fixture.commit()?;
+    let script = capability_shell()?;
+    let (output, calls) = capability_calls(&fixture, &script, &base, &head, "0")?;
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(calls, CAPABILITY_CALLS);
+    assert_eq!(script.matches("core.quotePath=false").count(), 1);
+    let quoted = script.replace("core.quotePath=false", "core.quotePath=true");
+    let (output, calls) = capability_calls(&fixture, &quoted, &base, &head, "0")?;
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(calls, CAPABILITY_CALLS, "NUL output ignores quotePath");
+    assert_eq!(script.matches("--name-only -z").count(), 1);
+    let mutant = script.replace("--name-only -z", "--name-only");
+    let (output, calls) = capability_calls(&fixture, &mutant, &base, &head, "0")?;
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        calls.is_empty(),
+        "newline output cannot satisfy the NUL record reader"
+    );
+    Ok(())
+}
+
+#[test]
+fn capability_selector_preserves_diff_and_selected_command_failures() -> TestResult {
+    let fixture = Fixture::new()?;
+    let base = fixture.git(&["rev-parse", "HEAD"])?;
+    fixture.write("docs/status/SUPPORT_TIERS.md", "selected\n")?;
+    let head = fixture.commit()?;
+    let script = capability_shell()?;
+    let (output, calls) = capability_calls(&fixture, &script, "missing", &head, "0")?;
+    assert!(
+        !output.status.success(),
+        "invalid diff cannot silently skip"
+    );
+    assert!(calls.is_empty());
+    let (output, calls) = capability_calls(&fixture, &script, &base, &head, "23")?;
+    assert_eq!(output.status.code(), Some(23), "{output:?}");
+    assert_eq!(calls, "xtask capability-docs --check\n");
+    let wrapper = fixture.wrapper(
+        "if [ \"$3\" = diff ]; then printf 'docs/status/SUPPORT_TIERS.md\\0'; exit 17; fi",
+    )?;
+    let output = fixture.run(
+        &format!("cargo() {{ return 99; }}\n{script}"),
+        &[
+            ("BASE_SHA", &base),
+            ("HEAD_SHA", &head),
+            ("TMPDIR", ".git/selector-temp"),
+        ],
+        Some(&wrapper),
+    )?;
+    assert_eq!(output.status.code(), Some(17), "partial diff: {output:?}");
+    assert_eq!(
+        fs::read_dir(fixture.root.join(".git/selector-temp"))?.count(),
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn capability_selector_selects_quoted_spec_paths() -> TestResult {
+    let script = capability_shell()?;
+    let mut missed = Vec::new();
+    for path in [
+        "docs/specs/quoted\".md",
+        "docs/specs/line\nbreak.md",
+        "docs/specs/tab\tname.md",
+        "docs/specs/slash\\name.md",
+    ] {
+        let fixture = Fixture::new()?;
+        let base = fixture.git(&["rev-parse", "HEAD"])?;
+        fixture.write(path, "relevant spec path\n")?;
+        let head = fixture.commit()?;
+        assert!(fixture.detect(
+            &shell("detect-docs-only")?,
+            "pull_request",
+            &base,
+            &head,
+            None
+        )?);
+        let (output, calls) = capability_calls(&fixture, &script, &base, &head, "0")?;
+        assert!(output.status.success(), "{output:?}");
+        if calls != CAPABILITY_CALLS {
+            missed.push(format!("{path:?}: calls={calls:?}"));
+        }
+    }
+    // Literal expectations retain the quote/newline regression from #10065.
+    assert!(
+        missed.is_empty(),
+        "quoted relevant paths skipped: {missed:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn capability_selector_keeps_empty_diff_and_both_rename_sides() -> TestResult {
+    let script = capability_shell()?;
+    let fixture = Fixture::new()?;
+    let head = fixture.git(&["rev-parse", "HEAD"])?;
+    let (output, calls) = capability_calls(&fixture, &script, &head, &head, "0")?;
+    assert!(output.status.success(), "{output:?}");
+    assert!(calls.is_empty(), "empty diff must not select a build");
+    for (from, to, expected) in [
+        ("docs/status/SUPPORT_TIERS.md", "docs/other.md", true),
+        ("docs/other.md", "docs/LANGUAGE_ADAPTER_PREVIEW.md", true),
+        ("docs/specs/quoted\".md", "docs/other.md", true),
+        ("docs/other.md", "docs/specs/line\nbreak.md", true),
+        ("docs/old.md", "docs/new.md", false),
+    ] {
+        let fixture = Fixture::new()?;
+        fixture.write(from, "identical rename content\n")?;
+        let base = fixture.commit()?;
+        fs::create_dir_all(fixture.root.join(to).parent().ok_or("rename parent")?)?;
+        fixture.git(&["mv", from, to])?;
+        let head = fixture.commit()?;
+        let (output, calls) = capability_calls(&fixture, &script, &base, &head, "0")?;
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            calls,
+            if expected { CAPABILITY_CALLS } else { "" },
+            "rename {from:?} -> {to:?}"
+        );
+    }
+    Ok(())
 }
 
 struct Fixture {
@@ -509,7 +761,7 @@ fn routed_result_admitted(
     heavy: &str,
     (admission_result, admission_status): (&str, &str),
 ) -> TestResult<bool> {
-    let source = job("result")?;
+    let source = result_step()?;
     let (setup, _) = source.split_once("        run: |\n").ok_or("result step")?;
     let (_, bindings) = setup.split_once("        env:\n").ok_or("result env")?;
     let mut env = bindings
@@ -549,6 +801,19 @@ fn routed_result_admitted(
         ("TARGET", "github"),
         ("ROUTE_RESULT", "success"),
         ("GITHUB_RESULT", heavy),
+        // The hosted route runs its nextest step in the sharded job (#10507); a
+        // green hosted gates job stands for a green sharded job in these fixtures.
+        ("GITHUB_TESTS_RESULT", heavy),
+        // This fixture isolates aggregate selection. The actual late shell and
+        // its changing API inputs run in routed_dispatch_result.rs.
+        (
+            "ELIGIBILITY_RESULT",
+            if admission_result == "success" && admission_status == "admitted" {
+                "success"
+            } else {
+                "skipped"
+            },
+        ),
         ("ADMISSION_RESULT", admission_result),
         ("ADMISSION_STATUS", admission_status),
     ]);
@@ -572,7 +837,9 @@ fn actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies(
     // The step keeps the label-aware nonrequest branch ahead of every
     // qualification decision; the job name (policy-pinned) then differs from
     // the required context, so this pass can never satisfy branch protection.
-    let (_, run) = source.split_once("        run: |\n").ok_or("result step")?;
+    let (_, run) = result_step()?
+        .split_once("        run: |\n")
+        .ok_or("result step")?;
     let first_decision = run
         .lines()
         .find(|line| line.trim_start().starts_with("if ["))
@@ -632,7 +899,7 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
             (result, status)
         )?);
     }
-    assert!(routed_result_admitted(
+    assert!(!routed_result_admitted(
         &fixture,
         "pull_request",
         "success",

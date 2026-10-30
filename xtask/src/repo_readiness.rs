@@ -1,6 +1,12 @@
-use std::fs;
-
 use crate::{json_escape, write_json_string_array};
+
+/// Outcome returned by this invocation, never inferred from a retained report.
+/// `Completed` describes this step only; it grants no merge readiness.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReadinessOutcome {
+    Completed,
+    NeedsAttention,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PrReadyStep {
@@ -17,18 +23,23 @@ pub(crate) fn run_readiness_step(
     command: &'static str,
     report: &'static str,
     required: bool,
-    run_step: fn() -> Result<(), String>,
+    run_step: impl FnOnce() -> Result<ReadinessOutcome, String>,
 ) -> PrReadyStep {
     match run_step() {
-        Ok(()) => {
-            let (status, summary) = pr_ready_report_outcome(report)
-                .unwrap_or_else(|| ("pass".to_string(), "completed".to_string()));
+        Ok(outcome) => {
+            let (status, summary) = match outcome {
+                ReadinessOutcome::Completed => ("pass", "completed".to_string()),
+                ReadinessOutcome::NeedsAttention => (
+                    "needs_attention",
+                    format!("current invocation found attention items; see {report}"),
+                ),
+            };
             PrReadyStep {
                 id,
                 command,
                 report,
                 required,
-                status,
+                status: status.to_string(),
                 summary,
             }
         }
@@ -40,36 +51,6 @@ pub(crate) fn run_readiness_step(
             status: if required { "fail" } else { "needs_attention" }.to_string(),
             summary: first_error_line(&err),
         },
-    }
-}
-
-fn pr_ready_report_outcome(report: &str) -> Option<(String, String)> {
-    let contents = fs::read_to_string(report).ok()?;
-    let status = markdown_status_value(&contents)?;
-    pr_ready_status_from_report_status(status).map(|step_status| {
-        (
-            step_status.to_string(),
-            format!("report status: {status}; see {report}"),
-        )
-    })
-}
-
-fn markdown_status_value(contents: &str) -> Option<&str> {
-    contents.lines().find_map(|line| {
-        line.strip_prefix("Status:")
-            .map(str::trim)
-            .filter(|status| !status.is_empty())
-    })
-}
-
-pub(crate) fn pr_ready_status_from_report_status(status: &str) -> Option<&'static str> {
-    match status {
-        "pass" => None,
-        "fail" | "error" => Some("fail"),
-        "warn" | "actionable" | "incomplete" | "blocked" | "needs_attention" => {
-            Some("needs_attention")
-        }
-        _ => None,
     }
 }
 

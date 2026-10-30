@@ -809,6 +809,450 @@ fn gate_gap_ledger_and_baseline_refuse_limited_findings_bound() -> Result<(), St
     Ok(())
 }
 
+/// #10733 repro, end to end at the cheapest level: the exact refusal envelope
+/// `render_diff_scope_limited_check_json` emits (exit 2, empty findings,
+/// `downstream_consumable: false`) is saved through the gap-ledger report and
+/// then read back as the gate's `--gap-ledger` input. The gate must refuse it
+/// with a config error naming the typed refusal — not pass on an empty
+/// denominator.
+#[test]
+fn gate_refuses_saved_refusal_ledger_with_named_reason() -> Result<(), String> {
+    let dir = temp_dir("gate-saved-refusal-ledger")?;
+    let refusal = serde_json::json!({
+        "schema_version": "0.2",
+        "tool": "ripr",
+        "mode": "fast",
+        "root": ".",
+        "summary": {
+            "changed_rust_files": 0,
+            "probes": 0,
+            "findings": 0,
+            "exposed": 0,
+            "weakly_exposed": 0,
+            "reachable_unrevealed": 0,
+            "no_static_path": 0,
+            "infection_unknown": 0,
+            "propagation_unknown": 0,
+            "static_unknown": 0,
+            "changed_files_by_language": []
+        },
+        "findings": [],
+        "analysis_scope": {
+            "scope": "diff",
+            "run_status": "diff_scope_oversized",
+            "basis": "rust_diff_scope_budget",
+            "downstream_consumable": false,
+            "limitation": "diff_scope_oversized",
+            "repair_route": "analysis/diff-scope-budget"
+        },
+        "run_limitations": [
+            {
+                "category": "diff_scope_oversized",
+                "run_status": "diff_scope_oversized",
+                "basis": "rust_diff_scope_budget",
+                "downstream_consumable": false,
+                "message": "diff_scope_oversized: changed Rust exceeds the diff scope budget",
+                "repair_route": "analysis/diff-scope-budget"
+            }
+        ]
+    });
+    let ledger = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+        crate::output::gap_decision_ledger::GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind:
+                crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "check.json".to_string(),
+            records_json: Ok(refusal.to_string()),
+        },
+    );
+    let rendered = crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&ledger)
+        .map_err(|error| format!("render saved refusal ledger: {error}"))?;
+    let ledger_path = dir.join("gap-ledger.json");
+    fs::write(&ledger_path, rendered)
+        .map_err(|error| format!("write saved refusal ledger: {error}"))?;
+
+    let (_fixture_input, mut input) = fixture_input(GateMode::VisibleOnly)?;
+    input.pr_guidance = None;
+    input.gap_ledger = Some(ledger_path);
+    let report = build_gate_decision_report(&input)?;
+
+    assert_eq!(report.status, "config_error");
+    assert!(gate_decision_should_fail(&report));
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("diff_scope_oversized")
+                && error.contains("downstream_consumable")),
+        "saved-refusal rejection must name the typed run status and the consumable flag: {:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn producer_refusal_detection_covers_run_state_vocabulary() {
+    assert_eq!(
+        refusal_run_status(&json!({"run_status": "diff_scope_oversized"})),
+        Some("diff_scope_oversized")
+    );
+    assert_eq!(
+        refusal_run_status(&json!({
+            "analysis_scope": {"run_status": "repo_scope_oversized"}
+        })),
+        Some("repo_scope_oversized")
+    );
+    assert_eq!(
+        refusal_run_status(&json!({
+            "run_limitations": [{"category": "diff_scope_oversized"}]
+        })),
+        Some("diff_scope_oversized")
+    );
+    assert_eq!(
+        refusal_run_status(&json!({
+            "run_limitations": [{"run_status": "repo_scope_oversized"}]
+        })),
+        Some("repo_scope_oversized")
+    );
+    // Refusal is independent from the older limited states: complete, partial
+    // and findings-bounded documents are not producer refusals.
+    assert_eq!(refusal_run_status(&json!({"run_status": "complete"})), None);
+    assert_eq!(
+        refusal_run_status(&json!({
+            "analysis_scope": {"run_status": "limited_partial_scope"}
+        })),
+        None
+    );
+    assert_eq!(
+        refusal_run_status(&json!({
+            "run_limitations": [{"run_status": "limited_findings_bound"}]
+        })),
+        None
+    );
+    // No disclosure at all is not a refusal.
+    assert_eq!(
+        refusal_run_status(&json!({"schema_version": "0.2", "findings": []})),
+        None
+    );
+}
+
+#[test]
+fn non_consumable_record_detection_requires_explicit_false() {
+    assert!(discloses_non_consumable_record(&json!({
+        "run_limitations": [{"downstream_consumable": false}]
+    })));
+    assert!(discloses_non_consumable_record(&json!({
+        "analysis_scope": {"downstream_consumable": false}
+    })));
+    // Explicitly consumable or absent members are not refusals; a malformed
+    // member does not establish an explicit refusal either.
+    assert!(!discloses_non_consumable_record(&json!({
+        "run_limitations": [{"downstream_consumable": true}]
+    })));
+    assert!(!discloses_non_consumable_record(&json!({
+        "run_limitations": [{"run_status": "limited_findings_bound"}]
+    })));
+    assert!(!discloses_non_consumable_record(&json!({
+        "run_limitations": [{"downstream_consumable": "false"}]
+    })));
+    assert!(!discloses_non_consumable_record(&json!({"findings": []})));
+}
+
+#[test]
+fn refusal_input_error_requires_explicit_consumable_false() -> Result<(), String> {
+    // #10733 review repair (RIPR-SPEC-0362 identity): a known refusal status
+    // requires an EXPLICIT `downstream_consumable: false` alongside it. A
+    // known status without the flag is the healthy complete shape (the
+    // producer never writes the member on a complete run) and must be
+    // admitted, not refused; the document does not disclose a refusal.
+    let path = Path::new("input.json");
+    for document in [
+        json!({"run_status": "diff_scope_oversized"}),
+        json!({"analysis_scope": {"run_status": "repo_scope_oversized"}}),
+        json!({
+            "run_limitations": [{"category": "diff_scope_oversized", "run_status": "diff_scope_oversized"}]
+        }),
+        // A malformed flag member does not establish an explicit refusal.
+        json!({
+            "run_status": "diff_scope_oversized",
+            "run_limitations": [{"downstream_consumable": "false"}]
+        }),
+    ] {
+        assert_eq!(
+            refusal_input_error(&document, path, "gate input"),
+            None,
+            "a known refusal status without an explicit false flag is admitted as \
+             the healthy complete shape, not refused: {document}"
+        );
+    }
+    // The explicit flag in EITHER position still establishes the refusal and
+    // names the typed status.
+    for document in [
+        json!({
+            "run_status": "diff_scope_oversized",
+            "run_limitations": [{"downstream_consumable": false}]
+        }),
+        json!({
+            "run_status": "diff_scope_oversized",
+            "analysis_scope": {"downstream_consumable": false}
+        }),
+    ] {
+        let error = refusal_input_error(&document, path, "gate input")
+            .ok_or_else(|| format!("explicit false flag must establish the refusal: {document}"))?;
+        assert!(
+            error.contains("diff_scope_oversized"),
+            "typed refusal must name the run status: {error}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn gate_admits_consumable_document_with_known_refusal_status() -> Result<(), String> {
+    // #10733 review repair: a document carrying a known refusal run status
+    // but NO explicit `downstream_consumable: false` discloses no refusal;
+    // the gate must admit it instead of reporting a config_error both
+    // surfaces refuse without the document disclosing one.
+    let dir = temp_dir("gate-status-without-flag-admitted")?;
+    let ledger = write_temp_json(
+        &dir,
+        "gap-ledger.json",
+        r#"{
+          "schema_version": "0.2",
+          "kind": "gap_decision_ledger",
+          "status": "no_records",
+          "records": [],
+          "run_status": "diff_scope_oversized"
+        }"#,
+    )?;
+    let (_fixture_input, mut input) = fixture_input(GateMode::Acknowledgeable)?;
+    input.pr_guidance = None;
+    input.gap_ledger = Some(ledger);
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(
+        report.status, "pass",
+        "a known refusal status without the explicit false flag is the healthy \
+         complete shape and must pass, not config_error: {:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_gap_ledger_refuses_generic_non_consumable_record() -> Result<(), String> {
+    // #10733: a document whose disclosed run_limitations entry is explicitly
+    // non-consumable under an unknown typed status is still a refusal, caught
+    // by the generic `downstream_consumable: false` check.
+    let dir = temp_dir("gate-generic-non-consumable-ledger")?;
+    let ledger = write_temp_json(
+        &dir,
+        "gap-ledger.json",
+        r#"{
+          "schema_version": "0.2",
+          "kind": "gap_decision_ledger",
+          "status": "advisory",
+          "records": [],
+          "run_limitations": [
+            {
+              "category": "some_future_guard",
+              "run_status": "some_future_guard",
+              "downstream_consumable": false,
+              "repair_route": "analysis/future-guard"
+            }
+          ]
+        }"#,
+    )?;
+    let (_fixture_input, mut input) = fixture_input(GateMode::VisibleOnly)?;
+    input.pr_guidance = None;
+    input.gap_ledger = Some(ledger);
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "config_error");
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("downstream_consumable: false")),
+        "generic non-consumable refusal must name the consumable flag: {:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_baseline_refuses_producer_refusal_envelope() -> Result<(), String> {
+    // #10733: the baseline reader applies the same shared refusal admission
+    // as the gap-ledger reader.
+    let dir = temp_dir("gate-refusal-baseline")?;
+    let baseline = write_temp_json(
+        &dir,
+        "baseline.json",
+        r#"{
+          "run_limitations": [
+            {
+              "category": "diff_scope_oversized",
+              "run_status": "diff_scope_oversized",
+              "basis": "rust_diff_scope_budget",
+              "downstream_consumable": false,
+              "repair_route": "analysis/diff-scope-budget"
+            }
+          ]
+        }"#,
+    )?;
+    let (_fixture_input, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    input.baseline = Some(baseline);
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "config_error");
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("diff_scope_oversized")),
+        "baseline refusal must name the typed run status: {:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_pr_guidance_refuses_producer_refusal_run() -> Result<(), String> {
+    // #10733: a review-comments-shaped document that discloses a producer
+    // refusal run is refused at the pr-guidance position with the same named
+    // reason, rather than passing on its (empty) comment set.
+    let dir = temp_dir("gate-refusal-pr-guidance")?;
+    let guidance = write_temp_json(
+        &dir,
+        "comments.json",
+        r#"{
+          "schema_version": "0.1",
+          "tool": "ripr",
+          "status": "advisory",
+          "comments": [],
+          "run_limitations": [
+            {
+              "category": "repo_scope_oversized",
+              "run_status": "repo_scope_oversized",
+              "basis": "rust_repo_scope_budget",
+              "downstream_consumable": false,
+              "repair_route": "analysis/repo-scope-budget"
+            }
+          ]
+        }"#,
+    )?;
+    let (_fixture_input, mut input) = fixture_input(GateMode::VisibleOnly)?;
+    input.pr_guidance = Some(guidance);
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "config_error");
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("repo_scope_oversized")),
+        "pr-guidance refusal must name the typed run status: {:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_refusal_admission_keeps_complete_and_advisory_controls() -> Result<(), String> {
+    // #10733 positive controls: a saved ledger from a complete zero-finding
+    // run still passes, and a saved ledger from an advisory-churn run still
+    // evaluates its records — refusal admission must not widen to healthy
+    // envelopes.
+    let dir = temp_dir("gate-refusal-positive-controls")?;
+
+    let zero_ledger = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+        crate::output::gap_decision_ledger::GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind:
+                crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "check.json".to_string(),
+            records_json: Ok(json!({
+                "schema_version": "0.2",
+                "tool": "ripr",
+                "mode": "fast",
+                "root": ".",
+                "summary": {"findings": 0},
+                "findings": []
+            })
+            .to_string()),
+        },
+    );
+    let zero_json =
+        crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&zero_ledger)?;
+    let zero_parsed: serde_json::Value =
+        serde_json::from_str(&zero_json).map_err(|error| format!("parse zero ledger: {error}"))?;
+    assert_eq!(zero_parsed["status"], "no_records");
+    let zero_path = dir.join("zero-ledger.json");
+    fs::write(&zero_path, zero_json).map_err(|error| format!("write zero ledger: {error}"))?;
+    let (_zero_fixture, mut zero_input) = fixture_input(GateMode::Acknowledgeable)?;
+    zero_input.pr_guidance = None;
+    zero_input.gap_ledger = Some(zero_path);
+    let zero_report = build_gate_decision_report(&zero_input)?;
+    assert_eq!(
+        zero_report.status, "pass",
+        "complete zero-finding ledger must still pass: {:?}",
+        zero_report.config_errors
+    );
+
+    let advisory_ledger = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+        crate::output::gap_decision_ledger::GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind::Records,
+            records_path: "records.json".to_string(),
+            records_json: Ok(json!({
+                "records": [
+                    {
+                        "gap_id": "gap:advisory-churn",
+                        "source_currentness": "candidate_current",
+                        "canonical_gap_id": "gap:advisory-churn",
+                        "kind": "MissingBoundaryAssertion",
+                        "language": "typescript",
+                        "language_status": "preview",
+                        "scope": "pr_local",
+                        "evidence_class": "predicate_boundary",
+                        "gap_state": "actionable",
+                        "policy_state": "new"
+                    }
+                ]
+            })
+            .to_string()),
+        },
+    );
+    let advisory_json =
+        crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&advisory_ledger)?;
+    let advisory_parsed: serde_json::Value = serde_json::from_str(&advisory_json)
+        .map_err(|error| format!("parse advisory ledger: {error}"))?;
+    assert_eq!(advisory_parsed["status"], "advisory");
+    let advisory_path = dir.join("advisory-ledger.json");
+    fs::write(&advisory_path, advisory_json)
+        .map_err(|error| format!("write advisory ledger: {error}"))?;
+    let (_advisory_fixture, mut advisory_input) = fixture_input(GateMode::Acknowledgeable)?;
+    advisory_input.pr_guidance = None;
+    advisory_input.gap_ledger = Some(advisory_path);
+    let advisory_report = build_gate_decision_report(&advisory_input)?;
+    assert_ne!(
+        advisory_report.status, "config_error",
+        "advisory-churn ledger must not be refused: {:?}",
+        advisory_report.config_errors
+    );
+    assert!(
+        advisory_report.summary.evaluated >= 1,
+        "advisory-churn ledger records must still be evaluated: {:?}",
+        advisory_report.summary
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
 #[test]
 fn incomplete_analysis_outcome_detection_covers_typed_envelope() {
     assert!(discloses_incomplete_analysis_outcome(&json!({
@@ -4935,4 +5379,1605 @@ fn fallback_identity_for_normalizes_like_the_baseline_writers() -> Result<(), St
         }
     }
     Ok(())
+}
+
+// ---- #9301 F2 end-to-end: real producers -> gate decision -> baseline delta/update ----
+
+const E2E_TWO_GAP_BASELINE: &str = r#"{
+  "schema_version": "0.1",
+  "kind": "gate_baseline",
+  "entries": [
+    {"identity": {"canonical_gap_id": "gap:fixed"}, "path": "src/fixed.rs", "line": 3, "static_class": "weakly_gripped", "decision": "advisory"},
+    {"identity": {"canonical_gap_id": "gap:elsewhere"}, "path": "src/elsewhere.rs", "line": 9, "static_class": "weakly_gripped", "decision": "advisory"}
+  ]
+}"#;
+
+/// A real review-comments document rendered by the production renderer with a
+/// `diff_scoped_changed_files` scope and no findings.
+fn e2e_review_comments_doc(
+    changed: &[&str],
+    omitted_by_cap: usize,
+    mutate: impl FnOnce(&mut Value),
+) -> Result<String, String> {
+    use crate::app::Mode;
+    use crate::app::agent_brief::{
+        AGENT_BRIEF_HARD_MAX_SEAMS, AgentBriefResolvedWorkingSet, AgentBriefSelection,
+        DEFAULT_AGENT_BRIEF_MAX_SEAMS,
+    };
+    use crate::output::review_comments::{
+        ReviewCommentsAnalysisScope, ReviewCommentsRenderContext,
+        render_review_comments_json_with_scope,
+    };
+    let files = changed.iter().map(PathBuf::from).collect::<Vec<_>>();
+    let working_set = AgentBriefResolvedWorkingSet::files(files);
+    let scope = ReviewCommentsAnalysisScope {
+        scope: "diff_scoped_changed_files",
+        run_status: "limited_diff_scope",
+        basis: "changed_production_files_plus_immediate_callers",
+        changed_files: changed.iter().map(|f| f.to_string()).collect(),
+        changed_lines: 1,
+        changed_owner_functions: 0,
+        changed_production_files: changed.iter().map(|f| f.to_string()).collect(),
+        parser_declined_files: Vec::new(),
+        immediate_caller_files: Vec::new(),
+        scoped_production_files: changed.iter().map(|f| f.to_string()).collect(),
+        total_rust_files: Some(10),
+        total_production_files: Some(8),
+        production_files_considered: changed.len(),
+        classified_seams_considered: 0,
+        unevaluated_seams: 0,
+        absent_changed_files: Vec::new(),
+        downstream_consumable: true,
+        limitation: "review_comments_diff_scope_only",
+        repair_route: "analysis/diff-scoped-large-repo-review-fast-path",
+    };
+    let selection = AgentBriefSelection {
+        requested: 10,
+        returned: 0,
+        default: DEFAULT_AGENT_BRIEF_MAX_SEAMS,
+        hard_cap: AGENT_BRIEF_HARD_MAX_SEAMS,
+        top_seams: Vec::new(),
+        warnings: Vec::new(),
+        omitted_by_cap,
+        omitted_by_policy: 0,
+    };
+    let config = crate::config::RiprConfig::default();
+    let context = ReviewCommentsRenderContext {
+        root: Path::new("."),
+        base: "main",
+        head: "HEAD",
+        mode: &Mode::Draft,
+        config: &config,
+    };
+    let rendered =
+        render_review_comments_json_with_scope(&context, &working_set, &selection, &scope, None)?;
+    let mut value: Value = serde_json::from_str(&rendered).map_err(|err| err.to_string())?;
+    mutate(&mut value);
+    serde_json::to_string_pretty(&value).map_err(|err| err.to_string())
+}
+
+/// Gate-evaluate `doc` (pr-guidance) or a ledger, then run delta and update
+/// against `E2E_TWO_GAP_BASELINE`. Returns (delta JSON, update entry count).
+fn e2e_delta_and_update(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+) -> Result<(Value, usize, String), String> {
+    e2e_delta_and_update_with(pr_guidance, gap_ledger, E2E_TWO_GAP_BASELINE)
+}
+
+fn e2e_gate_json(pr_guidance: Option<&str>, gap_ledger: Option<&str>) -> Result<String, String> {
+    e2e_gate_json_in(pr_guidance, gap_ledger, None)
+}
+
+/// The two Rust files `e2e_real_ledger` analyzes, so a gate run can sit on the
+/// same (fresh) or a different (stale) tree than the ledger it reads.
+fn e2e_write_project(root: &std::path::Path, lib_source: &str) -> Result<(), String> {
+    for (path, text) in [
+        ("src/lib.rs", lib_source),
+        (
+            "tests/boundary.rs",
+            "#[test] fn boundary() { assert!(early(10)); }\n",
+        ),
+    ] {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::write(&full, text).map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+fn e2e_gate_json_in(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    project_lib_source: Option<&str>,
+) -> Result<String, String> {
+    e2e_gate_json_with_files(pr_guidance, gap_ledger, project_lib_source, &[])
+}
+
+/// A per-test, recreated project root. The ledger's Cargo-configuration
+/// identity is bound to the checkout path, so a ledger and the gate that reads
+/// it must see the same absolute root (as one CI job does).
+fn e2e_fixed_root() -> Result<PathBuf, String> {
+    let tag = format!("{:?}", std::thread::current().id())
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect::<String>();
+    // Stable within one process (the producer and gate must see the same
+    // absolute root) but unique across the per-test processes nextest runs.
+    let path =
+        std::env::temp_dir().join(format!("ripr-gate-e2e-fixed-{}-{tag}", std::process::id()));
+    ignore_remove_dir_all(path.clone());
+    fs::create_dir_all(&path).map_err(|err| err.to_string())?;
+    Ok(path)
+}
+
+fn e2e_gate_json_with_files(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    project_lib_source: Option<&str>,
+    extra_files: &[(&str, &str)],
+) -> Result<String, String> {
+    let dir = if project_lib_source.is_some() {
+        e2e_fixed_root()?
+    } else {
+        temp_dir("gate-e2e-9301")?
+    };
+    if let Some(lib_source) = project_lib_source {
+        e2e_write_project(&dir, lib_source)?;
+    }
+    for (path, text) in extra_files {
+        fs::write(dir.join(path), text).map_err(|err| err.to_string())?;
+    }
+    let rel = |name: &str, body: &str| -> Result<PathBuf, String> {
+        let path = write_temp_json(&dir, name, body)?;
+        Ok(path
+            .strip_prefix(&dir)
+            .map_err(|err| err.to_string())?
+            .to_path_buf())
+    };
+    let input = GateEvaluateInput {
+        root: dir.clone(),
+        repo_exposure: None,
+        pr_guidance: pr_guidance.map(|d| rel("comments.json", d)).transpose()?,
+        gap_ledger: gap_ledger.map(|d| rel("gap-ledger.json", d)).transpose()?,
+        sarif_policy: None,
+        labels_json: None,
+        labels: Vec::new(),
+        agent_verify: None,
+        agent_receipt: None,
+        recommendation_calibration: None,
+        mutation_calibration: None,
+        baseline: None,
+        mode: GateMode::Acknowledgeable,
+        acknowledgement_labels: Vec::new(),
+        exception_policy: None,
+    };
+    let report = build_gate_decision_report(&input)?;
+    let gate_json = render_gate_decision_json(&report)?;
+    ignore_remove_dir_all(dir);
+    Ok(gate_json)
+}
+
+fn e2e_delta_and_update_with(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    baseline_template: &str,
+) -> Result<(Value, usize, String), String> {
+    e2e_delta_and_update_in(pr_guidance, gap_ledger, baseline_template, None)
+}
+
+fn e2e_delta_and_update_in(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    baseline_template: &str,
+    project_lib_source: Option<&str>,
+) -> Result<(Value, usize, String), String> {
+    let gate_json = e2e_gate_json_in(pr_guidance, gap_ledger, project_lib_source)?;
+
+    // Stamp the baseline with the producing build so the same-build rule
+    // applies and only scope decides resolved vs not_evaluated.
+    let gate_value: Value = serde_json::from_str(&gate_json).map_err(|err| err.to_string())?;
+    let mut baseline_value: Value =
+        serde_json::from_str(baseline_template).map_err(|err| err.to_string())?;
+    baseline_value["subject"] =
+        json!({"analyzer_version": gate_value["subject"]["analyzer_version"].clone()});
+    let baseline_json = serde_json::to_string(&baseline_value).map_err(|err| err.to_string())?;
+
+    let delta = crate::output::baseline_delta::build_baseline_delta_report(
+        crate::output::baseline_delta::BaselineDeltaInput {
+            root: ".".to_string(),
+            baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "gate-decision.json".to_string(),
+            baseline_json: Ok(baseline_json.clone()),
+            current_gate_decision_json: Ok(gate_json.clone()),
+        },
+    );
+    let delta_json: Value = serde_json::from_str(
+        &crate::output::baseline_delta::render_baseline_delta_json(&delta)?,
+    )
+    .map_err(|err| err.to_string())?;
+    let update = crate::output::baseline_update::build_baseline_update_remove_resolved(
+        crate::output::baseline_update::BaselineUpdateInput {
+            baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "gate-decision.json".to_string(),
+            baseline_json,
+            current_gate_decision_json: gate_json,
+            remove_resolved: true,
+            migrate_legacy_identities: false,
+        },
+    )?;
+    let updated = crate::output::baseline_update::render_baseline_update_json(&update)?;
+    Ok((
+        delta_json,
+        crate::output::baseline_update::baseline_update_after_entry_count(&update),
+        updated,
+    ))
+}
+
+#[test]
+fn e2e_pr_guidance_scope_resolves_only_analyzed_absent_gap() -> Result<(), String> {
+    let doc = e2e_review_comments_doc(&["src/fixed.rs"], 0, |_| {})?;
+    let (delta, after, updated) = e2e_delta_and_update(Some(&doc), None)?;
+    assert_eq!(delta["delta"]["resolved"], 1, "{delta}");
+    assert_eq!(delta["delta"]["stale_baseline_entry"], 1, "{delta}");
+    assert_eq!(after, 1);
+    assert!(updated.contains("gap:elsewhere"), "{updated}");
+    assert!(!updated.contains("gap:fixed"), "{updated}");
+    Ok(())
+}
+
+#[test]
+fn e2e_cap_omitted_seams_keep_in_scope_gap_not_evaluated() -> Result<(), String> {
+    // Both files are analyzed, but the brief cap dropped seams: absence of
+    // `src/fixed.rs` must not read as resolved.
+    let doc = e2e_review_comments_doc(&["src/fixed.rs", "src/elsewhere.rs"], 2, |_| {})?;
+    let (delta, after, updated) = e2e_delta_and_update(Some(&doc), None)?;
+    // The cap disclosure passed through gate evaluation into the delta's copy of
+    // the scope before any downstream claim is made.
+    assert_eq!(delta["analysis_scope"]["cap_omitted_seams"], 2, "{delta}");
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(delta["delta"]["stale_baseline_entry"], 2, "{delta}");
+    assert_eq!(after, 2);
+    assert!(updated.contains("gap:fixed"), "{updated}");
+    Ok(())
+}
+
+#[test]
+fn e2e_malformed_scope_counters_and_lists_fail_closed() -> Result<(), String> {
+    type Mutation = fn(&mut Value);
+    let mutations: [(&str, &str, Mutation); 7] = [
+        ("string unevaluated_seams", "unevaluated_seams", |v| {
+            v["analysis_scope"]["unevaluated_seams"] = json!("1");
+        }),
+        ("negative unevaluated_seams", "unevaluated_seams", |v| {
+            v["analysis_scope"]["unevaluated_seams"] = json!(-1);
+        }),
+        (
+            "non-array changed_production_files",
+            "changed_production_files",
+            |v| {
+                v["analysis_scope"]["changed_production_files"] = json!("src/fixed.rs");
+            },
+        ),
+        (
+            "non-string changed_production_files entry",
+            "changed_production_files",
+            |v| {
+                v["analysis_scope"]["changed_production_files"] = json!(["src/fixed.rs", 7]);
+            },
+        ),
+        ("malformed cap_omitted_seams", "cap_omitted_seams", |v| {
+            v["analysis_scope"]["cap_omitted_seams"] = json!("2");
+        }),
+        ("missing cap_omitted_seams", "cap_omitted_seams", |v| {
+            if let Some(object) = v["analysis_scope"].as_object_mut() {
+                object.remove("cap_omitted_seams");
+            }
+        }),
+        ("missing omitted_by_policy", "omitted_by_policy", |v| {
+            if let Some(object) = v["analysis_scope"].as_object_mut() {
+                object.remove("omitted_by_policy");
+            }
+        }),
+    ];
+    for (label, key, mutate) in mutations {
+        let doc = e2e_review_comments_doc(&["src/fixed.rs"], 0, mutate)?;
+        let (delta, after, updated) = e2e_delta_and_update(Some(&doc), None)?;
+        // The mutated value reached the delta (via the gate decision), so
+        // the entry is retained for the malformed key rather than because the
+        // scope was dropped.
+        assert!(
+            delta["analysis_scope"].is_object()
+                && (label.starts_with("missing") || delta["analysis_scope"].get(key).is_some()),
+            "{label}: {delta}"
+        );
+        assert_eq!(delta["delta"]["resolved"], 0, "{label}: {delta}");
+        let named = delta["items"].as_array().is_some_and(|items| {
+            items.iter().any(|item| {
+                item["not_evaluated_reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains(key))
+            })
+        });
+        assert!(named, "{label}: {delta}");
+        assert_eq!(after, 2, "{label}");
+        assert!(updated.contains("gap:fixed"), "{label}: {updated}");
+    }
+    Ok(())
+}
+
+#[test]
+fn e2e_gap_ledger_path_fails_closed_until_analyzed_files_are_disclosed() -> Result<(), String> {
+    let (delta, after, updated) = e2e_delta_and_update(None, Some(GAP_LEDGER_BLOCKING_JSON))?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(delta["delta"]["stale_baseline_entry"], 2, "{delta}");
+    assert_eq!(after, 2);
+    assert!(updated.contains("gap:fixed"), "{updated}");
+    let items = delta["items"].as_array().ok_or("items missing")?;
+    let stale = items
+        .iter()
+        .filter(|item| item["bucket"] == "stale_baseline_entry")
+        .collect::<Vec<_>>();
+    assert_eq!(stale.len(), 2);
+    for item in stale {
+        assert_eq!(item["evaluation"], "not_evaluated", "{item}");
+        let reason = item["not_evaluated_reason"].as_str().unwrap_or_default();
+        assert!(reason.contains("#9599"), "{reason}");
+    }
+    Ok(())
+}
+
+#[test]
+fn e2e_filtered_ledger_same_file_omitted_gap_stays_not_evaluated() -> Result<(), String> {
+    // The ledger holds only `gap:kept` at src/pricing.rs:88 (its anchor file
+    // is src/pricing.rs); the baseline entry `gap:omitted` is in the same
+    // file but was filtered out of the ledger. Anchor-file coverage must not
+    // read it as resolved or let --remove-resolved delete it.
+    let baseline = r#"{
+      "schema_version": "0.1",
+      "kind": "gate_baseline",
+      "entries": [
+        {"identity": {"canonical_gap_id": "gap:omitted"}, "path": "src/pricing.rs", "line": 3, "static_class": "weakly_gripped", "decision": "advisory"}
+      ]
+    }"#;
+    let (delta, after, updated) =
+        e2e_delta_and_update_with(None, Some(GAP_LEDGER_BLOCKING_JSON), baseline)?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(delta["delta"]["stale_baseline_entry"], 1, "{delta}");
+    assert_eq!(after, 1);
+    assert!(updated.contains("gap:omitted"), "{updated}");
+    Ok(())
+}
+
+#[test]
+fn e2e_non_rust_changed_files_are_not_covered_by_seam_analysis() -> Result<(), String> {
+    // The diff touched `src/pricing.py` and `README.md`, but the Rust-seam
+    // analysis evaluated only `src/fixed.rs`. Absence of Python/Markdown
+    // baseline entries must stay not_evaluated; the `.rs` control resolves.
+    let baseline = r#"{
+      "schema_version": "0.1",
+      "kind": "gate_baseline",
+      "entries": [
+        {"identity": {"canonical_gap_id": "gap:fixed"}, "path": "src/fixed.rs", "line": 3, "static_class": "weakly_gripped", "decision": "advisory"},
+        {"identity": {"canonical_gap_id": "gap:py"}, "path": "src/pricing.py", "line": 4, "static_class": "weakly_gripped", "decision": "advisory"},
+        {"identity": {"canonical_gap_id": "gap:md"}, "path": "README.md", "line": 5, "static_class": "weakly_gripped", "decision": "advisory"}
+      ]
+    }"#;
+    let doc = e2e_review_comments_doc(&["src/fixed.rs"], 0, |v| {
+        v["analysis_scope"]["changed_files"] =
+            json!(["src/fixed.rs", "src/pricing.py", "README.md"]);
+    })?;
+    let (delta, after, updated) = e2e_delta_and_update_with(Some(&doc), None, baseline)?;
+    assert_eq!(delta["delta"]["resolved"], 1, "{delta}");
+    assert_eq!(delta["delta"]["stale_baseline_entry"], 2, "{delta}");
+    assert_eq!(after, 2);
+    assert!(
+        updated.contains("gap:py") && updated.contains("gap:md"),
+        "{updated}"
+    );
+    assert!(!updated.contains("gap:fixed"), "{updated}");
+    Ok(())
+}
+
+#[test]
+fn e2e_policy_omitted_seams_keep_in_scope_gap_not_evaluated() -> Result<(), String> {
+    // A baselined seam later configured off is dropped by policy and absent
+    // from decisions; it must not read as resolved.
+    let doc = e2e_review_comments_doc(&["src/fixed.rs", "src/elsewhere.rs"], 0, |v| {
+        v["analysis_scope"]["omitted_by_policy"] = json!(1);
+    })?;
+    let (delta, after, updated) = e2e_delta_and_update(Some(&doc), None)?;
+    assert_eq!(delta["analysis_scope"]["omitted_by_policy"], 1, "{delta}");
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, 2);
+    assert!(updated.contains("gap:fixed"), "{updated}");
+    Ok(())
+}
+
+/// Run the real inventory -> selection -> review-comments renderer for a
+/// one-file project, then gate evaluate, baseline delta and update against a
+/// baseline holding one reviewed gap at `src/lib.rs:2`.
+fn e2e_real_review_doc(lib_source: &str) -> Result<String, String> {
+    e2e_real_review_render(lib_source, false)
+}
+
+fn e2e_real_review_render(lib_source: &str, markdown: bool) -> Result<String, String> {
+    use crate::app::agent_brief::{
+        AgentBriefLine, AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
+    };
+    use crate::output::review_comments::{
+        ReviewCommentsAnalysisScope, ReviewCommentsRenderContext,
+        render_review_comments_json_with_scope,
+    };
+    let root = temp_dir("gate-e2e-real-9301")?;
+    for (path, text) in [
+        ("src/lib.rs", lib_source),
+        (
+            "tests/boundary.rs",
+            "#[test] fn boundary() { assert!(early(10)); }\n",
+        ),
+    ] {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::write(&full, text).map_err(|err| err.to_string())?;
+    }
+    let config = crate::config::RiprConfig::default();
+    let inventory = crate::analysis::inventory_diff_scoped_classified_seams_at_with_config(
+        &root,
+        &config,
+        &[PathBuf::from("src/lib.rs")],
+        &[],
+    )?;
+    let working_set = AgentBriefResolvedWorkingSet::diff(
+        "change.diff",
+        vec![AgentBriefLine::new("src/lib.rs", 1)],
+    );
+    let selection = select_agent_brief_seams(
+        &inventory.classified,
+        &working_set,
+        10,
+        AgentBriefPolicy::from_config(&config),
+    );
+    let scope = ReviewCommentsAnalysisScope::limited_diff_scope(&working_set, &inventory);
+    let context = ReviewCommentsRenderContext {
+        root: &root,
+        base: "main",
+        head: "HEAD",
+        mode: &crate::app::Mode::Draft,
+        config: &config,
+    };
+    let doc = if markdown {
+        crate::output::review_comments::render_review_comments_markdown_with_scope(
+            &context,
+            &working_set,
+            &selection,
+            &scope,
+            None,
+        )
+    } else {
+        render_review_comments_json_with_scope(&context, &working_set, &selection, &scope, None)?
+    };
+    ignore_remove_dir_all(root);
+    Ok(doc)
+}
+
+#[test]
+fn e2e_real_pipeline_parser_declined_file_keeps_unchanged_baseline_debt() -> Result<(), String> {
+    // Capture the baseline from the real pipeline: parse the shallow file
+    // (holding the `>= 10` seam), render, gate-evaluate, then run the real
+    // `baseline create` over that gate decision. No identity is hand-written.
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let shallow_gate = e2e_gate_json(Some(&e2e_real_review_doc(shallow)?), None)?;
+    let created = crate::output::baseline::baseline_create_report_from_gate_decision_json(
+        "gate-decision.json",
+        "unix_ms:1",
+        &shallow_gate,
+    )?;
+    let captured = crate::output::baseline::baseline_entry_count(&created);
+    assert!(captured >= 1);
+    let baseline = crate::output::baseline::render_baseline_create_json(&created)?;
+    let baseline_value: Value = serde_json::from_str(&baseline).map_err(|err| err.to_string())?;
+    assert_eq!(baseline_value["entries"][0]["path"], "src/lib.rs");
+
+    // Control: the file parses and no longer contains the seam, so the real
+    // analysis covers the file and the captured gap is genuinely resolved.
+    let fixed = "pub fn unrelated() {}\n";
+    let (delta, after, updated) =
+        e2e_delta_and_update_with(Some(&e2e_real_review_doc(fixed)?), None, &baseline)?;
+    assert!(
+        delta["analysis_scope"]["parser_declined_files"].is_null(),
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], captured as u64, "{delta}");
+    assert_eq!(after, 0);
+
+    // Same captured identity, but deeply nested code elsewhere exceeds the
+    // parse budget: the lexical fallback extracts no seams (including the
+    // unchanged earlier one), so absence must not read as resolved.
+    let declined = format!(
+        "{shallow}pub fn deep() {{ {}{} }}\n",
+        "{".repeat(400),
+        "}".repeat(400)
+    );
+    let (delta, after, updated_declined) =
+        e2e_delta_and_update_with(Some(&e2e_real_review_doc(&declined)?), None, &baseline)?;
+    assert_eq!(
+        delta["analysis_scope"]["parser_declined_files"],
+        json!(["src/lib.rs"]),
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(
+        delta["delta"]["stale_baseline_entry"], captured as u64,
+        "{delta}"
+    );
+    assert_eq!(after, captured);
+    let updated_value: Value =
+        serde_json::from_str(&updated_declined).map_err(|err| err.to_string())?;
+    assert_eq!(
+        updated_value["entries"].as_array().map(|entries| {
+            entries
+                .iter()
+                .map(|entry| entry["identity"].clone())
+                .collect::<Vec<_>>()
+        }),
+        baseline_value["entries"].as_array().map(|entries| {
+            entries
+                .iter()
+                .map(|entry| entry["identity"].clone())
+                .collect::<Vec<_>>()
+        }),
+        "{updated_declined}"
+    );
+    assert!(!updated.contains("src/lib.rs"), "{updated}");
+    let reason = delta["items"][0]["not_evaluated_reason"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(reason.contains("not parsed"), "{reason}");
+    Ok(())
+}
+
+/// #9734: the real review-comments Markdown names a parser-declined file, and
+/// stays silent when every changed file parsed.
+#[test]
+fn e2e_real_markdown_lists_parser_declined_files() -> Result<(), String> {
+    let declined = format!(
+        "pub fn early(n: i32) -> bool {{ n >= 10 }}\npub fn deep() {{ {}{} }}\n",
+        "{".repeat(400),
+        "}".repeat(400)
+    );
+    let markdown = e2e_real_review_render(&declined, true)?;
+    assert!(
+        markdown.contains(
+            "- limitation: `parser_declined_files`; no seams were extracted from: `src/lib.rs`"
+        ),
+        "{markdown}"
+    );
+    let clean = e2e_real_review_render("pub fn unrelated() {}\n", true)?;
+    assert!(!clean.contains("parser_declined_files"), "{clean}");
+    Ok(())
+}
+
+// ---- #9599: gap-ledger path with a producer coverage disclosure ----
+
+/// Real chain for one project: full Rust inventory -> repo-exposure JSON
+/// (production writer) -> gap decision ledger (production builder/renderer).
+fn e2e_real_ledger(lib_source: &str) -> Result<String, String> {
+    let root = e2e_fixed_root()?;
+    e2e_write_project(&root, lib_source)?;
+    let rendered = e2e_real_ledger_at(&root, &crate::config::RiprConfig::default())?;
+    ignore_remove_dir_all(root);
+    Ok(rendered)
+}
+
+fn e2e_real_ledger_at(root: &Path, config: &crate::config::RiprConfig) -> Result<String, String> {
+    use crate::output::gap_decision_ledger::{
+        GapDecisionLedgerInput, GapDecisionLedgerSourceKind, build_gap_decision_ledger_report,
+        render_gap_decision_ledger_json,
+    };
+    let report = crate::analysis::inventory_classified_seams_report_at_with_config(root, config)?;
+    let generated_skip = crate::output::repo_exposure::GeneratedRustSkip::from_parts(
+        report.skipped_generated.clone(),
+        report.naming_only_skips.clone(),
+        report.declined_rust_files.clone(),
+    );
+    let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
+        root.to_path_buf(),
+        "draft".to_string(),
+        None,
+        config,
+    )?
+    .with_rust_inventory(
+        report.corpus_key.as_ref(),
+        &report.analyzed_production_files,
+    );
+    let mut bytes = Vec::new();
+    crate::output::repo_exposure::write_repo_exposure_json_with_context(
+        &report.classified,
+        report.limit_info.as_ref(),
+        None,
+        None,
+        generated_skip.as_ref(),
+        &context,
+        &mut bytes,
+    )?;
+    let exposure = String::from_utf8(bytes).map_err(|err| err.to_string())?;
+    let ledger = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+        root: root.to_string_lossy().to_string(),
+        generated_at: "2026-01-01T00:00:00Z".to_string(),
+        source_kind: GapDecisionLedgerSourceKind::RepoExposure,
+        records_path: "repo-exposure.json".to_string(),
+        records_json: Ok(exposure),
+    });
+    render_gap_decision_ledger_json(&ledger)
+}
+
+fn e2e_real_gate_from_ledger_at(root: &Path, ledger: &str) -> Result<String, String> {
+    fs::write(root.join("ledger.json"), ledger).map_err(|err| err.to_string())?;
+    let input = GateEvaluateInput {
+        root: root.to_path_buf(),
+        repo_exposure: None,
+        pr_guidance: None,
+        gap_ledger: Some(PathBuf::from("ledger.json")),
+        sarif_policy: None,
+        labels_json: None,
+        labels: Vec::new(),
+        agent_verify: None,
+        agent_receipt: None,
+        recommendation_calibration: None,
+        mutation_calibration: None,
+        baseline: None,
+        mode: GateMode::Acknowledgeable,
+        acknowledgement_labels: Vec::new(),
+        exception_policy: None,
+    };
+    render_gate_decision_json(&build_gate_decision_report(&input)?)
+}
+
+#[test]
+fn e2e_ledger_coverage_rejects_role_only_source_changes() -> Result<(), String> {
+    let root = temp_dir("gate-e2e-ledger-roles-9599")?;
+    e2e_write_project(&root, "pub fn unrelated() {}\n")?;
+    fs::write(root.join("tests/tool.rs"), "pub fn helper() {}\n").map_err(|err| err.to_string())?;
+    fs::write(
+        root.join("ripr.toml"),
+        "[analysis]\nproduction_like_targets = [\"tests/tool.rs\"]\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let config = crate::config::load_for_root(&root).map_err(|err| err.to_string())?;
+    let ledger = e2e_real_ledger_at(&root, &config)?;
+    let captured: Value = serde_json::from_str(&ledger).map_err(|err| err.to_string())?;
+    assert!(
+        captured["analysis_coverage"]["corpus"]["analyzed_production_files"]
+            .as_array()
+            .is_some_and(|files| files.contains(&json!("tests/tool.rs"))),
+        "{captured}",
+    );
+    let gate: Value = serde_json::from_str(&e2e_real_gate_from_ledger_at(&root, &ledger)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(
+        gate["analysis_scope"]["scope"], "rust_workspace_complete",
+        "{gate}"
+    );
+    fs::remove_file(root.join("ripr.toml")).map_err(|err| err.to_string())?;
+    let config = crate::config::load_for_root(&root).map_err(|err| err.to_string())?;
+    let current = e2e_real_ledger_at(&root, &config)?;
+    let current: Value = serde_json::from_str(&current).map_err(|err| err.to_string())?;
+    assert_eq!(
+        current["analysis_coverage"]["corpus"]["files_content_hash"],
+        captured["analysis_coverage"]["corpus"]["files_content_hash"],
+        "the Rust corpus bytes are unchanged; only source-role policy changed",
+    );
+    assert!(
+        !current["analysis_coverage"]["corpus"]["analyzed_production_files"]
+            .as_array()
+            .is_some_and(|files| files.contains(&json!("tests/tool.rs"))),
+        "{current}",
+    );
+    let gate: Value = serde_json::from_str(&e2e_real_gate_from_ledger_at(&root, &ledger)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(
+        gate["analysis_scope"]["scope"], "gap_ledger_artifact",
+        "{gate}"
+    );
+    ignore_remove_dir_all(root);
+    Ok(())
+}
+
+/// #9599: a ledger produced under one set of non-Rust analysis inputs (config,
+/// test intent, suppressions, build-feature environment) does not earn
+/// coverage when gated under different ones, even with identical Rust bytes
+/// and production-file membership.
+#[test]
+fn e2e_ledger_coverage_requires_matching_non_rust_analysis_inputs() -> Result<(), String> {
+    let root = temp_dir("gate-e2e-ledger-inputs-9599")?;
+    e2e_write_project(&root, "pub fn unrelated() {}\n")?;
+    let config = crate::config::load_for_root(&root).map_err(|err| err.to_string())?;
+    let ledger = e2e_real_ledger_at(&root, &config)?;
+    let captured: Value = serde_json::from_str(&ledger).map_err(|err| err.to_string())?;
+    assert_eq!(
+        captured["analysis_coverage"]["corpus"]["analysis_inputs"]
+            .as_object()
+            .map(|inputs| inputs.len()),
+        Some(8),
+        "{captured}"
+    );
+    let scope_of = |root: &Path, ledger: &str| -> Result<Value, String> {
+        let gate: Value = serde_json::from_str(&e2e_real_gate_from_ledger_at(root, ledger)?)
+            .map_err(|err| err.to_string())?;
+        Ok(gate["analysis_scope"].clone())
+    };
+    let scope = scope_of(&root, &ledger)?;
+    assert_eq!(scope["scope"], "rust_workspace_complete");
+    assert!(scope.get("coverage_refused").is_none());
+
+    let intent = root.join(".ripr").join("test_intent.toml");
+    let suppressions = root.join(config.suppressions().path());
+    for (name, class, path, text) in [
+        (
+            "config",
+            "config",
+            root.join("ripr.toml"),
+            "[analysis]\n# changed\n",
+        ),
+        ("test_intent", "test_intent", intent, "# changed\n"),
+        ("suppressions", "suppressions", suppressions, "# changed\n"),
+        (
+            "manifest harness",
+            "workspace_manifests",
+            root.join("Cargo.toml"),
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[[test]]\nname = \"boundary\"\npath = \"tests/boundary.rs\"\nharness = false\n",
+        ),
+        (
+            "lockfile",
+            "lockfile",
+            root.join("Cargo.lock"),
+            "# changed\n",
+        ),
+    ] {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::write(&path, text).map_err(|err| err.to_string())?;
+        let scope = scope_of(&root, &ledger)?;
+        assert_eq!(scope["scope"], "gap_ledger_artifact", "{name}");
+        assert!(
+            scope["coverage_refused"]
+                .as_array()
+                .is_some_and(|classes| classes.contains(&json!(class))),
+            "{name}: {scope}"
+        );
+        fs::remove_file(&path).map_err(|err| err.to_string())?;
+        assert_eq!(
+            scope_of(&root, &ledger)?["scope"],
+            "rust_workspace_complete",
+            "{name} restored"
+        );
+    }
+
+    // A ledger produced under other build features / toolchain / analyzer
+    // inputs (disclosed hashes differ from the gate's recomputation) is
+    // refused, naming the class; a removed or blanked identity establishes
+    // nothing.
+    for (key, class) in [
+        ("cfg_features_hash", "cfg_features"),
+        ("toolchain_hash", "toolchain"),
+        ("analyzer_version", "analyzer_version"),
+    ] {
+        let mut other = captured.clone();
+        other["analysis_coverage"]["corpus"]["analysis_inputs"][key] = json!("different");
+        let other = serde_json::to_string(&other).map_err(|err| err.to_string())?;
+        let scope = scope_of(&root, &other)?;
+        assert_eq!(scope["scope"], "gap_ledger_artifact", "{key}");
+        assert_eq!(scope["coverage_refused"], json!([class]), "{key}");
+    }
+    for patch in [None, Some("cfg_features_hash")] {
+        let mut stripped = captured.clone();
+        match patch {
+            None => {
+                if let Some(corpus) = stripped["analysis_coverage"]["corpus"].as_object_mut() {
+                    corpus.remove("analysis_inputs");
+                }
+            }
+            Some(key) => {
+                stripped["analysis_coverage"]["corpus"]["analysis_inputs"][key] = json!("");
+            }
+        }
+        let stripped = serde_json::to_string(&stripped).map_err(|err| err.to_string())?;
+        assert_eq!(scope_of(&root, &stripped)?["scope"], "gap_ledger_artifact");
+    }
+    ignore_remove_dir_all(root);
+    Ok(())
+}
+
+#[test]
+fn e2e_ledger_workspace_coverage_resolves_only_in_scope_rust_gaps() -> Result<(), String> {
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let ledger0 = e2e_real_ledger(shallow)?;
+    let ledger0_value: Value = serde_json::from_str(&ledger0).map_err(|err| err.to_string())?;
+    let records = ledger0_value["records"]
+        .as_array()
+        .ok_or("records missing")?;
+    assert!(!records.is_empty(), "{ledger0}");
+    assert_eq!(
+        ledger0_value["analysis_coverage"]["scope"], "rust_workspace",
+        "{ledger0}"
+    );
+
+    // Baseline entries derived from the real gate decision over this ledger
+    // (repo-scoped records are not gate candidates, so `baseline create`
+    // would skip them; the identity fields are copied, not authored).
+    let gate0 = e2e_gate_json_in(None, Some(&ledger0), Some(shallow))?;
+    let gate0_value: Value = serde_json::from_str(&gate0).map_err(|err| err.to_string())?;
+    let entries = gate0_value["decisions"]
+        .as_array()
+        .ok_or("decisions missing")?
+        .iter()
+        .map(|decision| {
+            json!({
+                "identity": {"canonical_gap_id": decision["canonical_gap_id"].clone()},
+                "path": decision["placement"]["path"].clone(),
+                "line": decision["placement"]["line"].clone(),
+                "static_class": decision["static_class"].clone(),
+                "decision": "advisory",
+            })
+        })
+        .collect::<Vec<_>>();
+    let captured = entries.len();
+    assert!(captured >= 1, "{gate0}");
+    assert_eq!(entries[0]["path"], "src/lib.rs");
+    let baseline = serde_json::to_string(&json!({
+        "schema_version": "0.1",
+        "kind": "gate_baseline",
+        "entries": entries,
+    }))
+    .map_err(|err| err.to_string())?;
+
+    // Analyzed fixed gap: the file is gone from the records but the producer
+    // disclosed whole-workspace coverage, so every captured entry resolves.
+    let fixed = e2e_real_ledger("pub fn unrelated() {}\n")?;
+    let unrelated = "pub fn unrelated() {}\n";
+    let (delta, after, updated) =
+        e2e_delta_and_update_in(None, Some(&fixed), &baseline, Some(unrelated))?;
+    assert_eq!(
+        delta["analysis_scope"]["scope"], "rust_workspace_complete",
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], captured as u64, "{delta}");
+    assert_eq!(after, 0, "{updated}");
+
+    // Filtered ledger, same file: the surviving record set no longer matches
+    // the coverage digest, so absence proves nothing and nothing is removed.
+    let mut filtered: Value = serde_json::from_str(&ledger0).map_err(|err| err.to_string())?;
+    filtered["records"] = json!([]);
+    let filtered = serde_json::to_string(&filtered).map_err(|err| err.to_string())?;
+    let (delta, after, _) =
+        e2e_delta_and_update_in(None, Some(&filtered), &baseline, Some(shallow))?;
+    assert_eq!(
+        delta["analysis_scope"]["scope"], "gap_ledger_artifact",
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // Parser-declined file: the producer run is not complete, so there is no
+    // coverage disclosure and the same baseline stays not_evaluated.
+    let declined = format!(
+        "{shallow}pub fn deep() {{ {}{} }}\n",
+        "{".repeat(400),
+        "}".repeat(400)
+    );
+    let declined_ledger = e2e_real_ledger(&declined)?;
+    let declined_value: Value =
+        serde_json::from_str(&declined_ledger).map_err(|err| err.to_string())?;
+    assert!(declined_value.get("analysis_coverage").is_none());
+    let (delta, after, _) =
+        e2e_delta_and_update_in(None, Some(&declined_ledger), &baseline, Some(&declined))?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // A non-Rust baseline path is outside what the Rust workspace run read.
+    let mut python_baseline: Value =
+        serde_json::from_str(&baseline).map_err(|err| err.to_string())?;
+    if let Some(entries) = python_baseline["entries"].as_array_mut() {
+        for entry in entries {
+            entry["path"] = json!("scripts/tool.py");
+        }
+    }
+    let python_baseline = serde_json::to_string(&python_baseline).map_err(|err| err.to_string())?;
+    let (delta, after, _) =
+        e2e_delta_and_update_in(None, Some(&fixed), &python_baseline, Some(unrelated))?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // Rust-looking paths the producer's walk never read, or that name a
+    // different file than the run saw, are not evaluated either.
+    for path in [
+        "../outside/x.rs",
+        "/abs/y.rs",
+        "target/debug/build/gen.rs",
+        "fixtures/case/src/lib.rs",
+        "src/lib.rs ",
+        "src/./lib.rs",
+    ] {
+        let mut odd: Value = serde_json::from_str(&baseline).map_err(|err| err.to_string())?;
+        if let Some(entries) = odd["entries"].as_array_mut() {
+            for entry in entries {
+                entry["path"] = json!(path);
+            }
+        }
+        let odd = serde_json::to_string(&odd).map_err(|err| err.to_string())?;
+        let (delta, after, _) = e2e_delta_and_update_in(None, Some(&fixed), &odd, Some(unrelated))?;
+        assert_eq!(delta["delta"]["resolved"], 0, "{path}: {delta}");
+        assert_eq!(after, captured, "{path}");
+    }
+
+    // Stale corpus: the ledger describes an older tree than the one being
+    // gated, so the disclosure is not upgraded and nothing resolves.
+    let (delta, after, _) = e2e_delta_and_update_in(None, Some(&fixed), &baseline, Some(shallow))?;
+    assert_eq!(
+        delta["analysis_scope"]["scope"], "gap_ledger_artifact",
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // A tampered digest loses its coverage even on the matching tree.
+    let mut tampered: Value = serde_json::from_str(&fixed).map_err(|err| err.to_string())?;
+    tampered["analysis_coverage"]["records_digest"] = json!("sha256:00");
+    let tampered = serde_json::to_string(&tampered).map_err(|err| err.to_string())?;
+    let (delta, after, _) =
+        e2e_delta_and_update_in(None, Some(&tampered), &baseline, Some(unrelated))?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // Missing, malformed or unverified membership cannot establish coverage,
+    // even when the unchanged record digest and Rust bytes still match.
+    for files in [
+        Value::Null,
+        json!("src/lib.rs"),
+        json!([7]),
+        json!(["src/lib.rs", "src/lib.rs"]),
+        json!(["src/../lib.rs"]),
+        json!(["src/not-admitted.rs"]),
+        json!([]),
+    ] {
+        let mut malformed: Value = serde_json::from_str(&fixed).map_err(|err| err.to_string())?;
+        malformed["analysis_coverage"]["corpus"]["analyzed_production_files"] = files;
+        let malformed = serde_json::to_string(&malformed).map_err(|err| err.to_string())?;
+        let (delta, after, _) =
+            e2e_delta_and_update_in(None, Some(&malformed), &baseline, Some(unrelated))?;
+        assert_eq!(
+            delta["analysis_scope"]["scope"], "gap_ledger_artifact",
+            "{delta}"
+        );
+        assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+        assert_eq!(after, captured);
+    }
+    let mut missing: Value = serde_json::from_str(&fixed).map_err(|err| err.to_string())?;
+    if let Some(corpus) = missing["analysis_coverage"]["corpus"].as_object_mut() {
+        corpus.remove("analyzed_production_files");
+    }
+    let missing = serde_json::to_string(&missing).map_err(|err| err.to_string())?;
+    let (delta, after, _) =
+        e2e_delta_and_update_in(None, Some(&missing), &baseline, Some(unrelated))?;
+    assert_eq!(
+        delta["analysis_scope"]["scope"], "gap_ledger_artifact",
+        "{delta}"
+    );
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // A real record edited in place (same ids and count) while the original
+    // digest is kept: the full-record digest no longer matches.
+    let mut edited: Value = serde_json::from_str(&ledger0).map_err(|err| err.to_string())?;
+    edited["records"][0]["gap_state"] = json!("edited_after_coverage");
+    let edited = serde_json::to_string(&edited).map_err(|err| err.to_string())?;
+    let (delta, after, _) = e2e_delta_and_update_in(None, Some(&edited), &baseline, Some(shallow))?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+
+    // A pr-guidance document cannot carry the workspace scope: a hand-written
+    // `rust_workspace_complete` is dropped and the baseline stays retained.
+    let guidance = e2e_real_review_doc(unrelated)?;
+    let mut forged: Value = serde_json::from_str(&guidance).map_err(|err| err.to_string())?;
+    forged["analysis_scope"] = json!({
+        "scope": "rust_workspace_complete",
+        "run_status": "complete",
+        "basis": "repo_exposure_complete_run",
+        "corpus": {"scope": "rust_workspace", "cache_schema_version": "1.93", "files_content_hash": "0123456789abcdef"},
+        "records_total": 0,
+        "records_digest": "sha256:00",
+        "downstream_consumable": true,
+    });
+    let forged = serde_json::to_string(&forged).map_err(|err| err.to_string())?;
+    let (delta, after, _) = e2e_delta_and_update_in(Some(&forged), None, &baseline, None)?;
+    assert_eq!(delta["delta"]["resolved"], 0, "{delta}");
+    assert_eq!(after, captured);
+    assert_ne!(
+        delta["analysis_scope"]["scope"], "rust_workspace_complete",
+        "{delta}"
+    );
+    Ok(())
+}
+
+/// #9599: a `ripr.toml` that fails to load means the gated tree's corpus cannot
+/// be established, so a coverage disclosure that is otherwise current is not
+/// upgraded.
+#[test]
+fn e2e_unloadable_config_keeps_gap_ledger_artifact_scope() -> Result<(), String> {
+    let unrelated = "pub fn unrelated() {}\n";
+    let ledger = e2e_real_ledger(unrelated)?;
+    let fresh: Value = serde_json::from_str(&e2e_gate_json_with_files(
+        None,
+        Some(&ledger),
+        Some(unrelated),
+        &[],
+    )?)
+    .map_err(|err| err.to_string())?;
+    assert_eq!(fresh["analysis_scope"]["scope"], "rust_workspace_complete");
+    let broken: Value = serde_json::from_str(&e2e_gate_json_with_files(
+        None,
+        Some(&ledger),
+        Some(unrelated),
+        &[("ripr.toml", "this is = = not toml [")],
+    )?)
+    .map_err(|err| err.to_string())?;
+    assert_eq!(broken["analysis_scope"]["scope"], "gap_ledger_artifact");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn e2e_real_ledger_symlink_file_keeps_baseline_debt() -> Result<(), String> {
+    e2e_real_ledger_symlink_keeps_baseline_debt(false)
+}
+
+#[cfg(unix)]
+#[test]
+fn e2e_real_ledger_symlink_parent_keeps_baseline_debt() -> Result<(), String> {
+    e2e_real_ledger_symlink_keeps_baseline_debt(true)
+}
+
+#[cfg(unix)]
+fn e2e_real_ledger_symlink_keeps_baseline_debt(parent: bool) -> Result<(), String> {
+    // Retained review 5623869444: identities originate in the actual
+    // guidance -> gate -> baseline-create chain, never an authored scope.
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let original_gate = e2e_gate_json(Some(&e2e_real_review_doc(shallow)?), None)?;
+    let captured = crate::output::baseline::baseline_create_report_from_gate_decision_json(
+        "gate.json",
+        "unix_ms:1",
+        &original_gate,
+    )?;
+    let before = crate::output::baseline::baseline_entry_count(&captured);
+    assert!(
+        before > 0,
+        "real production pipeline must produce baseline debt"
+    );
+    let baseline = crate::output::baseline::render_baseline_create_json(&captured)?;
+    let root = temp_dir("gate-e2e-ledger-symlink-9599")?;
+    e2e_write_project(&root, shallow)?;
+    if parent {
+        fs::create_dir_all(root.join("real")).map_err(|err| err.to_string())?;
+        fs::rename(root.join("src"), root.join("real/src")).map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink("real/src", root.join("src")).map_err(|err| err.to_string())?;
+    } else {
+        fs::rename(root.join("src/lib.rs"), root.join("src/lib.source"))
+            .map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink("lib.source", root.join("src/lib.rs"))
+            .map_err(|err| err.to_string())?;
+    }
+    assert_eq!(
+        fs::read_to_string(root.join("src/lib.rs")).map_err(|err| err.to_string())?,
+        shallow,
+    );
+    let config = crate::config::RiprConfig::default();
+    // Both cold and warm producer paths must retain the captured path's debt.
+    for warm in [false, true] {
+        let ledger = e2e_real_ledger_at(&root, &config)?;
+        let value: Value = serde_json::from_str(&ledger).map_err(|err| err.to_string())?;
+        let files = &value["analysis_coverage"]["corpus"]["analyzed_production_files"];
+        assert!(
+            !files
+                .as_array()
+                .is_some_and(|files| files.contains(&json!("src/lib.rs"))),
+            "{value}",
+        );
+        // The parent alias is unanalysed even when the same bytes really
+        // seed seams at a different admitted production path.
+        if parent {
+            assert!(
+                files
+                    .as_array()
+                    .is_some_and(|files| { files.contains(&json!("real/src/lib.rs")) }),
+                "{value}"
+            );
+            assert!(
+                value["records"]
+                    .as_array()
+                    .is_some_and(|records| { !records.is_empty() }),
+                "{value}"
+            );
+        } else {
+            assert_eq!(value["records"], json!([]), "{value}");
+        }
+        let gate = e2e_real_gate_from_ledger_at(&root, &ledger)?;
+        let delta = crate::output::baseline_delta::build_baseline_delta_report(
+            crate::output::baseline_delta::BaselineDeltaInput {
+                root: root.to_string_lossy().to_string(),
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "gate.json".to_string(),
+                baseline_json: Ok(baseline.clone()),
+                current_gate_decision_json: Ok(gate.clone()),
+            },
+        );
+        let delta: Value = serde_json::from_str(
+            &crate::output::baseline_delta::render_baseline_delta_json(&delta)?,
+        )
+        .map_err(|err| err.to_string())?;
+        let update = crate::output::baseline_update::build_baseline_update_remove_resolved(
+            crate::output::baseline_update::BaselineUpdateInput {
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "gate.json".to_string(),
+                baseline_json: baseline.clone(),
+                current_gate_decision_json: gate,
+                remove_resolved: true,
+                migrate_legacy_identities: false,
+            },
+        )?;
+        assert_eq!(
+            delta["delta"]["resolved"], 0,
+            "parent={parent}, warm={warm}: {delta}"
+        );
+        assert_eq!(
+            delta["delta"]["stale_baseline_entry"], before as u64,
+            "{delta}"
+        );
+        assert_eq!(
+            delta["items"].as_array().map(|items| {
+                items
+                    .iter()
+                    .filter(|item| item["evaluation"] == "not_evaluated")
+                    .count()
+            }),
+            Some(before),
+            "{delta}",
+        );
+        assert_eq!(
+            crate::output::baseline_update::baseline_update_after_entry_count(&update),
+            before,
+            "an unchanged source reached by a skipped symlink must retain its real baseline debt",
+        );
+    }
+    ignore_remove_dir_all(root);
+    Ok(())
+}
+
+/// #11101: the aliased-path refusal must run on every host, including the
+/// Windows evidence lane where the `#[cfg(unix)]` symlink tests cannot. Every
+/// forged spelling below is refused by membership-set equality against the
+/// discovered (component-normalized) membership; this test does not isolate
+/// the path shape owner, which is pinned directly by
+/// `rust_workspace_path_gap_refuses_aliased_spellings` in `corpus.rs`. It
+/// injects aliased spellings into the membership of a real, otherwise-current
+/// coverage ledger instead of creating a link.
+#[test]
+fn e2e_aliased_path_in_forged_membership_keeps_baseline_debt() -> Result<(), String> {
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let fixed = "pub fn unrelated() {}\n";
+    let original_gate = e2e_gate_json(Some(&e2e_real_review_doc(shallow)?), None)?;
+    let captured = crate::output::baseline::baseline_create_report_from_gate_decision_json(
+        "gate.json",
+        "unix_ms:1",
+        &original_gate,
+    )?;
+    let before = crate::output::baseline::baseline_entry_count(&captured);
+    assert!(
+        before > 0,
+        "real production pipeline must produce baseline debt"
+    );
+    let baseline = crate::output::baseline::render_baseline_create_json(&captured)?;
+
+    let root = temp_dir("gate-e2e-ledger-forged-alias-11101")?;
+    e2e_write_project(&root, fixed)?;
+    let ledger = e2e_real_ledger_at(&root, &crate::config::RiprConfig::default())?;
+    let genuine: Value = serde_json::from_str(&ledger).map_err(|err| err.to_string())?;
+    // Fixture construction: a genuine membership names exactly the real file,
+    // so none of the aliased spellings below is already in it.
+    let members = genuine["analysis_coverage"]["corpus"]["analyzed_production_files"]
+        .as_array()
+        .cloned()
+        .ok_or_else(|| format!("no disclosed membership: {genuine}"))?;
+    assert_eq!(members, vec![json!("src/lib.rs")], "{genuine}");
+
+    let evaluate = |ledger: &str| -> Result<(Value, Value, usize), String> {
+        let gate = e2e_real_gate_from_ledger_at(&root, ledger)?;
+        let gate_value: Value = serde_json::from_str(&gate).map_err(|err| err.to_string())?;
+        let delta = crate::output::baseline_delta::build_baseline_delta_report(
+            crate::output::baseline_delta::BaselineDeltaInput {
+                root: root.to_string_lossy().to_string(),
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "gate.json".to_string(),
+                baseline_json: Ok(baseline.clone()),
+                current_gate_decision_json: Ok(gate.clone()),
+            },
+        );
+        let delta: Value = serde_json::from_str(
+            &crate::output::baseline_delta::render_baseline_delta_json(&delta)?,
+        )
+        .map_err(|err| err.to_string())?;
+        let update = crate::output::baseline_update::build_baseline_update_remove_resolved(
+            crate::output::baseline_update::BaselineUpdateInput {
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "gate.json".to_string(),
+                baseline_json: baseline.clone(),
+                current_gate_decision_json: gate,
+                remove_resolved: true,
+                migrate_legacy_identities: false,
+            },
+        )?;
+        Ok((
+            gate_value,
+            delta,
+            crate::output::baseline_update::baseline_update_after_entry_count(&update),
+        ))
+    };
+
+    // Discriminating positive: the unforged ledger earns complete coverage and
+    // resolves the fixed debt, so a retained debt below is attributable to the
+    // injected path and not to a broken fixture.
+    let (gate, delta, after) = evaluate(&ledger)?;
+    assert_eq!(
+        gate["analysis_scope"]["scope"], "rust_workspace_complete",
+        "{gate}"
+    );
+    assert_eq!(delta["delta"]["resolved"], before as u64, "{delta}");
+    assert_eq!(after, 0, "{delta}");
+
+    // Negative: each aliased membership must keep the debt unresolved, whatever
+    // the host's link support. Same bytes at a different path (the parent-alias
+    // shape), an alias beside the real file, non-normalized spellings, and the
+    // real path dropped (an empty membership, not an alias).
+    let aliased: [(&str, Vec<&str>); 6] = [
+        (
+            "parent alias replaces the real path",
+            vec!["real/src/lib.rs"],
+        ),
+        (
+            "alias added beside the real path",
+            vec!["src/lib.rs", "real/src/lib.rs"],
+        ),
+        ("dot-dot spelling", vec!["src/lib.rs", "src/../src/lib.rs"]),
+        ("dot-slash spelling", vec!["./src/lib.rs"]),
+        ("backslash spelling", vec!["src\\lib.rs"]),
+        ("real path dropped", vec![]),
+    ];
+    for (label, files) in aliased {
+        let mut forged = genuine.clone();
+        forged["analysis_coverage"]["corpus"]["analyzed_production_files"] = json!(files);
+        let forged = serde_json::to_string(&forged).map_err(|err| err.to_string())?;
+        let (gate, delta, after) = evaluate(&forged)?;
+        assert_ne!(
+            gate["analysis_scope"]["scope"], "rust_workspace_complete",
+            "{label}: {gate}"
+        );
+        assert_eq!(delta["delta"]["resolved"], 0, "{label}: {delta}");
+        assert_eq!(
+            delta["delta"]["stale_baseline_entry"], before as u64,
+            "{label}: {delta}"
+        );
+        assert_eq!(
+            delta["items"].as_array().map(|items| {
+                items
+                    .iter()
+                    .filter(|item| item["evaluation"] == "not_evaluated")
+                    .count()
+            }),
+            Some(before),
+            "{label}: {delta}",
+        );
+        assert_eq!(after, before, "{label}: debt must be retained");
+    }
+    ignore_remove_dir_all(root);
+    Ok(())
+}
+
+#[test]
+fn gate_and_baseline_fallback_identities_normalize_paths_identically() {
+    for path in [
+        "src/a/B.rs",
+        "src\\a\\B.rs",
+        "./src/a/B.rs",
+        ".\\src\\a\\B.rs",
+    ] {
+        let gate = fallback_identity_for(Some(path), Some(7), Some("weakly_gripped"));
+        let baseline =
+            crate::output::baseline::fallback_identity(Some(path), Some(7), Some("weakly_gripped"));
+        assert_eq!(gate, baseline, "{path}");
+        assert_eq!(gate.as_deref(), Some("src/a/B.rs:7:weakly_gripped"));
+    }
+    assert_eq!(
+        fallback_identity_for(Some("./a.rs"), Some(1), None).as_deref(),
+        Some("a.rs:1:unknown")
+    );
+}
+
+// -- fail-closed producer-disclosure and status-precedence regressions --
+
+fn guidance_only_input(
+    dir: &Path,
+    name: &str,
+    contents: &str,
+) -> Result<GateEvaluateInput, String> {
+    write_temp_json(dir, name, contents)?;
+    Ok(GateEvaluateInput {
+        root: dir.to_path_buf(),
+        repo_exposure: None,
+        pr_guidance: Some(PathBuf::from(name)),
+        gap_ledger: None,
+        sarif_policy: None,
+        labels_json: None,
+        labels: Vec::new(),
+        agent_verify: None,
+        agent_receipt: None,
+        recommendation_calibration: None,
+        mutation_calibration: None,
+        baseline: None,
+        mode: GateMode::Acknowledgeable,
+        acknowledgement_labels: Vec::new(),
+        exception_policy: None,
+    })
+}
+
+/// A producer that reports a healthy-looking `advisory` status but discloses a
+/// `tool_error` or `timeout` warning still emitted zero comments because it
+/// failed. The warning alone must fail the gate closed, not pass.
+#[test]
+fn given_advisory_status_with_failure_warning_when_gate_evaluated_then_config_error()
+-> Result<(), String> {
+    for kind in ["tool_error", "timeout"] {
+        let dir = temp_dir("gate-warning-only-producer-failure")?;
+        let doc = format!(
+            r#"{{"schema_version":"0.1","tool":"ripr","status":"advisory","comments":[],"warnings":[{{"kind":"{kind}","message":"boom"}}]}}"#
+        );
+        let input = guidance_only_input(&dir, "warn.json", &doc)?;
+        let report = build_gate_decision_report(&input)?;
+        assert_eq!(report.status, "config_error", "{kind}: must fail closed");
+        assert!(gate_decision_should_fail(&report), "{kind}: must fail");
+        assert!(
+            report.config_errors.iter().any(|error| {
+                error.contains("warn.json")
+                    && error.contains("producer warnings contain tool_error or timeout")
+            }),
+            "{kind}: reason must cite the warning signal, got {:?}",
+            report.config_errors,
+        );
+        assert!(report.decisions.is_empty(), "{kind}: no fake decisions");
+        ignore_remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// `incomplete` and `timeout` statuses are structurally valid but disclose an
+/// unfinished producer; each must fail closed and name the status.
+#[test]
+fn given_incomplete_or_timeout_producer_status_when_gate_evaluated_then_config_error()
+-> Result<(), String> {
+    for status in ["incomplete", "timeout"] {
+        let dir = temp_dir("gate-incomplete-producer-status")?;
+        let doc = format!(
+            r#"{{"schema_version":"0.1","tool":"ripr","status":"{status}","comments":[]}}"#
+        );
+        let input = guidance_only_input(&dir, "status.json", &doc)?;
+        let report = build_gate_decision_report(&input)?;
+        assert_eq!(report.status, "config_error", "{status}: must fail closed");
+        assert!(gate_decision_should_fail(&report), "{status}: must fail");
+        assert!(
+            report.config_errors.iter().any(|error| {
+                error.contains("status.json") && error.contains(&format!("status=\"{status}\""))
+            }),
+            "{status}: reason must cite the status, got {:?}",
+            report.config_errors,
+        );
+        ignore_remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// A warning of an unrelated kind must not be mistaken for a producer failure:
+/// the discriminating negative for the failure-warning refusal above.
+#[test]
+fn given_advisory_status_with_benign_warning_when_gate_evaluated_then_not_config_error()
+-> Result<(), String> {
+    let dir = temp_dir("gate-benign-producer-warning")?;
+    let doc = r#"{"schema_version":"0.1","tool":"ripr","status":"advisory","comments":[],"warnings":[{"kind":"note","message":"fyi"}]}"#;
+    let input = guidance_only_input(&dir, "benign.json", doc)?;
+    let report = build_gate_decision_report(&input)?;
+    assert_ne!(report.status, "config_error", "{:?}", report.config_errors);
+    assert!(report.config_errors.is_empty());
+    assert!(!gate_decision_should_fail(&report));
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn pr_guidance_document_defect_names_every_missing_or_malformed_field() {
+    let defect = |value: Value| pr_guidance_document_defect(&value);
+
+    // Both required fields absent: plural noun, both named.
+    let both = defect(json!({"tool": "ripr", "status": "advisory"}));
+    assert!(
+        both.as_deref().is_some_and(|text| {
+            text.starts_with("missing required fields")
+                && text.contains("`schema_version`")
+                && text.contains("`comments`")
+        }),
+        "{both:?}"
+    );
+    // Exactly one absent: singular noun.
+    let one = defect(json!({"schema_version": "0.1", "tool": "ripr", "status": "advisory"}));
+    assert!(
+        one.as_deref()
+            .is_some_and(|text| text.starts_with("missing required field `comments`")),
+        "{one:?}"
+    );
+    // An empty schema marker and a non-array `comments` are both unusable.
+    assert!(
+        defect(json!({"schema_version": "", "comments": [], "tool": "ripr", "status": "advisory"}))
+            .is_some_and(|text| text.contains("`schema_version`"))
+    );
+    assert!(
+        defect(
+            json!({"schema_version": "0.1", "comments": {}, "tool": "ripr", "status": "advisory"})
+        )
+        .is_some_and(|text| text.contains("expected a JSON array"))
+    );
+    // A non-string producer marker is rejected, not coerced.
+    assert!(
+        defect(json!({"schema_version": "0.1", "comments": [], "tool": 7, "status": "advisory"}))
+            .is_some_and(|text| text.contains("field `tool` is 7"))
+    );
+    // A null status is rejected.
+    assert!(
+        defect(json!({"schema_version": "0.1", "comments": [], "tool": "ripr", "status": null}))
+            .is_some_and(|text| text.contains("field `status` is null"))
+    );
+    // Every known status with a complete document is accepted.
+    for status in PR_GUIDANCE_KNOWN_STATUSES {
+        assert_eq!(
+            defect(
+                json!({"schema_version": "0.1", "comments": [], "tool": "ripr", "status": status})
+            ),
+            None,
+            "{status}"
+        );
+    }
+}
+
+/// A blocked ledger discloses a failed producer only when it carries warnings;
+/// a genuinely empty zero-gap ledger is `blocked` with no warnings and stays a
+/// complete zero denominator.
+#[test]
+fn blocked_producer_outcome_requires_status_blocked_and_nonempty_warnings() {
+    assert!(discloses_blocked_producer_outcome(&json!({
+        "status": "blocked", "warnings": ["no records"]
+    })));
+    assert!(!discloses_blocked_producer_outcome(&json!({
+        "status": "blocked", "warnings": []
+    })));
+    assert!(!discloses_blocked_producer_outcome(
+        &json!({"status": "blocked"})
+    ));
+    assert!(!discloses_blocked_producer_outcome(&json!({
+        "status": "complete", "warnings": ["x"]
+    })));
+    assert!(!discloses_blocked_producer_outcome(&json!({
+        "status": 1, "warnings": ["x"]
+    })));
+}
+
+#[test]
+fn blocked_producer_warnings_keeps_only_string_entries_and_defaults_empty() {
+    assert_eq!(
+        blocked_producer_warnings(&json!({"warnings": ["a", 3, null, "b", {"k": "v"}]})),
+        ["a", "b"]
+    );
+    assert!(blocked_producer_warnings(&json!({})).is_empty());
+    assert!(blocked_producer_warnings(&json!({"warnings": "not-an-array"})).is_empty());
+}
+
+#[test]
+fn incomplete_analysis_outcome_kind_prefers_typed_kind_and_defaults_to_incomplete() {
+    assert_eq!(
+        incomplete_analysis_outcome_kind(&json!({
+            "analysis_outcome": {"analysis_complete": false, "outcome": {"kind": "unsupported_input"}}
+        })),
+        "unsupported_input"
+    );
+    assert_eq!(
+        incomplete_analysis_outcome_kind(&json!({
+            "analysis_outcome": {"analysis_complete": false}
+        })),
+        "incomplete"
+    );
+    // When the analysis itself is incomplete AND the document is bounded, the
+    // analysis verdict wins over the bounded-document kind.
+    assert_eq!(
+        incomplete_analysis_outcome_kind(&json!({
+            "analysis_outcome": {
+                "analysis_complete": false,
+                "document_complete": false,
+                "outcome": {"kind": "timeout"}
+            }
+        })),
+        "timeout"
+    );
+}
+
+/// Exit-code precedence: a config error outranks a block, a block outranks
+/// acknowledgement, and only a fully clean evaluation reads `pass`.
+#[test]
+fn top_level_status_precedence_orders_config_error_blocked_acknowledged_advisory_pass() {
+    let blocking = GateSummary {
+        blocking: 1,
+        acknowledged: 1,
+        advisory: 1,
+        ..GateSummary::default()
+    };
+    let errors = vec!["bad input".to_string()];
+    let warnings = vec!["w".to_string()];
+    let clean = GateSummary::default();
+    assert_eq!(
+        top_level_status(&blocking, &warnings, &errors, GateMode::Acknowledgeable, 1),
+        GATE_STATUS_CONFIG_ERROR
+    );
+    assert_eq!(
+        top_level_status(&blocking, &[], &[], GateMode::Acknowledgeable, 0),
+        GATE_STATUS_BLOCKED
+    );
+    // An exception-policy block alone also blocks, even in visible-only mode.
+    assert_eq!(
+        top_level_status(&clean, &[], &[], GateMode::VisibleOnly, 1),
+        GATE_STATUS_BLOCKED
+    );
+    let acked = GateSummary {
+        acknowledged: 1,
+        advisory: 1,
+        ..GateSummary::default()
+    };
+    assert_eq!(
+        top_level_status(&acked, &warnings, &[], GateMode::Acknowledgeable, 0),
+        "acknowledged"
+    );
+    let suppressed = GateSummary {
+        suppressed: 1,
+        ..GateSummary::default()
+    };
+    let unknown = GateSummary {
+        unknown_confidence: 1,
+        ..GateSummary::default()
+    };
+    for summary in [&suppressed, &unknown] {
+        assert_eq!(
+            top_level_status(summary, &[], &[], GateMode::Acknowledgeable, 0),
+            "advisory"
+        );
+    }
+    assert_eq!(
+        top_level_status(&clean, &warnings, &[], GateMode::Acknowledgeable, 0),
+        "advisory"
+    );
+    assert_eq!(
+        top_level_status(&clean, &[], &[], GateMode::VisibleOnly, 0),
+        "advisory"
+    );
+    assert_eq!(
+        top_level_status(&clean, &[], &[], GateMode::Acknowledgeable, 0),
+        "pass"
+    );
 }

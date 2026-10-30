@@ -36,13 +36,15 @@ pub(crate) struct Binary {
 
 /// Environment variables the child inherits from the parent are limited to
 /// what the corpus does not set itself; `RIPR_*` is removed so ambient
-/// configuration cannot change a row.
+/// configuration cannot change a row, and so is every variable that points Git
+/// at a repository other than the one found from the working directory.
 pub(crate) fn removed_env() -> Vec<String> {
     let mut names: Vec<String> = std::env::vars()
         .map(|(name, _)| name)
         .filter(|name| name.starts_with("RIPR_"))
         .collect();
     names.sort();
+    names.extend(GIT_REDIRECT_ENV.iter().map(|name| (*name).to_string()));
     names
 }
 
@@ -272,8 +274,7 @@ fn launch(
         ("RUST_BACKTRACE", "0"),
     ];
     let removed = removed_env();
-    let mut removed_refs: Vec<&str> = removed.iter().map(String::as_str).collect();
-    removed_refs.extend(GIT_REDIRECT_ENV);
+    let removed_refs: Vec<&str> = removed.iter().map(String::as_str).collect();
     // A binary that floods a stream is a failed row, not a reason to hold the
     // whole run's memory: overflow refuses instead of truncating.
     let timed = run::capture_bytes_in_dir_with_env_budget(

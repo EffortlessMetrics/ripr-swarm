@@ -464,7 +464,7 @@ fn run_refusing(mut options: RerunOptions) -> Result<(), String> {
     if let Some(out) = options.out {
         let out = resolve_output_path(&input.root, &out);
         write_text_file(&out, &rendered).map_err(|err| refuse(CoreError::from(err)))?;
-        println!("Wrote {}", out.display());
+        println!("Wrote {}", crate::output::path::human_path(&out));
     } else {
         println!("{rendered}");
     }
@@ -692,7 +692,7 @@ fn rerun_gap(
                 "stale_gap_ledger",
                 format!(
                     "gap ledger root `{ledger_root}` does not match rerun root `{}`",
-                    root.display()
+                    crate::output::path::human_path(root)
                 ),
             ));
         }
@@ -1936,8 +1936,8 @@ fn normalize_changed_test(root: &Path, changed_test: &Path) -> Result<PathBuf, S
             .map_err(|err| {
                 format!(
                     "rerun changed test {} is outside root {}: {err}",
-                    changed_test.display(),
-                    root.display()
+                    crate::output::path::human_path(changed_test),
+                    crate::output::path::human_path(root)
                 )
             });
     }
@@ -1970,7 +1970,7 @@ fn resolve_output_path(root: &Path, out: &Path) -> PathBuf {
 }
 
 fn display_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    crate::output::path::fold_verbatim_on_host(path.to_string_lossy().replace('\\', "/"))
 }
 
 fn write_text_file(path: &Path, rendered: &str) -> Result<(), String> {

@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-macro-table",
+  "origin": "authored",
+  "version_label": "authored 2026-10-21 for RIPR-SPEC-0117 example 8 (same-file macro_rules! test tables, the itoa test! shape, #6925)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "6818d74ac1a9897052a0f42c11e2c550e3f15c0a664fa18c71b1a012129d58ca"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "7749458920ce2aa35e7ccbeea1bab8bc17ce8b21ed5a2fdbea66e7f2de5971d6"
+    },
+    {
+      "path": "tests/table.rs",
+      "sha256": "0680ed9238851603dc2581ce2282f045c6ef344a673658e259805726324f38dc"
+    }
+  ]
+}

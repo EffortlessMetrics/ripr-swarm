@@ -67,8 +67,14 @@ impl CliCommand {
             // `--all` after a help request selects the exhaustive reference
             // rather than the one-screen overview (#1613). Accepted on both
             // spellings so neither `ripr --help --all` nor `ripr help --all`
-            // is a surprising error.
-            Some("--help" | "-h") if wants_all(&command_args) => Ok(Self::HelpAll),
+            // is a surprising error; both routes are strict about trailing
+            // arguments so an extra token is never silently discarded (#9867).
+            Some("--help" | "-h") if wants_all(&command_args) => match command_args.len() {
+                1 => Ok(Self::HelpAll),
+                _ => Err(
+                    "usage: ripr --help --all (this route accepts no other arguments)".to_string(),
+                ),
+            },
             None | Some("--help" | "-h") => Ok(Self::Help),
             // `ripr help` (no subcommand) prints the top-level help, identical
             // to `ripr --help`. `ripr help <command> [args...]` is the standard
@@ -80,7 +86,13 @@ impl CliCommand {
             // typo is not silently swallowed.
             Some("help") => {
                 if wants_all(&command_args) {
-                    return Ok(Self::HelpAll);
+                    return match command_args.len() {
+                        1 => Ok(Self::HelpAll),
+                        _ => Err(
+                            "usage: ripr help --all (this route accepts no other arguments)"
+                                .to_string(),
+                        ),
+                    };
                 }
                 // `ripr help --json` is the versioned machine-discovery route
                 // (RIPR-SPEC-0190 / #4825): strict grammar, exactly one flag.
@@ -110,7 +122,10 @@ impl CliCommand {
             // (RIPR-SPEC-0184). Help/version stay here because they are flag
             // spellings and `help <command>` rewrites, not catalog rows.
             Some(command) => match crate::cli::command_catalog::resolve_top_level(command) {
-                Some(entry) => Ok(cli_command_from_dispatch(entry.dispatch, command_args)),
+                Some(entry) => {
+                    reject_unsupported_extended_help(entry.dispatch, command, &command_args)?;
+                    Ok(cli_command_from_dispatch(entry.dispatch, command_args))
+                }
                 None => Err(unknown_command_error(command)),
             },
         }
@@ -124,9 +139,46 @@ impl CliCommand {
 /// global catalog instead of dispatching to `check --help`, and
 /// `ripr help <typo> --all` would exit 0 with the catalog instead of the
 /// unknown-command error the `from_parts` `help` arm promises. `--all` is a
-/// modifier on *bare* help, so it has to be in the position bare help occupies.
+/// modifier on *bare* help, so it has to be in the position bare help occupies;
+/// the strict trailing-argument checks beside each `wants_all` call keep the
+/// modifier from discarding anything after it (#9867).
 fn wants_all(args: &[String]) -> bool {
     args.first().is_some_and(|arg| arg == "--all")
+}
+
+/// `--help --all` widens only `ripr check --help` to the exhaustive reference
+/// (#8163): `check` parses the pair itself and owns that grammar. On every
+/// other command the pair is a usage error naming the supported routes
+/// (#9867), not a silent no-op that prints ordinary help while discarding
+/// the flag. `command` is the top-level spelling and `args` the remaining
+/// argv, so the error can name the exact route the user typed.
+fn reject_unsupported_extended_help(
+    dispatch: crate::cli::command_catalog::CommandDispatch,
+    command: &str,
+    args: &[String],
+) -> Result<(), String> {
+    use crate::cli::command_catalog::CommandDispatch;
+    if dispatch == CommandDispatch::Check
+        || !args.iter().any(|arg| arg == "--help" || arg == "-h")
+        || !args.iter().any(|arg| arg == "--all")
+    {
+        return Ok(());
+    }
+    let words = args
+        .iter()
+        .take_while(|arg| !arg.starts_with('-'))
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let path = if words.is_empty() {
+        command.to_string()
+    } else {
+        format!("{command} {words}")
+    };
+    Err(format!(
+        "`ripr {path} --help --all` is not supported; extended help is available via \
+         `ripr help --all` (or `ripr check --help --all` for check)"
+    ))
 }
 
 /// `ripr help workflow [name]`: no flags are accepted on this route, the name
@@ -331,28 +383,26 @@ mod tests {
 
     /// `--all` selects the exhaustive reference on both help spellings, and
     /// nothing else changes: a bare help request still gets the short screen,
-    /// and `help <command>` still routes to that command's own help (#1613).
+    /// `help <command>` still routes to that command's own help (#1613), and
+    /// a trailing argument after `--all` is a usage error rather than a
+    /// silently discarded token (#9867).
     #[test]
     fn help_all_is_reachable_from_both_help_spellings() {
-        for args in [
-            vec!["--all".to_string()],
-            vec!["--all".to_string(), "extra".to_string()],
-        ] {
-            assert_eq!(
-                CliCommand::from_parts(Some("help"), args.clone()),
-                Ok(CliCommand::HelpAll),
-                "`ripr help {args:?}` should select the full reference"
-            );
-            assert_eq!(
-                CliCommand::from_parts(Some("--help"), args.clone()),
-                Ok(CliCommand::HelpAll),
-                "`ripr --help {args:?}` should select the full reference"
-            );
-            assert_eq!(
-                CliCommand::from_parts(Some("-h"), args),
-                Ok(CliCommand::HelpAll)
-            );
-        }
+        let all = args(&["--all"]);
+        assert_eq!(
+            CliCommand::from_parts(Some("help"), all.clone()),
+            Ok(CliCommand::HelpAll),
+            "`ripr help {all:?}` should select the full reference"
+        );
+        assert_eq!(
+            CliCommand::from_parts(Some("--help"), all.clone()),
+            Ok(CliCommand::HelpAll),
+            "`ripr --help {all:?}` should select the full reference"
+        );
+        assert_eq!(
+            CliCommand::from_parts(Some("-h"), all),
+            Ok(CliCommand::HelpAll)
+        );
 
         // Unchanged behavior: bare help, and `help <command>`.
         assert_eq!(
@@ -372,6 +422,85 @@ mod tests {
         assert_eq!(
             CliCommand::from_parts(Some("help"), args(&["--all"])),
             Ok(CliCommand::HelpAll)
+        );
+    }
+
+    /// #9867: `ripr help --all <extra>` used to print the full reference and
+    /// exit 0 with the extra token silently discarded (`ripr help --all check`
+    /// meant `ripr help check` and got 200 lines instead). The route is now as
+    /// strict as `help --json`: exactly one flag, any trailing argument is a
+    /// usage error naming the accepted form.
+    #[test]
+    fn help_all_rejects_trailing_arguments() {
+        let usage = "usage: ripr help --all (this route accepts no other arguments)";
+        for bad in [
+            args(&["--all", "check"]),
+            args(&["--all", "foo", "bar"]),
+            args(&["--all", "--quiet"]),
+        ] {
+            assert_eq!(
+                CliCommand::from_parts(Some("help"), bad),
+                Err(usage.to_string())
+            );
+        }
+        let flag_usage = "usage: ripr --help --all (this route accepts no other arguments)";
+        assert_eq!(
+            CliCommand::from_parts(Some("--help"), args(&["--all", "check"])),
+            Err(flag_usage.to_string())
+        );
+        assert_eq!(
+            CliCommand::from_parts(Some("-h"), args(&["--all", "extra"])),
+            Err(flag_usage.to_string())
+        );
+        // The bare selector still works on both spellings.
+        assert_eq!(
+            CliCommand::from_parts(Some("help"), args(&["--all"])),
+            Ok(CliCommand::HelpAll)
+        );
+        assert_eq!(
+            CliCommand::from_parts(Some("--help"), args(&["--all"])),
+            Ok(CliCommand::HelpAll)
+        );
+    }
+
+    /// #9867: `--help --all` is a real extended-help grammar only on `check`
+    /// (#8163). Every other command sees the pair rejected with exit 2 and a
+    /// message naming the supported routes, instead of printing ordinary help
+    /// while silently discarding `--all`.
+    #[test]
+    fn help_all_flag_pair_is_rejected_outside_check() {
+        assert_eq!(
+            CliCommand::from_parts(Some("repair"), args(&["--help", "--all"])),
+            Err(
+                "`ripr repair --help --all` is not supported; extended help is available \
+                 via `ripr help --all` (or `ripr check --help --all` for check)"
+                    .to_string()
+            )
+        );
+        // Subcommand words are part of the named route.
+        assert_eq!(
+            CliCommand::from_parts(Some("gate"), args(&["evaluate", "--help", "--all"])),
+            Err(
+                "`ripr gate evaluate --help --all` is not supported; extended help is \
+                 available via `ripr help --all` (or `ripr check --help --all` for check)"
+                    .to_string()
+            )
+        );
+        // `check` keeps its documented progressive-help grammar, and a bare
+        // `--all` without `--help` is still an ordinary parse matter for
+        // check's own parser, not this gate.
+        assert_eq!(
+            CliCommand::from_parts(Some("check"), args(&["--help", "--all"])),
+            Ok(CliCommand::Check(args(&["--help", "--all"])))
+        );
+        assert_eq!(
+            CliCommand::from_parts(Some("check"), args(&["--diff", "--all"])),
+            Ok(CliCommand::Check(args(&["--diff", "--all"])))
+        );
+        // `ripr help check --all` rewrites to check's own grammar and stays.
+        assert_eq!(
+            CliCommand::from_parts(Some("help"), args(&["check", "--all"])),
+            CliCommand::from_parts(Some("check"), args(&["--help", "--all"]))
         );
     }
 

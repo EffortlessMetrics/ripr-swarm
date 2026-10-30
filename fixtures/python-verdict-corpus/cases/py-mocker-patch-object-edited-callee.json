@@ -1,0 +1,44 @@
+{
+  "case_id": "py-mocker-patch-object-edited-callee",
+  "subject_id": "authored-py-pytest-imports",
+  "diff": "cases/py-mocker-patch-object-edited-callee.diff",
+  "anchor": {
+    "file": "shop/rates.py",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_mocker_patch_object_edited_callee_replaced",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, pytest-mock 3.17.0, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return cents // 25",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the fee rate doubles"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "mocker.patch.object replaces rates.fee for the only test that reaches it, so its body is never run.",
+  "labeling_observation": {
+    "ripr_commit": "b6491843",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

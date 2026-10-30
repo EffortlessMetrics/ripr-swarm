@@ -101,8 +101,39 @@ fn language_flag_without_a_value_is_refused() {
 fn human_output_and_help_route() {
     let (ok, stdout, _) = run(&["capabilities"]);
     assert!(ok);
-    assert!(stdout.contains("not_proven"), "{stdout}");
+    assert!(stdout.contains("ripr language support"), "{stdout}");
+    assert!(!stdout.contains("not_proven"), "{stdout}");
+    assert!(!stdout.contains("RIPR-SPEC"), "{stdout}");
     let (ok, help, _) = run(&["capabilities", "--help"]);
     assert!(ok);
     assert!(help.contains("Usage: ripr capabilities"), "{help}");
+}
+
+#[test]
+fn markdown_is_the_generated_support_tiers_block_and_matches_the_doc() {
+    let (ok, stdout, stderr) = run(&["capabilities", "--markdown"]);
+    assert!(ok, "{stderr}");
+    assert!(
+        stdout.starts_with("<!-- capability-registry:begin"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.ends_with("<!-- capability-registry:end -->\n"),
+        "{stdout}"
+    );
+    let doc_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/status/SUPPORT_TIERS.md");
+    let doc = std::fs::read_to_string(&doc_path).unwrap_or_default();
+    assert!(
+        doc.contains(stdout.trim_end()),
+        "doc block differs from --markdown"
+    );
+    for combined in [
+        &["capabilities", "--markdown", "--json"][..],
+        &["capabilities", "--markdown", "--language", "rust"][..],
+    ] {
+        let (ok, _stdout, stderr) = run(combined);
+        assert!(!ok, "{combined:?}");
+        assert!(stderr.contains("whole-table"), "{combined:?}: {stderr}");
+    }
 }

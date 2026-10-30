@@ -1,0 +1,22 @@
+{
+  "case_id": "py-trap-bool-key-fallback",
+  "subject_id": "authored-py-table-traps",
+  "origin": "authored",
+  "anchor": "tablekit/rates_bool.py:1",
+  "behavior_family": "constructor_field",
+  "test_shape": "module_dict_bool_key_get_fallback",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

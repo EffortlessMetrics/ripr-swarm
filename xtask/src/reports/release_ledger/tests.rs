@@ -633,3 +633,65 @@ fn editing_the_audit_file_after_derivation_fails_validation() -> Result<(), Stri
         Err(error) => Err(format!("unexpected error: {error}")),
     }
 }
+
+fn finalize_args(extra: &[&str]) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "--cut",
+        &"ab".repeat(20),
+        "--packet",
+        "p.json",
+        "--audit",
+        "a.md",
+    ]
+    .iter()
+    .map(ToString::to_string)
+    .collect();
+    args.extend(extra.iter().map(ToString::to_string));
+    args
+}
+
+#[test]
+fn finalize_defaults_to_the_pinned_base_and_output_directory() {
+    let result = super::parse_finalize_args(&finalize_args(&[]));
+    assert!(result.is_ok(), "{:?}", result.as_ref().err());
+    if let Ok(parsed) = result {
+        assert_eq!(parsed.base, super::validate::RELEASE_BASE_0_11);
+        assert_eq!(parsed.outdir, "target/ripr/release-ledger/final");
+        assert_eq!(parsed.cut, "ab".repeat(20));
+        assert!(parsed.overrides.is_none());
+    }
+}
+
+#[test]
+fn finalize_requires_the_frozen_cut_as_a_full_sha() {
+    for cut in ["origin/main", "abc1234", &"zz".repeat(20)] {
+        let mut args = finalize_args(&[]);
+        args[1] = cut.to_string();
+        let error = super::parse_finalize_args(&args).err().unwrap_or_default();
+        assert!(error.contains("40-hex"), "{cut}: {error}");
+    }
+}
+
+#[test]
+fn finalize_requires_cut_packet_and_audit() {
+    for (flag, value) in [("--cut", 1), ("--packet", 3), ("--audit", 5)] {
+        let mut args = finalize_args(&[]);
+        args.drain(value - 1..=value);
+        let error = super::parse_finalize_args(&args).err().unwrap_or_default();
+        assert!(error.contains(flag), "{flag}: {error}");
+    }
+}
+
+#[test]
+fn finalize_rejects_unknown_repeated_and_valueless_flags() {
+    for (extra, needle) in [
+        (vec!["--stage", "final"], "unknown"),
+        (vec!["--outdir", "a", "--outdir", "b"], "more than once"),
+        (vec!["--manifest"], "requires a value"),
+    ] {
+        let error = super::parse_finalize_args(&finalize_args(&extra))
+            .err()
+            .unwrap_or_default();
+        assert!(error.contains(needle), "{extra:?}: {error}");
+    }
+}

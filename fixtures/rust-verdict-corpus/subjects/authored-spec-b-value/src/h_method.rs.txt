@@ -1,0 +1,28 @@
+//! The helper is reached through a method call site.
+
+pub struct Gauge;
+
+impl Gauge {
+    pub fn wide_m(&self, input: &str) -> bool {
+        input.len() > 3
+    }
+}
+
+pub fn classify_method(input: &str) -> &'static str {
+    if Gauge.wide_m(input) {
+        "wide"
+    } else {
+        "narrow"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rows_straddle_four_method_h_method() {
+        assert_eq!(classify_method("abcd"), "wide");
+        assert_eq!(classify_method("abc"), "narrow");
+    }
+}

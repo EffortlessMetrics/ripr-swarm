@@ -1,3 +1,0 @@
-case = "ts-grid-boundary-table"
-issue = 9533
-reason = "False actionable: table-loop assertion straddling a predicate boundary is not credited (#9533)."

@@ -1,0 +1,3 @@
+case = "serde-derive-rename-field-upper"
+issue = 8782
+reason = "A bare-imported unit variant receiver (UpperCase.apply_to_field) is not credited by the bounded inherent-receiver rule (#7415, #8782)."

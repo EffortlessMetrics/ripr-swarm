@@ -152,6 +152,8 @@ mod tests {
         static_limit_kind: Option<StaticLimitKind>,
     ) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:pkg_mod_py:7:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -199,6 +201,7 @@ mod tests {
 
     fn check_output(findings: Vec<Finding>) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             tool: "ripr".to_string(),

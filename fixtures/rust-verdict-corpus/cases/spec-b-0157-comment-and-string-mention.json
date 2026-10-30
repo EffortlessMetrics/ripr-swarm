@@ -1,0 +1,55 @@
+{
+  "case_id": "spec-b-0157-comment-and-string-mention",
+  "subject_id": "authored-spec-b-bindings",
+  "diff": "cases/spec-b-0157-comment-and-string-mention.diff",
+  "anchor": {
+    "file": "src/b_text.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "binding_named_in_comment_and_string_only",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let end = text.as_bytes().len() + 1; // end == width is checked by the caller",
+        "mutated_line": "let end = text.as_bytes().len() + 1; // end == width is checked by the caller",
+        "outcome": "tests_failed",
+        "failing_test": "b_text::tests::the_end_is_the_length_b_text",
+        "equivalence_review": "not equivalent: b_text::tests::the_end_is_the_length_b_text fails on it"
+      },
+      {
+        "replacement": "let end = text.as_bytes().len() - 1; // end == width is checked by the caller",
+        "mutated_line": "let end = text.as_bytes().len() - 1; // end == width is checked by the caller",
+        "outcome": "tests_failed",
+        "failing_test": "b_text::tests::the_end_is_the_length_b_text",
+        "equivalence_review": "not equivalent: b_text::tests::the_end_is_the_length_b_text fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "end == width appears only in a comment and a string; the exact length pins fail both mutants. Spec cells: RIPR-SPEC-0157#8.",
+  "labeling_observation": {
+    "ripr_commit": "371565fe",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0157#8"
+  ]
+}

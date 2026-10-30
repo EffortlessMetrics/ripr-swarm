@@ -261,17 +261,21 @@ fn truncated_discovery_walk_is_partial() -> Result<(), String> {
 fn skipped_links_disclose_even_when_production_is_selected() -> Result<(), String> {
     let root = ts_unique_tempdir("repo-links-skipped")?;
     ts_write_file(&root.join("src/lib.ts"), TS_SRC)?;
-    ts_write_file(&root.join("real_more/extra.ts"), TS_SRC)?;
+    // The target sits outside the root: a link to a directory the walk
+    // already visits is an alias and is not disclosed (#10829).
+    let outside = ts_unique_tempdir("repo-links-outside")?;
+    ts_write_file(&outside.join("real_more/extra.ts"), TS_SRC)?;
     // A link the discovery walk must not follow; sources behind it are
     // invisible, so the run must disclose the skip even though `src/lib.ts`
     // keeps the production set non-empty.
     #[cfg(unix)]
     let linked = {
         use std::os::unix::fs::symlink;
-        let target = root.join("real_more");
+        let target = outside.join("real_more");
         let link = root.join("linked_more");
         if symlink(&target, &link).is_err() {
             let _ = std::fs::remove_dir_all(&root);
+            let _ = std::fs::remove_dir_all(&outside);
             return Ok(()); // platform refused; nothing to assert here
         }
         link
@@ -279,10 +283,11 @@ fn skipped_links_disclose_even_when_production_is_selected() -> Result<(), Strin
     #[cfg(windows)]
     let linked = {
         use std::os::windows::fs::symlink_dir;
-        let target = root.join("real_more");
+        let target = outside.join("real_more");
         let link = root.join("linked_more");
         if symlink_dir(&target, &link).is_err() {
             let _ = std::fs::remove_dir_all(&root);
+            let _ = std::fs::remove_dir_all(&outside);
             return Ok(()); // privilege missing; nothing to assert here
         }
         link
@@ -293,6 +298,7 @@ fn skipped_links_disclose_even_when_production_is_selected() -> Result<(), Strin
     };
     let result = run(&root, 800);
     let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&outside);
     let result = result?;
     assert!(
         !result.findings.is_empty(),
@@ -306,6 +312,42 @@ fn skipped_links_disclose_even_when_production_is_selected() -> Result<(), Strin
         "{reason}"
     );
     let _ = linked;
+    Ok(())
+}
+
+#[test]
+fn a_link_to_a_non_source_file_does_not_make_repo_mode_partial() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-links-nonsource")?;
+    ts_write_file(&root.join("src/lib.ts"), TS_SRC)?;
+    ts_write_file(&root.join("README.md"), "# docs\n")?;
+    // A generated-named link is a name the walk would not index either.
+    for name in ["docs.md", "bundle.generated.ts"] {
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(root.join("README.md"), root.join(name));
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(root.join("README.md"), root.join(name));
+        #[cfg(not(any(unix, windows)))]
+        let linked: std::io::Result<()> = Err(std::io::ErrorKind::Unsupported.into());
+        if linked.is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(()); // platform or privilege refused; nothing to assert here
+        }
+    }
+    let result = run(&root, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    assert!(
+        !result.findings.is_empty(),
+        "the real production file still seeds findings"
+    );
+    assert!(
+        result
+            .partial_reason
+            .as_deref()
+            .is_none_or(|reason| !reason.contains("typescript_repo_links_skipped:")),
+        "{:?}",
+        result.partial_reason
+    );
     Ok(())
 }
 
@@ -388,5 +430,198 @@ fn distinct_predicates_of_one_owner_both_survive() -> Result<(), String> {
         .collect();
     assert!(exprs.iter().any(|e| e.contains("a > 0")), "{exprs:?}");
     assert!(exprs.iter().any(|e| e.contains("b > 7")), "{exprs:?}");
+    Ok(())
+}
+
+#[test]
+fn capped_run_reports_typed_selected_omitted_total_and_first_stage() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-accounting-capped")?;
+    for name in ["a", "b", "c"] {
+        ts_write_file(&root.join(format!("src/{name}.ts")), TS_SRC)?;
+    }
+    ts_write_file(&root.join("test/a.test.ts"), TS_TEST)?;
+    ts_write_file(&root.join("src/types.d.ts"), "export type T = number;\n")?;
+    let result = run(&root, 2);
+    let _ = std::fs::remove_dir_all(&root);
+    let accounting = result?.file_accounting;
+    assert_eq!(accounting.discovered, Some(5));
+    assert_eq!(accounting.selected, Some(3), "two production plus one test");
+    assert_eq!(accounting.skipped, Some(1), "declaration file");
+    assert_eq!(accounting.omitted, Some(1));
+    assert_eq!(
+        accounting.first_cap_fired,
+        Some(RepoCapFired {
+            name: "RIPR_MAX_REPO_INDEX_FILES",
+            stage: RepoLimitingStage::Selection,
+            limit: 2,
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn uncapped_run_reports_measured_zero_omitted_and_no_cap() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-accounting-uncapped")?;
+    ts_write_file(&root.join("src/a.ts"), TS_SRC)?;
+    let result = run(&root, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    let accounting = result?.file_accounting;
+    assert_eq!(accounting.discovered, Some(1));
+    assert_eq!(accounting.omitted, Some(0), "measured zero, not unknown");
+    assert_eq!(accounting.first_cap_fired, None);
+    Ok(())
+}
+
+#[test]
+fn truncated_walk_names_the_discovery_cap_first_and_leaves_total_unknown() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-accounting-walk")?;
+    for name in ["a", "b", "c", "d"] {
+        ts_write_file(&root.join(format!("src/{name}.ts")), TS_SRC)?;
+    }
+    let result = repo::analyze_repo_with_limit(
+        &repo_options(&root),
+        1,
+        2,
+        ts_file_read_limit(),
+        ts_workspace_read_budget(),
+        &[],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let accounting = result?.file_accounting;
+    assert_eq!(accounting.discovered, None, "truncated walk has no total");
+    assert_eq!(accounting.selected, Some(1), "selected is exact");
+    assert_eq!(accounting.skipped, None, "lower bound only");
+    assert_eq!(accounting.omitted, None, "lower bound only");
+    assert_eq!(
+        accounting.first_cap_fired,
+        Some(RepoCapFired {
+            name: "RIPR_TS_MAX_WORKSPACE_FILES",
+            stage: RepoLimitingStage::Discovery,
+            limit: 2,
+        }),
+        "discovery precedes selection even when both fired"
+    );
+    Ok(())
+}
+
+#[test]
+fn unreadable_root_leaves_every_count_unknown() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-accounting-missing")?;
+    let missing = root.join("absent");
+    let result = run(&missing, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(result?.file_accounting, RepoFileAccounting::default());
+    Ok(())
+}
+
+#[test]
+fn working_set_boundary_omits_only_beyond_the_limit() -> Result<(), String> {
+    let limit = 3;
+    for (count, omitted) in [(limit - 1, 0), (limit, 0), (limit + 1, 1)] {
+        let root = ts_unique_tempdir("repo-accounting-boundary")?;
+        for index in 0..count {
+            ts_write_file(&root.join(format!("src/f{index}.ts")), TS_SRC)?;
+        }
+        let result = run(&root, limit);
+        let _ = std::fs::remove_dir_all(&root);
+        let accounting = result?.file_accounting;
+        assert_eq!(accounting.discovered, Some(count), "count {count}");
+        assert_eq!(accounting.selected, Some(count.min(limit)), "count {count}");
+        assert_eq!(accounting.omitted, Some(omitted), "count {count}");
+        assert_eq!(
+            accounting.first_cap_fired.is_some(),
+            omitted > 0,
+            "count {count}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn real_analyze_repo_output_flows_into_the_outcome_verbatim() -> Result<(), String> {
+    use crate::analysis::language_outcome::LanguageAnalysisOutcomeV1;
+    let root = ts_unique_tempdir("repo-accounting-outcome")?;
+    for name in ["a", "b", "c"] {
+        ts_write_file(&root.join(format!("src/{name}.ts")), TS_SRC)?;
+    }
+    let result = run(&root, 2);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    let outcome =
+        LanguageAnalysisOutcomeV1::from_repo_result(DomainLanguage::TypeScript, &result, None);
+    assert_eq!(outcome.resources.files, result.file_accounting);
+    assert_eq!(outcome.resources.files.omitted, Some(1));
+    assert_eq!(
+        outcome.resources.files.first_cap_fired.map(|cap| cap.name),
+        Some("RIPR_MAX_REPO_INDEX_FILES")
+    );
+    Ok(())
+}
+
+/// An alias an indexed test imports through (`../alias/lib`, `alias -> src`)
+/// names a path the walk never indexes, so repo mode stays partial (#10829);
+/// a direct-path import of the same owner relates the test and is not
+/// disclosed.
+#[cfg(unix)]
+#[test]
+fn an_alias_imported_through_keeps_repo_mode_partial_but_a_direct_import_does_not()
+-> Result<(), String> {
+    let root = ts_unique_tempdir("repo-alias-import")?;
+    ts_write_file(&root.join("src/lib.ts"), TS_SRC)?;
+    ts_write_file(
+        &root.join("tests/lib.test.ts"),
+        &TS_TEST
+            .replace("import {", "/* \" */ import {")
+            .replace("../src/lib", "../alias/lib"),
+    )?;
+    if std::os::unix::fs::symlink("src", root.join("alias")).is_err() {
+        let _ = std::fs::remove_dir_all(&root);
+        return Ok(());
+    }
+    let canonical = std::fs::canonicalize(root.join("alias")).map_err(|e| e.to_string())?;
+    let through = run(&root, 800);
+    // An escaped separator leaves neither `./` nor `/alias` in the raw text.
+    ts_write_file(
+        &root.join("tests/lib.test.ts"),
+        &TS_TEST.replace("../src/lib", "..\\u002falias/lib"),
+    )?;
+    let through_encoded = run(&root, 800);
+    ts_write_file(&root.join("tests/lib.test.ts"), TS_TEST)?;
+    let direct = run(&root, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        canonical.ends_with("src") || !canonical.exists(),
+        "{canonical:?}"
+    );
+    let through = through?;
+    let through_reason = through
+        .partial_reason
+        .ok_or("an import through the alias must keep the run partial")?;
+    assert!(
+        through_reason.contains("typescript_repo_links_skipped:"),
+        "{through_reason}"
+    );
+    let encoded_reason = through_encoded?
+        .partial_reason
+        .ok_or("an escaped import through the alias must keep the run partial")?;
+    assert!(
+        encoded_reason.contains("typescript_repo_links_skipped:"),
+        "{encoded_reason}"
+    );
+    let direct = direct?;
+    assert!(
+        direct.findings.iter().any(|finding| finding
+            .related_tests
+            .iter()
+            .any(|t| t.name.contains("is positive"))),
+        "the direct-path import relates the test to classify: {:?}",
+        direct.findings
+    );
+    assert!(
+        direct
+            .partial_reason
+            .is_none_or(|reason| !reason.contains("typescript_repo_links_skipped:")),
+        "a direct-path import never traverses the alias"
+    );
     Ok(())
 }

@@ -1,0 +1,9 @@
+diff --git a/hostile/settings.py b/hostile/settings.py
+--- a/hostile/settings.py
++++ b/hostile/settings.py
+@@ -1,4 +1,4 @@
+-RATES = {"silver": 5}
++RATES = {"silver": 6}
+ 
+ def price(tier):
+     return RATES.get(tier, 0)

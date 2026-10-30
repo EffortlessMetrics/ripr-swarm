@@ -28,10 +28,15 @@ fn status_and_refresh_advertise_committed_scope_variants() -> Result<(), String>
         "properties": {
             "analyzed": {
                 "type": "string",
-                "pattern": "^committed (default-branch diff|diff against base .+)$"
+                "pattern": "^(committed (default-branch diff|diff against base .+)|saved tracked-worktree diff against (the default branch|base .+))$"
             },
-            "uncommitted_edits": { "type": "string", "const": "outside this analysis" },
+            "uncommitted_edits": {
+                "type": "string",
+                "enum": ["outside this analysis", "saved tracked edits included"]
+            },
             "note": { "type": "string" },
+            "consumed_source_commitment": { "type": "string", "const": "not_established" },
+            "repair_cards": { "type": "string", "const": "withheld" },
             "untracked_edits": {
                 "type": "object",
                 "properties": {
@@ -42,6 +47,18 @@ fn status_and_refresh_advertise_committed_scope_variants() -> Result<(), String>
                     "remedy": { "type": "string" }
                 },
                 "required": ["files", "total", "more", "listing_example", "remedy"],
+                "additionalProperties": false
+            },
+            "ignored_edits": {
+                "type": "object",
+                "properties": {
+                    "files": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 3 },
+                    "total": { "type": "integer", "minimum": 1 },
+                    "more": { "type": "integer", "minimum": 0 },
+                    "languages_analyzed": { "type": "string" },
+                    "remedy": { "type": "string" }
+                },
+                "required": ["files", "total", "more", "languages_analyzed", "remedy"],
                 "additionalProperties": false
             }
         },

@@ -1,0 +1,47 @@
+{
+  "case_id": "jest-spec0258-ex07-config-resolver",
+  "subject_id": "authored-ts-jest-snapshot-config",
+  "diff": "cases/jest-spec0258-ex07-config-resolver.diff",
+  "anchor": {
+    "file": "src/priceSnapConfigured.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_expect_tomatchsnapshot_config_resolver",
+  "hard_case": "a committed snapshot exists, but the package script `jest --config config/jest.js` loads a snapshotResolver that sends snapshots to another directory, so the committed entry is never read",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npm test",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the edit is the spec's behavior change (140 becomes 130 for amount 150)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`priceSnapConfigured(150)` returns 140; the edit returns 130. The committed entry `priceSnapConfigured 1` = `140` sits next to the test, but `npm test` runs `jest --config config/jest.js` and that config's `snapshotResolver` points snapshots at `config/snapshots`. A run outside CI writes a fresh entry from the edited value and passes on the unedited and the edited package alike. RIPR-SPEC-0258 example 7: a `package.json` script `jest --config config/jest.js` with a `snapshotResolver` keeps the reading at snapshot / medium. ripr reports `weakly_exposed`.",
+  "labeling_observation": {
+    "ripr_commit": "acb0ea8a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0258#7"
+  ]
+}

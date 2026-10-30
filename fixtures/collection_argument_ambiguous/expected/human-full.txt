@@ -2,39 +2,44 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/collection_argument_ambiguous/input
 
-Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach add: records_into_the_bag
   E2 [findings 1, 2]: infection yes: Reachable tests can plausibly activate this changed behavior
   E3 [findings 1, 2]: propagation yes: Complete propagation witness reaches state write: v.push(x * 1)
   E4 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
-  E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   E6 [findings 1, 2]: local flow reaches state write: v.push(x * 1) (line 3)
   E7 [findings 1, 2]: related test src/lib.rs:10 records_into_the_bag uses strong exact value oracle: assert_eq!(b.0[1], vec![11]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  E8 [findings 1, 2]: source function argument value v = 0 at line 13
-  E9 [findings 1, 2]: source function argument value x = 11 at line 13
-  E10 [findings 1, 2]: source assertion argument value 0 at line 14
-  E11 [findings 1, 2]: source assertion argument value 1 at line 14
-  E12 [findings 1, 2]: source assertion argument value 11 at line 14
+  E8 [findings 1, 2]: source function argument value x = 11 at line 13
+  E9 [findings 1, 2]: source assertion argument value 0 at line 14
+  E10 [findings 1, 2]: source assertion argument value 1 at line 14
+  E11 [findings 1, 2]: source assertion argument value 11 at line 14
 
 Finding 1: WARNING ./src/lib.rs:3
   id: probe:src_lib.rs:call_deletion:1f64eda5
 Changed
   before: v.push(x)
   after:  v.push(x * 1)
-Probe
+Change type
+  a call was removed
   family: call_deletion
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/lib.rs::add
-  canonical gap: gap:rust:src/lib.rs:add:call_deletion:call_deletion:v.push_x*1
+  gap id (for scripts): gap:rust:src/lib.rs:add:call_deletion:call_deletion:v.push_x*1
 Static exposure
   weakly_exposed (warning, confidence 0.92)
 Evidence
-  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E11, E12
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E11
 Weakness
   - No strong discriminator was detected
 Next step
@@ -48,15 +53,16 @@ Finding 2: WARNING ./src/lib.rs:3
 Changed
   before: v.push(x)
   after:  v.push(x * 1)
-Probe
+Change type
+  a side effect changed
   family: side_effect
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/lib.rs::add
-  canonical gap: gap:rust:src/lib.rs:add:side_effect:side_effect:v.push_x*1
+  gap id (for scripts): gap:rust:src/lib.rs:add:side_effect:side_effect:v.push_x*1
 Static exposure
   weakly_exposed (warning, confidence 0.92)
 Evidence
-  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E11, E12
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E11
 Weakness
   - No strong discriminator was detected
 Next step

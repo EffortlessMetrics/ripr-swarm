@@ -4,14 +4,14 @@ Spec: RIPR-SPEC-0164
 
 ## Given
 
-Four caller-side equality boundaries over match helpers that each
-break one rule of the strict grammar: a computed arm value
-(`"word" => pick(kind)`), a guard arm (`"word" if kind.len() > 2`),
+Four caller-side equality boundaries over match helpers: a computed arm
+value (`"word" => pick(kind)`), a guard arm (`"word" if kind.len() > 2`),
 a bare-identifier pattern (`word => "alpha"`), and a char scrutinee
 (`match c { 'a' => ... }`). Each caller binds the helper return into
 `final_label` and compares it at an equality boundary; the diff
 changes each comparison constant (`"alpha"` -> `"beta"`). The tests
-call each classify with an exact literal.
+call each classify with one exact literal, and that row returns the
+constant the edit replaced (`"alpha"`).
 
 ## When
 
@@ -21,18 +21,22 @@ cargo xtask fixtures match_arm_controls
 
 ## Then
 
-Every probe stays at its fail-closed class, `infection_unknown` with
-`Changed boundary input is unresolved` naming `final_label`
-(RIPR-SPEC-0001, #6674): the match evaluator refuses each
-variant by rule (a computed value is not an exact return; a guard or
-unresolved pattern could match anything; a bare identifier may be a
-binding — the token-coincidence family; a non-string scrutinee is a
-named limitation).
+All four probes read `exposed`. The edit is a one-sided equality swap
+(RIPR-SPEC-0032): a row that sits on the replaced constant (`"alpha"`)
+takes the `if` branch before the edit and the `else` branch after it,
+so the single pinned row flips whichever side the new constant is on.
+Runtime mutation of each helper confirms every test fails under the
+edit. The bare identifier is read as a catch-all only because the file
+declares no item of that name (RIPR-SPEC-0164 Example 4).
+
+The negative shapes (a row on neither constant, a compound predicate
+with the gate off, a weak oracle) are the `eq-swap-*` cases of the
+Rust verdict corpus; they stay gaps.
 
 ## Must Not
 
-- Produce any `exposed` finding or any hop-provenance string on any
-  of the four probes.
-- Skip the helper authority entirely: each variant must be refused by
-  the match grammar, not by argument binding (the arguments stay exact
-  literals or the owner's bound parameter).
+- Report a gap or an unknown class on any of the four probes: each
+  pinned row is discriminated by the runtime mutant.
+- Resolve a helper through argument binding instead of the match
+  grammar (the arguments stay exact literals or the owner's bound
+  parameter).

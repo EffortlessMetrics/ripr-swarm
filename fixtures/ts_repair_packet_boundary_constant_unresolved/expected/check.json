@@ -12,9 +12,16 @@
   "findings": [
     {
       "id": "probe:src_pricing.ts:typescript_preview:17445ecf",
+      "canonical_gap_id": "gap:typescript:typescript_preview:17445ecf",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "boundary_input_not_matched", "summary": "no observed call supplies the changed boundary input"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_pricing.ts:typescript_preview:17445ecf",
         "family": "predicate",
@@ -68,7 +75,9 @@
           "oracle_kind": "exact_value",
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "discounts far above threshold",
@@ -78,7 +87,9 @@
           "oracle_kind": "exact_value",
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {

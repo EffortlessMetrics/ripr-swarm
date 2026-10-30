@@ -1,0 +1,12 @@
+diff --git a/src/table.ts b/src/table.ts
+--- a/src/table.ts
++++ b/src/table.ts
+@@ -3,7 +3,7 @@
+ }
+ 
+ export function qualifiesForFreeReturns(cents: number): boolean {
+-  return cents >= 8000;
++  return cents > 8000;
+ }
+ 
+ export function qualifiesForGiftWrap(cents: number): boolean {

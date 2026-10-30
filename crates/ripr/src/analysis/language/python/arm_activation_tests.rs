@@ -301,3 +301,49 @@ fn a_non_ascii_table_name_fails_open_instead_of_panicking() -> Result<(), String
     );
     Ok(())
 }
+
+const INVOICE_IMPORT: &str = "from src.shop import Invoice";
+const INVOICE_OLD: &str = "        return cls(0, 0.0)";
+const INVOICE_HEAD: &str = "from dataclasses import dataclass\n\n\n@dataclass\nclass Invoice:\n    amount: int\n    tax_rate: float = 0.2\n\n    def total(self):\n        return round(self.amount * (1 + self.tax_rate))\n\n    def rate(self):\n        return self.tax_rate\n\n    @classmethod\n    def free(cls):\n        return cls(0, 0.2)\n";
+
+#[test]
+fn a_chained_method_that_masks_the_edited_field_does_not_credit() -> Result<(), String> {
+    // `total()` prices an amount of 0 to 0 at any rate.
+    let masked = "def test_free():\n    assert Invoice.free().total() == 0\n";
+    assert_eq!(
+        classify(INVOICE_HEAD, INVOICE_OLD, INVOICE_IMPORT, masked)?,
+        ExposureClass::WeaklyExposed
+    );
+    // Control: a method that returns the edited state directly observes it.
+    let getter = "def test_free():\n    assert Invoice.free().rate() == 0.2\n";
+    assert_eq!(
+        classify(INVOICE_HEAD, INVOICE_OLD, INVOICE_IMPORT, getter)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_chained_method_rule_fails_open_when_the_result_is_read_otherwise() -> Result<(), String> {
+    // A direct attribute read observes the edited field.
+    let attribute = "def test_free():\n    assert Invoice.free().tax_rate == 0.2\n";
+    assert_eq!(
+        classify(INVOICE_HEAD, INVOICE_OLD, INVOICE_IMPORT, attribute)?,
+        ExposureClass::Exposed
+    );
+    // One strong test that reads the field directly keeps the credit even
+    // when another reads only through the masking method.
+    let mixed = "def test_free_total():\n    assert Invoice.free().total() == 0\n\n\ndef test_free_rate():\n    assert Invoice.free().rate() == 0.2\n";
+    assert_eq!(
+        classify(INVOICE_HEAD, INVOICE_OLD, INVOICE_IMPORT, mixed)?,
+        ExposureClass::Exposed
+    );
+    // A class that is not a plain dataclass is not read.
+    let plain = INVOICE_HEAD.replace("@dataclass\n", "");
+    let masked = "def test_free():\n    assert Invoice.free().total() == 0\n";
+    assert_eq!(
+        classify(&plain, INVOICE_OLD, INVOICE_IMPORT, masked)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
