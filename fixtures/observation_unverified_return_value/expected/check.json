@@ -25,7 +25,7 @@
       },
       "classification": "weakly_exposed",
       "severity": "warning",
-      "confidence": 0.92,
+      "confidence": 0.84,
       "probe": {
         "id": "probe:src_lib.rs:return_value:63d1fd29",
         "family": "return_value",
@@ -36,16 +36,16 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach compute_score: result_is_positive"},
-        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Every related test's assertions hold with the same truth value on the baseline and the change, so no assertion tells the versions apart"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: base * 2"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach compute_score: result_is_positive", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: base * 2", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: base * 2 (line 2)", "related test tests/score_tests.rs:4 result_is_positive uses weak relational check oracle: assert!(compute_score(3) > 0);", "source function argument value base = 3 at line 5"],
+      "evidence_path": ["reach yes: Related tests appear to reach compute_score: result_is_positive", "infection weak: Every related test's assertions hold with the same truth value on the baseline and the change, so no assertion tells the versions apart", "propagation yes: Complete propagation witness reaches returned value: base * 2", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: base * 2 (line 2)", "related test tests/score_tests.rs:4 result_is_positive uses weak relational check oracle: assert!(compute_score(3) > 0);", "source function argument value base = 3 at line 5"],
       "flow_sinks": [
         {"kind":"return_value","text":"base * 2","line":2}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: base * 2", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach compute_score: result_is_positive"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: base * 2", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Every related test's assertions hold with the same truth value on the baseline and the change, so no assertion tells the versions apart", "Related tests appear to reach compute_score: result_is_positive"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "5": "assert!(compute_score(3) > 0);"

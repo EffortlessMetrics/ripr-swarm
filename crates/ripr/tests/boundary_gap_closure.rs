@@ -10,10 +10,15 @@
 //! receipt/status agreement. Caller-supplied `--test`/`--command` metadata
 //! cannot substitute for that execution receipt.
 
+#[path = "boundary_gap_closure/boolean_owner_pin.rs"]
+mod boolean_owner_pin;
 #[path = "common/boundary_gap.rs"]
 mod boundary_gap;
 #[path = "common/mod.rs"]
 mod common;
+
+#[path = "boundary_gap_closure/ordinary_daily_loop.rs"]
+mod ordinary_daily_loop;
 
 use boundary_gap::{
     AFTER_TESTS, BEFORE_TESTS, EQUALITY_DISCRIMINATOR, EQUALITY_SELECTOR, FocusedExecution,

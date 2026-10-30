@@ -47,3 +47,50 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_path_remap (2)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_path_remap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — module_reach_super_import_path_remap (3)
+
+Reason:
+RIPR-SPEC-0118 / #10192: preserve exact canonical edge/route/non-claim and all prior evidence; add private-helper context only as separate limitation_helper_boundary evidence. Guidance retains the same displayed boundary, with verdict/stage/identity/oracle metadata unchanged.
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_path_remap --reason "..."`
+
+Updated:
+- `expected/check.json`
+
+## Pending — module_reach_super_import_path_remap (5)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_path_remap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — module_reach_super_import_path_remap (6)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: compose landed main fixture rows with 10192 hidden-row kind/reason naming and typed unresolved-edge guidance; JSON findings, classes, oracles and recommendations unchanged (golden-drift cosmetic-only)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_path_remap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

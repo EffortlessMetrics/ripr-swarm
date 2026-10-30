@@ -1,0 +1,44 @@
+{
+  "case_id": "eq-swap-weak-oracle",
+  "subject_id": "authored-eq-swap",
+  "diff": "cases/eq-swap-weak-oracle.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 45
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "one_sided_equality_constant_swap",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if label == \"beta\" {",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the edit changes which input takes the branch, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The row equals the replaced constant, but the oracle only asserts a non-empty result, which both branches satisfy. A weak oracle must not credit the swap.",
+  "labeling_observation": {
+    "ripr_commit": "f59bb04f4",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

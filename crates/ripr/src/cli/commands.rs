@@ -168,6 +168,8 @@ use init_workflow::generated_github_actions_workflow;
 
 #[path = "commands/pilot.rs"]
 mod pilot;
+#[path = "commands/pilot_timings.rs"]
+mod pilot_timings;
 pub(super) use pilot::pilot;
 
 pub(super) fn outcome(args: &[String]) -> Result<(), String> {

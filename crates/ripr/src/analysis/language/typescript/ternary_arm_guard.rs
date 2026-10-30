@@ -75,6 +75,14 @@ impl TernaryArmChange {
     /// Whether `expected` provably equals neither the old nor the new value
     /// of the changed arm, so an assertion on it fails on both versions.
     pub(crate) fn expected_is_dead(&self, expected: &str) -> bool {
+        // An array literal equals no scalar arm; a member-path arm has an
+        // unknown value, so it cannot be ruled out.
+        if is_array_literal_text(expected)
+            && let (Some(old), Some(new)) = (&self.old_arm, &self.new_arm)
+        {
+            return !matches!(old, ArmConstant::Member(_))
+                && !matches!(new, ArmConstant::Member(_));
+        }
         let (Some(expected), Some(old), Some(new)) =
             (parse_arm_constant(expected), &self.old_arm, &self.new_arm)
         else {
@@ -158,6 +166,10 @@ impl TernaryThresholdMove {
     /// Whether `expected` provably equals neither arm, so an assertion on it
     /// fails on both versions.
     pub(crate) fn expected_is_dead(&self, expected: &str) -> bool {
+        if is_array_literal_text(expected) {
+            return !matches!(self.when_true, ArmConstant::Member(_))
+                && !matches!(self.when_false, ArmConstant::Member(_));
+        }
         let Some(expected) = parse_arm_constant(expected) else {
             return false;
         };
@@ -410,5 +422,53 @@ fn evaluate(
             _ => None,
         },
         _ => None,
+    }
+}
+
+/// Source text of an array literal expectation (`[1, 2]`, `[]`).
+fn is_array_literal_text(expected: &str) -> bool {
+    let trimmed = expected.trim();
+    trimmed.starts_with('[') && trimmed.ends_with(']')
+}
+
+#[cfg(test)]
+mod array_expectation_tests {
+    use super::*;
+
+    fn arm_change(old: ArmConstant, new: ArmConstant) -> TernaryArmChange {
+        TernaryArmChange {
+            param_index: 0,
+            comparison: ArmComparison::Greater,
+            operand: ArmConstant::Number(5.0),
+            arm_runs_when: true,
+            old_arm: Some(old),
+            new_arm: Some(new),
+        }
+    }
+
+    /// An array expectation equals no scalar arm, so it fails on both
+    /// versions and is dead; a member-path arm may hold an array, so it is
+    /// never ruled out (discriminating negative).
+    #[test]
+    fn array_expectation_is_dead_against_scalar_arms_only() {
+        let scalar = arm_change(ArmConstant::Number(1.0), ArmConstant::Number(2.0));
+        assert!(scalar.expected_is_dead("[1, 2]"));
+        assert!(scalar.expected_is_dead("[]"));
+        let member = arm_change(ArmConstant::Number(1.0), ArmConstant::Member("A.b".into()));
+        assert!(!member.expected_is_dead("[1, 2]"));
+        // Scalar behavior is unchanged: a live arm value is not dead.
+        assert!(!scalar.expected_is_dead("2"));
+        assert!(scalar.expected_is_dead("3"));
+
+        let moved = TernaryThresholdMove {
+            param_index: 0,
+            comparison: ArmComparison::Greater,
+            old: ArmConstant::Number(5.0),
+            new: ArmConstant::Number(25.0),
+            when_true: ArmConstant::Number(900.0),
+            when_false: ArmConstant::Number(400.0),
+        };
+        assert!(moved.expected_is_dead("[900]"));
+        assert!(!moved.expected_is_dead("900"));
     }
 }

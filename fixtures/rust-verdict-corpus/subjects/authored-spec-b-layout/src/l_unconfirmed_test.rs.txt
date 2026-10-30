@@ -1,0 +1,15 @@
+//! Named like a test file but declared in no manifest target: production.
+
+pub fn shifted_unconfirmed(base: u32) -> u32 {
+    base + 11
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_unconfirmed_shift_is_eleven_l_unconfirmed() {
+        assert_eq!(shifted_unconfirmed(1), 12);
+    }
+}

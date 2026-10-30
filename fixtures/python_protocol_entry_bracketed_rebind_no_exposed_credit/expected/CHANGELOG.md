@@ -102,6 +102,19 @@ Updated:
 ## Pending — python_protocol_entry_bracketed_rebind_no_exposed_credit (8)
 
 Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless python_protocol_entry_bracketed_rebind_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_protocol_entry_bracketed_rebind_no_exposed_credit (9)
+
+Reason:
 RIPR-SPEC-0028 (#9531): preserve the original receiver-rebinding subject and add six non-adjacent, outer/chained and inline for/with header controls. Independent actual-output assertions require seven related subjects, one static_unknown finding, zero exposed findings and no protocol_entry_call; retain the current main classification and rendering contracts.
 
 Command:

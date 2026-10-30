@@ -94,7 +94,7 @@ pub(super) fn annotate_row_misses(
     class: &ExposureClass,
     has_static_limit: bool,
     change: &RowMissChange<'_>,
-    all_tests: &[PythonTest],
+    prep: &AlignmentPrep<'_>,
 ) {
     // Class gate: only a concrete supported gap class carries row misses.
     if has_static_limit || !matches!(class, ExposureClass::WeaklyExposed) {
@@ -112,10 +112,10 @@ pub(super) fn annotate_row_misses(
     {
         return;
     }
-    // Built once per finding; each strong row is still aligned on its own.
-    let prep = AlignmentPrep::new(change.owner, all_tests);
+    // Built once per owner by the caller; each strong row is still aligned on
+    // its own.
     for (row, candidate) in rows.iter_mut().zip(candidates) {
-        row.miss = row_miss(row, candidate, candidates, change, &prep);
+        row.miss = row_miss(row, candidate, candidates, change, prep);
         // #5564: `missing_input` is assigned only from this row's own
         // omission proof, so the boundary that proof was made against is
         // this row's support. Any other miss carries none; a missing

@@ -737,6 +737,7 @@ mod tests {
     fn static_unknown_finding(expression: &str, owner: &str) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib.rs:binding:test".to_string(),
             canonical_gap: None,
             probe: Probe {

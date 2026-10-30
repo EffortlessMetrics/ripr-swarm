@@ -507,7 +507,8 @@ fn validate_editor_first_run_actions(case: &str, actions: &Value, violations: &m
     let first_repair_actions = items
         .iter()
         .filter(|item| {
-            json_string_field(item, "title").as_deref() == Some("Copy first repair packet")
+            json_string_field(item, "title").as_deref()
+                == Some("Copy repair instructions for an AI agent")
                 || json_string_field(item, "command").as_deref() == Some("ripr.copyContext")
         })
         .collect::<Vec<_>>();
@@ -518,7 +519,7 @@ fn validate_editor_first_run_actions(case: &str, actions: &Value, violations: &m
     ) && !has_first_repair_packet
     {
         violations.push(format!(
-            "editor first-run usability case {case} must include Copy first repair packet"
+            "editor first-run usability case {case} must include Copy repair instructions for an AI agent"
         ));
     }
     if matches!(
@@ -546,9 +547,11 @@ fn validate_editor_first_run_repair_action(
     action: &Value,
     violations: &mut Vec<String>,
 ) {
-    if json_string_field(action, "title").as_deref() != Some("Copy first repair packet") {
+    if json_string_field(action, "title").as_deref()
+        != Some("Copy repair instructions for an AI agent")
+    {
         violations.push(format!(
-            "editor first-run usability case {case} first repair action must use the Copy first repair packet title"
+            "editor first-run usability case {case} first repair action must use the Copy repair instructions for an AI agent title"
         ));
     }
     if json_string_field(action, "command").as_deref() != Some("ripr.copyContext") {
