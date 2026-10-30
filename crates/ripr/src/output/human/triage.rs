@@ -670,8 +670,10 @@ fn repair_already_noticed(navigation: &crate::app::FindingNavigation) -> bool {
 
 /// True when the repair advisory on screen (if any) says there is no repair
 /// start for this finding. Refusals that name a route or a recovery
-/// (`SeveralBindingSeams`, `Ineligible`, `SeamLimit`, `ClassificationFailed`)
-/// must not sit beside "ripr has no repair route".
+/// (`SeveralBindingSeams`, `Ineligible`, `SeamLimit`, `ClassificationFailed`,
+/// `GapRouteUnavailable`, `ConfigUnreadable`, and `NoBindingSeam` with seams
+/// in the file, which points at `ripr pilot`) must not sit beside "ripr has no
+/// repair route".
 fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
     !matches!(
         navigation.repair_route_refusal(),
@@ -680,7 +682,12 @@ fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
                 | RepairRouteRefusal::Ineligible { .. }
                 | RepairRouteRefusal::SeamLimit
                 | RepairRouteRefusal::ClassificationFailed
+                | RepairRouteRefusal::GapRouteUnavailable { .. }
+                | RepairRouteRefusal::ConfigUnreadable
         )
+    ) && !matches!(
+        navigation.repair_route_refusal(),
+        Some(RepairRouteRefusal::NoBindingSeam { seams_in_file }) if *seams_in_file > 0
     )
 }
 
@@ -1765,6 +1772,9 @@ mod tests {
             },
             RepairRouteRefusal::SeamLimit,
             RepairRouteRefusal::ClassificationFailed,
+            RepairRouteRefusal::NoBindingSeam { seams_in_file: 3 },
+            RepairRouteRefusal::GapRouteUnavailable { reason: "no base" },
+            RepairRouteRefusal::ConfigUnreadable,
         ];
         for refusal in naming {
             let text = render_with_refusal(refused(), Some(refusal.clone()));

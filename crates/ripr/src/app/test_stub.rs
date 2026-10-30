@@ -542,11 +542,29 @@ fn narrowed_ambiguity(
             narrowed = true;
         }
     }
+    validate_ambiguity(root, config, candidates, narrowed, reason, || {
+        analysis::inventory_classified_seams_at_with_config(root, config)
+            .map(|(classified, _)| classified)
+    })
+}
+
+/// The validation half of `narrowed_ambiguity`, with the classified inventory
+/// supplied by `load_inventory` so each withhold path is reachable on its own:
+/// too many candidates (the inventory is never loaded), an inventory that
+/// cannot be classified, and candidates the inventory does not hold (every
+/// outcome `Missing`).
+fn validate_ambiguity(
+    root: &Path,
+    config: &RiprConfig,
+    candidates: Vec<String>,
+    narrowed: bool,
+    reason: String,
+    load_inventory: impl FnOnce() -> Result<Vec<ClassifiedSeam>, String>,
+) -> StubRouteDecision {
     if candidates.len() > AMBIGUOUS_VALIDATION_LIMIT {
         return withheld_ambiguity(&reason);
     }
-    let Ok((classified, _)) = analysis::inventory_classified_seams_at_with_config(root, config)
-    else {
+    let Ok(classified) = load_inventory() else {
         return withheld_ambiguity(&reason);
     };
     let outcomes = candidates
@@ -2022,22 +2040,42 @@ mod tests {
             raw.to_string(),
             true,
         );
-        match withheld {
-            StubRouteDecision::Withheld { reason } => assert!(
-                reason.contains("cannot pick one")
-                    && !reason.contains("pass one of")
-                    && !reason.contains("--seam-id"),
-                "{reason}"
-            ),
-            other => panic!("expected Withheld, got {other:?}"),
-        }
-        let choice = fold_seam_outcomes(vec![ok("a"), ok("b")], raw.to_string(), false);
-        match choice {
-            StubRouteDecision::Ambiguous { reason, .. } => {
-                assert!(!reason.contains("pass one of"), "{reason}")
+        let reason = match withheld {
+            StubRouteDecision::Withheld { reason } => reason,
+            other => format!("UNEXPECTED {other:?}"),
+        };
+        assert!(
+            reason.contains("cannot pick one")
+                && !reason.contains("pass one of")
+                && !reason.contains("--seam-id"),
+            "{reason}"
+        );
+        // An empty validated set can never be a choice: a Missing seam beside a
+        // hard refusal is that refusal, and beside a weak oracle is the
+        // strengthen-the-test guidance, never an Ambiguous with no commands.
+        let missing = || ("m".to_string(), SeamStubOutcome::Missing);
+        assert_eq!(
+            fold_seam_outcomes(vec![missing(), hard("a")], raw.to_string(), true),
+            StubRouteDecision::Refused {
+                reason: "no".into()
             }
-            other => panic!("expected Ambiguous, got {other:?}"),
-        }
+        );
+        assert!(
+            matches!(
+                fold_seam_outcomes(vec![missing(), weak("a")], raw.to_string(), true),
+                StubRouteDecision::WeakOracle { .. }
+            ),
+            "missing + weak oracle is weak-oracle guidance"
+        );
+        let choice = fold_seam_outcomes(vec![ok("a"), ok("b")], raw.to_string(), false);
+        let reason = match choice {
+            StubRouteDecision::Ambiguous { reason, .. } => reason,
+            other => format!("UNEXPECTED {other:?}"),
+        };
+        assert!(
+            !reason.starts_with("UNEXPECTED") && !reason.contains("pass one of"),
+            "{reason}"
+        );
         assert_eq!(
             fold_seam_outcomes(vec![weak("a"), ok("b")], why(), true),
             StubRouteDecision::SeamStub {
@@ -2046,35 +2084,45 @@ mod tests {
         );
     }
 
-    /// Both withhold paths of `narrowed_ambiguity` (too many seams to
-    /// validate, and an inventory that cannot classify them) return a plain
-    /// reason with no unvalidated seam IDs and no command.
+    /// Each withhold path of `validate_ambiguity` returns a plain reason with
+    /// no unvalidated seam IDs and no command, and each is pinned separately
+    /// by injecting the inventory: too many candidates (the loader must not
+    /// run), an inventory that cannot be classified, and candidates the
+    /// inventory does not hold. No directory is created.
     #[test]
     fn narrowed_ambiguity_withholds_with_a_plain_reason() {
         let raw = "src/lib.rs:12 holds more than one field_construction seam, so --at cannot pick one; pass one of: --seam-id s0, --seam-id s1";
-        let root = std::env::temp_dir().join("ripr-withhold-no-such-root-10710");
+        let root = Path::new("no-such-root-10710");
         let config = RiprConfig::default();
-        for count in [AMBIGUOUS_VALIDATION_LIMIT + 1, 2] {
-            let ids = (0..count).map(|i| format!("s{i}")).collect::<Vec<_>>();
-            let mut index = None;
-            let decision = narrowed_ambiguity(
-                &root,
-                &config,
-                "src/lib.rs",
-                "y: 3",
-                raw.to_string(),
-                ids,
-                &mut index,
+        let ids = |count: usize| (0..count).map(|i| format!("s{i}")).collect::<Vec<_>>();
+        let cases: Vec<(&str, usize, Option<Result<Vec<ClassifiedSeam>, String>>)> = vec![
+            ("too many", AMBIGUOUS_VALIDATION_LIMIT + 1, None),
+            (
+                "unclassifiable",
+                2,
+                Some(Err("cannot classify".to_string())),
+            ),
+            ("missing from inventory", 2, Some(Ok(Vec::new()))),
+        ];
+        for (label, count, inventory) in cases {
+            let mut loaded = false;
+            let decision =
+                validate_ambiguity(root, &config, ids(count), false, raw.to_string(), || {
+                    loaded = true;
+                    inventory.unwrap_or_else(|| Err("must not load".to_string()))
+                });
+            assert_eq!(loaded, label != "too many", "{label}: inventory load");
+            let reason = match decision {
+                StubRouteDecision::Withheld { reason } => reason,
+                other => format!("UNEXPECTED {other:?}"),
+            };
+            assert!(
+                reason.contains("cannot pick one")
+                    && reason.ends_with("ripr could not check which of them your change touches")
+                    && !reason.contains("pass one of")
+                    && !reason.contains("--seam-id"),
+                "{label}: {reason}"
             );
-            match decision {
-                StubRouteDecision::Withheld { reason } => assert!(
-                    reason.contains("cannot pick one")
-                        && !reason.contains("pass one of")
-                        && !reason.contains("--seam-id"),
-                    "{count}: {reason}"
-                ),
-                other => panic!("{count}: expected Withheld, got {other:?}"),
-            }
         }
     }
 
