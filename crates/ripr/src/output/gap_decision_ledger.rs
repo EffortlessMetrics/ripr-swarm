@@ -4104,7 +4104,7 @@ mod tests {
     /// refuse and the saved ledger must retain a marker the gate's generic
     /// non-consumable check reads.
     #[test]
-    fn gap_decision_ledger_refuses_refusal_flagged_only_in_analysis_scope() {
+    fn gap_decision_ledger_refuses_refusal_flagged_only_in_analysis_scope() -> Result<(), String> {
         let report = report_from_check_output(serde_json::json!({
             "schema_version": "0.2",
             "tool": "ripr",
@@ -4144,12 +4144,13 @@ mod tests {
             "refusal admission must name the typed run status and the consumable flag: {:?}",
             report.warnings
         );
-        let saved = saved_ledger_value(&report);
+        let saved = saved_ledger_value(&report)?;
         assert!(
             crate::output::gate::discloses_non_consumable_record(&saved),
             "the saved ledger must retain the non-consumable marker when only \
              analysis_scope carried it: {saved}"
         );
+        Ok(())
     }
 
     /// The same either-location retention for a refusal under a status this
@@ -4158,7 +4159,8 @@ mod tests {
     /// lived only in `analysis_scope`, and the saved ledger used to lose it
     /// entirely — a healthy `no_records` ledger the gate passed.
     #[test]
-    fn gap_decision_ledger_refuses_generic_flag_retained_from_analysis_scope() {
+    fn gap_decision_ledger_refuses_generic_flag_retained_from_analysis_scope() -> Result<(), String>
+    {
         let report = report_from_check_output(serde_json::json!({
             "schema_version": "0.2",
             "tool": "ripr",
@@ -4189,12 +4191,13 @@ mod tests {
             "generic refusal landing must name the consumable flag: {:?}",
             report.warnings
         );
-        let saved = saved_ledger_value(&report);
+        let saved = saved_ledger_value(&report)?;
         assert!(
             crate::output::gate::discloses_non_consumable_record(&saved),
             "the saved ledger must retain the non-consumable marker when only \
              analysis_scope carried it: {saved}"
         );
+        Ok(())
     }
 
     /// #10733 review repair (RIPR-SPEC-0362 identity): a known refusal run
@@ -4228,9 +4231,9 @@ mod tests {
 
     /// Render a ledger report to the exact saved JSON and parse it back, so
     /// retention assertions see what a downstream gate reader would read.
-    fn saved_ledger_value(report: &GapDecisionLedgerReport) -> serde_json::Value {
-        let rendered = render_gap_decision_ledger_json(report).expect("render saved ledger");
-        serde_json::from_str(&rendered).expect("parse saved ledger")
+    fn saved_ledger_value(report: &GapDecisionLedgerReport) -> Result<serde_json::Value, String> {
+        let rendered = render_gap_decision_ledger_json(report)?;
+        serde_json::from_str(&rendered).map_err(|error| format!("parse saved ledger: {error}"))
     }
 
     /// Refusal admission is narrow: a complete run with an empty

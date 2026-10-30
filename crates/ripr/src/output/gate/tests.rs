@@ -961,7 +961,7 @@ fn non_consumable_record_detection_requires_explicit_false() {
 }
 
 #[test]
-fn refusal_input_error_requires_explicit_consumable_false() {
+fn refusal_input_error_requires_explicit_consumable_false() -> Result<(), String> {
     // #10733 review repair (RIPR-SPEC-0362 identity): a known refusal status
     // requires an EXPLICIT `downstream_consumable: false` alongside it. A
     // known status without the flag is the healthy complete shape (the
@@ -999,14 +999,14 @@ fn refusal_input_error_requires_explicit_consumable_false() {
             "analysis_scope": {"downstream_consumable": false}
         }),
     ] {
-        let error = refusal_input_error(&document, path, "gate input").unwrap_or_else(|| {
-            panic!("explicit false flag must establish the refusal: {document}")
-        });
+        let error = refusal_input_error(&document, path, "gate input")
+            .ok_or_else(|| format!("explicit false flag must establish the refusal: {document}"))?;
         assert!(
             error.contains("diff_scope_oversized"),
             "typed refusal must name the run status: {error}"
         );
     }
+    Ok(())
 }
 
 #[test]
