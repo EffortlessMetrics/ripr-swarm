@@ -259,6 +259,42 @@ assertion is cited); if any neighbour goes unnoticed, or the constant is not an
 integer, it keeps its abstention. A rewrite is never reported as a gap here:
 the neighbours are a sample of the wrong values, not all of them.
 
+The first implementation slice after this spec should target only the
+same-file direct-reader row; the slice after it targets only `opaque_config_lookup`. Generated output, macro output, dynamic dispatch,
+and unsupported cross-file flow must stay named static limitations unless a
+later spec or fixture PR selects one of those rows explicitly.
+
+Before the `opaque_config_lookup` analyzer slice, its fixture and benchmark PR
+must add:
+
+- a positive `opaque_config_lookup` case with a directly supported lookup shape;
+- a must-not-claim `opaque_config_lookup` case where helper or registry naming
+  alone is insufficient;
+- limitation cases for generated config/schema output, macro output, dynamic
+  dispatch, and unsupported cross-file flow;
+- an internal-policy/config metadata guard proving metadata alone remains
+  `internal_only` / `no_action_internal`;
+- expected audit signals for `opaque_config_lookup`,
+  `macro_generated_config_output`, `dynamic_config_dispatch`, and
+  `config_policy_flow_unknown`.
+
+The analyzer implementation PR must record before/after audit or scorecard
+movement:
+
+- `opaque_config_lookup` decreases only for the supported fixture-backed lookup
+  shape;
+- `config_policy_static_limitations` decreases only when the selected case moves
+  to `already_observed`, `actionable`, or `internal_only`;
+- `config_policy_repair_route_coverage` and
+  `config_policy_verify_command_coverage` do not regress;
+- generated, macro, dynamic-dispatch, and unsupported cross-file examples remain
+  named limitations with repair routes;
+- internal metadata does not become user test debt.
+
+If those deltas cannot be shown, the implementation must keep the cases in
+`static_limitation` and report the missing proof instead of widening the
+supported scope.
+
 #### Associated-constant extension (selected by `shape-assoc-const-value`)
 
 The value-flow evaluation above refuses a constant declared more than once in
@@ -306,42 +342,6 @@ clamped input is `weakly_exposed`.
 Delivery order: this amendment, then the authored negatives with the existing
 positive left at its current accepted verdict, then the analyzer slice, which
 removes `shape-assoc-const-value` from `missed-credit.toml`.
-
-The first implementation slice after this spec should target only the
-same-file direct-reader row; the slice after it targets only `opaque_config_lookup`. Generated output, macro output, dynamic dispatch,
-and unsupported cross-file flow must stay named static limitations unless a
-later spec or fixture PR selects one of those rows explicitly.
-
-Before the `opaque_config_lookup` analyzer slice, its fixture and benchmark PR
-must add:
-
-- a positive `opaque_config_lookup` case with a directly supported lookup shape;
-- a must-not-claim `opaque_config_lookup` case where helper or registry naming
-  alone is insufficient;
-- limitation cases for generated config/schema output, macro output, dynamic
-  dispatch, and unsupported cross-file flow;
-- an internal-policy/config metadata guard proving metadata alone remains
-  `internal_only` / `no_action_internal`;
-- expected audit signals for `opaque_config_lookup`,
-  `macro_generated_config_output`, `dynamic_config_dispatch`, and
-  `config_policy_flow_unknown`.
-
-The analyzer implementation PR must record before/after audit or scorecard
-movement:
-
-- `opaque_config_lookup` decreases only for the supported fixture-backed lookup
-  shape;
-- `config_policy_static_limitations` decreases only when the selected case moves
-  to `already_observed`, `actionable`, or `internal_only`;
-- `config_policy_repair_route_coverage` and
-  `config_policy_verify_command_coverage` do not regress;
-- generated, macro, dynamic-dispatch, and unsupported cross-file examples remain
-  named limitations with repair routes;
-- internal metadata does not become user test debt.
-
-If those deltas cannot be shown, the implementation must keep the cases in
-`static_limitation` and report the missing proof instead of widening the
-supported scope.
 
 ## Required Evidence
 
