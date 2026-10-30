@@ -2300,6 +2300,12 @@ impl GapAttempt {
         )
     }
 
+    fn edit_closing_test(&self) -> Result<(), String> {
+        self.write_test_edit(
+            "  it(\"discounts exactly at the threshold\", () => {\n    expect(discountedTotal(10000)).toBe(9500);\n  });\n\n  it(\"discounts an above-threshold subtotal\"",
+        )
+    }
+
     /// Commit a focused-test edit that leaves the boundary unpinned.
     fn commit_non_discriminating_test(&self, label: &str) -> Result<(), String> {
         self.commit_test_edit(
@@ -2311,6 +2317,17 @@ impl GapAttempt {
     }
 
     fn commit_test_edit(&self, insertion: &str, message: &str) -> Result<(), String> {
+        self.write_test_edit(insertion)?;
+        // Only the paths the edit touched: `target/ripr` artifacts and the
+        // untracked `ripr.toml` are not part of the committed edit.
+        fixture_git_ok(&self.root, &["add", "test/pricing.test.ts"])?;
+        if self.root.join("src/extra.ts").is_file() {
+            fixture_git_ok(&self.root, &["add", "src/extra.ts"])?;
+        }
+        fixture_git_ok(&self.root, &["commit", "-q", "-m", message])
+    }
+
+    fn write_test_edit(&self, insertion: &str) -> Result<(), String> {
         let test_file = self.root.join("test/pricing.test.ts");
         let original =
             std::fs::read_to_string(&test_file).map_err(|error| format!("read test: {error}"))?;
@@ -2322,14 +2339,7 @@ impl GapAttempt {
         if edited == original {
             return Err("test edit did not apply".to_string());
         }
-        std::fs::write(&test_file, edited).map_err(|error| format!("write test: {error}"))?;
-        // Only the paths the edit touched: `target/ripr` artifacts and the
-        // untracked `ripr.toml` are not part of the committed edit.
-        fixture_git_ok(&self.root, &["add", "test/pricing.test.ts"])?;
-        if self.root.join("src/extra.ts").is_file() {
-            fixture_git_ok(&self.root, &["add", "src/extra.ts"])?;
-        }
-        fixture_git_ok(&self.root, &["commit", "-q", "-m", message])
+        std::fs::write(&test_file, edited).map_err(|error| format!("write test: {error}"))
     }
 
     fn state(&self) -> Result<String, String> {
@@ -2346,6 +2356,175 @@ fn text_of(output: &std::process::Output) -> (String, String) {
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
     )
+}
+
+/// A second edit to the *same* bound test must invalidate the receipt, even
+/// though the changed path and its kind remain unchanged (#11005).
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn finished_gap_attempt_detects_changed_bound_test_bytes() -> Result<(), String> {
+    for committed in [false, true] {
+        check_bound_test_drift(committed)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn finished_attempt_keeps_non_owned_operational_directory_bytes_bound() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-bound-operational-neighbors")?;
+    let directories = [
+        "target/ripr/repair-attempts",
+        "target/ripr/workflow",
+        "target/ripr/reports",
+        "target/ripr/cache",
+    ];
+    let mut paths = Vec::new();
+    for directory in directories {
+        let directory = attempt.root.join(directory);
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let path = directory.join("not-owned-by-this-invocation.dat");
+        std::fs::write(&path, b"bound non-owned file\n").map_err(|error| error.to_string())?;
+        paths.push(path);
+    }
+    attempt.edit_closing_test()?;
+    let output = attempt.after(true)?;
+    expect_exit(
+        output.status.success(),
+        true,
+        "finish with operational neighbors",
+    )?;
+    let current = || -> Result<Option<bool>, String> {
+        let (ok, text) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "status with operational neighbors")?;
+        let doc: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| format!("parse status: {error}: {text}"))?;
+        let row = doc["repair_attempts"]
+            .as_array()
+            .ok_or("missing attempts")?
+            .iter()
+            .find(|row| row["attempt_id"] == attempt.attempt_id)
+            .ok_or("selected attempt missing")?;
+        if row["disposition"] != "finished" {
+            return Err(format!("attempt not finished: {row}"));
+        }
+        Ok(row["head_current"].as_bool())
+    };
+    assert_eq!(current()?, Some(true), "nonempty finished positive control");
+    for path in paths {
+        std::fs::write(&path, b"changed non-owned file\n").map_err(|error| error.to_string())?;
+        assert_eq!(
+            current()?,
+            Some(false),
+            "directory membership hid drift in {}",
+            path.display()
+        );
+        std::fs::write(&path, b"bound non-owned file\n").map_err(|error| error.to_string())?;
+        assert_eq!(
+            current()?,
+            Some(true),
+            "exact restoration did not restore {}",
+            path.display()
+        );
+    }
+    decoy_untouched(&attempt.decoy)
+}
+
+#[cfg(feature = "lang-typescript")]
+fn check_bound_test_drift(committed: bool) -> Result<(), String> {
+    let attempt = GapAttempt::start(if committed {
+        "ts-bound-committed"
+    } else {
+        "ts-bound-uncommitted"
+    })?;
+    if committed {
+        attempt.commit_closing_test()?;
+    } else {
+        attempt.edit_closing_test()?;
+    }
+    let output = attempt.after(true)?;
+    expect_exit(output.status.success(), true, "finish gap attempt")?;
+    let current = || -> Result<Option<bool>, String> {
+        let (ok, text) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "status")?;
+        let doc: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| format!("parse status: {error}: {text}"))?;
+        let rows = doc["repair_attempts"]
+            .as_array()
+            .ok_or("missing attempts")?;
+        let row = rows
+            .iter()
+            .find(|row| row["attempt_id"] == attempt.attempt_id)
+            .ok_or("selected attempt missing")?;
+        if row["disposition"] != "finished" {
+            return Err(format!("attempt not finished: {row}"));
+        }
+        Ok(row["head_current"].as_bool())
+    };
+    if current()? != Some(true) {
+        return Err("finished attempt was not initially current".to_string());
+    }
+    let file = attempt.root.join("test/pricing.test.ts");
+    let original = std::fs::read_to_string(&file).map_err(|error| error.to_string())?;
+    let wrong = original.replace(
+        "expect(discountedTotal(10000)).toBe(9500)",
+        "expect(discountedTotal(10000)).toBe(10000)",
+    );
+    if wrong == original {
+        return Err("focused assertion not found".to_string());
+    }
+    std::fs::write(&file, wrong).map_err(|error| error.to_string())?;
+    if current()? == Some(true) {
+        return Err("changed bound test bytes stayed current".to_string());
+    }
+    for json in [false, true] {
+        let mut args = vec!["agent", "status", "--root", &attempt.root_arg];
+        if json {
+            args.push("--json");
+        }
+        let (ok, status) = ripr(&attempt.decoy, &args)?;
+        expect_exit(ok, true, "same-HEAD drift status")?;
+        need(
+            &status,
+            "bound inputs no longer match",
+            "same-HEAD drift warning",
+        )?;
+        if status.contains("the repository HEAD is now") {
+            return Err(format!(
+                "same-HEAD drift misreported a moved HEAD: {status}"
+            ));
+        }
+        if status.contains("stale against HEAD") {
+            return Err(format!("same-HEAD drift blamed HEAD in status: {status}"));
+        }
+    }
+    std::fs::write(&file, original).map_err(|error| error.to_string())?;
+    if current()? != Some(true) {
+        return Err("exact restoration did not recover currentness".to_string());
+    }
+    fixture_git_ok(
+        &attempt.root,
+        &["commit", "--allow-empty", "-q", "-m", "move HEAD"],
+    )?;
+    if current()? != Some(false) {
+        return Err("moved HEAD was not stale".to_string());
+    }
+    for json in [false, true] {
+        let mut args = vec!["agent", "status", "--root", &attempt.root_arg];
+        if json {
+            args.push("--json");
+        }
+        let (ok, status) = ripr(&attempt.decoy, &args)?;
+        expect_exit(ok, true, "moved-HEAD status")?;
+        need(&status, "the repository HEAD is now", "moved-HEAD warning")?;
+    }
+    decoy_untouched(&attempt.decoy)
 }
 
 /// #9103 (RIPR-SPEC-0311): the gap-bound after phase closes a gap only on

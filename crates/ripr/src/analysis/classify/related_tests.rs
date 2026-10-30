@@ -4228,6 +4228,24 @@ fn associated_fn_returns_own_type(index: &RustIndex, ty: &str, name: &str) -> bo
     declared_return_names_type(function, index, ty)
 }
 
+/// Names of the inherent associated fns of `ty` that
+/// [`associated_fn_returns_own_type`] vouches for, so a path call `ty::name(..)`
+/// is known to build a `ty`.
+fn inherent_constructor_names(index: &RustIndex, ty: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for function in index.functions() {
+        let inherent = matches!(&function.item.container,
+            FunctionContainer::Inherent { self_ty } if base_type_name(self_ty) == ty);
+        if inherent
+            && !names.contains(&function.name)
+            && associated_fn_returns_own_type(index, ty, &function.name)
+        {
+            names.push(function.name.clone());
+        }
+    }
+    names
+}
+
 /// A unique module-level `fn name` (no `self`) whose declared return type is
 /// `ty`: positive index evidence for a free-function receiver such as
 /// `fixture().method()`. A same-named function, trait or method declaration

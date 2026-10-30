@@ -14692,8 +14692,16 @@ Field contract:
   its after phase would evaluate the current `HEAD` as the attempt's, by the
   attempt authority's rule: the prepared head, or for an ordinary attempt a
   commit that descends from it; for an attempt with an after verdict, whether
-  `HEAD` is still the head that verdict recorded; `null` when `HEAD` cannot be
-  read or related to the prepared head), `disposition` (`resumable`,
+  its bound inputs are still current: the recorded `HEAD`, packet, delta,
+  and captured contents/index identities of already-bound paths must match.
+  This field is not a HEAD-only comparison. Producer-owned temporary workflow
+  backups are excluded only when their exact paths and identities match the
+  current producer transaction; another attempt's manifest remains bound.
+  `null` means currentness cannot be established, including legacy path-only
+  deltas that lack path identities. Those legacy attempts remain readable as
+  unknown currentness in status, but receipt reissue refuses them; a fresh
+  before phase is required. `null` also applies when `HEAD` cannot be read or
+  related to the prepared head), `disposition` (`resumable`,
   `prepared_at_other_head`, `retry_budget_spent`, `head_unknown`,
   `not_published`, `finished`, `gap_open`, `unconfirmed`, or `ended`), `manifest`, `command` (the command
   that would move this attempt or its seam forward, or `null`),

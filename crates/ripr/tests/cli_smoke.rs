@@ -28131,11 +28131,11 @@ fn agent_status_keeps_the_gap_open_when_the_receipt_did_not_improve()
         .as_str()
         .unwrap_or_default();
     assert!(
-        reason.contains("stale against HEAD") && reason.contains("movement `unchanged`"),
+        reason.contains("evidence is no longer current") && reason.contains("movement `unchanged`"),
         "{reason}"
     );
     assert!(
-        repair_route_markdown(&root)?.contains("evidence stale against HEAD"),
+        repair_route_markdown(&root)?.contains("evidence no longer current"),
         "stale evidence must show in the attempt table"
     );
 
