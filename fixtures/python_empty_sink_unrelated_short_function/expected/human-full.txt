@@ -63,7 +63,7 @@ Python repair card (preview/advisory)
   suggested file: tests/test_constants.py
   suggested test: test_constants
   pytest node: tests/test_constants.py::test_constants
-  verify: python -m pytest tests/test_constants.py::test_constants (high)
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_empty_sink_unrelated_short_function/input && python -m pytest tests/test_constants.py::test_constants) (high)
   receipt: unavailable_until_python_gap_ledger
   receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
   stop conditions:

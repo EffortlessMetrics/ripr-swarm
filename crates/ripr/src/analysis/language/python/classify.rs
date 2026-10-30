@@ -1546,6 +1546,9 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         if let Some(node_id) = &placement.suggested_test_node_id {
             evidence.push(format!("suggested_test_node_id: {node_id}"));
         }
+        if let Some(qualified_name) = &placement.suggested_test_qualified_name {
+            evidence.push(format!("suggested_test_qualified_name: {qualified_name}"));
+        }
         evidence.push(format!(
             "suggested_verify_command: {}",
             placement.verify_command

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index ed7e681..969e020 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -50,7 +50,7 @@
+ pub fn arm_old(n: u32) -> u32 {
+     match n {
+         x if x > 3 => 9,
+-        x if x == 5 => 1,
++        x if x == 6 => 1,
+         _ => 0,
+     }
+ }

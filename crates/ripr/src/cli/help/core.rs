@@ -190,7 +190,7 @@ findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
 Examples:
   ripr check
-  ripr check --base origin/main --json
+  ripr check --base origin/main --json --quiet   (--json alone still prints progress)
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;
@@ -384,7 +384,8 @@ Progress:
   Machine formats (json, sarif, github) keep stdout byte-clean;
   they do not disable stderr progress. Unknown totals never become a
   percentage or ETA. Progress does not mean analysis is faster or
-  that the command will succeed. `--quiet` turns this stream off.
+  that the command will succeed. `--quiet` turns this stream off; agents
+  and scripts reading json should pass it.
 
 Environment variables:
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines

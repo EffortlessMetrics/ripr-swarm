@@ -327,3 +327,15 @@ Strings authored from source (crates/ripr/src/analysis/language/python/{classify
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_rebound_constant_boundary_limit (28)
+
+Reason:
+RIPR-SPEC-0028: merge with main #11103 - rebound module constant is not an unplaced call, missing text names observed amount values and unresolved DISCOUNT_THRESHOLD, no-card safe action names the unbindable operand; classes and discriminators unchanged
+
+Command:
+`cargo xtask goldens bless python_rebound_constant_boundary_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

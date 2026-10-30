@@ -288,12 +288,31 @@ pub(crate) struct RepairAttemptAfterRefusal {
     pub(crate) recorded_unix_ms: u64,
 }
 
+/// Custody for the one compatibility receipt replaced after the delta bind.
+/// No arbitrary path or directory is accepted. The predecessor is resolved
+/// only in this attempt's store and must retain a valid issued receipt pair.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReceiptProjectionPredecessor {
+    pub(crate) attempt_id: RepairAttemptId,
+    pub(crate) kind: crate::edit_cage::AttemptPathChangeKind,
+    pub(crate) executable: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RepairAttemptAfter {
     pub(crate) attempt_id: RepairAttemptId,
     pub(crate) repository_head: String,
     pub(crate) delta_sha256: String,
+    /// Version of the delta's post-change identity commitment. Older
+    /// attempts did not bind the bytes of an already changed path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) delta_binding: Option<String>,
+    /// An already-bound issued receipt that this producer replaces with its
+    /// own receipt. Absent for legacy, unowned, or ineligible projections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) receipt_projection_predecessor: Option<ReceiptProjectionPredecessor>,
     pub(crate) packet_sha256: String,
     pub(crate) current: bool,
     pub(crate) verdict: EditCageVerdict,
@@ -547,6 +566,9 @@ fn recompute_after_verdict_binding(
     manifest: &RepairAttemptManifest,
     after: &RepairAttemptAfter,
 ) -> Result<(crate::edit_cage::EditCageVerdict, bool), String> {
+    if after.delta_binding.as_deref() != Some("path-state-v1") {
+        return Err("repair attempt has no post-change path identity binding; currentness cannot be established".to_string());
+    }
     let baseline_artifact = find_manifest_artifact(manifest, "edit_cage_baseline")?;
     let baseline_bytes = std::fs::read(root.join(&baseline_artifact.path))
         .map_err(|error| format!("read staged edit-cage baseline failed: {error}"))?;
@@ -558,15 +580,20 @@ fn recompute_after_verdict_binding(
     // Recomputed under the admitting rule: for an attempt whose head did not
     // move it is identical to the exact-head rule, and an attempt whose finish
     // required the exact head and saw it move is already refused as stale.
-    let (delta, _) = evaluate_repository_edit_cage_with_head_movement(
+    let (mut delta, _) = evaluate_repository_edit_cage_with_head_movement(
         &baseline,
         HeadMovement::AdmitDescendantCommits,
+    )?;
+    crate::edit_cage::omit_attempt_manifest_identity(
+        &mut delta,
+        &baseline,
+        &manifest_relative_path(manifest),
     )?;
     // The after phase, a rerun of `ripr agent receipt`, and `ripr agent
     // status` write command-owned files under `target/ripr` after the finish
     // bound its verdict. Those later operational writes are not part of the
     // attempt; any other movement still breaks the binding.
-    let delta = crate::edit_cage::without_later_operational_writes(
+    let mut delta = crate::edit_cage::without_later_operational_writes(
         baseline.policy(),
         &delta,
         &after.verdict.changed_paths,
@@ -575,7 +602,121 @@ fn recompute_after_verdict_binding(
     let delta_bytes = serde_json::to_vec(&delta)
         .map_err(|error| format!("serialize repair delta failed: {error}"))?;
     let holds = sha256_bytes(&delta_bytes) == after.delta_sha256 && verdict == after.verdict;
-    Ok((verdict, holds))
+    if holds {
+        return Ok((verdict, true));
+    }
+    let Some(predecessor) = &after.receipt_projection_predecessor else {
+        return Ok((verdict, false));
+    };
+    // Historical pair validation never calls currentness: A may correctly be
+    // stale after B finished, and following currentness would create a cycle.
+    let restore = || -> Result<(Vec<u8>, Vec<u8>), String> {
+        let locator = manifest
+            .store
+            .as_ref()
+            .map(|store| Path::new(&store.locator));
+        let (_, _, prior) = open_attempt(root, locator, &predecessor.attempt_id)?;
+        Ok((
+            issued_terminal_receipt_bytes(root, &prior)?,
+            issued_terminal_receipt_bytes(root, manifest)?,
+        ))
+    };
+    let Ok((prior, issued)) = restore() else {
+        return Ok((verdict, false));
+    };
+    if !crate::edit_cage::reconstruct_receipt_projection(
+        &mut delta,
+        &baseline,
+        predecessor.kind,
+        predecessor.executable,
+        &prior,
+        &issued,
+    ) {
+        return Ok((verdict, false));
+    }
+    let reconstructed = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
+    let bytes = serde_json::to_vec(&delta)
+        .map_err(|error| format!("serialize receipt projection delta failed: {error}"))?;
+    Ok((
+        reconstructed.clone(),
+        sha256_bytes(&bytes) == after.delta_sha256 && reconstructed == after.verdict,
+    ))
+}
+
+/// The retained pair, not a JSON attempt id or canonical pathname, supplies
+/// producer custody. Bound the reads before historical validation.
+fn issued_terminal_receipt_bytes(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> Result<Vec<u8>, String> {
+    for role in [TERMINAL_RECEIPT_ROLE, TERMINAL_VERIFY_ROLE] {
+        let artifact = find_terminal_artifact_by_role(manifest, role)
+            .ok_or("issued receipt pair is missing")?;
+        if artifact.bytes > crate::edit_cage::MAX_CAPTURE_FILE_BYTES {
+            return Err("issued receipt pair exceeds capture limit".to_string());
+        }
+    }
+    if !matches!(
+        load_attempt_terminal_receipt(root, manifest),
+        AttemptTerminalReceipt::Issued { .. }
+    ) {
+        return Err("receipt predecessor is not a validated issued pair".to_string());
+    }
+    let artifact = find_terminal_artifact_by_role(manifest, TERMINAL_RECEIPT_ROLE)
+        .ok_or("issued receipt disappeared")?;
+    read_terminal_artifact_bytes(root, manifest, artifact)
+}
+
+fn receipt_projection_predecessor(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+    baseline: &AttemptBaseline,
+    delta: &crate::edit_cage::AttemptDelta,
+) -> Option<ReceiptProjectionPredecessor> {
+    use std::io::Read as _;
+    let path = root.join(crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT);
+    let file = crate::output::file_write::open_regular_read(&path).ok()?;
+    let mut bytes = Vec::new();
+    file.take(crate::edit_cage::MAX_CAPTURE_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let (kind, executable) =
+        crate::edit_cage::receipt_projection_identity(delta, baseline, &bytes)?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let attempt_id = RepairAttemptId::parse(
+        value
+            .pointer("/repair_attempt/attempt_id")?
+            .as_str()?
+            .to_string(),
+    )
+    .ok()?;
+    if attempt_id == manifest.repair_attempt_id {
+        return None;
+    }
+    let locator = manifest
+        .store
+        .as_ref()
+        .map(|store| Path::new(&store.locator));
+    let (_, _, prior) = open_attempt(root, locator, &attempt_id).ok()?;
+    if issued_terminal_receipt_bytes(root, &prior).ok()? != bytes {
+        return None;
+    }
+    Some(ReceiptProjectionPredecessor {
+        attempt_id,
+        kind,
+        executable,
+    })
+}
+
+fn manifest_relative_path(manifest: &RepairAttemptManifest) -> PathBuf {
+    Path::new(
+        manifest
+            .store
+            .as_ref()
+            .map_or(REPAIR_ATTEMPT_DIRECTORY, |store| store.locator.as_str()),
+    )
+    .join(manifest.repair_attempt_id.as_str())
+    .join(REPAIR_ATTEMPT_MANIFEST)
 }
 
 /// Resolve the retained before snapshot a verify document must name, and read
@@ -2078,8 +2219,9 @@ pub(crate) fn edit_cage_policy_from_packet(
     packet: &str,
     seam_id: &str,
 ) -> Result<EditCagePolicy, String> {
-    let value: serde_json::Value = serde_json::from_str(packet)
-        .map_err(|error| format!("decode repair packet for edit cage failed: {error}"))?;
+    let value: serde_json::Value = serde_json::from_str(packet).map_err(|error| {
+        format!("decode repair packet for the allowed-files check failed: {error}")
+    })?;
     if value.get("packets").is_none()
         && value.get("seam_id").and_then(serde_json::Value::as_str) != Some(seam_id)
     {
@@ -2152,7 +2294,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         && is_inline_test_module_candidate(selected_target_text);
     if !is_test_surface_path(selected_target_text) && !inline_test_module_target {
         return Err(format!(
-            "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a production file is never the authored edit target and no edit cage is constructed",
+            "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never the test to edit, so no allowed-files list is built",
             test_surface_requirement()
         ));
     }
@@ -2544,6 +2686,24 @@ pub(crate) fn finish_repair_attempt_from(
     packet_path: &Path,
     movement: HeadMovement,
 ) -> Result<RepairAttemptAfter, String> {
+    finish_repair_attempt_with_workflow_backups_from(
+        root,
+        store,
+        attempt_id,
+        packet_path,
+        movement,
+        &[],
+    )
+}
+
+pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    packet_path: &Path,
+    movement: HeadMovement,
+    backups: &[(PathBuf, String, bool)],
+) -> Result<RepairAttemptAfter, String> {
     let root_argument = root;
     let (store, manifest_path, base_bytes, mut manifest) =
         open_attempt_with_bytes(root, store, attempt_id)?;
@@ -2599,8 +2759,14 @@ pub(crate) fn finish_repair_attempt_from(
     // swap inside the window is undetectable by commit comparison alone,
     // so the reflog fingerprint makes `current` robust to it (#5930).
     let before = crate::agent::artifact::current_git_head_identity(&root)?;
-    let (delta, mut verdict) =
-        evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
+    let (mut delta, _) = evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
+    crate::edit_cage::omit_attempt_manifest_identity(
+        &mut delta,
+        &baseline,
+        &manifest_relative_path(&manifest),
+    )?;
+    crate::edit_cage::omit_owned_workflow_backups(&mut delta, &baseline, backups)?;
+    let mut verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
     let (current, current_head) =
         after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
     if !current {
@@ -2608,10 +2774,14 @@ pub(crate) fn finish_repair_attempt_from(
     }
     let delta_bytes = serde_json::to_vec(&delta)
         .map_err(|error| format!("serialize repair delta failed: {error}"))?;
+    let receipt_projection_predecessor =
+        receipt_projection_predecessor(&root, &manifest, &baseline, &delta);
     let after = RepairAttemptAfter {
         attempt_id: manifest.repair_attempt_id.clone(),
         repository_head: current_head,
         delta_sha256: sha256_bytes(&delta_bytes),
+        delta_binding: Some("path-state-v1".to_string()),
+        receipt_projection_predecessor,
         packet_sha256,
         current,
         verdict,
@@ -3000,7 +3170,7 @@ impl DivergedHeadRecovery {
     pub(crate) fn lines(&self) -> Vec<String> {
         vec![
             self.cause.clone(),
-            "the attempt was not finished and is still awaiting the focused test edit.".to_string(),
+            "the attempt was not finished and is still waiting for your test.".to_string(),
             self.reset.clone(),
             self.restart.clone(),
         ]
@@ -3221,9 +3391,7 @@ fn select_awaiting_repair_attempt_by_seam(
             .collect::<Vec<_>>()
             .join(", ");
         let detail = if matches.is_empty() {
-            format!(
-                "no awaiting repair attempt exists for seam `{seam_id}`; start one with `{restart}`"
-            )
+            format!("no repair is in progress for this gap; start one with `{restart}`")
         } else {
             format!(
                 "found {}: {ids}; pass --attempt <id> to select the prepared work exactly",
@@ -3231,7 +3399,7 @@ fn select_awaiting_repair_attempt_by_seam(
             )
         };
         return Err(format!(
-            "expected exactly one awaiting repair attempt for seam `{seam_id}`: {detail}"
+            "expected exactly one repair in progress for gap `{seam_id}`: {detail}"
         ));
     }
     matches.pop().ok_or_else(|| "missing attempt".to_string())
@@ -3666,6 +3834,34 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     );
     if has_after != state_requires_after {
         return Err("repair attempt state/after boundary is inconsistent".to_string());
+    }
+    if manifest
+        .after
+        .as_ref()
+        .and_then(|after| after.delta_binding.as_deref())
+        .is_some_and(|binding| binding != "path-state-v1")
+    {
+        return Err("repair attempt delta binding version is not recognized".to_string());
+    }
+    if let Some(after) = &manifest.after
+        && let Some(predecessor) = &after.receipt_projection_predecessor
+    {
+        RepairAttemptId::parse(predecessor.attempt_id.as_str().to_string())?;
+        if predecessor.attempt_id == manifest.repair_attempt_id
+            || !after
+                .verdict
+                .changed_paths
+                .iter()
+                .any(|path| path == crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT)
+            || after.delta_binding.as_deref() != Some("path-state-v1")
+            || !matches!(
+                predecessor.kind,
+                crate::edit_cage::AttemptPathChangeKind::Added
+                    | crate::edit_cage::AttemptPathChangeKind::Modified
+            )
+        {
+            return Err("repair receipt projection predecessor is invalid".to_string());
+        }
     }
     if manifest
         .last_after_refusal
@@ -4368,7 +4564,7 @@ mod tests {
         for needle in [
             "src/production.py",
             "is not a test surface",
-            "no edit cage is constructed",
+            "no allowed-files list is built",
         ] {
             if !error.contains(needle) {
                 return Err(format!("refusal did not name `{needle}`: {error}"));
@@ -4572,6 +4768,8 @@ mod tests {
             repository_head: manifest.repository_head.clone(),
             delta_sha256: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                 .to_string(),
+            delta_binding: None,
+            receipt_projection_predecessor: None,
             packet_sha256:
                 "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                     .to_string(),
@@ -4631,6 +4829,27 @@ mod tests {
             .ok_or_else(|| "schema after required list missing".to_string())?;
         if !required.iter().any(|value| value == "attempt_id") {
             return Err("schema after omitted durable attempt_id".to_string());
+        }
+        let versions = schema["$defs"]["after"]["properties"]["delta_binding"]["enum"]
+            .as_array()
+            .ok_or_else(|| "schema delta binding enum missing".to_string())?;
+        if !versions.iter().any(|value| value == "path-state-v1")
+            || !versions.iter().any(serde_json::Value::is_null)
+        {
+            return Err("schema does not admit the current and legacy binding forms".to_string());
+        }
+        let witness =
+            &schema["$defs"]["after"]["properties"]["receipt_projection_predecessor"]["anyOf"][1];
+        if witness["additionalProperties"] != false
+            || witness["properties"]["kind"]["enum"] != serde_json::json!(["added", "modified"])
+            || witness["required"] != serde_json::json!(["attempt_id", "kind", "executable"])
+            || required
+                .iter()
+                .any(|value| value == "receipt_projection_predecessor")
+        {
+            return Err(
+                "schema must carry the optional exact receipt predecessor contract".to_string(),
+            );
         }
         Ok(())
     }
@@ -6325,6 +6544,9 @@ mod tests {
         let root = test_repo_root("worktree-drift-currentness")?;
         let result = (|| -> Result<(), String> {
             let prepared = prepare_sample_attempt(&root, "seam:sample", "drift")?;
+            let unrelated = root.join("target/ripr/unrelated.txt");
+            std::fs::write(&unrelated, "prior unrelated bytes\n")
+                .map_err(|error| error.to_string())?;
             let finished = finish_sample_attempt(&root, &prepared)?;
             if finished.state != RepairAttemptState::ReadyToFinish {
                 return Err(format!("expected a finished attempt: {:?}", finished.state));
@@ -6335,6 +6557,128 @@ mod tests {
                 return Err(format!(
                     "undrifted finished attempt must read current: {reading:?}"
                 ));
+            }
+
+            std::fs::write(&unrelated, "different unrelated bytes\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("changed unrelated operational path remained current".to_string());
+            }
+            std::fs::write(&unrelated, "prior unrelated bytes\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err(
+                    "restored unrelated operational path did not recover currentness".to_string(),
+                );
+            }
+
+            let mut legacy = finished.clone();
+            if let Some(after) = legacy.after.as_mut() {
+                after.delta_binding = None;
+            }
+            let legacy_reading = repair_attempt_head_reading(&root, &legacy, Some(&head));
+            if legacy_reading.head_current.is_some() {
+                return Err(format!(
+                    "legacy path-only binding must be unknown: {legacy_reading:?}"
+                ));
+            }
+            let mut invalid = legacy.clone();
+            if let Some(after) = invalid.after.as_mut() {
+                after.delta_binding = Some("unknown-version".to_string());
+            }
+            if validate_manifest(&invalid).is_ok() {
+                return Err("unknown delta binding version was accepted".to_string());
+            }
+            let manifest_bytes =
+                std::fs::read(&prepared.manifest_path).map_err(|error| error.to_string())?;
+            let mut legacy_json: serde_json::Value =
+                serde_json::from_slice(&manifest_bytes).map_err(|error| error.to_string())?;
+            legacy_json["after"]
+                .as_object_mut()
+                .ok_or("missing after")?
+                .remove("delta_binding");
+            let mut null_json = legacy_json.clone();
+            null_json["after"]["delta_binding"] = serde_json::Value::Null;
+            let null_manifest: RepairAttemptManifest =
+                serde_json::from_value(null_json).map_err(|error| error.to_string())?;
+            validate_manifest(&null_manifest)?;
+            if repair_attempt_head_reading(&root, &null_manifest, Some(&head))
+                .head_current
+                .is_some()
+            {
+                return Err("null delta binding must remain unknown".to_string());
+            }
+            std::fs::write(
+                &prepared.manifest_path,
+                serde_json::to_vec(&legacy_json).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            let packet = root.join(&find_manifest_artifact(&finished, "agent_packet")?.path);
+            let attempt = finished.repair_attempt_id.as_str();
+            match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
+                Err(error) if error.contains("no post-change path identity binding") => {}
+                other => return Err(format!("legacy receipt must be unavailable: {other:?}")),
+            }
+            std::fs::write(&prepared.manifest_path, manifest_bytes)
+                .map_err(|error| error.to_string())?;
+
+            // The selected path already appears in the finished delta. A
+            // second edit keeps its kind (Added) but changes its identity.
+            let selected = root.join("tests/target.rs");
+            let original = std::fs::read(&selected).map_err(|error| error.to_string())?;
+            std::fs::write(&selected, b"#[test]\nfn focused() { assert!(false); }\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("second edit to bound selected path remained current".to_string());
+            }
+            match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
+                Err(error) if error.contains("tampered or stale") => {}
+                other => return Err(format!("receipt must refuse changed test bytes: {other:?}")),
+            }
+            std::fs::write(&selected, original).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("restored selected path did not recover currentness".to_string());
+            }
+
+            run_git(&root, &["add", "tests/target.rs"])?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("staging the selected path remained current".to_string());
+            }
+            run_git(&root, &["reset", "-q", "HEAD", "--", "tests/target.rs"])?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("restoring the index did not recover currentness".to_string());
+            }
+            let selected_bytes = std::fs::read(&selected).map_err(|error| error.to_string())?;
+            std::fs::remove_file(&selected).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("deleting the selected path remained current".to_string());
+            }
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink("../README.md", &selected)
+                    .map_err(|error| error.to_string())?;
+                if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current
+                    == Some(true)
+                {
+                    return Err(
+                        "replacing the selected path with a symlink remained current".to_string(),
+                    );
+                }
+                std::fs::remove_file(&selected).map_err(|error| error.to_string())?;
+            }
+            std::fs::write(&selected, selected_bytes).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err(
+                    "restoring the deleted selected path did not recover currentness".to_string(),
+                );
             }
 
             // Drift: an uncommitted production edit outside the allowed
@@ -6353,8 +6697,6 @@ mod tests {
             }
             // The authority path refuses the same state, and issues the
             // receipt before the drift.
-            let packet = root.join(&find_manifest_artifact(&finished, "agent_packet")?.path);
-            let attempt = finished.repair_attempt_id.as_str();
             match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
                 Err(error) if error.contains("tampered or stale") => {}
                 other => return Err(format!("receipt must refuse drift: {other:?}")),
@@ -6368,6 +6710,40 @@ mod tests {
                 ));
             }
             receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt))?;
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn ignored_selected_test_uses_content_identity_for_currentness() -> Result<(), String> {
+        let root = test_repo_root("ignored-bound-test")?;
+        let result = (|| -> Result<(), String> {
+            std::fs::write(root.join(".gitignore"), "tests/target.rs\n")
+                .map_err(|error| error.to_string())?;
+            run_git(&root, &["add", ".gitignore"])?;
+            run_git(&root, &["commit", "-q", "-m", "ignore selected test"])?;
+            let prepared = prepare_sample_attempt(&root, "seam:sample", "ignored")?;
+            let finished = finish_sample_attempt(&root, &prepared)?;
+            let head = crate::agent::artifact::current_git_head(&root)?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("ignored selected test was not initially current".to_string());
+            }
+            let selected = root.join("tests/target.rs");
+            let original = std::fs::read(&selected).map_err(|error| error.to_string())?;
+            std::fs::write(&selected, b"#[test]\nfn changed() {}\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("changed ignored selected test remained current".to_string());
+            }
+            std::fs::write(&selected, original).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("restored ignored test did not recover currentness".to_string());
+            }
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);

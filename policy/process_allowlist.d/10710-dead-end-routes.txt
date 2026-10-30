@@ -1,0 +1,2 @@
+crates/ripr/tests/check_dead_end_routes.rs|Command::new|2|cli-tests|#10710: runs git (fixture repository setup and commits) and the built ripr binary (`check`, and the `agent stub` commands `check` printed) against an isolated temp workspace. No shell, network, or user-repository mutation.
+crates/ripr/tests/check_dead_end_routes.rs|use std::process::Command|1|cli-tests|#10710: imports the process spawner for the fixture-repository commands above.

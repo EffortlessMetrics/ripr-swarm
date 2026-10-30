@@ -212,11 +212,17 @@ pub(super) enum Expr {
     Method(Box<Expr>, String, Vec<Expr>),
     Call(String, Vec<Expr>),
     Format(String, Vec<Expr>),
+    /// `if cond { a } else { b }`: only a trait-default reader (the
+    /// associated-constant extension) may contain one.
+    If(Box<Expr>, Box<Expr>, Box<Expr>),
 }
 
 struct Parser<'a> {
     tokens: &'a [Token],
     at: usize,
+    /// A trait default method's body: `Self::NAME` reads the constant and an
+    /// `if`/`else` chain is evaluable. Off for every other expression.
+    trait_body: bool,
 }
 
 impl Parser<'_> {
@@ -301,8 +307,11 @@ impl Parser<'_> {
             Token::Ident(word) if word == "true" || word == "false" => {
                 Some(Expr::Literal(Value::Bool(word == "true")))
             }
+            Token::Ident(word) if word == "if" && self.trait_body => self.if_expression(),
             Token::Ident(first) => {
+                let first_word = first.clone();
                 let mut name = first;
+                let mut segments = 0usize;
                 // A path reads as its last segment only for a call; a qualified
                 // value (`Self::MAX`, `other::NAME`) is another item.
                 let mut qualified = false;
@@ -313,6 +322,17 @@ impl Parser<'_> {
                     self.at += 1;
                     name = next;
                     qualified = true;
+                    segments += 1;
+                }
+                // `Self::NAME` in a trait default method names the constant
+                // the impl binds; any longer or other-typed path stays unread.
+                if self.trait_body
+                    && qualified
+                    && segments == 1
+                    && first_word == "Self"
+                    && self.peek() != Some(&Token::Punct("("))
+                {
+                    return Some(Expr::Var(name));
                 }
                 if self.eat("(") {
                     return Some(Expr::Call(name, self.arguments()?));
@@ -327,6 +347,38 @@ impl Parser<'_> {
             }
             _ => None,
         }
+    }
+
+    /// The rest of an `if` whose keyword is consumed: `cond { a } else { b }`,
+    /// the `else` branch another `if` or a block. A missing `else` is
+    /// unreadable.
+    fn if_expression(&mut self) -> Option<Expr> {
+        let condition = self.expression(1)?;
+        let then = self.block()?;
+        if !matches!(self.peek(), Some(Token::Ident(word)) if word == "else") {
+            return None;
+        }
+        self.at += 1;
+        let otherwise = if matches!(self.peek(), Some(Token::Ident(word)) if word == "if") {
+            self.at += 1;
+            self.if_expression()?
+        } else {
+            self.block()?
+        };
+        Some(Expr::If(
+            Box::new(condition),
+            Box::new(then),
+            Box::new(otherwise),
+        ))
+    }
+
+    /// `{ expr }`.
+    fn block(&mut self) -> Option<Expr> {
+        if !self.eat("{") {
+            return None;
+        }
+        let inner = self.expression(1)?;
+        self.eat("}").then_some(inner)
     }
 
     fn format_macro(&mut self) -> Option<Expr> {
@@ -352,7 +404,15 @@ impl Parser<'_> {
 }
 
 fn parse_tokens(tokens: &[Token]) -> Option<Expr> {
-    let mut parser = Parser { tokens, at: 0 };
+    parse_tokens_in(tokens, false)
+}
+
+fn parse_tokens_in(tokens: &[Token], trait_body: bool) -> Option<Expr> {
+    let mut parser = Parser {
+        tokens,
+        at: 0,
+        trait_body,
+    };
     let expr = parser.expression(1)?;
     (parser.at == tokens.len()).then_some(expr)
 }
@@ -372,6 +432,9 @@ impl Expr {
             }
             Self::Call(..) => false,
             Self::Format(_, args) => args.iter().all(Self::is_closed),
+            Self::If(condition, then, otherwise) => {
+                condition.is_closed() && then.is_closed() && otherwise.is_closed()
+            }
         }
     }
 
@@ -386,6 +449,10 @@ impl Expr {
                 .or_else(|| args.iter().find_map(Self::first_call)),
             Self::Call(..) => Some(self),
             Self::Format(_, args) => args.iter().find_map(Self::first_call),
+            Self::If(condition, then, otherwise) => condition
+                .first_call()
+                .or_else(|| then.first_call())
+                .or_else(|| otherwise.first_call()),
         }
     }
 
@@ -393,7 +460,7 @@ impl Expr {
     fn is_literal_only(&self) -> bool {
         match self {
             Self::Literal(_) => true,
-            Self::Var(_) | Self::Call(..) => false,
+            Self::Var(_) | Self::Call(..) | Self::If(..) => false,
             Self::Not(inner) | Self::Neg(inner) => inner.is_literal_only(),
             Self::Bin(_, left, right) => left.is_literal_only() && right.is_literal_only(),
             Self::Method(receiver, _, args) => {
@@ -440,6 +507,11 @@ impl Expr {
                 args.iter().for_each(|arg| arg.call_names(names));
             }
             Self::Format(_, args) => args.iter().for_each(|arg| arg.call_names(names)),
+            Self::If(condition, then, otherwise) => {
+                condition.call_names(names);
+                then.call_names(names);
+                otherwise.call_names(names);
+            }
         }
     }
 }
@@ -481,6 +553,17 @@ pub(super) struct Reader {
 /// allowed). Control flow, statements, generics, `self` and any other shape
 /// are unreadable.
 pub(super) fn parse_reader(text: &str) -> Option<Reader> {
+    parse_reader_in(text, false)
+}
+
+/// A trait default method with no receiver: `Self::NAME` is the constant and
+/// its body may be an `if`/`else` chain (RIPR-SPEC-0048, associated-constant
+/// extension).
+pub(super) fn parse_trait_reader(text: &str) -> Option<Reader> {
+    parse_reader_in(text, true)
+}
+
+fn parse_reader_in(text: &str, trait_body: bool) -> Option<Reader> {
     let tokens = tokenize(text)?;
     let mut at = 0;
     if matches!(tokens.get(at), Some(Token::Ident(word)) if word == "pub") {
@@ -530,7 +613,7 @@ pub(super) fn parse_reader(text: &str) -> Option<Reader> {
     if tokens.last() != Some(&Token::Punct("}")) {
         return None;
     }
-    let body = parse_tokens(body)?;
+    let body = parse_tokens_in(body, trait_body)?;
     body.is_closed().then(|| Reader {
         name: name.clone(),
         params,
@@ -822,6 +905,11 @@ fn eval(expr: &Expr, scope: &Scope<'_>, machine: Option<&Machine<'_>>) -> Option
             };
             eval(&reader.body, &inner, None)
         }
+        Expr::If(condition, then, otherwise) => match eval(condition, scope, machine)? {
+            Value::Bool(true) => eval(then, scope, machine),
+            Value::Bool(false) => eval(otherwise, scope, machine),
+            _ => None,
+        },
         Expr::Format(template, args) => {
             let args: Option<Vec<Value>> =
                 args.iter().map(|arg| eval(arg, scope, machine)).collect();

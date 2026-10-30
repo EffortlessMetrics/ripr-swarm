@@ -131,6 +131,8 @@ pub(crate) fn build_baseline_update_remove_resolved(
         &input.current_gate_decision_json,
         "",
     )?;
+    let absence_scope =
+        crate::output::baseline_delta::PreparedAnalysisScope::new(current.get("analysis_scope"));
     let baseline_entries = baseline
         .get("entries")
         .and_then(Value::as_array)
@@ -289,7 +291,7 @@ pub(crate) fn build_baseline_update_remove_resolved(
                 } else if input.remove_resolved
                     && let Some(reason) =
                         crate::output::baseline_delta::absence_not_evaluated_reason(
-                            current.get("analysis_scope"),
+                            &absence_scope,
                             string_field(entry.get("path"))
                                 .or_else(|| string_field(entry.pointer("/placement/path")))
                                 .as_deref(),

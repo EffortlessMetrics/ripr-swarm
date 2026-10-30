@@ -294,6 +294,7 @@ fn literal(expr: &Expr) -> Option<Value> {
         model: None,
         receiver: None,
         floats: false,
+        callee: None,
     };
     match expr {
         Expr::Constant(_) | Expr::UnaryOp(_) => evaluate(expr, &scope),
@@ -320,6 +321,7 @@ fn fails_under_new_operator(
         model: None,
         receiver: None,
         floats: false,
+        callee: None,
     };
     let Some(Value::Int(other)) = evaluate(&old.other, &scope) else {
         return false;
