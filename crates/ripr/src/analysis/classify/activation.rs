@@ -3654,18 +3654,15 @@ pub(in crate::analysis) fn macro_names_rebound(
     let mut key: Vec<String> = names.iter().map(ToString::to_string).collect();
     key.sort();
     key.dedup();
-    index.call_identity_memos.macro_rebound(key, || {
-        rebound_scan(index, names)
-    })
+    index
+        .call_identity_memos
+        .macro_rebound(key, || rebound_scan(index, names))
 }
 
 /// The unmemoized whole-index rebound scan [`macro_names_rebound`]
 /// caches: whether any indexed file binds a requested macro name to
 /// something other than the standard macro.
-fn rebound_scan(
-    index: &crate::analysis::rust_index::RustIndex,
-    names: &[&str],
-) -> bool {
+fn rebound_scan(index: &crate::analysis::rust_index::RustIndex, names: &[&str]) -> bool {
     index.files().iter().any(|(path, file)| {
         if file
             .macro_candidates
@@ -11586,7 +11583,10 @@ assert_eq!(input.amount, 100);"#
         for _ in 0..8 {
             assert!(!macro_names_rebound(&index, &rebound));
         }
-        assert!(!macro_names_rebound(&index, &["assert_ne", "assert_eq", "assert"]));
+        assert!(!macro_names_rebound(
+            &index,
+            &["assert_ne", "assert_eq", "assert"]
+        ));
         assert_eq!(scans(), 1, "repeated probes must not rescan");
         // A different requested set is its own entry: one more scan,
         // then reuse again.
@@ -11608,8 +11608,7 @@ assert_eq!(input.amount, 100);"#
         // scan would: a `macro_rules!` rebinding the name is rebound,
         // and clearing the index (a rebuilt analysis) recomputes.
         use crate::analysis::classify::macro_names_rebound;
-        let rebound_source =
-            "macro_rules! assert {\n    () => {};\n}\n";
+        let rebound_source = "macro_rules! assert {\n    () => {};\n}\n";
         let mut index = crate::analysis::rust_index::RustIndex::default();
         index.insert_file_only(
             PathBuf::from("src/lib.rs"),
