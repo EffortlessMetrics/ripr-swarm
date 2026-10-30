@@ -702,7 +702,7 @@ Updated:
 ## Pending — typescript_dynamic_assertion_unresolved (34)
 
 Reason:
-RIPR-SPEC-0087: plain TypeScript/JavaScript wording for unresolved expected values and moved assertion selection
+RIPR-SPEC-0122: plain TypeScript/JavaScript wording for unresolved expected values and moved assertion selection (#10682)
 
 Command:
 `cargo xtask goldens bless typescript_dynamic_assertion_unresolved --reason "..."`

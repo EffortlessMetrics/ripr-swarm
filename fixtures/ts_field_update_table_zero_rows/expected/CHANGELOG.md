@@ -146,7 +146,7 @@ Updated:
 ## Pending — ts_field_update_table_zero_rows (12)
 
 Reason:
-RIPR-SPEC-0087: plain TypeScript/JavaScript wording for unresolved expected values and moved assertion selection
+RIPR-SPEC-0122: plain TypeScript/JavaScript wording for unresolved expected values and moved assertion selection (#10682)
 
 Command:
 `cargo xtask goldens bless ts_field_update_table_zero_rows --reason "..."`

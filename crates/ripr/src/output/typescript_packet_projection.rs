@@ -1464,7 +1464,7 @@ fn has_moved_assertion_selection(finding: &Finding) -> bool {
 }
 
 /// Plain-words account of a dynamic-assertion block (limit from RIPR-SPEC-0085
-/// §PR5; wording under RIPR-SPEC-0087) for the human surfaces: which test line holds the unresolved expected value and
+/// §PR5; wording under RIPR-SPEC-0122) for the human surfaces: which test line holds the unresolved expected value and
 /// which matcher receives it. The raw limitation id stays in evidence only.
 pub(crate) fn typescript_dynamic_assertion_blocker(finding: &Finding) -> Option<String> {
     let sample = finding.evidence.iter().find_map(|line| {
@@ -1491,7 +1491,7 @@ pub(crate) fn typescript_dynamic_assertion_blocker(finding: &Finding) -> Option<
 }
 
 /// Plain-words account of the moved-assertion-selection refusal (guard from
-/// RIPR-SPEC-0224; wording under RIPR-SPEC-0087): related tests whose assertions all check other behavior
+/// RIPR-SPEC-0224; wording under RIPR-SPEC-0122): related tests whose assertions all check other behavior
 /// make the target test ambiguous, so no packet is projected.
 pub(crate) fn typescript_moved_selection_blocker(finding: &Finding) -> Option<String> {
     // A named limitation refuses projection before the selection guard, so it

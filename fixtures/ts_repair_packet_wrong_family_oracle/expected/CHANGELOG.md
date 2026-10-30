@@ -460,7 +460,7 @@ Updated:
 ## Pending — ts_repair_packet_wrong_family_oracle (38)
 
 Reason:
-RIPR-SPEC-0087: plain TypeScript/JavaScript wording for unresolved expected values and moved assertion selection
+RIPR-SPEC-0122: plain TypeScript/JavaScript wording for unresolved expected values and moved assertion selection (#10682)
 
 Command:
 `cargo xtask goldens bless ts_repair_packet_wrong_family_oracle --reason "..."`

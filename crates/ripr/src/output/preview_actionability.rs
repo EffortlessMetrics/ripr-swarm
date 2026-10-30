@@ -114,7 +114,11 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
             // nameable cause behind that generic line, so lead with it. A
             // repo-scope reason (above) still wins, and anything else keeps
             // the evidence line.
-            None if finding.language != Some(LanguageId::Perl) => {
+            None if matches!(
+                finding.language,
+                Some(LanguageId::TypeScript | LanguageId::JavaScript)
+            ) =>
+            {
                 super::typescript_packet_projection::typescript_moved_selection_blocker(finding)
                     .unwrap_or_else(|| {
                         specific

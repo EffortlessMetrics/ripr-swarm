@@ -619,7 +619,7 @@ Updated:
 ## Pending — ts_dynamic_oracle (34)
 
 Reason:
-RIPR-SPEC-0087: plain TypeScript/JavaScript wording for unresolved expected values and moved assertion selection
+RIPR-SPEC-0122: plain TypeScript/JavaScript wording for unresolved expected values and moved assertion selection (#10682)
 
 Command:
 `cargo xtask goldens bless ts_dynamic_oracle --reason "..."`
