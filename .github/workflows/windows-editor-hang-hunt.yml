@@ -5,17 +5,23 @@ permissions:
   contents: read
 jobs:
   selector:
-    name: selector ${{ matrix.row }} VS Code 1.91.0
+    name: original selector test ${{ matrix.subject.name }} VS Code 1.91.0
     runs-on: windows-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        row: ['controller']
+        subject:
+          - {name: baseline, sha: a533e7fb312e1b989c99f3f022f4373cadb230eb}
+          - {name: corrected, sha: 703e9c93522032e95c22187d261f971c884c2b50}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
+          ref: ${{ matrix.subject.sha }}
           persist-credentials: false
+      - name: Verify source
+        shell: pwsh
+        run: if ((git rev-parse HEAD).Trim() -ne '${{ matrix.subject.sha }}') { throw 'wrong checkout' }
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 24
@@ -27,30 +33,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npx tsc -p .
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Run selector row
-        continue-on-error: true
+      - name: Run selector test
         working-directory: editors/vscode
         shell: pwsh
         env:
-          RIPR_TEST_GREP: Windows glob controller probe
-          RIPR_TEST_REQUIRE_RAN: Windows glob controller probe controller selects own file through the workspace URI
-          RIPR_GLOB_PROBE_ROW: ${{ matrix.row }}
+          RIPR_TEST_GREP: a root containing glob metacharacters still selects its own files
+          RIPR_TEST_REQUIRE_RAN: Document selector workspace-root glob escaping a root containing glob metacharacters still selects its own files
         run: |
-          $env:RIPR_GLOB_PROBE_RESULT = Join-Path $env:RUNNER_TEMP 'selector-result.json'
-          $env:PROBE_ROOT = Join-Path $env:RUNNER_TEMP 'proj[1]{a,b}'
-          New-Item -ItemType Directory -Force -Path $env:PROBE_ROOT | Out-Null
-          node -e 'const path = require("path"); require("@vscode/test-electron").runTests({version:"1.91.0", extensionDevelopmentPath:process.cwd(), extensionTestsPath:path.resolve("out/test/suite/index"), launchArgs:["--disable-extensions", "--disable-workspace-trust", process.env.PROBE_ROOT]}).catch(e => { console.error(e); process.exitCode=1; });'
+          node -e 'const path = require("path"); require("@vscode/test-electron").runTests({version:"1.91.0", extensionDevelopmentPath:process.cwd(), extensionTestsPath:path.resolve("out/test/suite/index"), launchArgs:["--disable-extensions", "--disable-workspace-trust"]}).catch(e => { console.error(e); process.exitCode=1; });'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Verify host reached selector and version
-        shell: pwsh
-        run: |
-          if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'selector-result.json'))) { throw 'selector result absent' }
-          $result = Get-Content (Join-Path $env:RUNNER_TEMP 'selector-result.json') -Raw | ConvertFrom-Json
-          if ($result.version -ne '1.91.0' -or ($null -eq $result.own) -or ($null -eq $result.other)) { throw 'unexpected VS Code version or result shape' }
-      - name: Verify selected assertion row
-        shell: pwsh
-        env:
-          ROW: ${{ matrix.row }}
-        run: |
-          $result = Get-Content (Join-Path $env:RUNNER_TEMP 'selector-result.json') -Raw | ConvertFrom-Json
-          if ($result.own -ne $true -or $result.other -ne $false) { throw 'controller selector mismatch' }
