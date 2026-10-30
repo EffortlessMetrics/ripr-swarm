@@ -90,3 +90,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — member_reexport_foreign_trait_keeps_dispatch_allowance (8)
+
+Reason:
+RIPR-SPEC-0122: when the missing-check line reports no boundary input, the proximity next step names that missing input instead of reading as unrelated (#10978)
+
+Command:
+`cargo xtask goldens bless member_reexport_foreign_trait_keeps_dispatch_allowance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — member_reexport_foreign_trait_keeps_dispatch_allowance (9)
+
+Reason:
+RIPR-SPEC-0122: loosen the no-boundary-input next-step wording to the changed condition, not only comparisons (#10978)
+
+Command:
+`cargo xtask goldens bless member_reexport_foreign_trait_keeps_dispatch_allowance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
