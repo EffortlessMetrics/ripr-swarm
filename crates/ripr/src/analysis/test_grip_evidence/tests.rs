@@ -19847,6 +19847,193 @@ fn inherent_receiver_constructors_need_indexed_declarations() -> Result<(), Stri
     Ok(())
 }
 
+/// An injected rstest fixture reaches the test as a typed parameter. Only a
+/// plain, unqualified, unshadowed owner type is the nominal owner.
+#[test]
+fn inherent_receiver_typed_parameter_names_the_owner_only_for_a_plain_type() -> Result<(), String> {
+    let used = "assert_eq!(s.area(), 1);";
+    for (params, call, expected) in [
+        ("s: Site", used, true),
+        ("mut s: Site", used, true),
+        ("s: &Site", used, true),
+        ("s: &mut Site", used, true),
+        ("s: Cache", used, false),
+        ("s: foreign::Site", used, false),
+        ("s: Box<Site>", used, false),
+        ("s: impl Into<Site>", used, false),
+        ("other: Site", used, false),
+        (
+            "s: Site",
+            "let s = Foreign;\n    assert_eq!(s.area(), 1);",
+            false,
+        ),
+        (
+            "s: Site",
+            "if let Some(s) = ext() {\n        assert_eq!(s.area(), 1);\n    }",
+            false,
+        ),
+        (
+            "s: Site",
+            "let f = |s: Cache| s.area();\n    f(Cache);",
+            false,
+        ),
+        // `prefix|params`: a type parameter named like the owner, or an
+        // import that rebinds the owner name, is not the nominal owner.
+        ("<Site: Tr>|s: Site", used, false),
+        ("use ext::Site;|s: Site", used, false),
+        ("use ext::Other as Site;|s: Site", used, false),
+        ("use ext::*;|s: Site", used, false),
+        ("mod inner { pub struct Site; }|s: Site", used, false),
+        ("trait Site {}|s: Site", used, false),
+        ("mod tests { use super::*; }|s: Site", used, true),
+        ("mod a { mod b { use super::*; } }|s: Site", used, false),
+    ] {
+        let (prefix, params) = params.split_once('|').unwrap_or(("", params));
+        let (imports, generics) = if !prefix.starts_with('<') {
+            (prefix, "")
+        } else {
+            ("", prefix)
+        };
+        let source = format!(
+            "{}\n{imports}\n#[test]\nfn t{generics}({params}) {{\n    {call}\n}}\n",
+            site!("}")
+        );
+        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), &source)])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|f| f.name == "area" && f.item.has_self_param)
+            .ok_or("missing owner")?;
+        let caller = index
+            .tests()
+            .iter()
+            .find(|t| t.name == "t")
+            .ok_or("missing test")?;
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+            expected,
+            "{prefix} {params} / {call}"
+        );
+    }
+    Ok(())
+}
+
+/// `Site::default()` is credited by a `#[derive(Default)]` declared once in
+/// the test's own file even when sibling files also spell the type, but not
+/// when that file lacks the derive, declares the type twice or imports it.
+#[test]
+fn inherent_receiver_default_derive_is_read_from_the_test_file() -> Result<(), String> {
+    let owner_file = |declaration: &str| {
+        format!(
+            "{declaration}\nimpl Site {{ pub fn area(&self) -> u32 {{ 1 }} }}\n\
+             #[test]\nfn t() {{\n    assert_eq!(Site::default().area(), 1);\n}}\n"
+        )
+    };
+    let derived = "#[derive(Default)]\npub struct Site { v: u32 }";
+    for (own, sibling, expected) in [
+        (owner_file(derived), derived, true),
+        (owner_file(derived), "pub struct Site;", true),
+        (owner_file("pub struct Site { v: u32 }"), derived, false),
+        (
+            owner_file(&format!("{derived}\nmod inner {{ {derived} }}")),
+            derived,
+            false,
+        ),
+        (
+            owner_file(&format!("use ext::Site;\n{derived}")),
+            derived,
+            false,
+        ),
+        (
+            owner_file(&format!("use ext::*;\n{derived}")),
+            derived,
+            false,
+        ),
+        (
+            owner_file(&format!(
+                "type Site = ext::Real;\nmod inner {{ {derived} }}"
+            )),
+            derived,
+            false,
+        ),
+        (
+            owner_file(&format!("mod fixtures {{ {derived} }}")),
+            derived,
+            false,
+        ),
+    ] {
+        let index = index_from_files(&[
+            (PathBuf::from("src/lib.rs"), &own),
+            (PathBuf::from("src/other.rs"), sibling),
+        ])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|f| f.name == "area" && f.item.has_self_param)
+            .ok_or("missing owner")?;
+        let caller = index
+            .tests()
+            .iter()
+            .find(|t| t.name == "t")
+            .ok_or("missing test")?;
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+            expected,
+            "{own} / {sibling}"
+        );
+    }
+    Ok(())
+}
+
+/// The file-local claims speak of the test file's root type, so they bind the
+/// probed owner only when its `impl` is a root item of that file (#11000).
+#[test]
+fn inherent_receiver_file_local_credit_needs_a_root_owner_impl() -> Result<(), String> {
+    let nested_owner = "mod other { impl super::Site { pub fn area(&self) -> u32 { 1 } } }";
+    for (source, expected) in [
+        (
+            "#[derive(Default)]\npub struct Site { v: u32 }\n\
+             mod other { #[derive(Default)] pub struct Site { v: u32 }\n\
+             impl Site { pub fn area(&self) -> u32 { 1 } } }\n\
+             #[test]\nfn t() {\n    assert_eq!(Site::default().area(), 1);\n}\n"
+                .to_string(),
+            false,
+        ),
+        (
+            format!(
+                "pub struct Site {{ v: u32 }}\n{nested_owner}\n\
+                 #[test]\nfn t(s: Site) {{\n    assert_eq!(s.area(), 1);\n}}\n"
+            ),
+            false,
+        ),
+        (
+            "#[derive(Default)]\npub struct Site { v: u32 }\n\
+             impl Site { pub fn area(&self) -> u32 { 1 } }\n\
+             #[test]\nfn t() {\n    assert_eq!(Site::default().area(), 1);\n}\n"
+                .to_string(),
+            true,
+        ),
+    ] {
+        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), &source)])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|f| f.name == "area" && f.item.has_self_param)
+            .ok_or("missing owner")?;
+        let caller = index
+            .tests()
+            .iter()
+            .find(|t| t.name == "t")
+            .ok_or("missing test")?;
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+            expected,
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn inherent_helper_hop_credits_only_a_sync_helper_that_binds_the_owner_type() -> Result<(), String>
 {
