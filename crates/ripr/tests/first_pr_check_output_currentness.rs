@@ -102,6 +102,125 @@ fn fixture() -> Result<PathBuf, String> {
 }
 
 #[test]
+fn zero_record_foreign_check_preserves_the_input() -> Result<(), String> {
+    let a = fixture()?;
+    fs::create_dir_all(a.join("src")).map_err(|e| e.to_string())?;
+    fs::write(
+        a.join("Cargo.toml"),
+        "[package]\nname = \"case\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        a.join("src/lib.rs"),
+        "pub fn boundary(x: i32) -> bool { x >= 10 }\n",
+    )
+    .map_err(|e| e.to_string())?;
+    git(&a, &["add", "."])?;
+    git(&a, &["commit", "-qm", "rust base"])?;
+    fs::write(
+        a.join("src/lib.rs"),
+        "pub fn boundary(x: i32) -> bool { x > 10 }\n",
+    )
+    .map_err(|e| e.to_string())?;
+    git(&a, &["add", "src/lib.rs"])?;
+    git(&a, &["commit", "-qm", "rust change"])?;
+    let b = a.with_extension("zero-other");
+    git(
+        a.parent().ok_or("missing parent")?,
+        &["clone", "-q", "--no-hardlinks", text(&a)?, text(&b)?],
+    )?;
+    let produced = check(&a)?;
+    assert!(
+        produced["summary"]["findings"].as_u64().unwrap_or(0) > 0,
+        "real Rust findings required: {produced}"
+    );
+    let input = a.with_extension("zero-check.json");
+    let bytes = serde_json::to_vec(&produced).map_err(|e| e.to_string())?;
+    fs::write(&input, &bytes).map_err(|e| e.to_string())?;
+    let same = first_pr(
+        &a,
+        &input,
+        &a.join("target/zero-same"),
+        &a.join("target/zero-same-ledger.json"),
+    )?;
+    let same_ledger: Value = serde_json::from_slice(
+        &fs::read(a.join("target/zero-same-ledger.json")).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    assert_eq!(same_ledger["status"], "no_records", "{same_ledger}");
+    assert_eq!(same_ledger["records"].as_array().map(Vec::len), Some(0));
+    assert_eq!(same["selected"]["state"], "blocked_artifact", "{same}");
+    let other = first_pr(
+        &b,
+        &input,
+        &b.join("target/zero-other"),
+        &b.join("target/zero-other-ledger.json"),
+    )?;
+    let other_ledger: Value = serde_json::from_slice(
+        &fs::read(b.join("target/zero-other-ledger.json")).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    assert_eq!(other_ledger["status"], "no_records", "{other_ledger}");
+    assert_eq!(other_ledger["records"].as_array().map(Vec::len), Some(0));
+    assert_eq!(
+        other["selected"]["reason_code"], "check_output_wrong_root",
+        "{other}"
+    );
+    assert_eq!(other["selected"]["output_state"], "wrong_root", "{other}");
+    assert_eq!(other_ledger["input_root"], text(&a)?);
+    assert_eq!(other_ledger["root"], text(&b)?);
+    assert!(
+        other["commands"].get("regenerate_gap_ledger").is_none(),
+        "{other}"
+    );
+    for id in ["check_output", "gap_ledger"] {
+        let artifact = other["artifacts"]
+            .as_array()
+            .ok_or("artifacts")?
+            .iter()
+            .find(|v| v["id"] == id)
+            .ok_or("artifact")?;
+        assert!(artifact["regeneration_command"].is_null(), "{artifact}");
+    }
+    #[cfg(unix)]
+    {
+        let command = other["selected"]["next_command"]
+            .as_str()
+            .ok_or("missing inspection")?;
+        let bin_dir = Path::new(env!("CARGO_BIN_EXE_ripr"))
+            .parent()
+            .ok_or("binary directory")?;
+        let mut paths = vec![bin_dir.to_path_buf()];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        let result = Command::new("sh")
+            .current_dir(&b)
+            .env(
+                "PATH",
+                std::env::join_paths(paths).map_err(|e| e.to_string())?,
+            )
+            .args(["-c", command])
+            .output()
+            .map_err(|e| e.to_string())?;
+        assert!(
+            result.status.success(),
+            "inspection failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(
+            fs::read(&input).map_err(|e| e.to_string())?,
+            bytes,
+            "foreign input changed"
+        );
+    }
+    fs::remove_dir_all(&a).map_err(|e| e.to_string())?;
+    fs::remove_dir_all(&b).map_err(|e| e.to_string())?;
+    fs::remove_file(input).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[test]
 fn no_action_does_not_promote_unbound_or_stale_preview_check() -> Result<(), String> {
     let a = fixture()?;
     let b = a.with_extension("other");

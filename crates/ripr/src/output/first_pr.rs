@@ -1290,6 +1290,15 @@ impl TopGapSelection {
 
 fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOptions) -> Selection {
     let records = gap_records(gap_ledger);
+    // Refuse a foreign check producer before any ledger-status recovery can
+    // offer a command that overwrites the supplied check artifact. In
+    // particular, a valid Rust check can project zero ledger records.
+    if is_check_output_derived(gap_ledger)
+        && foreign_check_output_root(gap_ledger, root).is_some()
+        && let Some(limitation) = unbound_no_action_limit(gap_ledger, root, options)
+    {
+        return limitation;
+    }
     if ledger_reports_timeout(gap_ledger) {
         return Selection::blocked(
             "timeout",
@@ -1477,13 +1486,7 @@ fn unbound_no_action_limit(
         "No worktree check is offered because the selected head is not established as the live HEAD; use a checkout at the selected head and the intended analysis configuration."
     };
     let source_root = string_path(ledger, &["input_root"]);
-    if let Some(source) = source_root
-        .as_deref()
-        .filter(|s| Path::new(s).is_absolute())
-        && Path::new(source).canonicalize().is_ok()
-        && root.canonicalize().is_ok()
-        && !crate::output::gap_source_subject::same_root(root, Path::new(source))
-    {
+    if let Some(source) = foreign_check_output_root(ledger, root) {
         return Some(Selection::blocked_with_reason(
             "wrong_root",
             "check_output_wrong_root",
@@ -1518,6 +1521,16 @@ fn unbound_no_action_limit(
         message,
         inspect,
     ))
+}
+
+fn foreign_check_output_root(ledger: &Value, root: &Path) -> Option<String> {
+    let source = string_path(ledger, &["input_root"])?;
+    let source_path = Path::new(&source);
+    (source_path.is_absolute()
+        && source_path.canonicalize().is_ok()
+        && root.canonicalize().is_ok()
+        && !crate::output::gap_source_subject::same_root(root, source_path))
+    .then_some(source)
 }
 
 fn is_check_output_derived(ledger: &Value) -> bool {
