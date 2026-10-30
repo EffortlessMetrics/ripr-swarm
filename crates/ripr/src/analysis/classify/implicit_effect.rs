@@ -1440,15 +1440,21 @@ fn implicit_observer() {
         for replacement in [
             "counter.next();",
             "let _ = counter;",
-            "for _ in counter {}\n    let _again = counter;",
-            "for _ in counter {}\n    for _ in counter {}",
+            "let _again = &counter;\n    for _ in counter {}",
+            "for _ in &mut counter {}\n    for _ in counter {}",
             "let alias = state.clone();\n    for _ in counter {}",
             "for _ in counter {}\n    state.set(9);",
             "touch(&counter);\n    for _ in counter {}",
             "while let Some(_) = counter.next() {}",
             "",
         ] {
-            let source = edit(CELL_OBSERVER, "for _ in counter {}", replacement)?;
+            // A mutable receiver keeps every row valid Rust (`next` borrows `&mut self`).
+            let source = edit(
+                CELL_OBSERVER,
+                "let counter = Counter",
+                "let mut counter = Counter",
+            )?;
+            let source = edit(&source, "for _ in counter {}", replacement)?;
             assert!(!observes(&source, "next", "next", DIRECT)?, "{replacement}");
         }
         // The proof needs a prior dispatch: one placed after the assertion is not credited.
