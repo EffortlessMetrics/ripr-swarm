@@ -2342,6 +2342,46 @@ fn repair_same_line_candidates_are_told_apart_in_plain_words() -> Result<(), Str
     Ok(())
 }
 
+/// #11111 review: the candidate commands carry a concrete `--root`, so a root
+/// with an apostrophe (Bash `'\''`, PowerShell `''`) must print each command's
+/// PowerShell spelling instead of leaving a PowerShell reader with silent Bash.
+#[test]
+fn repair_choice_commands_pair_powershell_form_for_apostrophe_root() -> Result<(), String> {
+    let fixture = Fixture::two_seam("facade-o'neil")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    assert!(
+        root_arg.contains('\''),
+        "fixture root must carry an apostrophe"
+    );
+    let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&repair, 3, "repair with two actionable items");
+    assert!(
+        stdout_text(&repair).is_empty(),
+        "selection must leave stdout empty"
+    );
+    let stderr = stderr_text(&repair);
+    let lines: Vec<&str> = stderr.lines().collect();
+    for seam in [FIXTURE_SEAM, SECOND_SEAM] {
+        assert!(
+            lines.windows(2).any(|pair| {
+                pair[0]
+                    .trim_start()
+                    .starts_with(&format!("ripr repair {seam} --root "))
+                    && pair[0].contains("'\\''")
+                    && pair[1]
+                        .trim_start()
+                        .starts_with(&format!("(PowerShell) ripr repair {seam} --root '"))
+                    && pair[1].contains("''")
+                    && !pair[1].contains("'\\''")
+            }),
+            "candidate {seam} must pair its PowerShell form:\n{stderr}"
+        );
+    }
+    assert!(attempt_ids(root).is_empty(), "no attempt before selection");
+    Ok(())
+}
+
 /// Control 3: two actionable items — no attempt is created until the user
 /// selects one; never an implicit first/newest pick.
 #[test]
@@ -2360,7 +2400,7 @@ fn repair_two_items_requires_explicit_selection() -> Result<(), String> {
         assert!(stderr.contains(seam), "must list seam {seam}:\n{stderr}");
     }
     assert!(
-        stderr.contains("ripr can start a repair for 2 changes"),
+        stderr.contains("ripr can start 2 different repairs"),
         "must bound the selection to both candidates:\n{stderr}"
     );
     // #10978: each candidate says where the change is and what it is, with

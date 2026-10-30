@@ -775,22 +775,52 @@ fn run_facade_status(mut options: StatusFacadeOptions) -> Result<(), CommandErro
     .map_err(CommandError::from)
 }
 
-/// Print one retry template with its PowerShell pair when the translator
-/// renders one. The template keeps a placeholder, never a filled
-/// candidate: filling one would be the implicit selection the façade
+/// Print one retry template and, when PowerShell needs a different spelling
+/// (or has none), that spelling. The template keeps a placeholder, never a
+/// filled candidate: filling one would be the implicit selection the façade
 /// refuses to make.
-/// Print a retry template and, only when PowerShell needs a different
-/// spelling, that spelling. The templates carry a `<placeholder>` the user
-/// replaces, which the PowerShell translator reads as a redirection; its
-/// "unavailable" disclosure would then describe the placeholder, not the
-/// command, so it is not printed (#11111).
 fn print_retry_line(retry: &str) {
-    eprintln!("retry: {retry}");
-    if let crate::output::markdown::PowershellForm::Translated(form) =
-        crate::output::markdown::powershell_form(retry)
-    {
-        eprintln!("retry (PowerShell): {form}");
+    for line in retry_lines(retry) {
+        eprintln!("{line}");
     }
+}
+
+/// The retry lines [`print_retry_line`] prints. A `<placeholder>` the user
+/// replaces would read to the PowerShell translator as a redirection, so it
+/// is swapped for a plain token while the rest of the command (its quoted
+/// root) is translated, then restored (#11111). The disclosure that no form
+/// exists then describes the command, never the placeholder.
+fn retry_lines(retry: &str) -> Vec<String> {
+    const TOKEN: &str = "riprplaceholder";
+    let mut placeholders = Vec::new();
+    let mut masked = String::new();
+    let mut rest = retry;
+    while let Some(open) = rest.find('<') {
+        let Some(len) = rest[open..].find('>') else {
+            break;
+        };
+        let name = &rest[open..=open + len];
+        if !name[1..name.len() - 1]
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        {
+            break;
+        }
+        masked.push_str(&rest[..open]);
+        masked.push_str(&format!("{TOKEN}{}", placeholders.len()));
+        placeholders.push(name);
+        rest = &rest[open + len + 1..];
+    }
+    masked.push_str(rest);
+    let mut lines = vec![format!("retry: {retry}")];
+    if let Some(mut form) = crate::output::markdown::powershell_text_variant(&masked) {
+        // Restore from the highest index so `…1` never matches inside `…10`.
+        for (index, name) in placeholders.iter().enumerate().rev() {
+            form = form.replace(&format!("{TOKEN}{index}"), name);
+        }
+        lines.push(format!("retry (PowerShell): {form}"));
+    }
+    lines
 }
 
 #[cfg(test)]
@@ -800,6 +830,26 @@ mod tests {
 
     fn args(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| word.to_string()).collect()
+    }
+
+    /// #11111: a retry template keeps its placeholder, yet a root that quotes
+    /// differently in PowerShell still gets its PowerShell line; an ordinary
+    /// root prints only the Bash line.
+    #[test]
+    fn retry_template_translates_root_around_its_placeholder() {
+        let root = crate::agent::loop_commands::shell_arg("/home/o'neil/proj");
+        assert_eq!(
+            retry_lines(&format!("ripr continue --attempt <attempt-id> --root {root}")),
+            vec![
+                format!("retry: ripr continue --attempt <attempt-id> --root {root}"),
+                "retry (PowerShell): ripr continue --attempt <attempt-id> --root '/home/o''neil/proj'"
+                    .to_string(),
+            ]
+        );
+        assert_eq!(
+            retry_lines("ripr repair <seam-id> --root /work/proj"),
+            vec!["retry: ripr repair <seam-id> --root /work/proj".to_string()]
+        );
     }
 
     #[test]

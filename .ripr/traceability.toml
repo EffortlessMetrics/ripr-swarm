@@ -1865,6 +1865,8 @@ tests = [
   "crates/ripr/tests/task_first_facade.rs::repair_without_actionable_item_creates_no_attempt",
   "crates/ripr/tests/task_first_facade.rs::repair_single_item_matches_advanced_card",
   "crates/ripr/tests/task_first_facade.rs::repair_two_items_requires_explicit_selection",
+  "crates/ripr/tests/task_first_facade.rs::repair_same_line_candidates_are_told_apart_in_plain_words",
+  "crates/ripr/tests/task_first_facade.rs::repair_choice_commands_pair_powershell_form_for_apostrophe_root",
   "crates/ripr/tests/task_first_facade.rs::continue_single_attempt_advances_it",
   "crates/ripr/tests/task_first_facade.rs::continue_two_attempts_requires_explicit_selection",
   "crates/ripr/tests/task_first_facade.rs::continue_refuses_a_diverged_head_with_recovery",

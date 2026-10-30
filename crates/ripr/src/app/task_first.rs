@@ -573,14 +573,20 @@ pub(crate) struct RepairCandidateNote {
     pub(crate) test_need: &'static str,
     /// The exact command that starts this candidate.
     pub(crate) command: String,
+    /// The change's 1-based start column, when the parser gave a span. Shown
+    /// only to tell apart choices that would otherwise read the same.
+    pub(crate) column: Option<usize>,
 }
 
 /// The plain-language choice `ripr repair` prints when several changes could
 /// start a repair (#11111). When every listed candidate is the same changed
 /// code, the header names that change once and each choice is told apart by
 /// what a test must check; otherwise each choice also names its location.
-/// `total` is the selection's full count; candidates beyond the listed ones
-/// are disclosed with the route that lists them all. The closing line points
+/// `total` is the selection's full count of choices (one change can offer
+/// several); candidates beyond the listed ones are disclosed with the route
+/// that lists them all. Each command is followed by its PowerShell spelling
+/// when PowerShell needs a different one (a root with an apostrophe), so a
+/// PowerShell reader is not left with silent Bash. The closing line points
 /// at the command `ripr check` printed, which applies to the finding check
 /// selected; this selector has no diff base, so it does not guess which
 /// candidate that was.
@@ -606,26 +612,28 @@ pub(crate) fn render_repair_choice(
             ));
             for (index, candidate) in candidates.iter().enumerate() {
                 out.push_str(&format!(
-                    "  {}. {}\n     {}\n",
+                    "  {}. {}{}\n",
                     index + 1,
                     candidate.test_need,
-                    candidate.command
+                    column_suffix(candidates, candidate)
                 ));
+                push_candidate_command(&mut out, &candidate.command);
             }
         }
         _ => {
             out.push_str(&format!(
-                "ripr can start a repair for {total} changes. Pick one and run its command:\n"
+                "ripr can start {total} different repairs. Pick one and run its command:\n"
             ));
             for (index, candidate) in candidates.iter().enumerate() {
                 out.push_str(&format!(
-                    "  {}. {}  `{}`: {}\n     {}\n",
+                    "  {}. {}  `{}`: {}{}\n",
                     index + 1,
                     candidate.location,
                     candidate.code,
                     candidate.test_need,
-                    candidate.command
+                    column_suffix(candidates, candidate)
                 ));
+                push_candidate_command(&mut out, &candidate.command);
             }
             if total > candidates.len() {
                 out.push_str(&format!(
@@ -640,6 +648,32 @@ pub(crate) fn render_repair_choice(
         "If `ripr check` printed a `ripr repair` command for this change, run that one: it is the choice check recommends.\n",
     );
     out
+}
+
+/// One candidate's start command, then its PowerShell spelling only when
+/// PowerShell needs a different one (or has none), from the shared translator.
+fn push_candidate_command(out: &mut String, command: &str) {
+    out.push_str(&format!("     {command}\n"));
+    if let Some(form) = crate::output::markdown::powershell_text_variant(command) {
+        out.push_str(&format!("     (PowerShell) {form}\n"));
+    }
+}
+
+/// ` (column N)` when another listed choice has the same location, code and
+/// test need, so the two would otherwise read the same; empty otherwise.
+fn column_suffix(candidates: &[RepairCandidateNote], candidate: &RepairCandidateNote) -> String {
+    let twins = candidates
+        .iter()
+        .filter(|other| {
+            other.location == candidate.location
+                && other.code == candidate.code
+                && other.test_need == candidate.test_need
+        })
+        .count();
+    match candidate.column {
+        Some(column) if twins > 1 => format!(" (column {column})"),
+        _ => String::new(),
+    }
 }
 
 /// Describe a selectable seam: where the change is and the changed code (the
@@ -671,6 +705,7 @@ fn describe_candidate(
             entry.seam.id().as_str(),
             shell_arg(bound_root_display)
         ),
+        column: entry.seam.span().map(|span| span.start_column),
     }
 }
 
@@ -1966,7 +2001,7 @@ pub(crate) mod tests {
                 );
                 // The disclosure names the remainder and the route listing it.
                 let text = render_repair_choice(&described, 10, ".");
-                assert!(text.contains("10 changes"), "{text}");
+                assert!(text.contains("10 different repairs"), "{text}");
                 assert!(text.contains("2 more not shown"), "{text}");
                 Ok(())
             }
@@ -1980,6 +2015,7 @@ pub(crate) mod tests {
             code: code.to_string(),
             test_need: crate::analysis::seams::SeamKind::ReturnValue.plain_test_need(),
             command: format!("ripr repair {seam} --root ."),
+            column: None,
         }
     }
 
@@ -2031,12 +2067,54 @@ pub(crate) mod tests {
             ".",
         );
         assert!(
-            text.starts_with("ripr can start a repair for 2 changes"),
+            text.starts_with("ripr can start 2 different repairs"),
             "{text}"
         );
         assert!(text.contains("1. src/lib.rs:2  `a >= b`:"), "{text}");
         assert!(text.contains("2. src/lib.rs:10  `c >= d`:"), "{text}");
         assert!(!text.contains("more not shown"), "{text}");
+    }
+
+    /// A root with an apostrophe quotes differently in PowerShell, so each
+    /// concrete command is paired with its PowerShell spelling; an ordinary
+    /// root prints none.
+    #[test]
+    fn candidate_commands_carry_a_powershell_form_when_quoting_differs() {
+        let root = "/home/o'neil/proj";
+        let mut first = note("src/lib.rs:2", "a >= b", "aaa");
+        first.command = format!("ripr repair aaa --root {}", shell_arg(root));
+        let mut second = note("src/lib.rs:10", "c >= d", "bbb");
+        second.command = format!("ripr repair bbb --root {}", shell_arg(root));
+        let text = render_repair_choice(&[first, second], 2, root);
+        for seam in ["aaa", "bbb"] {
+            assert!(
+                text.contains(&format!(
+                    "     (PowerShell) ripr repair {seam} --root '/home/o''neil/proj'\n"
+                )),
+                "{text}"
+            );
+        }
+        assert!(
+            !render_repair_choice(&[note("src/lib.rs:2", "a >= b", "aaa")], 1, ".")
+                .contains("PowerShell")
+        );
+    }
+
+    /// Two choices with the same location, code and test need are told apart
+    /// by column; distinct choices carry no column.
+    #[test]
+    fn identical_choices_are_told_apart_by_column() {
+        let mut left = note("src/lib.rs:2", "a + a", "aaa");
+        left.column = Some(5);
+        let mut right = note("src/lib.rs:2", "a + a", "bbb");
+        right.column = Some(11);
+        let text = render_repair_choice(&[left, right], 2, ".");
+        assert!(text.contains(" (column 5)\n"), "{text}");
+        assert!(text.contains(" (column 11)\n"), "{text}");
+        let mut other = note("src/lib.rs:9", "b", "ccc");
+        other.column = Some(3);
+        let plain = render_repair_choice(&[note("src/lib.rs:2", "a", "aaa"), other], 2, ".");
+        assert!(!plain.contains("column"), "{plain}");
     }
 
     /// Descriptions follow the stop's ids and order, not the inventory's.
