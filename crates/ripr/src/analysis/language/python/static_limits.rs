@@ -3,6 +3,7 @@ use super::admission::PythonAssertionAdmission;
 use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
+use super::cli_subcommand::CliSubcommand;
 use super::effect_alignment::ChangedEffect;
 use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
 use super::forwarding_decorator::is_forwarding_decorator;
@@ -160,9 +161,22 @@ pub(super) fn static_limit_for_focused_change(
             ),
         });
     }
+    // A group subcommand's registration decorator builds a command that runs
+    // the body; it stops being an indirection once a test is shown to invoke
+    // the group with its name (`cli_subcommand.rs`, #9226).
+    let reached_subcommand_decorator = owner
+        .cli_subcommand
+        .as_ref()
+        .filter(|_| {
+            related_candidates
+                .iter()
+                .any(|candidate| candidate.relation == PythonRelationKind::CliRunnerInvoke)
+        })
+        .map(CliSubcommand::decorator);
     if let Some(decorator) = owner.decorators.iter().find(|decorator| {
         !is_transparent_owner_decorator_for_owner(decorator, owner)
             && !is_forwarding_decorator(decorator, owner, owner_source)
+            && reached_subcommand_decorator.as_ref() != Some(*decorator)
     }) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::DecoratorIndirection,
@@ -1669,6 +1683,7 @@ pub(super) mod tests {
             class_facts: Default::default(),
             foreign_writes: Default::default(),
             version_conditional: false,
+            cli_subcommand: None,
         }
     }
 

@@ -3787,6 +3787,8 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_stays_uncredited_without_a_bound_owner_receiver",
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_quoted_for_membership_reads_keep_receiver_credit",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_unterminated_literals_do_not_invent_receiver_credit",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_real_for_targets_still_withhold_receiver_credit",
@@ -3987,6 +3989,13 @@ tests = [
   "crates/ripr/src/analysis/language/python/imported_literal_tests.rs::an_equal_valued_integer_respelling_is_not_an_edit",
   "crates/ripr/src/analysis/language/python/imported_literal_tests.rs::re_indenting_the_line_is_not_an_integer_only_edit",
   "crates/ripr/src/analysis/language/python/imported_literal_tests.rs::lambda_syntax_on_the_line_keeps_its_limit",
+  "crates/ripr/src/analysis/language/python/cli_subcommand_tests.rs::a_subcommand_named_in_the_invoke_arguments_is_reached_without_an_oracle",
+  "crates/ripr/src/analysis/language/python/cli_subcommand_tests.rs::the_registration_spellings_the_relation_accepts",
+  "crates/ripr/src/analysis/language/python/cli_subcommand_tests.rs::an_invoke_that_does_not_name_the_subcommand_first_makes_no_edge",
+  "crates/ripr/src/analysis/language/python/cli_subcommand_tests.rs::a_test_that_does_not_prove_the_group_or_the_runner_makes_no_edge",
+  "crates/ripr/src/analysis/language/python/cli_subcommand_tests.rs::a_registration_the_file_does_not_prove_makes_no_edge",
+  "crates/ripr/src/analysis/language/python/cli_subcommand_tests.rs::a_derived_name_click_versions_disagree_on_is_refused_but_an_explicit_one_is_read",
+  "crates/ripr/src/analysis/language/python/cli_subcommand_tests.rs::a_subcommand_no_test_invokes_keeps_its_decorator_limit",
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_runner_invoke_in_a_test_of_the_package_is_named_without_changing_the_class",
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::without_a_recognised_runner_invoke_the_generic_line_stays",
   "crates/ripr/src/analysis/language/python/effect_order_tests.rs",
