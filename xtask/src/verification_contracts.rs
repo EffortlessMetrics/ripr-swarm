@@ -1031,16 +1031,70 @@ fn supported_numeric_input(value: &Value) -> bool {
 }
 
 fn supported_numeric_bounds(schema: &Value) -> bool {
-    match schema {
-        Value::Object(object) => object.iter().all(|(key, value)| {
-            if (key == "minimum" || key == "maximum") && value.is_number() {
-                exact_schema_number(value).is_some()
-            } else {
-                supported_numeric_bounds(value)
-            }
-        }),
-        Value::Array(values) => values.iter().all(supported_numeric_bounds),
-        _ => true,
+    let Some(object) = schema.as_object() else {
+        return true;
+    };
+    for (key, value) in object {
+        let supported = match key.as_str() {
+            "minimum" | "maximum" | "const" | "enum" => supported_numeric_input(value),
+            "properties" | "$defs" | "definitions" => value
+                .as_object()
+                .is_none_or(|entries| entries.values().all(supported_numeric_bounds)),
+            "allOf" | "anyOf" | "oneOf" => value
+                .as_array()
+                .is_none_or(|entries| entries.iter().all(supported_numeric_bounds)),
+            "not" | "if" | "then" | "else" | "items" => supported_numeric_bounds(value),
+            _ => true,
+        };
+        if !supported {
+            return false;
+        }
+    }
+    true
+}
+
+// Typed keys preserve the distinctions between JSON types while normalizing
+// numbers mathematically, including nested values. The caller preflights all
+// numbers so an unsupported value never becomes a successful comparison.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum SchemaValueKey {
+    Null,
+    Boolean(bool),
+    Number(num_bigint::BigInt, i64),
+    String(String),
+    Array(Vec<SchemaValueKey>),
+    Object(Vec<(String, SchemaValueKey)>),
+}
+
+fn schema_value_key(value: &Value) -> Option<SchemaValueKey> {
+    Some(match value {
+        Value::Null => SchemaValueKey::Null,
+        Value::Bool(b) => SchemaValueKey::Boolean(*b),
+        Value::Number(_) => {
+            let (coefficient, scale) = exact_schema_number(value)?
+                .normalized()
+                .as_bigint_and_exponent();
+            SchemaValueKey::Number(coefficient, scale)
+        }
+        Value::String(s) => SchemaValueKey::String(s.clone()),
+        Value::Array(values) => {
+            SchemaValueKey::Array(values.iter().map(schema_value_key).collect::<Option<_>>()?)
+        }
+        Value::Object(values) => {
+            let mut keys: Vec<_> = values
+                .iter()
+                .map(|(key, value)| Some((key.clone(), schema_value_key(value)?)))
+                .collect::<Option<_>>()?;
+            keys.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+            SchemaValueKey::Object(keys)
+        }
+    })
+}
+
+fn schema_values_equal(left: &Value, right: &Value) -> bool {
+    match (schema_value_key(left), schema_value_key(right)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
     }
 }
 
@@ -1197,7 +1251,7 @@ fn validate_value_against_schema_inner(
     }
 
     if let Some(expected) = schema.get("const")
-        && value != expected
+        && !schema_values_equal(value, expected)
     {
         violations.push(format!(
             "{location}: expected const {}, got {}",
@@ -1207,7 +1261,9 @@ fn validate_value_against_schema_inner(
     }
 
     if let Some(allowed) = schema.get("enum").and_then(Value::as_array)
-        && !allowed.iter().any(|candidate| candidate == value)
+        && !allowed
+            .iter()
+            .any(|candidate| schema_values_equal(candidate, value))
     {
         violations.push(format!(
             "{location}: value {} is not in enum",
@@ -1326,7 +1382,11 @@ fn validate_array(
     if schema.get("uniqueItems").and_then(Value::as_bool) == Some(true) {
         let mut seen = BTreeSet::new();
         for item in items {
-            if !seen.insert(compact_json(item)) {
+            let Some(key) = schema_value_key(item) else {
+                violations.push(format!("{location}: unsupported numeric precision"));
+                return;
+            };
+            if !seen.insert(key) {
                 violations.push(format!(
                     "{location}: uniqueItems violated by duplicate {}",
                     compact_json(item)
