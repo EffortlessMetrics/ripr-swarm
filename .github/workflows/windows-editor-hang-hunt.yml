@@ -12,8 +12,6 @@ jobs:
       fail-fast: false
       matrix:
         row: ['upper:own', 'upper:sibling', 'lower:own', 'lower:sibling']
-    env:
-      RIPR_GLOB_PROBE_RESULT: ${{ runner.temp }}\selector-result.json
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -38,20 +36,21 @@ jobs:
           RIPR_TEST_REQUIRE_RAN: Document selector workspace-root glob escaping Windows drive-letter spellings select the same workspace, but not a sibling
           RIPR_GLOB_PROBE_ROW: ${{ matrix.row }}
         run: |
+          $env:RIPR_GLOB_PROBE_RESULT = Join-Path $env:RUNNER_TEMP 'selector-result.json'
           node -e 'const path = require("path"); require("@vscode/test-electron").runTests({version:"1.91.0", extensionDevelopmentPath:process.cwd(), extensionTestsPath:path.resolve("out/test/suite/index"), launchArgs:["--disable-extensions", "--disable-workspace-trust"]}).catch(e => { console.error(e); process.exitCode=1; });'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify host reached selector and version
         shell: pwsh
         run: |
-          if (-not (Test-Path $env:RIPR_GLOB_PROBE_RESULT)) { throw 'selector result absent' }
-          $result = Get-Content $env:RIPR_GLOB_PROBE_RESULT -Raw | ConvertFrom-Json
+          if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'selector-result.json'))) { throw 'selector result absent' }
+          $result = Get-Content (Join-Path $env:RUNNER_TEMP 'selector-result.json') -Raw | ConvertFrom-Json
           if ($result.version -ne '1.91.0' -or $result.scores.Count -ne 2) { throw 'unexpected VS Code version or result shape' }
       - name: Verify selected assertion row
         shell: pwsh
         env:
           ROW: ${{ matrix.row }}
         run: |
-          $result = Get-Content $env:RIPR_GLOB_PROBE_RESULT -Raw | ConvertFrom-Json
+          $result = Get-Content (Join-Path $env:RUNNER_TEMP 'selector-result.json') -Raw | ConvertFrom-Json
           $parts = $env:ROW.Split(':')
           $entry = $result.scores | Where-Object spelling -eq $parts[0]
           if ($null -eq $entry) { throw 'missing spelling' }
