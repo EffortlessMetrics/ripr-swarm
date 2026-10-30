@@ -589,15 +589,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — typescript_tothrow_exact_oracle (36)
-
-Reason:
-RIPR-SPEC-0087: plain TypeScript/JavaScript advisory wording for no-repair-start and blocked packet
-
-Command:
-`cargo xtask goldens bless typescript_tothrow_exact_oracle --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

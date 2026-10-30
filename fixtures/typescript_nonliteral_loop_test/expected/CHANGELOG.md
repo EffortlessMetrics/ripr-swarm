@@ -47,15 +47,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — typescript_nonliteral_loop_test (5)
-
-Reason:
-RIPR-SPEC-0087: plain TypeScript/JavaScript advisory wording for no-repair-start and blocked packet
-
-Command:
-`cargo xtask goldens bless typescript_nonliteral_loop_test --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

@@ -42,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_adversarial_token_substring/input --diff <cwd>/fixtures/typescript_adversarial_token_substring/diff.patch --mode fast probe:src_stream.ts:typescript_preview:5430a07e
   ripr context --root <cwd>/fixtures/typescript_adversarial_token_substring/input --diff <cwd>/fixtures/typescript_adversarial_token_substring/diff.patch --mode fast --at probe:src_stream.ts:typescript_preview:5430a07e
-  no repair start offered: ripr has no complete repair packet for this TypeScript finding (its repair packet is not complete); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`
+  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

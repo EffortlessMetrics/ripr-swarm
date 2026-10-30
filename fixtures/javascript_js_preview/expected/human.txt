@@ -44,7 +44,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/javascript_js_preview/input --diff <cwd>/fixtures/javascript_js_preview/diff.patch --mode fast probe:src_discount.js:typescript_preview:8152c8c0
   ripr context --root <cwd>/fixtures/javascript_js_preview/input --diff <cwd>/fixtures/javascript_js_preview/diff.patch --mode fast --at probe:src_discount.js:typescript_preview:8152c8c0
-  no repair start offered: ripr has no complete repair packet for this JavaScript finding (its repair packet is not complete); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`
+  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: ripr cannot tell whether the test at `tests/stats.test.ts:12` covers this change: its `.equal(...)` compares against a variable or computed value, not a literal; replace that expected value with a literal, or check by hand that the test covers this change, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it
+  Safe next action: preview-language evidence is advisory; no repair packet is emitted because of the named static limitation: typescript_dynamic_assertion_unresolved — the matcher `.equal(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior; `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
   File: src/stats.ts:4
   Language: typescript
   Language status: preview
@@ -44,7 +44,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_field_update_table_zero_rows/input --diff <cwd>/fixtures/ts_field_update_table_zero_rows/diff.patch --mode fast probe:src_stats.ts:typescript_preview:6e11f2c2
   ripr context --root <cwd>/fixtures/ts_field_update_table_zero_rows/input --diff <cwd>/fixtures/ts_field_update_table_zero_rows/diff.patch --mode fast --at probe:src_stats.ts:typescript_preview:6e11f2c2
-  no repair start offered: ripr has no complete repair packet for this TypeScript finding (ripr cannot tell whether the test at `tests/stats.test.ts:12` covers this change: its `.equal(...)` compares against a variable or computed value, not a literal); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`
+  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

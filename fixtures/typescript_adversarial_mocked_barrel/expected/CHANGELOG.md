@@ -289,15 +289,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — typescript_adversarial_mocked_barrel (25)
-
-Reason:
-RIPR-SPEC-0087: plain TypeScript/JavaScript advisory wording for no-repair-start and blocked packet
-
-Command:
-`cargo xtask goldens bless typescript_adversarial_mocked_barrel --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

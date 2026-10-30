@@ -248,18 +248,6 @@ pub(crate) fn render_human_triage(
                         if matches!(
                             finding.language,
                             Some(LanguageId::TypeScript) | Some(LanguageId::JavaScript)
-                        ) && crate::output::typescript_packet_projection::typescript_dynamic_assertion_blocker(finding).is_some() =>
-                    {
-                        if let Some(blocker) = crate::output::typescript_packet_projection::typescript_dynamic_assertion_blocker(finding) {
-                            out.push_str(&format!(
-                                "  Safe next action: {blocker}; replace that expected value with a literal, or check by hand that the test covers this change, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it\n"
-                            ));
-                        }
-                    }
-                    Some(finding)
-                        if matches!(
-                            finding.language,
-                            Some(LanguageId::TypeScript) | Some(LanguageId::JavaScript)
                         ) && typescript_named_limitation_why(finding).is_some() =>
                     {
                         if let Some(why) = typescript_named_limitation_why(finding) {
