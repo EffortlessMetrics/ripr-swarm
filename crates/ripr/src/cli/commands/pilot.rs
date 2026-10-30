@@ -497,11 +497,9 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     )?;
 
     let summary_json = output::pilot::render_pilot_summary_json(&classified, context);
+    let (summary_md, terminal) = output::pilot::render_pilot_human_summaries(&classified, context);
     write_pilot_file(&artifacts.pilot_summary_json, &summary_json)?;
-    write_pilot_file(
-        &artifacts.pilot_summary_md,
-        output::pilot::render_pilot_summary_md(&classified, context),
-    )?;
+    write_pilot_file(&artifacts.pilot_summary_md, summary_md)?;
     timings.record("write_artifacts", write_started, Some(classified.len()));
     // #10727: the sidecar is written last, so it cannot change any other
     // artifact. A run without `-v` drops a prior run's sidecar rather than
@@ -519,14 +517,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         remove_timeout_packet_sibling(&timings_path)?;
     }
 
-    print!(
-        "{}",
-        pilot_stdout(
-            options.format,
-            &summary_json,
-            &output::pilot::render_pilot_terminal(&classified, context),
-        )
-    );
+    print!("{}", pilot_stdout(options.format, &summary_json, &terminal));
     // #10727: stderr only, so stdout and the artifacts stay byte-identical.
     // Through the shadowed `eprintln!`, so a held-open TTY progress row is
     // finished before the table starts instead of being glued onto.

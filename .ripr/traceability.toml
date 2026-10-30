@@ -19826,9 +19826,11 @@ name = "Pilot next steps name the dirty-target precondition and the continue com
 spec = "docs/specs/RIPR-SPEC-0318-pilot-dirty-target-next-steps.md"
 tests = [
   "crates/ripr/src/output/pilot/tests.rs::pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies",
+  "crates/ripr/src/output/pilot/tests/spec_0237.rs",
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/cli/commands/pilot.rs",
   "crates/ripr/src/output/pilot/render/complete.rs",
   "crates/ripr/src/output/pilot/commands.rs",
   "crates/ripr/src/edit_cage/mod.rs",
