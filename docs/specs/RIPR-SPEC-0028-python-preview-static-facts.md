@@ -333,7 +333,28 @@ parameter or local rebinding of the name, an attribute call, and comment or
 string text make no edge, nor does a caller wrapped by any decorator
 (including one whose name cannot be read, or a call form such as
 `@property(x)`) other than a bare `classmethod`, `staticmethod` or
-`property`, alone or combined; an `async def` caller is allowed (#4568).
+`property`, alone or combined, except that a top-level `click.command` or
+`click.group` function (decorated only by those and `click.option` /
+`click.argument`, with `import click` in its module) is a caller as well, since
+its decorators build a command that runs the body; an `async def` caller is
+allowed (#4568, #9226).
+A top-level `click.command` or `click.group` function that no test calls is
+related, with the weak `cli_runner_invoke` relation, to a test that passes it
+as the first argument of `<runner>.invoke(` (`runner.invoke(hello, [...])`),
+and, through the `helper_owner_call` hops above, so are the helpers it calls
+(#9226). The test must name the command through the provenance-checked import
+that every direct call uses; `<runner>` must be a local assigned exactly once
+to `CliRunner(...)` imported from `click.testing` or `typer.testing`, or a
+literal `CliRunner()` fixture that nothing else rewrites. A different module's
+`CliRunner`, a non-first argument, an attribute of the command, a rebound or
+parameter-shadowed name, a fixture with arguments or extra statements, an
+undecorated function and a command reached only by a group's subcommand name
+make no edge. The relation is uncertain, carries no oracle and never reaches
+`exposed`: the command's output is not credited, and a helper reached through
+the command is reach-only too (the invoke may never run the body, e.g.
+`--help`). `import click as c`, `from click import command` and group
+subcommands are not recognised.
+
 Known limits, all weak-only: a module-level rebinding such as
 `helper = wrap(helper)` is not detected, and a call inside a nested `def` or
 lambda counts as an edge of the enclosing owner.

@@ -195,6 +195,7 @@ use static_limits::{
     PythonStaticLimit, has_identifier_boundary, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
+mod cli_runner;
 mod transitive_reach;
 #[cfg(test)]
 use static_limits::{
@@ -1790,6 +1791,8 @@ mod helper_inline_tests;
 #[cfg(test)]
 mod literal_patch_tests;
 
+#[cfg(test)]
+mod cli_runner_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 
