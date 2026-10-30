@@ -218,6 +218,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             analysis::ClassifiedSeamsReport {
                 classified: Vec::new(),
                 corpus_key: None,
+                analyzed_production_files: Vec::new(),
                 diff_bound_corpus: false,
                 limit_info: None,
                 skipped_generated: Vec::new(),
@@ -293,6 +294,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // budget wins when both fire; inventory limit is the outer bound).
     let mut classified = report.classified;
     let corpus_key = report.corpus_key;
+    let analyzed_production_files = report.analyzed_production_files;
     let diff_bound_corpus = report.diff_bound_corpus;
     let mut inventory_limit_info = report.limit_info;
     let declined_rust_files = report.declined_rust_files.clone();
@@ -461,7 +463,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 None,
                 &config,
             )?
-            .with_rust_corpus_key(corpus_key.as_ref()),
+            .with_rust_inventory(corpus_key.as_ref(), &analyzed_production_files),
         )
     };
     let write_started = Instant::now();
@@ -1582,6 +1584,7 @@ mod tests {
                 Ok(analysis::ClassifiedSeamsReport {
                     classified: Vec::new(),
                     corpus_key: None,
+                    analyzed_production_files: Vec::new(),
                     diff_bound_corpus: false,
                     limit_info: None,
                     skipped_generated: Vec::new(),

@@ -4113,6 +4113,40 @@ no seam names a file or a named file cannot be read. `content_sha256` covers it
 like any other member. The gap ledger and `actionable-gaps.json` derived from
 this snapshot copy their stamps from it.
 
+The gap decision ledger built from a snapshot of this kind
+(`ripr reports gap-ledger --repo-exposure`) additionally carries an optional
+top-level `analysis_coverage` (#9599) only when the snapshot is a complete
+whole-Rust-workspace run of a producer-issued artifact (the `repo_exposure`
+envelope whose governed `content_sha256` still matches the bytes read;
+`run_status: complete`; no `limitations[]` entry other than TypeScript/Python
+guidance; no `run_limitations` and no incomplete `analysis_outcome` when one is
+present; every seam converted to a record; and a `source_subject.corpus` carrying
+the producer's `cache_schema_version`, 16-lowercase-hex `files_content_hash`, and
+`analyzed_production_files` array, plus the top-level `analysis_inputs` object (carried into the coverage `corpus`); a refused disclosure is named in the fallback
+`gap_ledger_artifact` scope's additive `coverage_refused` array):
+`scope` (`rust_workspace`), `basis` (`repo_exposure_complete_run`), `run_status`,
+`corpus`, `records_total` and `records_digest` (SHA-256 over every record's
+canonical serialization, ordered by `gap_id`). The digest is tamper-evident
+against filtering or editing the records, not authentication: a party who can
+rewrite the ledger and recompute it is out of scope (a writer who deletes
+records and recomputes the digest and total still earns the disclosure).
+`gate evaluate --gap-ledger` honors the disclosure only while the records still
+match the count and digest, and the disclosed corpus hash and production-file
+membership, and `corpus.analysis_inputs` (the producer cache key's 64-bit FNV
+hashes of the classified config including raw `ripr.toml` bytes, test-intent
+file, suppressions file, `RIPR_CFG_FEATURES`, Cargo workspace manifests and
+configuration (checkout-path bound), `Cargo.lock`, the toolchain label, plus the
+analyzer build identity; all eight required, seam limit not compared because a
+complete run applied none)
+equal the current inventory owner's discovery, role selection and inputs
+for the tree being gated (`--root`, loaded with its `ripr.toml`). Membership
+comes from the actual inventory inputs, including cache hits, independently of
+surviving records. Source symlinks and symlinked parents are not followed.
+Missing, malformed or duplicate membership entries establish no coverage;
+a present empty array covers no baseline paths. A stale,
+unverifiable or rootless evaluation ignores it. The field is omitted for every
+other source or a limited run, so existing ledgers are byte-stable.
+
 ### Repo Exposure Summary JSON
 
 `ripr check --root . --format repo-exposure-summary-json` emits a bounded
@@ -10561,7 +10595,22 @@ Field contract:
   targets instead of raw PR guidance candidates.
 - `analysis_scope` - additive (#9301). The candidate source's `analysis_scope`
   copied verbatim: from the `--pr-guidance` review-comments document, or the
-  `gap_ledger_artifact` scope for `--gap-ledger`. Omitted when the evaluation
+  `gap_ledger_artifact` scope for `--gap-ledger`, or `rust_workspace_complete`
+  (`run_status`, `basis = "repo_exposure_complete_run"`, the producer's `corpus`
+  identity, `records_total`, `records_digest`; #9599) when the ledger carries a
+  verified `analysis_coverage` disclosure from a complete repo-exposure run and
+  its corpus is still current. When a disclosed coverage is refused the
+  `gap_ledger_artifact` scope carries an additive `coverage_refused` array of
+  the differing classes (`content`, `membership`, `config`, `test_intent`,
+  `suppressions`, `cfg_features`, `workspace_manifests`, `lockfile`,
+  `toolchain`, `analyzer_version`, `records_or_disclosure`,
+  `config_unloadable`, `unverifiable`); it is absent when no coverage was
+  disclosed. Only that path can emit
+  `rust_workspace_complete`: a `rust_workspace_complete` scope arriving in a
+  `--pr-guidance` document is dropped (with a warning) and leaves baseline
+  entries `not_evaluated`. A hand-edited gate-decision file is out of scope: the
+  contract does not authenticate the producer.
+  Omitted when the evaluation
   is a `config_error`. `ripr baseline diff` / `baseline update` read it to decide
   whether a baseline entry absent from `decisions` was actually analyzed. A
   review-comments scope also carries `cap_omitted_seams` (seams dropped by the
@@ -10571,7 +10620,9 @@ Field contract:
   `changed_production_files` counts as coverage; changed production files the
   parser declined (nesting budget, parse error, non-UTF-8: the lexical fallback
   extracts no seams) are excluded from it and listed in the optional
-  `parser_declined_files` (present only when non-empty). A gate decision without `analysis_scope` (a build before #9301),
+  `parser_declined_files` (present only when non-empty; the review-comments
+  Markdown summary also lists them as a `limitation: parser_declined_files`
+  line, omitted when empty, #9734). A gate decision without `analysis_scope` (a build before #9301),
   or with a malformed one, makes every absent baseline entry `not_evaluated`.
 - `subject` - identity of the evaluation (#5263): `analyzer_version` (the
   writing binary's build identity, the same stamp `check --write-artifact`
@@ -11162,7 +11213,12 @@ Field contract:
   present only on a `stale_baseline_entry` item whose baseline entry is absent
   from current evidence but whose file the current `analysis_scope` does not
   cover (or whose scope is missing, malformed, skipped or cap-omitted seams, or
-  is a `gap_ledger_artifact` scope, tracked in #9599). `evaluation` is
+  is a `gap_ledger_artifact` scope; a `rust_workspace_complete` scope covers only
+  normalized relative `.rs` paths in `corpus.analyzed_production_files`, the
+  inventory's actual production-role inputs. Symlink aliases, skipped sources
+  and evidence-only inputs are not covered, #9599; when the gate refused a
+  ledger's workspace coverage the scope's additive `coverage_refused` classes
+  are quoted as `differing: ...`). `evaluation` is
   `"not_evaluated"`; `not_evaluated_reason` is a one-sentence reason. Such an
   item is never `resolved` and `baseline update --remove-resolved` keeps it. The
   same set is exhaustive in the Markdown `Not evaluated by the current analysis`
@@ -18878,7 +18934,24 @@ top-level `source_subject`:
   `{ "scope": "rust_workspace", "cache_schema_version": "1.122",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
-  files after the existing generated-file exclusions. This is the existing
+  files after the existing generated-file exclusions. Repo-exposure producers
+  also carry `corpus.analyzed_production_files`, the sorted, normalized
+  repo-relative production-role inputs captured independently of surviving
+  seams and recomputed before cache lookup. Evidence-only sources, generated
+  exclusions and no-follow symlink aliases are absent. Missing or malformed
+  membership cannot establish baseline coverage; an empty list covers no paths.
+  They also carry a top-level `analysis_inputs` object (deliberately outside
+  `source_subject`, whose corpus identity stays checkout-path independent for
+  byte-identical workspaces; the ledger copies it into
+  `analysis_coverage.corpus.analysis_inputs`), eight required strings from the
+  same cache key: `cfg_features_hash`, `config_hash` (classified config
+  including raw `ripr.toml` bytes), `test_intent_hash`, `suppressions_hash`,
+  `workspace_manifests_hash` (Cargo manifests and configuration, bound to the
+  checkout path), `lockfile_hash`, `toolchain_hash` and `analyzer_version`.
+  A gate recomputes them to admit baseline coverage. The seven hash fields use
+  64-bit FNV change detection; `analyzer_version` is the build identity string.
+  Neither is producer authentication.
+  This is the existing
   cache content authority, not another digest or a HEAD identity. Cold and
   warm inventories carry the same authority. Derived writers copy it only
   within the same canonical physical root; they do not rehash the current
