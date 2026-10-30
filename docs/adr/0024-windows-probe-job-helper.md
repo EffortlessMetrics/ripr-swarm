@@ -55,7 +55,8 @@ Adopt option 3 from the alternatives above, narrowly.
   inheritance and re-declares the other workspace lints in its own `[lints.rust]` and
   `[lints.clippy]` tables (the hygiene lints span both),
   including the unsafe-hygiene lints (`undocumented_unsafe_blocks`,
-  `multiple_unsafe_ops_per_block`, `unsafe_op_in_unsafe_fn`) that the root
+  `multiple_unsafe_ops_per_block`, `repr_packed_without_abi`,
+  `unsafe_op_in_unsafe_fn`) that the root
   manifest keeps for a future unsafe island. Accepting the exception implies
   keeping those duplicate tables in step with the workspace.
 - Shipped only in the win32 VSIX. The PowerShell wrapper remains as the
