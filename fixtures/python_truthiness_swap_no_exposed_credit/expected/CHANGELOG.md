@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_truthiness_swap_no_exposed_credit (3)
+
+Reason:
+RIPR-SPEC-0122: verify command now renders with its working directory, formatting only, classification unchanged
+
+Command:
+`cargo xtask goldens bless python_truthiness_swap_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

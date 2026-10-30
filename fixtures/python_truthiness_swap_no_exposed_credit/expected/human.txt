@@ -28,7 +28,7 @@ Start here:
   Suggested test file: tests/test_lib.py
   Suggested test: test_pick
   Test node: tests/test_lib.py::test_pick
-  Verify command: python -m pytest tests/test_lib.py::test_pick (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_truthiness_swap_no_exposed_credit/input && python -m pytest tests/test_lib.py::test_pick) (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `x == 0`
   Evidence: reach yes · infection weak · propagation weak · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
