@@ -35,6 +35,7 @@ mod bounded_read;
 mod fact_serde;
 mod fact_store;
 pub(crate) use fact_store::PythonFileFactStore;
+mod teardown;
 mod workspace_reach;
 use crate::analysis::workspace::{
     changed_source_files_absent_from_worktree, limitations_for_absent_changed_files,
@@ -198,6 +199,7 @@ use static_limits::{
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
 mod cli_runner;
+mod cli_subcommand;
 mod transitive_reach;
 #[cfg(test)]
 use static_limits::{
@@ -346,6 +348,10 @@ struct PythonOwner {
     foreign_writes: module_value::ForeignWrites,
     /// Owner admitted through a decided interpreter-version condition.
     version_conditional: bool,
+    /// The click group this top-level function is registered on as a
+    /// subcommand, and the name a test passes to the group to reach it
+    /// (`cli_subcommand.rs`, #9226). `None` unless the file proves it.
+    cli_subcommand: Option<cli_subcommand::CliSubcommand>,
 }
 
 /// One declared parameter of a Python function owner.
@@ -1072,6 +1078,9 @@ impl PythonAdapter {
         walk_limits: PythonDiffWalkLimits,
         handwritten: &[String],
     ) -> Result<LanguageDiffResult, String> {
+        // A previous run's facts are freed before this run builds its own
+        // (sequential callers; see `teardown` for concurrent ones).
+        teardown::await_previous();
         // Changed files are the subject of the diff, so the cap only ever
         // refuses context around them (#10461). The walk streams into a
         // bounded selection so discovery memory stays at the cap rather
@@ -1465,20 +1474,50 @@ impl PythonAdapter {
             .keys()
             .flat_map(|file| file.ancestors().skip(1))
             .collect();
-        for changed in &python_changed_files {
-            let mut foreign = foreign_index.excluding(&changed.path);
+        let foreign_of = |file: &Path| {
+            let mut foreign = foreign_index.excluding(file);
             if shadowed_import
-                || module_value::extension_beside(&options.root, &changed.path)
-                || module_value::compiled_package_shadow(
-                    &options.root,
-                    &import_roots,
-                    &changed.path,
-                )
+                || module_value::extension_beside(&options.root, file)
+                || module_value::compiled_package_shadow(&options.root, &import_roots, file)
                 || extension_names
                     .as_ref()
-                    .is_none_or(|names| module_value::shadowed_by_extension(names, &changed.path))
+                    .is_none_or(|names| module_value::shadowed_by_extension(names, file))
             {
                 foreign.mark_compiled_shadow();
+            }
+            foreign
+        };
+        for changed in &python_changed_files {
+            let mut foreign = foreign_of(&changed.path);
+            // A sole top-level line replacement may be a module constant a
+            // sibling module reads through a relative import of one of its
+            // readers (#9619); each such module gets its own write view.
+            if let ([added], [_]) = (
+                changed.added_lines.as_slice(),
+                changed.removed_lines.as_slice(),
+            ) && added
+                .text
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_alphabetic() || first == '_')
+            {
+                foreign.set_forwarders(
+                    module_value::forwarder_candidates(
+                        &changed.path,
+                        workspace_read
+                            .sources
+                            .iter()
+                            .map(|(file, source)| (file.as_path(), source.as_str())),
+                        |file| workspace_read.sources.contains_key(file),
+                    )
+                    .into_iter()
+                    .map(|(file, source)| module_value::ForwarderModule {
+                        file: file.to_path_buf(),
+                        source: source.to_string(),
+                        foreign: foreign_of(file),
+                    })
+                    .collect(),
+                );
             }
             conditional_defs::retain_workspace_certain(&mut all_owners, &changed.path, &foreign);
             for owner in all_owners
@@ -1704,6 +1743,25 @@ impl PythonAdapter {
             );
             findings.extend(deleted);
         }
+        // Freeing the run's facts takes ~0.3 s on one thread for a large
+        // workspace (#10914: pandas, ~23k tests). Nothing in the result
+        // borrows them, so they are freed off the result path (`teardown`).
+        drop(related_memo);
+        drop(foreign_index);
+        drop(import_roots);
+        let facts = (
+            all_tests,
+            all_owners,
+            workspace_read,
+            foreign_prior_by_file,
+            fixture_defs_by_file,
+            fixture_side_by_file,
+            helper_modules_by_file,
+            docstring_ranges_by_file,
+            import_ranges_by_file,
+            star_facts_by_file,
+        );
+        teardown::free_in_background(facts);
         Ok(LanguageDiffResult {
             value_origins,
             findings,
@@ -1787,6 +1845,8 @@ mod deleted_lines_tests;
 mod fixtures_tests;
 
 #[cfg(test)]
+mod import_writer_tests;
+#[cfg(test)]
 mod inert_tool_fixture_tests;
 #[cfg(test)]
 mod literal_fixture_tests;
@@ -1816,12 +1876,18 @@ mod literal_patch_tests;
 #[cfg(test)]
 mod cli_runner_tests;
 #[cfg(test)]
+mod cli_subcommand_tests;
+#[cfg(test)]
 mod helper_owner_call_tests;
+#[cfg(test)]
+mod imported_literal_tests;
 #[cfg(test)]
 mod test_body_writer_tests;
 
 #[cfg(test)]
 mod call_chain_tests;
+#[cfg(test)]
+mod forwarder_tests;
 #[cfg(test)]
 mod imported_call_operator_tests;
 #[cfg(test)]

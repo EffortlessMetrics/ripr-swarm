@@ -37,8 +37,10 @@ The TypeScript preview adapter (RIPR-SPEC-0085 §PR5):
 - does NOT emit `typescript_oracle_expected` (dynamic arg — cannot resolve),
 - emits `typescript_oracle_confidence: medium` (strong oracle with unresolved literal),
 - emits `typescript_dynamic_assertion_unresolved` named limitation because
-  the `toBe(...)` argument is a dynamic variable — the adapter cannot
-  statically establish the expected discriminator value.
+  the `toBe(...)` argument is a dynamic variable in the seam's oracle family
+  (a value matcher on this predicate seam) — the adapter cannot statically
+  establish the expected discriminator value. A dynamic assertion of another
+  oracle family would not raise it.
 
 ## Must Not
 

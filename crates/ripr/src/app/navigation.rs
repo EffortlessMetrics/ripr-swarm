@@ -104,8 +104,21 @@ pub(crate) enum RepairRouteRefusal {
     GapRouteUnavailable {
         reason: &'static str,
     },
+    /// The run's analysis is incomplete (#11136): the after phase refuses a
+    /// before artifact like that, so no gap-bound start is printed.
+    /// `limitation` names the cause and the recovery.
+    AnalysisIncomplete {
+        limitation: String,
+    },
     /// The finding has no canonical gap to bind a seam from.
     NoCanonicalGap,
+    /// A TypeScript/JavaScript preview finding whose repair packet is not
+    /// complete: the delegated loop starts from a complete packet's gap id,
+    /// not from a Rust seam, so the absent seam is not the reason.
+    PreviewPacketNotComplete {
+        language: String,
+        reason: String,
+    },
     /// The finding's file belongs to a language adapter whose findings the
     /// seam inventory behind `ripr repair` cannot bind (#9102). The
     /// inventory is built from the Rust index only, so no seam exists for
@@ -169,11 +182,19 @@ impl RepairRouteRefusal {
             Self::GapRouteUnavailable { reason } => format!(
                 "no repair start offered: {reason}; inspect the current workspace and rerun `ripr check`"
             ),
+            Self::AnalysisIncomplete { limitation } => format!(
+                "no repair start offered: the analysis is incomplete ({limitation}), so a repair started now could not be verified afterward; resolve that, rerun `ripr check`, or add the missing test by hand from the packet above"
+            ),
             Self::NoCanonicalGap => {
                 "no repair start offered: this finding has no gap ID, so there is \
                  no seam to start a repair from; follow the Next step above"
                     .to_string()
             }
+            Self::PreviewPacketNotComplete { language, reason } => format!(
+                "no repair start offered: ripr has no complete repair packet for this {language} \
+                 finding ({reason}); add or strengthen the test by hand as the Next step above \
+                 says, then rerun `ripr check`"
+            ),
             Self::NoSeamInventory { language, file } => format!(
                 "no repair start offered: {}",
                 super::task_first::no_seam_inventory_reason(language, file)
@@ -904,6 +925,19 @@ mod tests {
                 && unverified.contains(gate)
                 && !unverified.contains("still missing"),
             "non-RouteNotReady kinds keep their reason and gate pointer: {unverified}"
+        );
+        // A TypeScript/JavaScript preview finding names its packet state, not
+        // a Rust seam it can never have.
+        let preview = RepairRouteRefusal::PreviewPacketNotComplete {
+            language: "TypeScript".to_string(),
+            reason: "its repair packet is not complete".to_string(),
+        }
+        .advisory(gate);
+        assert!(
+            preview.starts_with("no repair start offered: ripr has no complete repair packet")
+                && preview.contains("TypeScript finding")
+                && !preview.contains("no seam"),
+            "preview refusal must name the packet, not a seam: {preview}"
         );
         // #9244: a finding with no canonical gap would get the same refusal
         // from the full gate, so the advisory names its own recovery.

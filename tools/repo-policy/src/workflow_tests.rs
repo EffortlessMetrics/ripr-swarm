@@ -1205,12 +1205,12 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "[ \"$ref_sha\" = \"$head\" ] || [ \"$ref_sha\" = \"$GROUP_BASE_SHA\" ]",
         ),
         (
-            "check the live head is not newer",
-            "[ \"$ref_sha\" != \"$head\" ]",
+            "PR ref to still name the live head",
+            "[ \"$fetched\" = \"$head\" ]",
         ),
         (
-            "not older than the queued commit",
-            "[[ \"$pushed_at\" < \"$queued_at\" ]] || { echo \"::error::PR #${pr} head",
+            "tree to the live head merged onto the group base",
+            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
         ),
     ] {
         let mutated = workflow.replace(snippet, "removed");

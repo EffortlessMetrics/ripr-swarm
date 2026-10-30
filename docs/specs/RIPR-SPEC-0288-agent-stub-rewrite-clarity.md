@@ -97,7 +97,7 @@ comment lines — the stub is flagged `already_present`:
 On the stub path, the grip-class disclosure names the real reason:
 
 - `strongly_gripped` warns `seam <id> is strongly_gripped: existing tests
-  already discriminate it, so a stub would add nothing`. The word
+  already discriminate it, so this stub is an optional scaffold for the location you named, not evidence of a missing discriminator`. The word
   "configured off" must not appear: the default `Off` severity for the
   class is policy, and the classification counterpart (`exposed`) is the
   state, not a suppression.
@@ -139,7 +139,7 @@ On the stub path, the grip-class disclosure names the real reason:
 Second `--write` for the same seam, human output (excerpt):
 
 ```text
-seam <id> is strongly_gripped: existing tests already discriminate it, so a stub would add nothing
+seam <id> is strongly_gripped: existing tests already discriminate it, so this stub is an optional scaffold for the location you named, not evidence of a missing discriminator
 Stub already written at src/lib.rs:14 (existing inline module).
 Run it: cargo test --manifest-path Cargo.toml clamp_to_boundary_discriminator
 ```
@@ -154,7 +154,7 @@ Same run under `--json` (excerpt):
   "written": false,
   "already_present": true,
   "warnings": [
-    "seam <id> is strongly_gripped: existing tests already discriminate it, so a stub would add nothing"
+    "seam <id> is strongly_gripped: existing tests already discriminate it, so this stub is an optional scaffold for the location you named, not evidence of a missing discriminator"
   ]
 }
 ```

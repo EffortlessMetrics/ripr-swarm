@@ -8595,6 +8595,107 @@ fn ava_truthy_is_smoke_only() {
     assert_eq!(assertions[0].oracle_strength, OracleStrength::Smoke);
 }
 
+/// An all-literal array expected value is a concrete discriminator, not a
+/// dynamic argument (`t.deepEqual(x, [10, 20, 30])`).
+#[test]
+fn ava_deep_equal_all_literal_array_is_not_dynamic() {
+    let source = "t.deepEqual(score(10, 3), [10, -20, [30, 'a']]);";
+    let allocator = Allocator::default();
+    let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+    let assertions = collect_expect_assertions_in_statements(
+        &parse_result.program.body,
+        &SourceText::new(source),
+        Some("t"),
+    );
+    assert_eq!(assertions.len(), 1);
+    assert!(!assertions[0].has_dynamic_matcher_arg, "{assertions:?}");
+    assert!(assertions[0].expected_value_or_variant.is_some());
+}
+
+/// Discriminating negative: arrays holding an identifier, call, spread, object
+/// or hole stay dynamic.
+#[test]
+fn ava_deep_equal_non_literal_arrays_stay_dynamic() {
+    for expected in ["[10, x]", "[10, f()]", "[...xs]", "[{a: 1}]", "[1, , 2]"] {
+        let source = format!("t.deepEqual(score(10, 3), {expected});");
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, &source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(&source),
+            Some("t"),
+        );
+        assert_eq!(assertions.len(), 1, "{expected}");
+        assert!(
+            assertions[0].has_dynamic_matcher_arg,
+            "`{expected}` must stay dynamic: {assertions:?}"
+        );
+    }
+}
+
+/// AVA `t.is` / `strictEqual` compare by reference: an array literal is never
+/// the value a call returns, so it stays a dynamic argument there, while
+/// `deepEqual` accepts it.
+#[test]
+fn ava_reference_equality_array_literal_stays_dynamic() {
+    for (method, dynamic) in [
+        ("is", true),
+        ("strictEqual", true),
+        ("deepEqual", false),
+        ("equal", true),
+    ] {
+        let source = format!("t.{method}(score(10, 3), [1, 2]);");
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, &source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(&source),
+            Some("t"),
+        );
+        assert_eq!(assertions.len(), 1, "{method}");
+        assert_eq!(assertions[0].has_dynamic_matcher_arg, dynamic, "{method}");
+    }
+}
+
+/// Jest: `toEqual` / `toStrictEqual` accept an all-literal array (including
+/// `[]`); `toBe` / `toMatchObject` and arrays holding a non-literal such as
+/// `[-x]` stay dynamic.
+#[test]
+fn jest_array_expected_values_are_literal_only_for_deep_equality() {
+    for (call, dynamic) in [
+        ("expect(f(1)).toEqual([1, 2])", false),
+        ("expect(f(1)).toStrictEqual([1, 'a', [2]])", false),
+        ("expect(f(1)).toEqual([])", false),
+        ("expect(f(1)).toBe([1])", true),
+        ("expect(f(1)).toMatchObject([1])", true),
+        ("expect(f(1)).toEqual([-x])", true),
+        ("expect(f(1)).toEqual([1, y])", true),
+    ] {
+        let source = format!("{call};");
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, &source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(&source),
+            None,
+        );
+        assert_eq!(assertions.len(), 1, "{call}");
+        assert_eq!(assertions[0].has_dynamic_matcher_arg, dynamic, "{call}");
+    }
+}
+
+/// A zero or empty array matches a field's initial state just like a scalar
+/// zero, so it never pins a field update.
+#[test]
+fn zero_like_expected_values_include_empty_and_zero_arrays() {
+    for zero in ["0", "''", "null", "[]", "[ ]", "[0, 0]", "[[], '']"] {
+        assert!(ts_expected_is_zero_like(zero), "{zero}");
+    }
+    for live in ["1", "[1]", "[0, 1]", "['a']", "[10]", "[[0], 2]"] {
+        assert!(!ts_expected_is_zero_like(live), "{live}");
+    }
+}
+
 /// Tape / node:test positive equality aliases use the same receiver-gated path
 /// as AVA: `t.equal(...)`, `t.strictEqual(...)`, and positive deep-equality
 /// forms are exact-value oracles when the receiver matches the test callback
@@ -8792,6 +8893,152 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
     assert_evidence_contains(&finding, "typescript_oracle_confidence: medium");
     // repair_packet_ready stays false
     assert_evidence_contains(&finding, "repair_route:");
+    Ok(())
+}
+
+/// Discriminating negative for the family-scoped limit (RIPR-SPEC-0104): a dynamic
+/// error-family expectation (AVA `throwsAsync` with a dynamic option) cannot hide
+/// a discriminator for a changed predicate, so it must NOT raise
+/// `typescript_dynamic_assertion_unresolved`. The sibling test above keeps a
+/// dynamic value-family assertion raising the limit.
+#[test]
+fn named_limitation_dynamic_assertion_not_emitted_for_other_family_assertion() -> Result<(), String>
+{
+    let owner = test_owner("clamp", "src/clamp.ts");
+    // Manually construct a test with a dynamic matcher arg
+    let test = TypeScriptTest {
+        name: "clamps below minimum".to_string(),
+        local_name: "clamps below minimum".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/clamp.test.ts"),
+        line: 1,
+        reach_body_text: None,
+        body_text: "const expected = computeExpected(0);\nclamp(-5, 0, 10);\nexpect(clamp(-5, 0, 10)).toBe(expected);".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "throwsAsync".to_string(),
+            argument_count: 1,
+            line: 3,
+            oracle_kind: OracleKind::BroadError,
+            oracle_strength: OracleStrength::Weak,
+            mock_payload: None,
+            error_payload: None,
+            observed_expression: Some("clamp(-5, 0, 10)".to_string()),
+            expected_value_or_variant: None,
+            has_dynamic_matcher_arg: true,
+            dynamic_expected_text: None,
+            oracle_confidence: OracleConfidence::Medium,
+            rendered_call: None,
+            loose_number_expected: false,
+            expected_object_const: None,
+            compares_reference_identity: false,
+        }],
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
+        assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
+        factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/clamp".to_string(),
+            imported: Some("clamp".to_string()),
+            local: "clamp".to_string(),
+            namespace: false,
+        }].into(),
+    };
+    let finding = classify_change(
+        Path::new("src/clamp.ts"),
+        2,
+        "    if (value < min) {",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert_evidence_lacks(
+        &finding,
+        "typescript_limitation: typescript_dynamic_assertion_unresolved",
+    );
+    Ok(())
+}
+
+/// Retained-case control for the family-scoped limit: a dynamic error-family
+/// assertion on an error-path seam still raises
+/// `typescript_dynamic_assertion_unresolved`.
+#[test]
+fn named_limitation_dynamic_assertion_emitted_for_error_family_assertion_on_error_seam()
+-> Result<(), String> {
+    let owner = test_owner("clamp", "src/clamp.ts");
+    // Manually construct a test with a dynamic matcher arg
+    let test = TypeScriptTest {
+        name: "clamps below minimum".to_string(),
+        local_name: "clamps below minimum".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/clamp.test.ts"),
+        line: 1,
+        reach_body_text: None,
+        body_text: "const expected = computeExpected(0);\nclamp(-5, 0, 10);\nexpect(clamp(-5, 0, 10)).toBe(expected);".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toThrow".to_string(),
+            argument_count: 1,
+            line: 3,
+            oracle_kind: OracleKind::ExactErrorVariant,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            observed_expression: Some("clamp(-5, 0, 10)".to_string()),
+            expected_value_or_variant: None,
+            has_dynamic_matcher_arg: true,
+            dynamic_expected_text: None,
+            oracle_confidence: OracleConfidence::Medium,
+            rendered_call: None,
+            loose_number_expected: false,
+            expected_object_const: None,
+            compares_reference_identity: false,
+        }],
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
+        assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
+        factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/clamp".to_string(),
+            imported: Some("clamp".to_string()),
+            local: "clamp".to_string(),
+            namespace: false,
+        }].into(),
+    };
+    let finding = classify_change(
+        Path::new("src/clamp.ts"),
+        2,
+        "    throw new RangeError(\"below minimum\");",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_dynamic_assertion_unresolved",
+    );
     Ok(())
 }
 
@@ -16414,6 +16661,323 @@ fn expected_side_is_live_unique_line_still_folds_liveness() {
     );
 }
 
+/// Point a `direct_test_with_assertion` test at `src/clamp.ts` so it relates
+/// to the `clamp` owner by a direct imported call.
+fn retarget_to_clamp(test: &mut TypeScriptTest) {
+    test.file = PathBuf::from("tests/clamp.test.ts");
+    test.imports_in_file = vec![TypeScriptImport {
+        source: "../src/clamp".to_string(),
+        imported: Some("clamp".to_string()),
+        local: "clamp".to_string(),
+        namespace: false,
+    }]
+    .into();
+}
+
+/// A wrong-family dynamic assertion no longer raises the limitation, but it
+/// must not change the class: with a pinned literal assertion beside it, the
+/// finding keeps the class it had. (The retained-case control above shows a
+/// right-family dynamic assertion still raises the limit.)
+#[test]
+fn wrong_family_dynamic_assertion_with_pinned_literal_keeps_class() -> Result<(), String> {
+    let owner = test_owner("clamp", "src/clamp.ts");
+    let mut test = direct_test_with_assertion(
+        "clamps",
+        "clamp",
+        "clamp(-5, 0, 10);\nexpect(clamp(-5, 0, 10)).toBe(0);",
+        "toBe",
+        1,
+        OracleKind::ExactValue,
+        OracleStrength::Strong,
+    );
+    retarget_to_clamp(&mut test);
+    test.assertions[0].line = 2;
+    test.assertions[0].observed_expression = Some("clamp(-5, 0, 10)".to_string());
+    test.assertions[0].expected_value_or_variant = Some("0".to_string());
+    test.assertions[0].oracle_confidence = OracleConfidence::High;
+    let mut dynamic_wrong_family = test.assertions[0].clone();
+    dynamic_wrong_family.matcher = "throwsAsync".to_string();
+    dynamic_wrong_family.line = 3;
+    dynamic_wrong_family.oracle_kind = OracleKind::BroadError;
+    dynamic_wrong_family.oracle_strength = OracleStrength::Weak;
+    dynamic_wrong_family.expected_value_or_variant = None;
+    dynamic_wrong_family.has_dynamic_matcher_arg = true;
+    test.assertions.push(dynamic_wrong_family);
+    let finding = classify_change(
+        Path::new("src/clamp.ts"),
+        2,
+        "    if (value < min) {",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert_evidence_lacks(
+        &finding,
+        "typescript_limitation: typescript_dynamic_assertion_unresolved",
+    );
+    // The class is the one the finding had with the limitation: the narrowing
+    // changes which limitation is listed, never the exposure class, and the
+    // actionability gate stays the evidence-based projection (unchanged).
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// The family condition scopes the dynamic-assertion limitation only: a
+/// table-driven test whose only dynamic assertion is wrong-family keeps
+/// `typescript_table_case_unresolved` exactly as before.
+#[test]
+fn table_case_limitation_is_not_narrowed_by_the_family_condition() -> Result<(), String> {
+    let owner = test_owner("clamp", "src/clamp.ts");
+    let mut test = direct_test_with_assertion(
+        "clamps rows",
+        "clamp",
+        "test.each([[1, 1]])('row', (v, e) => {\n  expect(clamp(v, 0, 10)).toThrow(e);\n});",
+        "toThrow",
+        1,
+        OracleKind::BroadError,
+        OracleStrength::Weak,
+    );
+    retarget_to_clamp(&mut test);
+    test.assertions[0].line = 2;
+    test.assertions[0].observed_expression = Some("clamp(v, 0, 10)".to_string());
+    test.assertions[0].has_dynamic_matcher_arg = true;
+    let finding = classify_change(
+        Path::new("src/clamp.ts"),
+        2,
+        "    if (value < min) {",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_table_case_unresolved",
+    );
+    assert_evidence_lacks(
+        &finding,
+        "typescript_limitation: typescript_dynamic_assertion_unresolved",
+    );
+    Ok(())
+}
+
+/// End to end through the parser: an all-literal `toEqual([...])` array
+/// removes the dynamic limit, and an array holding an identifier keeps it.
+#[test]
+fn literal_array_to_equal_removes_the_dynamic_limit_and_identifier_array_keeps_it()
+-> Result<(), String> {
+    for (source, limited) in [
+        ("expect(clamp(-5, 0, 10)).toEqual([0, 1]);", false),
+        ("expect(clamp(-5, 0, 10)).toEqual([0, y]);", true),
+    ] {
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(source),
+            None,
+        );
+        let mut test = direct_test_with_assertion(
+            "clamps",
+            "clamp",
+            format!("clamp(-5, 0, 10);\n{source}"),
+            "toEqual",
+            1,
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        retarget_to_clamp(&mut test);
+        test.assertions = assertions
+            .into_iter()
+            .map(|mut assertion| {
+                assertion.line = 2;
+                assertion
+            })
+            .collect();
+        let finding = classify_change(
+            Path::new("src/clamp.ts"),
+            2,
+            "    if (value < min) {",
+            &[test_owner("clamp", "src/clamp.ts")],
+            &[test],
+            None,
+            &ReExportIndex::empty(),
+            None,
+        )
+        .ok_or_else(|| "expected a finding".to_string())?;
+        let has = finding
+            .evidence
+            .iter()
+            .any(|line| line == "typescript_limitation: typescript_dynamic_assertion_unresolved");
+        assert_eq!(has, limited, "{source}: {:?}", finding.evidence);
+    }
+    Ok(())
+}
+
+/// A pinned empty or zero-like array does not witness a field update (it can
+/// match the field's initial state); a nonzero scalar pin still does.
+#[test]
+fn field_update_pinned_by_zero_like_array_stays_unwitnessed() {
+    let owner = TypeScriptOwner {
+        name: "record".to_string(),
+        file: PathBuf::from("src/stats.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Method,
+        class_name: Some("Stats".to_string()),
+        arity: Some(1),
+        params: vec!["n".to_string()],
+        source_text: Some(
+            concat!("record(n: number): void {\n", "    this.hits = n;\n", "}",).to_string(),
+        ),
+        ..test_owner("record", "src/stats.ts")
+    };
+    let change = FieldUpdateChange {
+        field: "hits".to_string(),
+        class_name: "Stats".to_string(),
+    };
+    let witnessed = |expected: &str, matcher: &str| {
+        let mut test = direct_test_with_assertion(
+            "records",
+            "record",
+            format!(
+                "const stats = new Stats();\nstats.record(3);\nexpect(stats.hits).{matcher}({expected});"
+            ),
+            matcher,
+            1,
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        test.assertions[0].line = 3;
+        test.assertions[0].observed_expression = Some("stats.hits".to_string());
+        test.assertions[0].expected_value_or_variant = Some(expected.to_string());
+        let candidate = TypeScriptRelatedCandidate::with_owner_path(
+            &test,
+            TypeScriptRelationKind::DirectOwnerCall,
+            TypeScriptOwnerPathDisposition::TrustedOwnerPath,
+        );
+        ts_field_update_witnessed(&change, &owner, &[candidate])
+    };
+    assert!(
+        witnessed("3", "toBe"),
+        "control: a nonzero scalar pin witnesses"
+    );
+    for zero in ["[]", "[0]", "[0, 0]", "0"] {
+        assert!(!witnessed(zero, "toEqual"), "{zero} must stay unwitnessed");
+    }
+}
+
+/// An array expectation equals no scalar arm, so it cannot witness a changed
+/// ternary arm; the matching scalar pin still does.
+#[test]
+fn array_expectation_does_not_witness_a_changed_ternary_arm() {
+    let owner = TypeScriptOwner {
+        name: "pick".to_string(),
+        file: PathBuf::from("src/pick.ts"),
+        start_line: 1,
+        end_line: 3,
+        owner_kind: OwnerKind::Function,
+        arity: Some(1),
+        params: vec!["p".to_string()],
+        source_text: Some(
+            concat!(
+                "export function pick(p: number): number {\n",
+                "    return p > 5 ? 3 : 2;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..test_owner("pick", "src/pick.ts")
+    };
+    let change = ts_ternary_arm_change(
+        &owner,
+        "    return p > 5 ? 3 : 2;",
+        Some("    return p > 5 ? 1 : 2;"),
+    );
+    assert!(
+        change.is_some(),
+        "the one-arm ternary edit must read as a TernaryArmChange"
+    );
+    let Some(change) = change else {
+        return;
+    };
+    let witnessed = |expected: &str, matcher: &str| {
+        let mut test = direct_test_with_assertion(
+            "picks",
+            "pick",
+            format!("expect(pick(7)).{matcher}({expected});"),
+            matcher,
+            1,
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        test.assertions[0].line = 1;
+        test.assertions[0].observed_expression = Some("pick(7)".to_string());
+        test.assertions[0].expected_value_or_variant = Some(expected.to_string());
+        let candidate = TypeScriptRelatedCandidate::with_owner_path(
+            &test,
+            TypeScriptRelationKind::DirectOwnerCall,
+            TypeScriptOwnerPathDisposition::TrustedOwnerPath,
+        );
+        ts_arm_change_witnessed(
+            &change,
+            &owner,
+            &[candidate],
+            &ReExportIndex::empty(),
+            None,
+            None,
+        )
+    };
+    assert!(
+        witnessed("3", "toBe"),
+        "control: the new arm value witnesses"
+    );
+    assert!(!witnessed("[3]", "toEqual"));
+    assert!(!witnessed("[]", "toEqual"));
+}
+
+/// A pinned literal array is a dead witness against scalar numeric branches.
+#[test]
+fn expected_side_is_live_treats_an_array_expectation_as_dead_for_scalar_branches() {
+    let owner = boundary_witness_owner();
+    for expected in ["[90]", "[ 100 ]", "[]"] {
+        assert_eq!(
+            expected_side_is_live(
+                &owner,
+                "  if (total >= 100) {",
+                "total",
+                "100",
+                &["100".to_string()],
+                expected,
+            ),
+            Some(false),
+            "{expected}"
+        );
+    }
+    // Control: a non-numeric, non-array expectation stays undetermined.
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "  if (total >= 100) {",
+            "total",
+            "100",
+            &["100".to_string()],
+            "expectedTotal",
+        ),
+        None
+    );
+}
+
 /// A test that still pins the pre-change value at the boundary input fails
 /// against the changed code, so its expectation tells the two behaviors
 /// apart: live. An expectation equal under both behaviors, or neither, is
@@ -17204,6 +17768,142 @@ fn analyze_diff_emits_test_extraction_partial_for_template_literal_title() -> Re
         }),
         "expected a typescript_test_extraction_partial limitation, got {:?}",
         result.limitations
+    );
+    Ok(())
+}
+
+/// #11132: a panic on the parse worker (an oxc or AST-consumer failure) is a
+/// join error, so the caller sees the typed `parse_worker_failed` refusal
+/// instead of the thread's death, and the process keeps running.
+#[test]
+fn parse_worker_panic_is_a_typed_refusal_not_a_process_failure() -> Result<(), String> {
+    let outcome = super::parse::parse_on_worker(
+        Path::new("src/boom.ts"),
+        "export const a = 1;\n",
+        |_file, _source, _allocator| -> usize {
+            std::panic::resume_unwind(Box::new("injected consumer panic"))
+        },
+    );
+    let Err(reason) = outcome else {
+        return Err("a panicking worker must not return Ok".to_string());
+    };
+    assert!(
+        reason.starts_with("static limit parse_worker_failed:"),
+        "typed worker-failure reason, got {reason:?}"
+    );
+    assert!(super::parse::is_worker_failure(&reason));
+    // The next parse on a fresh worker is unaffected.
+    let next = super::parse::parse_on_worker(
+        Path::new("src/ok.ts"),
+        "export const a = 1;\n",
+        |_file, source, _allocator| source.len(),
+    );
+    assert_eq!(next, Ok(20), "the failure must not poison later parses");
+    Ok(())
+}
+
+/// #11132: a worker that dies on a CHANGED file is disclosed as a typed
+/// `unsupported_syntax` finding plus a language-scope limitation naming the
+/// file, never as a clean result and never as an actionable repair signal.
+#[test]
+fn analyze_diff_contains_a_parse_worker_panic_on_a_changed_file() -> Result<(), String> {
+    let root = ts_unique_tempdir("workerpanic-changed")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    let _armed = super::parse::injected_worker_panic::arm(Path::new("src/calc.ts"), 0);
+
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root),
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/calc.ts", &[(2, "  return a + b;")])],
+    )?;
+    assert!(
+        result.limitations.iter().any(|limitation| {
+            limitation.path.as_deref() == Some("src/calc.ts")
+                && limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("parse_worker_failed"))
+        }),
+        "expected a parse_worker_failed limitation naming the file, got {:?}",
+        result.limitations
+    );
+    assert!(
+        !result.findings.is_empty(),
+        "the contained file still reports its limit as a finding"
+    );
+    for finding in &result.findings {
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::UnsupportedSyntax),
+            "{finding:?}"
+        );
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line == "actionability_category: unsupported_syntax"),
+            "a contained failure is never actionable: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
+
+/// #11132: a worker failure while extracting an UNCHANGED test file used to
+/// serve an empty extraction with no disclosure, so the file's tests vanished
+/// from the index and an owner they cover read as a confident false
+/// `no_static_path`. It is now the typed partial-extraction limitation.
+#[test]
+fn analyze_diff_discloses_a_test_extraction_worker_failure() -> Result<(), String> {
+    let root = ts_unique_tempdir("workerpanic-extract")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/calc.test.ts"),
+        "import { add } from '../src/calc';\nit('adds', () => {\n  expect(add(1, 2)).toBe(3);\n});\n",
+    )?;
+    let run = |root: &Path| {
+        TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root.to_path_buf()),
+            &OraclePolicy::default(),
+            &[changed_with_lines("src/calc.ts", &[(2, "  return a + b;")])],
+        )
+    };
+    let is_extraction_failure = |limitation: &AnalysisLimitation| {
+        limitation.bounded_detail.as_deref().is_some_and(|detail| {
+            detail.contains("typescript_test_extraction_partial")
+                && detail.contains("test extraction unavailable (parse worker failed)")
+        })
+    };
+
+    // Control: the same workspace without a worker failure discloses nothing.
+    let control = run(&root)?;
+    assert!(
+        !control.limitations.iter().any(is_extraction_failure),
+        "no failure, no disclosure: {:?}",
+        control.limitations
+    );
+
+    // The control run cached this file's facts and extraction by content, so
+    // the armed run changes the bytes to reach the worker again. The first
+    // parse of the test file (its per-file facts) succeeds; the dedicated
+    // test extraction after it loses its worker.
+    ts_write_file(
+        &root.join("tests/calc.test.ts"),
+        "// uncached bytes\nimport { add } from '../src/calc';\nit('adds', () => {\n  expect(add(1, 2)).toBe(3);\n});\n",
+    )?;
+    let _armed = super::parse::injected_worker_panic::arm(Path::new("tests/calc.test.ts"), 1);
+    let failed = run(&root)?;
+    assert!(
+        failed.limitations.iter().any(is_extraction_failure),
+        "expected the extraction worker failure to be disclosed, got {:?}",
+        failed.limitations
     );
     Ok(())
 }
@@ -19128,6 +19828,7 @@ mod gap_reach_config_tests;
 mod guard_entry_tests;
 mod infection_tests;
 mod instance_class_tests;
+mod issue10925_shadow_scan_tests;
 mod issue7507_shadow_tests;
 mod literal_matcher_tests;
 mod lookup_table_tests;

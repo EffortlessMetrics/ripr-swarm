@@ -65,7 +65,7 @@ Python repair card (preview/advisory)
   suggested file: tests/test_kind.py
   suggested test: test_kind_of_known_values
   pytest node: tests/test_kind.py::test_kind_of_known_values
-  verify: python -m pytest tests/test_kind.py::test_kind_of_known_values (high)
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_unreached_match_arm/input && python -m pytest tests/test_kind.py::test_kind_of_known_values) (high)
   receipt: unavailable_until_python_gap_ledger
   receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
   stop conditions:
