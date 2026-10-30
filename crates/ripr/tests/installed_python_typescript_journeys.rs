@@ -1552,9 +1552,46 @@ fn check_bound_test_drift(committed: bool) -> Result<(), String> {
     if current()? == Some(true) {
         return Err("changed bound test bytes stayed current".to_string());
     }
+    for json in [false, true] {
+        let mut args = vec!["agent", "status", "--root", &attempt.root_arg];
+        if json {
+            args.push("--json");
+        }
+        let (ok, status) = ripr(&attempt.decoy, &args)?;
+        expect_exit(ok, true, "same-HEAD drift status")?;
+        need(
+            &status,
+            "bound inputs no longer match",
+            "same-HEAD drift warning",
+        )?;
+        if status.contains("the repository HEAD is now") {
+            return Err(format!(
+                "same-HEAD drift misreported a moved HEAD: {status}"
+            ));
+        }
+        if status.contains("stale against HEAD") {
+            return Err(format!("same-HEAD drift blamed HEAD in status: {status}"));
+        }
+    }
     std::fs::write(&file, original).map_err(|error| error.to_string())?;
     if current()? != Some(true) {
         return Err("exact restoration did not recover currentness".to_string());
+    }
+    fixture_git_ok(
+        &attempt.root,
+        &["commit", "--allow-empty", "-q", "-m", "move HEAD"],
+    )?;
+    if current()? != Some(false) {
+        return Err("moved HEAD was not stale".to_string());
+    }
+    for json in [false, true] {
+        let mut args = vec!["agent", "status", "--root", &attempt.root_arg];
+        if json {
+            args.push("--json");
+        }
+        let (ok, status) = ripr(&attempt.decoy, &args)?;
+        expect_exit(ok, true, "moved-HEAD status")?;
+        need(&status, "the repository HEAD is now", "moved-HEAD warning")?;
     }
     decoy_untouched(&attempt.decoy)
 }

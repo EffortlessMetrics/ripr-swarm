@@ -986,13 +986,14 @@ fn finished_attempt_warnings(
                 kind: "repair_receipt_stale".to_string(),
                 artifact: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
                 message: format!(
-                    "the receipt for repair attempt `{}` (seam `{}`) reports static grip improved (receipt advisory) at HEAD `{}`, the head its after phase recorded, but {}; its static evidence is stale against HEAD, so status does not report the loop complete. Re-read the current HEAD with `ripr check --root {}` before relying on it",
+                    "the receipt for repair attempt `{}` (seam `{}`) reports static grip improved (receipt advisory) at HEAD `{}`, the head its after phase recorded, but {}; status does not report the loop complete. Re-read the current inputs with `ripr check --root {}` before relying on it",
                     attempt.attempt_id,
                     attempt.seam_id,
                     attempt.evidence_head,
-                    match current_head {
-                        Some(head) => format!("the repository HEAD is now `{head}`"),
-                        None => "the current Git HEAD could not be read".to_string(),
+                    match (current_head, attempt.head_current) {
+                        (Some(head), _) if head != attempt.evidence_head => format!("the repository HEAD is now `{head}` and its static evidence is stale against HEAD"),
+                        (Some(_), Some(false)) => "bound inputs no longer match the recorded evidence".to_string(),
+                        _ => "currentness of the bound evidence could not be established".to_string(),
                     },
                     shell_arg(root_display)
                 ),
@@ -2276,11 +2277,10 @@ fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
                 reading.status.as_deref().unwrap_or("unknown"),
                 reading.movement.as_deref().unwrap_or("unknown")
             );
-            if attempt.head_current != Some(true) {
-                condition.push_str(&format!(
-                    ", and its evidence is stale against HEAD (recorded at `{}`)",
-                    attempt.evidence_head
-                ));
+            match attempt.head_current {
+                Some(false) => condition.push_str(", and its evidence is no longer current"),
+                None => condition.push_str(", and its evidence currentness is unknown"),
+                Some(true) => {}
             }
             if let Some(action) = &reading.recommended_action {
                 condition.push_str(&format!(
@@ -2326,8 +2326,8 @@ fn attempt_outcome(attempt: &AgentStatusRepairAttempt) -> String {
     if attempt.receipt != AgentStatusAttemptReceipt::NotApplicable {
         match attempt.head_current {
             Some(true) => {}
-            Some(false) => parts.push("evidence stale against HEAD".to_string()),
-            None => parts.push("HEAD unknown".to_string()),
+            Some(false) => parts.push("evidence no longer current".to_string()),
+            None => parts.push("evidence currentness unknown".to_string()),
         }
     }
     if attempt.last_after_refusal.is_some() {
@@ -2907,10 +2907,13 @@ pub(crate) fn build_agent_attempt_status(
     let mut limitations = manifest.limitations.clone();
     limitations.extend(resolved.limitations().iter().cloned());
     if view.head_current.is_none() {
-        limitations.push(
+        limitations.push(if current_head.is_none() {
             "the current Git HEAD could not be read; this attempt's currentness is unknown"
-                .to_string(),
-        );
+                .to_string()
+        } else {
+            "this attempt's currentness could not be established from its bound evidence"
+                .to_string()
+        });
     }
     Ok(AgentAttemptStatusReport {
         root: root_display,
