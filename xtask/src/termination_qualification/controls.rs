@@ -5,7 +5,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::corpus::{Case, Expect, Route};
+use super::corpus::Case;
+#[cfg(unix)]
+use super::corpus::{Expect, Route};
 use super::exec::{self, Binary};
 use super::model::{Control, ControlKind, Family, Role, Row, RowResult};
 

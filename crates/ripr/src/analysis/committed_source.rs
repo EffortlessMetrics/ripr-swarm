@@ -45,6 +45,7 @@ pub(crate) struct CommittedSourceOverlay {
     /// Root-relative, `/`-separated path → `HEAD` bytes, or `None` when the
     /// path is not a regular file at `HEAD` (absent, symlink, or gitlink).
     entries: BTreeMap<String, Option<Vec<u8>>>,
+    unsupported_head: BTreeSet<String>,
     /// Git-ignored paths an adapter routes, and git-ignored directories.
     /// Neither exists at `HEAD`, but discovery walks the disk without
     /// `.gitignore`, so both read as absent unless tracked.
@@ -125,6 +126,7 @@ impl CommittedSourceOverlay {
             .ignored
             .files
             .iter()
+            .filter(|path| super::language::route(Path::new(path)).is_some())
             .filter(|path| !is_cargo_build_output(&self.root, path))
             .cloned()
             .collect();
@@ -149,6 +151,19 @@ impl CommittedSourceOverlay {
     pub(crate) fn committed_paths_missing_on_disk(&self) -> Vec<String> {
         self.entries
             .iter()
+            .filter(|(path, _)| super::language::route(Path::new(path)).is_some())
+            .filter(|(_, bytes)| bytes.is_some())
+            .filter(|(path, _)| !self.root.join(path.as_str()).exists())
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+
+    /// Missing HEAD inputs needed to make the Rust workspace listing complete.
+    /// Cargo manifests are authority inputs, but are not source-disclosure paths.
+    fn committed_workspace_paths_missing_on_disk(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter(|(path, _)| path.ends_with(".rs") || path.ends_with("Cargo.toml"))
             .filter(|(_, bytes)| bytes.is_some())
             .filter(|(path, _)| !self.root.join(path.as_str()).exists())
             .map(|(path, _)| path.clone())
@@ -179,6 +194,7 @@ impl CommittedSourceOverlay {
             ignored: IgnoredPaths::default(),
             untracked: BTreeSet::new(),
             snapshot_inputs: BTreeSet::new(),
+            unsupported_head: BTreeSet::new(),
             entries: entries
                 .into_iter()
                 .map(|(path, bytes)| (path.to_string(), bytes.map(<[u8]>::to_vec)))
@@ -288,17 +304,16 @@ pub(crate) fn current_overlay() -> Option<Arc<CommittedSourceOverlay>> {
     CURRENT_OVERLAY.with(|slot| slot.borrow().clone())
 }
 
-/// Root-relative paths the installed overlay serves from `HEAD` although the
-/// working tree lacks them; empty without an overlay for `root`. A caller
-/// that lists the working tree adds these to see the committed file set.
-pub(crate) fn committed_paths_missing_on_disk(root: &Path) -> Vec<String> {
+/// Missing committed Rust files and manifests that make a working-tree
+/// workspace listing incomplete; empty without an overlay for `root`.
+pub(crate) fn committed_workspace_paths_missing_on_disk(root: &Path) -> Vec<String> {
     CURRENT_OVERLAY.with(|slot| {
         slot.borrow()
             .as_ref()
             .filter(|overlay| {
                 overlay.root == root || overlay.canonical_root.as_deref() == Some(root)
             })
-            .map(|overlay| overlay.committed_paths_missing_on_disk())
+            .map(|overlay| overlay.committed_workspace_paths_missing_on_disk())
             .unwrap_or_default()
     })
 }
@@ -312,6 +327,26 @@ pub(crate) fn lookup(root: &Path, relative: &Path) -> CommittedSourceRead {
             .map_or(CommittedSourceRead::Worktree, |overlay| {
                 overlay.lookup(root, relative)
             })
+    })
+}
+
+/// An ignored directory alone does not establish that an absent authority
+/// file changed. Explicit overlay entries (including unsupported HEAD object
+/// types) and filesystem errors remain unknown, not absence.
+pub(crate) fn ignored_authority_file_is_absent(root: &Path, relative: &Path) -> bool {
+    CURRENT_OVERLAY.with(|slot| {
+        let borrowed = slot.borrow();
+        let Some(overlay) = borrowed.as_ref() else {
+            return false;
+        };
+        let Some(key) = normalized_key(relative) else {
+            return false;
+        };
+        overlay.serves(root)
+            && !overlay.entries.contains_key(&key)
+            && overlay.ignored.contains(&key)
+            && std::fs::symlink_metadata(root.join(relative))
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
     })
 }
 
@@ -393,6 +428,40 @@ pub(crate) fn read_source_bytes(root: &Path, relative: &Path) -> std::io::Result
         CommittedSourceRead::Committed(bytes) => Ok(Some(bytes)),
         CommittedSourceRead::AbsentAtHead => Ok(None),
     }
+}
+
+/// Cargo authority must be a regular file at the selected snapshot. Symlinks
+/// can otherwise read mutable bytes outside the snapshot's tracked inputs.
+pub(crate) fn read_cargo_manifest(
+    root: &Path,
+    relative: &Path,
+) -> std::io::Result<Option<Vec<u8>>> {
+    if unsupported_head_object(root, relative) {
+        return Err(std::io::Error::other(
+            "unsupported committed manifest object",
+        ));
+    }
+    if matches!(lookup(root, relative), CommittedSourceRead::Worktree) {
+        match std::fs::symlink_metadata(root.join(relative)) {
+            Ok(meta) if !meta.is_file() => {
+                return Err(std::io::Error::other("manifest is not a regular file"));
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    read_source_bytes(root, relative)
+}
+
+pub(crate) fn unsupported_head_object(root: &Path, relative: &Path) -> bool {
+    CURRENT_OVERLAY.with(|slot| {
+        let borrowed = slot.borrow();
+        borrowed.as_ref().is_some_and(|overlay| {
+            overlay.serves(root)
+                && normalized_key(relative)
+                    .is_some_and(|key| overlay.unsupported_head.contains(&key))
+        })
+    })
 }
 
 /// Probe `root` for paths that differ from `HEAD` (tracked edits and
@@ -492,6 +561,11 @@ pub(crate) fn probe(
         }
     }
     let mut entries = BTreeMap::new();
+    let unsupported_head = head_blobs
+        .iter()
+        .filter(|(_, entry)| !is_regular_file_mode(&entry.mode))
+        .map(|(path, _)| path.clone())
+        .collect();
     for path in dirty {
         let content =
             match head_blobs.get(&path) {
@@ -506,6 +580,7 @@ pub(crate) fn probe(
         root: root.to_path_buf(),
         canonical_root: root.canonicalize().ok(),
         entries,
+        unsupported_head,
         ignored,
         untracked,
         snapshot_inputs,
@@ -568,6 +643,7 @@ pub(crate) fn untracked_and_ignored_routed_paths(
     let untracked = below_root(records.untracked).into_iter().collect();
     let mut ignored: BTreeSet<String> = below_root(records.ignored_files)
         .into_iter()
+        .filter(|path| super::language::route(Path::new(path)).is_some())
         .filter(|path| !is_cargo_build_output(root, path))
         .collect();
     // Tracked force-added files inside ignored directories keep their
@@ -663,6 +739,26 @@ fn is_regular_file_mode(mode: &str) -> bool {
     mode == "100644" || mode == "100755"
 }
 
+/// POSIX single-quote `text` so a repair command pasted from a refusal targets
+/// the selected root even when it contains spaces or quotes.
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+/// Whether Git's stderr says the index file itself is damaged, as opposed to
+/// unreadable, misconfigured or a failure unrelated to the index.
+fn index_damage_reported(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    [
+        "index file smaller than expected",
+        "index file corrupt",
+        "bad index file",
+        "unknown index entry format",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
 fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<Vec<u8>, CoreError> {
     let describe = args.iter().take(2).copied().collect::<Vec<_>>().join(" ");
     let output = crate::git::run_git_output_with_optional_deadline_and_limit(
@@ -677,8 +773,23 @@ fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<V
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = stderr.lines().next().unwrap_or("unknown git error").trim();
+        // Exit 128 is Git's generic fatal. Only a diagnostic that says the
+        // index itself is damaged earns rebuild advice; a permission, config
+        // or revision failure keeps Git's reason alone, since deleting a valid
+        // index would discard staged work (#10567).
+        let repair = if output.status.code() == Some(128) && index_damage_reported(&stderr) {
+            let quoted = shell_quote(&root.to_string_lossy());
+            format!(
+                ". Git reports a damaged index. Rebuilding it from HEAD discards staged changes \
+                 that differ from HEAD, so first copy the index file Git names aside (`.git/index`, \
+                 or `index` under a linked worktree's gitdir). Then remove it, run \
+                 `git -C {quoted} reset` to rebuild it, re-stage what you need, and re-run."
+            )
+        } else {
+            String::new()
+        };
         return Err(format!(
-            "committed-source probe: `git {describe}` exited with {}: {detail}",
+            "committed-source probe: `git {describe}` exited with {}: {detail}{repair}",
             output.status
         )
         .into());
@@ -686,10 +797,8 @@ fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<V
     Ok(output.stdout)
 }
 
-/// Repo-relative paths from `git status --porcelain -z`, limited to files a
-/// language adapter routes: nothing else is read through the overlay, so an
-/// unrelated binary, README or non-UTF-8 name never costs a blob load or
-/// fails the probe.
+/// Repo-relative paths from `git status --porcelain -z`, limited to routed
+/// source and Cargo authority inputs read through the overlay.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct StatusRecords {
     /// Tracked paths that differ from `HEAD`, and untracked routed files.
@@ -710,6 +819,22 @@ struct StatusRecords {
 
 fn routed(path: &[u8]) -> bool {
     super::language::route(Path::new(String::from_utf8_lossy(path).as_ref())).is_some()
+}
+
+fn cargo_authority_input(path: &[u8]) -> bool {
+    let Ok(path) = std::str::from_utf8(path) else {
+        return false;
+    };
+    let path = Path::new(path);
+    path.file_name()
+        .is_some_and(|name| name == "Cargo.toml" || name == ".cargo")
+        || (path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == ".cargo")
+            && path
+                .file_name()
+                .is_some_and(|name| name == "config" || name == "config.toml"))
 }
 
 /// A file the TypeScript committed-snapshot reading reads (a `.ts` or `.js`
@@ -742,7 +867,7 @@ fn parse_porcelain_z(bytes: &[u8]) -> Result<StatusRecords, String> {
                     out.ignored_directories.push(directory);
                 }
             } else {
-                if routed(path) {
+                if routed(path) || cargo_authority_input(path) {
                     out.ignored_files.push(utf8_path(path)?);
                 }
                 if snapshot_input(path) {
@@ -754,17 +879,17 @@ fn parse_porcelain_z(bytes: &[u8]) -> Result<StatusRecords, String> {
         if snapshot_input(path) {
             out.snapshot_inputs.push(utf8_path(path)?);
         }
-        if routed(path) {
+        if routed(path) || cargo_authority_input(path) {
             let named = utf8_path(path)?;
             // #5258: `??` marks an untracked path — no adapter-routed read
             // of it can be covered by either diff mode.
-            if *index_status == b'?' {
+            if *index_status == b'?' && routed(path) {
                 out.untracked.push(named.clone());
             }
             out.dirty.push(named);
         }
         if let Some(original) = original {
-            if routed(original) {
+            if routed(original) || cargo_authority_input(original) {
                 out.dirty.push(utf8_path(original)?);
             }
             if snapshot_input(original) {
@@ -815,7 +940,7 @@ fn parse_ls_tree_z(bytes: &[u8]) -> Result<Vec<(String, LsTreeEntry)>, String> {
 fn utf8_path(bytes: &[u8]) -> Result<String, String> {
     String::from_utf8(bytes.to_vec()).map_err(|_utf8_error| {
         format!(
-            "committed-source probe: tracked path `{}` is not valid UTF-8; refusing a lossy committed-content lookup",
+            "committed-source probe: path `{}` is not valid UTF-8; refusing a lossy committed-content lookup. Rename the file to a UTF-8 name, then re-run: `git mv` and commit the rename for a tracked file (a staged rename still lists the old name), or a plain filesystem rename for an untracked or ignored one",
             String::from_utf8_lossy(bytes)
         )
     })

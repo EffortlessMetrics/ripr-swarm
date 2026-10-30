@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0153"
+scope = "out"
+reason = "Rust source-role layout rules over Cargo targets; a Python case cannot label it"

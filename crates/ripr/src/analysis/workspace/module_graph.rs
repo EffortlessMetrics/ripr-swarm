@@ -419,9 +419,8 @@ fn list_workspace_including_targets(
     workspace_root: &Path,
     include_targets: bool,
 ) -> Option<WorkspaceListing> {
-    if crate::analysis::committed_source::committed_paths_missing_on_disk(workspace_root)
-        .iter()
-        .any(|path| path.ends_with(".rs") || path.ends_with("Cargo.toml"))
+    if !crate::analysis::committed_source::committed_workspace_paths_missing_on_disk(workspace_root)
+        .is_empty()
     {
         return None;
     }

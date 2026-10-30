@@ -1,0 +1,48 @@
+{
+  "case_id": "free-call-offset-minus",
+  "subject_id": "authored-free-call-pin",
+  "diff": "cases/free-call-offset-minus.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 17
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "integration_test_free_call_entry_pin",
+  "hard_case": "The entry shifts the private owner's result by `- 1` and the integration test pins the entry at `minus_one(4) == 11`.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 4",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "minus_one_pins_the_tripled_value",
+        "equivalence_review": "the edit itself: minus_one(4) becomes 15"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`minus_one` returns `minus_one_inner(x) - 1`; subtracting a constant is injective on i64, so the pinned `minus_one(4) == 11` moves with the owner. 1 of 1 listed mutants fails cargo test. Spec cells: RIPR-SPEC-0159.",
+  "labeling_observation": {
+    "ripr_commit": "fe57f0a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0159#14"
+  ]
+}

@@ -74,6 +74,46 @@ pub(super) fn text_for_range(source: &str, range: TextRange) -> String {
     source.get(start..end).unwrap_or_default().to_string()
 }
 
+/// The byte offset just past the `:` that ends a `def` signature starting at
+/// `def_offset`: the first colon outside strings, comments and brackets. A
+/// quote does not run past its line. `None` when no such colon is found.
+pub(super) fn signature_colon_end(text: &str, def_offset: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut comment = false;
+    for (index, ch) in text.get(def_offset..)?.char_indices() {
+        if ch == '\n' {
+            quote = None;
+            escaped = false;
+            comment = false;
+            continue;
+        }
+        if comment {
+            continue;
+        }
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '#' => comment = true,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ':' if depth == 0 => return Some(def_offset + index + 1),
+            _ => {}
+        }
+    }
+    None
+}
+
 pub(super) fn normalized_path(path: &Path) -> String {
     let mut normalized = path.to_string_lossy().replace('\\', "/");
     while let Some(stripped) = normalized.strip_prefix("./") {

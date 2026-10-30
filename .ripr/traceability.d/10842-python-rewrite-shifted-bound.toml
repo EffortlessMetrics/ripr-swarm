@@ -1,0 +1,9 @@
+# Registers the shifted-bound row an integer-equivalent rewrite needs (#10842) under RIPR-SPEC-0028.
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::an_integer_equivalent_rewrite_needs_the_row_its_shifted_bound_moves_to",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/boundary.rs",
+]
