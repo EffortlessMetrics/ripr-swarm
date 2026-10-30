@@ -593,6 +593,22 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         &related_candidates,
         &focus,
     );
+    // Limits that apply when the leading one does not; re-read when the
+    // imported-literal lift (#9226) drops the leading limit.
+    let fallback_limits = || {
+        module_object_rebind_limit(
+            line_text,
+            old_line_text,
+            owner,
+            &related_candidates,
+            alignment.credited.as_ref().filter(|_| alignment.observes()),
+        )
+        .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates))
+        .or_else(|| heuristic_only_relation_limit(owner, &related_candidates))
+        .or_else(|| {
+            unpinned_equality_dunder_limit(owner, &related_candidates, alignment.credited.is_some())
+        })
+    };
     let static_limit = static_limit_for_focused_change(
         line_text,
         old_line_text,
@@ -612,20 +628,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                     limit.evidence == format!("static_limit decorator_indirection: `{decorator}`")
                 }))
     })
-    .or_else(|| {
-        module_object_rebind_limit(
-            line_text,
-            old_line_text,
-            owner,
-            &related_candidates,
-            alignment.credited.as_ref().filter(|_| alignment.observes()),
-        )
-    })
-    .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates))
-    .or_else(|| heuristic_only_relation_limit(owner, &related_candidates))
-    .or_else(|| {
-        unpinned_equality_dunder_limit(owner, &related_candidates, alignment.credited.is_some())
-    });
+    .or_else(&fallback_limits);
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());
@@ -890,8 +893,11 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         .as_ref()
         .is_some_and(|limit| limit.evidence == IMPORTED_CALL_LIMIT_EVIDENCE)
         && old_line_text.is_some_and(|old| integer_literal_swap(old.trim(), line_text.trim()))
+        && log_evidence.is_none()
+        && has_oracle_eligible_relation
         && strongest_strength >= OracleStrength::Strong.rank()
-        && alignment.observes();
+        && alignment.observes()
+        && fallback_limits().is_none();
     let static_limit = if imported_literal_gap {
         None
     } else {
@@ -1225,8 +1231,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         .chars()
         .map(|c| if c == '/' || c == '\\' { '_' } else { c })
         .collect();
-    let canonical_gap = static_limit
-        .is_none()
+    let canonical_gap = (static_limit.is_none() && !imported_literal_gap)
         .then(|| canonical_python_gap_for(file, owner, &family, line_text));
     let owner_id = owner.symbol_id();
     let probe_id = fingerprint_probe_id(
@@ -1314,8 +1319,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         },
     );
     let propagate = python_propagation_evidence(&family, line_text, static_limit.as_ref());
-    let flow_sink = static_limit
-        .is_none()
+    let flow_sink = (static_limit.is_none() && !imported_literal_gap)
         .then(|| python_flow_sink_for(&family, owner, line, line_text))
         .flatten();
     let missing_discriminators = if static_limit.is_none()

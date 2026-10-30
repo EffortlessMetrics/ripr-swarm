@@ -583,7 +583,9 @@ The abstention is lifted only when a strong exact oracle observes the owner;
 no test, a smoke assertion or an assertion on another value keeps it. The callee
 is not evaluated, so a strong exact oracle that reaches the owner is
 not credited as `exposed`: the finding is `weakly_exposed` with no nameable
-discriminator, no `suggested_*` repair card and no next step. Without the old
+discriminator, no canonical gap or flow sink, no `suggested_*` repair card and no
+next step. Any other limit that applies (rebind, dunder dispatch,
+heuristic-only relation, `caplog` evidence) still wins. Without the old
 line the limit stays.
 A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only

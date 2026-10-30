@@ -29,6 +29,12 @@ fn assert_no_repair_signal(finding: &Finding) {
     assert_eq!(finding.recommended_next_step, None);
     assert!(finding.activation.missing_discriminators.is_empty());
     assert!(
+        finding.canonical_gap.is_none(),
+        "{:?}",
+        finding.canonical_gap
+    );
+    assert!(finding.flow_sinks.is_empty());
+    assert!(
         !finding
             .evidence
             .iter()
@@ -203,5 +209,16 @@ fn only_a_strong_observing_oracle_lifts_the_abstention() -> Result<(), String> {
         "{:?}",
         unrelated.evidence
     );
+    Ok(())
+}
+
+#[test]
+fn an_equal_valued_integer_respelling_is_not_an_edit() -> Result<(), String> {
+    let finding = finding(
+        "    return itertools.islice(seq, 0x1, None, n)",
+        "    return itertools.islice(seq, 1, None, n)",
+        TEST_SOURCE,
+    )?;
+    assert!(abstains_on_the_import(&finding), "{:?}", finding.evidence);
     Ok(())
 }
