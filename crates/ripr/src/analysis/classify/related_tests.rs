@@ -144,6 +144,9 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Tests the diff adds or changes (#8387). Ranking only; see
     /// [`super::DiffTouchedTests`].
     diff_touched: super::DiffTouchedTests,
+    /// Changed single-line constants with their old and new declarations
+    /// (RIPR-SPEC-0048), for the value-flow check.
+    changed_consts: super::ChangedConsts,
 }
 
 impl RelatedTestCandidateIndex {
@@ -299,6 +302,19 @@ impl RelatedTestCandidateIndex {
 
     pub(in crate::analysis) fn diff_touched(&self) -> &super::DiffTouchedTests {
         &self.diff_touched
+    }
+
+    /// Record the diff's changed constants for the value-flow check.
+    pub(in crate::analysis) fn with_changed_consts(
+        mut self,
+        changed_consts: super::ChangedConsts,
+    ) -> Self {
+        self.changed_consts = changed_consts;
+        self
+    }
+
+    pub(in crate::analysis) fn changed_consts(&self) -> &super::ChangedConsts {
+        &self.changed_consts
     }
 
     /// Fold in the macro bindings of files a narrowed diff index withheld
