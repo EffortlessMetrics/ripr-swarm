@@ -142,6 +142,38 @@ fn unknown_root_cases(
             ledger["check_output_provenance"].get("source_root_raw"),
             input.get("root")
         );
+        let wrapped_path = root
+            .join("target")
+            .join(format!("unknown-{expected_records}-{state}-wrapped.json"));
+        let ledger_path = root
+            .join("target")
+            .join(format!("unknown-{expected_records}-{state}-ledger.json"));
+        ripr(
+            root,
+            &[
+                "reports",
+                "gap-ledger",
+                "--root",
+                text(root)?,
+                "--records",
+                text(&ledger_path)?,
+                "--out",
+                text(&wrapped_path)?,
+                "--out-md",
+                text(
+                    &root
+                        .join("target")
+                        .join(format!("unknown-{expected_records}-{state}-wrapped.md")),
+                )?,
+            ],
+        )?;
+        let wrapped: Value =
+            serde_json::from_slice(&fs::read(wrapped_path).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+        assert_eq!(
+            wrapped["check_output_provenance"].get("source_root_raw"),
+            input.get("root")
+        );
         assert_eq!(
             ledger["records"].as_array().map(Vec::len),
             Some(expected_records),
@@ -404,6 +436,9 @@ fn newly_discovered_foreign_write_changes_strong_producer_result() -> Result<(),
             ledger["check_output_provenance"].get("source_subject"),
             altered.get("source_subject")
         );
+        for key in ["base", "head"] {
+            assert_eq!(ledger["check_output_provenance"].get(key), altered.get(key));
+        }
         let wrapped = root.join("target").join(format!("{state}-wrapped.json"));
         ripr(
             &root,
