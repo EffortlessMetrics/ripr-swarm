@@ -545,7 +545,18 @@ pub(crate) fn typescript_target_assertion_shape_with_boundary_facts(
 /// The kind a `typeof <operand> == "<kind>"` discriminator tests.
 fn typeof_kind_of_discriminator(discriminator: &str) -> Option<&str> {
     let rest = discriminator.trim().strip_prefix("typeof ")?;
-    let (_, kind) = rest.split_once(" == ")?;
+    let (operand, kind) = rest.split_once(" == ")?;
+    // Only a plain identifier (a parameter of the owner) can be witnessed by
+    // an argument; a member read or a local is never credited, so it must not
+    // be offered a kind-input shape that no test can close.
+    let mut chars = operand.trim().chars();
+    let plain = chars
+        .next()
+        .is_some_and(|ch| ch.is_alphabetic() || matches!(ch, '_' | '$'))
+        && chars.all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '$'));
+    if !plain {
+        return None;
+    }
     let kind = kind.trim().strip_prefix('"')?.strip_suffix('"')?;
     (!kind.is_empty() && kind.chars().all(|ch| ch.is_ascii_alphabetic())).then_some(kind)
 }
@@ -2428,6 +2439,10 @@ pub(crate) mod tests {
             "typeof input == function",
             "typeof input == \"\"",
             "typeof input == \"two words\"",
+            // A member read or a local is never credited by an argument, so
+            // no kind-input shape may be offered for it.
+            "typeof opts.cb == \"function\"",
+            "typeof opts[0] == \"function\"",
         ] {
             let shape = typescript_target_assertion_shape(
                 &ProbeFamily::Predicate,
