@@ -294,13 +294,13 @@ Python analysis is `preview`: its evidence is advisory, not Rust-grade. A
 Python project needs no `ripr.toml` — when the repository root has a Python
 project marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
 `requirements.txt`, `pytest.ini`, `tox.ini`, or `noxfile.py`), the CLI
-auto-enables the preview. From a Python repository on a branch with a change
-to inspect:
+auto-enables the preview. Work from a Python repository on a branch with a change
+to inspect.
 
-0. Add `/target/ripr/` (or `/target/`) to `.gitignore`: ripr writes its
-   artifacts under `target/ripr`, and `check`, `pilot` and `agent repair` all
-   create it. Do this before the first run so `git add -A` never commits
-   ripr's own reports.
+Before the first run, add `/target/ripr/` (or `/target/`) to `.gitignore`:
+ripr writes its artifacts under `target/ripr`, and `check`, `pilot` and
+`agent repair` all create it, so ignoring it keeps `git add -A` from
+committing ripr's own reports. Then run:
 
 ```bash
 ripr check
@@ -317,8 +317,8 @@ ripr pilot --root .
 
 When the Rust ranking is empty, pilot's top recommendation is the Python
 repair card (`language: python (preview)`) and its `Next, in order:` route;
-run the steps it prints. Both commands write under `target/ripr/` (see step 0; doctor and pilot
-also say so on the first run when no ignore rule covers it).
+run the steps it prints. Both commands write under `target/ripr/` (see the `.gitignore` note above;
+doctor and pilot also say so on the first run when no ignore rule covers it).
 
 A repository with no marker leaves the preview disabled; `check` then skips
 Python files and prints:
@@ -348,12 +348,13 @@ Rust-only.
 TypeScript analysis is `preview`: its evidence is advisory, not Rust-grade. A
 TypeScript project needs no `ripr.toml` — when the repository root has a
 `tsconfig.json` or `jsconfig.json` (or TypeScript source under `src/` or
-`tests/`), the CLI auto-enables the preview. From a TypeScript repository on
-a branch with a change to inspect:
+`tests/`), or a package one level down or under `packages/*`, `apps/*`,
+`libs/*` or `libraries/*` has one, the CLI auto-enables the preview. Work from a TypeScript repository on
+a branch with a change to inspect.
 
-0. Add `/target/ripr/` (or `/target/`) to `.gitignore`: ripr writes its
-   artifacts under `target/ripr`, and `check`, `pilot` and `agent repair` all
-   create it.
+Before the first run, add `/target/ripr/` (or `/target/`) to `.gitignore`:
+ripr writes its artifacts under `target/ripr`, and `check`, `pilot` and
+`agent repair` all create it. Then run:
 
 ```bash
 ripr check
