@@ -1789,6 +1789,76 @@ fn generated_comment_plan_withholds_write_permission_for_dependabot() -> Result<
     Ok(())
 }
 
+/// #11145: the generated `Explain failed SARIF upload` condition, evaluated by
+/// the replay's own condition model, runs when either upload step failed and
+/// not when both succeeded or were skipped; the evaluator rejects shapes it
+/// does not model instead of guessing.
+#[cfg(unix)]
+#[test]
+fn explain_failed_sarif_upload_condition_follows_the_upload_outcomes() -> Result<(), Box<dyn Error>>
+{
+    use std::collections::BTreeMap;
+    let base = replay::unique_temp_dir("sarif-explain")?;
+    let root = base.join("repo");
+    replay::write_pr_fixture(&root)?;
+    let init = replay::ripr(&root, &["init", "--root", ".", "--ci", "github"])?;
+    assert!(init.status.success());
+    let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+    let condition = replay::parse_steps(&workflow)
+        .into_iter()
+        .find(|step| step.name == "Explain failed SARIF upload")
+        .and_then(|step| step.condition)
+        .ok_or("no condition on the explain step")?;
+    let holds = |findings: Option<&str>, seams: Option<&str>| {
+        let mut env = BTreeMap::new();
+        if let Some(outcome) = findings {
+            env.insert(
+                "REPLAY_STEP_OUTCOME_sarif_findings".to_string(),
+                outcome.to_string(),
+            );
+        }
+        if let Some(outcome) = seams {
+            env.insert(
+                "REPLAY_STEP_OUTCOME_sarif_seams".to_string(),
+                outcome.to_string(),
+            );
+        }
+        replay::condition_holds(&condition, &root, &env)
+    };
+    let verdicts = (
+        holds(Some("failure"), Some("success"))?,
+        holds(Some("success"), Some("failure"))?,
+        holds(Some("failure"), Some("failure"))?,
+        holds(Some("success"), Some("success"))?,
+        holds(Some("skipped"), Some("skipped"))?,
+        holds(None, None)?,
+        holds(Some("cancelled"), Some("success"))?,
+    );
+    // Shapes the evaluator does not model are errors, not guesses.
+    let nested = replay::condition_holds(
+        "always() && ((steps.sarif_seams.outcome == 'failure'))",
+        &root,
+        &BTreeMap::new(),
+    );
+    let group_not_last = replay::condition_holds(
+        "always() && (steps.sarif_seams.outcome == 'failure') && always()",
+        &root,
+        &BTreeMap::new(),
+    );
+    let _ = fs::remove_dir_all(&base);
+    assert_eq!(
+        verdicts,
+        (true, true, true, false, false, false, false),
+        "(findings failed, seams failed, both failed, both ok, both skipped, default, cancelled)"
+    );
+    assert!(nested.is_err(), "nested groups must be refused");
+    assert!(
+        group_not_last.is_err(),
+        "a group that is not last must be refused"
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 mod replay {
     use std::collections::BTreeMap;
@@ -1838,7 +1908,7 @@ fn far_above_threshold_discounts() {
     #[derive(Debug, Default)]
     pub(super) struct Step {
         pub(super) name: String,
-        condition: Option<String>,
+        pub(super) condition: Option<String>,
         pub(super) run: Option<String>,
         env: Vec<(String, String)>,
     }
@@ -2144,26 +2214,39 @@ fn far_above_threshold_discounts() {
             return Ok("ripr-test-user".to_string());
         }
         // The replay skips every `uses:` step, the SARIF uploads included, so
-        // no upload failed (#11145).
-        if matches!(
-            text,
-            "steps.sarif_findings.outcome" | "steps.sarif_seams.outcome"
-        ) {
-            return Ok("success".to_string());
+        // by default no upload failed (#11145). A test sets the outcome with
+        // `REPLAY_STEP_OUTCOME_<id>` to drive the failure path.
+        if let Some(id) = text
+            .strip_prefix("steps.")
+            .and_then(|rest| rest.strip_suffix(".outcome"))
+            .filter(|id| matches!(*id, "sarif_findings" | "sarif_seams"))
+        {
+            return Ok(env
+                .get(&format!("REPLAY_STEP_OUTCOME_{id}"))
+                .cloned()
+                .unwrap_or_else(|| "success".to_string()));
         }
         Err(format!("replay does not model the condition operand `{text}`").into())
     }
 
-    fn condition_holds(
+    pub(super) fn condition_holds(
         condition: &str,
         root: &Path,
         env: &BTreeMap<String, String>,
     ) -> TestResult<bool> {
         // A conjunction whose last atom is one parenthesized disjunction:
-        // `always() && (a == 'x' || b == 'x')`.
-        if let Some((head, group)) = condition.split_once("&& (")
-            && let Some(group) = group.trim().strip_suffix(')')
-        {
+        // `always() && (a == 'x' || b == 'x')`. Only that shape is modeled:
+        // one group, last, with no nesting and no `&&` inside it.
+        if let Some((head, group)) = condition.split_once("&& (") {
+            let group = group
+                .trim()
+                .strip_suffix(')')
+                .ok_or_else(|| format!("replay: group is not last in `{condition}`"))?;
+            if group.contains(['(', ')']) || group.contains("&&") || head.contains("||") {
+                return Err(
+                    format!("replay models one flat `(a || b)` group, not `{condition}`").into(),
+                );
+            }
             if !condition_holds(head, root, env)? {
                 return Ok(false);
             }

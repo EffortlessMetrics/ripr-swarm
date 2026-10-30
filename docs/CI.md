@@ -1753,9 +1753,10 @@ Steps:
 - **Upload RIPR diff findings** stays `continue-on-error`: upload infrastructure
   is not analysis authority (#2009), so a code-scanning outage must not fail a
   gate the analysis passed. **Explain failed SARIF upload** runs only when
-  one of the two upload steps failed and says why that usually happens
-  (private repository without GitHub Code Security, code scanning not
-  available, or a read-only token) and the one-line fix.
+  one of the two upload steps failed and lists the usual causes (private
+  repository without GitHub Code Security, code scanning not available, or a
+  read-only token), notes it can also be an outage or a rejected SARIF file,
+  and points at the failed step's log and the one-line fix.
 
 For a first rollout, treat code-scanning annotations as review guidance. Do not
 make the job blocking until the repository has reviewed its initial SARIF

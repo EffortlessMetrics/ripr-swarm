@@ -193,7 +193,7 @@ const TEMPLATE_TAIL: &str = r#"      - name: Upload RIPR report artifacts
       - name: Explain failed SARIF upload
         if: always() && (steps.sarif_findings.outcome == 'failure' || steps.sarif_seams.outcome == 'failure')
         continue-on-error: true
-        run: echo '::warning title=RIPR SARIF upload failed::GitHub code scanning rejected the upload, so nothing reached the Security tab. It needs a public repository or GitHub Code Security on a private one, and a token that can write security events (not a fork or Dependabot pull request). The rest of the RIPR report is unaffected. Set RIPR_UPLOAD_SARIF to false in this workflow to stop uploading.'
+        run: echo '::warning title=RIPR SARIF upload failed::A SARIF upload step failed, so its results may not be in the Security tab. Usual causes include a private repository without GitHub Code Security, code scanning not being available, or a read-only token (fork or Dependabot pull request); it can also be a transient GitHub outage or a rejected SARIF file, so open the log of the failed upload step for the exact error. The rest of the RIPR report is unaffected. If code scanning is not wanted, set RIPR_UPLOAD_SARIF to false in this workflow.'
 "#;
 
 /// The unrendered workflow template, pinned by hash below. The only
@@ -381,7 +381,7 @@ mod template_pin_tests {
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "45a2ac9cd8e4597041ff96d93f3d6b3af28450551c085df35871581e606ad22b";
+        "f0238ee00aba27aeb49a33594acc306e0ea332e4db6978663eb3f70c9494f520";
 
     #[test]
     fn template_matches_the_pinned_bytes() {
