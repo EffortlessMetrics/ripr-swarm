@@ -19585,12 +19585,14 @@ fn assert_pilot_headline_names_supported_check_route(
     );
     assert!(
         !stdout.contains(
-            "none: pilot scans Rust and found no gaps here; see the other languages below"
+            "none: pilot found no gaps in the Rust code it checked; see the other languages below"
         ),
         "headline must not read as an empty recommendation:\n{stdout}"
     );
     assert!(
-        stdout.contains("(pilot scans Rust and found no gaps here; see the other languages below)"),
+        stdout.contains(
+            "(pilot found no gaps in the Rust code it checked; see the other languages below)"
+        ),
         "{stdout}"
     );
     assert!(
@@ -19651,7 +19653,7 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
     // still names the route (#7665).
     assert!(
         stdout.contains(
-            "none: pilot scans Rust and found no gaps here; see the other languages below"
+            "none: pilot found no gaps in the Rust code it checked; see the other languages below"
         ),
         "disabled TypeScript must not headline the check route:\n{stdout}"
     );
@@ -19785,7 +19787,7 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
     );
     assert!(
         !stdout.contains(
-            "none: pilot scans Rust and found no gaps here; see the other languages below"
+            "none: pilot found no gaps in the Rust code it checked; see the other languages below"
         ),
         "a Python repair card remains the top recommendation:\n{stdout}"
     );
@@ -19849,7 +19851,7 @@ fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), St
         // headline stays none (same as disabled TypeScript).
         assert!(
             stdout.contains(
-                "none: pilot scans Rust and found no gaps here; see the other languages below"
+                "none: pilot found no gaps in the Rust code it checked; see the other languages below"
             ),
             "disabled Perl keeps the none headline:\n{stdout}"
         );
@@ -19857,7 +19859,7 @@ fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), St
     } else {
         assert!(
             stdout.contains(
-                "none: pilot scans Rust and found no gaps here; see the other languages below"
+                "none: pilot found no gaps in the Rust code it checked; see the other languages below"
             ),
             "unavailable Perl keeps the none headline:\n{stdout}"
         );

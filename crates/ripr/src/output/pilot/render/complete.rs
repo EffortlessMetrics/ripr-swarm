@@ -740,14 +740,14 @@ pub(crate) fn render_pilot_terminal(
     } else if let Some((route, command)) = supported_headline_route(context) {
         out.push_str("Top recommendation:\n");
         out.push_str(&format!(
-            "  analyze the {} diff: {command}\n  (pilot scans Rust and found no gaps here; see the other languages below)\n\n",
+            "  analyze the {} diff: {command}\n  (pilot found no gaps in the Rust code it checked; see the other languages below)\n\n",
             route.language.display_name(),
         ));
         false
     } else if required_routes(context).is_some() {
         out.push_str("Top recommendation:\n");
         out.push_str(
-            "  none: pilot scans Rust and found no gaps here; see the other languages below\n\n",
+            "  none: pilot found no gaps in the Rust code it checked; see the other languages below\n\n",
         );
         false
     } else if let Some(unanalyzed) = unanalyzed_only(context) {

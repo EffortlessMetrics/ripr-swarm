@@ -1285,6 +1285,46 @@ fn pilot_terminal_qualifies_empty_ranking_when_rust_files_were_declined() {
     );
 }
 
+/// #10694 review: the routed-language lines never claim "no gaps" about Rust
+/// code a limit or a parse decline left unchecked.
+#[test]
+fn pilot_route_lines_say_no_gaps_only_about_the_rust_code_it_checked() {
+    use crate::domain::LanguageId;
+    let artifacts = pilot_artifacts();
+    let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
+    let declined = vec![crate::analysis::DeclinedRustFile {
+        path: PathBuf::from("src/deep.rs"),
+        reason: "static limit rust_nesting_budget".to_string(),
+    }];
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files)
+            .with_declined_rust_files(declined);
+    let limit = crate::analysis::SeamLimitInfo {
+        analyzed: 2,
+        total: 9,
+        source: crate::analysis::SeamLimitSource::Configured,
+    };
+    let context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        seam_limit: Some(&limit),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains("limit reached: checked 2 of 9 spots"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("Rust files declined by a parse limit"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("found no gaps in the Rust code it checked"),
+        "{terminal}"
+    );
+    assert!(!terminal.contains("found no gaps here"), "{terminal}");
+}
+
 #[test]
 fn pilot_terminal_prints_top_test_and_follow_up_commands() {
     let entry = classified_with(
@@ -2942,7 +2982,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         );
         assert!(
             terminal.contains(
-                "none: pilot scans Rust and found no gaps here; see the other languages below"
+                "none: pilot found no gaps in the Rust code it checked; see the other languages below"
             ),
             "{terminal}"
         );
@@ -2990,7 +3030,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         );
         assert!(
             !enabled_terminal.contains(
-                "none: pilot scans Rust and found no gaps here; see the other languages below"
+                "none: pilot found no gaps in the Rust code it checked; see the other languages below"
             ),
             "{enabled_terminal}"
         );
@@ -3033,7 +3073,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         let terminal = render_pilot_terminal(&[], context);
         assert!(
             terminal.contains(
-                "none: pilot scans Rust and found no gaps here; see the other languages below"
+                "none: pilot found no gaps in the Rust code it checked; see the other languages below"
             ),
             "unavailable-only languages keep the none headline:\n{terminal}"
         );
@@ -3084,13 +3124,14 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
     );
     assert!(
         !terminal.contains(
-            "none: pilot scans Rust and found no gaps here; see the other languages below"
+            "none: pilot found no gaps in the Rust code it checked; see the other languages below"
         ),
         "headline must not read as an empty recommendation:\n{terminal}"
     );
     assert!(
-        terminal
-            .contains("(pilot scans Rust and found no gaps here; see the other languages below)"),
+        terminal.contains(
+            "(pilot found no gaps in the Rust code it checked; see the other languages below)"
+        ),
         "Rust-scan explanation stays secondary:\n{terminal}"
     );
     assert!(
@@ -3166,7 +3207,7 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
         let disabled_terminal = render_pilot_terminal(&[], disabled_context);
         assert!(
             disabled_terminal.contains(
-                "none: pilot scans Rust and found no gaps here; see the other languages below"
+                "none: pilot found no gaps in the Rust code it checked; see the other languages below"
             ),
             "{disabled_terminal}"
         );
