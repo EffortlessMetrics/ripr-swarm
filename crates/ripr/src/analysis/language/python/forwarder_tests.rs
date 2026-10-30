@@ -134,6 +134,17 @@ fn a_forwarder_credits_only_through_certain_bindings_and_a_flipped_assertion() -
     let circular_owner = format!("{TABLE}\n\nfrom .quote import helper\n");
     let circular_quote = format!("{QUOTE}\n\ndef helper():\n    return 1\n");
     let module_call = format!("{QUOTE}\n\nDEFAULT = quote(\"gold\", 1)\n");
+    let package_reset = format!("__package__ = \"\"\n{QUOTE}");
+    let unbound_annotation =
+        QUOTE.replace("def quote(tier, units)", "def quote(tier: Tier, units)");
+    let postponed = format!(
+        "from __future__ import annotations\n{}",
+        QUOTE.replace(
+            "def quote(tier, units)",
+            "def quote(tier: Tier, units: int)"
+        )
+    );
+    let third_owner = format!("{TABLE}\n\nfrom . import other\n");
     let cases: Vec<Case<'_>> = vec![
         (
             "aliased reader",
@@ -141,6 +152,29 @@ fn a_forwarder_credits_only_through_certain_bindings_and_a_flipped_assertion() -
             vec![("shapes/rates/quote.py", Some(alias))],
         ),
         ("src layout", true, src_layout),
+        (
+            "postponed name annotations",
+            true,
+            vec![("shapes/rates/quote.py", Some(&postponed))],
+        ),
+        (
+            "forwarder module resets __package__",
+            false,
+            vec![("shapes/rates/quote.py", Some(&package_reset))],
+        ),
+        (
+            "annotation that loading evaluates",
+            false,
+            vec![("shapes/rates/quote.py", Some(&unbound_annotation))],
+        ),
+        (
+            "owner reaches the forwarder through a third module",
+            false,
+            vec![
+                ("shapes/rates/table.py", Some(&third_owner)),
+                ("shapes/rates/other.py", Some("from .quote import quote\n")),
+            ],
+        ),
         (
             "package imported from inside its own directory",
             false,

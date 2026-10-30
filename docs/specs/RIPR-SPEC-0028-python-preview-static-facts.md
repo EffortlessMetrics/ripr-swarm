@@ -617,15 +617,20 @@ pkg.quote import quote [as name]`, where `quote`'s body is one `return` calling
 through the new one. The conditions are:
 
 - the owner module is not `__init__.py` and sits in a regular package (its
-  `__init__.py` is a workspace source), and does not mention the forwarder
-  module's name, so loading it never imports the forwarder module;
+  `__init__.py` is a workspace source), does not mention the forwarder
+  module's name, imports nothing while loading but `__future__` and
+  standard-library modules (outside function bodies), and names no runtime
+  module loader, so loading it can never import the forwarder module;
 - the forwarder module is a non-test sibling in the same directory (not
   `__init__.py` or `conftest.py`) whose source spells `from .<stem> import`; at
   most 16 such siblings are read per changed file, and more reads none;
 - loading the forwarder module runs nothing else: its top level holds only a
   docstring, `pass`, `from __future__` and level-1 `from .<stem>` imports,
-  assignments of literals, and undecorated `def`s whose defaults are literals
-  and whose annotations are names or strings;
+  assignments of literals to plain names other than dunders (`__all__`
+  aside, so `__package__` cannot redirect the relative import), and
+  undecorated `def`s whose defaults are literals; an annotation is absent or
+  a string, or a bare name under `from __future__ import annotations`, so
+  loading never evaluates one;
 - the local name and the forwarder are each bound once in that module; the
   forwarder is a top-level `def` with positional parameters and no defaults,
   and it calls the local name with positional arguments only;

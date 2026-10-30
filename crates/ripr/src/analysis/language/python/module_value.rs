@@ -2052,6 +2052,17 @@ fn forwarders_of<'o>(
     if module_owner.foreign_writes.shares_module_name() {
         return Vec::new();
     }
+    // An owner that imports another workspace module while loading can close
+    // a cycle back to the forwarder module through it.
+    let owner_imports_inert = match parse_module_result(file, owner_source) {
+        Ok(Mod::Module(parsed)) => {
+            imports_only_standard_library(&parsed.body)
+                && !MODULE_LOADERS
+                    .iter()
+                    .any(|word| mentions_identifier(owner_source, word))
+        }
+        _ => false,
+    };
     let mut out = Vec::new();
     for module in &module_owner.foreign_writes.forwarders {
         let foreign = &module.foreign;
@@ -2082,7 +2093,7 @@ fn forwarders_of<'o>(
         };
         // The owner importing the forwarder module makes the import order
         // matter: loading it first can meet a partly initialized module.
-        if mentions_identifier(owner_source, module_stem) {
+        if mentions_identifier(owner_source, module_stem) || !owner_imports_inert {
             continue;
         }
         let Ok(Mod::Module(parsed)) = parse_module_result(&module.file, source) else {
@@ -2149,19 +2160,76 @@ fn forwarders_of<'o>(
 /// defaults are literals and whose annotations are names or strings. Any
 /// other statement could call the forwarder, or import a module that does,
 /// before its import binds the reader.
+/// Whether every import a module runs while loading (outside function
+/// bodies) is `from __future__` or of a standard-library module.
+fn imports_only_standard_library(body: &[Stmt]) -> bool {
+    body.iter().all(|statement| match statement {
+        Stmt::Import(import) => import
+            .names
+            .iter()
+            .all(|alias| names_stdlib_module(alias.name.as_str())),
+        Stmt::ImportFrom(import) => {
+            import.level.is_none_or(|level| level.to_u32() == 0)
+                && import
+                    .module
+                    .as_deref()
+                    .is_some_and(|module| module == "__future__" || names_stdlib_module(module))
+        }
+        Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) => true,
+        Stmt::ClassDef(class) => imports_only_standard_library(&class.body),
+        Stmt::If(branch) => {
+            imports_only_standard_library(&branch.body)
+                && imports_only_standard_library(&branch.orelse)
+        }
+        Stmt::Try(block) => {
+            imports_only_standard_library(&block.body)
+                && imports_only_standard_library(&block.orelse)
+                && imports_only_standard_library(&block.finalbody)
+                && block.handlers.iter().all(|handler| {
+                    let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                    imports_only_standard_library(&handler.body)
+                })
+        }
+        Stmt::With(block) => imports_only_standard_library(&block.body),
+        Stmt::For(block) => {
+            imports_only_standard_library(&block.body)
+                && imports_only_standard_library(&block.orelse)
+        }
+        Stmt::While(block) => {
+            imports_only_standard_library(&block.body)
+                && imports_only_standard_library(&block.orelse)
+        }
+        Stmt::Match(_) | Stmt::TryStar(_) | Stmt::AsyncWith(_) | Stmt::AsyncFor(_) => false,
+        _ => true,
+    })
+}
+
 fn inert_forwarder_module(body: &[Stmt], stem: &str) -> bool {
+    // Without `from __future__ import annotations` an annotation runs while
+    // the module loads (before 3.14), and a name it reads may be unbound.
+    let postponed = body.iter().any(|statement| {
+        matches!(statement, Stmt::ImportFrom(import)
+            if import.module.as_deref() == Some("__future__")
+                && import.names.iter().any(|alias| alias.name.as_str() == "annotations"))
+    });
+    // A literal bound to a dunder (`__package__ = ""`) changes what the
+    // relative import resolves to; `__all__` alone is inert.
+    let plain_target = |target: &Expr| {
+        matches!(target, Expr::Name(name)
+            if name.id.as_str() == "__all__" || !name.id.as_str().starts_with("__"))
+    };
+    let annotation = |expr: Option<&Expr>| match expr {
+        None => true,
+        Some(Expr::Constant(constant)) => matches!(constant.value, ast::Constant::Str(_)),
+        Some(Expr::Name(_)) => postponed,
+        Some(_) => false,
+    };
     fn literal(expr: &Expr) -> bool {
         match expr {
             Expr::Constant(_) => true,
             Expr::List(list) => list.elts.iter().all(literal),
             Expr::Tuple(tuple) => tuple.elts.iter().all(literal),
             _ => false,
-        }
-    }
-    fn annotation(expr: Option<&Expr>) -> bool {
-        match expr {
-            None | Some(Expr::Constant(_)) | Some(Expr::Name(_)) => true,
-            Some(_) => false,
         }
     }
     body.iter().all(|statement| match statement {
@@ -2172,9 +2240,11 @@ fn inert_forwarder_module(body: &[Stmt], stem: &str) -> bool {
             None | Some(0) => import.module.as_deref() == Some("__future__"),
             Some(_) => false,
         },
-        Stmt::Assign(assign) => literal(&assign.value),
+        Stmt::Assign(assign) => assign.targets.iter().all(plain_target) && literal(&assign.value),
         Stmt::AnnAssign(assign) => {
-            annotation(Some(&assign.annotation)) && assign.value.as_deref().is_none_or(literal)
+            plain_target(&assign.target)
+                && annotation(Some(&assign.annotation))
+                && assign.value.as_deref().is_none_or(literal)
         }
         Stmt::FunctionDef(function) => {
             let args = &function.args;
