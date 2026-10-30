@@ -4,7 +4,7 @@ use crate::agent::loop_commands::{
 };
 use crate::app::agent_status::pilot_select_command;
 use crate::config::{detect_python_project, detect_typescript_project};
-use crate::domain::CommandSpec;
+use crate::domain::{CommandSpec, LanguageId};
 use crate::output::gap_decision_ledger::projection_eligible_from_value;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state;
 use crate::output::receipt_write::receipt_write_command;
@@ -854,6 +854,38 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
     if !root.join("Cargo.toml").is_file() {
         if detect_python_project(root) || detect_typescript_project(root) {
             return None;
+        }
+        // `doctor` detects TypeScript or JavaScript from a `package.json` or
+        // shallow source files, but the no-config rule above enables the
+        // adapter only from a `tsconfig.json`/`jsconfig.json` marker or
+        // TypeScript below `src`/`tests` (`package.json` alone is deliberately
+        // not a marker). The root is the right one in that case, so name the
+        // missing marker instead of calling it a wrong root and looping back
+        // to `doctor` (#10713). A root `doctor` also detects as Python keeps
+        // `wrong_root` (its `package.json` is likely tooling), and Rust below
+        // the root still means a wrong root.
+        let doctor_languages = crate::cli::commands::detect_languages(root);
+        let doctor_javascript = doctor_languages.contains(&LanguageId::JavaScript);
+        if LanguageId::TypeScript.is_available()
+            && (doctor_javascript || doctor_languages.contains(&LanguageId::TypeScript))
+            && !doctor_languages.contains(&LanguageId::Python)
+            && !doctor_languages.contains(&LanguageId::Rust)
+            && crate::analysis::workspace_rust_files(root).is_empty()
+        {
+            let (kind, marker) = if doctor_javascript {
+                ("JavaScript", "jsconfig.json")
+            } else {
+                ("TypeScript", "tsconfig.json")
+            };
+            return Some(Selection::blocked_with_reason(
+                "blocked_artifact",
+                "typescript_project_marker_missing",
+                format!(
+                    "The first-pr root `{}` looks like a {kind} project, but first-pr needs a `tsconfig.json` or `jsconfig.json` at the root, or TypeScript files under `src/` or `tests/`; a `package.json` alone is not enough. This root is not necessarily wrong: add a `{marker}` (an empty `{{}}` is enough) and rerun `ripr first-pr`.",
+                    options.root
+                ),
+                None,
+            ));
         }
         // A Go or Java repository is the right root; sending it to `--root`
         // and doctor loops. Name the languages ripr cannot analyze instead.
@@ -4410,6 +4442,138 @@ mod tests {
         let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
         assert_eq!(packet["status"], "blocked", "{packet}");
         assert_eq!(packet["selected"]["state"], "wrong_root", "{packet}");
+        cleanup(&repo)
+    }
+
+    /// #10713: `doctor` detects a `package.json` + `.ts` repository as
+    /// TypeScript, so first-pr must not call it a wrong root or send the
+    /// reader back to `doctor`; it names the marker the config rules need.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn package_json_only_typescript_root_names_the_missing_marker_not_wrong_root()
+    -> Result<(), String> {
+        let repo = write_temp_root(&env::temp_dir(), "first-pr-package-json-only-ts")?;
+        fs::write(
+            repo.join("package.json"),
+            r#"{"devDependencies":{"jest":"^30"}}"#,
+        )
+        .map_err(|err| format!("write package.json: {err}"))?;
+        fs::write(
+            repo.join("pricing.ts"),
+            "export const p = (x: number) => x;\n",
+        )
+        .map_err(|err| format!("write pricing.ts: {err}"))?;
+        fs::write(repo.join("pricing.test.ts"), "test('p', () => {});\n")
+            .map_err(|err| format!("write pricing.test.ts: {err}"))?;
+        init_git_repo_with_initial_files(
+            &repo,
+            &["package.json", "pricing.ts", "pricing.test.ts"],
+        )?;
+        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        assert!(
+            doctor_languages.contains(&LanguageId::TypeScript),
+            "fixture must be TypeScript to doctor: {doctor_languages:?}"
+        );
+        assert!(
+            !detect_typescript_project(&repo),
+            "package.json is not a marker"
+        );
+
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        let selected = &packet["selected"];
+        assert_eq!(packet["status"], "blocked", "{packet}");
+        assert_ne!(selected["state"], "wrong_root", "{packet}");
+        assert_eq!(
+            selected["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
+        let message = selected["message"].as_str().ok_or("missing message")?;
+        assert!(message.contains("add a `tsconfig.json`"), "{message}");
+        assert!(!message.contains("project marker"), "{message}");
+        assert!(!message.contains("Pass the repository root"), "{message}");
+        assert!(
+            selected["next_command"].is_null(),
+            "no doctor loop: {packet}"
+        );
+
+        // The named marker resolves it: the same root now takes the
+        // TypeScript route instead of the marker refusal.
+        fs::write(repo.join("tsconfig.json"), "{}\n")
+            .map_err(|err| format!("write tsconfig.json: {err}"))?;
+        // Pin the exact post-marker state reachable by reading the code: the
+        // marker makes `detect_typescript_project` true, so the root
+        // preflight recovers nothing and hands the root on to the
+        // TypeScript route. (Not compiled or run in the authoring sandbox.)
+        assert!(
+            detect_typescript_project(&repo),
+            "tsconfig.json is a marker"
+        );
+        assert!(
+            root_preflight_recovery(&repo, &options).is_none(),
+            "marker present: no root-level refusal"
+        );
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_ne!(
+            packet["selected"]["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
+        assert_ne!(packet["selected"]["state"], "wrong_root", "{packet}");
+        cleanup(&repo)
+    }
+
+    /// #10713: a JavaScript-only root (no `package.json`, no TypeScript) is
+    /// told to add `jsconfig.json`, not `tsconfig.json`.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn javascript_only_root_names_jsconfig_marker() -> Result<(), String> {
+        let repo = write_temp_root(&env::temp_dir(), "first-pr-js-only")?;
+        fs::write(repo.join("index.js"), "module.exports = (x) => x;\n")
+            .map_err(|err| format!("write index.js: {err}"))?;
+        init_git_repo_with_initial_files(&repo, &["index.js"])?;
+        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        assert!(
+            doctor_languages.contains(&LanguageId::JavaScript),
+            "fixture must be JavaScript to doctor: {doctor_languages:?}"
+        );
+        write_first_pr(&repo, &FirstPrOptions::default())?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        let selected = &packet["selected"];
+        assert_eq!(
+            selected["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
+        let message = selected["message"].as_str().ok_or("missing message")?;
+        assert!(message.contains("add a `jsconfig.json`"), "{message}");
+        cleanup(&repo)
+    }
+
+    /// #10713: a root `doctor` also detects as Python keeps `wrong_root`
+    /// even with a `package.json` (likely tooling), not the TypeScript hint.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn python_root_with_package_json_keeps_wrong_root() -> Result<(), String> {
+        let repo = write_temp_root(&env::temp_dir(), "first-pr-python-package-json")?;
+        fs::write(repo.join("package.json"), "{}")
+            .map_err(|err| format!("write package.json: {err}"))?;
+        fs::write(repo.join("app.py"), "def f():\n    return 1\n")
+            .map_err(|err| format!("write app.py: {err}"))?;
+        init_git_repo_with_initial_files(&repo, &["package.json", "app.py"])?;
+        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        assert!(
+            doctor_languages.contains(&LanguageId::Python),
+            "fixture must be Python to doctor: {doctor_languages:?}"
+        );
+        assert!(!detect_python_project(&repo), "shallow Python only");
+        write_first_pr(&repo, &FirstPrOptions::default())?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "wrong_root", "{packet}");
+        assert_ne!(
+            packet["selected"]["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
         cleanup(&repo)
     }
 

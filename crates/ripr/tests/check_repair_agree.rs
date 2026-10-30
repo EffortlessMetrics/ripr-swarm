@@ -397,3 +397,60 @@ fn compound_boolean_tail_is_not_read_as_exposed_by_repair() -> Result<(), String
     );
     Ok(())
 }
+
+const GUARD_OLD: &str = "pub fn check_age(age: u32) -> u32 {\n    if age > 150 {\n        panic!(\"too old\");\n    }\n    age\n}\n";
+const GUARD_NEW: &str = "pub fn check_age(age: u32) -> u32 {\n    if age > 120 {\n        panic!(\"too old\");\n    }\n    age\n}\n";
+const GUARD_TEST: &str =
+    "use ar::check_age;\n\n#[test]\n#[should_panic]\nfn too_old() {\n    check_age(200);\n}\n";
+
+/// #11111 (group 4, panic-guard): the changed guard is a named static
+/// limitation, while the unchanged `age` tail is a separate seam that is not
+/// ready. Repair used to print both reasons unlabelled, so one change read as
+/// "no gap here" and "missing assertion" at once. With the diff available the
+/// unchanged seam is counted, not listed, and the changed seam's reason names
+/// its seam.
+#[test]
+fn bare_repair_does_not_list_an_unchanged_seams_missing_evidence_for_the_change()
+-> Result<(), String> {
+    let repo = Repo::create_uncommitted(GUARD_OLD, GUARD_NEW, GUARD_TEST)?;
+    let check = repo.ripr(&["check", "--base", "HEAD"])?;
+    assert!(
+        check.contains("ripr does not report a gap here"),
+        "precondition, check names the static limitation:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        repair.contains("seam src/lib.rs:2 `age > 120`: ripr does not report a gap here"),
+        "the changed seam's reason must name its seam:\n{repair}"
+    );
+    assert!(
+        !repair.contains("a test assertion that checks the changed return value"),
+        "the unchanged tail's missing evidence must not read as the change's verdict:\n{repair}"
+    );
+    assert!(
+        repair.contains("outside your changed lines cannot start a repair either"),
+        "the unchanged blocked seam must be counted, not hidden:\n{repair}"
+    );
+    Ok(())
+}
+
+/// The same shape with the change committed: no diff is available, so repair
+/// keeps the whole-repository view, and each reason names the seam it is
+/// about instead of sitting beside the other as a second verdict.
+#[test]
+fn whole_repository_refusals_name_the_seam_each_reason_is_about() -> Result<(), String> {
+    let repo = Repo::create(GUARD_OLD, GUARD_NEW, GUARD_TEST)?;
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        repair.contains("seam src/lib.rs:2 `age > 120`: ripr does not report a gap here")
+            && repair.contains("seam src/lib.rs:5 `age`: repair route not ready"),
+        "each refusal must name its own seam:\n{repair}"
+    );
+    assert!(
+        !repair.contains("outside your changed lines"),
+        "without a diff nothing is scoped:\n{repair}"
+    );
+    Ok(())
+}

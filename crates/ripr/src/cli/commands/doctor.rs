@@ -1255,7 +1255,7 @@ fn shallow_has_file(root: &Path, name: &str) -> bool {
 /// Detect which languages have concrete file markers in this workspace.
 /// Returns detected `LanguageId`s in a stable order (Rust first, then
 /// TypeScript, JavaScript, Python, Perl).
-fn detect_languages(root: &Path) -> Vec<LanguageId> {
+pub(crate) fn detect_languages(root: &Path) -> Vec<LanguageId> {
     let mut found = Vec::new();
 
     // Rust: Cargo.toml at root OR .rs files in root/src (shared with the
