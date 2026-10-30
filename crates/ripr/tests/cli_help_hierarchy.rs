@@ -130,6 +130,92 @@ fn agent_repair_phase_refusals_render_scoped_recovery_without_writes() -> Result
 }
 
 #[test]
+fn agent_repair_default_and_later_phase_selectors_match_help() -> Result<(), String> {
+    in_help_workspace(|root| {
+        let implicit = run_ripr_in(&["agent", "repair", "--root", "."], Some(root))?;
+        let explicit = run_ripr_in(
+            &["agent", "repair", "--root", ".", "--phase", "before"],
+            Some(root),
+        )?;
+        for output in [&implicit, &explicit] {
+            assert_eq!(output.status.code(), Some(2));
+            assert!(output.stdout.is_empty());
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .starts_with("ripr: agent repair --phase before requires --seam-id <id>;")
+            );
+        }
+        assert_eq!(implicit.stderr, explicit.stderr);
+        for (phase, expected) in [
+            ("after", "requires --attempt <id> or --seam-id <id>"),
+            ("verify", "requires --attempt <id>"),
+        ] {
+            let output = run_ripr_in(&["agent", "repair", "--phase", phase], Some(root))?;
+            assert_eq!(output.status.code(), Some(2), "{phase}: {output:?}");
+            assert!(output.stdout.is_empty());
+            assert_eq!(
+                String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+                format!("ripr: agent repair --phase {phase} {expected}\n")
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn agent_repair_later_phases_require_existing_attempts_without_writes() -> Result<(), String> {
+    in_help_workspace(|root| {
+        let attempt = "repair-attempt-0123456789abcdef01234567";
+        for phase in ["after", "verify"] {
+            let mut args = vec![
+                "agent",
+                "repair",
+                "--root",
+                ".",
+                "--phase",
+                phase,
+                "--attempt",
+                attempt,
+            ];
+            if phase == "verify" {
+                args.extend(["--verify-authorized", "--verify-authority", "help-contract"]);
+            }
+            let output = run_ripr_in(&args, Some(root))?;
+            assert_eq!(output.status.code(), Some(2), "{phase}: {output:?}");
+            assert!(output.stdout.is_empty());
+            assert_contains(
+                phase,
+                &String::from_utf8_lossy(&output.stderr),
+                &format!("repair attempt manifest not found for {attempt}"),
+            )?;
+        }
+        // After's compatibility selector still resolves an existing attempt;
+        // it must not start one, nor be refused as an unsupported selector.
+        let output = run_ripr_in(
+            &[
+                "agent",
+                "repair",
+                "--root",
+                ".",
+                "--phase",
+                "after",
+                "--seam-id",
+                "seam:missing",
+            ],
+            Some(root),
+        )?;
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_contains(
+            "after seam selector",
+            &String::from_utf8_lossy(&output.stderr),
+            "no awaiting repair attempt exists for seam `seam:missing`; start one with",
+        )?;
+        Ok(())
+    })
+}
+
+#[test]
 fn agent_subcommand_typos_render_scoped_recovery() -> Result<(), String> {
     let accepted = "start, brief, packet, card, stub, verify, verify-execute, receipt, status, review-summary, repair";
     for (typo, suggestion) in [("brief2", "brief"), ("verify-execue", "verify-execute")] {
@@ -1381,6 +1467,8 @@ fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<()
         "--verify-authorized",
         "--verify-authority ID",
         "--verify-rollback",
+        "Which phase of the repair loop to run. Defaults to `before` (start a new attempt); `after` and `verify` require an existing repair attempt.",
+        "--attempt ID Select one durable repair attempt; valid for `after` and `verify` (verify accepts only `--attempt`).",
         "ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase before",
         "ripr agent repair [--root PATH] [--store PATH] (--attempt ID|--seam-id ID) --phase after",
         "ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify",
