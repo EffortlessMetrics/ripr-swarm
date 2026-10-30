@@ -1,3 +1,4 @@
+mod npm_native;
 mod payload;
 mod producer;
 mod qualification;
@@ -11,6 +12,21 @@ use sha2::{Digest, Sha256};
 use crate::{command_success_owned, run_owned};
 
 pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
+    if let Some(payload_dir) = optional_release_arg(args, "npm-payload-dir") {
+        let identity = required_release_arg(args, "payload-identity", "PAYLOAD_IDENTITY")?;
+        let producer = required_release_arg(args, "producer-receipt", "PRODUCER_RECEIPT")?;
+        let build_identity = required_release_arg(args, "build-identity", "BUILD_IDENTITY")?;
+        let archive = required_release_arg(args, "qualified-archive", "QUALIFIED_ARCHIVE")?;
+        let out_dir = required_release_arg(args, "out-dir", "NPM_NATIVE_OUT_DIR")?;
+        return npm_native::produce(
+            Path::new(&payload_dir),
+            Path::new(&identity),
+            Path::new(&producer),
+            Path::new(&build_identity),
+            Path::new(&archive),
+            Path::new(&out_dir),
+        );
+    }
     if let Some(rows_dir) = optional_release_arg(args, "terminal-receipt-dir") {
         let out_dir = required_release_arg(args, "out-dir", "TERMINAL_RECEIPT_OUT_DIR")?;
         let candidate_sha = required_release_arg(args, "candidate-sha", "CANDIDATE_SHA")?;
