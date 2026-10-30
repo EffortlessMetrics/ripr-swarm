@@ -9172,7 +9172,7 @@ fn run_repair_phase_redirected(
 #[test]
 fn agent_repair_names_output_redirected_into_the_checkout() -> Result<(), Box<dyn std::error::Error>>
 {
-    const GUIDANCE: &str = "keep this command's output out of the checkout";
+    const GUIDANCE: &str = "write this command's output outside the repo";
     const UNTRACKED_HINT: &str = "not tracked by Git when the before phase ran.";
     const REDIRECT_HINT: &str = "a file you redirected ripr output into";
 
@@ -10130,7 +10130,7 @@ fn agent_repair_seam_selection_names_start_command_and_found_ids()
     assert_failure(&after);
     let stderr = String::from_utf8_lossy(&after.stderr);
     let expected_start = format!(
-        "no awaiting repair attempt exists for seam `{BOUNDARY_GAP_SEAM_ID}`; start one with `ripr agent repair --root {} --seam-id {BOUNDARY_GAP_SEAM_ID} --phase before`",
+        "no repair is in progress for this gap; start one with `ripr agent repair --root {} --seam-id {BOUNDARY_GAP_SEAM_ID} --phase before`",
         // The refusal renders the root through the same display rule as the
         // sibling messages (stable separators).
         root.display().to_string().replace('\\', "/")
@@ -10168,7 +10168,7 @@ fn agent_repair_seam_selection_names_start_command_and_found_ids()
     assert_failure(&after);
     let stderr = String::from_utf8_lossy(&after.stderr);
     assert!(
-        stderr.contains("expected exactly one awaiting repair attempt for seam")
+        stderr.contains("expected exactly one repair in progress for gap")
             && stderr.contains("found 2"),
         "the ambiguity refusal must fire:\n{stderr}"
     );

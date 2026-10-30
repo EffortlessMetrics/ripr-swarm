@@ -809,7 +809,7 @@ pub(crate) fn render_pilot_terminal(
         ));
         out.push_str("  3. run the `continue --attempt ...` command that step 1 prints\n");
         out.push_str(
-            "  (do not redirect these commands' output into the checkout, for example `> packet.json`: the edit cage counts that file as an edit; use target/ripr/ or a directory outside the repository)\n",
+            "  (write output outside the repo, for example under target/ripr/: files inside it count as edits and fail the repair)\n",
         );
         return out;
     }

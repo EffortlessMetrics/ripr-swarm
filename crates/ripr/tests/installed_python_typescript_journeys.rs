@@ -731,11 +731,7 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         "check names the commit step on a dirty tree",
     )?;
     expect_exit(dirty_ok, false, "dirty production start")?;
-    need(
-        &dirty,
-        "outside the allowed test surface already differ from HEAD",
-        "dirty premise",
-    )?;
+    need(&dirty, "Uncommitted:", "dirty premise")?;
     need(&dirty, "--gap-id", "gap-specific restart")?;
     if dirty.contains("--seam-id") {
         return Err(format!("dirty refusal names --seam-id:\n{dirty}"));
@@ -806,11 +802,7 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     std::fs::write(&production, &original)
         .map_err(|error| format!("restore production: {error}"))?;
     expect_exit(dirty_ok, false, "dirty premise with sentinels")?;
-    need(
-        &dirty,
-        "outside the allowed test surface already differ from HEAD",
-        "dirty premise",
-    )?;
+    need(&dirty, "Uncommitted:", "dirty premise")?;
     sentinels_intact("dirty premise refusal", &all_names)?;
     // Accepted gap whose publication fails after the snapshot and packet were
     // rewritten: their prior bytes return.

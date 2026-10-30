@@ -627,19 +627,19 @@ fn persist_before_repair_attempt(
         // #9103: the gap-bound after phase enforces this cage, so the
         // guidance matches the seam-bound one except for the committed test.
         eprintln!(
-            "ripr: before phase complete. Next: add or strengthen one focused test in the packet's test file and commit it (leave production code unchanged), then run the command printed below. The after phase checks closure first: a gap that does not read exposed is refused and the attempt stays retryable; once the gap reads exposed, the edit cage ends the attempt terminally if any file outside that test surface changed."
+            "ripr: before phase complete. Next: add or strengthen one focused test in the packet's test file and commit it (leave production code unchanged), then run the command printed below. The after phase checks closure first: a gap that does not read exposed is refused and the attempt stays retryable; once the gap reads exposed, the attempt fails if any file outside that test file changed."
         );
     } else if policy.inline_test_module_target {
         // #5210: the cage admits only new test functions inserted into the
         // target's inline test module, so "strengthen" an existing test, or
         // any other byte of the production file, would fail the attempt.
         eprintln!(
-            "ripr: before phase complete. Next: add one new focused test function inside the existing `#[cfg(test)]` module of {} (leave production code, the module declaration, and existing tests unchanged), then run the command printed below. Any other edit fails the attempt terminally.",
+            "ripr: before phase complete. Next: add one new focused test function inside the existing `#[cfg(test)]` module of {} (leave production code, the module declaration, and existing tests unchanged), then run the command printed below. Any other edit fails the attempt.",
             policy.selected_target.path()
         );
     } else {
         eprintln!(
-            "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the command printed below. Editing any file outside that one test surface fails the attempt terminally."
+            "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the command printed below. Editing any file outside that test file fails the attempt."
         );
     }
     let packet_location = if options.gap_id.is_some() {
@@ -648,7 +648,7 @@ fn persist_before_repair_attempt(
         "target/ripr/workflow/agent-packet.json"
     };
     eprintln!(
-        "ripr: keep this command's output out of the checkout: the edit cage counts a file you redirect it into (for example `> packet.json` or `2> before.err`) as an edit outside the test surface. The packet is already at {packet_location}; to keep a copy, redirect under target/ripr/ or outside the repository. The same applies to the after phase."
+        "ripr: write this command's output outside the repo (for example under target/ripr/): a file inside it (such as `> packet.json` or `2> before.err`) counts as an edit and fails the repair. The packet is already at {packet_location}. The same applies to the next step."
     );
     if baseline_ambiguous {
         eprintln!(

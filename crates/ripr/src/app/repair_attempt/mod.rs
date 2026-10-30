@@ -3221,9 +3221,7 @@ fn select_awaiting_repair_attempt_by_seam(
             .collect::<Vec<_>>()
             .join(", ");
         let detail = if matches.is_empty() {
-            format!(
-                "no awaiting repair attempt exists for seam `{seam_id}`; start one with `{restart}`"
-            )
+            format!("no repair is in progress for this gap; start one with `{restart}`")
         } else {
             format!(
                 "found {}: {ids}; pass --attempt <id> to select the prepared work exactly",
@@ -3231,7 +3229,7 @@ fn select_awaiting_repair_attempt_by_seam(
             )
         };
         return Err(format!(
-            "expected exactly one awaiting repair attempt for seam `{seam_id}`: {detail}"
+            "expected exactly one repair in progress for gap `{seam_id}`: {detail}"
         ));
     }
     matches.pop().ok_or_else(|| "missing attempt".to_string())

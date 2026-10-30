@@ -1001,7 +1001,7 @@ fn finished_attempt_warnings(
                 kind: "repair_receipt_unconfirmed".to_string(),
                 artifact: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
                 message: format!(
-                    "repair attempt `{}` (seam `{}`) passed the edit cage, but {}; status does not report the loop complete{}{}",
+                    "repair `{}` (gap `{}`) stayed within the test files, but {}; status does not report the loop complete{}{}",
                     attempt.attempt_id,
                     attempt.seam_id,
                     unconfirmed_receipt_reason(attempt),
@@ -1297,7 +1297,7 @@ fn select_next_command(
             kind: "repair_attempt_head_unknown".to_string(),
             artifact: store.locator.to_string(),
             message: format!(
-                "the current Git HEAD could not be read or related to the head its attempt was prepared at, so status cannot tell whether {} awaiting repair attempt(s) are still current",
+                "the current Git HEAD could not be read or related to the head its attempt was prepared at, so status cannot tell whether {} repair(s) in progress are still current",
                 head_unknown.len()
             ),
         });
@@ -5812,12 +5812,12 @@ mod tests {
 
         // Dirty-premise start refusal: the recipe is the tail of a clause and
         // a later sentence must survive.
-        let dirty = "repair attempt cannot start: tracked file(s) differ from HEAD: src/lib.rs. to recover: commit the listed file(s) (for example `git commit -- src/lib.rs`), or restore them, then rerun `ripr agent repair --root '/r' --seam-id abc --phase before`. No workflow was prepared and no repair attempt was started.";
+        let dirty = "ripr repair needs your source changes committed first, so it can tell your new test apart from them. Uncommitted: src/lib.rs. Commit them (for example `git commit -- src/lib.rs`) or restore them, then rerun `ripr agent repair --root '/r' --seam-id abc --phase before`. A test file you are still editing is fine. Nothing was started.";
         let cleaned = without_start_recipe(dirty);
         assert!(
             !cleaned.contains("--phase before")
                 && cleaned.contains("or restore them")
-                && cleaned.contains("No workflow was prepared and no repair attempt was started.")
+                && cleaned.contains("Nothing was started.")
                 && cleaned.contains(cut),
             "{cleaned}"
         );
