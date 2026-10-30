@@ -1834,6 +1834,31 @@ fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<
         {
             return Err(format!("invalid retained snapshot was trusted: {status}"));
         }
+        for json in [false, true] {
+            let mut args = vec![
+                "agent",
+                "status",
+                "--root",
+                &attempt.root_arg,
+                "--attempt",
+                &attempt.attempt_id,
+            ];
+            if json {
+                args.push("--json");
+            }
+            let (ok, selected) = ripr(&attempt.decoy, &args)?;
+            expect_exit(ok, true, "selected status with invalid retained snapshot")?;
+            need(
+                &selected,
+                "currentness could not be established",
+                "unknown evidence explanation",
+            )?;
+            if selected.contains("the current Git HEAD could not be read") {
+                return Err(format!(
+                    "unavailable evidence blamed readable HEAD: {selected}"
+                ));
+            }
+        }
         Ok(())
     };
     unavailable()?;

@@ -2907,10 +2907,13 @@ pub(crate) fn build_agent_attempt_status(
     let mut limitations = manifest.limitations.clone();
     limitations.extend(resolved.limitations().iter().cloned());
     if view.head_current.is_none() {
-        limitations.push(
+        limitations.push(if current_head.is_none() {
             "the current Git HEAD could not be read; this attempt's currentness is unknown"
-                .to_string(),
-        );
+                .to_string()
+        } else {
+            "this attempt's currentness could not be established from its bound evidence"
+                .to_string()
+        });
     }
     Ok(AgentAttemptStatusReport {
         root: root_display,
