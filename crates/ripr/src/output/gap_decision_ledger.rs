@@ -5592,7 +5592,14 @@ mod tests {
         // #11103: `python_len_local_boundary_repair_gap` derives its once-bound
         // `visible = len(text)` operand, so the weak boundary finding names
         // `visible == limit` and carries one direct-aligned card.
-        if (direct, no_strong, orthogonal, family_selection) != (18, 27, 30, 1) {
+        // #10391: nine conservative patch-scope fixtures
+        // (`python_bool_owner_{environment_protocol, escaped_patch_target,
+        // fake_environment, mock_comprehension, mock_equality,
+        // mock_inspection_override, mock_result_escape, parameter_patch,
+        // patched_callee}`) carry one packet-eligible `no_strong_oracle` card
+        // each; the admitted-environment positive stays exposed and the
+        // formatted-patch limit contributes no card.
+        if (direct, no_strong, orthogonal, family_selection) != (18, 36, 30, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
