@@ -306,19 +306,17 @@ pub(super) fn python_boundary_evidence(
     // Missing is an aggregate claim: every relevant call must be placeable.
     // Keep a resolved witness even if another call is unknown, but do not let
     // the resolved values hide a call that could be at the boundary.
+    let unresolved = |operand: &str, row: &CallRow| match &filter {
+        Some(filter) if filter.local == operand => !row.elements.contains_key(filter.iterable),
+        _ => resolve_operand(operand, row, &constants).is_none(),
+    };
     let unplaced_call = call_gaps
         || rows.iter().any(|row| {
-            let unresolved = |operand: &str| match &filter {
-                Some(filter) if filter.local == operand => {
-                    !row.elements.contains_key(filter.iterable)
-                }
-                _ => resolve_operand(operand, row, &constants).is_none(),
-            };
-            unresolved(&left)
-                || unresolved(&right)
+            unresolved(&left, row)
+                || unresolved(&right, row)
                 || old_equality_operands
                     .as_ref()
-                    .is_some_and(|(left, right)| unresolved(left) || unresolved(right))
+                    .is_some_and(|(left, right)| unresolved(left, row) || unresolved(right, row))
         });
     for row in &rows {
         let left_candidates = candidates(&left, row);
@@ -392,11 +390,7 @@ pub(super) fn python_boundary_evidence(
             })
         });
     if let Some(step) = step {
-        if call_gaps
-            || rows
-                .iter()
-                .any(|row| candidates(&step.variable, row).is_empty())
-        {
+        if call_gaps || rows.iter().any(|row| unresolved(&step.variable, row)) {
             crate::analysis::classify::sort_value_facts(&mut observed_values);
             return Some(PythonBoundaryEvidence {
                 activation: BoundaryActivation::Missing,
