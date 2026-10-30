@@ -234,3 +234,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_slice_table_zero_elements (19)
+
+Reason:
+RIPR-SPEC-0122: #10920 review - the weak-infection hint claimed no test input tells the versions apart; the admitted relational sibling case (#10916) has asserted inputs that evaluate differently, so the hint now states the assertion-level fact
+
+Command:
+`cargo xtask goldens bless rust_slice_table_zero_elements --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_slice_table_zero_elements (20)
+
+Reason:
+RIPR-SPEC-0122: incomplete evidence stage tokens render as plain words in the human repair advisory (#11025)
+
+Command:
+`cargo xtask goldens bless rust_slice_table_zero_elements --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

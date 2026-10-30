@@ -26,6 +26,12 @@ pub struct ContextPacket {
     /// The finding's confidence score (`0.0..=1.0`), wire-identical to the
     /// `confidence` float on the check finding (#8743).
     pub confidence: f32,
+    /// Why `confidence` is capped for preview findings (#10700); empty for
+    /// Rust. Wire-identical to the check finding's `confidence_basis`.
+    pub confidence_basis: Vec<crate::domain::ConfidenceBasisEntry>,
+    /// One plain-English "why capped" line; `None` when `confidence_basis`
+    /// is empty.
+    pub confidence_why_capped: Option<String>,
     pub ripr: ContextPacketRipr,
     /// Matched related-test rows before the packet's display window, using
     /// the finding's conservative retained-count fallback for legacy data.
@@ -112,6 +118,14 @@ impl ContextPacket {
             classification: finding.class.as_str(),
             severity: finding.class.severity(),
             confidence: finding.confidence,
+            confidence_basis: crate::domain::basis_entries(
+                &finding.confidence_basis,
+                finding.language,
+            ),
+            confidence_why_capped: crate::domain::why_capped_line(
+                &finding.confidence_basis,
+                finding.language,
+            ),
             ripr: ContextPacketRipr {
                 reach: finding.ripr.reach.state.as_str().to_string(),
                 infect: finding.ripr.infect.state.as_str().to_string(),
@@ -317,6 +331,7 @@ mod tests {
     fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib_rs:9:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {

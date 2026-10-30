@@ -124,6 +124,13 @@ Test discovery:
   `node:test` `suite(...)`, as test and describe roots with the same active
   modifiers (`.only`, `.concurrent`, `.sequential`); `.skip`, `xit`, and
   `xcontext` register nothing (#4548)
+- a renamed registration alias the imports layer admits (`const { test: t } =
+  require('node:test')`, `import { test as t }`): the alias registers like
+  the direct spelling, bare or through an active modifier, with the same
+  runner-source, shadowing, skip/todo-options and inactive-modifier fences
+  (#10987). The namespace object's own name, a member read off it
+  (`runner.test(...)`), and an aliased `.each` factory register nothing
+  through this path
 - AVA's macro form, a named macro between the title and the callback
   (`test(name, macro, async (t) => {})`, `test(name, ns.macro, fn)`): the
   function third argument is the callback (#10964) for a root bound to AVA's `test`, and only an inline function; a macro without a

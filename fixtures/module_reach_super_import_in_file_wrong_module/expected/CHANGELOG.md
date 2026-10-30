@@ -65,3 +65,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (6)
+
+Reason:
+RIPR-SPEC-0122: #10920 review - the weak-infection hint claimed no test input tells the versions apart; the admitted relational sibling case (#10916) has asserted inputs that evaluate differently, so the hint now states the assertion-level fact
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

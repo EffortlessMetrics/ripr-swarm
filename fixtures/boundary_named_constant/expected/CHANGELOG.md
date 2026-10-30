@@ -382,3 +382,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — boundary_named_constant (32)
+
+Reason:
+RIPR-SPEC-0122: incomplete evidence stage tokens render as plain words in the human repair advisory (#11025)
+
+Command:
+`cargo xtask goldens bless boundary_named_constant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — boundary_named_constant (33)
+
+Reason:
+RIPR-SPEC-0122: clarify test reach inspection before changing tests (#8387)
+
+Command:
+`cargo xtask goldens bless boundary_named_constant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -251,11 +251,13 @@ descended. The dropped-registration disclosure no longer fires for these shapes.
 **Rule 22. A test inside `describe.skipIf(cond)` / `describe.runIf(cond)` is reached, never credited (#10629).**
 Vitest's conditional suite factories take a runtime condition static analysis
 does not evaluate. A `describe.skipIf(cond)('name', () => { ... })` or
-`describe.runIf(cond)(...)` is indexed for reach with the
+`describe.runIf(cond)(...)` — including the untitled callback-only form
+`describe.runIf(cond)(() => { ... })` (#10982) — is indexed for reach with the
 factory call as its guard (`describe.skipIf(!existsSync(dist))`; nested guards
 join with `&&`). Its tests keep no assertion, their admission stays
 unresolved, and findings read as under Rule 20. A non-literal title is named
-as for any suite; another root (`runner.skipIf`) is not descended. An options
+as for any suite; an untitled suite is named like a non-literal title; another
+root (`runner.skipIf`) is not descended. An options
 object that skips the suite (`{ skip: true }`) is honored as for `describe`, and
 strict mode is read from the callback, not the title.
 
@@ -666,6 +668,19 @@ passes on the old code reaches it and fails on the edit. Both cases need the cha
   smoke, and unknown otherwise. A non-literal matcher argument (including
   a regex) adds `typescript_dynamic_assertion_unresolved` and does not
   change the class.
+  (Amended 2026-10-30, #10682: the limitation is added only for an assertion
+  in the changed seam's oracle family (RIPR-SPEC-0104
+  `ts_oracle_kind_matches_seam`); a dynamic error-family expectation on a
+  value or predicate seam, and the reverse, adds nothing, because it cannot
+  hide that seam's discriminator. An all-literal array (`[]`, `[1, 'a', [2]]`)
+  is a concrete expected value for deep-equality matchers only (AVA
+  `deepEqual`; Jest `toEqual` / `toStrictEqual`), so those assertions read
+  `typescript_oracle_confidence: high`; `toBe`, `toMatchObject`, AVA
+  `is` / `strictEqual` / `equal` and arrays holding an identifier, call,
+  spread, hole, object or `-x` stay dynamic. `typescript_table_case_unresolved`
+  keeps its own unconditional rule. A pinned `[]` / all-zero-like array does not
+  witness a field update, and an array expectation is a dead witness against
+  scalar changed arms and scalar branch values.)
 
 ### Reach
 

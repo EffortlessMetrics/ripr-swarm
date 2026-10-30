@@ -49,6 +49,7 @@ Preview actionability
   raw evidence: src/audit.ts:2 (typescript_preview_probe) source=probe:src_audit.ts:typescript_preview:a853f862 owner=emit
 Static exposure
   weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
 Evidence
   shared evidence: E1, E2, E3, E4, E5, E6
 Weakness
@@ -105,6 +106,7 @@ Preview actionability
   raw evidence: src/audit.ts:3 (typescript_preview_probe) source=probe:src_audit.ts:typescript_preview:fe5718af owner=emit
 Static exposure
   weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
 Evidence
   shared evidence: E1, E2, E3, E4, E5, E6
 Weakness

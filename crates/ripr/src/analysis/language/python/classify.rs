@@ -5,6 +5,7 @@ use super::assertion_selection::{
     strength_only_assertion,
 };
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
+use super::call_chain::call_chain_credits;
 use super::caplog_text::{PythonLogVerdict, python_log_evidence};
 use super::dataclass_default::dataclass_default_credits;
 use super::discriminators::python_missing_discriminators;
@@ -29,11 +30,13 @@ use super::related_tests::{
 };
 use super::row_miss::{RowMissChange, annotate_row_misses};
 use super::sink_alignment::{
-    CreditedAssertion, SinkAlignment, classify_sink_alignment_with_old, enclosing_literal_pair,
+    AlignmentPrep, CreditedAssertion, SinkAlignment, classify_sink_alignment_prepared,
+    enclosing_literal_pair,
 };
 use super::static_limits::{
     LAMBDA_LIMIT_EVIDENCE, heuristic_only_relation_limit, implicit_dunder_dispatch_limit,
     module_object_rebind_limit, static_limit_for_focused_change, unpinned_equality_dunder_limit,
+    unresolved_pytest_fixture_names,
 };
 use super::table_rows::python_unvaried_table_operand;
 use super::term_activation::python_inactive_term_evidence;
@@ -365,7 +368,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // (#4568), never an oracle.
     let helper_callers = if !related_candidates.is_empty() {
         Vec::new()
-    } else if let Some(memo) = related {
+    } else if let Some(memo) = related.as_deref_mut() {
         memo.helper_candidates(owner, owners, all_tests)
     } else {
         helper_owner_call_candidates(owner, owners, all_tests)
@@ -414,8 +417,15 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                     all_tests,
                 );
                 if default.is_empty() {
-                    imported_call = true;
-                    imported_call_credits(&edit, owner, owners, all_tests)
+                    let imported = imported_call_credits(&edit, owner, owners, all_tests);
+                    if imported.is_empty() {
+                        // A one-`return` owner read through a chain of
+                        // one-`return` callers a test pins (#9226).
+                        call_chain_credits(&edit, owner, owners, all_tests)
+                    } else {
+                        imported_call = true;
+                        imported
+                    }
                 } else {
                     default
                 }
@@ -472,6 +482,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     if !module_value.is_empty() || bool_credit.is_some() {
         sort_related_candidates(&mut related_candidates);
     }
+    let memo = related;
     let mut related = related_tests_for_candidates(&related_candidates, Some(&focus));
     if let Some(credit) = &bool_credit
         && let Some(row) = related.iter_mut().find(|row| {
@@ -497,12 +508,22 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     });
     let literal_pair = owner_source
         .and_then(|source| enclosing_literal_pair(source, line, line_text, old_line_text));
-    let alignment = classify_sink_alignment_with_old(
+    // The alignment index depends only on the owner and the run's tests, so a
+    // run's memo builds it once per owner (#10914).
+    let built_prep;
+    let alignment_prep = match memo {
+        Some(memo) => memo.alignment_prep(owner, all_tests),
+        None => {
+            built_prep = AlignmentPrep::new(owner, all_tests);
+            &built_prep
+        }
+    };
+    let alignment = classify_sink_alignment_prepared(
         owner,
         line_text,
         old_line_text,
         &related,
-        all_tests,
+        alignment_prep,
         guard_entered,
         literal_pair.as_ref(),
     );
@@ -1513,7 +1534,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 &ProbeFamily::Predicate,
             ),
         },
-        all_tests,
+        alignment_prep,
     );
     for candidate in related_candidates {
         let test = candidate.test;
@@ -1531,6 +1552,27 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         }
         if test.parametrized {
             evidence.push(format!("test_parametrized: pytest ({})", test.name));
+        }
+        if candidate.relation.uses_oracle()
+            && static_limit
+                .as_ref()
+                .is_some_and(|limit| limit.kind == StaticLimitKind::UnresolvedPytestFixture)
+        {
+            // An argname whose `indirect=` the read cannot settle is a
+            // parametrize value that may or may not pass through a fixture;
+            // only the rest are fixtures ripr knows the test takes.
+            let (routed, fixtures): (Vec<&str>, Vec<&str>) =
+                unresolved_pytest_fixture_names(test, owner)
+                    .into_iter()
+                    .partition(|name| test.unsettled_indirect.iter().any(|n| n == name));
+            for (prefix, names) in [
+                ("unresolved_fixtures", fixtures),
+                ("unsettled_indirect_params", routed),
+            ] {
+                if !names.is_empty() {
+                    evidence.push(format!("{prefix}: {} ({})", names.join(", "), test.name));
+                }
+            }
         }
         if let Some(command) = verify_command_for_test(test) {
             evidence.push(format!("test_verify_command: {command} ({})", test.name));
@@ -1651,6 +1693,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     .into_public();
     let mut finding = Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: probe.id.0.clone(),
         canonical_gap,
         probe,
@@ -1689,6 +1732,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         source_currentness,
     };
     apply_python_no_static_path_limit(&mut finding, owner, owners, all_tests);
+    note_runner_invocation(&mut finding, owner, all_tests);
     // #10708: the with-no-static-link guidance is pre-limit advice. The
     // post-classification step can only attach the Python transitive-reach
     // limitation to a NoStaticPath finding with no related tests (`apply_
@@ -1704,6 +1748,36 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         origins.record(&finding, files);
     }
     Some(finding)
+}
+
+/// #11069: keep `no_static_path`, but when a test that imports the owner's
+/// package runs commands through a recognised `CliRunner.invoke(...)`, say so
+/// instead of asking for a new test the project may already have. Only
+/// replaces the generic "No Python test references" line; never changes class.
+fn note_runner_invocation(finding: &mut Finding, owner: &PythonOwner, tests: &[PythonTest]) {
+    if !(finding.class == ExposureClass::NoStaticPath
+        && finding.related_tests.is_empty()
+        && finding.static_limit_kind.is_none())
+    {
+        return;
+    }
+    let Some(test) = super::cli_runner::runner_invoking_test(owner, tests) else {
+        return;
+    };
+    let Some(line) = finding
+        .missing
+        .iter_mut()
+        .find(|line| line.starts_with("No Python test references"))
+    else {
+        return;
+    };
+    *line = format!(
+        "No static test path reaches `{}`. Tests of this package run commands through `CliRunner.invoke(...)` (for example `{}:{}`) and may exercise it; ripr does not follow into command internals, so check those tests before adding a new one.",
+        owner.name,
+        test.file.display(),
+        test.line
+    );
+    finding.recommended_next_step = None;
 }
 
 /// Number a file's candidate-side findings that share a probe id (#10450).

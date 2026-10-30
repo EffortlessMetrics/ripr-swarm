@@ -3435,7 +3435,7 @@ mod tests {
             page.0
         );
         assert!(
-            page.0.contains("39c2500"),
+            page.0.contains("72e613e"),
             "ranking lane revision missing: {}",
             page.0
         );
