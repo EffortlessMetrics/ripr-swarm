@@ -1195,7 +1195,7 @@ enum SchemaValueKey {
 }
 
 fn charge_validation_work(budget: &mut ValidationBudget, amount: usize) -> bool {
-    if budget.remaining < amount {
+    if budget.exhausted || budget.remaining < amount {
         budget.exhausted = true;
         return false;
     }
@@ -1357,6 +1357,10 @@ fn validate_value_against_schema_impl(
         }
     }
 
+    if budget.exhausted {
+        return;
+    }
+
     if let Some(all_of) = schema.get("allOf").and_then(ExactValue::as_array) {
         for (index, subschema) in all_of.iter().enumerate() {
             if budget.exhausted {
@@ -1371,6 +1375,10 @@ fn validate_value_against_schema_impl(
                 budget,
             );
         }
+    }
+
+    if budget.exhausted {
+        return;
     }
 
     if let Some(any_of) = schema.get("anyOf").and_then(ExactValue::as_array) {
@@ -1396,11 +1404,21 @@ fn validate_value_against_schema_impl(
             messages.extend(nested);
         }
         if !matched {
+            let bytes = messages.iter().fold(location.len(), |total, message| {
+                total.saturating_add(message.len())
+            });
+            if !charge_validation_work(budget, 1 + bytes / 1024) {
+                return;
+            }
             violations.push(format!(
                 "{location}: did not match any allowed schema ({})",
                 messages.join("; ")
             ));
         }
+    }
+
+    if budget.exhausted {
+        return;
     }
 
     if let Some(one_of) = schema.get("oneOf").and_then(ExactValue::as_array) {
@@ -1428,6 +1446,12 @@ fn validate_value_against_schema_impl(
             messages.extend(nested);
         }
         if matches != 1 {
+            let bytes = messages.iter().fold(location.len(), |total, message| {
+                total.saturating_add(message.len())
+            });
+            if !charge_validation_work(budget, 1 + bytes / 1024) {
+                return;
+            }
             violations.push(format!(
                 "{location}: matched {matches} of {} mutually exclusive schemas ({})",
                 one_of.len(),
@@ -1439,6 +1463,10 @@ fn validate_value_against_schema_impl(
     // `if`/`then`/`else` carry the conditional field requirements that make a
     // state vocabulary closed — a validator that skipped them would accept a
     // state paired with evidence the schema forbids.
+    if budget.exhausted {
+        return;
+    }
+
     if let Some(condition) = schema.get("if") {
         let mut condition_violations = Vec::new();
         validate_value_against_schema_inner(
@@ -1449,6 +1477,9 @@ fn validate_value_against_schema_impl(
             &mut condition_violations,
             budget,
         );
+        if budget.exhausted {
+            return;
+        }
         let branch = if condition_violations.is_empty() {
             schema.get("then")
         } else {
@@ -1466,6 +1497,10 @@ fn validate_value_against_schema_impl(
         }
     }
 
+    if budget.exhausted {
+        return;
+    }
+
     if let Some(negated) = schema.get("not") {
         let mut nested = Vec::new();
         validate_value_against_schema_inner(
@@ -1476,19 +1511,30 @@ fn validate_value_against_schema_impl(
             &mut nested,
             budget,
         );
+        if budget.exhausted {
+            return;
+        }
         if nested.is_empty() {
             violations.push(format!("{location}: matched a forbidden schema"));
         }
     }
 
-    if let Some(expected) = schema.get("const")
-        && !schema_values_equal(value, expected, budget)
-    {
-        violations.push(format!(
-            "{location}: expected const {}, got {}",
-            compact_exact_json(expected),
-            compact_exact_json(value)
-        ));
+    if budget.exhausted {
+        return;
+    }
+
+    if let Some(expected) = schema.get("const") {
+        let matched = schema_values_equal(value, expected, budget);
+        if budget.exhausted {
+            return;
+        }
+        if !matched {
+            violations.push(format!(
+                "{location}: expected const {}, got {}",
+                compact_exact_json(expected),
+                compact_exact_json(value)
+            ));
+        }
     }
 
     if let Some(allowed) = schema.get("enum").and_then(ExactValue::as_array) {
@@ -1511,6 +1557,10 @@ fn validate_value_against_schema_impl(
                 compact_exact_json(value)
             ));
         }
+    }
+
+    if budget.exhausted {
+        return;
     }
 
     if let Some(schema_type) = schema.get("type") {
@@ -2444,6 +2494,35 @@ mod tests {
                 "repeated long diagnostics must consume budget"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn exhausted_comparison_stops_later_schema_work() -> Result<(), String> {
+        let schema = parse_exact_text(&format!(
+            r#"{{"const":"{}","pattern":"("}}"#,
+            "x".repeat(65_536)
+        ))?;
+        let value = parse_exact_text(r#""x""#)?;
+        let mut budget = ValidationBudget {
+            remaining: 10,
+            depth: 0,
+            exhausted: false,
+        };
+        let mut violations = Vec::new();
+        validate_value_against_schema_inner(
+            &value,
+            &schema,
+            &schema,
+            "value".into(),
+            &mut violations,
+            &mut budget,
+        );
+        assert!(budget.exhausted);
+        assert!(
+            violations.is_empty(),
+            "no later diagnostics or pattern work after exhaustion"
+        );
         Ok(())
     }
 
