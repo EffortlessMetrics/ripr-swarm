@@ -446,9 +446,10 @@ pub(super) fn collect_fixture_side_effects(
             })
             .cloned()
             .collect(),
-        class_writes: super::module_constants::names_used_beyond_construction(source, &|name| {
-            INERT_TOOL_CLASSES.iter().any(|(_, class)| *class == name)
-        }),
+        class_writes: super::module_constants::watched_names_used_beyond_construction(
+            source,
+            &|name| INERT_TOOL_CLASSES.iter().any(|(_, class)| *class == name),
+        ),
         imported_modules: super::module_constants::imported_module_names(statements),
         ..FixtureSideEffects::default()
     };

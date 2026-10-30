@@ -507,7 +507,7 @@ Updated:
 ## Pending — assertion_shaped_control_production_caller (33)
 
 Reason:
-RIPR-SPEC-0122: check now prints one hand-written-test step when a gap has neither a repair start nor a stub, and only stub commands that produce a stub (#10710)
+RIPR-SPEC-0122: clarify test reach inspection before changing tests (#8387); check now prints one hand-written-test step when a gap has neither a repair start nor a stub, and only stub commands that produce a stub (#10710)
 
 Command:
 `cargo xtask goldens bless assertion_shaped_control_production_caller --reason "..."`

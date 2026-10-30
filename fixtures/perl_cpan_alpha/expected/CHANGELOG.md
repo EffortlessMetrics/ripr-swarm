@@ -197,3 +197,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — perl_cpan_alpha (12)
+
+Reason:
+RIPR-SPEC-0090: summary.changed_files_by_language now lists the path-routed changed files of a language whose adapter did not run (#10719); human output gains the by-language line
+
+Command:
+`cargo xtask goldens bless perl_cpan_alpha --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

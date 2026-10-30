@@ -23,7 +23,7 @@ use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
 
-pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt for one gap, or select the gap to repair.
+pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt from a Rust seam, or select a seam to repair.
 
 Usage: ripr repair [<item>] [--root PATH]
 
@@ -40,7 +40,9 @@ item — a seam ID, a `ripr check` finding ID (`probe:` / `repo-probe:`), a
 canonical gap ID, or a `file:line` location naming exactly one
 repair-eligible seam — repair starts the before phase for that exact
 subject. A cross-namespace ID the current seams no longer map refuses with
-the recovery route instead of guessing a seam.
+the recovery route instead of guessing a seam. For a Python or TypeScript
+diff gap, use the gap-bound start printed by `ripr check`, when offered;
+this command does not reuse that check's diff or base.
 
 Run from a workspace member, a `file:line` item is bound to that member and
 is refused (fail closed) when a workspace-root file with the same path suffix
@@ -681,7 +683,7 @@ fn no_eligible_seam_message(
             return crate::app::task_first::non_rust_repair_guidance(&root, &changed_non_rust);
         }
         return format!(
-            "no seams visible under {root}; analyze the workspace before starting a repair. Next: `ripr pilot --root {root}`"
+            "no seams visible under {root}; `ripr repair` selects repository seams and does not reuse the diff or base from an earlier `ripr check`. If that check printed a gap-bound repair start, use the start printed by that check; rerun the same check, including its original --base if supplied, if needed. To explore repository seams, run `ripr pilot --root {root}`"
         );
     }
     let noun = if total_seams == 1 { "seam" } else { "seams" };

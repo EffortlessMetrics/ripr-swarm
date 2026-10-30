@@ -660,3 +660,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — opaque_fixture_builder (31)
+
+Reason:
+RIPR-SPEC-0122: clarify test reach inspection before changing tests (#8387)
+
+Command:
+`cargo xtask goldens bless opaque_fixture_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

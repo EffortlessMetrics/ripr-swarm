@@ -213,8 +213,12 @@ projection is `ripr agent card --seam-id ID [--json]` (RIPR-SPEC-0194,
 #4667): the compact card is the default agent handoff, the complete packet
 stays behind the card's explicit detail route, and the LSP seam handoff code
 action emits the same card while the seam hover shows a bounded summary of it
-(RIPR-SPEC-0198, #4668); no MCP projection emits the card yet. Measured
-field/budget ratification landed in #4669.
+(RIPR-SPEC-0198, #4668). MCP also projects it through
+`ripr_get_repair_card` and `ripr://repair-card/{canonical_id}` for an eligible
+item in its committed snapshot (RIPR-SPEC-0215, #4668); the read is subject to
+the MCP snapshot and refusal contracts; worktree snapshots do not expose repair
+cards. Measured field/budget ratification in
+#4669 is limited to the synthetic scope described below.
 
 Detail references and overflow disclosure (RIPR-SPEC-0193, #4666) keep the
 default card finite: nine load-bearing evidence families — the full fix
@@ -232,8 +236,9 @@ Stale, malformed, wrong-root, missing and unavailable evidence states stay
 visible on the references; the card never upgrades them and never lets
 budgeting change readiness, target selection or actionability. The
 item/byte budget (`repair-card-budget-v1`: 16 detail items, 64 KiB wire
-card, 4 KiB per compact inline field) is provisional but versioned; #4669
-ratifies the numbers. The budget-version constant lives in
+card, 4 KiB per compact inline field) is versioned; #4669 ratified the defaults
+for four synthetic profiles only, with real-attempt usability still pending.
+The budget-version constant lives in
 `crates/ripr/src/domain/repair_card.rs` and is pinned by unit tests and
 `cargo xtask check-output-contracts`.
 
@@ -918,6 +923,20 @@ identity agree and the analysis-outcome validator accepts the artifact.
   }
 }
 ```
+
+`summary.changed_files_by_language` lists every language the diff touched
+(#10719): one entry per adapter that returned a result (its own count, which
+may be an honest zero and applies that adapter's generated/excluded-path
+filtering), plus one entry for each routed language whose adapter produced no
+count (not enabled, not compiled in, or errored). For the added entries the
+count is the raw path-routed changed-file count, so a consumer reading
+`summary` alone cannot see "no files changed" for a skipped TypeScript or
+Python diff. The two denominators differ: an adapter's count is the files it
+admitted, a routed-only count is every changed file routed to that language, and
+`analysis_outcome.outcome.counts.changed_file_count` is the outcome's own file
+count. `summary.changed_rust_files` stays Rust-adapter-only (#2103):
+preview-language files never inflate it, so it is `0` for a Python-only diff
+by design; read `changed_files_by_language` for other languages.
 
 `canonical_next_action` (additive, no `schema_version` bump, #7258) is the
 same DTO RepairCard and agent-status JSON already embed. Check JSON carries
@@ -18810,7 +18829,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.119",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.120",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19578,7 +19597,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.119",
+      "schema_version": "1.120",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

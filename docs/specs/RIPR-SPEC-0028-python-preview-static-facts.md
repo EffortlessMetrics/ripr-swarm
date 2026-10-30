@@ -354,6 +354,11 @@ make no edge. The relation is uncertain, carries no oracle and never reaches
 the command is reach-only too (the invoke may never run the body, e.g.
 `--help`). `import click as c`, `from click import command` and group
 subcommands are not recognised.
+An owner left `no_static_path` while a test that imports its module (or a
+package above it) calls `.invoke(` on a recognised fresh `CliRunner` keeps its
+class but replaces the generic "No Python test references" line with one
+naming that test and saying ripr does not follow into command internals, and
+withdraws the add-a-test next step (#11069). No recognised invoke, no change.
 
 Known limits, all weak-only: a module-level rebinding such as
 `helper = wrap(helper)` is not detected, and a call inside a nested `def` or

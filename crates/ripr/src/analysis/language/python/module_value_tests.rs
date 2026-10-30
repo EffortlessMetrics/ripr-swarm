@@ -2588,3 +2588,42 @@ fn a_dataclass_whose_creation_or_construction_may_raise_is_not_credited() -> Che
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn persisted_lexes_carry_the_loose_name_answer_the_index_uses() {
+    // a.py spells a non-ASCII name, which only a lex finds. The workspace
+    // pass records that answer with the file's lexes and a warm run serves
+    // it from the fact store; the index built from it must match a fresh one.
+    let sources = [
+        (Path::new("a.py"), "import b\ncaf\u{e9} = 1\n"),
+        (Path::new("b.py"), "LIMIT = 10\n"),
+    ];
+    assert!(super::module_value::ForeignLexes::of(sources[0].1).loose_names);
+    assert!(!super::module_value::ForeignLexes::of("x = 'caf\u{e9}'\n").loose_names);
+    assert!(!super::module_value::ForeignLexes::of(sources[1].1).loose_names);
+    let parsed = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    assert!(
+        parsed
+            .excluding(Path::new("b.py"))
+            .names_may_differ_elsewhere()
+    );
+    let prior: std::collections::BTreeMap<_, _> = sources
+        .iter()
+        .map(|(file, source)| {
+            let facts = super::source_facts::extract_workspace_source_facts(file, source);
+            (
+                file.to_path_buf(),
+                super::module_value::PriorFileFacts {
+                    assigned: facts.assigned_attributes,
+                    lexes: facts.foreign_lexes,
+                },
+            )
+        })
+        .collect();
+    assert!(prior.values().all(|prior| prior.lexes.is_some()));
+    let shared =
+        super::module_value::ForeignIndex::build_with_prior(sources.iter().copied(), false, &prior);
+    for (own, _) in &sources {
+        assert_eq!(shared.excluding(own), parsed.excluding(own), "{own:?}");
+    }
+}
