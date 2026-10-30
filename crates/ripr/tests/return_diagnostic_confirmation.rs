@@ -127,7 +127,7 @@ fn native_mutants_separate_structural_and_value_observers() -> Result<(), String
                 format!("{source}\n#[cfg(test)] mod tests {{ {test} }}"),
             )
             .map_err(|e| e.to_string())?;
-            let binary = root.join("fixture-bin");
+            let binary = root.join(format!("fixture-bin{}", std::env::consts::EXE_SUFFIX));
             let mut compile = std::process::Command::new("rustc");
             compile
                 .args(["--edition=2024", "--test"])
