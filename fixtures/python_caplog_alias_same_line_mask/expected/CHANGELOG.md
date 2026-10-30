@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_caplog_alias_same_line_mask (3)
+
+Reason:
+RIPR-SPEC-0238 rule 22: refresh expected human/human-full rendering to main's current summary contract (probe->changed behavior, unknown->unclear wording) after the 69321269d5 merge; check.json classification byte-identical, static_unknown unchanged
+
+Command:
+`cargo xtask goldens bless python_caplog_alias_same_line_mask --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
