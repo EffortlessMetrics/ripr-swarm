@@ -2570,12 +2570,23 @@ fn gap_record_from_python_no_repair_card_finding(
             )
         })
         .flatten();
+    // #11103: the boundary decline already names the equality in the Missing
+    // check but cannot bind one operand to a test input, so no repair card
+    // exists. Name that operand instead of the generic line; routing stays
+    // fail-closed (no gap id, no card). The extraction is shared with the
+    // human triage surface so the two wordings cannot drift.
+    let unresolved_operand =
+        crate::output::human::unresolved_boundary_operand(&string_array_at(finding, &["missing"]));
     let reason = if let Some(repo_reason) = repo_reason.as_deref() {
-        repo_reason
+        repo_reason.to_string()
+    } else if let Some(operand) = unresolved_operand {
+        format!(
+            "static evidence cannot bind `{operand}` to a test input, so the boundary equality cannot become a repair target"
+        )
     } else if first_missing_discriminator_value(finding).is_none() {
-        "static evidence names no concrete missing discriminator"
+        "static evidence names no concrete missing discriminator".to_string()
     } else {
-        "its test placement or related-test evidence is incomplete"
+        "its test placement or related-test evidence is incomplete".to_string()
     };
     let detail = format!(
         "this Python preview finding has no repair card ({reason}), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
@@ -6013,7 +6024,7 @@ mod tests {
         assert_eq!(
             record.static_limit_detail.as_deref(),
             Some(
-                "this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+                "this Python preview finding has no repair card (static evidence cannot bind `DISCOUNT_THRESHOLD` to a test input, so the boundary equality cannot become a repair target), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
             )
         );
         assert!(record.repair_route.is_none());
@@ -6044,7 +6055,8 @@ mod tests {
 
     // The other reason branch: a finding that names a missing discriminator
     // but still has no card is held by incomplete placement or related-test
-    // evidence, and says so.
+    // evidence, and says so. Scoped to a non-boundary discriminator so the
+    // #11103 unresolved-operand arm keeps its own specific wording.
     #[test]
     fn check_output_python_no_repair_card_with_discriminator_names_incomplete_evidence()
     -> Result<(), String> {
@@ -6059,6 +6071,11 @@ mod tests {
         {
             finding["missing_discriminators"] =
                 serde_json::json!([{"value": "amount == discount_threshold"}]);
+            // Drop the unresolved-operand boundary shape so this case
+            // exercises the placement-reason branch, not #11103.
+            if let Some(missing) = finding["missing"].as_array_mut() {
+                missing.clear();
+            }
         }
         let report = check_output_ledger(payload.to_string());
         let records = python_no_repair_card_records(&report);

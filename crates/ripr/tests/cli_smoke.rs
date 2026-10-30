@@ -5620,7 +5620,7 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
     assert!(stdout.contains(&format!("Start here: {wrote_base}/start-here.md")));
     assert!(stdout.contains(&format!("Wrote {wrote_base}/start-here.json")));
     assert!(stdout.contains(&format!("Wrote {wrote_base}/start-here.md")));
-    assert!(stdout.contains("State: top_gap"));
+    assert!(stdout.contains("State: top gap"));
     assert!(stdout.contains("Safe next action: repair one named gap"));
     assert!(stdout.contains("Top actionable gap: missing boundary assertion"));
     assert!(stdout.contains("Changed behavior: `amount >= threshold`"));
@@ -5629,19 +5629,13 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
             .contains("Current evidence strength: Static evidence found related Rust test context")
     );
     assert!(
-        stdout.contains(
-            "Missing discriminator: Equality-boundary assertion for the changed behavior."
-        )
+        stdout.contains("Missing check: Equality-boundary assertion for the changed behavior.")
     );
-    assert!(
-        stdout.contains(
-            "Focused proof intent: Add a focused boundary assertion in `tests/pricing.rs`"
-        )
-    );
+    assert!(stdout.contains("Test to add: Add a focused boundary assertion in `tests/pricing.rs`"));
     assert!(stdout.contains(
         "Why this matters: A related Rust test reaches this change, but no equality-boundary assertion was found for the changed behavior."
     ));
-    assert!(stdout.contains("Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval."));
+    assert!(stdout.contains("Note: ripr reads code; it does not run your tests. This is not proof your tests are good enough and not approval to merge."));
 
     let json_path = reports.join("start-here.json");
     let md_path = reports.join("start-here.md");
@@ -5777,7 +5771,7 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
     assert_success(&check_output);
     let check_stdout = String::from_utf8_lossy(&check_output.stdout);
     assert!(check_stdout.contains("Start here:"));
-    assert!(check_stdout.contains("State: top_gap"));
+    assert!(check_stdout.contains("State: top gap"));
     assert!(check_stdout.contains("First PR start-here packet ok:"));
     // --check validates without rewriting, so the disclosure must not claim writes.
     assert!(
@@ -19535,7 +19529,7 @@ fn check_python_finding_without_repair_card_names_the_terminal_manual_step() -> 
     )?;
     assert_eq!(
         line,
-        "  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+        "  Safe next action: this Python preview finding has no repair card (static evidence cannot bind `DISCOUNT_THRESHOLD` to a test input, so the boundary equality cannot become a repair target), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
     );
     Ok(())
 }
@@ -33167,7 +33161,7 @@ fn repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_
         "status must not claim a repair is in progress:\n{status_out}\n{status_err}"
     );
     assert!(
-        status_out.contains("Seam: unknown") && !status_out.contains("agent_packet"),
+        status_out.contains("No repair in progress.") && !status_out.contains("agent_packet"),
         "status must report no repair in progress:\n{status_out}\n{status_err}"
     );
     std::fs::remove_dir_all(&root)?;

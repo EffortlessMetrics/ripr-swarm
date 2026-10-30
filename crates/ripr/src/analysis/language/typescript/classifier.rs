@@ -1934,6 +1934,29 @@ pub(crate) fn ts_predicate_boundary_row_activation(
     )
 }
 
+/// A zero or empty expected value is treated as matching a field's initial
+/// state, so pinning it cannot show an update ran: a scalar
+/// zero/empty/false/null/undefined, or an array holding only such values
+/// (`[]`, `[0, 0]`, `[[], '']`). Conservative by design: an array of zero-like
+/// values may under-credit a real pin, never over-credit one.
+pub(crate) fn ts_expected_is_zero_like(expected: &str) -> bool {
+    let compact: String = expected.split_whitespace().collect();
+    if matches!(
+        compact.as_str(),
+        "0" | "\"\"" | "''" | "``" | "false" | "null" | "undefined"
+    ) {
+        return true;
+    }
+    if !(compact.starts_with('[') && compact.ends_with(']')) {
+        return false;
+    }
+    let mut rest = compact;
+    for token in ["\"\"", "''", "``", "false", "null", "undefined", "0"] {
+        rest = rest.replace(token, "");
+    }
+    rest.chars().all(|ch| matches!(ch, '[' | ']' | ','))
+}
+
 /// RIPR-SPEC-0243 decision 18: whether some strong, pinned, exact-value assertion
 /// of an oracle relation reads the updated field from an instance the test
 /// called the owner method on.
@@ -1981,12 +2004,7 @@ pub(crate) fn ts_field_update_witnessed(
             if assertion
                 .expected_value_or_variant
                 .as_deref()
-                .is_some_and(|expected| {
-                    matches!(
-                        expected.trim(),
-                        "0" | "\"\"" | "''" | "``" | "false" | "null" | "undefined"
-                    )
-                })
+                .is_some_and(ts_expected_is_zero_like)
             {
                 return false;
             }
@@ -4980,7 +4998,17 @@ pub(crate) fn expected_side_is_live(
     expected: &str,
 ) -> Option<bool> {
     let source = owner.source_text.as_deref()?;
-    let expected_value = signed_numeric_expected_value(expected)?;
+    // An array literal is never a scalar branch value; it is judged below,
+    // once the branches are known to be scalar-foldable.
+    let expected_is_array = {
+        let trimmed = expected.trim();
+        trimmed.starts_with('[') && trimmed.ends_with(']')
+    };
+    let expected_value = if expected_is_array {
+        None
+    } else {
+        Some(signed_numeric_expected_value(expected)?)
+    };
     let operator = changed_comparison_operator(line_text)?;
     let lines: Vec<&str> = source.lines().collect();
     // Locate the changed line inside the owner body. Uniqueness runs before
@@ -5029,6 +5057,11 @@ pub(crate) fn expected_side_is_live(
     };
     let new_value = fold_numeric_expression(new_expr, &bindings)?;
     let old_value = fold_numeric_expression(old_expr, &bindings)?;
+    // Both branches fold to numbers, so an array expectation equals neither:
+    // the pin is dead on both versions and cannot show the change.
+    let Some(expected_value) = expected_value else {
+        return Some(false);
+    };
     // Jest `toBe` uses `Object.is`, which distinguishes `+0` from `-0`.
     // Epsilon equality would credit `toBe(-0)` against a `return 0` branch.
     if expected_value == 0.0 || new_value == 0.0 || old_value == 0.0 {
@@ -6690,7 +6723,7 @@ pub(crate) fn classify_resolved_owner(
     // there is no static_limit. We always compute them; they are empty when there
     // are no oracle-eligible candidates or no qualifying assertions.
     let named_limitations_from_oracle =
-        named_limitations_for_oracle_candidates(owner, related_candidates);
+        named_limitations_for_oracle_candidates(owner, related_candidates, &probe_shape.family);
     // Oracle metadata evidence lines (RIPR-SPEC-0085 §PR5).
     // Emitted from the strongest owner-call-observing assertion across
     // candidates. ADDITIVE: does not change oracle_kind, oracle_strength,
@@ -7557,6 +7590,17 @@ pub(crate) fn classify_resolved_owner(
     } else {
         0.4
     };
+    // #10700: the score above is a per-class constant, so name why it is
+    // capped. Evidence-derived and explanatory only: it never changes the
+    // score or any actionability decision.
+    let confidence_basis = crate::domain::ConfidenceCap::for_preview(
+        &class,
+        &crate::domain::ConfidenceBasisInputs {
+            has_related_test: has_oracle_eligible_relation,
+            strong_oracle_present: strongest_strength >= OracleStrength::Strong.rank(),
+            boundary_input_matched: boundary_witnessed,
+        },
+    );
 
     let mut evidence = vec![format!("owner: {}", owner.name)];
     if !probe_shape.specific {
@@ -7688,7 +7732,7 @@ pub(crate) fn classify_resolved_owner(
             },
         },
         confidence: confidence_value,
-        confidence_basis: Vec::new(),
+        confidence_basis,
         evidence,
         missing,
         flow_sinks: flow_sink.into_iter().collect(),
