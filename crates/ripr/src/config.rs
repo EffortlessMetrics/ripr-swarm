@@ -177,7 +177,7 @@ path = ".ripr/suppressions.toml"
 # file is absent, Python project markers can enable Python preview analysis
 # automatically for the detected repository root; this explicit list remains
 # authoritative when present.
-# Valid values: rust, typescript, python, perl.
+# Valid values: rust, typescript, javascript (alias for typescript), python, perl.
 # (`perl` consumes externally-produced `ripr-perl-facts-v1` packets and does
 # not parse Perl source directly. Pass --perl-facts <path> for an explicit
 # packet, or configure a managed [perl].producer and make its exporter
@@ -933,16 +933,28 @@ impl RiprConfig {
 }
 
 fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String> {
+    if values.iter().any(|value| value == "javascript")
+        && values.iter().any(|value| value == "typescript")
+    {
+        return Err(
+            "languages.enabled lists `javascript` together with `typescript`; `javascript` is an alias for `typescript`, so list only one of them"
+                .to_string(),
+        );
+    }
     let mut parsed = Vec::with_capacity(values.len());
     for value in values {
         let language = match value.as_str() {
             "rust" => LanguageId::Rust,
             "typescript" => LanguageId::TypeScript,
+            // JavaScript is analyzed by the TypeScript adapter and is
+            // emitted as its own language label in output, so naming it
+            // here enables that same adapter instead of failing.
+            "javascript" => LanguageId::TypeScript,
             "python" => LanguageId::Python,
             "perl" => LanguageId::Perl,
             other => {
                 return Err(format!(
-                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, python, perl (Perl consumes externally-produced fact packets; use --perl-facts <path> or a configured managed [perl].producer)"
+                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, javascript (alias for typescript), python, perl (Perl consumes externally-produced fact packets; use --perl-facts <path> or a configured managed [perl].producer)"
                 ));
             }
         };

@@ -41,10 +41,10 @@ pub(crate) const EXIT_DECISION_OR_REFUSAL: i32 = 3;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandError {
     /// The command could not complete: usage, parse, operational, or
-    /// internal error. Maps to [`EXIT_COULD_NOT_COMPLETE`].
+    /// internal error. Maps to `EXIT_COULD_NOT_COMPLETE`.
     Failure(String),
     /// The command ran successfully and reached a blocking decision or a
-    /// typed refusal. Maps to [`EXIT_DECISION_OR_REFUSAL`], so orchestrators
+    /// typed refusal. Maps to `EXIT_DECISION_OR_REFUSAL`, so orchestrators
     /// can branch on `0` (completed), `3` (decision/refusal), and `2`
     /// (could not complete) without parsing output.
     Decision(String),
@@ -599,12 +599,21 @@ fn persist_before_repair_attempt(
     // captures only stdout can complete before → edit → after without reading
     // stderr. Without it, the human summary plus the one command a reader of
     // stdout alone needs next.
+    let typescript_test_cache_guidance = !baseline_ambiguous
+        && options.gap_id.is_some()
+        && matches!(
+            std::path::Path::new(policy.selected_target.path())
+                .extension()
+                .and_then(std::ffi::OsStr::to_str),
+            Some("ts" | "tsx" | "js" | "jsx" | "mts" | "cts" | "mjs" | "cjs")
+        );
     let continuation = crate::output::agent_seam_packets::BeforePhaseAttemptContinuation {
         attempt_id: result.manifest.repair_attempt_id.as_str().to_string(),
         manifest_path: crate::agent::loop_commands::display_path(&result.manifest_path),
         next_command: result.manifest.next_command.clone(),
         packet_path: crate::agent::loop_commands::display_path(&agent_packet),
         baseline_ambiguous,
+        typescript_test_cache_guidance,
     };
     if let Some(binding) = &binding {
         eprintln!(

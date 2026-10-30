@@ -182,6 +182,9 @@ pub(crate) struct ClassifiedSeamsReport {
     /// its consumed corpus identity avoids a later renderer hashing new
     /// workspace bytes for old classifications. Synthetic reports have none.
     pub(crate) corpus_key: Option<RepoSeamCacheKey>,
+    /// Production-role files admitted by this run's discovery, independent of
+    /// surviving seams. Recomputed before cache lookup, never inferred from gaps.
+    pub(crate) analyzed_production_files: Vec<PathBuf>,
     /// This run's selected inputs differ from ordinary repo exposure, including
     /// evidence-only files. Recomputed at discovery, never reused from cache.
     pub(crate) diff_bound_corpus: bool,
@@ -267,6 +270,7 @@ fn inventory_classified_seams_report_collect(
         }
     };
     let rust_files = corpus.analyzable;
+    let analyzed_production_files = production_files_with_role(root, config, &rust_files);
     let fingerprint = corpus.fingerprint;
     let skipped_generated = corpus.skipped_generated;
     let naming_only_skips = corpus.naming_only_skips;
@@ -301,6 +305,7 @@ fn inventory_classified_seams_report_collect(
                 return Ok(ClassifiedSeamsReport {
                     classified: cached,
                     corpus_key: Some(key),
+                    analyzed_production_files,
                     diff_bound_corpus,
                     limit_info: cached_limit_info.map(SeamLimitInfo::from),
                     skipped_generated,
@@ -363,6 +368,7 @@ fn inventory_classified_seams_report_collect(
             return Ok(ClassifiedSeamsReport {
                 classified: cached,
                 corpus_key: Some(key),
+                analyzed_production_files,
                 diff_bound_corpus,
                 limit_info: cached_limit_info.map(SeamLimitInfo::from),
                 skipped_generated,
@@ -386,7 +392,11 @@ fn inventory_classified_seams_report_collect(
     let compute_started = Instant::now();
     trace_latency_phase("cold_compute", "start", Duration::ZERO);
     let (classified, limit_info, lexical_fallback_files) =
-        match inventory_classified_seams_from_state_with_config(&state, config) {
+        match inventory_classified_seams_from_state_with_config(
+            &state,
+            config,
+            &analyzed_production_files,
+        ) {
             Ok(pair) => {
                 trace_latency_phase("cold_compute", "ok", compute_started.elapsed());
                 pair
@@ -442,6 +452,7 @@ fn inventory_classified_seams_report_collect(
     Ok(ClassifiedSeamsReport {
         classified,
         corpus_key: key.is_reusable().then_some(key),
+        analyzed_production_files,
         diff_bound_corpus,
         limit_info,
         skipped_generated,
@@ -459,7 +470,26 @@ pub(crate) fn workspace_cache_key_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<super::seam_cache::RepoSeamCacheKey, String> {
+    workspace_cache_key_for_corpus(root, config, scan_corpus_fingerprint(root, config)?)
+}
+
+/// Current corpus identity and production membership from the same discovery
+/// and role authority as the full inventory, without running the classifier.
+pub(crate) fn workspace_cache_key_and_production_files_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<(RepoSeamCacheKey, Vec<PathBuf>), String> {
     let corpus = scan_corpus_fingerprint(root, config)?;
+    let production_files = production_files_with_role(root, config, &corpus.analyzable);
+    let key = workspace_cache_key_for_corpus(root, config, corpus)?;
+    Ok((key, production_files))
+}
+
+fn workspace_cache_key_for_corpus(
+    root: &Path,
+    config: &RiprConfig,
+    corpus: AnalyzableRustCorpus,
+) -> Result<RepoSeamCacheKey, String> {
     let inputs = workspace_key_inputs(root, config);
     // Fingerprint fast path (issue #2108): a stored mapping yields the
     // byte-identical key without reading any file contents.
@@ -934,8 +964,8 @@ type ClassifiedSeamInventory = (Vec<ClassifiedSeam>, Option<SeamLimitInfo>, Vec<
 fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
+    production_files: &[PathBuf],
 ) -> Result<ClassifiedSeamInventory, String> {
-    let production_files = production_files_from_state_with_role(state, config);
     let build_started = Instant::now();
     trace_latency_phase(
         "file_fact_cache",
@@ -964,7 +994,7 @@ fn inventory_classified_seams_from_state_with_config(
     // inventory work, rather than after; every other behavior is unchanged.
     let limit_and_source = repo_exposure_seam_limit()?;
     let limit = limit_and_source.as_ref().map(|(limit, _)| *limit);
-    let bounded = inventory_seams_from_index_bounded(&production_files, &cached.index, limit)?;
+    let bounded = inventory_seams_from_index_bounded(production_files, &cached.index, limit)?;
     cancellation::checkpoint()?;
     // The retained-object peak is production-observable here (issue #4997):
     // the retained prefix stays within K while the trace reports the peak
@@ -2845,13 +2875,12 @@ fn production_files_from_state_with_role(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
 ) -> Vec<PathBuf> {
-    let context = production_role_context(
-        &state.workspace_root,
-        config,
-        state.files.iter().map(PathBuf::as_path),
-    );
-    state
-        .files
+    production_files_with_role(&state.workspace_root, config, &state.files)
+}
+
+fn production_files_with_role(root: &Path, config: &RiprConfig, files: &[PathBuf]) -> Vec<PathBuf> {
+    let context = production_role_context(root, config, files.iter().map(PathBuf::as_path));
+    files
         .iter()
         .filter(|path| workspace::classify_with(path, &context).seeds_production_findings())
         .cloned()
@@ -8499,6 +8528,62 @@ marker = "libtest_mimic::Trial"
             return Err("production edit must keep full seam computation active".to_owned());
         }
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn changed_production_files_partition_parsed_from_parser_declined() -> Result<(), String> {
+        // #9734: a changed production file the parser declines (nesting
+        // budget, non-UTF-8) falls back to lexical facts and yields no seams,
+        // so it is reported as declined, never as covered. Unchanged declined
+        // files and changed non-production files appear in neither list.
+        let root = make_tempdir("covered-declined-partition")?;
+        let nested = format!(
+            "pub fn deep() {{ {}{} }}\n",
+            "{".repeat(400),
+            "}".repeat(400)
+        );
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub mod ok;\npub mod deep;\npub mod raw;\npub mod stale;\n",
+        )?;
+        write_file(
+            &root.join("src/ok.rs"),
+            "pub fn early(n: i32) -> bool { n >= 10 }\n",
+        )?;
+        write_file(&root.join("src/deep.rs"), &nested)?;
+        write_file(&root.join("src/stale.rs"), &nested)?;
+        std::fs::write(
+            root.join("src/raw.rs"),
+            b"pub fn raw(n: i32) -> bool { n >= 3 } // \xff\xfe\n",
+        )
+        .map_err(|err| format!("write raw.rs: {err}"))?;
+        write_file(
+            &root.join("tests/boundary.rs"),
+            "#[test] fn boundary() { assert!(early(10)); }\n",
+        )?;
+        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &RiprConfig::default(),
+            &[
+                PathBuf::from("src/ok.rs"),
+                PathBuf::from("src/deep.rs"),
+                PathBuf::from("src/raw.rs"),
+                PathBuf::from("tests/boundary.rs"),
+            ],
+            &[],
+        )?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            inventory.changed_production_files,
+            [PathBuf::from("src/ok.rs")]
+        );
+        let mut declined = inventory.parser_declined_files.clone();
+        declined.sort();
+        assert_eq!(
+            declined,
+            [PathBuf::from("src/deep.rs"), PathBuf::from("src/raw.rs")]
+        );
         Ok(())
     }
 

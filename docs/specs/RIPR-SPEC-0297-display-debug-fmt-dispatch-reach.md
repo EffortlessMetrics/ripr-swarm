@@ -156,7 +156,9 @@ pinned output, so the finding reads `propagation_unknown`
 (`helper_result_not_forwarded`) instead of `weakly_exposed` with "no test is
 seen calling", and never `exposed`. A type annotation must be bare or
 prefixed only by `crate`, `self` or `super` (`other_crate::Merge` may be a
-foreign type that shares the name). A factory receiver without a type
+foreign type that shares the name), and a struct literal or tuple-struct
+initializer (`let merge = other_crate::Merge { .. };`) names the local type
+under the same prefix rule (bare, `crate`, `self` or `super`; #8999). A factory receiver without a type
 annotation (`let merge = Merge::new(..)`), the other trait's placeholder, a
 different type and a type declared twice stay unrelated.
 
@@ -189,7 +191,7 @@ finding stays `propagation_unknown`, never `exposed`. A hop through a local
 - Helper entry (#8999): positive for `to_string()` in a multi-line
   `assert_eq!` on an annotated or struct-literal receiver; negative for an
   untyped factory receiver, another type, the other trait, a doubly declared
-  type, a path-qualified foreign annotation, a macro-argument hop, a test in a
+  type, a path-qualified foreign annotation or initializer, a macro-argument hop, a test in a
   separate file (positive), a second caller of the helper, and a non-Display/Debug `fmt` entry.
 
 ## Non-Goals

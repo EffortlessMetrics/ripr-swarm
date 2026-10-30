@@ -190,7 +190,18 @@ share one rule in `analysis/classify/call_identity.rs`:
 
 This is bounded syntax, not name resolution. A package with any `#[path]`
 attribute switches the rule off, since module files may not sit where the
-layout says; macro-generated items are a residual that reads unsettled. A
+layout says. The one exception is a `#[path]` that only selects between the
+two files of a complementary `cfg` pair (#8999): top-level out-of-line
+`#[cfg(P)] #[path = "a.rs"] mod m;` and `#[cfg(not(P))] #[path = "b.rs"] mod
+m;`, each with exactly one `cfg` and one bare `#[path]`, `P` not `test`.
+The two files are alternatives of one module, so a test in one file that
+calls its own `wait` (`super::wait(..)`) settles on that file's definition,
+not the other alternative's, and is not related to a change there through a
+direct call; the changed file's own test keeps its credit. Any other
+`#[path]` in the package (a third remap, a `cfg_attr` path, an inline or
+nested declaration, a non-complementary pair, a `cfg(test)` pair, a parse
+error) keeps the rule off and the earlier behavior. Macro-generated items are
+a residual that reads unsettled. A
 same-named `fn` in another crate of the package (an integration test's or a
 binary's root) or an `extern` declaration is no settled rival and keeps
 refusing the pin.

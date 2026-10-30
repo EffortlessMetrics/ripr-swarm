@@ -88,6 +88,7 @@ use tower_lsp_server::{LspService, Server};
 mod analysis_thread_routing_tests;
 mod bare_cr_origin_tests;
 mod consumed_source_tests;
+mod panic_containment_tests;
 mod progress_completion_tests;
 mod progress_create_liveness_tests;
 mod progress_notification_isolation_tests;
@@ -1259,6 +1260,10 @@ fn serve_stdio_call_presence_observer() -> Result<(), String> {
     assert!(
         serve_streams.contains(".concurrency_level(bounds.request_concurrency)"),
         "serve_streams should set the explicit in-flight request concurrency bound (#2034)"
+    );
+    assert!(
+        serve_streams.contains("panic_containment::ContainPanics("),
+        "serve_streams should serve behind the handler panic-containment layer so one panicking request cannot end the session"
     );
     assert!(
         serve_streams.contains("dollar_requests::AnswerDollarRequests(")
@@ -14505,6 +14510,73 @@ fn boundary_gap_workspace_diagnostics_include_live_seam_diagnostic() -> Result<(
         seam_diagnostic,
         "expected boundary_gap live workspace diagnostics to include ripr-seam-weakly-gripped"
     );
+    Ok(())
+}
+
+/// #11132: a panic inside a language adapter during an editor refresh is a
+/// typed failure of that refresh, not an unwind through the sidecar. The next
+/// refresh on the same workspace runs normally, and the failed one published
+/// no finding (so nothing actionable) for the code it could not analyze.
+#[test]
+fn lsp_refresh_contains_a_language_adapter_panic() -> Result<(), String> {
+    let root = unique_lsp_test_root("adapter-panic-containment")?;
+    write_lsp_scope_fixture(root.path())?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["add", "Cargo.toml", "src/lib.rs", "tests/end_to_end.rs"],
+    )?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+    fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+    )
+    .map_err(|err| format!("persist saved tracked source edit failed: {err}"))?;
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        ..LspAnalysisConfig::default()
+    };
+
+    // Control: the unarmed refresh analyzes the edit.
+    let control = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    if control.snapshot.findings.is_empty() {
+        return Err("control refresh produced no findings; the fixture is not exercised".into());
+    }
+
+    {
+        let _armed = crate::analysis::injected_adapter_panic::arm(
+            root.path(),
+            crate::analysis::language::LanguageId::Rust,
+        );
+        match workspace_diagnostics_with_config(root.path(), &config, true) {
+            Err(failure) => {
+                let message = failure.to_string();
+                if !message.contains("adapter_panicked") {
+                    return Err(format!(
+                        "failure must be the typed adapter panic: {message}"
+                    ));
+                }
+            }
+            Ok(diagnostics) => {
+                if !diagnostics.snapshot.findings.is_empty() {
+                    return Err("a contained adapter panic must publish no findings".into());
+                }
+            }
+        }
+    }
+
+    // The sidecar keeps serving: the very next refresh succeeds again.
+    let recovered = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    if recovered.snapshot.findings.is_empty() {
+        return Err("the refresh after a contained panic must analyze normally".into());
+    }
     Ok(())
 }
 

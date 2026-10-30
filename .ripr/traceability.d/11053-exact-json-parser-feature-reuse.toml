@@ -1,0 +1,9 @@
+# Preserve exact JSON parser contracts while reusing the product feature graph.
+[[extend]]
+id = "RIPR-SPEC-0067"
+tests = [
+  "xtask/src/exact_schema_json.rs::tests::exact_parser_matches_duplicate_and_pointer_rules",
+  "xtask/src/exact_schema_json.rs::tests::duplicate_escaped_keys_keep_last_and_invalid_discarded_values_fail",
+  "xtask/src/exact_schema_json.rs::tests::parser_preflight_rejects_unsupported_input",
+  "xtask/src/exact_schema_json.rs::tests::parser_preserves_lexical_boundaries_and_number_spellings",
+]

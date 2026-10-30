@@ -61,7 +61,9 @@ pub use diagnostic_witness::{
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticSourceLocation, DiagnosticWitness,
     DiagnosticWitnessLimitation,
 };
-pub(crate) use diagnostic_witness::{perl_suggested_related_test, python_suggested_related_test};
+pub(crate) use diagnostic_witness::{
+    contract_confidence, perl_suggested_related_test, python_suggested_related_test,
+};
 pub(crate) use evidence::BOUNDARY_INPUT_OBSERVED_SUMMARY;
 pub(crate) use evidence::indefinite_article;
 pub use evidence::{
