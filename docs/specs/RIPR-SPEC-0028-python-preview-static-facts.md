@@ -1426,8 +1426,10 @@ recognized only under its imported name or a module alias the reader
 resolves, never through a receiver alias (`m = src.lib; m.pick(0, 3)`,
 `self.lib.pick(0, 3)`); an owner docstring holding `>>>` refuses. The test
 file source is not read, so these shapes are known limits: an owner call at
-module level (`R = pick(0, 3)`), in a class attribute, in `setUp`, or in a
-conftest/autouse fixture, a helper or runner table defined at module level
+module level (`R = pick(0, 3)`), in a class attribute, in `setUp`, in a
+decorator (`@pytest.mark.parametrize('v', [pick(0, 3)])`), or in a conftest
+or autouse fixture, a module-docstring, README or `.txt` doctest, a
+`--doctest-modules` run over test or source files, a helper or runner table defined at module level
 and seen only through its call in the test body, a discriminating call under
 a non-strong oracle (`assert not pick(0, 3)`), and an owner doctest the
 reader does not see. The change is only `exposed` to `weakly_exposed`, the

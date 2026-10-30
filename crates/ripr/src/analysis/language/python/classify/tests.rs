@@ -3651,6 +3651,14 @@ fn truthiness_swap_fails_open_on_fstring_alias_and_doctest_reach() -> Result<(),
     ] {
         assert_eq!(swap_class(tests)?, ExposureClass::Exposed, "{tests}");
     }
+    // A nested owner call is an input the rows do not bind: pick(0, 7) is
+    // 0 before the swap and 7 after it.
+    assert_eq!(
+        swap_class(
+            "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, pick(0, 7)) == 7\n"
+        )?,
+        ExposureClass::Exposed
+    );
     let source = concat!(
         "def pick(x, d):\n    \"\"\">>> pick(0, 3)\n    3\n    \"\"\"\n    if not x:",
         "\n        return d\n    return x\n"

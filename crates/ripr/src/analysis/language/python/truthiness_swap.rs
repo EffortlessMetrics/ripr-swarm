@@ -31,6 +31,7 @@ use super::boundary::{
     BoundaryActivation, PythonBoundaryEvidence, strong_owner_call_rows_with_gaps,
     unrebound_constants,
 };
+use super::no_behavior::call_arglists_with_offsets;
 
 use super::related_tests::PythonRelatedCandidate;
 use crate::domain::OwnerKind;
@@ -414,9 +415,25 @@ fn owner_reached_indirectly(
             has_unicode_name(text)
                 || has_fstring(text)
                 || calls_through_a_result(text)
+                || owner_call_nested_in_owner_call(text, &names, method_call)
                 || names.iter().any(|name| mentions_without_call(text, name))
                 || calls_unrecognized_callee(text, &names, method_call)
         })
+}
+
+/// Whether an owner call appears inside another owner call's argument list
+/// (`pick(None, pick(0, 7))`): the inner call's result is an input the row
+/// reader does not bind.
+fn owner_call_nested_in_owner_call(text: &str, names: &[String], method_call: bool) -> bool {
+    names.iter().any(|name| {
+        call_arglists_with_offsets(text, name, method_call)
+            .into_iter()
+            .any(|(_, arglist)| {
+                names.iter().any(|other| {
+                    mentions_identifier(arglist, other.rsplit('.').next().unwrap_or(other))
+                })
+            })
+    })
 }
 
 /// Whether a call's callee is itself a subscript or a call result
