@@ -35,6 +35,7 @@ mod bounded_read;
 mod fact_serde;
 mod fact_store;
 pub(crate) use fact_store::PythonFileFactStore;
+mod teardown;
 mod workspace_reach;
 use crate::analysis::workspace::{
     changed_source_files_absent_from_worktree, limitations_for_absent_changed_files,
@@ -1077,6 +1078,9 @@ impl PythonAdapter {
         walk_limits: PythonDiffWalkLimits,
         handwritten: &[String],
     ) -> Result<LanguageDiffResult, String> {
+        // A previous run's facts are freed before this run builds its own
+        // (sequential callers; see `teardown` for concurrent ones).
+        teardown::await_previous();
         // Changed files are the subject of the diff, so the cap only ever
         // refuses context around them (#10461). The walk streams into a
         // bounded selection so discovery memory stays at the cap rather
@@ -1739,6 +1743,25 @@ impl PythonAdapter {
             );
             findings.extend(deleted);
         }
+        // Freeing the run's facts takes ~0.3 s on one thread for a large
+        // workspace (#10914: pandas, ~23k tests). Nothing in the result
+        // borrows them, so they are freed off the result path (`teardown`).
+        drop(related_memo);
+        drop(foreign_index);
+        drop(import_roots);
+        let facts = (
+            all_tests,
+            all_owners,
+            workspace_read,
+            foreign_prior_by_file,
+            fixture_defs_by_file,
+            fixture_side_by_file,
+            helper_modules_by_file,
+            docstring_ranges_by_file,
+            import_ranges_by_file,
+            star_facts_by_file,
+        );
+        teardown::free_in_background(facts);
         Ok(LanguageDiffResult {
             value_origins,
             findings,

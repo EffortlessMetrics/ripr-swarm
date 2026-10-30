@@ -76,6 +76,20 @@ review decision, and every page of review threads. Missing or malformed
 evidence refuses the result; a Result-only retry cannot reuse admission from
 an older attempt. Main/manual authorities and child-result checks remain.
 
+Same-head succession (#4986, #8082): as the last live read, the Result also
+lists the same workflow's runs for the same head (queue requests: the same
+queue-entry commit) and event. A newer run of the same request kind, a newer
+attempt of this run, a missing or duplicate own record, a failed or
+non-JSON read, an inconsistent count or an inventory beyond ten pages refuses,
+so the superseded invocation cannot report success. An ordinary label event is
+another run title and revokes nothing. Re-applying `merge-ready` creates a new
+run for the same head, which intentionally supersedes the earlier request: the
+label route stays valid, but only its newest run can qualify. Order is by run
+number, whatever the newer run's own outcome; the read uses the existing
+`actions: read` permission and changes no trigger or required context. It is a
+non-atomic read, not proof that the hosted race is closed or of which check
+GitHub selects for protection.
+
 This is a late eligibility check, not queue-cutover acceptance. The tree match
 binds the queued commit to the head GitHub reports live at admission; it does not
 establish that this is the head a reviewer judged ready, and its premise (GitHub's

@@ -6663,9 +6663,10 @@ impl LanguageServer for Backend {
     /// Locks `latest_analysis` read-only exactly like `hover_for_position` and
     /// `code_action`, then delegates to the pure `code_lens_response` helper in
     /// `lsp/lens.rs`. Returns `Some([])` (not `None`) so the client removes any
-    /// stale lenses from a previous snapshot. Returns an empty Vec when no
-    /// snapshot is available — absence of analysis is not absence of tests, and
-    /// we must not fabricate a 0-count lens.
+    /// stale lenses from a previous snapshot, including for a quarantined
+    /// (unsaved or divergent) buffer whose lines no longer match the snapshot.
+    /// Returns an empty Vec when no snapshot is available — absence of analysis
+    /// is not absence of tests, and we must not fabricate a 0-count lens.
     async fn code_lens(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
         self.trace_inbound(
             "request",
@@ -6679,10 +6680,20 @@ impl LanguageServer for Backend {
             .ok()
             .and_then(|value| value.clone());
         let uri = &params.text_document.uri;
-        let result = Ok(Some(code_lens_response(
-            uri,
-            snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
-        )));
+        // A lens anchors at the finding's line in the analyzed saved file. A
+        // buffer that diverges from that content (an unsaved edit, or an
+        // external rewrite the client reloaded) has moved lines, so the
+        // lens would sit on the wrong line while diagnostics and hover are
+        // already paused. Withdraw it with them; the paused marker and hover
+        // name the recovery.
+        let result = if self.document_quarantine(uri).is_some() {
+            Ok(Some(Vec::new()))
+        } else {
+            Ok(Some(code_lens_response(
+                uri,
+                snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
+            )))
+        };
         self.trace_response("textDocument/codeLens", &result).await;
         result
     }

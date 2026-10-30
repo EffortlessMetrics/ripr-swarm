@@ -471,6 +471,10 @@ pub(crate) fn resolve_repair_start(
     };
     let mut gripped_off_change = 0usize;
     let mut eligible_off_change = 0usize;
+    let mut blocked_off_change = 0usize;
+    // Distinct refusal reasons in first-seen order, each with the first seam
+    // that has it and how many seams share it.
+    let mut blocked_groups: Vec<(String, String, usize)> = Vec::new();
     for entry in &classified {
         match repair_refusal(entry, policy, Some(root)) {
             None if off_change(entry) => eligible_off_change += 1,
@@ -488,12 +492,41 @@ pub(crate) fn resolve_repair_start(
                     gripped_reasons.push(format!("{}: {reason}", seam_label(entry)));
                 }
             }
+            // A seam the diff does not touch says nothing about the change
+            // (#11111 group 4): its "not ready" or "no gap here" reason is
+            // counted, not listed beside the verdict on the changed seam.
+            Some(_) if off_change(entry) => blocked_off_change += 1,
             // Name the shared gate's own reason among the no-eligible
-            // reasons so the limitation is diagnosable.
-            Some((_, reason)) => refusal_reasons.push(reason),
+            // reasons so the limitation is diagnosable, with the seam it
+            // is about, so two reasons about two seams never read as two
+            // verdicts on one change.
+            Some((_, reason)) => match blocked_groups.iter_mut().find(|group| group.0 == reason) {
+                Some(group) => group.2 += 1,
+                None => blocked_groups.push((reason, seam_label(entry), 1)),
+            },
         }
     }
+    for (reason, label, count) in blocked_groups {
+        let mut text = format!("{label}: {reason}");
+        if count > 1 {
+            text.push_str(&format!(
+                " (and {} other seams in the same state)",
+                count - 1
+            ));
+        }
+        refusal_reasons.push(text);
+    }
     refusal_reasons.extend(gripped_reasons);
+    if blocked_off_change > 0 {
+        let noun = if blocked_off_change == 1 {
+            "seam outside your changed lines cannot start a repair either and is"
+        } else {
+            "seams outside your changed lines cannot start a repair either and are"
+        };
+        refusal_reasons.push(format!(
+            "{blocked_off_change} {noun} not listed, since that says nothing about your change"
+        ));
+    }
     if eligible_off_change > 0 {
         let (noun, verb) = if eligible_off_change == 1 {
             ("seam", "is")
