@@ -63,7 +63,7 @@ Python repair card (preview/advisory)
   suggested file: tests/test_account.py
   suggested test: test_balance_starts_at_the_opening_amount
   pytest node: tests/test_account.py::test_balance_starts_at_the_opening_amount
-  verify: python -m pytest tests/test_account.py::test_balance_starts_at_the_opening_amount (high)
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_adversarial_replaced_block_non_delta_operand/input && python -m pytest tests/test_account.py::test_balance_starts_at_the_opening_amount) (high)
   receipt: unavailable_until_python_gap_ledger
   receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
   stop conditions:

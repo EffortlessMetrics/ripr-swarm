@@ -682,6 +682,8 @@ fn repair_card_output_schema() -> Value {
                     "requested_snapshot_id": { "type": ["string", "null"] },
                     "item": { "type": "object" },
                     "card": { "type": "object" },
+                    "finding_guidance": { "type": "object" },
+                    "mcp_detail_routes": { "type": "array", "items": { "type": "object" } },
                     "currentness": { "type": "object" },
                     "claim_boundary": { "type": "string" },
                     "limitations": {
@@ -1133,6 +1135,16 @@ fn refresh_output_schema() -> Value {
                     },
                     "scope": scope_disclosure_schema(),
                     "requested_base": { "type": "string" },
+                    "empty_scope_hint": {
+                        "type": "object",
+                        "properties": {
+                            "why": { "type": "string" },
+                            "pass_base": { "type": "string" },
+                            "pass_source": { "type": "string" }
+                        },
+                        "required": ["why", "pass_base", "pass_source"],
+                        "additionalProperties": false
+                    },
                     "requested_source": { "type": "string", "enum": ["committed", "worktree"] },
                     "captured_source": { "type": ["string", "null"], "enum": ["committed", "worktree", null] },
                     "snapshot": { "type": ["object", "null"] },
@@ -1349,6 +1361,7 @@ fn repair_packet_output_schema() -> Value {
                     "requested_snapshot_id": { "type": ["string", "null"] },
                     "repair_packet_ready": { "type": "boolean" },
                     "ineligibility": { "type": "object" },
+                    "finding_guidance": { "type": "object" },
                     "recovery": { "type": "string" },
                     "item": { "type": "object" },
                     "attempt": { "type": ["object", "null"] },

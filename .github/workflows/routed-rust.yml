@@ -486,6 +486,7 @@ jobs:
           EXPECTED_REQUEST: ${{ needs.admission.outputs.request }}
           EXPECTED_QUEUE_ENTRY: ${{ needs.admission.outputs.queue_entry }}
           EVENT_NAME: ${{ github.event_name }}
+          GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
           # Bind live eligibility to initial admission, never a newly adopted H.
@@ -505,6 +506,49 @@ jobs:
                 ($event != "pull_request" or (.labels | type == "array" and any(.name == "merge-ready")))
               ' <<<"$pr" >/dev/null
             }
+            # Same-head succession (#4986, #8082): a newer run of this workflow for
+            # the same head (merge group: same queue-entry commit) and request
+            # kind, or a newer attempt of this run, revokes this invocation. Every
+            # read is paginated and any failure, truncation or ambiguity refuses.
+            # An ordinary label event is another run title, so it revokes nothing;
+            # re-applying `merge-ready` creates a new run and intentionally
+            # supersedes the older request. The read is last, so it is as late as
+            # this step can make it; it is not atomic with check publication.
+            read_succession() {
+              local run run_head title wf number spage=0 seen=0 total=0 list got all=""
+              run=$(gh api "repos/$REPOSITORY/actions/runs/$GITHUB_RUN_ID") || return
+              if [ "$EVENT_NAME" = merge_group ]; then run_head=$GROUP_HEAD_SHA title="Merge queue $GROUP_HEAD_SHA"
+              else run_head=$EXPECTED_HEAD title="Merge-ready request $EXPECTED_HEAD"; fi
+              [[ "$run_head" =~ ^[0-9a-f]{40}$ ]] || return 1
+              jq -e --argjson id "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" --arg head "$run_head" --arg event "$EVENT_NAME" --arg title "$title" --arg repo "$REPOSITORY" '
+                .id == $id and .run_attempt == $attempt and .head_sha == $head and .event == $event and
+                .display_title == $title and .repository.full_name == $repo and
+                (.run_number | type == "number" and . > 0) and (.workflow_id | type == "number")
+              ' <<<"$run" >/dev/null || return
+              wf=$(jq -er '.workflow_id' <<<"$run") || return
+              number=$(jq -er '.run_number' <<<"$run") || return
+              while :; do
+                spage=$((spage + 1)); [ "$spage" -le 10 ] || return 1
+                list=$(gh api "repos/$REPOSITORY/actions/workflows/$wf/runs?head_sha=$run_head&event=$EVENT_NAME&per_page=100&page=$spage") || return
+                jq -e '(.total_count | type == "number") and (.workflow_runs | type == "array")' <<<"$list" >/dev/null || return
+                total=$(jq -r '.total_count' <<<"$list") || return
+                got=$(jq -r '.workflow_runs | length' <<<"$list") || return
+                all+=$(jq -c '.workflow_runs[]' <<<"$list")$'\n' || return
+                seen=$((seen + got))
+                [ "$seen" -lt "$total" ] || break
+                [ "$got" -gt 0 ] || return 1
+              done
+              jq -s -e --argjson seen "$seen" --argjson id "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" --argjson wf "$wf" --argjson number "$number" --arg head "$run_head" --arg event "$EVENT_NAME" --arg title "$title" --arg repo "$REPOSITORY" '
+                length == $seen and
+                all(.[]; (.id | type == "number") and (.run_number | type == "number") and (.run_attempt | type == "number") and
+                  (.workflow_id | type == "number") and (.head_sha | type == "string") and (.event | type == "string") and
+                  (.display_title | type == "string") and (.repository.full_name | type == "string")) and
+                ([.[].id] | unique | length) == length and
+                ([.[] | select(.id == $id and .run_number == $number and .run_attempt == $attempt)] | length) == 1 and
+                ([.[] | select(.workflow_id == $wf and .head_sha == $head and .event == $event and .display_title == $title and
+                  .repository.full_name == $repo and .id != $id and .run_number >= $number)] | length) == 0
+              ' <<<"$all" >/dev/null
+            }
             read_pr || return
             while :; do
               page=$((page + 1)); [ "$page" -le 100 ] || return 1
@@ -521,7 +565,8 @@ jobs:
               [ "$more" = true ] || break
               cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(type == "string" and length > 0)' <<<"$frame") || return
             done
-            read_pr
+            read_pr || return
+            read_succession
           }
           current_eligibility
       - name: Summarize routed result

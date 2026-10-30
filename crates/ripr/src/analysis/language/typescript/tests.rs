@@ -19828,6 +19828,7 @@ mod gap_reach_config_tests;
 mod guard_entry_tests;
 mod infection_tests;
 mod instance_class_tests;
+mod issue10925_shadow_scan_tests;
 mod issue7507_shadow_tests;
 mod literal_matcher_tests;
 mod lookup_table_tests;
@@ -20581,6 +20582,57 @@ fn unrelated_guarded_test_in_a_shared_file_does_not_mark_the_outcome_partial() -
         result.limitations
     );
     let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// RIPR-SPEC-0243 rule 11: a conditional assertion in one test of a shared
+/// test file marks the analysis incomplete only for findings that consulted
+/// that test. `f` is pinned by the unconditional test; `g` rests on the
+/// conditional one.
+#[test]
+fn unrelated_conditional_assertion_in_a_shared_file_does_not_mark_the_outcome_incomplete()
+-> Result<(), String> {
+    let owner = "export function f(a: number): number {\n  return a + 1;\n}\nexport function g(a: number): number {\n  return a * 2;\n}\n";
+    let tests = concat!(
+        "import { f, g } from '../src/calc';\n",
+        "test('g doubles', () => {\n",
+        "  if (ok) {\n",
+        "    expect(g(2)).toBe(4);\n",
+        "  }\n",
+        "});\n",
+        "test('f increments', () => {\n",
+        "  expect(f(1)).toBe(2);\n",
+        "});\n",
+    );
+    let condition_limited = |changed: &[(usize, &str)]| -> Result<bool, String> {
+        let root = ts_unique_tempdir("credit-scope")?;
+        ts_write_file(&root.join("src/calc.ts"), owner)?;
+        ts_write_file(&root.join("tests/mixed.test.ts"), tests)?;
+        let adapter = TypeScriptAdapter;
+        let options = ts_analysis_options(root.clone());
+        let result = adapter.analyze_diff(
+            &options,
+            &OraclePolicy::default(),
+            &[changed_with_lines("src/calc.ts", changed)],
+        )?;
+        assert_eq!(result.findings.len(), 1, "{:?}", result.findings);
+        let limited = result.limitations.iter().any(|limitation| {
+            matches!(
+                limitation.kind,
+                AnalysisLimitationKind::UnevaluatedCondition
+            )
+        });
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(limited)
+    };
+    assert!(
+        !condition_limited(&[(2, "  return a + 1;")])?,
+        "f rests only on the unconditional test, so the conditional in g's test is not its limitation"
+    );
+    assert!(
+        condition_limited(&[(5, "  return a * 2;")])?,
+        "g rests on the conditional test, so the limitation must stay"
+    );
     Ok(())
 }
 

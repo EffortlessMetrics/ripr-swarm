@@ -514,6 +514,27 @@ fn gap_evidence_core(
     }))
 }
 
+/// #11213: the finding's own `missing` and `recommended_next_step`, read from
+/// the same committed `evidence_core` that `ripr_get_gap` serves, so a
+/// not-ready repair card or `ripr_prepare_repair` refusal tells an agent what
+/// to change without a second call. Additive and advisory: it carries no
+/// readiness, never replaces the typed refusal, and invents nothing the gap
+/// does not already hold.
+pub(super) fn finding_guidance(item: &GapItem) -> Value {
+    json!({
+        "missing": item.evidence_core.get("missing").cloned().unwrap_or(Value::Null),
+        "recommended_next_step": item
+            .evidence_core
+            .get("recommended_next_step")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "gap_route": {
+            "tool": "ripr_get_gap",
+            "arguments": { "canonical_id": item.canonical_id },
+        },
+    })
+}
+
 /// Budget items for the shared [`crate::lsp::diagnostic_budget`] authority.
 /// Eligibility is the producer's candidate-actionability predicate captured
 /// at projection time; MCP does not invent its own filter or ranking. The

@@ -589,6 +589,12 @@ wrong credits.
        may not bind it itself (a `mod`, `struct`, `enum`, `union`, `trait`
        or `type` of the name, a `use` of the name, or any glob, in a file of
        the test's crate).
+       A file that composes only under another explicitly declared Cargo
+       target (a manifest `[[bin]]`, `[[example]]`, `[[test]]` or `[[bench]]`
+       `path` other than the test's own root) is not a file of the test's
+       crate (#11123); a file whose placement is unestablished still is
+       (fixtures `declared_target_glob_public_call` and
+       `undeclared_target_glob_public_call`).
      The owner must sit directly in a module (not a fn body or an `impl`)
      that ripr can place by parsing its file. Neither the owner nor any
      enclosing inline module may carry a `cfg` or `cfg_attr` attribute,

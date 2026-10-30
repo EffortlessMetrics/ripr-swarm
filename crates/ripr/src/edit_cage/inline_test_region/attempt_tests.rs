@@ -282,7 +282,21 @@ fn a_later_production_edit_moves_the_recomputed_delta() -> Result<(), String> {
         &baseline,
         HeadMovement::RequireBaselineHead,
     )?;
-    assert_eq!(bound.changes, recomputed.changes);
+    let changed_paths = |delta: &AttemptDelta| {
+        delta
+            .changes
+            .iter()
+            .map(|change| {
+                (
+                    change.path.clone(),
+                    change.kind,
+                    change.previous_path.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(changed_paths(&bound), changed_paths(&recomputed));
+    assert_ne!(bound.changes, recomputed.changes);
     assert_ne!(bound, recomputed);
     assert_eq!(verdict.status, EditCageVerdictStatus::Violated);
     Ok(())
