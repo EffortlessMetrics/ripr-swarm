@@ -1083,6 +1083,28 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             withheld(&finding, "sourceless shadow in a source-free test root");
         }
     }
+    // A top-level owner named for a standard-library module is never what
+    // the test's import loads: the built-in importer runs first.
+    for (module, credited) in [("ledger", true), ("math", false), ("json", false)] {
+        let owner = format!("{module}.py");
+        let test = format!(
+            "from {module} import render\n\n\ndef test_render():\n    assert render() == \"|  |\"\n"
+        );
+        let files = [
+            (owner.as_str(), functions),
+            ("tests/test_render.py", test.as_str()),
+        ];
+        let finding = classify(&files, &owner, 2, "    return 2", "    return 3")?;
+        if credited {
+            assert_eq!(
+                finding.class,
+                ExposureClass::Exposed,
+                "{module} owner: {finding:?}"
+            );
+        } else {
+            withheld(&finding, module);
+        }
+    }
     // A workspace file that puts an archive first on `sys.path` hands a
     // top-level owner's import another module; the inert helper keeps it.
     let top_test = "import reach.boot\nfrom ledger import render\n\n\ndef test_render():\n    assert render() == \"|  |\"\n";

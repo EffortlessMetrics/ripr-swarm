@@ -675,7 +675,11 @@ package directory below such a root along a dotted path the owner can be
 imported by (`tests/reach/ledger.pyc`, which pytest's prepend mode puts
 ahead of `reach/ledger.py`), as does a package directory named for the
 whole path with an initializer of any kind (`tests/reach/ledger/
-__init__.pyc`) other than the owner's own package.
+__init__.pyc`) other than the owner's own package. A test import whose
+top-level module is a standard-library name (`from math import floor`)
+never credits a workspace `math.py`: the built-in and frozen importers run
+before any path entry, and pytest has already imported many pure-Python
+stdlib modules.
 What the environment supplies is outside the static claim and stays a
 residual risk: a `PYTHONPATH` or `PYTEST_ADDOPTS` set by the caller (a
 Makefile, a noxfile, CI configuration, `.envrc`), a `.pth` file in site packages, or an installed

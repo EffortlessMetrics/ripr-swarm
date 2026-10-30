@@ -50,6 +50,8 @@
 //!   sourceless pyc named like the owner or one of its packages, and no
 //!   other package is named for the owner's whole dotted path, since each
 //!   can put an archive or unread code ahead of the owner;
+//! - the test's import does not start with a standard-library module name,
+//!   which the built-in importer or an earlier import resolves first;
 //! - inside a callable, a name is a parameter, a call is a bare call of a model
 //!   function or class of the module, or a method call on an instance of a
 //!   model class (the method's receiver, a parameter holding one, or
@@ -74,8 +76,8 @@ use super::bool_oracle::count_bindings;
 use super::module_constants::ModuleBindingFacts;
 use super::module_value::{
     ModuleEdit, ModuleValueCredit, Value, arithmetic, assertion_expression, comparison,
-    keep_unshadowed, mentions_reflection, names_may_differ, straight_line_assertion,
-    with_line_replaced,
+    keep_unshadowed, mentions_reflection, names_may_differ, names_stdlib_module,
+    straight_line_assertion, with_line_replaced,
 };
 use super::related_tests::import_source_module_matches_owner;
 use super::source_facts::parse_module_result;
@@ -661,6 +663,7 @@ fn entry_spellings(test: &PythonTest, module_owner: &PythonOwner, name: &str) ->
         .iter()
         .filter(|import| {
             import.imported == name
+                && !names_stdlib_module(&import.source_module)
                 && import_source_module_matches_owner(import, module_owner, &test.file)
         })
         .map(|import| import.alias.clone())
