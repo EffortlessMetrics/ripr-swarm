@@ -1677,30 +1677,44 @@ fn project_json_cwd_prefix(text: &str) -> String {
 }
 
 pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
+    normalize_fixture_json_output_for_host(value, cfg!(windows))
+}
+
+/// [`normalize_fixture_json_output`] with the host explicit.
+///
+/// Only a Windows-produced document carries path separators as backslashes
+/// (#2337), so only a Windows host projects them to `/`. Elsewhere a JSON
+/// `\\` is a literal backslash of source text (an escaped quote `\"`, a
+/// `\u{7b}` escape, a `\n` in an asserted string literal) and must reach
+/// the golden unchanged: the former blanket `\\` to `/` rewrote
+/// `quoted\"marker\"` to `quoted/"marker/"` in checked-in goldens (#11119).
+/// On Windows a `\\` separates path components only between two path
+/// characters; a doubled backslash that opens a Rust `\u{..}` escape or
+/// sits beside a quote or another backslash is source text there too.
+fn normalize_fixture_json_output_for_host(value: &str, windows: bool) -> String {
     let value = normalize_check_json_golden_document(value);
-    // #2337: match the human normalizer's approach — replace ALL backslashes
-    // with forward slashes, not just the escaped double-backslash form. On
-    // Windows, ripr check --json can emit single-backslash paths inside
-    // free-text string values (error messages, code excerpts). The previous
-    // normalizer only handled the `\\` (JSON-escaped) form, missing these.
-    // First replace `\\` (the JSON-escaped form), then replace any remaining
-    // single `\` — matching the human normalizer at line 737.
-    //
-    // BUT: JSON escape sequences like `\"`, `\n`, `\t`, `\r`, `\/` must be
-    // preserved — they are valid JSON string content, not path separators.
-    // The previous blanket `.replace('\\', "/")` corrupted these by turning
-    // `\"` into `/"`, breaking the expected golden output (#2522 regression).
-    //
-    // Strategy: replace `\\` → `/` first (the JSON-escaped backslash, which
-    // represents a literal backslash in the source text). Then replace any
-    // remaining single `\` that is NOT part of a JSON escape sequence.
-    let after_double = value.replace("\\\\", "/");
-    // #2556: operate on CHARS, not bytes — byte-wise push corrupts multi-byte
-    // UTF-8 sequences (e.g. é = 0xC3 0xA9 becomes two wrong chars).
-    let mut result = String::with_capacity(after_double.len());
-    let chars: Vec<char> = after_double.chars().collect();
+    if !windows {
+        return project_json_cwd_prefix(&value);
+    }
+    // #2556: operate on CHARS, not bytes, so multi-byte UTF-8 survives.
+    let chars: Vec<char> = value.chars().collect();
+    let is_path_char = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':');
+    let mut result = String::with_capacity(value.len());
     let mut i = 0;
     while i < chars.len() {
+        if chars[i] == '\\' && chars.get(i + 1) == Some(&'\\') {
+            let prev_is_path = i > 0 && is_path_char(chars[i - 1]);
+            let next = chars.get(i + 2).copied();
+            let next_is_path = next.is_some_and(is_path_char);
+            let opens_unicode_escape = next == Some('u') && chars.get(i + 3) == Some(&'{');
+            if prev_is_path && next_is_path && !opens_unicode_escape {
+                result.push('/');
+            } else {
+                result.push_str("\\\\");
+            }
+            i += 2;
+            continue;
+        }
         if chars[i] == '\\' && i + 1 < chars.len() {
             let next = chars[i + 1];
             // Preserve JSON escape sequences: \" \\ \n \t \r \uXXXX
@@ -1710,7 +1724,7 @@ pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
                 i += 2;
                 continue;
             }
-            // Not a JSON escape — treat as a path separator
+            // Not a JSON escape: a lone Windows path separator.
             result.push('/');
             i += 1;
             continue;
@@ -3200,7 +3214,7 @@ mod tests {
     #[test]
     fn normalize_json_handles_double_backslash() {
         let input = r#"{"path":"crates\\ripr\\src\\lib.rs"}"#;
-        let out = normalize_fixture_json_output(input);
+        let out = normalize_fixture_json_output_for_host(input, true);
         assert!(
             !out.contains('\\'),
             "double backslash must be normalized: {out}"
@@ -3216,7 +3230,7 @@ mod tests {
         // be treated as path separators and normalized.
         // Note: in the raw string, `\b` is a single backslash + 'b'.
         let input = r#"{"expression":"a\b\c"}"#;
-        let out = normalize_fixture_json_output(input);
+        let out = normalize_fixture_json_output_for_host(input, true);
         // After normalization: the `\b` becomes `/b` (not a JSON escape
         // since \b in JSON is backspace U+0008, but in this context it's
         // a raw backslash in the Rust string). The key assertion is that
@@ -3225,6 +3239,33 @@ mod tests {
         assert!(
             !out.contains(r#"\b"#) && !out.contains(r#"\c"#),
             "single backslash before non-escape char must be normalized: {out}"
+        );
+    }
+
+    #[test]
+    fn normalize_json_keeps_source_text_backslashes_off_windows() -> Result<(), String> {
+        // #11119: a JSON `\\` is a literal backslash of asserted source text.
+        // Source `"read \"error\"", "\u{7b}", "a\nb"` renders as the JSON below.
+        let input =
+            r#"{"oracle":"assert_eq!(x, \"read \\\"error\\\"\", \"\\u{7b}\", \"a\\nb\");"}"#;
+        assert_eq!(normalize_fixture_json_output_for_host(input, false), input);
+        let parsed: serde_json::Value =
+            serde_json::from_str(input).map_err(|error| error.to_string())?;
+        assert_eq!(
+            parsed["oracle"],
+            "assert_eq!(x, \"read \\\"error\\\"\", \"\\u{7b}\", \"a\\nb\");"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn normalize_json_windows_keeps_quote_and_unicode_escapes_but_folds_paths() {
+        let source =
+            r#"{"oracle":"\"read \\\"error\\\"\" \\u{7b}","file":"crates\\ripr\\src\\lib.rs"}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(
+            out,
+            r#"{"oracle":"\"read \\\"error\\\"\" \\u{7b}","file":"crates/ripr/src/lib.rs"}"#
         );
     }
 

@@ -13212,12 +13212,16 @@ fn first_line_difference_truncates_very_long_snapshot_lines() {
 
 #[test]
 fn fixture_output_normalization_keeps_json_escapes_readable() {
+    // Only a Windows host folds JSON `\\` path separators; elsewhere the
+    // backslash is source text and survives (#11119).
     let json =
         r#"{"file":"fixtures/example/input\\src/lib.rs","oracle":"assert!(value == \"x\")"}"#;
+    let folded =
+        r#"{"file":"fixtures/example/input/src/lib.rs","oracle":"assert!(value == \"x\")"}"#;
 
     assert_eq!(
         normalize_fixture_json_output(json),
-        r#"{"file":"fixtures/example/input/src/lib.rs","oracle":"assert!(value == \"x\")"}"#
+        if cfg!(windows) { folded } else { json }
     );
     assert_eq!(
         normalize_fixture_human_output("fixtures\\example\\input\\src/lib.rs"),
