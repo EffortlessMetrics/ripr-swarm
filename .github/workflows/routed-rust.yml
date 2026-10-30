@@ -237,9 +237,16 @@ jobs:
             return 1
           }
           read_subject() {
-            local frame candidate base tree
-            frame=$(gh api graphql -f query="$NATIVE_SUBJECT_QUERY" -F number="$PR_NUMBER") || return
-            candidate=$(jq -ceS --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" --arg generation "$GENERATION" "$NATIVE_SUBJECT_JQ" <<< "$frame") || return
+            # The REST merge ref and the GraphQL live view rebuild at different
+            # times after a main push; a bounded refresh reads the pair the way
+            # settle_request reads mergeability, without widening admission.
+            local attempt frame candidate base tree
+            for attempt in 1 2 3; do
+              frame=$(gh api graphql -f query="$NATIVE_SUBJECT_QUERY" -F number="$PR_NUMBER") || { [ "$attempt" = 3 ] || sleep 2; continue; }
+              candidate=$(jq -ceS --arg repo "$REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$HEAD_SHA" --arg merge "$SUBJECT_SHA" --arg generation "$GENERATION" "$NATIVE_SUBJECT_JQ" <<< "$frame") && break
+              [ "$attempt" = 3 ] || sleep 2
+            done
+            [ -n "$candidate" ] || return 1
             base=$(jq -er .base <<< "$candidate") || return
             tree=$(jq -er .tree <<< "$candidate") || return
             commit=$(gh api "repos/$REPOSITORY/git/commits/$SUBJECT_SHA") || return
