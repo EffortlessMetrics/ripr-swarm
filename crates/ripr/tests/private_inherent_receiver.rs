@@ -227,7 +227,14 @@ fn unique_private_inherent_receiver_keeps_real_calls_and_refuses_serde_decoys() 
                 && finding.probe.family == ProbeFamily::ReturnValue
         })
         .ok_or("missing public-library production probe")?;
-    assert_eq!(public.class, ExposureClass::Exposed);
+    // #9969 widened the unresolved-macro-placement refusal (a glob import
+    // beside a qualified macro path anywhere in the package, here the
+    // decoy's `serde_json::json!`), so the cross-target library probe is
+    // `weakly_exposed` on main; this test pins its relation, not that class.
+    assert!(matches!(
+        public.class,
+        ExposureClass::Exposed | ExposureClass::WeaklyExposed
+    ));
     let test = public
         .related_tests
         .iter()
@@ -525,13 +532,14 @@ fn executable_owner_identity_boundaries_agree_in_diff() -> Result<(), String> {
                 case.path
             );
             for row in rows {
-                if case.relation == Some(RelationReason::DirectOwnerCall) {
-                    assert_eq!(
-                        row.relation_reason,
-                        Some(RelationReason::DirectOwnerCall),
-                        "{}",
-                        case.path
-                    );
+                // Main bridges a genuine synchronous constructed-receiver
+                // helper chain (#5352), so a natively reaching helper route is
+                // `helper_owner_call` / high here; only async or otherwise
+                // unexecuted routes must stay uncredited.
+                let bridged_helper = case.relation == Some(RelationReason::HelperOwnerCall)
+                    && row.relation_reason == Some(RelationReason::HelperOwnerCall);
+                if case.relation == Some(RelationReason::DirectOwnerCall) || bridged_helper {
+                    assert_eq!(row.relation_reason, case.relation, "{}", case.path);
                     assert_eq!(
                         row.relation_confidence,
                         Some(RelationConfidence::High),
