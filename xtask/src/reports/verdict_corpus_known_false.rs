@@ -262,6 +262,18 @@ fn resolve_base(dir: &Path) -> Result<String, String> {
     Err(failures.join("; "))
 }
 
+/// The base must name a commit. Otherwise every `cat-file` below fails the
+/// same way as a missing path, and every entry would read as new growth.
+fn verify_rev(dir: &Path, rev: &str) -> Result<(), String> {
+    let spec = format!("{rev}^{{commit}}");
+    let output = git_in(dir, &["rev-parse", "--verify", "--quiet", &spec])?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("base revision `{rev}` is not a readable commit"))
+    }
+}
+
 fn git_in(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
     std::process::Command::new("git")
         .current_dir(dir)
@@ -321,7 +333,7 @@ impl BaseLedger for GitBase<'_> {
 /// in hosted runs, where history is always fetched, and is named elsewhere.
 fn growth_gate(dir: &Path, ledger: &Ledger, ledger_label: &str) -> Result<Option<String>, String> {
     let hosted = std::env::var_os("GITHUB_ACTIONS").is_some_and(|value| value == "true");
-    let base = match resolve_base(dir) {
+    let base = match resolve_base(dir).and_then(|rev| verify_rev(dir, &rev).map(|()| rev)) {
         Ok(rev) => GitBase { dir, rev },
         Err(why) if hosted => {
             return Ok(Some(format!(
@@ -985,5 +997,15 @@ mod tests {
         }
         let result = ledger(ENTRY).and_then(|ledger| growth_violations(&ledger, "l.toml", &Broken));
         assert_eq!(result, Err("git failed".to_string()));
+    }
+
+    #[test]
+    fn a_base_that_is_not_a_commit_is_unreadable_not_growth() {
+        let here = Path::new(".");
+        assert_eq!(verify_rev(here, "HEAD"), Ok(()));
+        let err = verify_rev(here, "no-such-revision-10986")
+            .err()
+            .unwrap_or_default();
+        assert!(err.contains("not a readable commit"), "{err}");
     }
 }
