@@ -483,11 +483,13 @@ fn sweep(
             if subjects.is_empty() && !possible_lookalike {
                 continue;
             }
-            if let Some((_, reason)) = binding
+            let exclusion = binding
                 .excluded
                 .iter()
-                .find(|(prefix, _)| path.starts_with(prefix))
-            {
+                .find(|(prefix, _)| path.starts_with(prefix));
+            // Bound subjects remain excluded without needing to parse them.
+            // Possible unbound lookalikes must first actually match.
+            if !possible_lookalike && let Some((_, reason)) = exclusion {
                 counts.excluded += 1;
                 counts.subjects.push(
                     json!({ "path": path, "sha256": digest, "role": "excluded", "reason": reason }),
@@ -503,9 +505,17 @@ fn sweep(
             };
             if possible_lookalike {
                 match exact_lookalike(exact_schema, &exact_document) {
-                    Ok(true) => violations.push(format!("{path} looks like {label} output but no binding claims it; bind it or add a reviewed exclusion")),
-                    Ok(false) => {},
-                    Err(error) => violations.push(format!("{path}: cannot determine exact lookalike: {error}")),
+                    Ok(true) => {
+                        if let Some((_, reason)) = exclusion {
+                            counts.excluded += 1;
+                            counts.subjects.push(json!({ "path": path, "sha256": digest, "role": "excluded", "reason": reason }));
+                        } else {
+                            violations.push(format!("{path} looks like {label} output but no binding claims it; bind it or add a reviewed exclusion"));
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => violations
+                        .push(format!("{path}: cannot determine exact lookalike: {error}")),
                 }
                 continue;
             }
@@ -1130,6 +1140,44 @@ mod tests {
             "{:?}",
             report.violations
         );
+        Ok(())
+    }
+
+    #[test]
+    fn exclusions_count_only_matching_lookalikes_and_bound_subjects() -> Result<(), String> {
+        let schema = include_bytes!("../../schemas/badges/shields-endpoint.schema.json").to_vec();
+        let tree = CandidateTree {
+            commit: "fixture".into(),
+            files: BTreeMap::from([
+                (EXAMPLE_SCHEMA.into(), schema),
+                (
+                    "bound.json".into(),
+                    br#"{"schemaVersion":1,"label":"x","message":"x","color":"blue"}"#.to_vec(),
+                ),
+                (
+                    "excluded/bound.json".into(),
+                    br#"{"schemaVersion":1.5,"label":"x","message":"x","color":"blue"}"#.to_vec(),
+                ),
+                (
+                    "excluded/match.json".into(),
+                    br#"{"schemaVersion":1.0,"label":"x","message":"x","color":"blue"}"#.to_vec(),
+                ),
+                (
+                    "excluded/mismatch.json".into(),
+                    br#"{"schemaVersion":1.5,"label":"x","message":"x","color":"blue"}"#.to_vec(),
+                ),
+            ]),
+        };
+        let report = sweep(
+            &tree,
+            &[binding(
+                Corpus::Paths(&["bound.json", "excluded/bound.json"]),
+                &[("excluded/", "stimulus")],
+            )],
+            &[],
+        )?;
+        assert!(report.violations.is_empty(), "{:?}", report.violations);
+        assert_eq!(report.packet["rows"][0]["excluded_stimulus"], 2);
         Ok(())
     }
 
