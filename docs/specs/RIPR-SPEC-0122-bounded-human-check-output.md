@@ -215,7 +215,8 @@ and the Counts line's `candidate line` (#9244 item 4 leftovers, #10691). They cl
 The CLI prints the legend on the first standalone human run in a build tree that
 selects a digest (a `--output-dir` fanout member always carries it and does not
 count) and records that in `target/ripr/legend-seen`; later runs replace the ten lines with one
-`Terms: ` pointer to `--legend`, which prints them again. Library
+`Terms: ` pointer to `--legend`, which prints them again, and to the glossary in
+`docs/QUICKSTART.md` (#11230). Library
 callers and an unwritable output tree always get the full legend (#10481).
 No legend renders when there is no selected digest (empty, all-suppressed,
 base-side-only, or unresolved-currentness-only findings). The legend adds a fixed

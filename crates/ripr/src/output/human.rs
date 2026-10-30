@@ -7436,6 +7436,12 @@ mod tests {
             1,
             "{pointer}"
         );
+        assert_eq!(
+            pointer.matches("glossary: docs/QUICKSTART.md").count(),
+            1,
+            "{pointer}"
+        );
+        assert!(!full.contains("glossary: docs/QUICKSTART.md"), "{full}");
         let evidence = full
             .lines()
             .find(|line| line.starts_with("  Evidence: reach "))

@@ -57,6 +57,7 @@ fn legend_prints_on_the_first_run_then_collapses_to_a_pointer() -> TestResult {
     let second = check(&project, &[])?;
     assert!(!second.contains(LEGEND), "{second}");
     assert!(second.contains(POINTER), "{second}");
+    assert!(second.contains("glossary: docs/QUICKSTART.md"), "{second}");
     // Only the ten legend lines became one line; the finding is unchanged.
     assert_eq!(
         first.lines().count() - 9,
