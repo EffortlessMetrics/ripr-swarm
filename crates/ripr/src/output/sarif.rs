@@ -910,15 +910,30 @@ fn suppression_metadata(entry: &SuppressionEntry) -> Value {
 }
 
 fn finding_message(finding: &Finding) -> String {
-    let mut message = format!(
+    let mut message = String::new();
+    // #11219: lead with the missing check when the analyzer named one, so the
+    // length bound can never cut it; the full list stays in
+    // `properties.missing_discriminators`.
+    if let Some(missing) = finding.activation.missing_discriminators.first() {
+        let reason = missing.reason.trim();
+        if !reason.is_empty() {
+            message.push_str("Missing check: ");
+            message.push_str(reason.trim_end_matches('.'));
+            message.push_str(". ");
+        }
+    }
+    message.push_str(&format!(
         "{} static exposure for {} probe",
         finding.class.as_str(),
         finding.probe.family.as_str()
-    );
+    ));
     if !finding.probe.expression.is_empty() {
         message.push_str(": ");
         message.push_str(&finding.probe.expression);
     }
+    // Bound the evidence head only; the reconciled next step below is
+    // appended whole so it keeps agreeing with the other surfaces.
+    let mut message = bound_message(message);
     // RIPR-SPEC-0088 §PR8: the SARIF message text is a machine-consumed surface.
     // Use the shared reconciliation fn (not the raw field) so the embedded
     // "Next step" agrees with suggested_next_action and the other surfaces.
@@ -927,6 +942,20 @@ fn finding_message(finding: &Finding) -> String {
         message.push_str(&reconcile_next_step(finding));
     }
     message
+}
+
+/// Longest evidence head (missing check, class, probe, expression) a finding
+/// message carries (#11219). The reconciled next step is appended whole
+/// (RIPR-SPEC-0088); the complete evidence stays in `properties`.
+const MAX_MESSAGE_CHARS: usize = 240;
+
+fn bound_message(message: String) -> String {
+    if message.chars().count() <= MAX_MESSAGE_CHARS {
+        return message;
+    }
+    let mut bounded: String = message.chars().take(MAX_MESSAGE_CHARS - 3).collect();
+    bounded.push_str("...");
+    bounded
 }
 
 fn seam_message(entry: &ClassifiedSeam) -> String {
@@ -965,7 +994,7 @@ fn finding_rules() -> Vec<Value> {
             rule(
                 finding_rule_id(class),
                 format!("ripr {}", class.as_str()),
-                format!("Static exposure finding classified as {}", class.as_str()),
+                finding_class_title(class).to_string(),
                 full_description,
                 help,
                 STATIC_EXPOSURE_MODEL_URI,
@@ -982,13 +1011,61 @@ fn seam_rules() -> Vec<Value> {
             rule(
                 seam_rule_id(*class),
                 format!("ripr seam {}", class.as_str()),
-                format!("Repo seam grip evidence classified as {}", class.as_str()),
+                seam_class_title(class).to_string(),
                 full_description,
                 help,
                 SEAM_GRIP_SPEC_URI,
             )
         })
         .collect()
+}
+
+/// Author-facing alert titles (#11219): what the Security tab lists. They say
+/// what the static evidence suggests and avoid runtime verdicts.
+fn finding_class_title(class: &ExposureClass) -> &'static str {
+    match class {
+        ExposureClass::Exposed => "Changed behavior appears covered by a strong test oracle",
+        ExposureClass::WeaklyExposed => "Changed behavior may not be caught by the current tests",
+        ExposureClass::ReachableUnrevealed => {
+            "Tests reach the changed code but no assertion appears to check it"
+        }
+        ExposureClass::NoStaticPath => "No test appears to reach the changed code",
+        ExposureClass::InfectionUnknown => {
+            "Tests may reach the change but their inputs are not visible to static analysis"
+        }
+        ExposureClass::PropagationUnknown => {
+            "Static analysis cannot tell whether a wrong result would reach an assertion"
+        }
+        ExposureClass::StaticUnknown => "Static analysis could not judge this change",
+    }
+}
+
+fn seam_class_title(class: &SeamGripClass) -> &'static str {
+    match class {
+        SeamGripClass::StronglyGripped => "Tests appear to grip this code strongly",
+        SeamGripClass::WeaklyGripped => "Tests only weakly grip this code",
+        SeamGripClass::Ungripped => "No test appears to grip this code",
+        SeamGripClass::ReachableUnrevealed => {
+            "Tests reach this code but no assertion appears to check it"
+        }
+        SeamGripClass::ActivationUnknown => {
+            "Static analysis cannot tell whether tests activate this code"
+        }
+        SeamGripClass::PropagationUnknown => {
+            "Static analysis cannot tell whether a wrong result here would be observed"
+        }
+        SeamGripClass::ObservationUnknown => {
+            "Static analysis cannot tell where a wrong result here would be observed"
+        }
+        SeamGripClass::DiscriminationUnknown => {
+            "An assertion observes this code but may not discriminate a wrong result"
+        }
+        SeamGripClass::Opaque => {
+            "This code sits behind a boundary static analysis cannot see through"
+        }
+        SeamGripClass::Intentional => "Project records no discriminating test here by choice",
+        SeamGripClass::Suppressed => "Exposure gap waived by project policy",
+    }
 }
 
 /// Per-class rule metadata for someone who has never seen ripr (#7371): one
@@ -2173,6 +2250,47 @@ weakly_gripped = "note"
     /// #7371: every rule carries a real per-class fullDescription, help, and
     /// a helpUri worth clicking — not the class name rearranged and one
     /// shared spec link.
+    /// #11219: the Security-tab title says what to do, not just the class, and
+    /// the message is bounded and leads with the missing check.
+    #[test]
+    fn rule_titles_are_author_facing_and_messages_are_bounded() -> Result<(), String> {
+        for rule in finding_rules().iter().chain(seam_rules().iter()) {
+            let id = rule["id"].as_str().unwrap_or_default();
+            let title = rule["shortDescription"]["text"]
+                .as_str()
+                .unwrap_or_default();
+            let class = id.rsplit('.').next().unwrap_or_default();
+            if title.is_empty() || title.contains(class) || title.starts_with("Static exposure") {
+                return Err(format!("rule {id} title is not author-facing: {title}"));
+            }
+        }
+        let message = finding_message(&sample_finding());
+        assert!(
+            message.starts_with("Missing check: no related test calls the equality boundary. "),
+            "{message}"
+        );
+        assert!(message.contains("Next step:"), "{message}");
+
+        // The next step is never cut: it stays whole after the bounded head.
+        let mut long = sample_finding();
+        long.recommended_next_step = Some("word ".repeat(100));
+        let message = finding_message(&long);
+        assert!(message.ends_with(&reconcile_next_step(&long)), "{message}");
+        // A long expression is cut by the bound, never the leading missing check.
+        let mut wide = sample_finding();
+        wide.probe.expression = "x".repeat(2000);
+        let message = finding_message(&wide);
+        assert!(message.starts_with("Missing check: no related test calls the equality boundary"));
+        let head = message.split(". Next step:").next().unwrap_or_default();
+        assert_eq!(head.chars().count(), MAX_MESSAGE_CHARS);
+        assert!(head.ends_with("..."));
+        // Control: without a missing discriminator no "Missing check" is invented.
+        let mut none = sample_finding();
+        none.activation.missing_discriminators.clear();
+        assert!(!finding_message(&none).contains("Missing check"));
+        Ok(())
+    }
+
     #[test]
     fn rules_carry_per_class_help_and_meaningful_help_uri() -> Result<(), String> {
         let finding = finding_rules();
