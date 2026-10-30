@@ -303,7 +303,7 @@ fn exposed_boolean_tail_is_gripped_for_both_check_and_repair() -> Result<(), Str
         "repair must not start on a change check reads as exposed:\n{repair}"
     );
     assert!(
-        repair.contains("already grip it (exposed)") && !repair.contains("repair_ready=true"),
+        repair.contains("already grip it (exposed)") && !repair.contains("Ready to repair."),
         "repair must agree that no gap remains:\n{repair}"
     );
     Ok(())

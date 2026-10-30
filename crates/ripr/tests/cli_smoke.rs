@@ -6386,10 +6386,58 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
         "{route}"
     );
 
-    // The default surface is the compact human summary of the same card.
+    // The default surface is the short plain brief (#10693): no producer,
+    // subject, non-claim, detail rows or hashes. `--verbose` keeps the full
+    // field list of the same card, asserted below.
+    let plain = run_ripr(&[
+        "agent",
+        "card",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        "67fc764ba37d77bd",
+    ]);
+    assert_success(&plain);
+    let plain_stdout = String::from_utf8_lossy(&plain.stdout);
+    for needle in [
+        "Repair brief for gap 67fc764ba37d77bd",
+        "  Files you may change: ",
+        "  Do not change: ",
+        "  Done when: ",
+        "  This is a suggestion; ripr has not run or verified anything.",
+        "--seam-id 67fc764ba37d77bd --json",
+    ] {
+        assert!(
+            plain_stdout.contains(needle),
+            "missing {needle:?}:\n{plain_stdout}"
+        );
+    }
+    for absent in [
+        "Repair card ",
+        "producer:",
+        "subject:",
+        "non-claim",
+        "edit cage",
+        "allowed_edit_surface",
+        "witness",
+        "detail [",
+        "repair_ready=",
+        "sha256:",
+    ] {
+        assert!(
+            !plain_stdout.contains(absent),
+            "plain brief must not print {absent:?}:\n{plain_stdout}"
+        );
+    }
+    assert!(
+        plain_stdout.lines().count() <= 14,
+        "plain brief should stay short:\n{plain_stdout}"
+    );
+
     let human = run_ripr(&[
         "agent",
         "card",
+        "--verbose",
         "--root",
         &root_arg,
         "--seam-id",
@@ -6734,9 +6782,24 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
                 .ok_or("missing cage blocker")?;
             assert!(blocker.contains("no selected edit target"), "{blocker}");
             assert!(String::from_utf8_lossy(&before.stderr).contains(blocker));
+            let plain = run_ripr(&[
+                "agent",
+                "card",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                BOUNDARY_GAP_SEAM_ID,
+            ]);
+            assert_success(&plain);
+            let plain = String::from_utf8_lossy(&plain.stdout);
+            assert!(
+                plain.contains("Not ready to repair yet:") && plain.contains(blocker),
+                "{plain}"
+            );
             let human = run_ripr(&[
                 "agent",
                 "card",
+                "--verbose",
                 "--root",
                 &root_arg,
                 "--seam-id",

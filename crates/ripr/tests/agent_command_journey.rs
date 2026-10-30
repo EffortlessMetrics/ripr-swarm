@@ -1941,7 +1941,7 @@ fn relative_root_follow_ups(base: &Path, bash: &Path) -> Result<(), String> {
     )?;
     assert_success(&card, "ripr agent card")?;
     let card_stdout = String::from_utf8_lossy(&card.stdout);
-    let packet = printed(&card_stdout, "full packet: ")?;
+    let packet = printed(&card_stdout, "Machine-readable details (JSON): ")?;
 
     // The after phase with no attempt refuses and names the start command.
     let after = run_ripr(
