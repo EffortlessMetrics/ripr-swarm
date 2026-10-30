@@ -407,6 +407,32 @@ impl RefreshSource {
     }
 }
 
+/// The producer-custody state of a snapshot's source bytes (#7357).
+///
+/// `Established` is minted only from an agreement between the bytes the
+/// findings producer recorded and the bytes the seam inventory recorded; the
+/// commitment is bound into the snapshot identity. Anything else keeps repair
+/// readiness and cards withheld and says why.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SourceCustody {
+    /// A committed snapshot: unchanged contract, no worktree custody claim.
+    NotApplicable,
+    /// A worktree snapshot whose producers were not shown to agree.
+    NotEstablished { reason: String },
+    /// A worktree snapshot whose findings and inventory consumed the same
+    /// Rust context.
+    Established { commitment: String },
+}
+
+impl SourceCustody {
+    fn commitment(&self) -> Option<&str> {
+        match self {
+            Self::Established { commitment } => Some(commitment),
+            Self::NotApplicable | Self::NotEstablished { .. } => None,
+        }
+    }
+}
+
 /// The completed-snapshot authority for one MCP session. Immutable once
 /// committed: refresh replaces the whole snapshot, never mutates it.
 pub(crate) struct Snapshot {
@@ -440,11 +466,14 @@ pub(crate) struct Snapshot {
     pub(crate) base: Option<String>,
     /// The source the analysis was actually captured under (#7357). Worktree
     /// snapshots carry it in the snapshot identity; committed identities are
-    /// unchanged. A worktree snapshot binds no seam inventory and no card
-    /// producers: no consumed-source commitment spans the findings and
-    /// those later live-file producers, so cards and repair readiness are
-    /// withheld rather than claimed current.
+    /// unchanged. A worktree snapshot binds seam inventory, card producers
+    /// and repair readiness only when `custody` is established; otherwise
+    /// they are withheld rather than claimed current.
     pub(crate) source: RefreshSource,
+    /// Whether the findings and the later live-file seam inventory were shown
+    /// to have consumed the same Rust bytes (#7357). Committed snapshots make
+    /// no such claim and keep their unchanged contract.
+    pub(crate) custody: SourceCustody,
     /// Private CLI fallback bound when the producer output is captured. It is
     /// not part of portable identity or ordinary success documents. Newer
     /// requested inputs cannot relabel recovery for retained evidence.
@@ -492,6 +521,25 @@ impl Snapshot {
         root_identity: Option<&str>,
         admission: &super::repair_admission::SeamAdmission,
         source: RefreshSource,
+    ) -> Result<Self, AttemptFailure> {
+        let custody = match source {
+            RefreshSource::Committed => SourceCustody::NotApplicable,
+            RefreshSource::Worktree => SourceCustody::NotEstablished {
+                reason: "no producer agreement on consumed source bytes was evaluated".to_string(),
+            },
+        };
+        Self::from_output_with_custody(output, root_identity, admission, source, custody)
+    }
+
+    /// [`Self::from_output_admitted`] with the snapshot's source custody. An
+    /// established commitment is bound into the snapshot identity, so equal
+    /// findings over different consumed Rust bytes never share an identity.
+    pub(crate) fn from_output_with_custody(
+        output: &crate::app::CheckOutput,
+        root_identity: Option<&str>,
+        admission: &super::repair_admission::SeamAdmission,
+        source: RefreshSource,
+        custody: SourceCustody,
     ) -> Result<Self, AttemptFailure> {
         let outcome = output
             .analysis_outcome
@@ -549,9 +597,10 @@ impl Snapshot {
         items.sort_by(|left, right| left.canonical_id.cmp(&right.canonical_id));
 
         let scope = ScopeFacts::from_output(output);
-        let snapshot_id = snapshot_identity(&outcome, &items, &scope, source).map_err(|error| {
-            AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
-        })?;
+        let snapshot_id = snapshot_identity(&outcome, &items, &scope, source, custody.commitment())
+            .map_err(|error| {
+                AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+            })?;
         let profile_identity = format!(
             "mcp:{}:profile:diff:draft",
             root_identity.unwrap_or("root:unavailable")
@@ -585,6 +634,7 @@ impl Snapshot {
             scope,
             base: None,
             source,
+            custody,
             gap_item_recovery: gap_item_recovery(output, source),
             language_view: None,
         })
@@ -627,6 +677,7 @@ fn snapshot_identity(
     items: &[GapItem],
     scope: &ScopeFacts,
     source: RefreshSource,
+    custody_commitment: Option<&str>,
 ) -> Result<String, String> {
     let outcome_digest = outcome.semantic_digest()?;
     let item_ids = items
@@ -653,6 +704,13 @@ fn snapshot_identity(
     // unchanged, so existing committed identities do not move.
     if source == RefreshSource::Worktree {
         payload["source"] = json!(source.as_str());
+    }
+    // #7357: an established producer commitment to the consumed Rust context
+    // is load-bearing identity. Equal-result edits to a consumed helper or
+    // test change it, so a snapshot pinned before the edit goes stale. The
+    // outcome's own diff-byte identity cannot see such an edit.
+    if let Some(commitment) = custody_commitment {
+        payload["consumed_source_commitment"] = json!(commitment);
     }
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
@@ -1432,9 +1490,12 @@ fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
 
 /// The scope disclosure for a saved tracked-worktree snapshot (#7357). It
 /// always exists: the snapshot never covers unsaved editor buffers, untracked
-/// files or gitignored files, and it carries no consumed-source commitment,
-/// so a clean or empty result is never an all-clear and no currentness is
-/// claimed beyond the refresh that produced it.
+/// files or gitignored files, so a clean or empty result is never an
+/// all-clear. When the findings and the seam inventory were shown to have
+/// consumed the same Rust source bytes it says so and repair cards stay
+/// available behind their per-item gates; otherwise it names why custody is
+/// not established, withholds cards and claims no currentness beyond the
+/// refresh that produced it.
 fn worktree_scope_disclosure(snapshot: &Snapshot) -> Value {
     const NAMED_PATHS: usize = 3;
     let scope = &snapshot.scope;
@@ -1442,13 +1503,28 @@ fn worktree_scope_disclosure(snapshot: &Snapshot) -> Value {
         Some(base) => format!("saved tracked-worktree diff against base `{base}`"),
         None => "saved tracked-worktree diff against the default branch".to_string(),
     };
-    let mut disclosure = json!({
-        "analyzed": analyzed,
-        "uncommitted_edits": "saved tracked edits included",
-        "note": "this snapshot analyzed saved staged and unstaged tracked edits as the producer read them during the refresh; unsaved editor buffers, untracked files and gitignored files are outside it. It carries no consumed-source commitment, so edits after the refresh are not detected (refresh again) and repair cards and repair readiness are withheld",
-        "consumed_source_commitment": "not_established",
-        "repair_cards": "withheld",
-    });
+    let mut disclosure = match &snapshot.custody {
+        SourceCustody::Established { .. } => json!({
+            "analyzed": analyzed,
+            "uncommitted_edits": "saved tracked edits included",
+            "note": "this snapshot analyzed saved staged and unstaged tracked edits. The findings producer and the seam inventory recorded the same raw Rust source bytes for the analyzed files, and that commitment is part of the snapshot identity, so a repair card or readiness never mixes two saved states; unsaved editor buffers, untracked files and gitignored files are outside it. The server does not watch the worktree: edits after the refresh are not detected, so refresh again",
+            "consumed_source_commitment": "established",
+            "repair_cards": "available",
+        }),
+        SourceCustody::NotEstablished { .. } | SourceCustody::NotApplicable => json!({
+            "analyzed": analyzed,
+            "uncommitted_edits": "saved tracked edits included",
+            "note": format!(
+                "this snapshot analyzed saved staged and unstaged tracked edits as the producer read them during the refresh; unsaved editor buffers, untracked files and gitignored files are outside it. The consumed source bytes of the findings and the seam inventory were not shown to agree{}, so edits after the refresh are not detected (refresh again) and repair cards and repair readiness are withheld",
+                match &snapshot.custody {
+                    SourceCustody::NotEstablished { reason } => format!(" ({reason})"),
+                    SourceCustody::Established { .. } | SourceCustody::NotApplicable => String::new(),
+                }
+            ),
+            "consumed_source_commitment": "not_established",
+            "repair_cards": "withheld",
+        }),
+    };
     if !scope.untracked.is_empty() {
         let named = scope
             .untracked
@@ -1589,7 +1665,7 @@ fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
     Some(json!({
         "why": why,
         "pass_base": "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}",
-        "pass_source": "for saved uncommitted tracked edits retry with {\"source\": \"worktree\"}; that source reports findings but withholds repair cards",
+        "pass_source": "for saved uncommitted tracked edits retry with {\"source\": \"worktree\"}; repair cards and readiness are offered only when the findings and the seam inventory are shown to have consumed the same source bytes, and are withheld with the cause otherwise",
     }))
 }
 
@@ -1868,13 +1944,17 @@ pub(crate) fn run_check(
 }
 
 /// The saved tracked-worktree refresh (#7357): the shared worktree check
-/// producer's findings, bound into a snapshot tagged `worktree`. It
-/// deliberately gathers no seam inventory and binds no card producers. Those
-/// producers read live files after the findings pass and no shared
-/// consumed-source commitment spans the two, so a worktree snapshot could
-/// pair findings from one saved state with seams from another. Repair
-/// readiness is refused for every finding and the card read discloses
-/// unavailability instead of claiming currentness.
+/// producer's findings, then the same seam inventory and card producers a
+/// committed refresh binds, over one source the two producers must agree on.
+///
+/// The findings producer records the raw Rust bytes it consumed and the
+/// inventory records the raw Rust bytes it read while each buffer was live;
+/// [`crate::analysis::consumed_source::ConsumedRustSources::establish_agreement`]
+/// compares the two carriers. Only an established agreement enables the shared
+/// admission and card binding, and its commitment rides the snapshot identity.
+/// Any missing, conflicting or moved observation, or a moved `HEAD`, keeps
+/// readiness and cards withheld with the cause named. No digest is minted
+/// from a later filesystem rescan or by this adapter.
 fn run_worktree_check(
     input: crate::app::CheckInput,
     config: &crate::config::RiprConfig,
@@ -1882,28 +1962,116 @@ fn run_worktree_check(
     base: Option<&str>,
 ) -> Result<Snapshot, AttemptFailure> {
     let root = input.root.clone();
-    let (output, language_view) =
+    let (output, language_view, findings_sources) =
         crate::app::check_workspace_worktree_with_config_typed(input, config)
             .map_err(|error| check_failure(&error, &root, base, RefreshSource::Worktree))?;
-    let admission = super::repair_admission::SeamAdmission::withheld(
-        &output.findings,
-        super::repair_admission::SEAM_WORKTREE_SOURCE,
-        WORKTREE_CARD_WITHHELD_DETAIL,
-    );
-    let mut snapshot = Snapshot::from_output_admitted(
-        &output,
-        root_identity,
-        &admission,
-        RefreshSource::Worktree,
-    )?;
+    #[cfg(test)]
+    after_worktree_findings_hook::run();
+    let inventory = super::repair_card::gather_seam_inventory(&root, config, &output.findings)?;
+    let mut snapshot = match worktree_custody(&output, &findings_sources, &inventory) {
+        Ok(commitment) => {
+            let admission = super::repair_admission::SeamAdmission::evaluate(
+                &output.findings,
+                &inventory.candidate_seams,
+                crate::app::agent_brief::AgentBriefPolicy::from_config(config),
+                &inventory.completeness,
+            );
+            let mut snapshot = Snapshot::from_output_with_custody(
+                &output,
+                root_identity,
+                &admission,
+                RefreshSource::Worktree,
+                SourceCustody::Established { commitment },
+            )?;
+            snapshot.base = base.map(str::to_string);
+            snapshot.language_view = language_view;
+            super::repair_card::bind_snapshot_card_producers(&root, inventory, &mut snapshot)?;
+            return Ok(snapshot);
+        }
+        Err(reason) => {
+            let admission = super::repair_admission::SeamAdmission::withheld(
+                &output.findings,
+                super::repair_admission::SEAM_WORKTREE_SOURCE,
+                &worktree_card_withheld_detail(&reason),
+            );
+            Snapshot::from_output_with_custody(
+                &output,
+                root_identity,
+                &admission,
+                RefreshSource::Worktree,
+                SourceCustody::NotEstablished { reason },
+            )?
+        }
+    };
     snapshot.base = base.map(str::to_string);
     snapshot.language_view = language_view;
     Ok(snapshot)
 }
 
+/// Compare what the findings producer and the seam inventory consumed.
+/// `Ok` carries the established commitment; `Err` names why custody is not
+/// established. Withholding is the default: nothing here upgrades weaker
+/// evidence.
+fn worktree_custody(
+    output: &crate::app::CheckOutput,
+    findings_sources: &crate::analysis::consumed_source::ConsumedRustSources,
+    inventory: &super::repair_card::SeamInventory,
+) -> Result<String, String> {
+    if output.findings.is_empty() {
+        return Err(
+            "the refresh produced no findings, so no consumed-source claim was needed or bound"
+                .to_string(),
+        );
+    }
+    // The card binds the head the inventory resolved; the producer observed
+    // its own. A head the producer did not observe, or one that moved between
+    // the two, cannot be called coherent.
+    let producer_head = output
+        .analyzed_revisions
+        .as_ref()
+        .and_then(|revisions| revisions.head_commit.as_deref());
+    if producer_head != Some(inventory.repository_head.as_str()) {
+        return Err(
+            "the repository head the findings producer observed does not match the head the seam inventory bound, or was not observed"
+                .to_string(),
+        );
+    }
+    crate::analysis::consumed_source::ConsumedRustSources::establish_agreement(
+        findings_sources,
+        &inventory.consumed_sources,
+    )
+    .map(|commitment| commitment.as_str().to_string())
+    .map_err(|refusal| refusal.describe())
+}
+
+/// Test-only barrier between the findings producer and the seam inventory, so
+/// a test can move the saved source exactly where a concurrent edit would.
+#[cfg(test)]
+pub(crate) mod after_worktree_findings_hook {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static HOOK: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn install(hook: impl FnOnce() + 'static) {
+        HOOK.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    pub(super) fn run() {
+        if let Some(hook) = HOOK.with(|slot| slot.borrow_mut().take()) {
+            hook();
+        }
+    }
+}
+
 /// Why a saved tracked-worktree snapshot carries no repair readiness or
-/// repair card (#7357).
-pub(crate) const WORKTREE_CARD_WITHHELD_DETAIL: &str = "this snapshot analyzed saved tracked-worktree edits; no consumed-source commitment spans its findings and the live seam inventory that repair readiness and cards need, so they are withheld rather than claimed current. Commit the change and run ripr_refresh without `source` for repair cards";
+/// repair card when its source custody is not established (#7357).
+pub(crate) fn worktree_card_withheld_detail(reason: &str) -> String {
+    format!(
+        "this snapshot analyzed saved tracked-worktree edits, but the findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}), so repair readiness and cards are withheld rather than claimed current. Edits settle by refreshing again; commit the change and run ripr_refresh without `source` for committed repair cards"
+    )
+}
 
 /// Project a shared-check refusal into the attempt failure. The recovery
 /// names routes this server can actually take: base resolution is retried
@@ -4378,7 +4546,7 @@ mod tests {
         let admission = super::super::repair_admission::SeamAdmission::withheld(
             &equal.findings,
             super::super::repair_admission::SEAM_WORKTREE_SOURCE,
-            WORKTREE_CARD_WITHHELD_DETAIL,
+            &worktree_card_withheld_detail("test: agreement not evaluated"),
         );
         let worktree = Snapshot::from_output_admitted(
             &equal,
@@ -4427,6 +4595,32 @@ mod tests {
             "no worktree item is repair ready"
         );
         assert!(worktree.card_producers.is_none());
+        Ok(())
+    }
+
+    /// #7357: an established consumed-source commitment is load-bearing
+    /// snapshot identity; absent, the payload is the unchanged worktree one.
+    #[test]
+    fn established_custody_commitment_is_load_bearing_snapshot_identity() -> Result<(), String> {
+        let mut equal = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        equal.findings.push(gaps::test_finding()?);
+        let snapshot = Snapshot::from_output(&equal, Some("root:sha256:test"))
+            .map_err(|failure| failure.detail)?;
+        let id = |commitment: Option<&str>| {
+            snapshot_identity(
+                &snapshot.outcome,
+                &snapshot.items,
+                &snapshot.scope,
+                RefreshSource::Worktree,
+                commitment,
+            )
+        };
+        let none = id(None)?;
+        let one = id(Some("sha256:one"))?;
+        let two = id(Some("sha256:two"))?;
+        assert_ne!(none, one, "an established commitment must move identity");
+        assert_ne!(one, two, "different commitments must not share identity");
+        assert_eq!(one, id(Some("sha256:one"))?, "identity is deterministic");
         Ok(())
     }
 
@@ -4508,6 +4702,7 @@ mod tests {
                 &original_items,
                 &snapshot.scope,
                 RefreshSource::Committed,
+                None,
             )?;
             assert_eq!(snapshot.snapshot_id, original_id);
 

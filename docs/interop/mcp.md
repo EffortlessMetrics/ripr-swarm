@@ -74,12 +74,18 @@ An agent edits the worktree, but by default `ripr_refresh` analyzes only the
 committed default-branch diff. To analyze saved staged and unstaged tracked
 edits without committing them, call `ripr_refresh` with `{"source":
 "worktree"}`; omitting `source` (or `"committed"`) keeps the committed
-default. A worktree snapshot is tagged `source: "worktree"`, discloses that
-unsaved editor buffers are outside and that it carries no consumed-source
-commitment, and withholds repair cards and repair readiness
-(`repair_packet_ready: false`, `worktree_source_not_committed`;
-`ripr_get_repair_card` refuses with `incomplete_inventory`): commit the
-change and refresh without `source` for those. Untracked files stay excluded
+default. A worktree snapshot is tagged `source: "worktree"` and discloses that
+unsaved editor buffers are outside. The findings producer and the seam
+inventory each record the raw Rust bytes they read; when they agree
+(`scope.consumed_source_commitment: "established"`, `repair_cards:
+"available"`) the same repair readiness, `ripr_get_repair_card` and
+`ripr_prepare_repair` the committed refresh offers are available, behind their
+usual per-item gates, and the producer commitment is part of the snapshot
+identity. When a saved file or `HEAD` moved between the two producers, or any
+input was not observed (`not_established`, `withheld`), every item is
+`repair_packet_ready: false` with `worktree_source_not_committed` naming the
+cause and `ripr_get_repair_card` refuses with `incomplete_inventory`: refresh
+again once the edit settles. Untracked files stay excluded
 until `git add -N <paths>`. The server does not watch the worktree, so
 refresh again after edits. Requested and captured source are separate facts:
 a failed worktree request keeps the last committed snapshot tagged

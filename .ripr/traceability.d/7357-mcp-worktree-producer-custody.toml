@@ -1,0 +1,18 @@
+# Bind the MCP saved-worktree producer-custody agreement to its proof (#7357).
+[[extend]]
+id = "RIPR-SPEC-0211"
+tests = [
+  "crates/ripr/src/mcp/workspace.rs::tests::established_custody_commitment_is_load_bearing_snapshot_identity",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::agreeing_producers_establish_custody_and_serve_a_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::source_movement_between_findings_and_inventory_withholds_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::test_oracle_movement_between_findings_and_inventory_withholds_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::head_movement_between_findings_and_inventory_withholds_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::equal_result_consumed_byte_movement_changes_identity_and_stales_pinned_references",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_and_worktree_refreshes_do_not_share_custody_or_identity",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0215"
+tests = [
+  "crates/ripr/tests/mcp_stdio.rs::refresh_source_worktree_serves_repair_card_and_readiness_with_established_custody",
+]

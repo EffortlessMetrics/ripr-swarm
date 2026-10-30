@@ -772,8 +772,8 @@ fn scope_disclosure_schema() -> Value {
                 "enum": ["outside this analysis", "saved tracked edits included"]
             },
             "note": { "type": "string" },
-            "consumed_source_commitment": { "type": "string", "const": "not_established" },
-            "repair_cards": { "type": "string", "const": "withheld" },
+            "consumed_source_commitment": { "type": "string", "enum": ["not_established", "established"] },
+            "repair_cards": { "type": "string", "enum": ["withheld", "available"] },
             "untracked_edits": {
                 "type": "object",
                 "properties": {
