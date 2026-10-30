@@ -137,7 +137,8 @@ pub(super) fn code_lens_response(uri: &Uri, snapshot: Option<&AnalysisSnapshot>)
     lenses
 }
 
-/// The findings the code lens shows for `uri`, in snapshot order.
+/// The findings that produce code lenses for `uri`, in snapshot order. Lenses
+/// with an equal range and title collapse, so several findings can share one.
 fn lens_findings<'a>(
     uri: &'a Uri,
     snapshot: &'a AnalysisSnapshot,
@@ -154,7 +155,7 @@ fn lens_findings<'a>(
 }
 
 /// The findings whose code lens sits on the zero-based `line` of `uri`, so
-/// hover can describe exactly what the lens on that line shows.
+/// hover can list every finding the lens (or lenses) on that line summarize.
 pub(super) fn lens_findings_at_line<'a>(
     uri: &'a Uri,
     snapshot: &'a AnalysisSnapshot,
@@ -641,7 +642,12 @@ mod tests {
     #[test]
     fn code_lens_response_collapses_identical_lenses_on_one_line() -> Result<(), String> {
         let first = make_finding("src/lib.rs", 10, ExposureClass::Exposed, 3, None);
-        let twin = make_finding("src/lib.rs", 10, ExposureClass::Exposed, 3, None);
+        // A distinct probe on the same expression line that renders the same
+        // title: the case the user sees, so dedupe cannot key on finding id.
+        let mut twin = make_finding("src/lib.rs", 10, ExposureClass::Exposed, 3, None);
+        twin.id = "probe:src/lib.rs:10:return_value:11223344".to_string();
+        twin.probe.id = ProbeId(twin.id.clone());
+        twin.probe.family = ProbeFamily::ReturnValue;
         let other_line = make_finding("src/lib.rs", 20, ExposureClass::Exposed, 3, None);
         let different = make_finding("src/lib.rs", 10, ExposureClass::Exposed, 5, None);
         let snapshot =
@@ -652,8 +658,32 @@ mod tests {
 
         // Twin on the same line with the same title collapses; a distinct line
         // and a distinct title on the same line both survive.
-        if lenses.len() != 3 {
-            return Err(format!("expected 3 lenses, got {}", lenses.len()));
+        let survivors: Vec<(u32, String)> = lenses
+            .iter()
+            .map(|lens| {
+                let title = lens
+                    .command
+                    .as_ref()
+                    .map(|command| command.title.clone())
+                    .unwrap_or_default();
+                (lens.range.start.line, title)
+            })
+            .collect();
+        let lines: Vec<u32> = survivors.iter().map(|(line, _)| *line).collect();
+        if lines != vec![9, 19, 9] {
+            return Err(format!(
+                "expected survivors on lines [9, 19, 9] in snapshot order, got {survivors:?}"
+            ));
+        }
+        if survivors[0].1 == survivors[2].1 || !survivors[2].1.contains('5') {
+            return Err(format!(
+                "the distinct title on line 9 must survive: {survivors:?}"
+            ));
+        }
+        if survivors[0].1 != survivors[1].1 {
+            return Err(format!(
+                "same-count lenses must share a title: {survivors:?}"
+            ));
         }
         Ok(())
     }
