@@ -11,7 +11,6 @@ shape for which the preview adapter has no value-level infection model
 - a literal return value (`return 5;` to `return 6;`),
 - a `??` fallback literal (`?? 10` to `?? 20`),
 - a default parameter (`loud = false` to `loud = true`),
-- a single numeric operand inside an expression (`price * 0.9` to `0.8`),
 - an arithmetic no-op (`a / b` to `a / b + 0`),
 - a comment-only edit (`return price;` to `return price; // fallback`).
 

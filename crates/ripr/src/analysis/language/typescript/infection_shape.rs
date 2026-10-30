@@ -68,13 +68,6 @@ pub(crate) fn ts_unmodeled_infection(old: Option<&str>, new: &str) -> Option<Unm
             behavior_neutral: false,
         });
     }
-    if numeric_operand_changed(&old_code, &new_code) {
-        return Some(UnmodeledInfection {
-            shape: "numeric_operand",
-            reason: "the edit changes one numeric literal inside an expression, and the adapter does not evaluate whether any test input makes the expression's value differ",
-            behavior_neutral: false,
-        });
-    }
     None
 }
 
@@ -131,14 +124,29 @@ fn is_literal(token: &str) -> bool {
         return unsigned.replace('_', "").parse::<f64>().is_ok();
     }
     let mut chars = token.chars();
-    let (Some(first), Some(last)) = (chars.next(), token.chars().last()) else {
+    let Some(first) = chars.next() else {
         return false;
     };
-    token.len() >= 2
-        && first == last
-        && matches!(first, '"' | '\'' | '`')
-        && !token[1..token.len() - 1].contains(first)
-        && !(first == '`' && token.contains("${"))
+    let last = chars.next_back().unwrap_or(first);
+    if token.len() < 2
+        || first != last
+        || !matches!(first, '"' | '\'' | '`')
+        || (first == '`' && token.contains("${"))
+    {
+        return false;
+    }
+    // The body may hold the quote only when escaped.
+    let mut escaped = false;
+    for ch in token[1..token.len() - 1].chars() {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == first {
+            return false;
+        }
+    }
+    !escaped
 }
 
 /// Split `text` at its first top-level literal token: `(literal, rest)`. The
@@ -155,11 +163,13 @@ fn leading_literal(text: &str) -> Option<(&str, &str)> {
             } else if ch == '\\' {
                 escaped = true;
             } else if ch == open {
-                quote = None;
+                // The opening quote closes: the literal ends here.
+                end = index + ch.len_utf8();
+                break;
             }
-        } else if matches!(ch, '"' | '\'' | '`') {
+        } else if index == 0 && matches!(ch, '"' | '\'' | '`') {
             quote = Some(ch);
-        } else if matches!(ch, ',' | ')' | ']' | '}' | ';' | ' ') {
+        } else if matches!(ch, ',' | ')' | ']' | '}' | ';') || ch.is_whitespace() {
             end = index;
             break;
         }
@@ -168,9 +178,39 @@ fn leading_literal(text: &str) -> Option<(&str, &str)> {
     is_literal(literal).then_some((literal, rest))
 }
 
+/// Byte offset of the first (or last) occurrence of `pattern` outside string
+/// literals.
+fn find_outside_quotes(line: &str, pattern: &str, last: bool) -> Option<usize> {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut found = None;
+    for (index, ch) in line.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+        } else if matches!(ch, '"' | '\'' | '`') {
+            quote = Some(ch);
+        } else if line[index..].starts_with(pattern) {
+            if !last {
+                return Some(index);
+            }
+            found = Some(index);
+        }
+    }
+    found
+}
+
 fn fallback_literal_changed(old: &str, new: &str) -> bool {
     ["??", "||"].iter().any(|operator| {
-        let (Some(o), Some(n)) = (old.rfind(operator), new.rfind(operator)) else {
+        let (Some(o), Some(n)) = (
+            find_outside_quotes(old, operator, true),
+            find_outside_quotes(new, operator, true),
+        ) else {
             return false;
         };
         if old[..o] != new[..n] {
@@ -189,13 +229,19 @@ fn fallback_literal_changed(old: &str, new: &str) -> bool {
 }
 
 fn default_parameter_changed(old: &str, new: &str) -> bool {
-    let (Some(old_open), Some(new_open)) = (old.find('('), new.find('(')) else {
+    let (Some(old_open), Some(new_open)) = (
+        find_outside_quotes(old, "(", false),
+        find_outside_quotes(new, "(", false),
+    ) else {
         return false;
     };
     if old[..old_open] != new[..new_open] {
         return false;
     }
-    let (Some(old_close), Some(new_close)) = (old.find(')'), new.find(')')) else {
+    let (Some(old_close), Some(new_close)) = (
+        find_outside_quotes(old, ")", false),
+        find_outside_quotes(new, ")", false),
+    ) else {
         return false;
     };
     if old_close < old_open || new_close < new_open || old[old_close..] != new[new_close..] {
@@ -232,44 +278,4 @@ fn literal_return_changed(old: &str, new: &str) -> bool {
         (Some(o), Some(n)) => is_literal(o) && is_literal(n) && o.trim() != n.trim(),
         _ => false,
     }
-}
-
-/// The two lines differ in exactly one numeric literal token and nowhere else.
-fn numeric_operand_changed(old: &str, new: &str) -> bool {
-    let (o, n): (Vec<char>, Vec<char>) = (old.chars().collect(), new.chars().collect());
-    let prefix = o.iter().zip(&n).take_while(|(a, b)| a == b).count();
-    let suffix = o[prefix..]
-        .iter()
-        .rev()
-        .zip(n[prefix..].iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count();
-    let numeric = |c: &char| c.is_ascii_digit() || matches!(c, '.' | '_');
-    let mut start = prefix;
-    while start > 0 && numeric(&o[start - 1]) {
-        start -= 1;
-    }
-    let (mut o_end, mut n_end) = (o.len() - suffix, n.len() - suffix);
-    while o_end < o.len() && numeric(&o[o_end]) {
-        o_end += 1;
-        n_end += 1;
-    }
-    if start > o_end || start > n_end {
-        return false;
-    }
-    let boundary_before =
-        start == 0 || !(o[start - 1].is_alphanumeric() || matches!(o[start - 1], '_' | '$' | '.'));
-    let boundary_after =
-        o_end >= o.len() || !(o[o_end].is_alphanumeric() || matches!(o[o_end], '_' | '$'));
-    let (old_token, new_token): (String, String) = (
-        o[start..o_end].iter().collect(),
-        n[start..n_end].iter().collect(),
-    );
-    boundary_before
-        && boundary_after
-        && old_token != new_token
-        && old_token.starts_with(|c: char| c.is_ascii_digit())
-        && new_token.starts_with(|c: char| c.is_ascii_digit())
-        && old_token.replace('_', "").parse::<f64>().is_ok()
-        && new_token.replace('_', "").parse::<f64>().is_ok()
 }

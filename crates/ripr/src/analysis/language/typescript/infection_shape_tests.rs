@@ -66,19 +66,38 @@ fn modeled_or_ambiguous_edits_stay_unnamed() {
 }
 
 #[test]
-fn names_a_single_numeric_operand_edit() {
+fn a_fallback_literal_stops_where_its_quote_closes() {
+    // Positive: adjacent quoted operands are each a literal token.
     assert_eq!(
-        shape(
-            "return Math.floor(price * 0.9);",
-            "return Math.floor(price * 0.8);"
-        ),
-        Some("numeric_operand")
+        shape("return x ?? 'a'+tail;", "return x ?? 'b'+tail;"),
+        Some("fallback_literal")
     );
+    // Negative: a changed tail after the closing quote is not a literal-only edit.
+    assert_eq!(shape("return x ?? 'a'+t1;", "return x ?? 'b'+t2;"), None);
+}
+
+#[test]
+fn operators_and_parens_inside_strings_are_not_structure() {
+    // Negative: `??` and `(` inside a string do not make a fallback or default edit.
     assert_eq!(
-        shape("return x * 10;", "return x * 12;"),
-        Some("numeric_operand")
+        shape("return f(\"a ?? 1\" + x);", "return f(\"a ?? 2\" + x);"),
+        None
     );
-    // Two literals changed, or an identifier suffix, is not one operand edit.
-    assert_eq!(shape("return 1 + 2;", "return 3 + 4;"), None);
-    assert_eq!(shape("return v1 * 2;", "return v2 * 2;"), None);
+    assert_eq!(shape("log(\"(a = 1)\", z);", "log(\"(a = 2)\", z);"), None);
+    // Positive: the real fallback after a string that holds `??` is found.
+    assert_eq!(
+        shape("return \"a ?? b\" ?? 1;", "return \"a ?? b\" ?? 2;"),
+        Some("fallback_literal")
+    );
+}
+
+#[test]
+fn an_escaped_quote_does_not_end_a_string_literal() {
+    // Positive: `'it\'s'` is one literal.
+    assert_eq!(
+        shape("return 'it\\'s';", "return 'it\\'S';"),
+        Some("literal_return")
+    );
+    // Negative: an unescaped inner quote is not one literal.
+    assert_eq!(shape("return 'a'b';", "return 'a'c';"), None);
 }

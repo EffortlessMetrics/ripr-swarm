@@ -18,7 +18,7 @@ index 4900fcd..a45fd92 100644
    return x;
  }
 diff --git a/src/pricing.ts b/src/pricing.ts
-index 5cb138b..ac56653 100644
+index 5cb138b..1a63f43 100644
 --- a/src/pricing.ts
 +++ b/src/pricing.ts
 @@ -1,6 +1,6 @@
@@ -41,8 +41,7 @@ index 5cb138b..ac56653 100644
 +  return opts?.max ?? 20;
  }
  export function disc(price: number): number {
--  return Math.floor(price * 0.9);
-+  return Math.floor(price * 0.8);
+   return Math.floor(price * 0.9);
  }
 -export function say(msg: string, loud = false): string {
 +export function say(msg: string, loud = true): string {

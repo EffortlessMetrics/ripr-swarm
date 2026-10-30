@@ -7235,10 +7235,6 @@ pub(crate) fn classify_resolved_owner(
         if let Some(shape) =
             super::infection_shape::ts_unmodeled_infection(old_line_text, line_text)
             && (weak || (exposed && shape.behavior_neutral))
-            // A numeric literal under a predicate is the boundary the
-            // boundary-input facts model; only value expressions fail closed.
-            && !(shape.shape == "numeric_operand"
-                && matches!(probe_shape.family, ProbeFamily::Predicate))
         {
             verdict.class = ExposureClass::InfectionUnknown;
             verdict.observe_state = StageState::Unknown;

@@ -1580,7 +1580,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "infection_unknown"
         },
         {
           "type": "expected_oracle",

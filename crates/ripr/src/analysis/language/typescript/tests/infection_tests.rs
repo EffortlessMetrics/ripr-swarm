@@ -135,12 +135,6 @@ fn unmodeled_shapes_read_infection_unknown_and_never_a_packet() -> Result<(), St
             "comment_only",
         ),
         ("noop", "  return n;", "  return n + 0;", "arithmetic_noop"),
-        (
-            "operand",
-            "  return Math.floor(n * 0.9);",
-            "  return Math.floor(n * 0.8);",
-            "numeric_operand",
-        ),
     ] {
         let finding = shape_change(label, old, new)?;
         assert_eq!(finding.class, ExposureClass::InfectionUnknown, "{label}");
