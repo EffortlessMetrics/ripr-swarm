@@ -65,9 +65,26 @@ fn native_pytest_route_parts<'a>(
 fn safe_qualified_name(name: &str) -> bool {
     name.split('.').all(|part| {
         let mut chars = part.chars();
-        matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
-            && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+        matches!(chars.next(), Some(c) if c == '_' || identifier_start(c))
+            && chars.all(|c| c == '_' || identifier_continue(c))
     })
+}
+
+#[cfg(any(feature = "lang-python", feature = "lang-rust"))]
+fn identifier_start(c: char) -> bool {
+    unicode_ident::is_xid_start(c)
+}
+#[cfg(any(feature = "lang-python", feature = "lang-rust"))]
+fn identifier_continue(c: char) -> bool {
+    unicode_ident::is_xid_continue(c)
+}
+#[cfg(not(any(feature = "lang-python", feature = "lang-rust")))]
+fn identifier_start(c: char) -> bool {
+    c.is_ascii_alphabetic()
+}
+#[cfg(not(any(feature = "lang-python", feature = "lang-rust")))]
+fn identifier_continue(c: char) -> bool {
+    c.is_ascii_alphanumeric()
 }
 
 pub(crate) fn manual_python_raw(finding: &Finding) -> Option<&str> {
@@ -655,6 +672,28 @@ mod tests {
         let file = "tests/test_order.py";
         let node = "tests/test_order.py::test_total";
         let raw = "python -m pytest tests/test_order.py::test_total";
+        assert!(
+            route(
+                "tests/test_order.py",
+                "tests/test_order.py::test_café",
+                "python -m pytest tests/test_order.py::test_café",
+                "test_café",
+                false,
+                false
+            )
+            .is_some()
+        );
+        assert!(
+            route(
+                file,
+                "tests/test_order.py::$(touch x)::test_total",
+                "python -m pytest tests/test_order.py::$(touch x)::test_total",
+                "test_total",
+                false,
+                true
+            )
+            .is_none()
+        );
         assert!(route(file, node, raw, "test_total", false, false).is_some());
         assert!(route(file, node, raw, "test_other", false, false).is_none());
         assert!(

@@ -142,7 +142,7 @@ process-wrap = { version = "10.0.1", default-features = false, features = [
 default = ["lang-rust", "lang-typescript", "lang-python"]
 lang-rust = ["dep:ra_ap_syntax", "dep:unicode-ident"]
 lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span"]
-lang-python = ["dep:rustpython-parser"]
+lang-python = ["dep:rustpython-parser", "dep:unicode-ident"]
 lang-perl = []
 
 [dev-dependencies]
