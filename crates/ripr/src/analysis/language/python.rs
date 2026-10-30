@@ -1073,7 +1073,8 @@ impl PythonAdapter {
         walk_limits: PythonDiffWalkLimits,
         handwritten: &[String],
     ) -> Result<LanguageDiffResult, String> {
-        // A previous run's facts are freed before this run builds its own.
+        // A previous run's facts are freed before this run builds its own
+        // (sequential callers; see `teardown` for concurrent ones).
         teardown::await_previous();
         // Changed files are the subject of the diff, so the cap only ever
         // refuses context around them (#10461). The walk streams into a

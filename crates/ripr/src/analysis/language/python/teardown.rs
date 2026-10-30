@@ -5,8 +5,10 @@
 //! At most one teardown is outstanding: a run waits for the previous run's
 //! teardown before it reads sources, and hands off its own under the same
 //! lock it waits under.
-//! A long-lived caller (LSP, MCP) therefore holds no finished run's facts
-//! while it builds the next run's, as before, and a backlog cannot grow.
+//! A backlog therefore cannot grow. A long-lived caller (LSP, MCP) that runs
+//! analyses one after another holds no finished run's facts while it builds
+//! the next run's, as before; concurrent runs each pass the initial wait on
+//! their own, so one run's teardown can overlap another's build.
 //! The teardown runs on its own thread, so it never queues behind (or
 //! blocks) work on the shared rayon pool.
 
