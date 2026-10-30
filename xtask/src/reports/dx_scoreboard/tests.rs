@@ -6,7 +6,7 @@ use super::measure::{
     check_args_without_explicit_mode, check_contradictions, classify_replay, contradiction_outcome,
     extract_commands, hostile_outcome, parse_test_result, permissive_json_exit_zero, probe_result,
     record_warm_check, repo_exposure_contradictions, rss_sample, scan_check_contradictions,
-    warm_check_args, warm_check_subject,
+    warm_check_args, warm_check_envs, warm_check_subject,
 };
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
@@ -415,6 +415,41 @@ fn contradiction_rules_fire_only_on_self_inconsistent_rows() -> Result<(), Strin
         {"file": "c.rs", "line": 3, "evidence": {"reach": "yes"}, "related_tests_total": 4},
     ]});
     assert_eq!(repo_exposure_contradictions(&exposure).0, 1);
+
+    // Proximity relations are listed beside `reach: no` by design (#6866).
+    let listed = |reason: &str| {
+        json!({"seams": [{"file": "d.rs", "line": 4, "evidence": {"reach": "no"},
+            "related_tests_total": 1,
+            "related_tests": [{"name": "t", "relation_reason": reason}]}]})
+    };
+    for proximity in ["same_test_file", "same_module", "assertion_target_affinity"] {
+        assert_eq!(
+            repo_exposure_contradictions(&listed(proximity)).0,
+            0,
+            "{proximity}"
+        );
+    }
+    for reaching in [
+        "direct_owner_call",
+        "helper_owner_call",
+        "re_export_chain_followed",
+    ] {
+        assert_eq!(
+            repo_exposure_contradictions(&listed(reaching)).0,
+            1,
+            "{reaching}"
+        );
+    }
+    // A capped window can hide a reaching test ranked behind the listed ones.
+    let capped = json!({"seams": [{"file": "e.rs", "line": 5, "evidence": {"reach": "no"},
+        "related_tests_total": 9,
+        "related_tests": vec![json!({"name": "t", "relation_reason": "same_test_file"}); 8]}]});
+    assert_eq!(repo_exposure_contradictions(&capped).0, 1);
+    // A relation this scan cannot read is not read as clean.
+    assert_eq!(
+        repo_exposure_contradictions(&listed("brand_new_relation")).0,
+        1
+    );
 
     let check = json!({"findings": [
         {"id": "p1", "classification": "no_static_path", "related_tests_total": 2, "evidence": []},
@@ -1847,6 +1882,7 @@ fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
         base_sha: None,
         note: String::new(),
         heavy: false,
+        language: None,
     };
     let full = "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b";
     assert_eq!(validate_corpus(&[entry("a", full)]), Ok(()));
@@ -3185,6 +3221,7 @@ fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_par
         base_sha: None,
         note: String::new(),
         heavy: false,
+        language: None,
     };
 
     let refused = super::measure::prepare_checkout(&entry, &options);
@@ -4579,4 +4616,192 @@ fn corpus_pins_no_rust_commits() -> Result<(), String> {
         return Err("serde-no-rust is light and cargo-no-rust is heavy".to_string());
     }
     Ok(())
+}
+
+/// Non-Rust corpus rows (#10338): each names its language, pins full shas and
+/// is a separate population from the Rust rows. An unknown language is
+/// refused so a typo cannot silently fall back to `rust`.
+#[test]
+fn corpus_pins_python_commits_and_rejects_unknown_languages() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    validate_corpus(&config.corpus)?;
+    let python: Vec<_> = config
+        .corpus
+        .iter()
+        .filter(|entry| entry.language() == "python")
+        .collect();
+    let ids: Vec<_> = python.iter().map(|entry| entry.id.as_str()).collect();
+    if ids
+        != [
+            "click-python",
+            "poetry-python",
+            "pandas-python",
+            "django-python",
+        ]
+    {
+        return Err(format!(
+            "expected click, poetry, pandas and django Python rows, got {ids:?}"
+        ));
+    }
+    let shas: Vec<_> = python.iter().map(|entry| entry.sha.as_str()).collect();
+    if shas
+        != [
+            "f67c2bb6c2f055c1c7a57cd46c3697fc26a7742e",
+            "a416efd1be6b6787019e751e7c4f6fa1a0911050",
+            "ecdb4258a39cdfc8ba70ce1aa3edda1615b1defc",
+            "5c13b5a19864807cae7266339554c14e151e5961",
+        ]
+    {
+        return Err(format!(
+            "Python pins moved off the commits verified to edit Python and its test: {shas:?}"
+        ));
+    }
+    if python[0].heavy || python[1..].iter().any(|entry| !entry.heavy) {
+        return Err("click must be the light Python row and the larger ones heavy".to_string());
+    }
+    // Rows without a language stay Rust, so existing pins keep their meaning.
+    if config
+        .corpus
+        .iter()
+        .any(|entry| entry.id == "serde" && entry.language() != "rust")
+    {
+        return Err("rows without `language` must read as rust".to_string());
+    }
+    let mut typo = config.corpus.clone();
+    typo[0].language = Some("pyton".to_string());
+    match validate_corpus(&typo) {
+        Err(message) if message.contains("unknown language `pyton`") => Ok(()),
+        other => Err(format!(
+            "an unknown language must be refused, got {other:?}"
+        )),
+    }
+}
+
+/// A manifest `language` of the wrong JSON type must not be read as absent,
+/// which would file the entry's measurements under `rust`.
+#[test]
+fn manifest_language_must_be_a_string_when_present() -> Result<(), String> {
+    let manifest = |language: Value| {
+        json!({
+            "kind": "ripr_rust_corpus_manifest",
+            "corpus_version": "v",
+            "repos": [{
+                "id": "a", "url": "u", "tier": "fast", "language": language,
+                "sha": "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b",
+            }],
+        })
+    };
+    let (_, corpus) = corpus_from_manifest(&manifest(json!("python")))?;
+    if corpus.first().map(CorpusEntry::language) != Some("python") {
+        return Err("a string manifest language must be carried through".to_string());
+    }
+    match corpus_from_manifest(&manifest(json!(123))) {
+        Err(message) if message.contains("`language` must be a string") => Ok(()),
+        other => Err(format!("a numeric language must be refused, got {other:?}")),
+    }
+}
+
+/// The per-repository rows carry the entry's language so a consumer can
+/// group results without joining back to the corpus metadata.
+#[test]
+fn repo_view_rows_carry_the_corpus_language() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let repos = repo_view(&config, &[]);
+    let language = |id: &str| {
+        repos
+            .iter()
+            .find(|row| row["id"] == id)
+            .and_then(|row| row["language"].as_str())
+            .map(str::to_string)
+    };
+    if language("click-python").as_deref() != Some("python") {
+        return Err("click-python row must report python".to_string());
+    }
+    if language("serde").as_deref() != Some("rust") {
+        return Err("a row without `language` must report rust".to_string());
+    }
+    Ok(())
+}
+
+/// TypeScript row (#10338). The exact pin is asserted so moving it is a
+/// deliberate two-place edit that re-asks whether the commit still edits
+/// TypeScript source and its test. Only repositories that complete are pinned
+/// (defu, ky, h3, execa, destr, zod): a repository that stops short fails the
+/// completion gate even when new, so a pinned diff must complete.
+#[test]
+fn corpus_pins_the_typescript_commit() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    validate_corpus(&config.corpus)?;
+    let typescript: Vec<_> = config
+        .corpus
+        .iter()
+        .filter(|entry| entry.language() == "typescript")
+        .map(|entry| (entry.id.as_str(), entry.sha.as_str(), entry.heavy))
+        .collect();
+    let expected = [
+        (
+            "defu-typescript",
+            "11ba02213d4b1c6b02dd686041f75edc479c98e9",
+            false,
+        ),
+        (
+            "ky-typescript",
+            "33462fcbf8f9001fc3d7a08576992098e571c5ff",
+            false,
+        ),
+        (
+            "h3-typescript",
+            "3444ff78970e95c65e481ed2ff9a7d43c880ab1c",
+            false,
+        ),
+        (
+            "execa-typescript",
+            "ed80079bc4e21a259fdc521c5a4b27126b308c9a",
+            false,
+        ),
+        (
+            "destr-typescript",
+            "f9c78d402556aba3e50f94d46176f36a0570acbd",
+            false,
+        ),
+        (
+            "zod-typescript",
+            "680d19f7d1e042e55934209caeb79bc843b94f44",
+            false,
+        ),
+        (
+            "valibot-typescript",
+            "e6b538386cfa4ccf8be6122f7f457ea7d4020325",
+            false,
+        ),
+        (
+            "remeda-typescript",
+            "d02c3bdb5e18cfa53e76f33f4ae525adce515379",
+            false,
+        ),
+        (
+            "hono-typescript",
+            "d54720da80134a180f5fe2dd98a7676cfc8f08b4",
+            false,
+        ),
+    ];
+    if typescript != expected {
+        return Err(format!(
+            "expected only the verified defu, ky, h3, execa, destr, zod, valibot, remeda and hono TypeScript rows, got {typescript:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn warm_check_renders_the_full_findings_set_for_the_contradiction_scan() {
+    let envs = warm_check_envs("/cache");
+    assert!(envs.contains(&("RIPR_CACHE_DIR", "/cache")));
+    assert!(envs.contains(&("RIPR_CHECK_FINDINGS_BYTES", "0")));
 }

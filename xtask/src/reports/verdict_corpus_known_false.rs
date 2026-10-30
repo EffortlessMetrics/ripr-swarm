@@ -24,15 +24,52 @@ pub(crate) struct KnownFalse {
     /// The ripr-swarm issue that owns the fix.
     pub(crate) issue: u64,
     pub(crate) reason: String,
+    /// The accepted-cost issue that names this case, required when the entry
+    /// is new in the diff for a row that was not a false verdict at the merge
+    /// base (#10986). Without it the entry is a bless side effect.
+    #[serde(default)]
+    pub(crate) accepted_growth: Option<u64>,
 }
 
 /// The directory of entry files inside a corpus directory.
 pub(crate) const KNOWN_FALSE_DIR: &str = "known-false";
 
-/// Read every `known-false/<case>.toml`. The file stem must equal the `case`
-/// it holds, so one case has one path and a duplicate cannot be added.
-pub(crate) fn load_entries(corpus_dir: &Path) -> Result<Vec<KnownFalse>, String> {
-    let dir = corpus_dir.join(KNOWN_FALSE_DIR);
+/// One accepted missed credit: an abstained row whose tests do discriminate
+/// the change. One `[[entry]]` block per row in the corpus's sorted
+/// `missed-credit.toml`, so PRs that move different rows touch different
+/// hunks and git usually merges them (adjacent edits can still conflict) (#10222).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MissedCredit {
+    pub(crate) case: String,
+    pub(crate) reason: String,
+}
+
+/// The accepted-missed-credit file inside a corpus directory.
+pub(crate) const MISSED_CREDIT_FILE: &str = "missed-credit.toml";
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MissedCreditFile {
+    #[serde(default)]
+    entry: Vec<MissedCredit>,
+}
+
+/// An entry file's `case`, which must equal the file stem.
+trait CaseEntry: for<'de> Deserialize<'de> {
+    fn case(&self) -> &str;
+}
+
+impl CaseEntry for KnownFalse {
+    fn case(&self) -> &str {
+        &self.case
+    }
+}
+
+/// Read every `<dir_name>/<case>.toml` of a corpus. The file stem must equal
+/// the `case` it holds, so one case has one path and a duplicate cannot be added.
+fn load_case_files<T: CaseEntry>(corpus_dir: &Path, dir_name: &str) -> Result<Vec<T>, String> {
+    let dir = corpus_dir.join(dir_name);
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
@@ -48,27 +85,55 @@ pub(crate) fn load_entries(corpus_dir: &Path) -> Result<Vec<KnownFalse>, String>
     let mut entries = Vec::new();
     for path in paths {
         if path.extension().and_then(|e| e.to_str()) != Some("toml") {
-            return Err(format!(
-                "{} is not a `.toml` known-false entry",
-                path.display()
-            ));
+            return Err(format!("{} is not a `.toml` entry file", path.display()));
         }
         let text = std::fs::read_to_string(&path)
             .map_err(|err| format!("read {}: {err}", path.display()))?;
-        let entry: KnownFalse =
+        let entry: T =
             toml::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))?;
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        if stem != entry.case {
+        if stem != entry.case() {
             return Err(format!(
                 "{} holds case `{}`; name the file `{}.toml`",
                 path.display(),
-                entry.case,
-                entry.case
+                entry.case(),
+                entry.case()
             ));
         }
         entries.push(entry);
     }
     Ok(entries)
+}
+
+/// Read every `known-false/<case>.toml`.
+pub(crate) fn load_entries(corpus_dir: &Path) -> Result<Vec<KnownFalse>, String> {
+    load_case_files(corpus_dir, KNOWN_FALSE_DIR)
+}
+
+/// Read `missed-credit.toml`: `[[entry]]` blocks (case, reason), sorted by
+/// case and unique, so an insertion lands at its sorted place and two PRs
+/// adding different cases rarely touch the same lines. A corpus without the
+/// file accepts no missed credit.
+pub(crate) fn load_missed_credit_entries(corpus_dir: &Path) -> Result<Vec<MissedCredit>, String> {
+    let path = corpus_dir.join(MISSED_CREDIT_FILE);
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let text =
+        std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    let file: MissedCreditFile =
+        toml::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))?;
+    for pair in file.entry.windows(2) {
+        if pair[0].case >= pair[1].case {
+            return Err(format!(
+                "{} must list cases sorted and unique; `{}` does not follow `{}`",
+                path.display(),
+                pair[1].case,
+                pair[0].case
+            ));
+        }
+    }
+    Ok(file.entry)
 }
 
 fn is_false(outcome: Outcome) -> bool {
@@ -108,7 +173,189 @@ pub(crate) fn known_false_ledger_violations(
             ));
         }
     }
+    let mut accepted = BTreeSet::new();
+    for entry in &ledger.missed_credit {
+        if !accepted.insert(entry.case.as_str()) {
+            violations.push(format!(
+                "{ledger_label} lists missed-credit case `{}` twice",
+                entry.case
+            ));
+        }
+        if entry.reason.trim().is_empty() {
+            violations.push(format!(
+                "missed-credit case `{}` in {ledger_label} needs a `reason`",
+                entry.case
+            ));
+        }
+        if !case_ids.contains(entry.case.as_str()) {
+            violations.push(format!(
+                "missed-credit case `{}` in {ledger_label} is not a corpus case; remove the entry",
+                entry.case
+            ));
+        }
+    }
     violations
+}
+
+/// What the ledger and the blessed rows were at the merge base, so a diff
+/// cannot list a new false verdict in the same change that causes it (#10986).
+pub(crate) trait BaseLedger {
+    /// Whether `known-false/<case>.toml` existed at the base.
+    fn listed(&self, case: &str) -> Result<bool, String>;
+    /// The base's blessed outcome for the case; `None` when the row did not exist.
+    fn outcome(&self, case: &str) -> Result<Option<Outcome>, String>;
+}
+
+/// The `known_false` entries a diff adds for rows that were not false at the
+/// base. An entry for a row already false there, or one already listed, is not
+/// growth. A new false verdict needs `accepted_growth`, an accepted-cost issue,
+/// and the case named in the `reason`; both are visible in the reviewed diff.
+/// This cannot read the issue, so it makes growth explicit, not approved.
+pub(crate) fn growth_violations(
+    ledger: &Ledger,
+    ledger_label: &str,
+    base: &dyn BaseLedger,
+) -> Result<Vec<String>, String> {
+    let mut violations = Vec::new();
+    for entry in &ledger.known_false {
+        if base.listed(&entry.case)? || base.outcome(&entry.case)?.is_some_and(is_false) {
+            continue;
+        }
+        let accepted = entry.accepted_growth.is_some_and(|issue| issue != 0)
+            && names_case(&entry.reason, &entry.case);
+        if !accepted {
+            violations.push(format!(
+                "verdict-corpus: known_false case `{}` in {ledger_label} is new in this diff and the row was not a false verdict at the merge base; a bless cannot list its own regression. Fix the case, spec or analyzer. Accepting a new false verdict adds `accepted_growth = <issue>` (an accepted-cost issue that names the case) to the entry and names `{}` in its `reason`, and is a reviewed edit",
+                entry.case, entry.case
+            ));
+        }
+    }
+    Ok(violations)
+}
+
+/// True when `reason` carries `case` as a whole token, so a short case id is
+/// not satisfied by an unrelated word that merely contains it.
+fn names_case(reason: &str, case: &str) -> bool {
+    let is_id = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    reason.split(|c: char| !is_id(c)).any(|token| token == case)
+}
+
+/// The base revision for the growth gate: `RIPR_VERDICT_CORPUS_BASE`, else the
+/// merge base with `origin/main` or `main`.
+fn resolve_base(dir: &Path) -> Result<String, String> {
+    if let Some(rev) = std::env::var_os("RIPR_VERDICT_CORPUS_BASE") {
+        let rev = rev.to_string_lossy().trim().to_string();
+        if !rev.is_empty() {
+            return Ok(rev);
+        }
+    }
+    let mut failures = Vec::new();
+    for branch in ["origin/main", "main"] {
+        match git_in(dir, &["merge-base", branch, "HEAD"]) {
+            Ok(output) if output.status.success() => {
+                let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !sha.is_empty() {
+                    return Ok(sha);
+                }
+                failures.push(format!("{branch}: empty merge base"));
+            }
+            Ok(output) => failures.push(format!(
+                "{branch}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+            Err(err) => failures.push(format!("{branch}: {err}")),
+        }
+    }
+    Err(failures.join("; "))
+}
+
+/// The base must name a commit. Otherwise every `cat-file` below fails the
+/// same way as a missing path, and every entry would read as new growth.
+fn verify_rev(dir: &Path, rev: &str) -> Result<(), String> {
+    let spec = format!("{rev}^{{commit}}");
+    let output = git_in(dir, &["rev-parse", "--verify", "--quiet", &spec])?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("base revision `{rev}` is not a readable commit"))
+    }
+}
+
+fn git_in(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    std::process::Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .map_err(|err| format!("git {}: {err}", args.join(" ")))
+}
+
+/// The ledger as the merge base stored it, read through `git`.
+struct GitBase<'a> {
+    dir: &'a Path,
+    rev: String,
+}
+
+impl GitBase<'_> {
+    /// `git show <rev>:./<path>`, relative to the corpus directory; `None`
+    /// when the path did not exist at the base.
+    fn file_at_base(&self, path: &str) -> Result<Option<Vec<u8>>, String> {
+        let spec = format!("{}:./{path}", self.rev);
+        let exists = git_in(self.dir, &["cat-file", "-e", &spec])?;
+        if !exists.status.success() {
+            return Ok(None);
+        }
+        let shown = git_in(self.dir, &["show", &spec])?;
+        if !shown.status.success() {
+            return Err(format!(
+                "git show {spec}: {}",
+                String::from_utf8_lossy(&shown.stderr).trim()
+            ));
+        }
+        Ok(Some(shown.stdout))
+    }
+}
+
+impl BaseLedger for GitBase<'_> {
+    fn listed(&self, case: &str) -> Result<bool, String> {
+        Ok(self
+            .file_at_base(&format!("{KNOWN_FALSE_DIR}/{case}.toml"))?
+            .is_some())
+    }
+
+    fn outcome(&self, case: &str) -> Result<Option<Outcome>, String> {
+        #[derive(Deserialize)]
+        struct Row {
+            outcome: Outcome,
+        }
+        let Some(bytes) = self.file_at_base(&format!("expected/rows/{case}.json"))? else {
+            return Ok(None);
+        };
+        serde_json::from_slice::<Row>(&bytes)
+            .map(|row| Some(row.outcome))
+            .map_err(|err| format!("parse base row `{case}`: {err}"))
+    }
+}
+
+/// The growth gate over a corpus directory. A base that cannot be read fails
+/// in hosted runs, where history is always fetched, and is named elsewhere.
+fn growth_gate(dir: &Path, ledger: &Ledger, ledger_label: &str) -> Result<Option<String>, String> {
+    let hosted = std::env::var_os("GITHUB_ACTIONS").is_some_and(|value| value == "true");
+    let base = match resolve_base(dir).and_then(|rev| verify_rev(dir, &rev).map(|()| rev)) {
+        Ok(rev) => GitBase { dir, rev },
+        Err(why) if hosted => {
+            return Ok(Some(format!(
+                "verdict-corpus: the known-false growth gate has no merge base to compare with ({why}); fetch history or set RIPR_VERDICT_CORPUS_BASE"
+            )));
+        }
+        Err(why) => {
+            println!(
+                "verdict-corpus: known-false growth gate not established locally (no merge base: {why})"
+            );
+            return Ok(None);
+        }
+    };
+    let violations = growth_violations(ledger, ledger_label, &base)?;
+    Ok((!violations.is_empty()).then(|| violations.join("\n")))
 }
 
 /// Compare the scored rows (case id, outcome) with the ledger. `Err` names every unlisted false row and every stale entry.
@@ -150,36 +397,62 @@ pub(crate) fn known_false_gate(
     }
 }
 
-/// Rows where the tests discriminate the change but ripr abstained instead of
-/// crediting it: a safe answer that still leaves credit unclaimed.
-fn missed_credit(rows: &[CaseRow]) -> usize {
+/// Ids of rows where the tests discriminate the change but ripr abstained
+/// instead of crediting it: a safe answer that still leaves credit unclaimed.
+fn missed_credit(rows: &[CaseRow]) -> BTreeSet<&str> {
     rows.iter()
         .filter(|row| row.truth == TruthState::Discriminated && row.outcome == Outcome::Abstained)
-        .count()
+        .map(|row| row.case_id.as_str())
+        .collect()
 }
 
-/// Gate `missed_credit_ceiling`: above it is a regression and fails. Below it
-/// is an improvement that passes with a note to lower the ceiling; failing
-/// there would make every concurrent fix PR edit the same number and
-/// deadlock main. A ledger without a ceiling does not gate missed credit.
+/// Gate the accepted missed-credit rows (`missed-credit.toml`). A
+/// missed-credit row without an entry is a regression and fails, naming it. An
+/// entry whose row no longer misses credit also fails, naming the entry to
+/// delete: the committed entries must equal the blessed missed rows, the same
+/// pin `committed_ceilings_equal_the_blessed_missed_credit` holds, enforced here
+/// minutes into the required run instead of after the full test step (#10341).
+/// Each entry is its own block, so two PRs moving different rows never
+/// conflict and a fix never deadlocks main on a shared number. The count is
+/// derived from the entries, never stored (#10222).
 fn missed_credit_gate(
-    missed: usize,
+    missed: &BTreeSet<&str>,
     ledger: &Ledger,
     ledger_label: &str,
-) -> Result<Option<String>, String> {
-    let Some(ceiling) = ledger.missed_credit_ceiling else {
-        return Ok(None);
-    };
-    if missed > ceiling {
-        return Err(format!(
-            "verdict-corpus: {missed} abstained rows had tests that catch the change, above the missed_credit_ceiling of {ceiling} in {ledger_label}; a verdict stopped crediting a discriminating test. Fix the regression; raising the ceiling is a reviewed edit with a reason"
+) -> Result<(), String> {
+    let accepted: BTreeSet<&str> = ledger
+        .missed_credit
+        .iter()
+        .map(|e| e.case.as_str())
+        .collect();
+    let unlisted: Vec<&str> = missed.difference(&accepted).copied().collect();
+    let stale: Vec<&str> = accepted.difference(missed).copied().collect();
+    // Report both sides together so a count-preserving swap names the row to
+    // fix and the entry to delete in one run.
+    let mut failures = Vec::new();
+    if !unlisted.is_empty() {
+        failures.push(format!(
+            "verdict-corpus: {} abstained row(s) had tests that catch the change but {ledger_label} accepts no missed credit for them; a verdict stopped crediting a discriminating test. Fix the regression; accepting it adds an `[[entry]]` with a reason to {MISSED_CREDIT_FILE} and is a reviewed edit:\n{}",
+            unlisted.len(),
+            unlisted
+                .iter()
+                .map(|case| format!("  - {case}"))
+                .collect::<Vec<_>>()
+                .join("\n")
         ));
     }
-    Ok((missed < ceiling).then(|| {
-        format!(
-            "verdict-corpus: {missed} abstained rows had tests that catch the change, below the missed_credit_ceiling of {ceiling} in {ledger_label}; lower the ceiling to {missed} so the improvement cannot regress"
-        )
-    }))
+    if !stale.is_empty() {
+        failures.push(format!(
+            "verdict-corpus: {} accepted missed-credit row(s) in {ledger_label} no longer miss credit; delete its `[[entry]]` from {MISSED_CREDIT_FILE} so the improvement cannot regress: {}",
+            stale.len(),
+            stale.join(", ")
+        ));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 /// Join the ledger gate's failure to `existing`. A case subset cannot see the
@@ -203,15 +476,34 @@ pub(crate) fn apply_known_false_gate(
         .err()
         .into_iter()
         .collect();
-    match missed_credit_gate(missed_credit(rows), &ledger, &label) {
-        Ok(Some(note)) => println!("{note}"),
-        Ok(None) => {}
-        Err(failure) => failures.push(failure),
+    if let Err(failure) = missed_credit_gate(&missed_credit(rows), &ledger, &label) {
+        failures.push(failure);
     }
     if failures.is_empty() {
         return Ok(existing);
     }
     let failure = failures.join("\n");
+    Ok(Some(match existing {
+        Some(existing) => format!("{existing}\n{failure}"),
+        None => failure,
+    }))
+}
+
+/// Join the growth gate's failure to `existing`. Kept apart from
+/// [`apply_known_false_gate`], which scores rows without git, so a caller with
+/// no history (a unit test, a shallow checkout) is not a growth check.
+pub(crate) fn apply_growth_gate(
+    dir: &Path,
+    subset: bool,
+    existing: Option<String>,
+) -> Result<Option<String>, String> {
+    if subset || !dir.join(coverage::LEDGER_FILE).is_file() {
+        return Ok(existing);
+    }
+    let ledger = coverage::load_ledger(dir)?;
+    let Some(failure) = growth_gate(dir, &ledger, &coverage::ledger_label(dir))? else {
+        return Ok(existing);
+    };
     Ok(Some(match existing {
         Some(existing) => format!("{existing}\n{failure}"),
         None => failure,
@@ -286,29 +578,78 @@ mod tests {
         assert!(err.contains("owning `issue`"), "{err}");
     }
 
-    fn ceiling(value: Option<usize>) -> Result<Ledger, String> {
-        let line = value.map_or(String::new(), |v| format!("missed_credit_ceiling = {v}\n"));
-        ledger(&line)
+    fn accepting(cases: &[&str]) -> Result<Ledger, String> {
+        let mut ledger = ledger("")?;
+        ledger.missed_credit = cases
+            .iter()
+            .map(|case| MissedCredit {
+                case: (*case).to_string(),
+                reason: "accepted".to_string(),
+            })
+            .collect();
+        Ok(ledger)
+    }
+
+    fn set<'a>(cases: &[&'a str]) -> BTreeSet<&'a str> {
+        cases.iter().copied().collect()
     }
 
     #[test]
-    fn missed_credit_ceiling_fails_up_and_notes_down() -> Result<(), String> {
-        assert_eq!(missed_credit_gate(3, &ceiling(Some(3))?, "l.toml")?, None);
-        let up = missed_credit_gate(4, &ceiling(Some(3))?, "l.toml").err();
+    fn a_new_missed_credit_fails_and_a_stale_entry_fails() -> Result<(), String> {
+        let accepted = accepting(&["a", "b"])?;
+        // Exactly the accepted rows: clean.
+        missed_credit_gate(&set(&["a", "b"]), &accepted, "l.toml")?;
+        // Negative experiment: a row that newly misses credit has no entry, so
+        // the gate fails and names it.
+        let err = missed_credit_gate(&set(&["a", "b", "c"]), &accepted, "l.toml")
+            .err()
+            .unwrap_or_default();
+        assert!(err.contains("  - c") && !err.contains("  - a"), "{err}");
+        // Swapping one row for another keeps the count and still fails.
+        let swapped = missed_credit_gate(&set(&["a", "c"]), &accepted, "l.toml")
+            .err()
+            .unwrap_or_default();
         assert!(
-            up.is_some_and(|e| e.contains("above")),
-            "regression must fail"
+            swapped.contains("  - c")
+                && swapped.contains("no longer miss credit")
+                && swapped.contains(": b"),
+            "{swapped}"
         );
-        // An improvement passes with a note, so concurrent fix PRs do not collide.
-        let down = missed_credit_gate(2, &ceiling(Some(3))?, "l.toml")?;
-        assert!(down.is_some_and(|n| n.contains("lower the ceiling to 2")));
-        // No ceiling, no gate.
-        assert_eq!(missed_credit_gate(99, &ceiling(None)?, "l.toml")?, None);
+        // An improvement leaves a stale entry: the entries must equal the
+        // blessed missed rows, so the gate fails and names the entry to delete.
+        let stale = missed_credit_gate(&set(&["a"]), &accepted, "l.toml")
+            .err()
+            .unwrap_or_default();
+        assert_eq!(
+            stale,
+            "verdict-corpus: 1 accepted missed-credit row(s) in l.toml no longer miss credit; delete its `[[entry]]` from missed-credit.toml so the improvement cannot regress: b"
+        );
+        // Nothing accepted and nothing missed is clean.
+        missed_credit_gate(&set(&[]), &accepting(&[])?, "l.toml")?;
         Ok(())
     }
 
-    /// A ceiling set above the real count would pass the gate with only a
-    /// note, so pin each committed ceiling to its blessed rows.
+    #[test]
+    fn missed_credit_entries_are_structurally_checked() -> Result<(), String> {
+        let mut ledger = accepting(&["a", "a", "ghost"])?;
+        ledger.missed_credit[0].reason = " ".to_string();
+        let ids: BTreeSet<&str> = ["a"].into_iter().collect();
+        let found = known_false_ledger_violations(&ids, &ledger, "ledger.toml");
+        for needle in ["twice", "needs a `reason`", "not a corpus case"] {
+            assert!(
+                found.iter().any(|v| v.contains(needle)),
+                "{needle}: {found:?}"
+            );
+        }
+        Ok(())
+    }
+
+    /// Pin each committed entry set to its blessed rows. `check-all` now fails
+    /// a stale entry in the corpus step (#10341); this test is the second pin,
+    /// run with the full test step, so the equality survives if that wiring is
+    /// ever bypassed. The accepted count is derived from the entries, never
+    /// stored on a shared line. The name is kept from the retired numeric
+    /// ceiling test (CI selects it by name).
     #[test]
     fn committed_ceilings_equal_the_blessed_missed_credit() -> Result<(), String> {
         for language in ["rust", "typescript", "python", "perl"] {
@@ -318,13 +659,59 @@ mod tests {
             let rows = super::super::expected_report(&dir)?.rows;
             let ledger = coverage::load_ledger(&dir)?;
             let missed = missed_credit(&rows);
-            assert!(missed > 0, "{language} has no missed credit to count");
+            assert!(
+                !missed.is_empty(),
+                "{language} has no missed credit to count"
+            );
+            let accepted: BTreeSet<&str> = ledger
+                .missed_credit
+                .iter()
+                .map(|e| e.case.as_str())
+                .collect();
             assert_eq!(
-                ledger.missed_credit_ceiling,
-                Some(missed),
-                "{language} missed_credit_ceiling must equal the blessed count"
+                accepted, missed,
+                "{language} missed-credit.toml entries must equal the blessed missed rows"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn an_inline_ceiling_line_is_refused() -> Result<(), String> {
+        let dir = crate::tests::temp_dir("missed-credit-inline-ceiling");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        std::fs::write(
+            dir.join(coverage::LEDGER_FILE),
+            "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\nmissed_credit_ceiling = 3\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let err = coverage::load_ledger(&dir).err().unwrap_or_default();
+        assert!(err.contains("missed-credit.toml"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn missed_credit_file_loads_sorted_unique_entries() -> Result<(), String> {
+        let dir = crate::tests::temp_dir("missed-credit-entry-file");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let write = |text: &str| {
+            std::fs::write(dir.join(MISSED_CREDIT_FILE), text).map_err(|err| err.to_string())
+        };
+        assert!(load_missed_credit_entries(&dir)?.is_empty());
+        write(
+            "[[entry]]\ncase = \"a\"\nreason = \"why\"\n\n[[entry]]\ncase = \"b\"\nreason = \"why\"\n",
+        )?;
+        assert_eq!(load_missed_credit_entries(&dir)?.len(), 2);
+        write(
+            "[[entry]]\ncase = \"b\"\nreason = \"why\"\n\n[[entry]]\ncase = \"a\"\nreason = \"why\"\n",
+        )?;
+        let err = load_missed_credit_entries(&dir).err().unwrap_or_default();
+        assert!(err.contains("sorted and unique"), "{err}");
+        write(
+            "[[entry]]\ncase = \"a\"\nreason = \"why\"\n\n[[entry]]\ncase = \"a\"\nreason = \"why\"\n",
+        )?;
+        let err = load_missed_credit_entries(&dir).err().unwrap_or_default();
+        assert!(err.contains("sorted and unique"), "{err}");
         Ok(())
     }
 
@@ -343,7 +730,11 @@ mod tests {
 
     #[test]
     fn wiring_fails_an_unlisted_false_row_and_keeps_the_earlier_failure() -> Result<(), String> {
-        let (_, rows) = committed_rust_rows()?;
+        let (_, mut rows) = committed_rust_rows()?;
+        // The committed corpus can have no false row left; the negative control
+        // must not depend on one, so it makes a committed row false itself.
+        let row = rows.first_mut().ok_or("the committed corpus has no rows")?;
+        row.outcome = Outcome::FalseActionable;
         let empty = crate::tests::temp_dir("known-false-empty-ledger");
         std::fs::create_dir_all(&empty).map_err(|err| err.to_string())?;
         std::fs::write(
@@ -362,6 +753,61 @@ mod tests {
         );
         // A case subset cannot see the whole corpus, so it is never gated.
         assert_eq!(apply_known_false_gate(&empty, true, &rows, None)?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn wiring_fails_a_missed_credit_row_that_has_no_entry_end_to_end() -> Result<(), String> {
+        let (dir, rows) = committed_rust_rows()?;
+        // The committed corpus is clean.
+        assert_eq!(apply_known_false_gate(&dir, false, &rows, None)?, None);
+        // The same rows against a ledger directory that accepts no missed
+        // credit fail through `apply_known_false_gate` and name a missed row.
+        let bare = crate::tests::temp_dir("missed-credit-bare-ledger");
+        std::fs::create_dir_all(&bare).map_err(|err| err.to_string())?;
+        std::fs::write(
+            bare.join(coverage::LEDGER_FILE),
+            "schema_version = \"ripr_verdict_corpus_spec_coverage.v1\"\n",
+        )
+        .map_err(|err| err.to_string())?;
+        std::fs::write(bare.join(coverage::LOCK_FILE), "").map_err(|err| err.to_string())?;
+        let missed = missed_credit(&rows);
+        let named = missed.iter().next().copied().ok_or("no missed credit")?;
+        let failure = apply_known_false_gate(&bare, false, &rows, None)?.unwrap_or_default();
+        assert!(
+            failure.contains("accepts no missed credit")
+                && failure.contains(&format!("  - {named}")),
+            "{failure}"
+        );
+        // Accepting every missed row through the file clears that failure.
+        let entries: String = missed
+            .iter()
+            .map(|case| format!("[[entry]]\ncase = \"{case}\"\nreason = \"accepted\"\n\n"))
+            .collect();
+        std::fs::write(bare.join(MISSED_CREDIT_FILE), entries).map_err(|err| err.to_string())?;
+        let accepted = apply_known_false_gate(&bare, false, &rows, None)?.unwrap_or_default();
+        assert!(!accepted.contains("accepts no missed credit"), "{accepted}");
+        // An extra entry for a row that does not miss credit is a stale
+        // improvement, and the same gate fails it, naming the entry to delete.
+        let healthy = rows
+            .iter()
+            .map(|row| row.case_id.as_str())
+            .find(|case| !missed.contains(case))
+            .ok_or("no row without missed credit")?;
+        let with_stale: String = missed
+            .iter()
+            .chain(std::iter::once(&healthy))
+            .copied()
+            .collect::<BTreeSet<&str>>()
+            .iter()
+            .map(|case| format!("[[entry]]\ncase = \"{case}\"\nreason = \"accepted\"\n\n"))
+            .collect();
+        std::fs::write(bare.join(MISSED_CREDIT_FILE), with_stale).map_err(|err| err.to_string())?;
+        let stale = apply_known_false_gate(&bare, false, &rows, None)?.unwrap_or_default();
+        assert!(
+            stale.contains("no longer miss credit") && stale.contains(healthy),
+            "{stale}"
+        );
         Ok(())
     }
 
@@ -433,5 +879,144 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    /// A base where some cases were already listed and rows had outcomes.
+    struct FakeBase {
+        listed: Vec<&'static str>,
+        outcomes: Vec<(&'static str, Outcome)>,
+    }
+
+    impl BaseLedger for FakeBase {
+        fn listed(&self, case: &str) -> Result<bool, String> {
+            Ok(self.listed.contains(&case))
+        }
+        fn outcome(&self, case: &str) -> Result<Option<Outcome>, String> {
+            Ok(self
+                .outcomes
+                .iter()
+                .find(|(id, _)| *id == case)
+                .map(|(_, outcome)| *outcome))
+        }
+    }
+
+    fn growth(entries: &str, base: &FakeBase) -> Result<Vec<String>, String> {
+        growth_violations(&ledger(entries)?, "ledger.toml", base)
+    }
+
+    #[test]
+    fn a_new_entry_for_a_row_that_was_not_false_fails() -> Result<(), String> {
+        // The #8577 shape: the row was ideal at the base and the same diff
+        // re-blesses it false and lists it.
+        for outcomes in [
+            vec![("a", Outcome::Ideal)],
+            vec![("a", Outcome::Abstained)],
+            Vec::new(),
+        ] {
+            let base = FakeBase {
+                listed: Vec::new(),
+                outcomes,
+            };
+            let violations = growth(ENTRY, &base)?;
+            assert_eq!(violations.len(), 1, "{violations:?}");
+            assert!(
+                violations[0].contains("known_false case `a`"),
+                "{violations:?}"
+            );
+            assert!(violations[0].contains("accepted_growth"), "{violations:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_entry_already_listed_or_already_false_at_the_base_is_not_growth() -> Result<(), String> {
+        let listed = FakeBase {
+            listed: vec!["a"],
+            outcomes: vec![("a", Outcome::FalseSilent)],
+        };
+        assert!(growth(ENTRY, &listed)?.is_empty());
+        // A row false at the base but listed elsewhere (a moved entry file).
+        for outcome in [
+            Outcome::FalseActionable,
+            Outcome::FalseExposed,
+            Outcome::FalseSilent,
+        ] {
+            let moved = FakeBase {
+                listed: Vec::new(),
+                outcomes: vec![("a", outcome)],
+            };
+            assert!(growth(ENTRY, &moved)?.is_empty(), "{outcome:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_accepted_cost_override_must_name_an_issue_and_the_case() -> Result<(), String> {
+        let base = FakeBase {
+            listed: Vec::new(),
+            outcomes: vec![("a", Outcome::Ideal)],
+        };
+        let accepted = "[[known_false]]\ncase = \"a\"\nissue = 7\naccepted_growth = 9\nreason = \"a is accepted until 7\"\n";
+        assert!(growth(accepted, &base)?.is_empty());
+        // Each missing piece alone keeps the failure.
+        for (entry, what) in [
+            (
+                "[[known_false]]\ncase = \"a\"\nissue = 7\naccepted_growth = 0\nreason = \"a is accepted\"\n",
+                "zero issue",
+            ),
+            (
+                "[[known_false]]\ncase = \"a\"\nissue = 7\naccepted_growth = 9\nreason = \"why\"\n",
+                "case not named",
+            ),
+            (
+                "[[known_false]]\ncase = \"a\"\nissue = 7\naccepted_growth = 9\nreason = \"accepted until the analyzer is fixed\"\n",
+                "case only a substring of another word",
+            ),
+            (
+                "[[known_false]]\ncase = \"a\"\nissue = 7\nreason = \"a is accepted\"\n",
+                "no override",
+            ),
+        ] {
+            assert_eq!(growth(entry, &base)?.len(), 1, "{what}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn only_the_new_entries_of_a_mixed_diff_fail() -> Result<(), String> {
+        let base = FakeBase {
+            listed: vec!["old"],
+            outcomes: vec![("old", Outcome::FalseSilent), ("new", Outcome::Ideal)],
+        };
+        let entries = "[[known_false]]\ncase = \"old\"\nissue = 7\nreason = \"r\"\n[[known_false]]\ncase = \"new\"\nissue = 7\nreason = \"r\"\n";
+        let violations = growth(entries, &base)?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("`new`"), "{violations:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn an_unreadable_base_row_is_an_error_not_a_pass() {
+        struct Broken;
+        impl BaseLedger for Broken {
+            fn listed(&self, _case: &str) -> Result<bool, String> {
+                Err("git failed".to_string())
+            }
+            fn outcome(&self, _case: &str) -> Result<Option<Outcome>, String> {
+                Ok(None)
+            }
+        }
+        let result = ledger(ENTRY).and_then(|ledger| growth_violations(&ledger, "l.toml", &Broken));
+        assert_eq!(result, Err("git failed".to_string()));
+    }
+
+    #[test]
+    fn a_base_that_is_not_a_commit_is_unreadable_not_growth() {
+        let here = Path::new(".");
+        assert_eq!(verify_rev(here, "HEAD"), Ok(()));
+        let err = verify_rev(here, "no-such-revision-10986")
+            .err()
+            .unwrap_or_default();
+        assert!(err.contains("not a readable commit"), "{err}");
     }
 }

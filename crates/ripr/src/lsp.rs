@@ -17,6 +17,7 @@ mod hover;
 mod initialize_repair;
 mod input_identity;
 mod lens;
+mod panic_containment;
 mod payload_bounds;
 mod position;
 mod progress;
@@ -116,8 +117,8 @@ where
 
     Server::new(stdin, stdout, socket)
         .concurrency_level(bounds.request_concurrency)
-        .serve(dollar_requests::AnswerDollarRequests(
-            RecordShutdownExit::new(service, order.clone()),
+        .serve(panic_containment::ContainPanics(
+            dollar_requests::AnswerDollarRequests(RecordShutdownExit::new(service, order.clone())),
         ))
         .await;
     if order.exit_without_shutdown() {

@@ -1,0 +1,10 @@
+# Pins the associated-constant extension of the value-flow evaluation (#9871) under RIPR-SPEC-0048.
+[[extend]]
+id = "RIPR-SPEC-0048"
+tests = [
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::an_associated_constant_rewrite_is_credited_through_the_default_method",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::a_changed_associated_constant_is_discriminated_or_indistinguishable",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::a_call_through_another_type_or_path_is_not_read",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::an_associated_constant_that_breaks_a_binding_rule_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::a_trait_with_a_default_constant_or_a_helper_condition_is_not_evaluated",
+]

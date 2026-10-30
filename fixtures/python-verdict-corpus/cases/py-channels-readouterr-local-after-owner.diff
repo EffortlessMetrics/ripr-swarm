@@ -1,0 +1,9 @@
+diff --git a/channels/core.py b/channels/core.py
+--- a/channels/core.py
++++ b/channels/core.py
+@@ -50,4 +50,4 @@
+ 
+ 
+ def say_j(name):
+-    print("hi " + name)
++    print("hey " + name)

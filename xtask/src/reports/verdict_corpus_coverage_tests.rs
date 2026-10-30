@@ -453,6 +453,117 @@ fn lock_files_parse_sorted_unique_entries_and_reject_the_rest() -> Result<(), St
     Ok(())
 }
 
+fn scope_corpus(name: &str, inline_specs: &str) -> std::path::PathBuf {
+    let dir = crate::tests::temp_dir(name);
+    crate::tests::write(
+        &dir.join(LEDGER_FILE),
+        &format!("schema_version = \"{LEDGER_SCHEMA}\"\n{inline_specs}"),
+    );
+    crate::tests::write(&dir.join(LOCK_FILE), "");
+    dir
+}
+
+#[test]
+fn spec_scope_files_add_in_scope_out_of_scope_and_unmeasured_specs() -> Result<(), String> {
+    let dir = scope_corpus(
+        "spec-scope-files",
+        "[[spec]]\nid = \"RIPR-SPEC-0001\"\nscope = \"in\"\n",
+    );
+    crate::tests::write(
+        &dir.join("spec-scopes/RIPR-SPEC-0002.toml"),
+        "id = \"RIPR-SPEC-0002\"\nscope = \"out\"\nreason = \"not this language\"\n\n[[waived]]\nexample = 1\nreason = \"x\"\n",
+    );
+    crate::tests::write(
+        &dir.join("spec-scopes/RIPR-SPEC-0003.toml"),
+        "id = \"RIPR-SPEC-0003\"\nunmeasured = true\nreason = \"prose examples\"\n",
+    );
+    crate::tests::write(
+        &dir.join("spec-scopes/RIPR-SPEC-0004.toml"),
+        "id = \"RIPR-SPEC-0004\"\nscope = \"in\"\n",
+    );
+
+    let ledger = load_ledger(&dir)?;
+
+    let ids: Vec<&str> = ledger.spec.iter().map(|spec| spec.id.as_str()).collect();
+    assert_eq!(ids, ["RIPR-SPEC-0001", "RIPR-SPEC-0002", "RIPR-SPEC-0004"]);
+    assert_eq!(ledger.spec[1].scope, Scope::Out);
+    assert_eq!(ledger.spec[1].waived.len(), 1);
+    assert_eq!(ledger.unmeasured.len(), 1);
+    assert_eq!(ledger.unmeasured[0].id, "RIPR-SPEC-0003");
+    Ok(())
+}
+
+#[test]
+fn spec_scope_files_fail_closed_on_a_wrong_name_a_missing_field_or_a_non_toml_entry()
+-> Result<(), String> {
+    let wrong_name = scope_corpus("spec-scope-wrong-name", "");
+    crate::tests::write(
+        &wrong_name.join("spec-scopes/RIPR-SPEC-0009.toml"),
+        "id = \"RIPR-SPEC-0010\"\nscope = \"in\"\n",
+    );
+    let error = load_ledger(&wrong_name)
+        .err()
+        .ok_or("wrong stem accepted")?;
+    assert!(
+        error.contains("name the file `RIPR-SPEC-0010.toml`"),
+        "{error}"
+    );
+
+    let no_scope = scope_corpus("spec-scope-no-scope", "");
+    crate::tests::write(
+        &no_scope.join("spec-scopes/RIPR-SPEC-0009.toml"),
+        "id = \"RIPR-SPEC-0009\"\n",
+    );
+    let error = load_ledger(&no_scope).err().ok_or("no scope accepted")?;
+    assert!(error.contains("needs `scope"), "{error}");
+
+    let no_reason = scope_corpus("spec-scope-no-reason", "");
+    crate::tests::write(
+        &no_reason.join("spec-scopes/RIPR-SPEC-0009.toml"),
+        "id = \"RIPR-SPEC-0009\"\nunmeasured = true\n",
+    );
+    let error = load_ledger(&no_reason).err().ok_or("no reason accepted")?;
+    assert!(error.contains("without a `reason`"), "{error}");
+
+    let stray = scope_corpus("spec-scope-stray", "");
+    crate::tests::write(&stray.join("spec-scopes/notes.md"), "stray");
+    let error = load_ledger(&stray).err().ok_or("stray file accepted")?;
+    assert!(error.contains("not a `.toml` spec-scope file"), "{error}");
+
+    let not_a_dir = scope_corpus("spec-scope-not-a-dir", "");
+    crate::tests::write(&not_a_dir.join("spec-scopes"), "a file");
+    let error = load_ledger(&not_a_dir)
+        .err()
+        .ok_or("file accepted as dir")?;
+    assert!(error.contains("read "), "{error}");
+    Ok(())
+}
+
+#[test]
+fn a_spec_named_inline_and_in_a_scope_file_is_reported_twice() -> Result<(), String> {
+    let dir = scope_corpus(
+        "spec-scope-duplicate",
+        "[[spec]]\nid = \"RIPR-SPEC-0001\"\nscope = \"in\"\n",
+    );
+    crate::tests::write(
+        &dir.join("spec-scopes/RIPR-SPEC-0001.toml"),
+        "id = \"RIPR-SPEC-0001\"\nscope = \"in\"\n",
+    );
+    let ledger = load_ledger(&dir)?;
+    let specs = scan_specs(&repo_path(SPECS_DIR))?;
+    let corpus = bare_corpus()?;
+
+    let violations = coverage_violations(&corpus, &ledger, &specs);
+
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("names `RIPR-SPEC-0001` twice")),
+        "{violations:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn committed_ledger_is_valid_and_locks_every_covered_example() -> Result<(), String> {
     let corpus = load_corpus(&repo_path(CORPUS_DIR))?;

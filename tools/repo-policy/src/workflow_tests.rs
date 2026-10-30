@@ -1205,12 +1205,12 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "[ \"$ref_sha\" = \"$head\" ] || [ \"$ref_sha\" = \"$GROUP_BASE_SHA\" ]",
         ),
         (
-            "check the live head is not newer",
-            "[ \"$ref_sha\" != \"$head\" ]",
+            "PR ref to still name the live head",
+            "[ \"$fetched\" = \"$head\" ]",
         ),
         (
-            "not older than the queued commit",
-            "[[ \"$pushed_at\" < \"$queued_at\" ]] || { echo \"::error::PR #${pr} head",
+            "tree to the live head merged onto the group base",
+            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
         ),
     ] {
         let mutated = workflow.replace(snippet, "removed");
@@ -1361,8 +1361,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&any_label_request)
     );
     let skippable_result = workflow.replace(
-        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Summarize routed result",
-        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Summarize routed result",
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
     );
     assert_ne!(
         skippable_result, workflow,
@@ -1519,7 +1519,7 @@ fn advisory_review_prepares_locked_fixture_before_sensors() -> Result<(), String
 }
 
 const PINNED_CODECOV: &str =
-    "codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6.0.2";
+    "codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1";
 
 fn repo_workflow(name: &str) -> Result<String, String> {
     let root = crate::test_support::workspace_root()?;

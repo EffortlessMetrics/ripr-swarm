@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- A new process-spawn or network site adds its allowlist row as a file in `policy/process_allowlist.d/` or `policy/network_allowlist.d/` (`path|pattern|max_count|owner|reason`) instead of appending to the list tail, which 19 of 613 recent PRs edited. Fragments are read in file-name order after the main list; only an absent directory is optional, a non-`.txt` entry fails, and a row declared in both places fails naming both files. The newest two rows moved to fragments. (#9859)

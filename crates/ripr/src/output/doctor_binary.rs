@@ -604,6 +604,22 @@ mod tests {
             if dependents != expected {
                 return Err(format!("expected {expected:?}, got {dependents:?}"));
             }
+            // The other client's key does not count: VS Code reads `servers`,
+            // Cursor reads `mcpServers`.
+            std::fs::write(
+                root.join(".vscode/mcp.json"),
+                r#"{"mcpServers":{"ripr":{"command":"ripr"}}}"#,
+            )
+            .map_err(|error| error.to_string())?;
+            std::fs::write(
+                root.join(".cursor/mcp.json"),
+                r#"{"servers":{"ripr":{"command":"ripr"}}}"#,
+            )
+            .map_err(|error| error.to_string())?;
+            let crossed = ripr_config_dependents(&root);
+            if !crossed.is_empty() {
+                return Err(format!("wrong container key must not count: {crossed:?}"));
+            }
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);

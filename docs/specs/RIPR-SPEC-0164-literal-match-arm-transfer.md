@@ -40,7 +40,11 @@ related test row pins the exact label per arm.
   match, as it would not compile. The shared char parser still rejects
   an escaped char (`'\n'`), so an escaped char pattern or argument
   refuses; escapes resolve for string literals only. Values are plain string literals or
-  one nested direct call. A guard (`if`), a bare binding, a range, a
+  one nested direct call. A guard (`if`) that evaluates exactly over the
+  bound inputs — one comparison whose operands each resolve through the
+  shared evaluator, or `str::len()` on an exact string — selects the
+  arm only when it is true; a guard that does not evaluate, a bare
+  binding, a range, a
   path, or a value the shared authorities cannot evaluate refuses the
   whole match: an unresolved pattern could match anything and a
   non-literal value is not an exact return.
@@ -56,6 +60,17 @@ related test row pins the exact label per arm.
   #3295 does, and the observed-value provenance names the hop
   (``label = "beta" via helper return of `label` over bound inputs (1
   hop)``).
+- Replaced constant (#10304): when the changed line is exactly
+  `left == literal` (or `!=`) on both sides of the edit, with the same
+  left operand and operator and two different single literals (string,
+  char or integer), a related test row whose left operand equals
+  the replaced literal observes the swap: that row takes the
+  other branch after the edit, as a row on the new literal does before
+  it. A compound predicate, a changed left operand, a named or computed
+  constant, a row on neither literal and a weak oracle keep the missing
+  equality-boundary discriminator. Known limit (#10856): the rule is not
+  path-sensitive, so a row that an earlier branch or early return
+  handles still counts, as a row on the new literal already does.
 
 ## Required Evidence
 
@@ -65,15 +80,17 @@ related test row pins the exact label per arm.
   provenance, and both non-wildcard arms connect to exact assertions
   (the #3215 literal-match acceptance row).
 - A controls fixture (`fixtures/match_arm_controls`) with four
-  variants. The guard arm and the bare-identifier pattern stay at
-  their fail-closed class with zero hop provenance: since #6674 that
-  is `infection_unknown` with `Changed boundary input is unresolved`
-  naming `final_label` (RIPR-SPEC-0001). The literal-callee and char
-  variants resolve their operand, but the fixture's tests pin one row
-  each, so they read `weakly_exposed`, never `exposed`. The corpus
-  cases `spec-b-0164-alternative-pattern`, `-escaped-pattern`,
+  variants (computed value, guard, bare binding, char). Each test pins
+  one row, and that row returns the constant the diff replaced, so all
+  four read `exposed` (the replaced-constant rule above); a runtime
+  mutant of each edit fails its test. The negatives that must stay
+  gaps are the corpus cases `eq-swap-row-on-neither-constant`,
+  `eq-swap-compound-gate-off` and `eq-swap-weak-oracle`, and the
+  positives `eq-swap-string-old-constant-row`,
+  `-integer-old-constant-row` and `-inequality-old-constant-row`. The
+  corpus cases `spec-b-0164-alternative-pattern`, `-escaped-pattern`,
   `-char-scrutinee` and `-computed-arm-value` carry the two-row tests
-  that credit them.
+  that credit the other arms.
 - Unit tests in `match_transfer.rs` pinning per-arm resolution,
   wildcard/duplicate source order, no-match-without-wildcard stop, and
   the fail-closed family.
@@ -88,9 +105,17 @@ related test row pins the exact label per arm.
   initializer is a direct call to a unique helper); argument binding
   stays strict — a literal or the owner's bound parameter. A computed
   argument still stops by name (RIPR-SPEC-0159 edge).
-- Bare single-segment identifiers are refused as arm patterns (the
-  token-coincidence family): the same text may be a variable, and
-  treating it as a literal would invent evidence.
+- A bare single-segment identifier is never read as a literal (the
+  token-coincidence family): treating the same text as a literal would
+  invent evidence. An unguarded lowercase identifier whose arm value
+  never names it is read as a catch-all binding in source order (#10680),
+  only when the file holding the helper shows the name is a fresh binding:
+  no `const`, `static`, import, module glob, unit struct, enum, function,
+  type, trait, union or module of that name in the file or the helper body,
+  and no `include!`, `macro_rules!` or column-0 item macro that could
+  declare one. A guard on
+  it, a value that names it, a capitalized name, `ref`/`mut` and an
+  unreadable file refuse the whole match.
 - No bound is exceeded silently: the shape is all-or-nothing, and any
   unsupported edge refuses the whole helper rather than skipping the
   arm.
@@ -105,10 +130,18 @@ related test row pins the exact label per arm.
    exposes — `label("word")` = `"alpha"` and `label("text")` = `"beta"`
    are exact per row, the boundary comparison is observed, and the
    provenance names the helper hop.
-2. Reject: a guard arm refuses the whole match (controls fixture).
+2. Accept: a guard the shared authorities can evaluate selects the arm
+   exactly (`"word" if kind.len() > 2 => "alpha"` with `kind = "word"`),
+   and a guard that evaluates false falls through in source order.
+   Reject: a guard that does not evaluate (an unknown operand, an
+   unsupported method, a boolean combinator) refuses the whole match.
 3. Accept: `"word" | "term" => "alpha"` selects the arm for either
    literal.
-4. Reject: a bare binding pattern refuses the whole match.
+4. Accept: an unguarded lowercase binding pattern (`other => "alpha"`)
+   whose name the file does not declare or import selects the arm for
+   every scrutinee no earlier arm names. Reject: a bare name that is a
+   `const`, `static`, import or glob-imported (or a guard or value that
+   needs the bound scrutinee) refuses the whole match.
 5. Accept: an arm value `pick(kind)` resolves when `pick` is a unique
    helper whose body is one literal. Reject: an arm value such as
    `pick(kind.trim())` that the shared authorities cannot evaluate
@@ -130,8 +163,9 @@ related test row pins the exact label per arm.
 
 ## Non-Goals
 
-- Match arms with guards, ranges, or paths — these stay named
-  limitations until a corpus case demands them.
+- Match arms with unevaluable guards (anything beyond one exactly
+  evaluable comparison, such as boolean combinators or further method
+  calls), ranges, or paths — these stay named limitations.
 - Integer and enum scrutinees and non-string arm values: out of scope
   for this slice.
 - A match inside a let-chain or a statement position (only the tail

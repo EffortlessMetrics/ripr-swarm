@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..0000000 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -21,7 +21,7 @@
+ pub struct Wide;
+ 
+ impl Limits for Wide {
+-    const MAX: u32 = 100;
++    const MAX: u32 = 200;
+ }
+ 
+ pub fn limited<T: Limits>(v: u32) -> u32 {

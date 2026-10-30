@@ -17,6 +17,18 @@ const DEFAULT_IGNORED_DIRS: &[&str] = &[
     "node_modules",
 ];
 
+/// Whether any directory component of a repo-relative `/`-separated path is
+/// one the workspace walk never enters. The single owner of that rule, so a
+/// consumer deciding "would the producer have analyzed this file" cannot drift
+/// from `visit` (#9599).
+pub(crate) fn path_enters_ignored_dir(path: &str) -> bool {
+    let mut components = path.split('/').collect::<Vec<_>>();
+    components.pop();
+    components
+        .iter()
+        .any(|component| DEFAULT_IGNORED_DIRS.contains(component))
+}
+
 /// Changed source files that are not regular files in the working tree.
 ///
 /// Sparse checkout, local deletes and symlinks drop these from disk walks, so the
@@ -218,12 +230,12 @@ pub(crate) fn discover_routed_language_files(root: &Path) -> Vec<(LanguageId, Pa
 }
 
 /// Python test files a Rust diff cannot be linked to (#6340): the count and one
-/// repository-relative example. `at_least` is set when the bounded walk hit its
+/// repository-relative native example. `at_least` is set when the bounded walk hit its
 /// entry cap, so the count is a lower bound.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct UnlinkedPythonTests {
     pub(crate) count: usize,
-    pub(crate) example: String,
+    pub(crate) example: PathBuf,
     pub(crate) at_least: bool,
 }
 
@@ -342,7 +354,7 @@ pub(crate) fn discover_python_test_files(
     };
     Ok(Some(UnlinkedPythonTests {
         count,
-        example: example.to_string_lossy().replace('\\', "/"),
+        example,
         at_least: capped,
     }))
 }
@@ -620,7 +632,7 @@ mod tests {
             found,
             Some(UnlinkedPythonTests {
                 count: 3,
-                example: "tests/test_a.py".to_string(),
+                example: PathBuf::from("tests/test_a.py"),
                 at_least: false,
             })
         );

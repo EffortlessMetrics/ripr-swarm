@@ -1,0 +1,31 @@
+//! The helper is reached through a path-qualified call site whose first
+//! segment is an import, so the path does not name a child module here.
+
+mod holder {
+    pub mod meter {
+        pub fn wide_i(input: &str) -> bool {
+            input.len() > 3
+        }
+    }
+}
+
+use self::holder::meter;
+
+pub fn classify_import(input: &str) -> &'static str {
+    if meter::wide_i(input) {
+        "wide"
+    } else {
+        "narrow"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rows_straddle_four_path_h_path_import() {
+        assert_eq!(classify_import("abcd"), "wide");
+        assert_eq!(classify_import("abc"), "narrow");
+    }
+}

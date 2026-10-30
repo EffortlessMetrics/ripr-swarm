@@ -47,6 +47,7 @@ pub(super) fn normalize_index_test_styles(index: &mut RustIndex) -> Result<(), S
         &index.files,
         &index.function_facts,
         index.workspace_member_crates(),
+        &index.member_crates,
     );
     for facts in index.files.values_mut() {
         cancellation::checkpoint()?;
@@ -199,6 +200,8 @@ pub(crate) fn attributes_define_test<'attribute>(
         normalized_test_attribute_path(attribute)
             .as_deref()
             .is_some_and(is_test_attribute_path)
+            // `#[cfg_attr(all(), test)]` is a `#[test]` in a test build.
+            || cfg_predicates::attribute_introduces_only_test(attribute)
     })
 }
 

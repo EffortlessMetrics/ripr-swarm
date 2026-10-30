@@ -2,10 +2,10 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/propagated_error_closing_early_path/input
 
-Summary: 2 probes (0 exposed, 1 weak, 0 unrevealed, 0 no path, 1 unknown); 2 of 2 findings unsuppressed (1 base-side evidence, not candidate edit targets)
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 2 found, 0 suppressed by your settings (1 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 2 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Start here:
   State: a test gap to inspect or repair
@@ -13,9 +13,9 @@ Start here:
   File: ./src/lib.rs:6
   Static exposure: weak (severity: warning, confidence 0.66)
   Why weak: a related test reaches this change but does not observe the exact changed value
-  Canonical gap: gap:rust:src/lib.rs:check:error_variant:error_path:value.ok_or_failure_missing
+  Gap ID (for scripts): gap:rust:src/lib.rs:check:error_variant:error_path:value.ok_or_failure_missing
   Changed behavior: value.ok_or( Failure::Missing )?
-  Missing discriminator: No exact error variant discriminator was detected
+  Missing check: No exact error variant discriminator was detected
   Related test: src/lib.rs:16 observes_only_the_early_error (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished
   Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator weak
@@ -24,8 +24,11 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach check: observes_only_the_early_error
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full
@@ -39,6 +42,6 @@ Write a test for it:
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:8 (unknown)
+    - ./src/lib.rs:8 (unknown); kind: static_unknown; reason: No strong discriminator was detected
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

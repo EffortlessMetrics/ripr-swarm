@@ -63,15 +63,23 @@ pub(crate) struct GapDecisionLedgerReport {
     /// gate reads the same position on the ledger it reads on check output.
     run_limitations: Option<Value>,
     /// The analysis input's `source_subject` stamp and root, kept so a writer
-    /// can derive the ledger stamp from them (#4544). Never rendered.
+    /// can derive the ledger stamp from them (#4544). The check producer's
+    /// root is also retained on the rendered ledger as provenance (#10983).
     input_source_subject: Option<Value>,
     input_root: Option<String>,
+    /// Origin of check-output records, carried across `--records` derivation
+    /// so an intermediate ledger cannot erase the producer's root/limits.
+    check_output_provenance: Option<Value>,
     /// Content digests the analysis saw for the files the records name,
     /// copied from the input stamp. `None` until a writer derives it.
     source_subject: Option<GapSourceSubject>,
     /// Why the writer could not derive a stamp (for example the input carried
     /// none). Editor consumers then report `unverifiable_subject`.
     source_subject_unavailable: Option<&'static str>,
+    /// Producer disclosure that the whole Rust workspace was analyzed by a
+    /// complete run, independent of which records survive (#9599). Present
+    /// only for a complete repo-exposure source.
+    analysis_coverage: Option<Value>,
     pub(crate) records: Vec<GapRecord>,
     warnings: Vec<String>,
     limits: Vec<String>,
@@ -431,6 +439,206 @@ pub(crate) struct SafeGatePredicate {
     pub(crate) static_unknown_only: bool,
 }
 
+/// Tamper-evident digest of the ledger's complete record set (#9599): every
+/// record's canonical JSON serialization, ordered by `gap_id` then content, so a
+/// consumer can tell a ledger that still holds exactly the records the coverage
+/// disclosure was made for from one filtered, edited or re-labelled afterwards.
+/// It detects accidental or casual change; it is not an authenticated
+/// signature. The covered file membership is derived from the workspace, not
+/// from the records; the records are committed only by this digest and
+/// `records_total`, so a writer who deletes records and recomputes both still
+/// earns the disclosure. Out of scope: producer authentication.
+pub(crate) fn gap_records_digest(records: &[GapRecord]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut canonical = records
+        .iter()
+        .map(|record| {
+            (
+                record.gap_id.as_str(),
+                serde_json::to_value(record)
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    canonical.sort_unstable();
+    let mut hasher = Sha256::new();
+    for (gap_id, body) in canonical {
+        hasher.update(gap_id.len().to_le_bytes());
+        hasher.update(gap_id.as_bytes());
+        hasher.update(body.len().to_le_bytes());
+        hasher.update(body.as_bytes());
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+/// The corpus identity a coverage disclosure may carry: a complete
+/// `rust_workspace` corpus stamped by this build's cache schema, with the
+/// producer's hash spelling and no `unavailable` marker.
+fn corpus_identity_is_well_formed(corpus: &Value) -> bool {
+    corpus.get("scope").and_then(Value::as_str) == Some("rust_workspace")
+        && corpus.get("unavailable").is_none()
+        && corpus.get("cache_schema_version").and_then(Value::as_str)
+            == Some(crate::analysis::seam_cache::CACHE_SCHEMA_VERSION)
+        && corpus
+            .get("files_content_hash")
+            .and_then(Value::as_str)
+            .is_some_and(crate::output::gap_source_subject::is_corpus_hash_shape)
+}
+
+/// `run_status` / limitation categories that do not narrow Rust coverage.
+const COVERAGE_NEUTRAL_LIMITATIONS: [&str; 2] = ["typescript_diff_first", "python_diff_first"];
+
+/// Coverage disclosure for a ledger derived from a repo-exposure document:
+/// the producer's complete whole-Rust-workspace run (no seam limit, no
+/// parse-declined files, no skipped generated files), bound to the corpus
+/// identity the producer stamped and to this ledger's exact record set.
+/// `None` for any other source state, which keeps the ledger fail-closed for
+/// baseline resolution.
+fn repo_exposure_analysis_coverage(
+    source: Option<&Value>,
+    content_committed: bool,
+    records: &[GapRecord],
+) -> Option<Value> {
+    let source = source?;
+    // Producer envelope: a repo-exposure artifact whose governed content
+    // commitment still matches the bytes read. A hand-written minimal
+    // document has neither.
+    if !content_committed
+        || source.pointer("/artifact/kind").and_then(Value::as_str) != Some("repo_exposure")
+        || source
+            .pointer("/artifact/producer/tool")
+            .and_then(Value::as_str)
+            != Some("ripr")
+    {
+        return None;
+    }
+    // A seam the converter could not turn into a record would leave the
+    // record set smaller than the run's population.
+    if source.get("seams").and_then(Value::as_array).map(Vec::len) != Some(records.len()) {
+        return None;
+    }
+    if source.get("scope").and_then(Value::as_str) != Some("repo")
+        || source.get("run_status").and_then(Value::as_str) != Some("complete")
+    {
+        return None;
+    }
+    let neutral_only = match source.get("limitations") {
+        None => true,
+        Some(Value::Array(items)) => items.iter().all(|item| {
+            item.get("category")
+                .and_then(Value::as_str)
+                .is_some_and(|category| COVERAGE_NEUTRAL_LIMITATIONS.contains(&category))
+        }),
+        Some(_) => false,
+    };
+    if !neutral_only
+        || source.get("analysis_outcome").is_some_and(|outcome| {
+            outcome.get("analysis_complete").and_then(Value::as_bool) != Some(true)
+        })
+        || source.get("run_limitations").is_some()
+    {
+        return None;
+    }
+    // The input identity is a top-level producer field (not part of the
+    // checkout-path independent `source_subject`); the coverage corpus carries
+    // both.
+    let mut corpus = source.pointer("/source_subject/corpus")?.clone();
+    corpus.as_object_mut()?.insert(
+        "analysis_inputs".to_string(),
+        source.get("analysis_inputs")?.clone(),
+    );
+    let corpus = &corpus;
+    if !corpus_identity_is_well_formed(corpus)
+        || crate::output::gap_source_subject::analyzed_production_files(corpus).is_none()
+        || crate::output::gap_source_subject::analysis_inputs(corpus).is_none()
+    {
+        return None;
+    }
+    Some(serde_json::json!({
+        "scope": "rust_workspace",
+        "basis": "repo_exposure_complete_run",
+        "run_status": "complete",
+        "corpus": corpus,
+        "records_total": records.len(),
+        "records_digest": gap_records_digest(records),
+    }))
+}
+
+/// The ledger document's coverage disclosure when it is well formed and still
+/// describes exactly these records; `None` otherwise (fail closed).
+pub(crate) fn verified_analysis_coverage(document: &Value, records: &[GapRecord]) -> Option<Value> {
+    let coverage = document.get("analysis_coverage")?.as_object()?;
+    if coverage.get("scope").and_then(Value::as_str) != Some("rust_workspace")
+        || coverage.get("run_status").and_then(Value::as_str) != Some("complete")
+        || coverage.get("basis").and_then(Value::as_str) != Some("repo_exposure_complete_run")
+        || coverage.get("records_total").and_then(Value::as_u64) != Some(records.len() as u64)
+        || coverage.get("records_digest").and_then(Value::as_str)
+            != Some(gap_records_digest(records).as_str())
+        || !coverage
+            .get("corpus")
+            .is_some_and(corpus_identity_is_well_formed)
+        || coverage
+            .get("corpus")
+            .and_then(crate::output::gap_source_subject::analyzed_production_files)
+            .is_none()
+        || coverage
+            .get("corpus")
+            .and_then(crate::output::gap_source_subject::analysis_inputs)
+            .is_none()
+    {
+        return None;
+    }
+    Some(Value::Object(coverage.clone()))
+}
+
+/// #10733: the saved ledger's schema keeps no `analysis_scope`, so a refusal
+/// disclosed only under the source's `analysis_scope` would be lost in the
+/// saved document and the gate would read a healthy ledger. Stamp the
+/// explicit `downstream_consumable: false` marker into the propagated
+/// `run_limitations` position the gate's generic non-consumable check reads.
+/// Producer entries keep their members; only the marker is added, and only
+/// when no propagated entry already carries an explicit false. Typed
+/// entries naming the refusal are stamped; with no typed status (or no
+/// matching entry) a marker-only record is appended, so the retention is
+/// visible as retention rather than a silent edit of producer diagnostics.
+fn retain_non_consumable_marker(run_limitations: &mut Option<Value>, refusal_status: Option<&str>) {
+    let has_marker = |entries: &[Value]| {
+        entries
+            .iter()
+            .any(|entry| entry.get("downstream_consumable").and_then(Value::as_bool) == Some(false))
+    };
+    match run_limitations {
+        Some(Value::Array(entries)) => {
+            if has_marker(entries) {
+                return;
+            }
+            let mut stamped = false;
+            if let Some(status) = refusal_status {
+                for entry in entries.iter_mut() {
+                    let names_refusal = entry.get("category").and_then(Value::as_str)
+                        == Some(status)
+                        || entry.get("run_status").and_then(Value::as_str) == Some(status);
+                    if names_refusal && let Some(object) = entry.as_object_mut() {
+                        object.insert("downstream_consumable".to_string(), Value::Bool(false));
+                        stamped = true;
+                    }
+                }
+            }
+            if !stamped {
+                entries.push(serde_json::json!({"downstream_consumable": false}));
+            }
+        }
+        // A non-array run_limitations member is malformed producer data; it
+        // cannot carry the marker honestly and is left for the downstream
+        // validators to reject.
+        Some(_) => {}
+        None => {
+            *run_limitations = Some(serde_json::json!([{"downstream_consumable": false}]));
+        }
+    }
+}
+
 pub(crate) fn build_gap_decision_ledger_report(
     input: GapDecisionLedgerInput,
 ) -> GapDecisionLedgerReport {
@@ -445,9 +653,18 @@ pub(crate) fn build_gap_decision_ledger_report(
     // project, and it must be distinguishable by `status` alone.
     let mut parsed_cleanly = false;
     let mut source_value_snapshot = None;
+    let mut source_content_committed = false;
     let mut records = match input.records_json {
         Ok(contents) => {
             let source_value = serde_json::from_str::<Value>(&contents).ok();
+            source_content_committed = source_value
+                .as_ref()
+                .and_then(|value| value.pointer("/artifact/content_sha256"))
+                .and_then(Value::as_str)
+                .is_some_and(|declared| {
+                    crate::agent::artifact::recompute_content_commitment(&contents)
+                        .is_ok_and(|recomputed| recomputed == declared)
+                });
             analysis_outcome = source_value
                 .as_ref()
                 .and_then(|value| value.get("analysis_outcome").cloned());
@@ -489,6 +706,62 @@ pub(crate) fn build_gap_decision_ledger_report(
             Vec::new()
         }
     };
+
+    // #10733: a producer refusal envelope (exit 2, empty findings,
+    // `downstream_consumable: false`) parses cleanly to zero records, but it
+    // is not a healthy empty run — nothing was analyzed. Admitting it as
+    // `no_records` lets a saved refusal ride into a gate pass as an empty
+    // denominator; refuse admission with the typed reason and land on
+    // `blocked`, the ledger's existing rejected-input status. The marker
+    // counts from EITHER position the check schema opens for it —
+    // `analysis_scope` or `run_limitations[]` — and it must be explicit: a
+    // known refusal status without the flag is the healthy complete shape
+    // (RIPR-SPEC-0362 identity) and keeps its ordinary admission. Bounded,
+    // partial and incomplete documents keep their existing handling: the
+    // gate refuses them by their own typed names, so the ledger does not
+    // steal that vocabulary (a bounded envelope also carries an explicit
+    // false flag, which is exactly why the exclusion is required here).
+    let refusal_status = source_value_snapshot
+        .as_ref()
+        .and_then(crate::output::gate::refusal_run_status);
+    let refuses_typed_handling = source_value_snapshot.as_ref().is_some_and(|value| {
+        crate::output::gate::discloses_limited_findings_bound(value)
+            || crate::output::gate::discloses_limited_partial_scope(value)
+            || crate::output::gate::discloses_incomplete_analysis_outcome(value)
+    });
+    if !refuses_typed_handling
+        && source_value_snapshot
+            .as_ref()
+            .is_some_and(crate::output::gate::discloses_non_consumable_record)
+    {
+        match refusal_status {
+            Some(status) => {
+                warnings.push(format!(
+                    "gap decision ledger input {} is a producer refusal (run_status: {status}, \
+                     downstream_consumable: false): nothing was analyzed, so no gap records can \
+                     be derived; follow the refusal's repair_route (narrower diff or scope \
+                     budget), re-run the check, and rebuild this ledger before gating",
+                    input.records_path,
+                ));
+            }
+            None => {
+                warnings.push(format!(
+                    "gap decision ledger input {} discloses a non-consumable producer record \
+                     (downstream_consumable: false) with no known typed run status: nothing \
+                     was analyzed, so no gap records can be derived; follow its repair_route \
+                     and re-run before gating",
+                    input.records_path,
+                ));
+            }
+        }
+        parsed_cleanly = false;
+        // The saved ledger's schema keeps no `analysis_scope`, so a refusal
+        // disclosed only there would be lost in the saved document — the
+        // gate would read a healthy ledger and pass it. Retain the marker in
+        // the propagated `run_limitations` position the gate's generic
+        // non-consumable check reads, whichever source position disclosed it.
+        retain_non_consumable_marker(&mut run_limitations, refusal_status);
+    }
 
     if input.source_kind == GapDecisionLedgerSourceKind::CheckOutput {
         attach_check_output_preview_receipt_routes(&mut records, &input.root);
@@ -546,6 +819,16 @@ pub(crate) fn build_gap_decision_ledger_report(
             ));
         }
     }
+    let analysis_coverage =
+        if parsed_cleanly && input.source_kind == GapDecisionLedgerSourceKind::RepoExposure {
+            repo_exposure_analysis_coverage(
+                source_value_snapshot.as_ref(),
+                source_content_committed,
+                &records,
+            )
+        } else {
+            None
+        };
     let status = if records.is_empty() {
         if parsed_cleanly {
             "no_records"
@@ -559,6 +842,24 @@ pub(crate) fn build_gap_decision_ledger_report(
     }
     .to_string();
 
+    let check_output_provenance = match input.source_kind {
+        GapDecisionLedgerSourceKind::CheckOutput => Some(serde_json::json!({
+            "root": input_root.clone(),
+        })),
+        GapDecisionLedgerSourceKind::Records => source_value_snapshot.as_ref().and_then(|value| {
+            value.get("check_output_provenance").cloned().or_else(|| {
+                (value.pointer("/inputs/source_kind").and_then(Value::as_str)
+                    == Some("check_output"))
+                .then(|| {
+                    serde_json::json!({
+                        "root": value.get("input_root"),
+                        "source_subject_unavailable": value.get("source_subject_unavailable"),
+                    })
+                })
+            })
+        }),
+        GapDecisionLedgerSourceKind::RepoExposure => None,
+    };
     GapDecisionLedgerReport {
         status,
         root: input.root,
@@ -572,8 +873,10 @@ pub(crate) fn build_gap_decision_ledger_report(
         run_limitations,
         input_source_subject,
         input_root,
+        check_output_provenance,
         source_subject: None,
         source_subject_unavailable: None,
+        analysis_coverage,
         records,
         warnings,
         limits: vec![
@@ -601,6 +904,10 @@ pub(crate) fn render_gap_decision_ledger_json(
         root: &'a str,
         generated_at: &'a str,
         inputs: &'a GapDecisionLedgerInputs,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        input_root: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        check_output_provenance: Option<&'a Value>,
         summary: &'a GapDecisionLedgerSummary,
         #[serde(skip_serializing_if = "Option::is_none")]
         analysis_outcome: Option<&'a Value>,
@@ -610,6 +917,8 @@ pub(crate) fn render_gap_decision_ledger_json(
         source_subject: Option<&'a GapSourceSubject>,
         #[serde(skip_serializing_if = "Option::is_none")]
         source_subject_unavailable: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        analysis_coverage: Option<&'a Value>,
         records: &'a [Value],
         warnings: &'a [String],
         limits: &'a [String],
@@ -623,11 +932,18 @@ pub(crate) fn render_gap_decision_ledger_json(
         root: &report.root,
         generated_at: &report.generated_at,
         inputs: &report.inputs,
+        input_root: report
+            .check_output_provenance
+            .as_ref()
+            .and_then(|origin| origin.get("root"))
+            .and_then(Value::as_str),
+        check_output_provenance: report.check_output_provenance.as_ref(),
         summary: &report.summary,
         analysis_outcome: report.analysis_outcome.as_ref(),
         run_limitations: report.run_limitations.as_ref(),
         source_subject: report.source_subject.as_ref(),
         source_subject_unavailable: report.source_subject_unavailable,
+        analysis_coverage: report.analysis_coverage.as_ref(),
         records: &records,
         warnings: &report.warnings,
         limits: &report.limits,
@@ -682,6 +998,17 @@ pub(crate) fn stamp_gap_decision_ledger_source_subject(
             report.source_subject_unavailable = Some(reason);
         }
     }
+    if report.inputs.source_kind == "check_output"
+        && let Some(origin) = report
+            .check_output_provenance
+            .as_mut()
+            .and_then(Value::as_object_mut)
+    {
+        origin.insert(
+            "source_subject_unavailable".to_string(),
+            serde_json::json!(report.source_subject_unavailable),
+        );
+    }
     Ok(())
 }
 
@@ -692,8 +1019,7 @@ pub(crate) fn check_output_subject_paths(
     contents: &str,
     root: &Path,
 ) -> Result<BTreeSet<String>, String> {
-    let mut records = gap_records_from_check_output_json(contents)?;
-    attach_check_output_preview_receipt_routes(&mut records, &root.to_string_lossy());
+    let records = check_output_gap_records(contents, &root.to_string_lossy())?;
     let mut paths = BTreeSet::new();
     for record in &records {
         paths.extend(gap_source_subject::gap_record_subject_paths(
@@ -702,6 +1028,18 @@ pub(crate) fn check_output_subject_paths(
         ));
     }
     Ok(paths)
+}
+
+/// The gap records a `ripr check` JSON document projects, with the preview
+/// receipt and regeneration routes attached for `root`: the records
+/// `ripr reports gap-ledger --check-output` would write for that document.
+pub(crate) fn check_output_gap_records(
+    contents: &str,
+    root: &str,
+) -> Result<Vec<GapRecord>, String> {
+    let mut records = gap_records_from_check_output_json(contents)?;
+    attach_check_output_preview_receipt_routes(&mut records, root);
+    Ok(records)
 }
 
 fn gap_record_json_value(record: &GapRecord) -> Result<Value, String> {
@@ -765,6 +1103,20 @@ pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerRepo
     out.push_str("# RIPR Gap Decision Ledger\n\n");
     out.push_str(&format!("Status: `{}`\n\n", md_inline(&report.status)));
     out.push_str(&format!("Root: `{}`\n\n", md_inline(&report.root)));
+    if let Some(origin) = &report.check_output_provenance {
+        let source_root = origin
+            .get("root")
+            .and_then(Value::as_str)
+            .unwrap_or("unavailable");
+        let subject_limit = origin
+            .get("source_subject_unavailable")
+            .and_then(Value::as_str)
+            .unwrap_or("not recorded");
+        out.push_str(&format!(
+            "Check-output producer root: `{}`; producer subject limitation: `{}`. These are provenance disclosures, not complete corpus currentness.\n\n",
+            md_inline(source_root), md_inline(subject_limit)
+        ));
+    }
     out.push_str("Authority: gate-decision artifacts own pass/fail authority. This report is advisory projection input.\n\n");
     if let Some(outcome) = &report.analysis_outcome {
         let complete = outcome
@@ -2276,12 +2628,23 @@ fn gap_record_from_python_no_repair_card_finding(
             )
         })
         .flatten();
+    // #11103: the boundary decline already names the equality in the Missing
+    // check but cannot bind one operand to a test input, so no repair card
+    // exists. Name that operand instead of the generic line; routing stays
+    // fail-closed (no gap id, no card). The extraction is shared with the
+    // human triage surface so the two wordings cannot drift.
+    let unresolved_operand =
+        crate::output::human::unresolved_boundary_operand(&string_array_at(finding, &["missing"]));
     let reason = if let Some(repo_reason) = repo_reason.as_deref() {
-        repo_reason
+        repo_reason.to_string()
+    } else if let Some(operand) = unresolved_operand {
+        format!(
+            "static evidence cannot bind `{operand}` to a test input, so the boundary equality cannot become a repair target"
+        )
     } else if first_missing_discriminator_value(finding).is_none() {
-        "static evidence names no concrete missing discriminator"
+        "static evidence names no concrete missing discriminator".to_string()
     } else {
-        "its test placement or related-test evidence is incomplete"
+        "its test placement or related-test evidence is incomplete".to_string()
     };
     let detail = format!(
         "this Python preview finding has no repair card ({reason}), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
@@ -3881,6 +4244,302 @@ mod tests {
         assert!(empty.warnings.is_empty());
     }
 
+    /// #10733: a producer refusal envelope (`diff_scope_oversized`, exit 2,
+    /// `downstream_consumable: false`, empty findings) parses cleanly to zero
+    /// records, but it is not a healthy empty run — nothing was analyzed.
+    /// Admitting it as `no_records` lets a saved refusal ride into a gate
+    /// pass; it must land on `blocked` with a warning naming the typed
+    /// refusal and the non-consumable flag.
+    #[test]
+    fn gap_decision_ledger_refuses_diff_scope_oversized_refusal_envelope() {
+        let report = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {
+                "changed_rust_files": 0,
+                "probes": 0,
+                "findings": 0,
+                "exposed": 0,
+                "weakly_exposed": 0,
+                "reachable_unrevealed": 0,
+                "no_static_path": 0,
+                "infection_unknown": 0,
+                "propagation_unknown": 0,
+                "static_unknown": 0,
+                "changed_files_by_language": []
+            },
+            "findings": [],
+            "analysis_scope": {
+                "scope": "diff",
+                "run_status": "diff_scope_oversized",
+                "basis": "rust_diff_scope_budget",
+                "downstream_consumable": false,
+                "limitation": "diff_scope_oversized",
+                "repair_route": "analysis/diff-scope-budget"
+            },
+            "run_limitations": [
+                {
+                    "category": "diff_scope_oversized",
+                    "run_status": "diff_scope_oversized",
+                    "basis": "rust_diff_scope_budget",
+                    "downstream_consumable": false,
+                    "message": "diff_scope_oversized: changed Rust exceeds the diff scope budget",
+                    "repair_route": "analysis/diff-scope-budget"
+                }
+            ]
+        }));
+        assert_eq!(report.status, "blocked");
+        assert_eq!(report.summary.records_total, 0);
+        assert!(
+            report.warnings.iter().any(|warning| {
+                warning.contains("diff_scope_oversized")
+                    && warning.contains("downstream_consumable")
+            }),
+            "refusal admission must name the typed run status and the consumable flag: {:?}",
+            report.warnings
+        );
+    }
+
+    /// The repo-scope guard emits the same non-consumable refusal envelope
+    /// with only the scope identity different (#2109); admission refuses it
+    /// identically (#10733).
+    #[test]
+    fn gap_decision_ledger_refuses_repo_scope_oversized_refusal_envelope() {
+        let report = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"changed_rust_files": 0, "probes": 0, "findings": 0},
+            "findings": [],
+            "analysis_scope": {
+                "scope": "repo",
+                "run_status": "repo_scope_oversized",
+                "basis": "rust_repo_scope_budget",
+                "downstream_consumable": false,
+                "limitation": "repo_scope_oversized",
+                "repair_route": "analysis/repo-scope-budget"
+            },
+            "run_limitations": [
+                {
+                    "category": "repo_scope_oversized",
+                    "run_status": "repo_scope_oversized",
+                    "basis": "rust_repo_scope_budget",
+                    "downstream_consumable": false,
+                    "message": "repo_scope_oversized: indexed Rust files exceed the repo scope budget",
+                    "repair_route": "analysis/repo-scope-budget"
+                }
+            ]
+        }));
+        assert_eq!(report.status, "blocked");
+        assert!(
+            report.warnings.iter().any(|warning| {
+                warning.contains("repo_scope_oversized")
+                    && warning.contains("downstream_consumable")
+            }),
+            "refusal admission must name the typed run status and the consumable flag: {:?}",
+            report.warnings
+        );
+    }
+
+    /// #10733 review repair: the refusal marker counts from EITHER position
+    /// the check schema opens for it. When only `analysis_scope` carries the
+    /// explicit `downstream_consumable: false`, the old admission either
+    /// missed the refusal entirely (unknown status) or saved a ledger whose
+    /// schema keeps no `analysis_scope` — the saved document degraded to a
+    /// healthy `no_records` ledger the gate then passed. Admission must
+    /// refuse and the saved ledger must retain a marker the gate's generic
+    /// non-consumable check reads.
+    #[test]
+    fn gap_decision_ledger_refuses_refusal_flagged_only_in_analysis_scope() -> Result<(), String> {
+        let report = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"findings": 0},
+            "findings": [],
+            "analysis_scope": {
+                "scope": "diff",
+                "run_status": "diff_scope_oversized",
+                "basis": "rust_diff_scope_budget",
+                "downstream_consumable": false,
+                "limitation": "diff_scope_oversized",
+                "repair_route": "analysis/diff-scope-budget"
+            },
+            "run_limitations": [
+                {
+                    "category": "diff_scope_oversized",
+                    "run_status": "diff_scope_oversized",
+                    "basis": "rust_diff_scope_budget",
+                    "message": "diff_scope_oversized: changed Rust exceeds the diff scope budget",
+                    "repair_route": "analysis/diff-scope-budget"
+                }
+            ]
+        }));
+        assert_eq!(
+            report.status, "blocked",
+            "the typed refusal must land on blocked when only analysis_scope \
+             carries the flag: {:?}",
+            report.warnings
+        );
+        assert!(
+            report.warnings.iter().any(|warning| {
+                warning.contains("diff_scope_oversized")
+                    && warning.contains("downstream_consumable")
+            }),
+            "refusal admission must name the typed run status and the consumable flag: {:?}",
+            report.warnings
+        );
+        let saved = saved_ledger_value(&report)?;
+        assert!(
+            crate::output::gate::discloses_non_consumable_record(&saved),
+            "the saved ledger must retain the non-consumable marker when only \
+             analysis_scope carried it: {saved}"
+        );
+        Ok(())
+    }
+
+    /// The same either-location retention for a refusal under a status this
+    /// reader does not know (for example the post-argv-parse guard
+    /// `base_unresolvable`): with no `run_limitations` entry at all, the flag
+    /// lived only in `analysis_scope`, and the saved ledger used to lose it
+    /// entirely — a healthy `no_records` ledger the gate passed.
+    #[test]
+    fn gap_decision_ledger_refuses_generic_flag_retained_from_analysis_scope() -> Result<(), String>
+    {
+        let report = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"findings": 0},
+            "findings": [],
+            "analysis_scope": {
+                "scope": "diff",
+                "run_status": "base_unresolvable",
+                "basis": "analysis/base-resolution",
+                "downstream_consumable": false,
+                "limitation": "base_unresolvable",
+                "repair_route": "analysis/base-resolution"
+            }
+        }));
+        assert_eq!(
+            report.status, "blocked",
+            "the generic non-consumable refusal must land on blocked when only \
+             analysis_scope carries the flag: {:?}",
+            report.warnings
+        );
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("downstream_consumable")),
+            "generic refusal landing must name the consumable flag: {:?}",
+            report.warnings
+        );
+        let saved = saved_ledger_value(&report)?;
+        assert!(
+            crate::output::gate::discloses_non_consumable_record(&saved),
+            "the saved ledger must retain the non-consumable marker when only \
+             analysis_scope carried it: {saved}"
+        );
+        Ok(())
+    }
+
+    /// #10733 review repair (RIPR-SPEC-0362 identity): a known refusal run
+    /// status WITHOUT an explicit `downstream_consumable: false` is the
+    /// healthy complete shape — the producer never writes the member on a
+    /// complete run — so the ledger admits it as the ordinary
+    /// healthy `no_records` state instead of refusing it.
+    #[test]
+    fn gap_decision_ledger_admits_known_status_without_explicit_false_as_healthy() {
+        let report = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"findings": 0},
+            "findings": [],
+            "run_status": "diff_scope_oversized"
+        }));
+        assert_eq!(
+            report.status, "no_records",
+            "a known refusal status without the explicit false flag is admitted \
+             as the healthy complete shape: {:?}",
+            report.warnings
+        );
+        assert!(
+            report.warnings.is_empty(),
+            "the healthy complete shape carries no refusal warning: {:?}",
+            report.warnings
+        );
+    }
+
+    /// Render a ledger report to the exact saved JSON and parse it back, so
+    /// retention assertions see what a downstream gate reader would read.
+    fn saved_ledger_value(report: &GapDecisionLedgerReport) -> Result<serde_json::Value, String> {
+        let rendered = render_gap_decision_ledger_json(report)?;
+        serde_json::from_str(&rendered).map_err(|error| format!("parse saved ledger: {error}"))
+    }
+
+    /// Refusal admission is narrow: a complete run with an empty
+    /// `run_limitations` array and zero findings stays the healthy
+    /// `no_records` state, and a bounded document keeps its existing
+    /// handling (the gate refuses it by its typed `limited_findings_bound`
+    /// name — the ledger does not steal that vocabulary).
+    #[test]
+    fn gap_decision_ledger_refusal_admission_keeps_healthy_controls() {
+        let empty_limitations = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"findings": 0},
+            "findings": [],
+            "run_limitations": []
+        }));
+        assert_eq!(empty_limitations.status, "no_records");
+        assert!(empty_limitations.warnings.is_empty());
+
+        let bounded = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"findings": 2},
+            "findings": [
+                {"id": "rendered-prefix-finding", "classification": "reachable_unrevealed"}
+            ],
+            "run_limitations": [
+                {
+                    "category": "limited_findings_bound",
+                    "run_status": "limited_findings_bound",
+                    "basis": "check_findings_byte_budget",
+                    "downstream_consumable": false,
+                    "message": "rendered 1 of 2 findings within the findings-array byte budget",
+                    "repair_route": "output/check-findings-budget"
+                }
+            ]
+        }));
+        assert_ne!(
+            bounded.status, "blocked",
+            "a findings-bounded document keeps its existing ledger handling: {:?}",
+            bounded.warnings
+        );
+        assert!(
+            bounded
+                .run_limitations
+                .as_ref()
+                .is_some_and(|limitations| limitations
+                    .to_string()
+                    .contains("limited_findings_bound")),
+            "bounded run_limitations keep propagating unchanged"
+        );
+    }
+
     #[test]
     fn gap_decision_ledger_warns_on_unsafe_projection() {
         let record = serde_json::json!({
@@ -4918,7 +5577,22 @@ mod tests {
         // #10151: `python_caplog_alias_in_literal` keeps a captured-log alias
         // spelled inside the asserted literal a weak gap (RIPR-SPEC-0238 rule
         // 22), which carries one no-strong-oracle card.
-        if (direct, no_strong, orthogonal, family_selection) != (10, 27, 28, 1) {
+        // #10178: both pre-call effect observations stay orthogonal and
+        // packet-ineligible; native fixture output adds two weak cards.
+        // #10832: `python_parametrize_tuple_unpack` reads a tuple argname's
+        // off-boundary rows through its leading unpack, so the boundary is
+        // `weakly_exposed` and carries one direct-aligned card.
+        // #10842: `python_rewrite_shifted_bound` names the row its shifted
+        // bound needs, one more direct-aligned `weakly_exposed` card.
+        // #9815: `python_factor_reorder` adds four direct-aligned weak cards
+        // for area, float_area, boxed_area and hashed_area. Their numeric rows
+        // observe the owners but need operands that distinguish product order.
+        // `python_factor_reorder_rebound` adds one direct-aligned weak card:
+        // its rebound table operand leaves multiplication order unresolved.
+        // #11103: `python_len_local_boundary_repair_gap` derives its once-bound
+        // `visible = len(text)` operand, so the weak boundary finding names
+        // `visible == limit` and carries one direct-aligned card.
+        if (direct, no_strong, orthogonal, family_selection) != (18, 27, 30, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
@@ -5411,7 +6085,7 @@ mod tests {
         assert_eq!(
             record.static_limit_detail.as_deref(),
             Some(
-                "this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+                "this Python preview finding has no repair card (static evidence cannot bind `DISCOUNT_THRESHOLD` to a test input, so the boundary equality cannot become a repair target), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
             )
         );
         assert!(record.repair_route.is_none());
@@ -5442,7 +6116,8 @@ mod tests {
 
     // The other reason branch: a finding that names a missing discriminator
     // but still has no card is held by incomplete placement or related-test
-    // evidence, and says so.
+    // evidence, and says so. Scoped to a non-boundary discriminator so the
+    // #11103 unresolved-operand arm keeps its own specific wording.
     #[test]
     fn check_output_python_no_repair_card_with_discriminator_names_incomplete_evidence()
     -> Result<(), String> {
@@ -5457,6 +6132,11 @@ mod tests {
         {
             finding["missing_discriminators"] =
                 serde_json::json!([{"value": "amount == discount_threshold"}]);
+            // Drop the unresolved-operand boundary shape so this case
+            // exercises the placement-reason branch, not #11103.
+            if let Some(missing) = finding["missing"].as_array_mut() {
+                missing.clear();
+            }
         }
         let report = check_output_ledger(payload.to_string());
         let records = python_no_repair_card_records(&report);
@@ -7726,6 +8406,315 @@ mod tests {
             "missing typed-spec context: {error}"
         );
         Ok(())
+    }
+
+    fn record_with_id(id: &str) -> GapRecord {
+        GapRecord {
+            gap_id: id.to_string(),
+            ..GapRecord::default()
+        }
+    }
+
+    const SCHEMA: &str = crate::analysis::seam_cache::CACHE_SCHEMA_VERSION;
+
+    fn test_corpus() -> Value {
+        serde_json::json!({
+            "scope": "rust_workspace",
+            "cache_schema_version": SCHEMA,
+            "files_content_hash": "0123456789abcdef",
+            "analyzed_production_files": ["src/lib.rs"],
+        })
+    }
+
+    fn test_inputs() -> Value {
+        serde_json::json!({"cfg_features_hash": "a", "config_hash": "b", "test_intent_hash": "c", "suppressions_hash": "d", "workspace_manifests_hash": "e", "lockfile_hash": "f", "toolchain_hash": "g", "analyzer_version": "h"})
+    }
+
+    /// The corpus a coverage disclosure carries: the source corpus plus the
+    /// top-level input identity.
+    fn test_coverage_corpus() -> Value {
+        let mut corpus = test_corpus();
+        corpus["analysis_inputs"] = test_inputs();
+        corpus
+    }
+
+    #[test]
+    fn analysis_coverage_is_verified_against_the_exact_record_set() {
+        let records = vec![record_with_id("gap:a"), record_with_id("gap:b")];
+        let coverage = |records: &[GapRecord]| {
+            serde_json::json!({
+                "analysis_coverage": {
+                    "scope": "rust_workspace",
+                    "basis": "repo_exposure_complete_run",
+                    "run_status": "complete",
+                    "corpus": test_coverage_corpus(),
+                    "records_total": records.len(),
+                    "records_digest": gap_records_digest(records),
+                }
+            })
+        };
+        let document = coverage(&records);
+        assert!(verified_analysis_coverage(&document, &records).is_some());
+        // Reordered records keep the same digest; a dropped, added or renamed
+        // record does not.
+        let reordered = vec![record_with_id("gap:b"), record_with_id("gap:a")];
+        assert!(verified_analysis_coverage(&document, &reordered).is_some());
+        assert!(verified_analysis_coverage(&document, &records[..1]).is_none());
+        let renamed = vec![record_with_id("gap:a"), record_with_id("gap:c")];
+        assert!(verified_analysis_coverage(&document, &renamed).is_none());
+        let mut extra = records.clone();
+        extra.push(record_with_id("gap:c"));
+        assert!(verified_analysis_coverage(&document, &extra).is_none());
+        // Same ids and count, but a non-id field edited: the digest covers the
+        // whole record, so this is rejected.
+        let mut edited = records.clone();
+        edited[0].gap_state = "closed".to_string();
+        assert!(
+            verified_analysis_coverage(&document, &edited).is_none(),
+            "a record edited without changing id or count must not verify"
+        );
+        // A digest-matching document with a wrong `records_total` is rejected.
+        let mut wrong_total = coverage(&records);
+        wrong_total["analysis_coverage"]["records_total"] = serde_json::json!(99);
+        assert!(verified_analysis_coverage(&wrong_total, &records).is_none());
+        // A corpus identity the producer could not have stamped is rejected.
+        for corpus in [
+            serde_json::json!({"scope": "rust_workspace", "files_content_hash": "0123456789abcdef"}),
+            serde_json::json!({"scope": "rust_workspace", "cache_schema_version": "0.0", "files_content_hash": "0123456789abcdef"}),
+            serde_json::json!({"scope": "rust_workspace", "cache_schema_version": SCHEMA, "files_content_hash": "deadbeef"}),
+            serde_json::json!({"scope": "rust_workspace", "cache_schema_version": SCHEMA, "files_content_hash": "0123456789ABCDEF"}),
+        ] {
+            let mut forged = coverage(&records);
+            forged["analysis_coverage"]["corpus"] = corpus;
+            assert!(verified_analysis_coverage(&forged, &records).is_none());
+        }
+
+        for files in [
+            Value::Null,
+            serde_json::json!("src/lib.rs"),
+            serde_json::json!([7]),
+            serde_json::json!(["src/lib.rs", "src/lib.rs"]),
+            serde_json::json!(["src/../lib.rs"]),
+            serde_json::json!(["src\\\\lib.rs"]),
+        ] {
+            let mut malformed = coverage(&records);
+            malformed["analysis_coverage"]["corpus"]["analyzed_production_files"] = files;
+            assert!(verified_analysis_coverage(&malformed, &records).is_none());
+        }
+        let mut missing = coverage(&records);
+        if let Some(corpus) = missing["analysis_coverage"]["corpus"].as_object_mut() {
+            corpus.remove("analyzed_production_files");
+        }
+        assert!(verified_analysis_coverage(&missing, &records).is_none());
+        // No disclosure, or a non-object one, is no coverage.
+        assert!(verified_analysis_coverage(&serde_json::json!({}), &records).is_none());
+        assert!(
+            verified_analysis_coverage(&serde_json::json!({"analysis_coverage": 1}), &records)
+                .is_none()
+        );
+    }
+
+    fn complete_source(seams: usize) -> Value {
+        serde_json::json!({
+            "artifact": {"kind": "repo_exposure", "producer": {"tool": "ripr"}},
+            "scope": "repo",
+            "run_status": "complete",
+            "seams": vec![serde_json::json!({}); seams],
+            "source_subject": {"corpus": test_corpus()},
+            "analysis_inputs": test_inputs(),
+        })
+    }
+
+    #[test]
+    fn repo_exposure_coverage_requires_a_complete_run_with_a_corpus_identity() {
+        let records = vec![record_with_id("gap:a")];
+        let complete = complete_source(1);
+        assert!(repo_exposure_analysis_coverage(Some(&complete), true, &records).is_some());
+        // The governed content commitment must still hold for the bytes read.
+        assert!(repo_exposure_analysis_coverage(Some(&complete), false, &records).is_none());
+        // A seam the converter dropped leaves records smaller than the run.
+        assert!(
+            repo_exposure_analysis_coverage(Some(&complete_source(2)), true, &records).is_none()
+        );
+        let with = |patch: Value| {
+            let mut value = complete.clone();
+            if let (Some(target), Some(extra)) = (value.as_object_mut(), patch.as_object()) {
+                for (key, entry) in extra {
+                    target.insert(key.clone(), entry.clone());
+                }
+            }
+            value
+        };
+        for limited in [
+            with(serde_json::json!({"run_status": "limited_declined_files"})),
+            with(serde_json::json!({"run_status": "seam_limit_applied"})),
+            with(serde_json::json!({"scope": "diff"})),
+            with(
+                serde_json::json!({"limitations": [{"category": "generated_rust_source_skipped"}]}),
+            ),
+            with(serde_json::json!({"limitations": [{"category": "rust_files_declined"}]})),
+            with(serde_json::json!({"limitations": [{}]})),
+            with(serde_json::json!({"limitations": "none"})),
+            with(serde_json::json!({"run_limitations": [{"kind": "x"}]})),
+            with(serde_json::json!({"analysis_outcome": {"analysis_complete": false}})),
+            with(serde_json::json!({"analysis_outcome": "complete"})),
+            with(serde_json::json!({"source_subject": {}})),
+            with(
+                serde_json::json!({"artifact": {"kind": "check_findings", "producer": {"tool": "ripr"}}}),
+            ),
+            with(serde_json::json!({"artifact": {"kind": "repo_exposure"}})),
+            with(serde_json::json!({"seams": "none"})),
+            with(
+                serde_json::json!({"source_subject": {"corpus": {"unavailable": "x", "scope": "rust_workspace", "cache_schema_version": SCHEMA, "files_content_hash": "0123456789abcdef"}}}),
+            ),
+            with(
+                serde_json::json!({"source_subject": {"corpus": {"scope": "other", "cache_schema_version": SCHEMA, "files_content_hash": "0123456789abcdef"}}}),
+            ),
+            with(
+                serde_json::json!({"source_subject": {"corpus": {"scope": "rust_workspace", "files_content_hash": "0123456789abcdef"}}}),
+            ),
+            with(
+                serde_json::json!({"source_subject": {"corpus": {"scope": "rust_workspace", "cache_schema_version": SCHEMA, "files_content_hash": "deadbeef"}}}),
+            ),
+        ] {
+            assert!(
+                repo_exposure_analysis_coverage(Some(&limited), true, &records).is_none(),
+                "{limited}"
+            );
+        }
+
+        for files in [
+            Value::Null,
+            serde_json::json!("src/lib.rs"),
+            serde_json::json!([7]),
+            serde_json::json!(["src/lib.rs", "src/lib.rs"]),
+            serde_json::json!(["src/../lib.rs"]),
+        ] {
+            let mut malformed = complete.clone();
+            malformed["source_subject"]["corpus"]["analyzed_production_files"] = files;
+            assert!(repo_exposure_analysis_coverage(Some(&malformed), true, &records).is_none());
+        }
+        let mut missing = complete.clone();
+        if let Some(corpus) = missing["source_subject"]["corpus"].as_object_mut() {
+            corpus.remove("analyzed_production_files");
+        }
+        assert!(repo_exposure_analysis_coverage(Some(&missing), true, &records).is_none());
+        let mut no_inputs = complete.clone();
+        if let Some(object) = no_inputs.as_object_mut() {
+            object.remove("analysis_inputs");
+        }
+        assert!(repo_exposure_analysis_coverage(Some(&no_inputs), true, &records).is_none());
+        // The input identity is carried into the coverage corpus.
+        let with_inputs = repo_exposure_analysis_coverage(Some(&complete), true, &records);
+        assert_eq!(
+            with_inputs.and_then(|coverage| coverage.pointer("/corpus/analysis_inputs").cloned()),
+            Some(test_inputs())
+        );
+        // Language guidance entries do not narrow Rust coverage.
+        let guided = with(serde_json::json!({"limitations": [{"category": "python_diff_first"}]}));
+        assert!(repo_exposure_analysis_coverage(Some(&guided), true, &records).is_some());
+        assert!(repo_exposure_analysis_coverage(None, true, &records).is_none());
+    }
+
+    #[test]
+    fn committed_empty_repo_exposure_refuses_non_object_corpus() -> Result<(), String> {
+        let report_for = |corpus: Value| -> Result<GapDecisionLedgerReport, String> {
+            let mut source = complete_source(0);
+            source["source_subject"]["corpus"] = corpus;
+            source["artifact"]["content_sha256"] =
+                serde_json::json!(crate::agent::artifact::CONTENT_SHA256_PLACEHOLDER);
+            let commitment =
+                crate::agent::artifact::recompute_content_commitment(&source.to_string())?;
+            source["artifact"]["content_sha256"] = serde_json::json!(commitment);
+            let contents = source.to_string();
+            assert_eq!(
+                crate::agent::artifact::recompute_content_commitment(&contents)?,
+                commitment,
+                "the malformed-corpus control must pass content commitment verification"
+            );
+            Ok(build_gap_decision_ledger_report(GapDecisionLedgerInput {
+                root: ".".to_string(),
+                generated_at: "test".to_string(),
+                source_kind: GapDecisionLedgerSourceKind::RepoExposure,
+                records_path: "committed.json".to_string(),
+                records_json: Ok(contents),
+            }))
+        };
+        // Zero converted seams is a valid complete run, not a malformed input.
+        let complete = report_for(test_corpus())?;
+        assert_eq!(complete.status, "no_records");
+        assert!(complete.records.is_empty());
+        assert!(complete.analysis_coverage.is_some());
+        for corpus in [
+            Value::Null,
+            serde_json::json!("rust_workspace"),
+            serde_json::json!(7),
+            serde_json::json!(true),
+            serde_json::json!([]),
+        ] {
+            let malformed = report_for(corpus.clone())?;
+            assert_eq!(malformed.status, "no_records");
+            assert!(malformed.records.is_empty());
+            assert!(malformed.analysis_coverage.is_none(), "{corpus}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_top_level_analysis_inputs_are_the_only_source_of_the_input_identity() {
+        let records = vec![record_with_id("gap:a")];
+        // Valid identity only inside source_subject.corpus, no top-level field.
+        let mut nested_only = complete_source(1);
+        if let Some(object) = nested_only.as_object_mut() {
+            object.remove("analysis_inputs");
+        }
+        nested_only["source_subject"]["corpus"]["analysis_inputs"] = test_inputs();
+        assert!(repo_exposure_analysis_coverage(Some(&nested_only), true, &records).is_none());
+        // Both present and conflicting: the top-level value wins.
+        let mut conflicting = complete_source(1);
+        let mut nested = test_inputs();
+        nested["config_hash"] = serde_json::json!("nested-loses");
+        conflicting["source_subject"]["corpus"]["analysis_inputs"] = nested;
+        let coverage = repo_exposure_analysis_coverage(Some(&conflicting), true, &records);
+        assert_eq!(
+            coverage.and_then(|coverage| coverage.pointer("/corpus/analysis_inputs").cloned()),
+            Some(test_inputs())
+        );
+    }
+
+    #[test]
+    fn a_hand_written_minimal_repo_exposure_document_earns_no_coverage() {
+        let forged = serde_json::json!({
+            "schema_version": "0.3",
+            "scope": "repo",
+            "run_status": "complete",
+            "seams": [],
+            "source_subject": {"corpus": {
+                "scope": "rust_workspace",
+                "files_content_hash": "deadbeef",
+            }},
+        });
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "now".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::RepoExposure,
+            records_path: "forged.json".to_string(),
+            records_json: Ok(forged.to_string()),
+        });
+        assert!(report.analysis_coverage.is_none());
+        // Same forgery with an envelope and a well-formed corpus, but no valid
+        // content commitment, is also refused.
+        let mut enveloped = complete_source(0);
+        enveloped["artifact"]["content_sha256"] =
+            serde_json::json!(format!("sha256:{}", "0".repeat(64)));
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "now".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::RepoExposure,
+            records_path: "forged.json".to_string(),
+            records_json: Ok(enveloped.to_string()),
+        });
+        assert!(report.analysis_coverage.is_none());
     }
 }
 

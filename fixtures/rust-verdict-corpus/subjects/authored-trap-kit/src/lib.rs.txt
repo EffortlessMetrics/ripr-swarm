@@ -27,3 +27,5 @@ pub mod totals;
 pub mod units;
 pub mod units_checked;
 pub mod nested;
+pub mod cfg_attr_ignored;
+pub mod cfg_attr_should_panic;

@@ -1,6 +1,6 @@
 //! RepairCard usability measurement and budget-ratification evidence producer
 //! (RIPR-SPEC-0196, #4669): measures the normalized wire size of
-//! [`RepairCardV1`] cards against the complete canonical packet envelope for
+//! [`crate::domain::RepairCardV1`] cards against the complete canonical packet envelope for
 //! the same seam, over deterministic synthetic fixture profiles, and accounts
 //! governed real repair opportunities from the shared #1702/#1579 counting
 //! authority without creating a new denominator.

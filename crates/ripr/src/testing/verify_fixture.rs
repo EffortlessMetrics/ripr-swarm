@@ -43,6 +43,7 @@ pub(crate) fn snapshot_seam(
 pub(crate) fn mint_repo_exposure_snapshot(root: &Path, seams: Value) -> Result<String, String> {
     let context = crate::agent::artifact::RepoExposureArtifactContext {
         corpus_key: None,
+        analyzed_production_files: None,
         root: root.to_path_buf(),
         mode: "draft".to_string(),
         base_revision: None,

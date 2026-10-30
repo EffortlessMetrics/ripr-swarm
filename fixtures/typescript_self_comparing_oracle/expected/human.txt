@@ -3,23 +3,24 @@ mode: fast
 root: fixtures/typescript_self_comparing_oracle/input
 config: <cwd>/fixtures/typescript_self_comparing_oracle/input/ripr.toml
 
-Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 1
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: preview-language evidence is advisory; no repair packet is emitted because of the named static limitation: typescript_dynamic_assertion_unresolved — the matcher `.toBe(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior; `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  Safe next action: ripr cannot tell whether the test at `tests/lib.test.ts:4` covers this change: its `.toBe(...)` compares against a variable or computed value, not a literal; replace that expected value with a literal, or check by hand that the test covers this change, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it
   File: src/lib.ts:3
   Language: typescript
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return amount - 20;
-  Missing discriminator (1 of 2): Related test reaches `price` but the strongest extracted oracle is
+  Missing check (1 of 2): Related test reaches `price` but the strongest extracted oracle is
     `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`)
     assertion or a `toThrow` form with an exact payload (string, object, or class reference)
   Related test: tests/lib.test.ts:3 price (assertion too weak to tell the old behavior from the new)
@@ -32,8 +33,11 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related test(s) found for owner `price`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
@@ -41,7 +45,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_self_comparing_oracle/input --diff <cwd>/fixtures/typescript_self_comparing_oracle/diff.patch --mode fast probe:src_lib.ts:typescript_preview:c712a282
   ripr context --root <cwd>/fixtures/typescript_self_comparing_oracle/input --diff <cwd>/fixtures/typescript_self_comparing_oracle/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:c712a282
-  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: ripr has no complete repair packet for this TypeScript finding (ripr cannot tell whether the test at `tests/lib.test.ts:4` covers this change: its `.toBe(...)` compares against a variable or computed value, not a literal); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`
 
 More:
   Full evidence: rerun with --format human-full

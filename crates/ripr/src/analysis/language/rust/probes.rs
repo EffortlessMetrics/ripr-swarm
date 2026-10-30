@@ -10,7 +10,9 @@
 //! later RA slices.
 
 use crate::analysis::facts::RustIndex;
-use crate::analysis::probes::{BindingValueResolution, ChangedBindingPredicateUse};
+use crate::analysis::probes::{
+    BindingValueResolution, ChangedBindingPredicateUse, ChangedBindingReturnFlow,
+};
 use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
 
 /// #8479: disclose the field-selector boundary without altering any proof leg.
@@ -130,6 +132,20 @@ pub(super) fn apply_rust_value_propagation_limit(
     );
 }
 
+/// The literal byte-length route (#9637) established this binding's operand
+/// from exact test rows, so the syntax-only "unresolved" disclosure would
+/// contradict it. Only that route's own derived-local fact qualifies: other
+/// infection-Yes mechanisms keep the disclosure, and a miss here is the
+/// conservative direction (the disclosure stays).
+fn literal_byte_length_resolves(finding: &Finding, relation: &ChangedBindingPredicateUse) -> bool {
+    finding.ripr.infect.state == crate::domain::StageState::Yes
+        && finding.activation.observed_values.iter().any(|fact| {
+            fact.value.starts_with(&format!("{} = ", relation.binding))
+                && fact.text.contains("immutable string literal")
+                && fact.text.contains("via as_bytes().len()")
+        })
+}
+
 /// Disclose a changed-binding predicate relation on the probe's finding.
 /// The probe is predicate-shaped and classifies through the normal
 /// predicate path; this only discloses the causal link (which binding and
@@ -156,7 +172,10 @@ pub(super) fn attach_changed_binding_predicate_evidence(
         "binding_predicate_relation: changed binding `{}` initializer {initializer_range} flows into predicate operand at line {}",
         relation.binding, relation.predicate_line
     ));
-    if let BindingValueResolution::Unresolved { earliest_operation } = &relation.value_resolution {
+    if !literal_byte_length_resolves(finding, relation)
+        && let BindingValueResolution::Unresolved { earliest_operation } =
+            &relation.value_resolution
+    {
         // Neutral prefixes: this is a value disclosure on a
         // predicate-shaped finding, not a `static_limit_kind` record,
         // so it deliberately stays outside the structured
@@ -170,6 +189,42 @@ pub(super) fn attach_changed_binding_predicate_evidence(
                 .to_string(),
         );
     }
+}
+
+/// RIPR-SPEC-0357: name the flow from a changed `let` binding into the
+/// returned expression. Disclosure only: the finding keeps its class and
+/// stop reason, and the non-claim line says no value is evaluated.
+pub(super) fn attach_changed_binding_return_evidence(
+    finding: &mut Finding,
+    flow: Option<&ChangedBindingReturnFlow>,
+) {
+    let Some(flow) = flow else {
+        return;
+    };
+    let before_initializer = finding
+        .probe
+        .before
+        .as_deref()
+        .and_then(changed_let_binding)
+        .filter(|(binding, _)| *binding == flow.binding)
+        .map(|(_, initializer)| initializer);
+    let initializer_range = match before_initializer {
+        Some(before) if before != flow.initializer => {
+            format!("`{before}` -> `{}`", flow.initializer)
+        }
+        _ => format!("`{}`", flow.initializer),
+    };
+    finding.evidence.push(format!(
+        "binding_return_relation: changed binding `{}` initializer {initializer_range} reaches the returned expression `{}` at line {} as a {}",
+        flow.binding,
+        flow.return_expression,
+        flow.return_line,
+        flow.kind.label()
+    ));
+    finding.evidence.push(
+        "binding_return_non_claim: named analyzer limitation only; the binding value is not evaluated and no test is credited for the changed binding"
+            .to_string(),
+    );
 }
 
 /// Find an equality predicate that refers to the established binding after
@@ -477,7 +532,8 @@ fn rust_raw_string_literal_end(bytes: &[u8], start: usize) -> Option<usize> {
 mod tests {
     use super::{
         apply_rust_value_propagation_limit, attach_changed_binding_predicate_evidence,
-        changed_let_binding, find_value_propagation_predicate, mask_rust_comments_and_strings,
+        attach_changed_binding_return_evidence, changed_let_binding,
+        find_value_propagation_predicate, mask_rust_comments_and_strings,
     };
     use crate::analysis::facts::{FunctionSourceRole, FunctionSummary, RustIndex};
     use crate::analysis::probes::{
@@ -681,6 +737,7 @@ mod tests {
     fn static_unknown_finding(expression: &str, owner: &str) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib.rs:binding:test".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -918,5 +975,60 @@ mod tests {
         assert!(finding.evidence.iter().any(|line| {
             line == "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
         }));
+        let class = finding.class.clone();
+        finding.evidence.clear();
+        finding.ripr.infect.state = crate::domain::StageState::Yes;
+        // Infection from another mechanism keeps the unresolved disclosure.
+        attach_changed_binding_predicate_evidence(&mut finding, Some(&relation));
+        assert_eq!(finding.evidence.len(), 3);
+        finding.evidence.clear();
+        finding
+            .activation
+            .observed_values
+            .push(crate::domain::ValueFact {
+                line: 1,
+                text: "fits(\"abc\", 3) | immutable string literal \"abc\" has byte length 3 via as_bytes().len()"
+                    .to_string(),
+                value: format!("{} = 3", relation.binding),
+                context: crate::domain::ValueContext::Unknown,
+            });
+        attach_changed_binding_predicate_evidence(&mut finding, Some(&relation));
+        assert_eq!(finding.class, class);
+        assert_eq!(finding.evidence.len(), 1);
+        assert!(finding.evidence[0].starts_with("binding_predicate_relation:"));
+    }
+
+    #[test]
+    fn changed_binding_return_evidence_is_disclosure_only() {
+        use crate::analysis::probes::ChangedBindingReturnFlow;
+        let mut finding = static_unknown_finding(
+            "let end = sku.find('-').unwrap_or_else(|| sku.len());",
+            "src/lib.rs::family",
+        );
+        finding.probe.before = Some("let end = sku.find('-').unwrap_or(sku.len());".to_string());
+        attach_changed_binding_return_evidence(&mut finding, None);
+        assert!(finding.evidence.is_empty());
+
+        let flow = ChangedBindingReturnFlow {
+            binding: "end".to_string(),
+            initializer: "sku.find('-').unwrap_or_else(|| sku.len())".to_string(),
+            return_expression: "&sku[..end]".to_string(),
+            return_line: 7,
+            kind: crate::analysis::probes::ReturnFlowKind::RangeBound,
+        };
+        let class = finding.class.clone();
+        attach_changed_binding_return_evidence(&mut finding, Some(&flow));
+        assert_eq!(finding.class, class);
+        assert_eq!(finding.static_limit_kind, None);
+        assert!(finding.stop_reasons.is_empty());
+        assert!(finding.evidence.iter().any(|line| {
+            line == "binding_return_relation: changed binding `end` initializer `sku.find('-').unwrap_or(sku.len())` -> `sku.find('-').unwrap_or_else(|| sku.len())` reaches the returned expression `&sku[..end]` at line 7 as a range bound"
+        }));
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("binding_return_non_claim:"))
+        );
     }
 }
