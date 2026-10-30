@@ -672,6 +672,7 @@ mod tests {
         let file = "tests/test_order.py";
         let node = "tests/test_order.py::test_total";
         let raw = "python -m pytest tests/test_order.py::test_total";
+        #[cfg(any(feature = "lang-python", feature = "lang-rust"))]
         assert!(
             route(
                 "tests/test_order.py",
@@ -682,6 +683,18 @@ mod tests {
                 false
             )
             .is_some()
+        );
+        #[cfg(not(any(feature = "lang-python", feature = "lang-rust")))]
+        assert!(
+            route(
+                "tests/test_order.py",
+                "tests/test_order.py::test_café",
+                "python -m pytest tests/test_order.py::test_café",
+                "test_café",
+                false,
+                false
+            )
+            .is_none()
         );
         assert!(
             route(
