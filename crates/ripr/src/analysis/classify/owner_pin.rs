@@ -9049,12 +9049,80 @@ pub(in crate::analysis) fn file_renames_to(source: &str, name: &str) -> bool {
     if !source.contains(name) {
         return false;
     }
+    if let Some(renamed) = renamed_names_memoized(source)
+        && let Some(plain) = plain_rename_target(name)
+    {
+        return renamed.contains(plain);
+    }
+    file_renames_to_uncached(source, name)
+}
+
+fn file_renames_to_uncached(source: &str, name: &str) -> bool {
     let masked = mask_comments_and_strings(source);
     let spans = rename_item_spans(&masked);
     whole_word_offsets(&masked, "as").into_iter().any(|offset| {
         starts_with_word(masked[offset + "as".len()..].trim_start(), name)
             && spans.iter().any(|span| span.contains(&offset))
     })
+}
+
+/// `name` when it is one identifier, optionally raw (`r#name`): the only
+/// spellings whose "starts the word after `as`" test is a token equality.
+fn plain_rename_target(name: &str) -> Option<&str> {
+    let bare = name.strip_prefix("r#").unwrap_or(name);
+    is_plain_identifier(bare).then_some(name)
+}
+
+/// The identifier (with an `r#` prefix kept) that follows `as`, if any.
+fn word_after_as(rest: &str) -> &str {
+    let rest = rest.trim_start();
+    let body = rest.strip_prefix("r#").unwrap_or(rest);
+    let len = body
+        .bytes()
+        .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        .count();
+    &rest[..rest.len() - body.len() + len]
+}
+
+/// Every word that follows an `as` inside a renaming item of `source`,
+/// computed once per distinct source text. A pilot asks `file_renames_to`
+/// for each (seam, test, type) triple; masking and scanning the whole test
+/// file each time dominated ripgrep's evidence stage. Content-keyed, so a
+/// changed file can never read a stale answer; bounded so a long-lived
+/// process cannot grow without limit. `None` if the lock is poisoned.
+fn renamed_names_memoized(source: &str) -> Option<Arc<BTreeSet<String>>> {
+    use std::hash::{Hash, Hasher};
+    static MEMO: std::sync::Mutex<BTreeMap<(u64, usize), Arc<BTreeSet<String>>>> =
+        std::sync::Mutex::new(BTreeMap::new());
+    const MAX_ENTRIES: usize = 8192;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source.hash(&mut hasher);
+    let key = (hasher.finish(), source.len());
+    if let Ok(memo) = MEMO.lock()
+        && let Some(found) = memo.get(&key)
+    {
+        return Some(Arc::clone(found));
+    }
+    let masked = mask_comments_and_strings(source);
+    let spans = rename_item_spans(&masked);
+    let renamed: BTreeSet<String> = whole_word_offsets(&masked, "as")
+        .into_iter()
+        .filter(|offset| spans.iter().any(|span| span.contains(offset)))
+        .flat_map(|offset| {
+            let word = word_after_as(&masked[offset + "as".len()..]);
+            // `as r#Foo` also starts the word `r`, as the uncached check reads it.
+            let bare_r = word.starts_with("r#").then_some("r");
+            std::iter::once(word).chain(bare_r)
+        })
+        .filter(|word| !word.is_empty())
+        .map(str::to_string)
+        .collect();
+    let renamed = Arc::new(renamed);
+    let mut memo = MEMO.lock().ok()?;
+    if memo.len() >= MAX_ENTRIES {
+        memo.clear();
+    }
+    Some(Arc::clone(memo.entry(key).or_insert(renamed)))
 }
 
 /// The byte spans in `masked` where an `as` may rename: every `use ..;`
