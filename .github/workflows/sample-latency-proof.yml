@@ -1,0 +1,247 @@
+name: Sample latency probe (non-shipping)
+run-name: Sample latency at d8ba02c0
+
+# One-shot diagnostic controller. Never merge this workflow into the product.
+on:
+  push:
+    branches: [codex/8547-sample-latency-proof]
+    paths: [.github/workflows/sample-latency-proof.yml]
+permissions:
+  contents: read
+concurrency:
+  group: sample-latency-proof-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SUBJECT: d8ba02c0cdd0b5920ec9ca99e25a7b1638d736f7
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: d8ba02c0cdd0b5920ec9ca99e25a7b1638d736f7
+          path: build
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: d8ba02c0cdd0b5920ec9ca99e25a7b1638d736f7
+          path: subject
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: build -> target
+          shared-key: ripr-swarm-rust-small-${{ runner.os }}
+          save-if: 'false'
+      - name: Bind build and separate immutable analysis checkout
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/sample-latency-proof"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          mkdir -p "$EVIDENCE"
+          for checkout in build subject; do
+            test "$(git -C "$checkout" rev-parse HEAD)" = "$SUBJECT"
+            test -z "$(git -C "$checkout" status --porcelain)"
+          done
+          {
+            printf 'controller=%s\nsubject=%s\nrun=%s\nattempt=%s\n' "$GITHUB_SHA" "$SUBJECT" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            rustc +1.95.0 -Vv
+            cargo +1.95.0 -Vv
+            uname -a
+            nproc
+            free -h
+            df -h .
+            sha256sum subject/crates/ripr/examples/sample/example.diff subject/Cargo.lock subject/rust-toolchain.toml
+            if [ -f subject/ripr.toml ]; then sha256sum subject/ripr.toml; fi
+          } > "$EVIDENCE/identity.txt"
+      - name: Prepare bounded measurement driver
+        run: |
+          cat > "$EVIDENCE/measure.py" <<'PY'
+          import hashlib, json, os, signal, subprocess, sys, time
+          from pathlib import Path
+          evidence = Path(os.environ['EVIDENCE'])
+          subject = Path(os.environ['GITHUB_WORKSPACE']) / 'subject'
+          binary = Path(os.environ['GITHUB_WORKSPACE']) / 'build/target/debug/ripr'
+          mode = sys.argv[1]
+          destination = evidence / mode
+          destination.mkdir()
+          digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+          records = []
+          for scope, rounds in [('repository', 2 if mode == 'baseline' else 1), ('sample-root', 1)]:
+              for round_number in range(rounds):
+                  formats = ['human-full', 'json', 'human'] if round_number == 0 else ['human', 'json', 'human-full']
+                  for output_format in formats:
+                      cache = evidence / 'caches' / f'{mode}-{scope}-{round_number}-{output_format}'
+                      cache.mkdir(parents=True)
+                      previous_completed = False
+                      for repeat in range(2):
+                          condition = 'empty-ripr-cache' if repeat == 0 else ('repeat-after-completion' if previous_completed else 'repeat-after-incomplete')
+                          label = f'{scope}-{round_number}-{output_format}-{repeat}'
+                          argv = [str(binary), 'check', '--diff', 'crates/ripr/examples/sample/example.diff', '--format', output_format]
+                          if scope == 'sample-root':
+                              argv += ['--root', 'crates/ripr/examples/sample']
+                          stdout_path, stderr_path = destination / f'{label}.stdout', destination / f'{label}.stderr'
+                          env = dict(os.environ, RIPR_CACHE_DIR=str(cache))
+                          started = time.perf_counter()
+                          stopped = False
+                          with stdout_path.open('wb') as stdout, stderr_path.open('wb') as stderr:
+                              child = subprocess.Popen(argv, cwd=subject, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
+                              try:
+                                  code = child.wait(timeout=30)
+                              except subprocess.TimeoutExpired:
+                                  stopped = True
+                                  os.killpg(child.pid, signal.SIGTERM)
+                                  try:
+                                      code = child.wait(timeout=5)
+                                  except subprocess.TimeoutExpired:
+                                      os.killpg(child.pid, signal.SIGKILL)
+                                      code = child.wait()
+                          elapsed = time.perf_counter() - started
+                          previous_completed = not stopped and code == 0
+                          record = {'mode': mode, 'scope': scope, 'round': round_number, 'format': output_format, 'repeat': repeat, 'cache_condition': condition, 'binary_sha256': digest, 'argv': argv, 'elapsed_seconds': elapsed, 'exit_code': code, 'external_stop': stopped, 'external_budget_seconds': 30, 'os_page_cache': 'uncontrolled; not claimed cold'}
+                          for stream, path in [('stdout', stdout_path), ('stderr', stderr_path)]:
+                              data = path.read_bytes()
+                              record[stream + '_bytes'] = len(data)
+                              record[stream + '_sha256'] = hashlib.sha256(data).hexdigest()
+                              record[stream + '_retained_complete'] = len(data) <= 4 * 1024 * 1024
+                              if len(data) > 4 * 1024 * 1024:
+                                  path.write_bytes(data[:4 * 1024 * 1024])
+                          if output_format == 'json' and previous_completed and record['stdout_retained_complete']:
+                              value = json.loads(stdout_path.read_text())
+                              record['finding_count'] = len(value.get('findings', []))
+                              record['findings_sha256'] = hashlib.sha256(json.dumps(value.get('findings'), sort_keys=True).encode()).hexdigest()
+                              record['summary'] = value.get('summary')
+                              record['analysis_outcome'] = value.get('analysis_outcome')
+                          record['phase_lines'] = [line for line in stderr_path.read_text(errors='replace').splitlines() if line.startswith('ONBOARDING_')]
+                          records.append(record)
+                          (destination / 'measurements.json').write_text(json.dumps(records, indent=2) + '\n')
+                          print(json.dumps({key: record[key] for key in ['mode', 'scope', 'format', 'cache_condition', 'elapsed_seconds', 'external_stop', 'exit_code', 'stdout_bytes']}), flush=True)
+          if mode == 'instrumented':
+              baseline = json.loads((evidence / 'baseline/measurements.json').read_text())
+              comparisons = []
+              for row in records:
+                  old = next(item for item in baseline if all(item[key] == row[key] for key in ['scope', 'round', 'format', 'repeat']))
+                  completed = not old['external_stop'] and not row['external_stop'] and old['exit_code'] == row['exit_code'] == 0
+                  comparison = {'scope': row['scope'], 'format': row['format'], 'repeat': row['repeat'], 'both_completed': completed}
+                  if completed:
+                      comparison['stdout_byte_identical'] = old['stdout_sha256'] == row['stdout_sha256']
+                      if row['format'] == 'json':
+                          comparison['findings_identical'] = old.get('findings_sha256') == row.get('findings_sha256')
+                          comparison['summary_identical'] = old.get('summary') == row.get('summary')
+                  comparisons.append(comparison)
+              (evidence / 'output-comparison.json').write_text(json.dumps(comparisons, indent=2) + '\n')
+          # No stopped/empty run is relabeled as a successful first-run budget.
+          successful_json = [row for row in records if row['format'] == 'json' and not row['external_stop'] and row['exit_code'] == 0]
+          assert successful_json and all(row.get('finding_count', 0) > 0 for row in successful_json), 'no representative nonempty JSON control'
+          PY
+      - name: Build and measure unmodified development CLI
+        working-directory: build
+        run: |
+          set -euo pipefail
+          set +e
+          timeout --signal=TERM --kill-after=30s 1800s cargo +1.95.0 build --locked -p ripr --bin ripr > "$EVIDENCE/baseline-build.stdout" 2> "$EVIDENCE/baseline-build.stderr"
+          status=$?
+          set -e
+          echo "baseline_build_exit=$status" > "$EVIDENCE/status.txt"
+          test "$status" = 0
+          git diff --exit-code
+          sha256sum target/debug/ripr > "$EVIDENCE/baseline-binary.sha256"
+          python3 "$EVIDENCE/measure.py" baseline
+      - name: Add timing-only instrumentation to build checkout, not analysis inputs
+        working-directory: build
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          module = Path('crates/ripr/src/onboarding_phase_trace.rs')
+          assert not module.exists()
+          module.write_text('''use std::io::Write;
+          use std::time::Instant;
+          pub(crate) struct Phase { name: &'static str, started: Instant }
+          impl Phase {
+              pub(crate) fn new(name: &'static str) -> Self {
+                  let _ = writeln!(std::io::stderr().lock(), "ONBOARDING_PHASE begin {name}");
+                  Self { name, started: Instant::now() }
+              }
+          }
+          impl Drop for Phase {
+              fn drop(&mut self) {
+                  let _ = writeln!(std::io::stderr().lock(), "ONBOARDING_PHASE end {} elapsed_ns={}", self.name, self.started.elapsed().as_nanos());
+              }
+          }
+          pub(crate) fn flag(name: &'static str, value: bool) {
+              let _ = writeln!(std::io::stderr().lock(), "ONBOARDING_FLAG {name}={value}");
+          }
+          ''')
+          library = Path('crates/ripr/src/lib.rs')
+          library.write_text(library.read_text() + '\nmod onboarding_phase_trace;\n')
+          def replace_once(text, old, new):
+              assert text.count(old) == 1, f'non-unique measurement anchor: {old}'
+              return text.replace(old, new, 1)
+          check = Path('crates/ripr/src/app/check.rs')
+          text = check.read_text()
+          for stage, label in [('LoadingInput', 'app_loading'), ('Analyzing', 'analysis'), ('BuildingOutput', 'app_output')]:
+              old = f'    progress.emit(AnalysisProgressStage::{stage});'
+              prefix = '    let mut _onboarding_phase = ' if stage == 'LoadingInput' else '    drop(_onboarding_phase);\n    _onboarding_phase = '
+              text = replace_once(text, old, prefix + f'crate::onboarding_phase_trace::Phase::new("{label}");\n' + old)
+          text = replace_once(text, '    let origins = analysis.rust_diagnostic_origins.clone();', '    let origins = { let _phase = crate::onboarding_phase_trace::Phase::new("diagnostic_origins_clone"); analysis.rust_diagnostic_origins.clone() };')
+          text = replace_once(text, '    let mut output = output_builder::check_output_from_analysis(input, analysis);', '    let mut output = { let _phase = crate::onboarding_phase_trace::Phase::new("output_constructor_including_drop"); output_builder::check_output_from_analysis(input, analysis) };')
+          text = replace_once(text, '    if human_output && python_test_note_possible(&output.findings) {', '    let _walk_selected = human_output && python_test_note_possible(&output.findings);\n    crate::onboarding_phase_trace::flag("human_python_walk_selected", _walk_selected);\n    if _walk_selected {')
+          check.write_text(text)
+          for relative, name, label in [
+              ('app/check.rs', 'python_test_note_possible', 'python_note_predicate'),
+              ('analysis/workspace/discover.rs', 'discover_python_test_files', 'python_discovery'),
+              ('app/task_first.rs', 'check_repair_route', 'repair_routing'),
+              ('app/test_stub.rs', 'check_stub_routes', 'stub_routing'),
+              ('app.rs', 'render_check_with_config_and_navigation_and_progress', 'rendering'),
+              ('cli/commands_context.rs', 'write_stdout_chunked', 'stdout_write'),
+          ]:
+              path = Path('crates/ripr/src') / relative
+              text = path.read_text()
+              matches = list(re.finditer(r'\bfn\s+' + re.escape(name) + r'\b', text))
+              assert len(matches) == 1, f'non-unique function: {name}'
+              brace = text.index('{', matches[0].end())
+              text = text[:brace+1] + f'\n    let _onboarding_function_phase = crate::onboarding_phase_trace::Phase::new("{label}");' + text[brace+1:]
+              path.write_text(text)
+          PY
+          git add -N crates/ripr/src/onboarding_phase_trace.rs
+          git diff --binary > "$EVIDENCE/timing-only.patch"
+          sha256sum "$EVIDENCE/timing-only.patch" > "$EVIDENCE/timing-only.patch.sha256"
+          git -C ../subject diff --exit-code
+      - name: Build and measure instrumented development CLI
+        working-directory: build
+        run: |
+          set -euo pipefail
+          set +e
+          timeout --signal=TERM --kill-after=30s 1800s cargo +1.95.0 build --locked -p ripr --bin ripr > "$EVIDENCE/instrumented-build.stdout" 2> "$EVIDENCE/instrumented-build.stderr"
+          status=$?
+          set -e
+          echo "instrumented_build_exit=$status" >> "$EVIDENCE/status.txt"
+          test "$status" = 0
+          sha256sum target/debug/ripr > "$EVIDENCE/instrumented-binary.sha256"
+          python3 "$EVIDENCE/measure.py" instrumented
+          git -C ../subject diff --exit-code
+      - name: Retain measurement evidence, not build caches or executables
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sample-latency-d8ba02c0-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/sample-latency-proof/identity.txt
+            ${{ runner.temp }}/sample-latency-proof/status.txt
+            ${{ runner.temp }}/sample-latency-proof/*.py
+            ${{ runner.temp }}/sample-latency-proof/*.patch
+            ${{ runner.temp }}/sample-latency-proof/*.sha256
+            ${{ runner.temp }}/sample-latency-proof/*.stdout
+            ${{ runner.temp }}/sample-latency-proof/*.stderr
+            ${{ runner.temp }}/sample-latency-proof/*.json
+            ${{ runner.temp }}/sample-latency-proof/baseline/*
+            ${{ runner.temp }}/sample-latency-proof/instrumented/*
+          if-no-files-found: error
+          retention-days: 14
