@@ -28,3 +28,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_qualified_helper_effect_reach (3)
+
+Reason:
+RIPR-SPEC-0122: incomplete evidence stage tokens render as plain words in the human repair advisory (#11025)
+
+Command:
+`cargo xtask goldens bless rust_qualified_helper_effect_reach --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
