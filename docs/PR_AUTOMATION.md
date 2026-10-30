@@ -534,7 +534,7 @@ Set `RIPR_TEST_GH` to a real supported CLI binary and run
 `cargo test -p xtask --bin xtask gh_pr_status_real_cli_schema -- --ignored`
 to check the production view fields against its actual offline field registry;
 this opt-in capability test needs the tool but no credentials or network.
-It reads the full PR snapshot again after required-context lookup. Both reads
+It reads the full PR snapshot again before reporting. Both reads
 must identify the requested PR and the same full head/base commits and target
 branch. Movement or unavailable identity returns an error before publishing a
 new readiness packet; existing report files remain historical and must not be
@@ -544,11 +544,11 @@ unchanged-head proof/review and requires integration judgment, not blanket
 reruns. When identities match, the final response supplies checks and review
 facts. The warning list records the exact observed commits. This separate read
 is not atomic with a later merge and supplies no merge authority. It reads
-GitHub CLI PR status, branch-protection required contexts when available,
-latest reviews, and Droid-related checks, then writes
+GitHub CLI PR status, latest reviews, and Droid-related checks without reading
+branch-protection or ruleset settings, then writes
 `target/ripr/reports/gh-pr-status.md` and
 `target/ripr/reports/gh-pr-status.json` with the merge state, outstanding
-checks, failed checks, behind-main state, review status, Droid status, and a
+rollup checks, failed checks, behind-main state, review status, Droid status, and a
 safe next action: `wait`, `inspect integration`, `inspect failure`, or `merge`.
 `BEHIND` requests integration judgment after Draft, review-required and pending
 waits; it does not establish that a branch update is needed. The packet retains the current head commit and each latest review's original
@@ -556,8 +556,10 @@ commit, with `current_head`, `stale_for_head`, or `subject_unavailable` attribut
 An `APPROVED` aggregate without an exact-head latest approval recommends `wait`.
 The CLI's `latestReviews` summaries are joined by author, submission time, and
 state to the full `reviews` subjects; missing or ambiguous identity stays unknown.
-This attribution does not establish review substance, independence, approval
-quotas, integration qualification, or protection satisfaction. It is advisory and
+Required-context completeness is unknown from the rollup; an empty pending list
+does not establish that all required checks passed. GitHub enforces applicable
+requirements on a normal merge request. This attribution does not establish review
+substance, independence, approval quotas, integration qualification, or protection satisfaction. It is advisory and
 never updates the branch, comments, approves, or merges.
 The provider-response section retains known quota notices and unknown substance
 from returned reviews/comments without treating either as review completion.

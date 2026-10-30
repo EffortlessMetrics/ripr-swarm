@@ -3925,11 +3925,8 @@ fn finish_pr_triage_report(
 
 pub(crate) fn gh_pr_status_impl(args: &[String]) -> Result<(), String> {
     let number = parse_gh_pr_status_args(args)?;
-    let observation = gh_pr_status_snapshot::collect_current(
-        number,
-        || collect_gh_pr_status(number),
-        collect_required_status_contexts,
-    )?;
+    let observation =
+        gh_pr_status_snapshot::collect_current(number, || collect_gh_pr_status(number))?;
     let pr = parse_gh_pr_status_pull_request(&observation.pr.to_string())?;
     let required_contexts = observation.contexts;
     let required_contexts_available = observation.contexts_available;
@@ -4010,31 +4007,6 @@ fn collect_gh_pr_status_with(
     let value = collect_gh_pr_status_json_with(number, run)?;
     parse_gh_pr_status_pull_request(&value.to_string())
 }
-fn collect_required_status_contexts(base_ref_name: &str) -> Result<Vec<String>, String> {
-    let repo_output = run_output("gh", &["repo", "view", "--json", "owner,name"])?;
-    let repo_value: Value = serde_json::from_str(&repo_output)
-        .map_err(|err| format!("failed to parse gh repo JSON: {err}"))?;
-    let owner = repo_value
-        .get("owner")
-        .and_then(|owner| owner.get("login"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("gh repo JSON is missing owner.login: {repo_value}"))?;
-    let name = repo_value
-        .get("name")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("gh repo JSON is missing name: {repo_value}"))?;
-    let branch = if base_ref_name.trim().is_empty() {
-        "main"
-    } else {
-        base_ref_name.trim()
-    };
-    let endpoint = format!(
-        "repos/{owner}/{name}/branches/{branch}/protection/required_status_checks/contexts"
-    );
-    let output = run_output_owned("gh", &["api".to_string(), endpoint])?;
-    parse_required_status_contexts(&output)
-}
-
 fn parse_gh_pr_status_pull_request(text: &str) -> Result<GhPrStatusPullRequest, String> {
     let item: Value =
         serde_json::from_str(text).map_err(|err| format!("failed to parse gh PR JSON: {err}"))?;
@@ -4045,8 +4017,8 @@ fn parse_gh_pr_status_pull_request(text: &str) -> Result<GhPrStatusPullRequest, 
     let checks = item
         .get("statusCheckRollup")
         .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
+        .ok_or("PR statusCheckRollup is missing or malformed; check evidence is unknown")?
+        .iter()
         .map(parse_pr_triage_check)
         .collect::<Vec<_>>();
     let reviews = item
@@ -4140,22 +4112,6 @@ fn gh_pr_approved_review_subject_missing(pr: &GhPrStatusPullRequest) -> bool {
         })
 }
 
-fn parse_required_status_contexts(text: &str) -> Result<Vec<String>, String> {
-    let value: Value = serde_json::from_str(text)
-        .map_err(|err| format!("failed to parse required status contexts JSON: {err}"))?;
-    let Some(items) = value.as_array() else {
-        return Err("required status contexts JSON must be an array".to_string());
-    };
-    let mut contexts = items
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    contexts.sort();
-    contexts.dedup();
-    Ok(contexts)
-}
-
 fn gh_pr_status_readiness(
     pr: &GhPrStatusPullRequest,
     required_contexts: &[String],
@@ -4164,6 +4120,17 @@ fn gh_pr_status_readiness(
 ) -> GhPrStatusReadiness {
     if gh_pr_approved_review_subject_missing(pr) {
         warnings.push(format!("APPROVED has no latest approval attributed to current head {}; review subjects are stale or unavailable", value_or_unknown(&pr.head_ref_oid)));
+    }
+    let unknown_checks = pr
+        .checks
+        .iter()
+        .filter(|check| gh_pr_check_unknown(check))
+        .collect::<Vec<_>>();
+    if !unknown_checks.is_empty() {
+        warnings.push(format!(
+            "{} check(s) have unknown identity or state; do not treat them as passed",
+            unknown_checks.len()
+        ));
     }
     let failed_checks = pr
         .checks
@@ -4182,8 +4149,8 @@ fn gh_pr_status_readiness(
         .iter()
         .filter(|check| pr_check_pending(check))
         .filter(|check| {
-            !required_contexts_available
-                || required_contexts
+            required_contexts_available
+                && required_contexts
                     .iter()
                     .any(|context| context.eq_ignore_ascii_case(&check.name))
         })
@@ -4224,6 +4191,7 @@ fn gh_pr_safe_next_action(
         || pr.review_decision.eq_ignore_ascii_case("REVIEW_REQUIRED")
         || !readiness.required_checks_outstanding.is_empty()
         || !readiness.pending_checks.is_empty()
+        || pr.checks.iter().any(gh_pr_check_unknown)
     {
         return "wait";
     }
@@ -4237,6 +4205,19 @@ fn gh_pr_safe_next_action(
         "DIRTY" => "inspect failure",
         _ => "inspect failure",
     }
+}
+
+fn gh_pr_check_unknown(check: &PrTriageCheck) -> bool {
+    if check.name.trim().is_empty() {
+        return true;
+    }
+    if pr_check_pending(check) || pr_check_failed(check) {
+        return false;
+    }
+    let status = check.status.to_ascii_uppercase();
+    let conclusion = check.conclusion.to_ascii_uppercase();
+    !matches!(status.as_str(), "COMPLETED" | "SUCCESS")
+        || !matches!(conclusion.as_str(), "SUCCESS" | "NEUTRAL" | "SKIPPED")
 }
 
 fn format_gh_pr_check_status(check: &PrTriageCheck) -> String {
@@ -4291,9 +4272,17 @@ fn gh_pr_status_markdown(
             required_contexts.len()
         ));
     } else {
-        body.push_str("- Required context lookup: unavailable; using status rollup only\n");
+        body.push_str("- Required contexts: unknown; status rollup alone does not identify every required check\n");
     }
-    append_markdown_list(&mut body, &readiness.required_checks_outstanding, "None");
+    append_markdown_list(
+        &mut body,
+        &readiness.required_checks_outstanding,
+        if readiness.required_contexts_available {
+            "None"
+        } else {
+            "Required-check classification and completeness are unknown"
+        },
+    );
 
     body.push_str("\n## Failed Checks\n\n");
     append_markdown_list(&mut body, &readiness.failed_checks, "None");
