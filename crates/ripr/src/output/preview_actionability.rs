@@ -107,17 +107,20 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
         // that and keep the specific per-finding reason.
         match scope_qualified_why(finding, specific) {
             Some(why) => why,
-            // The projection refuses a moved assertion selection before any
-            // packet exists, so no validator reason does; name that real
-            // cause instead of the generic packet-contract line.
-            None if finding.language != Some(LanguageId::Perl)
-                && super::typescript_packet_projection::typescript_moved_selection_blocker(
-                    finding,
-                )
-                .is_some() =>
-            {
+            // This branch runs only when the projection returned no packet, so
+            // the shared validator never ran and there is no validator reason
+            // to displace; `specific` is the classifier's generic evidence
+            // line. A moved assertion selection (RIPR-SPEC-0224) is a real,
+            // nameable cause behind that generic line, so lead with it. A
+            // repo-scope reason (above) still wins, and anything else keeps
+            // the evidence line.
+            None if finding.language != Some(LanguageId::Perl) => {
                 super::typescript_packet_projection::typescript_moved_selection_blocker(finding)
-                    .unwrap_or_default()
+                    .unwrap_or_else(|| {
+                        specific
+                            .unwrap_or("TypeScript preview lacks a complete repair packet contract")
+                            .to_string()
+                    })
             }
             None => specific
                 .unwrap_or("TypeScript preview lacks a complete repair packet contract")

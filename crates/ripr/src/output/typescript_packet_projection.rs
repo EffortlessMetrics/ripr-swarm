@@ -1463,8 +1463,8 @@ fn has_moved_assertion_selection(finding: &Finding) -> bool {
         .any(|line| line.starts_with("typescript_assertion_selection: "))
 }
 
-/// Plain-words account of a dynamic-assertion block (RIPR-SPEC-0085 §PR5) for
-/// the human surfaces: which test line holds the unresolved expected value and
+/// Plain-words account of a dynamic-assertion block (limit from RIPR-SPEC-0085
+/// §PR5; wording under RIPR-SPEC-0087) for the human surfaces: which test line holds the unresolved expected value and
 /// which matcher receives it. The raw limitation id stays in evidence only.
 pub(crate) fn typescript_dynamic_assertion_blocker(finding: &Finding) -> Option<String> {
     let sample = finding.evidence.iter().find_map(|line| {
@@ -1490,10 +1490,15 @@ pub(crate) fn typescript_dynamic_assertion_blocker(finding: &Finding) -> Option<
     })
 }
 
-/// Plain-words account of the moved-assertion-selection refusal
-/// (RIPR-SPEC-0224): related tests whose assertions all check other behavior
+/// Plain-words account of the moved-assertion-selection refusal (guard from
+/// RIPR-SPEC-0224; wording under RIPR-SPEC-0087): related tests whose assertions all check other behavior
 /// make the target test ambiguous, so no packet is projected.
 pub(crate) fn typescript_moved_selection_blocker(finding: &Finding) -> Option<String> {
+    // A named limitation refuses projection before the selection guard, so it
+    // is the first cause; do not name the later guard in its place.
+    if has_named_typescript_limitation(finding) {
+        return None;
+    }
     let names: Vec<&str> = finding
         .evidence
         .iter()
@@ -1504,13 +1509,13 @@ pub(crate) fn typescript_moved_selection_blocker(finding: &Finding) -> Option<St
         })
         .collect();
     let first = names.first()?;
-    let more = if names.len() > 1 {
-        format!(" and {} more", names.len() - 1)
+    let (more, verb) = if names.len() > 1 {
+        (format!(" and {} more", names.len() - 1), "assert")
     } else {
-        String::new()
+        (String::new(), "asserts")
     };
     Some(format!(
-        "related test `{first}`{more} asserts a different kind of behavior than this change, so ripr cannot safely choose which test to edit"
+        "related test `{first}`{more} {verb} a different kind of behavior than this change, so ripr cannot safely choose which test to edit"
     ))
 }
 
@@ -1828,8 +1833,21 @@ pub(crate) mod tests {
         );
         let text = typescript_advisory_blocker(&moved)
             .ok_or_else(|| "moved selection must read a blocker".to_string())?;
-        if !text.contains("`throws on bad input` and 1 more") || text.contains("no_predicate") {
+        if !text.contains("`throws on bad input` and 1 more")
+            || !text.contains(" 1 more assert a different")
+            || text.contains("no_predicate")
+        {
             return Err(format!("unexpected moved blocker: {text}"));
+        }
+        let mut single = complete_finding();
+        single.evidence.push(
+            "typescript_assertion_selection: no_predicate_relevant_assertion (only one)"
+                .to_string(),
+        );
+        let text = typescript_advisory_blocker(&single)
+            .ok_or_else(|| "single moved selection must read a blocker".to_string())?;
+        if !text.contains("`only one` asserts a different") {
+            return Err(format!("singular wording must use `asserts`: {text}"));
         }
         // The blocker is wording only: the guard still refuses the packet.
         if typescript_gap_record_for(&moved).is_some() {

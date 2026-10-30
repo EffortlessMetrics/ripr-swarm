@@ -119,7 +119,7 @@
         "verify": {
           "command": null
         },
-        "why_not_actionable": "related test `empty user throws exact message` and 2 more asserts a different kind of behavior than this change, so ripr cannot safely choose which test to edit"
+        "why_not_actionable": "related test `empty user throws exact message` and 2 more assert a different kind of behavior than this change, so ripr cannot safely choose which test to edit"
       },
       "preview_actionability": {
         "actionability_category": "missing_target_shape",
@@ -151,7 +151,7 @@
         "repair_packet_ready": false,
         "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
         "unlock_condition": null,
-        "why_not_actionable": "related test `empty user throws exact message` and 2 more asserts a different kind of behavior than this change, so ripr cannot safely choose which test to edit"
+        "why_not_actionable": "related test `empty user throws exact message` and 2 more assert a different kind of behavior than this change, so ripr cannot safely choose which test to edit"
       },
       "stop_reasons": [],
       "oracle_kind": "unknown",

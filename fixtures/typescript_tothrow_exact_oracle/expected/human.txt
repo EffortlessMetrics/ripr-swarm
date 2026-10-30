@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this TypeScript preview finding's repair packet is not ready (related test `empty user throws exact message` and 2 more asserts a different kind of behavior than this change, so ripr cannot safely choose which test to edit); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: this TypeScript preview finding's repair packet is not ready (related test `empty user throws exact message` and 2 more assert a different kind of behavior than this change, so ripr cannot safely choose which test to edit); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
   File: src/parser.ts:11
   Language: typescript
   Language status: preview
@@ -44,7 +44,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_tothrow_exact_oracle/input --diff <cwd>/fixtures/typescript_tothrow_exact_oracle/diff.patch --mode fast probe:src_parser.ts:typescript_preview:c440ffa1
   ripr context --root <cwd>/fixtures/typescript_tothrow_exact_oracle/input --diff <cwd>/fixtures/typescript_tothrow_exact_oracle/diff.patch --mode fast --at probe:src_parser.ts:typescript_preview:c440ffa1
-  no repair start offered: ripr has no complete repair packet for this TypeScript finding (related test `empty user throws exact message` and 2 more asserts a different kind of behavior than this change, so ripr cannot safely choose which test to edit); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`
+  no repair start offered: ripr has no complete repair packet for this TypeScript finding (related test `empty user throws exact message` and 2 more assert a different kind of behavior than this change, so ripr cannot safely choose which test to edit); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`
 
 More:
   Full evidence: rerun with --format human-full
