@@ -3206,7 +3206,7 @@ fn repair_after_trusted_surface_recovery_lines(
         attempt.gap_base.as_deref(),
     );
     vec![
-        format!("attempt `{attempt_id}` stayed within the test files, but ripr could not accept its result: {error}."),
+        format!("attempt `{attempt_id}` changed only the files the repair allows, but ripr could not accept its result: {error}."),
         "a tracked file outside the test files differs from where the attempt started: most often a source change that was uncommitted when the attempt started, or a source edit made during the repair, and ripr cannot count either as part of this attempt.".to_string(),
         format!(
             "to recover: first inspect what moved (`git diff -- <path>`). If the named file was already modified before the attempt started, commit that change (`git commit -- <path>`); if it changed during the loop, set it aside without losing it (`git stash`). Only `git checkout {} -- <path>` restores the before-phase content, and it discards uncommitted work irrecoverably, so run it only when the change is disposable. Then start a new attempt: set your test edit aside (`git stash`), run `{restart}` while the gap still exists, restore the test edit (`git stash pop`), and run the new --attempt command it prints.",

@@ -1001,7 +1001,7 @@ fn finished_attempt_warnings(
                 kind: "repair_receipt_unconfirmed".to_string(),
                 artifact: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
                 message: format!(
-                    "repair `{}` (gap `{}`) stayed within the test files, but {}; status does not report the loop complete{}{}",
+                    "repair `{}` (gap `{}`) changed only the files the repair allows, but {}; status does not report the loop complete{}{}",
                     attempt.attempt_id,
                     attempt.seam_id,
                     unconfirmed_receipt_reason(attempt),
@@ -1262,7 +1262,7 @@ fn select_next_command(
                     refused_after_phase_reason(&attempt.attempt_id, &attempt.seam_id, refusal)
                 }
                 None => format!(
-                    "repair attempt `{}` for seam `{}` is awaiting the focused test edit; once the test is in place, run the after phase its before phase recorded",
+                    "repair `{}` for gap `{}` is waiting for your test; once the test is in place, run the next command the repair printed",
                     attempt.attempt_id, attempt.seam_id
                 ),
             };
@@ -3204,12 +3204,12 @@ fn refused_after_phase_reason(id: &str, seam: &str, refusal: &AgentStatusAfterRe
     let reason = refusal.reason.trim_end_matches('.');
     if refusal.retry_budget_exhausted {
         return format!(
-            "the after phase of repair attempt `{id}` for seam `{seam}` was refused {} times and its retry budget is spent; the latest refusal was: {reason}. Stop retrying this attempt: its after phase now refuses without running. Inspect the recorded refusal history in the attempt manifest, fix the cause, then start a new attempt while the gap is still open",
+            "the last step of repair `{id}` for gap `{seam}` was refused {} times and its retry limit is used up; the latest refusal was: {reason}. Stop retrying this repair: it now refuses without running. Inspect the recorded refusal history in the repair's manifest, fix the cause, then start a new repair while the gap is still open",
             refusal.refusal_count
         );
     }
     format!(
-        "the last after phase of repair attempt `{id}` for seam `{seam}` was refused: {reason} (refusal {} of a {}-refusal retry budget). The attempt still awaits the focused test edit; the command below repeats that after phase and refuses again until the cause the refusal names is resolved",
+        "the last step of repair `{id}` for gap `{seam}` was refused: {reason} (refusal {} of a {}-refusal retry limit). The repair still waits for your test; the command below repeats that step and refuses again until the cause the refusal names is resolved",
         refusal.refusal_count,
         crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
     )
@@ -3226,7 +3226,7 @@ fn after_attempt_command(
     let reason = match &view.last_after_refusal {
         Some(refusal) => refused_after_phase_reason(id, seam, refusal),
         None => format!(
-            "repair attempt `{id}` for seam `{seam}` is awaiting the focused test edit; once the test is in place, run the after phase its before phase recorded"
+            "repair `{id}` for gap `{seam}` is waiting for your test; once the test is in place, run the next command the repair printed"
         ),
     };
     AgentStatusCommand {

@@ -30,8 +30,9 @@ edit a tracked source file first; new files need git add -N PATH.
 
 The loop is: ripr names one gap -> you add one focused test -> ripr records
 whether the gap closed. `ripr repair` needs your source change committed
-first (git commit), so it can tell your new test apart from it. `ripr.toml` is optional; the zero-config run is the
-intended first interface.
+first (git commit), so it can tell your new test apart from it.
+`ripr.toml` is optional; the zero-config run is the intended first
+interface.
 
 What are you trying to do?
   Diagnose setup        ripr doctor

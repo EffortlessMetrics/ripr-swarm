@@ -9831,7 +9831,7 @@ fn agent_repair_refuses_a_tracked_cargo_lock_change_between_the_phases()
         let stderr = String::from_utf8_lossy(&after.stderr);
         assert!(
             stderr.contains(&format!(
-                "ripr: analysis inputs changed after the before phase: {changed_input}."
+                "ripr: analysis inputs changed after the repair started: {changed_input}."
             )),
             "{scenario}: the refusal must name the changed input:\n{stderr}"
         );
@@ -28510,7 +28510,7 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(
-        stderr.contains("ripr: analysis inputs changed after the before phase: Cargo.toml."),
+        stderr.contains("ripr: analysis inputs changed after the repair started: Cargo.toml."),
         "precondition: the after phase names the changed input:\n{stderr}"
     );
     let document: serde_json::Value = serde_json::from_slice(&refused.stdout)?;
@@ -28518,7 +28518,8 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
     assert!(
         json_strings(&document["narration"])
             .iter()
-            .any(|line| line.contains("analysis inputs changed after the before phase: Cargo.toml")),
+            .any(|line| line
+                .contains("analysis inputs changed after the repair started: Cargo.toml")),
         "{document:#}"
     );
 
@@ -28529,7 +28530,7 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
         .to_string();
     for needle in [
         "analysis input identities differ",
-        "Analysis inputs changed after the before phase: Cargo.toml",
+        "Analysis inputs changed after the repair started: Cargo.toml",
         "To recover: restore those files to their before-phase state",
     ] {
         assert!(recorded.contains(needle), "lacks `{needle}`: {recorded}");
@@ -28549,7 +28550,7 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
     );
     assert!(
         repair_route_markdown(&root)?
-            .contains("Analysis inputs changed after the before phase: Cargo.toml"),
+            .contains("Analysis inputs changed after the repair started: Cargo.toml"),
         "the Markdown view must carry the named cause"
     );
 

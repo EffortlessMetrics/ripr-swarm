@@ -2078,8 +2078,9 @@ pub(crate) fn edit_cage_policy_from_packet(
     packet: &str,
     seam_id: &str,
 ) -> Result<EditCagePolicy, String> {
-    let value: serde_json::Value = serde_json::from_str(packet)
-        .map_err(|error| format!("decode repair packet for edit cage failed: {error}"))?;
+    let value: serde_json::Value = serde_json::from_str(packet).map_err(|error| {
+        format!("decode repair packet for the allowed-files check failed: {error}")
+    })?;
     if value.get("packets").is_none()
         && value.get("seam_id").and_then(serde_json::Value::as_str) != Some(seam_id)
     {
@@ -2152,7 +2153,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         && is_inline_test_module_candidate(selected_target_text);
     if !is_test_surface_path(selected_target_text) && !inline_test_module_target {
         return Err(format!(
-            "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a production file is never the authored edit target and no edit cage is constructed",
+            "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never the test to edit, so no allowed-files list is built",
             test_surface_requirement()
         ));
     }
@@ -4366,7 +4367,7 @@ mod tests {
         for needle in [
             "src/production.py",
             "is not a test surface",
-            "no edit cage is constructed",
+            "no allowed-files list is built",
         ] {
             if !error.contains(needle) {
                 return Err(format!("refusal did not name `{needle}`: {error}"));
