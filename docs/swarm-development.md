@@ -319,6 +319,8 @@ copying a slice alone cannot establish those graph or tree guarantees. A slice
 can be withdrawn by agreement and branch cleanup after its evidence is retained;
 that does not undo an already integrated result.
 
+### Constructing the promotion join
+
 The source promotion is a history-preserving join, not a tree copy. The
 commands below show the required graph: the source parent first and the
 selected swarm parent second.
