@@ -1345,6 +1345,93 @@ fn check_findings_public_renderer_binds_analyzed_config() -> Result<(), String> 
 
 #[cfg(all(feature = "lang-typescript", feature = "lang-perl"))]
 #[test]
+fn check_findings_binds_perl_language_selection_without_packet() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "language-identity",
+        Some("[languages]\nenabled = [\"typescript\"]\n"),
+    )?;
+    let root_arg = root.to_string_lossy();
+    let base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    let produce = || -> Result<(serde_json::Value, Vec<u8>), String> {
+        let output = ripr_output(
+            &decoy,
+            &[
+                "check",
+                "--root",
+                &root_arg,
+                "--base",
+                &base,
+                "--format",
+                "check-findings-json",
+            ],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "producer: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        if value["findings"].as_array().is_none_or(Vec::is_empty) {
+            return Err(format!("expected nonempty findings: {value}"));
+        }
+        Ok((value, output.stdout))
+    };
+    let (before, before_bytes) = produce()?;
+    assert_eq!(before["analysis_outcome"]["analysis_complete"], true);
+    let snapshot_dir = root.join("target/ripr");
+    std::fs::create_dir_all(&snapshot_dir).map_err(|e| e.to_string())?;
+    let before_path = snapshot_dir.join("before-languages.json");
+    std::fs::write(&before_path, before_bytes).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("marker.txt"), "next\n").map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "marker.txt"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "next"])?;
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"typescript\", \"perl\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let (after, after_bytes) = produce()?;
+    assert_eq!(after["analysis_outcome"]["analysis_complete"], false);
+    assert_ne!(
+        before["artifact"]["analysis"]["input_identity"],
+        after["artifact"]["analysis"]["input_identity"],
+        "Perl selection must move identity even without packet-specific config changes"
+    );
+    let after_path = snapshot_dir.join("after-languages.json");
+    std::fs::write(&after_path, after_bytes).map_err(|e| e.to_string())?;
+    let verify = ripr_output(
+        &decoy,
+        &[
+            "agent",
+            "verify",
+            "--json",
+            "--root",
+            &root_arg,
+            "--before",
+            &before_path.to_string_lossy(),
+            "--after",
+            &after_path.to_string_lossy(),
+        ],
+    )?;
+    if verify.status.success() {
+        return Err("different language sets were accepted".to_string());
+    }
+    need(
+        &String::from_utf8_lossy(&verify.stderr),
+        "incomplete",
+        "missing Perl packet",
+    )?;
+    decoy_untouched(&decoy)
+}
+
+#[cfg(all(feature = "lang-typescript", feature = "lang-perl"))]
+#[test]
 fn check_findings_refuses_consumed_perl_packet() -> Result<(), String> {
     let (_guard, root, decoy) = materialize(
         "blind_journey_installed_typescript",
