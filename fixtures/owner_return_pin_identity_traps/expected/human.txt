@@ -39,9 +39,8 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_identity_traps/input --diff <cwd>/fixtures/owner_return_pin_identity_traps/diff.patch --mode fast probe:src_lib.rs:return_value:22c1d265
   ripr context --root <cwd>/fixtures/owner_return_pin_identity_traps/input --diff <cwd>/fixtures/owner_return_pin_identity_traps/diff.patch --mode fast --at probe:src_lib.rs:return_value:22c1d265
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the whole seam and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the whole seam) and ripr does not start a repair on conflicting evidence; follow the Next step above
 No test stub here: the owner is a trait default method or nested function, sits in an impl local to a block or whose self type is not a plain path, sits behind a cfg a plain `cargo test` build may not enable, or takes a typed `self` receiver
-Write this test by hand: call the function with an input that reaches the changed line and assert the exact value it returns. ripr has no repair route for this kind of change yet, so there is no command to run; add the test, then rerun `ripr check`.
 
 Hidden:
   5 finding(s) omitted: 3 lower-priority, 2 base-side evidence (not candidate edit targets).

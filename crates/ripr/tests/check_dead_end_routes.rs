@@ -84,7 +84,7 @@ impl Repo {
 
     /// Run every printed `ripr agent stub ...` command (not its PowerShell
     /// spelling) and require it to succeed. Returns how many were printed.
-    fn every_printed_stub_succeeds(&self, check: &str) -> Result<usize, String> {
+    fn printed_stub_count(&self, check: &str) -> Result<usize, String> {
         Ok(self.printed_stub_outputs(check)?.len())
     }
 
@@ -194,7 +194,7 @@ fn async_gap_with_no_route_says_to_write_the_test_by_hand() -> Result<(), String
         check.contains("run the future it returns to completion"),
         "an async owner's test must await the future, not call the function plainly:\n{check}"
     );
-    assert_eq!(repo.every_printed_stub_succeeds(&check)?, 0);
+    assert_eq!(repo.printed_stub_count(&check)?, 0);
     Ok(())
 }
 
@@ -210,7 +210,7 @@ fn side_effect_gap_with_no_route_says_to_write_the_test_by_hand() -> Result<(), 
         check.contains(HAND_WRITTEN) && check.contains(NO_ROUTE),
         "check must name the hand-written test and the missing route:\n{check}"
     );
-    assert_eq!(repo.every_printed_stub_succeeds(&check)?, 0);
+    assert_eq!(repo.printed_stub_count(&check)?, 0);
     Ok(())
 }
 
@@ -226,7 +226,7 @@ fn generic_gap_with_a_repair_start_is_not_told_there_is_no_route() -> Result<(),
         !check.contains(NO_ROUTE),
         "a finding with a repair start has a route:\n{check}"
     );
-    assert_eq!(repo.every_printed_stub_succeeds(&check)?, 0);
+    assert_eq!(repo.printed_stub_count(&check)?, 0);
     Ok(())
 }
 
@@ -239,7 +239,7 @@ fn field_gap_with_two_seams_prints_only_the_stub_that_works() -> Result<(), Stri
         "the unchanged field's seam is not offered as a choice:\n{check}"
     );
     assert_eq!(
-        repo.every_printed_stub_succeeds(&check)?,
+        repo.printed_stub_count(&check)?,
         1,
         "exactly the changed field's stub is printed:\n{check}"
     );
@@ -286,7 +286,7 @@ fn hidden_row_stub_command_runs_and_succeeds() -> Result<(), String> {
         "precondition, the hidden row offers its one validated stub as a choice:\n{check}"
     );
     assert_eq!(
-        repo.every_printed_stub_succeeds(&hidden)?,
+        repo.printed_stub_count(&hidden)?,
         1,
         "the hidden row's printed stub command must run and succeed:\n{check}"
     );

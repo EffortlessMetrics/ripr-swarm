@@ -461,7 +461,10 @@ pub(crate) fn render_human_triage(
                                     | RepairRouteRefusal::FindingAlreadyExposed
                             )
                         );
-                        if !repair_printed && !already_noticed {
+                        // A seam the inventory does not report as a gap has
+                        // nothing to write a test for; the line above says so.
+                        let not_a_gap = reason == TestStubRefusal::NotAGap.reason();
+                        if !repair_printed && !already_noticed && !not_a_gap {
                             out.push_str(&hand_written_test_step(finding, reason));
                         }
                     }

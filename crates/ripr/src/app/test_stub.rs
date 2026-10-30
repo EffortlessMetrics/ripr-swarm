@@ -395,8 +395,17 @@ pub(crate) enum StubRouteDecision {
 /// withheld.
 const AMBIGUOUS_VALIDATION_LIMIT: usize = 8;
 
-/// Why `ripr agent stub --seam-id <id>` would refuse, or `None` when it
-/// produces a stub. This is the resolution `resolve_test_stub` runs for a seam
+/// What `ripr agent stub --seam-id <id>` does for one seam. A weak-oracle
+/// result is its own outcome: the stub refuses because an existing test needs
+/// its assertion fixed, which is not a "write one by hand" refusal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SeamStubOutcome {
+    Stub,
+    Refused(String),
+    WeakOracle(String),
+}
+
+/// What `ripr agent stub --seam-id <id>` does for one seam. This is the resolution `resolve_test_stub` runs for a seam
 /// ID (`resolution_for` over the classified inventory), not a second
 /// validator, so a command printed on `Ok` is a command that succeeds.
 fn seam_stub_refusal(
@@ -404,22 +413,66 @@ fn seam_stub_refusal(
     config: &RiprConfig,
     classified: &[ClassifiedSeam],
     seam_id: &str,
-) -> Option<String> {
+) -> SeamStubOutcome {
     let Some(entry) = classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
     else {
-        return Some(TestStubRefusal::NotAGap.reason().to_string());
+        return SeamStubOutcome::Refused(TestStubRefusal::NotAGap.reason().to_string());
     };
     let source = match read_owner_source(root, &entry.seam) {
         Ok(source) => source,
-        Err(error) => return Some(format!("{error:?}")),
+        Err(error) => return SeamStubOutcome::Refused(format!("{error:?}")),
     };
     let resolution = resolution_for(root, config, entry, source);
-    match (resolution.outcome, resolution.weak_oracle_guidance) {
-        (Err(refusal), _) => Some(refusal.reason().to_string()),
-        (Ok(_), Some(guidance)) => Some(guidance),
-        (Ok(_), None) => None,
+    // The weak-oracle guidance wins, as it does in `agent stub` itself.
+    match (resolution.weak_oracle_guidance, resolution.outcome) {
+        (Some(guidance), _) => SeamStubOutcome::WeakOracle(guidance),
+        (None, Err(refusal)) => SeamStubOutcome::Refused(refusal.reason().to_string()),
+        (None, Ok(_)) => SeamStubOutcome::Stub,
+    }
+}
+
+/// Fold the per-seam outcomes into one route decision. When no seam produces
+/// a stub, all-weak-oracle candidates are a `WeakOracle` decision (strengthen
+/// the existing test; no hand-written step follows), otherwise the first
+/// hard refusal is shown.
+fn fold_seam_outcomes(
+    outcomes: Vec<(String, SeamStubOutcome)>,
+    reason: String,
+    narrowed: bool,
+) -> StubRouteDecision {
+    let mut stubbable = Vec::new();
+    let mut first_refusal = None;
+    let mut first_weak = None;
+    for (seam_id, outcome) in outcomes {
+        match outcome {
+            SeamStubOutcome::Stub => stubbable.push(seam_id),
+            SeamStubOutcome::Refused(why) => {
+                first_refusal.get_or_insert(why);
+            }
+            SeamStubOutcome::WeakOracle(guidance) => {
+                first_weak.get_or_insert(guidance);
+            }
+        }
+    }
+    match stubbable.len() {
+        0 => match (first_weak, first_refusal) {
+            (Some(guidance), None) => StubRouteDecision::WeakOracle { guidance },
+            (_, Some(why)) => StubRouteDecision::Refused { reason: why },
+            (None, None) => StubRouteDecision::Refused { reason },
+        },
+        // Only a seam tied to the finding's changed expression is printed as
+        // the one command. When the expression did not pick a seam, a lone
+        // survivor is still just one of the seams on the line (it may be the
+        // unchanged field), so it stays a choice.
+        1 if narrowed => StubRouteDecision::SeamStub {
+            seam_id: stubbable.swap_remove(0),
+        },
+        _ => StubRouteDecision::Ambiguous {
+            reason,
+            seam_ids: stubbable,
+        },
     }
 }
 
@@ -467,30 +520,14 @@ fn narrowed_ambiguity(
     else {
         return withheld(reason);
     };
-    let mut stubbable = Vec::new();
-    let mut first_refusal = None;
-    for seam_id in &candidates {
-        match seam_stub_refusal(root, config, &classified, seam_id) {
-            None => stubbable.push(seam_id.clone()),
-            Some(why) => {
-                first_refusal.get_or_insert(why);
-            }
-        }
-    }
-    match stubbable.len() {
-        0 => withheld(first_refusal.unwrap_or(reason)),
-        // Only a seam tied to the finding's changed expression is printed as
-        // the one command. When the expression did not pick a seam, a lone
-        // survivor is still just one of the seams on the line (it may be the
-        // unchanged field), so it stays a choice.
-        1 if narrowed => StubRouteDecision::SeamStub {
-            seam_id: stubbable.swap_remove(0),
-        },
-        _ => StubRouteDecision::Ambiguous {
-            reason,
-            seam_ids: stubbable,
-        },
-    }
+    let outcomes = candidates
+        .into_iter()
+        .map(|seam_id| {
+            let outcome = seam_stub_refusal(root, config, &classified, &seam_id);
+            (seam_id, outcome)
+        })
+        .collect();
+    fold_seam_outcomes(outcomes, reason, narrowed)
 }
 
 /// A route decision bound to the finding it was computed for.
@@ -1914,6 +1951,46 @@ mod tests {
             "a strongly gripped seam must not print a stub command: {decision:?}"
         );
         Ok(())
+    }
+
+    /// A narrowed seam that is weak-oracle (not a hard refusal) must not
+    /// become a plain `Refused`, which would print the hand-written step.
+    #[test]
+    fn fold_keeps_weak_oracle_distinct_from_refusal() {
+        let weak = |id: &str| (id.to_string(), SeamStubOutcome::WeakOracle("fix it".into()));
+        let hard = |id: &str| (id.to_string(), SeamStubOutcome::Refused("no".into()));
+        let ok = |id: &str| (id.to_string(), SeamStubOutcome::Stub);
+        let why = || "several".to_string();
+        assert_eq!(
+            fold_seam_outcomes(vec![weak("a")], why(), true),
+            StubRouteDecision::WeakOracle {
+                guidance: "fix it".into()
+            }
+        );
+        assert_eq!(
+            fold_seam_outcomes(vec![weak("a"), weak("b")], why(), false),
+            StubRouteDecision::WeakOracle {
+                guidance: "fix it".into()
+            }
+        );
+        assert_eq!(
+            fold_seam_outcomes(vec![weak("a"), hard("b")], why(), false),
+            StubRouteDecision::Refused {
+                reason: "no".into()
+            }
+        );
+        assert_eq!(
+            fold_seam_outcomes(vec![hard("a")], why(), true),
+            StubRouteDecision::Refused {
+                reason: "no".into()
+            }
+        );
+        assert_eq!(
+            fold_seam_outcomes(vec![weak("a"), ok("b")], why(), true),
+            StubRouteDecision::SeamStub {
+                seam_id: "b".into()
+            }
+        );
     }
 
     #[cfg(feature = "lang-rust")]
