@@ -288,6 +288,27 @@ fn parse_pilot_timeout_ms(value: &str) -> Result<Option<u64>, String> {
     }
 }
 
+/// The pilot step's argv. An explicit deadline is a hard limit with no
+/// automatic extension, exactly as `ripr pilot --timeout-ms` (#11205).
+fn pilot_argv(timeout_ms: Option<u64>) -> Vec<String> {
+    let mut argv = args(&[
+        "pilot",
+        "--root",
+        ".",
+        "--out",
+        "target/ripr/pilot",
+        "--mode",
+        "ready",
+        "--max-seams",
+        "5",
+    ]);
+    if let Some(ms) = timeout_ms {
+        argv.push("--timeout-ms".to_string());
+        argv.push(ms.to_string());
+    }
+    argv
+}
+
 /// How a retired step's failure counted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Role {
@@ -496,23 +517,7 @@ impl PacketRun {
             Role::Advisory,
             true,
             |run| {
-                let mut argv = args(&[
-                    "pilot",
-                    "--root",
-                    ".",
-                    "--out",
-                    "target/ripr/pilot",
-                    "--mode",
-                    "ready",
-                    "--max-seams",
-                    "5",
-                ]);
-                // An explicit deadline is a hard limit with no automatic
-                // extension, exactly as `ripr pilot --timeout-ms` (#11205).
-                if let Some(ms) = run.settings.pilot_timeout_ms {
-                    argv.push("--timeout-ms".to_string());
-                    argv.push(ms.to_string());
-                }
+                let argv = pilot_argv(run.settings.pilot_timeout_ms);
                 run.ripr(&argv)
             },
         );
@@ -2191,6 +2196,25 @@ mod tests {
             "ripr pilot --root . --out target/ripr/pilot --mode ready --max-seams 5 --timeout-ms 900000"
         );
         Ok(())
+    }
+
+    #[test]
+    fn pilot_deadline_is_a_distinct_argv_pair_with_the_exact_value() {
+        let base = args(&[
+            "pilot",
+            "--root",
+            ".",
+            "--out",
+            "target/ripr/pilot",
+            "--mode",
+            "ready",
+            "--max-seams",
+            "5",
+        ]);
+        assert_eq!(pilot_argv(None), base);
+        let mut with = base;
+        with.extend(args(&["--timeout-ms", "900000"]));
+        assert_eq!(pilot_argv(Some(900_000)), with);
     }
 
     #[test]

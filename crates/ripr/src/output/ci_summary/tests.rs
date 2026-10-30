@@ -427,6 +427,9 @@ fn a_pilot_deadline_is_named_as_the_cause_of_the_missing_artifacts() -> TestResu
     ] {
         assert!(block.contains(line), "missing {line:?} in:\n{block}");
     }
+    // One explanation per summary: the pilot report embedded further down is
+    // the producer's own text and does not repeat this notice.
+    assert_eq!(summary.matches("- Pilot deadline:").count(), 1, "{summary}");
     // The cause leads the downstream `missing_artifact` state it explains.
     let deadline = block.find("- Pilot deadline:").ok_or("no deadline line")?;
     let missing = block

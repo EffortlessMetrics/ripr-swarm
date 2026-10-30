@@ -1528,6 +1528,20 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
     assert!(json.contains("--timeout-ms 120000"));
 }
 
+/// #11205: the CI step summary names a pilot deadline from exactly these
+/// producer fields (`status`, `reason`, numeric `timeout_ms`); renaming one
+/// here must fail this test instead of silently silencing that notice.
+#[test]
+fn timeout_summary_json_carries_the_fields_the_ci_summary_reads() -> Result<(), String> {
+    let artifacts = pilot_artifacts();
+    let json = render_pilot_timeout_summary_json(pilot_context(&artifacts));
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    assert_eq!(value["status"], "partial");
+    assert_eq!(value["reason"], "timeout");
+    assert!(value["timeout_ms"].as_u64().is_some(), "{json}");
+    Ok(())
+}
+
 #[test]
 fn timeout_summary_json_records_loaded_config_path() {
     let artifacts = pilot_artifacts();
