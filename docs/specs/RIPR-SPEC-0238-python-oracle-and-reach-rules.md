@@ -443,12 +443,12 @@ This order is the existing behavior and is normative:
   binding the root, is spelled `pytest.mark.parametrize` or
   `mark.parametrize`. An import root counts only when the module binds it
   exactly once (that import) and the enclosing class body does not bind
-  it, and a dynamic writer (`setattr`, `globals()`, `patch`) does not unsettle
-  the module: a writer name that only appears in an `import` statement
-  (`from unittest.mock import patch`) is not a write, while an aliased
-  import, a call or a decorator using it still is (#11102); a canonical spelling whose root is not pinned that way (another
-  library's `mark`, a rebound or class-local root) leaves every argname
-  unsettled. A bare decorator name (`@cases`), the mark's callee
+  it, and the module has no dynamic writer (`setattr`, `globals()`,
+  `patch`). A writer name that only appears in an `import` statement
+  (`from unittest.mock import patch`) is not a write; an aliased import, a
+  call or a decorator using it still is (#11102); a canonical spelling whose root is not pinned that way
+  (another library's `mark`, a rebound or class-local root) leaves every
+  argname unsettled. A bare decorator name (`@cases`), the mark's callee
   (`parametrize = pytest.mark.parametrize`), argnames and `indirect` may
   each be one module-scope `NAME = <value>` binding that nothing in the
   module rebinds, bound before the test and not shadowed by the enclosing
