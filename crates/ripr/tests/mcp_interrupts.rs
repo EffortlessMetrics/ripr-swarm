@@ -222,6 +222,28 @@ fn own_children() -> Result<BTreeSet<u32>, String> {
     Ok(children)
 }
 
+/// Best-effort `comm` plus truncated argument text for a failure receipt. A
+/// reparented zombie still exposes `comm`; `cmdline` is typically empty by
+/// then. Reads are bounded and their absence never blocks cleanup.
+fn describe_unregistered_child(process: &PinnedProcess) -> String {
+    let comm = std::fs::read_to_string(format!("/proc/{}/comm", process.pid))
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_else(|_| "unknown".to_owned());
+    let mut arguments = Vec::new();
+    if let Ok(bytes) = std::fs::read(format!("/proc/{}/cmdline", process.pid)) {
+        arguments = bytes[..bytes.len().min(512)]
+            .split(|byte| *byte == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| String::from_utf8_lossy(part).into_owned())
+            .collect();
+    }
+    if arguments.is_empty() {
+        comm
+    } else {
+        format!("{comm} {}", arguments.join(" "))
+    }
+}
+
 /// Recover a fixture descendant whose normal marker/pidfd handshake failed.
 /// Known handles have already been stopped and their explicit waits finished.
 /// Before signalling, PIDFD + successful non-reaping waitid prove the target
@@ -259,6 +281,10 @@ fn settle_unregistered_children() -> Result<(), String> {
                     continue;
                 }
             };
+            // Diagnostic identity for the failure receipt. The pidfd pins the
+            // process, so this describes the discovered child and cannot race
+            // a PID reuse; it never grants or gates signal authority.
+            let identity = describe_unregistered_child(&process);
             let observed = match waitid(
                 WaitId::PidFd(process.descriptor.as_fd()),
                 WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
@@ -266,7 +292,7 @@ fn settle_unregistered_children() -> Result<(), String> {
                 Ok(observed) => observed,
                 Err(error) => {
                     receipts.push(format!(
-                        "child {pid}: custody query {error}; no signal sent"
+                        "child {pid} ({identity}): custody query {error}; no signal sent"
                     ));
                     continue;
                 }
@@ -274,7 +300,7 @@ fn settle_unregistered_children() -> Result<(), String> {
             if observed.is_none()
                 && let Err(error) = process.signal(Signal::KILL)
             {
-                receipts.push(format!("child {pid}: {error}"));
+                receipts.push(format!("child {pid} ({identity}): {error}"));
             }
             loop {
                 match waitid(
@@ -283,7 +309,7 @@ fn settle_unregistered_children() -> Result<(), String> {
                 ) {
                     Ok(Some(status)) => {
                         receipts.push(format!(
-                            "child {pid} reaped: exit={:?}, signal={:?}",
+                            "child {pid} ({identity}) reaped: exit={:?}, signal={:?}",
                             status.exit_status(),
                             status.terminating_signal()
                         ));
