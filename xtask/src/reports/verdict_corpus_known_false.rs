@@ -460,11 +460,31 @@ pub(crate) fn apply_known_false_gate(
     if let Err(failure) = missed_credit_gate(&missed_credit(rows), &ledger, &label) {
         failures.push(failure);
     }
-    failures.extend(growth_gate(dir, &ledger, &label)?);
     if failures.is_empty() {
         return Ok(existing);
     }
     let failure = failures.join("\n");
+    Ok(Some(match existing {
+        Some(existing) => format!("{existing}\n{failure}"),
+        None => failure,
+    }))
+}
+
+/// Join the growth gate's failure to `existing`. Kept apart from
+/// [`apply_known_false_gate`], which scores rows without git, so a caller with
+/// no history (a unit test, a shallow checkout) is not a growth check.
+pub(crate) fn apply_growth_gate(
+    dir: &Path,
+    subset: bool,
+    existing: Option<String>,
+) -> Result<Option<String>, String> {
+    if subset || !dir.join(coverage::LEDGER_FILE).is_file() {
+        return Ok(existing);
+    }
+    let ledger = coverage::load_ledger(dir)?;
+    let Some(failure) = growth_gate(dir, &ledger, &coverage::ledger_label(dir))? else {
+        return Ok(existing);
+    };
     Ok(Some(match existing {
         Some(existing) => format!("{existing}\n{failure}"),
         None => failure,
