@@ -1838,6 +1838,21 @@ mod tests {
     }
 
     #[test]
+    fn gap_binding_over_a_non_findings_after_snapshot_names_the_after_artifact() {
+        let error = verify_gap_closure(
+            Path::new("."),
+            r#"{"artifact":{"kind":"check_findings"}}"#,
+            r#"{"artifact":{"kind":"repo_exposure"}}"#,
+            "gap:a",
+        );
+        assert_eq!(
+            error.map(|closure| closure.after_classification),
+            Err("agent verify --gap-id requires `check-findings-json` snapshots; the after artifact is not one"
+                .to_string())
+        );
+    }
+
+    #[test]
     fn gap_closure_refuses_absence_other_gaps_and_unmoved_classes() -> Result<(), String> {
         let open = [gap("gap:a", "weakly_exposed")];
         let refusals = [
