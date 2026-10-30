@@ -22902,7 +22902,8 @@ async fn hover_without_evidence_names_an_unsaved_buffer() -> Result<(), String> 
 }
 
 #[tokio::test]
-async fn code_lens_is_withdrawn_for_an_unsaved_buffer_and_restored_on_save() -> Result<(), String> {
+async fn code_lens_is_withdrawn_for_an_unsaved_buffer_and_restored_when_buffer_matches_analyzed_content()
+-> Result<(), String> {
     // Lenses anchor at the analyzed saved file's line. Diagnostics and hover
     // already pause for a divergent buffer; a lens that stayed would sit on
     // the wrong line after any edit that shifts lines.

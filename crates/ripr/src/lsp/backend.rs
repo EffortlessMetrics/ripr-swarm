@@ -6664,9 +6664,9 @@ impl LanguageServer for Backend {
     /// `code_action`, then delegates to the pure `code_lens_response` helper in
     /// `lsp/lens.rs`. Returns `Some([])` (not `None`) so the client removes any
     /// stale lenses from a previous snapshot, including for a quarantined
-    /// (unsaved or divergent) buffer whose lines no longer match the snapshot. Returns an empty Vec when no
-    /// snapshot is available — absence of analysis is not absence of tests, and
-    /// we must not fabricate a 0-count lens.
+    /// (unsaved or divergent) buffer whose lines no longer match the snapshot.
+    /// Returns an empty Vec when no snapshot is available — absence of analysis
+    /// is not absence of tests, and we must not fabricate a 0-count lens.
     async fn code_lens(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
         self.trace_inbound(
             "request",
