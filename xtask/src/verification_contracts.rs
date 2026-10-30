@@ -1558,6 +1558,9 @@ fn validate_object(
                 continue;
             };
             if !object.contains_key(field) {
+                if !charge_validation_work(budget, 1 + location.len() / 1024 + field.len() / 1024) {
+                    return;
+                }
                 violations.push(format!("{location}: missing required field `{field}`"));
             }
         }
@@ -1577,6 +1580,9 @@ fn validate_object(
                 return;
             }
             if !properties.contains_key(field) {
+                if !charge_validation_work(budget, 1 + location.len() / 1024 + field.len() / 1024) {
+                    return;
+                }
                 violations.push(format!("{location}: unexpected field `{field}`"));
             }
         }
@@ -1636,6 +1642,9 @@ fn validate_array(
                 return;
             };
             if !seen.insert(key) {
+                if !charge_validation_work(budget, 1 + location.len() / 1024) {
+                    return;
+                }
                 violations.push(format!(
                     "{location}: uniqueItems violated by duplicate {}",
                     compact_exact_json(item)
@@ -2392,6 +2401,49 @@ mod tests {
             violations.iter().any(|v| v.contains("resource limit")),
             "type entries must consume budget"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_diagnostics_under_long_location_consume_budget() -> Result<(), String> {
+        let key = "x".repeat(65_536);
+        let names = (0..800)
+            .map(|n| format!("\"k{n}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        let fields = (0..800)
+            .map(|n| format!("\"k{n}\":0"))
+            .collect::<Vec<_>>()
+            .join(",");
+        for (inner_schema, inner_value) in [
+            (format!(r#"{{"required":[{names}]}}"#), "{}".to_string()),
+            (
+                r#"{"properties":{},"additionalProperties":false}"#.to_string(),
+                format!("{{{fields}}}"),
+            ),
+            (
+                r#"{"uniqueItems":true}"#.to_string(),
+                format!("[{}1]", "1,".repeat(800)),
+            ),
+        ] {
+            let schema =
+                parse_exact_text(&format!(r#"{{"properties":{{"{key}":{inner_schema}}}}}"#))?;
+            let value = parse_exact_text(&format!(r#"{{"{key}":{inner_value}}}"#))?;
+            let mut violations = Vec::new();
+            validate_exact_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "value".into(),
+                &mut violations,
+            );
+            assert!(
+                violations
+                    .iter()
+                    .any(|v| v.contains("evaluation resource limit")),
+                "repeated long diagnostics must consume budget"
+            );
+        }
         Ok(())
     }
 

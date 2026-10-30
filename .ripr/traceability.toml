@@ -6807,6 +6807,7 @@ tests = [
   "xtask/src/verification_contracts.rs::tests::non_string_required_entries_consume_work_budget",
   "xtask/src/verification_contracts.rs::tests::repeated_runtime_references_consume_work_budget",
   "xtask/src/verification_contracts.rs::tests::repeated_long_locations_consume_work_budget",
+  "xtask/src/verification_contracts.rs::tests::repeated_diagnostics_under_long_location_consume_budget",
   "xtask/src/verification_contracts.rs::tests::repeated_type_entries_consume_work_budget",
   "xtask/src/exact_schema_json.rs::tests::preflight_counts_nodes_before_duplicate_collapse",
   "xtask/src/verification_contracts.rs::tests::file_validator_checks_original_decimal_bytes",
