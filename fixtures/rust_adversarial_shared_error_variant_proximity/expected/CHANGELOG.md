@@ -242,3 +242,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_adversarial_shared_error_variant_proximity (18)
+
+Reason:
+RIPR-SPEC-0122: check prints only stub commands that produce a stub, so the unvalidated hidden-row seam choices are withheld (#10710)
+
+Command:
+`cargo xtask goldens bless rust_adversarial_shared_error_variant_proximity --reason "..."`
+
+Updated:
+- `expected/human.txt`

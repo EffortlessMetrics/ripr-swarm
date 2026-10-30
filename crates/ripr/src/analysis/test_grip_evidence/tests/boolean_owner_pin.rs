@@ -9,6 +9,20 @@ fn boundary_fixture(
     predicate: &str,
     test_body: &str,
 ) -> Result<(FixtureIndex, RepoSeam), String> {
+    seam_fixture(
+        SeamKind::PredicateBoundary,
+        owner_tail,
+        predicate,
+        test_body,
+    )
+}
+
+fn seam_fixture(
+    kind: SeamKind,
+    owner_tail: &str,
+    predicate: &str,
+    test_body: &str,
+) -> Result<(FixtureIndex, RepoSeam), String> {
     let file = PathBuf::from("src/lib.rs");
     let source = format!(
         "pub fn is_adult(age: u32) -> bool {{\n    {owner_tail}\n}}\n\n\
@@ -26,9 +40,7 @@ fn boundary_fixture(
     let mut selected = inventory_seams_from_index(std::slice::from_ref(&file), &index)
         .into_iter()
         .filter(|seam| {
-            seam.kind() == SeamKind::PredicateBoundary
-                && seam.owner() == owner_id
-                && seam.expression().trim() == predicate
+            seam.kind() == kind && seam.owner() == owner_id && seam.expression().trim() == predicate
         })
         .collect::<Vec<_>>();
     if selected.len() != 1 {
@@ -280,5 +292,43 @@ fn a_contradicted_boolean_assertion_withholds_the_whole_tests_promotion() -> Res
         SeamGripClass::ActivationUnknown,
         "compact evidence must keep the same refusal: {compact:?}"
     );
+    Ok(())
+}
+
+/// #11111: the return-value seam of a bool owner whose whole tail is the
+/// comparison reads the same verdict as its predicate seam, as `ripr check`
+/// does for the return-value finding; a wrong, unpaired or partial result
+/// still earns no credit on either seam.
+#[test]
+fn boolean_tail_return_value_seam_reads_the_predicate_seams_verdict() -> Result<(), String> {
+    for (body, gripped) in [
+        ("assert!(is_adult(18));\nassert!(!is_adult(17));", true),
+        ("assert!(is_adult(18));", true),
+        ("assert!(is_adult(30));", false),
+        ("assert!(!is_adult(18));", false),
+        ("assert!(is_adult(18) || true);", false),
+    ] {
+        for kind in [SeamKind::PredicateBoundary, SeamKind::ReturnValue] {
+            let (index, seam) = seam_fixture(kind, "age >= 18", "age >= 18", body)?;
+            let full = evidence_for_seam(&seam, &index);
+            assert!(
+                !full.related_tests.is_empty(),
+                "nonempty control: {kind:?} {body}: {full:?}"
+            );
+            let class = crate::analysis::seam_classification::classify_seam(&seam, &full);
+            assert_eq!(
+                class == SeamGripClass::StronglyGripped,
+                gripped,
+                "{kind:?} {body}: {class:?} {full:?}"
+            );
+            let context = CompactGripContext::new(&index);
+            let compact = compact_evidence_for_seam(&seam, &context);
+            assert_eq!(
+                crate::analysis::seam_classification::classify_seam(&seam, &compact),
+                class,
+                "compact evidence must agree: {kind:?} {body}: {compact:?}"
+            );
+        }
+    }
     Ok(())
 }

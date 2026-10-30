@@ -1860,7 +1860,11 @@ pub(crate) fn ts_predicate_boundary_row_activation(
                 alias_map,
                 workspace_root,
             );
-            let witnessed = if nullish_boundary {
+            let witnessed = if let Some(operand) = left.strip_prefix("typeof ") {
+                // #11196: a `typeof <param> == "<kind>"` guard is witnessed by
+                // an input of that kind, never by the kind's name as a string.
+                typeof_kind_input_reaches_read_argument(&arguments, operand, right, owner)
+            } else if nullish_boundary {
                 // #4104-E2 repair (review thread PRRT_kwDOSiSx0c6mUkkI):
                 // for a nullish-coalescing boundary only the NULLISH
                 // input — `null` / `undefined` at the LEFT operand's read
@@ -1905,6 +1909,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
                 continue;
             }
             if let Some(expected) = assertion.expected_value_or_variant.as_deref()
+                && !left.starts_with("typeof ")
                 && expected_side_is_live(
                     owner,
                     line_text,
@@ -1932,6 +1937,29 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         alias_map,
         workspace_root,
     )
+}
+
+/// A zero or empty expected value is treated as matching a field's initial
+/// state, so pinning it cannot show an update ran: a scalar
+/// zero/empty/false/null/undefined, or an array holding only such values
+/// (`[]`, `[0, 0]`, `[[], '']`). Conservative by design: an array of zero-like
+/// values may under-credit a real pin, never over-credit one.
+pub(crate) fn ts_expected_is_zero_like(expected: &str) -> bool {
+    let compact: String = expected.split_whitespace().collect();
+    if matches!(
+        compact.as_str(),
+        "0" | "\"\"" | "''" | "``" | "false" | "null" | "undefined"
+    ) {
+        return true;
+    }
+    if !(compact.starts_with('[') && compact.ends_with(']')) {
+        return false;
+    }
+    let mut rest = compact;
+    for token in ["\"\"", "''", "``", "false", "null", "undefined", "0"] {
+        rest = rest.replace(token, "");
+    }
+    rest.chars().all(|ch| matches!(ch, '[' | ']' | ','))
 }
 
 /// RIPR-SPEC-0243 decision 18: whether some strong, pinned, exact-value assertion
@@ -1981,12 +2009,7 @@ pub(crate) fn ts_field_update_witnessed(
             if assertion
                 .expected_value_or_variant
                 .as_deref()
-                .is_some_and(|expected| {
-                    matches!(
-                        expected.trim(),
-                        "0" | "\"\"" | "''" | "``" | "false" | "null" | "undefined"
-                    )
-                })
+                .is_some_and(ts_expected_is_zero_like)
             {
                 return false;
             }
@@ -4141,6 +4164,9 @@ pub(crate) fn ts_predicate_boundary_limitation(
         None
     };
     match boundary {
+        Some(boundary) if boundary.starts_with("typeof ") => format!(
+            "Related tests reach `{owner_name}` with a strong oracle, but no strong assertion observes a `{owner_name}(...)` call whose argument is written as a value of the kind the changed test checks (`{boundary}`); a call that passes a value of another kind, or the kind's name as a string, does not discriminate the changed comparison."
+        ),
         Some(boundary) => format!(
             "Related tests reach `{owner_name}` with a strong oracle, but no strong assertion observes a `{owner_name}(...)` call at the changed predicate boundary `{boundary}`; inputs on one side of the boundary do not discriminate the changed comparison."
         ),
@@ -4774,6 +4800,33 @@ fn last_identifier_segment(operand: &str) -> &str {
     operand.trim().rsplit('.').next().unwrap_or(operand).trim()
 }
 
+/// `true` when the argument at the parameter a `typeof <param> == "<kind>"`
+/// guard reads is written as a value of exactly that kind (#11196): a function
+/// for `"function"`, a number literal for `"number"`. An input of another kind
+/// can still flip a changed operator, but it cannot tell an edited kind apart,
+/// and the kind's name as a string literal is a string input, not the kind it
+/// names. The parameter must be named by the owner's own signature, and a
+/// type assertion on the argument does not change the value it carries.
+fn typeof_kind_input_reaches_read_argument(
+    arguments: &[String],
+    operand: &str,
+    kind: &str,
+    owner: &TypeScriptOwner,
+) -> bool {
+    let kind = kind.trim().trim_matches(['"', '\'']);
+    let Some(position) = owner
+        .params
+        .iter()
+        .position(|param| param == operand.trim())
+    else {
+        return false;
+    };
+    arguments
+        .get(position)
+        .and_then(|argument| super::typeof_kind::literal_argument_typeof_kind(argument))
+        .is_some_and(|argument_kind| argument_kind == kind)
+}
+
 /// `true` when the boundary literal reaches the argument position the changed
 /// comparison reads (#4102 guards 1 and 2). The literal must stand alone as
 /// the argument value — the whole argument tokenizes to the literal, or an
@@ -4980,7 +5033,17 @@ pub(crate) fn expected_side_is_live(
     expected: &str,
 ) -> Option<bool> {
     let source = owner.source_text.as_deref()?;
-    let expected_value = signed_numeric_expected_value(expected)?;
+    // An array literal is never a scalar branch value; it is judged below,
+    // once the branches are known to be scalar-foldable.
+    let expected_is_array = {
+        let trimmed = expected.trim();
+        trimmed.starts_with('[') && trimmed.ends_with(']')
+    };
+    let expected_value = if expected_is_array {
+        None
+    } else {
+        Some(signed_numeric_expected_value(expected)?)
+    };
     let operator = changed_comparison_operator(line_text)?;
     let lines: Vec<&str> = source.lines().collect();
     // Locate the changed line inside the owner body. Uniqueness runs before
@@ -5029,6 +5092,11 @@ pub(crate) fn expected_side_is_live(
     };
     let new_value = fold_numeric_expression(new_expr, &bindings)?;
     let old_value = fold_numeric_expression(old_expr, &bindings)?;
+    // Both branches fold to numbers, so an array expectation equals neither:
+    // the pin is dead on both versions and cannot show the change.
+    let Some(expected_value) = expected_value else {
+        return Some(false);
+    };
     // Jest `toBe` uses `Object.is`, which distinguishes `+0` from `-0`.
     // Epsilon equality would credit `toBe(-0)` against a `return 0` branch.
     if expected_value == 0.0 || new_value == 0.0 || old_value == 0.0 {
@@ -6690,7 +6758,7 @@ pub(crate) fn classify_resolved_owner(
     // there is no static_limit. We always compute them; they are empty when there
     // are no oracle-eligible candidates or no qualifying assertions.
     let named_limitations_from_oracle =
-        named_limitations_for_oracle_candidates(owner, related_candidates);
+        named_limitations_for_oracle_candidates(owner, related_candidates, &probe_shape.family);
     // Oracle metadata evidence lines (RIPR-SPEC-0085 §PR5).
     // Emitted from the strongest owner-call-observing assertion across
     // candidates. ADDITIVE: does not change oracle_kind, oracle_strength,
@@ -7557,6 +7625,17 @@ pub(crate) fn classify_resolved_owner(
     } else {
         0.4
     };
+    // #10700: the score above is a per-class constant, so name why it is
+    // capped. Evidence-derived and explanatory only: it never changes the
+    // score or any actionability decision.
+    let confidence_basis = crate::domain::ConfidenceCap::for_preview(
+        &class,
+        &crate::domain::ConfidenceBasisInputs {
+            has_related_test: has_oracle_eligible_relation,
+            strong_oracle_present: strongest_strength >= OracleStrength::Strong.rank(),
+            boundary_input_matched: boundary_witnessed,
+        },
+    );
 
     let mut evidence = vec![format!("owner: {}", owner.name)];
     if !probe_shape.specific {
@@ -7688,7 +7767,7 @@ pub(crate) fn classify_resolved_owner(
             },
         },
         confidence: confidence_value,
-        confidence_basis: Vec::new(),
+        confidence_basis,
         evidence,
         missing,
         flow_sinks: flow_sink.into_iter().collect(),

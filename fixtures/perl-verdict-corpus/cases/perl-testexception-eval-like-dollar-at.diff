@@ -1,0 +1,13 @@
+diff --git a/lib/Forms.pm b/lib/Forms.pm
+index a64ea0b..84a141d 100644
+--- a/lib/Forms.pm
++++ b/lib/Forms.pm
+@@ -35,7 +35,7 @@ sub class_then_message {
+ 
+ sub eval_like {
+     my ($n) = @_;
+-    die "zero not allowed\n" if $n == 0;
++    die "zero " . "not allowed\n" if $n == 0;
+     return 10 / $n;
+ }
+ 

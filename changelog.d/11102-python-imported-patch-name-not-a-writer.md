@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `from unittest.mock import patch` (or any import of a writer name such as `reload`) no longer makes every `@pytest.mark.parametrize` argname in the file look like an unresolved fixture. An import binds the name and writes nothing; a call, a decorator use or an aliased import (`import patch as p`) still counts as a dynamic writer. In pallets/click this was the last reason `_termui_impl.py` edits came back unknown on a plain parametrized test (#11102).

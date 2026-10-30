@@ -1,5 +1,5 @@
 use crate::analysis::classify::{
-    ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
+    ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, ConstFlow, EffectStateCarrier,
     HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
     activation_and_boundary_input, assertion_compares_hand_built_field,
@@ -726,6 +726,36 @@ impl ClassifiedProbeEvidence {
         let field_oracle_needs_admission = arm_selector
             .as_ref()
             .is_some_and(ArmSelector::field_oracle_needs_admission);
+        // RIPR-SPEC-0297 / #9836: an unsafe Display write edit needs its
+        // admitted owner pin; generic token overlap cannot establish that
+        // the changed format output is discriminated.
+        let fmt_write_tail = context
+            .owner_fn
+            .is_some_and(crate::analysis::classify::is_display_fmt_owner)
+            && matches!(
+                &propagation_witness,
+                Some(PropagationWitnessDiagnostic::Valid(witness))
+                    if witness.limitations.iter().any(|limit| limit == "fmt_write_owner_tail")
+            );
+        let fmt_literal_edit = fmt_write_tail
+            && crate::analysis::classify::changes_only_string_literals(
+                context.probe.before.as_deref(),
+                context.probe.after.as_deref(),
+            );
+        let fmt_display_assertion = |test: &TestSummary, assertion: &OracleFact| {
+            fmt_write_tail
+                && context.owner_fn.is_some_and(|owner| {
+                    crate::analysis::classify::assertion_pins_display_string(
+                        test,
+                        assertion,
+                        owner,
+                        context.index,
+                    )
+                })
+        };
+        let fmt_display_pin = |test: &TestSummary, assertion: &OracleFact| {
+            fmt_literal_edit && fmt_display_assertion(test, assertion)
+        };
         let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
             pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
                 && (!field_oracle_needs_admission
@@ -848,16 +878,6 @@ impl ClassifiedProbeEvidence {
                 })
             })
         };
-        // RIPR-SPEC-0297: a `write!(f, ..)`-only `Display::fmt` has its whole
-        // output pinned by an exact `value.to_string()` assertion.
-        let fmt_write_tail = matches!(
-            &propagation_witness,
-            Some(PropagationWitnessDiagnostic::Valid(witness))
-                if witness.limitations.iter().any(|limit| limit == "fmt_write_owner_tail")
-        ) && crate::analysis::classify::changes_only_string_literals(
-            context.probe.before.as_deref(),
-            context.probe.after.as_deref(),
-        );
         let map_callback_pin_required = matches!(
             &propagation_witness,
             Some(PropagationWitnessDiagnostic::Valid(witness))
@@ -879,6 +899,11 @@ impl ClassifiedProbeEvidence {
             })
         };
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            // Refuses every owner-pin route, not only token overlap: none of them
+            // observes the written output without an admitted display pin.
+            if fmt_write_tail && !fmt_literal_edit {
+                return false;
+            }
             if map_callback_pin_required {
                 return direct_owner_pin_admits(test, assertion);
             }
@@ -900,15 +925,7 @@ impl ClassifiedProbeEvidence {
                     })
                 });
             entry_pinned
-                || (fmt_write_tail
-                    && context.owner_fn.is_some_and(|owner| {
-                        crate::analysis::classify::assertion_pins_display_string(
-                            test,
-                            assertion,
-                            owner,
-                            context.index,
-                        )
-                    }))
+                || fmt_display_pin(test, assertion)
                 || field_projection.as_ref().is_some_and(|receipt| {
                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
                 })
@@ -960,9 +977,13 @@ impl ClassifiedProbeEvidence {
                         carrier.admits(test, assertion, context.index, pin_syntax)
                     })
                 },
-                returned_closure_pin_required: context.owner_fn.is_some_and(|owner| {
-                    crate::analysis::classify::returned_closure_pin_required(context.probe, owner)
-                }),
+                returned_closure_pin_required: (fmt_write_tail && !fmt_literal_edit)
+                    || context.owner_fn.is_some_and(|owner| {
+                        crate::analysis::classify::returned_closure_pin_required(
+                            context.probe,
+                            owner,
+                        )
+                    }),
                 owner_return_pin: &owner_pin_admits,
                 owner_return_pin_required: map_callback_pin_required,
                 wrapper_return_pin: &|test, assertion| {
@@ -1691,6 +1712,113 @@ impl ClassifiedProbeEvidence {
             implicit_dispatch_tests,
             debug_assert_eq_pins,
             related_call_budget_saturated,
+        }
+    }
+
+    /// RIPR-SPEC-0048: replace the stage evidence of a changed constant with
+    /// what evaluating it showed, and name the class that follows. Only
+    /// called with a flow the evaluator fully decided.
+    pub(in crate::analysis) fn apply_const_flow(&mut self, flow: &ConstFlow) -> ExposureClass {
+        let (detail, discriminated) = match flow {
+            ConstFlow::Discriminated(detail) => (detail, true),
+            ConstFlow::Indistinguishable(detail) => (detail, false),
+        };
+        let stage = |state, summary: String| StageEvidence::new(state, Confidence::Medium, summary);
+        let call = format!("`{}`", detail.assertion);
+        self.reach = stage(
+            StageState::Yes,
+            format!(
+                "`{}` calls `{}`, which reads the changed constant `{}`: {}",
+                detail.test, detail.reader, detail.constant, call
+            ),
+        );
+        self.infect = stage(
+            StageState::Yes,
+            if detail.rewrite {
+                format!(
+                    "`{}` keeps the value {}; evaluated with the neighbouring value(s) {}",
+                    detail.constant, detail.old_value, detail.new_value
+                )
+            } else {
+                format!(
+                    "`{}` changes from {} to {}",
+                    detail.constant, detail.old_value, detail.new_value
+                )
+            },
+        );
+        self.observe = stage(
+            StageState::Yes,
+            format!(
+                "{} compares the result of `{}` to a literal",
+                call, detail.reader
+            ),
+        );
+        if discriminated {
+            self.propagate = stage(
+                StageState::Yes,
+                format!(
+                    "`{}` returns {} instead of {} when `{}` is {}",
+                    detail.reader,
+                    detail.new_result,
+                    detail.old_result,
+                    detail.constant,
+                    detail.new_result_at
+                ),
+            );
+            self.discriminate = stage(
+                StageState::Yes,
+                if detail.rewrite {
+                    format!(
+                        "{} holds with {} = {}; every neighbour is noticed by a related assertion: {}",
+                        call,
+                        detail.constant,
+                        detail.old_value,
+                        detail.neighbour_breaks.join("; ")
+                    )
+                } else {
+                    format!(
+                        "{} holds with {} = {} and fails with {}",
+                        call, detail.constant, detail.old_value, detail.new_value
+                    )
+                },
+            );
+        } else {
+            self.propagate = stage(
+                StageState::Weak,
+                format!(
+                    "Each of the {} related test(s) gives the same assertion outcome under both values; for the cited assertion `{}` returns {} before and {} after",
+                    detail.tests_evaluated, detail.reader, detail.old_result, detail.new_result
+                ),
+            );
+            self.discriminate = stage(
+                StageState::No,
+                format!(
+                    "No related assertion fails when `{}` changes from {} to {}",
+                    detail.constant, detail.old_value, detail.new_value
+                ),
+            );
+        }
+        self.ripr = RiprEvidence {
+            reach: self.reach.clone(),
+            infect: self.infect.clone(),
+            propagate: self.propagate.clone(),
+            reveal: RevealEvidence {
+                observe: self.observe.clone(),
+                discriminate: self.discriminate.clone(),
+            },
+        };
+        self.evidence = evidence_summaries([
+            &self.reach,
+            &self.infect,
+            &self.propagate,
+            &self.observe,
+            &self.discriminate,
+        ]);
+        self.assertion_refusal = None;
+        if discriminated {
+            ExposureClass::Exposed
+        } else {
+            ExposureClass::WeaklyExposed
         }
     }
 

@@ -57,8 +57,12 @@ number comes from the merge-group branch name
 (`gh-readonly-queue/<base>/pr-<n>-<sha>`) and the PR's labels are forwarded to
 the gate (`full-ci` still selects the advisory reports, `ripr-waive` still
 reaches the PR-evidence step). The resolver accepts a head-suffixed ref or a
-base-suffixed fallback; the latter does not authoritatively identify the queued
-H. Admission is per PR, so the queue must use a group size of 1; the queued commit must be a single
+base-suffixed fallback; neither ref spelling identifies the queued H, so the
+queued commit's tree must also equal the live head merged onto the group base
+(`git merge-tree --write-tree <base> <head>`, with the head fetched from the
+PR's own `refs/pull/<n>/head` and required to match the head read from the API).
+A different head, extra content, a merge conflict, a moved PR ref or missing
+history refuses. Admission is per PR, so the queue must use a group size of 1; the queued commit must be a single
 squash commit of the queued PR sitting directly on the group's `base_sha`, or
 admission refuses it, so a batch fails closed even if the ruleset is misconfigured. Batching needs per-PR admission (#8082) and is a follow-up. The
 `merge-ready` label request below still works until the label request is
@@ -72,9 +76,25 @@ review decision, and every page of review threads. Missing or malformed
 evidence refuses the result; a Result-only retry cannot reuse admission from
 an older attempt. Main/manual authorities and child-result checks remain.
 
-This is a late eligibility check, not queue-cutover acceptance. The current
-base-suffixed queue-ref fallback still uses a timestamp and does not establish
-the reviewed/admitted H or its composed G tree. Candidate-local admission code
+Same-head succession (#4986, #8082): as the last live read, the Result also
+lists the same workflow's runs for the same head (queue requests: the same
+queue-entry commit) and event. A newer run of the same request kind, a newer
+attempt of this run, a missing or duplicate own record, a failed or
+non-JSON read, an inconsistent count or an inventory beyond ten pages refuses,
+so the superseded invocation cannot report success. An ordinary label event is
+another run title and revokes nothing. Re-applying `merge-ready` creates a new
+run for the same head, which intentionally supersedes the earlier request: the
+label route stays valid, but only its newest run can qualify. Order is by run
+number, whatever the newer run's own outcome; the read uses the existing
+`actions: read` permission and changes no trigger or required context. It is a
+non-atomic read, not proof that the hosted race is closed or of which check
+GitHub selects for protection.
+
+This is a late eligibility check, not queue-cutover acceptance. The tree match
+binds the queued commit to the head GitHub reports live at admission; it does not
+establish that this is the head a reviewer judged ready, and its premise (GitHub's
+squash tree equals `merge-tree(base, head)`) is checked here only on past
+squash merges and by local fixtures, not on a native queue entry. Candidate-local admission code
 also remains a trusted-source prerequisite. Neither these API freshness reads
 nor a tree match authenticates an arbitrary caller workflow or makes the final
 read and protected merge atomic. Preserve the installed gates until the
@@ -1596,6 +1616,16 @@ PR guidance, the comment plan, SARIF and badge renders, the gate, the ledgers,
 start-here, the report index, and the changed-line annotations, each as a log
 group named after the step it replaced. `ripr help reports` lists its
 failure rules, and `--step NAME` reruns one step locally.
+
+The PR-guidance producer runs its `ripr check --format json` child with the
+findings-array byte budget disabled (`RIPR_CHECK_FINDINGS_BYTES=0`, #11143):
+`review-comments` needs the complete document and applies its own brief caps
+before anything reaches the PR, while the default 1 MB budget would hand it a
+findings-bounded (`limited_findings_bound`) prefix that it — and every other
+gate-denominator consumer — must refuse fail-closed. The override covers only
+that child, so hand-run `ripr check` output keeps the ambient budget; set
+`RIPR_CHECK_FINDINGS_BYTES=0` yourself (or raise the byte value) when an
+outside-the-packet hand-off needs the full findings array.
 
 ```yaml
       - name: Run RIPR

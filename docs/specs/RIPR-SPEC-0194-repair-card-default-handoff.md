@@ -47,6 +47,12 @@ compatibility `ripr agent packet` command remains byte-for-byte unchanged.
 
 ## Behavior
 
+The human card groups detail families only when their route, evidence state,
+and unavailable reason agree, at the position of their first reference. Family
+order within a group follows the card. Every family remains named and the state is
+shown, including stale, missing, and unavailable. Distinct states or reasons
+remain separate; the full JSON card and its detail references are unchanged.
+
 `ripr agent card --root PATH --seam-id ID [--json]` resolves one visible,
 policy-admitted seam exactly like `ripr agent packet` (same inventory, same
 not-found refusal naming `ripr pilot`, same `AgentBriefPolicy` omission

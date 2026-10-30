@@ -107,6 +107,13 @@ limitation instead of leaving that to the first failed refresh. The field is a
 bounded marker probe, not a Git invocation, and is absent when a plausible
 marker exists: absence does not mean Git accepted it.
 
+When a committed refresh analyzed nothing (`no_scope`, `no_changed_lines` or
+`no_behavioral_candidates` with zero items), `ripr_refresh` adds an
+`empty_scope_hint` (`why`, `pass_base`, `pass_source`, #11213): the default base
+may have resolved to the analyzed commit (detached HEAD, `origin/HEAD` at HEAD),
+and `base` or `source: "worktree"` widen the diff. The hint never changes the
+outcome kind and an empty result is not an all-clear.
+
 `ripr_refresh` is read-only with respect to source, but the shared analysis
 writes its warm cache under the root's `target/ripr/`. Cargo projects normally
 gitignore `target/`; in a repository that does not, those files show as
@@ -403,6 +410,13 @@ omission), `seam_ambiguous` (several seams name the item), `seam_not_found`
 seam inventory is truncated by the seam limit, or its completeness could not
 be established, so `ripr repair` refuses every item; widen the budget with
 `RIPR_REPO_EXPOSURE_SEAM_LIMIT`).
+When that gate refuses an item, its reason is the item's first failing gate,
+ahead of the producer-side reasons such as `fix_site_not_established` (the one
+exception is a saved-worktree snapshot, #7357, whose withheld verdict is a
+snapshot-level fact, so a finding-level gate stays first there), so
+`ripr_prepare_repair` and `ripr repair` name the same cause for the same item
+(#10718). The producer-side reasons remain for items the gate admits or when
+no seam evaluation ran.
 
 The truncation refusal covers repair readiness (`ripr_list_gaps`,
 `ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` reads the same
@@ -499,6 +513,15 @@ readable id `ripr_list_gaps` and `ripr_get_gap` return (#8638), so it can be pas
 to those tools (they do not accept the seam-side hash); that hash rides additively as
 `subject.seam_content_gap_id`.
 
+For a card whose `readiness.repair_ready` is not true, the result also carries
+`finding_guidance` (#11213): the item's `missing` and `recommended_next_step`,
+read from the same evidence `ripr_get_gap` serves, plus the `ripr_get_gap`
+route. `ripr_prepare_repair` refusals carry the same `finding_guidance`. When
+the card names CLI routes (`ripr agent packet`, `ripr explain`, `ripr check`),
+`mcp_detail_routes` pairs each unchanged CLI string with `ripr_get_gap` and the
+`canonical_id`, which carries finding-level evidence over MCP (not the
+unbounded CLI packet). None of these fields changes readiness or any verdict.
+
 ## Typed failures
 
 The evidence tools fail closed with structured content (`isError: true` and a
@@ -527,9 +550,15 @@ reachable on the repair-card read (an item no seam owner-discriminated binds,
 an unnameable portable workspace identity, a card over its detail budget, a
 truncated or unverified repo-wide seam inventory). The card uses the CLI-pinned
 `incomplete_inventory` code, while the list/get/prepare readiness fields keep
-`seam_inventory_truncated`. `policy_omitted` and
-`witness_unavailable` stay named for wire stability even though this adapter
-cannot reach them; the rest stay reserved for the slices that own those
+`seam_inventory_truncated`. `policy_omitted` is reachable on the same read
+(#10718): the card applies the repository's agent policy to the seam's class
+exactly like `ripr agent card`, so an already-gripped seam the policy omits
+refuses with `policy_omitted`, and an item the repair-subject resolver maps to
+no seam (for example a Python finding, since the seam inventory covers Rust
+files only) refuses with `seam_not_found` carrying the CLI's own cause text.
+The MCP policy gate uses the configuration captured at `ripr_refresh`, while
+the CLI reads configuration at call time. `witness_unavailable` stays named for
+wire stability even though this adapter cannot reach it; the rest stay reserved for the slices that own those
 states (they are named now so the wire contract
 stays stable). Tool argument shape violations use standard Invalid Params;
 unknown tools use Invalid Params (MCP: the `tools/call` method exists; the
@@ -586,7 +615,7 @@ only it is the mapping, not an observed `resources/read` response.
 | `unsupported_profile` | `-32603` | operator action; tool-path only, not produced by `resources/read` (`ripr_refresh`) | the workspace input is unsupported; narrow the diff and retry `ripr_refresh` |
 | `config_invalid` | `-32603` | operator action; tool-path only, not produced by `resources/read` (`ripr_refresh`) | repair `ripr.toml`, then `ripr_refresh` |
 | `stale_inventory` | `-32603` | retryable after refresh; tool-path only, not produced by `resources/read` (`ripr_list_repair_attempts`) | re-list the attempt inventory |
-| `policy_omitted` | `-32603` | named, unreachable here | reserved for wire stability |
+| `policy_omitted` | `-32603` | operator action; reachable on the repair-card read (#10718) | the agent policy omits this seam's class; inspect it with `ripr agent brief --seam-id <seam> --json` |
 | `witness_unavailable` | `-32603` | named, unreachable here | reserved for wire stability |
 | `workspace_ambiguous` | `-32603` | reserved | reserved for a later slice |
 | `static_limitation` | `-32603` | reserved | reserved for a later slice |
