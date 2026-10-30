@@ -45,7 +45,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_owner_kinds/input --diff <cwd>/fixtures/typescript_owner_kinds/diff.patch --mode fast probe:src_owners.ts:typescript_preview:bd728bcd
   ripr context --root <cwd>/fixtures/typescript_owner_kinds/input --diff <cwd>/fixtures/typescript_owner_kinds/diff.patch --mode fast --at probe:src_owners.ts:typescript_preview:bd728bcd
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: ripr has no complete repair packet for this TypeScript finding (its repair packet is not complete); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (TypeScript preview: 3).

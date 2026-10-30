@@ -194,3 +194,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_self_comparing_one_hop_local (16)
+
+Reason:
+RIPR-SPEC-0087: plain TypeScript/JavaScript advisory wording for no-repair-start and blocked packet
+
+Command:
+`cargo xtask goldens bless typescript_self_comparing_one_hop_local --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

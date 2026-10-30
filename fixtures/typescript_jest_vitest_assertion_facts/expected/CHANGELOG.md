@@ -829,3 +829,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (38)
+
+Reason:
+RIPR-SPEC-0087: plain TypeScript/JavaScript advisory wording for no-repair-start and blocked packet
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

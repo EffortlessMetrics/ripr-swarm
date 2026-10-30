@@ -44,7 +44,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_one_line_if_dead_pin/input --diff <cwd>/fixtures/ts_one_line_if_dead_pin/diff.patch --mode fast probe:src_pick.ts:typescript_preview:20b9760b
   ripr context --root <cwd>/fixtures/ts_one_line_if_dead_pin/input --diff <cwd>/fixtures/ts_one_line_if_dead_pin/diff.patch --mode fast --at probe:src_pick.ts:typescript_preview:20b9760b
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: ripr has no complete repair packet for this TypeScript finding (its repair packet is not complete); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`
 
 More:
   Full evidence: rerun with --format human-full

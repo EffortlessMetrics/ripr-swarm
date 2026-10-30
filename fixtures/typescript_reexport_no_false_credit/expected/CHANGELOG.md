@@ -541,3 +541,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_no_false_credit (29)
+
+Reason:
+RIPR-SPEC-0087: plain TypeScript/JavaScript advisory wording for no-repair-start and blocked packet
+
+Command:
+`cargo xtask goldens bless typescript_reexport_no_false_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

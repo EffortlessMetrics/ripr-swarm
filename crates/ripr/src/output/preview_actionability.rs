@@ -107,6 +107,18 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
         // that and keep the specific per-finding reason.
         match scope_qualified_why(finding, specific) {
             Some(why) => why,
+            // The projection refuses a moved assertion selection before any
+            // packet exists, so no validator reason does; name that real
+            // cause instead of the generic packet-contract line.
+            None if finding.language != Some(LanguageId::Perl)
+                && super::typescript_packet_projection::typescript_moved_selection_blocker(
+                    finding,
+                )
+                .is_some() =>
+            {
+                super::typescript_packet_projection::typescript_moved_selection_blocker(finding)
+                    .unwrap_or_default()
+            }
             None => specific
                 .unwrap_or("TypeScript preview lacks a complete repair packet contract")
                 .to_string(),
