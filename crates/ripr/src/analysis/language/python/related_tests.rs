@@ -474,15 +474,7 @@ pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Op
             // ends with one, so `pytest "path"::test` would hand pytest the
             // quote bytes as part of the file name. A token with bytes cmd
             // or PowerShell expand inside double quotes gets no command.
-            let selector = if windows {
-                shell_quote_file_arg_for_host(&format!("{path}::{node}"), true)?
-            } else {
-                format!("{}::{node}", shell_quote_file_arg_for_host(&path, false)?)
-            };
-            Some(format!(
-                "{} {selector}",
-                crate::domain::PYTEST_VERIFY_PROGRAM
-            ))
+            crate::domain::python_pytest_verify_display(&path, &node, windows)
         }
         PythonFramework::Unittest => {
             let module = unittest_module_for_path(&path)?;

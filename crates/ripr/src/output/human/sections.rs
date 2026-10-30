@@ -748,10 +748,17 @@ pub(super) fn render_finding_with_shared_sections(
         if let Some(node_id) = placement.test_node_id {
             out.push_str(&format!("  pytest node: {node_id}\n"));
         }
-        out.push_str(&format!(
-            "  verify: {} ({})\n",
-            placement.verify_command, placement.verify_confidence
-        ));
+        if finding.language == Some(LanguageId::Python) {
+            out.push_str(&format!(
+                "  verify from the selected root: {} ({})\n",
+                placement.verify_command, placement.verify_confidence
+            ));
+        } else {
+            out.push_str(&format!(
+                "  verify: {} ({})\n",
+                placement.verify_command, placement.verify_confidence
+            ));
+        }
     }
 
     if finding.recommended_next_step.is_some() {

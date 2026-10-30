@@ -44,7 +44,6 @@ pub(crate) use classification::{
     LIMITATION_HELPER_BOUNDARY_PREFIX, LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
     LIMITATION_NON_CLAIM_PREFIX, NO_STATIC_PATH_NEXT_STEP, TRANSITIVE_REACH_WITNESS_PREFIX,
 };
-pub(crate) use command_spec::command_tokens;
 pub use command_spec::{
     CancellationPolicy, CommandAuthorityBoundary, CommandCostClass, CommandExecutionMode,
     CommandPlatform, CommandRole, CommandSpec, CommandSpecValidationError, EnvironmentAssignment,
@@ -52,6 +51,7 @@ pub use command_spec::{
     actionable_verify_source_is_supported,
     verify_command_is_unbounded_repo_exposure_snapshot_compare,
 };
+pub(crate) use command_spec::{command_tokens, python_pytest_verify_display};
 pub use diagnostic_witness::{
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticSourceLocation, DiagnosticWitness,
     DiagnosticWitnessLimitation,

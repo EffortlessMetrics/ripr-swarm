@@ -1989,7 +1989,7 @@ fn python_printed_verify_runs_in_selected_root_from_foreign_cwd() -> Result<(), 
     let bin = guard.0.join("bin");
     std::fs::create_dir(&bin).map_err(|e| e.to_string())?;
     let python = bin.join("python");
-    std::fs::write(&python, "#!/bin/sh\n[ \"$1\" = -m ] && [ \"$2\" = pytest ] || exit 9\n[ \"$PWD\" = \"$EXPECTED_ROOT\" ] || exit 8\nfile=${3%%::*}\n[ -f \"$file\" ] || exit 7\nprintf 'selected one fixture test\\n'\n").map_err(|e| e.to_string())?;
+    std::fs::write(&python, "#!/bin/sh\n[ \"$1\" = -m ] && [ \"$2\" = pytest ] || exit 9\n[ \"$PWD\" = \"$EXPECTED_ROOT\" ] || exit 8\n[ \"$3\" = tests/test_pricing.py::test_above_boundary_gets_discount ] || exit 6\nfile=${3%%::*}\n[ -f \"$file\" ] || exit 7\nprintf 'selected one fixture test\\n'\n").map_err(|e| e.to_string())?;
     std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755))
         .map_err(|e| e.to_string())?;
     let path = format!(
@@ -1998,7 +1998,7 @@ fn python_printed_verify_runs_in_selected_root_from_foreign_cwd() -> Result<(), 
         std::env::var("PATH").unwrap_or_default()
     );
     let run = |cwd: &Path, script: &str| {
-        Command::new("sh")
+        Command::new("bash")
             .args(["-c", script])
             .current_dir(cwd)
             .env("PATH", &path)

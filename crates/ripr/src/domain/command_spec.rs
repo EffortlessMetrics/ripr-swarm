@@ -10,6 +10,37 @@ use std::path::{Component, Path};
 const MAX_DISPLAY_LENGTH: usize = 512;
 const MAX_TIMEOUT_MS: u64 = 3_600_000;
 
+/// The Python producer's pytest display, shared with its rooted projection.
+/// `node` is the qualified test name with `::` separators, not a shell token.
+pub(crate) fn python_pytest_verify_display(
+    path: &str,
+    node: &str,
+    windows: bool,
+) -> Option<String> {
+    let safe = |c: char| {
+        c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-') || (windows && c == ':')
+    };
+    let quote = |value: &str| {
+        if !value.is_empty() && value.chars().all(safe) {
+            Some(value.to_string())
+        } else if windows {
+            (!value.contains(['$', '`', '%']))
+                .then(|| format!("\"{}\"", value.replace('"', "\"\"")))
+        } else {
+            Some(format!("'{}'", value.replace('\'', "'\\''")))
+        }
+    };
+    let selector = if windows {
+        quote(&format!("{path}::{node}"))?
+    } else {
+        format!("{}::{node}", quote(path)?)
+    };
+    Some(format!(
+        "{} {selector}",
+        crate::domain::PYTEST_VERIFY_PROGRAM
+    ))
+}
+
 /// Recognize the closed verification-provenance set of actionable packets.
 ///
 /// RIPR-SPEC-0057 admits an existing canonical command or the producer's

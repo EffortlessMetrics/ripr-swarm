@@ -26,9 +26,20 @@ fn native_pytest_route(finding: &Finding) -> Option<NativePytestRoute<'_>> {
     let file = unique("suggested_test_file: ")?;
     let node = unique("suggested_test_node_id: ")?;
     let raw = unique("suggested_verify_command: ")?;
-    if !raw.starts_with("python -m pytest ")
-        || !node.strip_prefix(file)?.starts_with("::")
-        || node == format!("{file}::")
+    let selected = crate::domain::python_suggested_related_test(finding)?;
+    native_pytest_route_parts(file, node, raw, &selected.name)
+}
+
+fn native_pytest_route_parts<'a>(
+    file: &str,
+    node: &'a str,
+    raw: &str,
+    selected: &str,
+) -> Option<NativePytestRoute<'a>> {
+    let name = node.strip_prefix(file)?.strip_prefix("::")?;
+    if name.is_empty()
+        || name.rsplit("::").next()? != selected
+        || crate::domain::python_pytest_verify_display(file, name, false).as_deref() != Some(raw)
         || file.chars().chain(node.chars()).any(char::is_control)
         || Path::new(file)
             .components()
@@ -576,6 +587,42 @@ mod tests {
         recommended_test_shape, stop_conditions, suggested_assertion,
     };
     use crate::domain::ProbeFamily;
+
+    #[test]
+    fn native_route_refuses_disagreeing_or_escaping_test_identity() {
+        let file = "tests/test_order.py";
+        let node = "tests/test_order.py::TestOrder::test_total";
+        let raw = "python -m pytest tests/test_order.py::TestOrder::test_total";
+        assert!(super::native_pytest_route_parts(file, node, raw, "test_total").is_some());
+        assert!(super::native_pytest_route_parts(file, node, raw, "test_other").is_none());
+        assert!(
+            super::native_pytest_route_parts(
+                file,
+                node,
+                "python -m pytest tests/test_order.py::test_other",
+                "test_total"
+            )
+            .is_none()
+        );
+        assert!(
+            super::native_pytest_route_parts(
+                file,
+                "tests/test_other.py::test_total",
+                raw,
+                "test_total"
+            )
+            .is_none()
+        );
+        assert!(
+            super::native_pytest_route_parts(
+                "../test_order.py",
+                "../test_order.py::test_total",
+                "python -m pytest ../test_order.py::test_total",
+                "test_total"
+            )
+            .is_none()
+        );
+    }
 
     #[test]
     fn exception_assertion_uses_matching_message_when_available() {
