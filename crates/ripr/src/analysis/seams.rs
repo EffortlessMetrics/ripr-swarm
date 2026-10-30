@@ -91,6 +91,23 @@ impl SeamKind {
             _ => return None,
         })
     }
+
+    /// What a test has to check to notice this kind of change, in plain
+    /// words (#11111). Two repair candidates on the same changed line differ
+    /// only by this, so a choice between them is shown with it.
+    pub(crate) fn plain_test_need(&self) -> &'static str {
+        match self {
+            SeamKind::PredicateBoundary => {
+                "a test must use an input right at the edge of this condition and check the result"
+            }
+            SeamKind::ErrorVariant => "a test must check exactly which error is returned",
+            SeamKind::ReturnValue => "a test must check the exact value returned",
+            SeamKind::FieldConstruction => "a test must check this field's exact value",
+            SeamKind::SideEffect => "a test must check that this effect happens",
+            SeamKind::MatchArm => "a test must check which match arm runs",
+            SeamKind::CallPresence => "a test must notice if this call is removed",
+        }
+    }
 }
 
 /// What a test would need to observe to grip this seam.

@@ -138,7 +138,8 @@ pub(crate) use seam_inventory::{
     inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config, pilot_seam_budget,
     probe_family_for_seam_kind, repo_exposure_seam_limit, scoped_file_seams,
-    seam_kind_for_probe_family, workspace_cache_key_at_with_config,
+    seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
+    workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{
@@ -153,6 +154,7 @@ pub(crate) use workspace::apply_module_graph_evidence;
 pub(crate) use workspace::classify_with;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
+pub(crate) use workspace::path_enters_ignored_dir;
 pub(crate) use workspace::seeds_diff_probes;
 pub(crate) use workspace::{UnlinkedPythonTests, discover_python_test_files};
 
@@ -2020,5 +2022,7 @@ mod git_candidate_entry_tests {
 pub(crate) mod input_boundary;
 #[cfg(test)]
 pub(crate) use pipeline::diff_pipeline_entry_count;
+#[cfg(test)]
+pub(crate) use pipeline::injected_adapter_panic;
 
 pub(crate) use workspace::cargo_input_identity;
