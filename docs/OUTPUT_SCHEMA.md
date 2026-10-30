@@ -18860,9 +18860,12 @@ For `--check-output`, the top-level optional `input_root` retains the source
 report's root spelling separately from the ledger's selected `root`. A missing
 or relative producer root is not an absolute checkout identity. This additive
 field does not authenticate the input or imply complete corpus provenance.
-`check_output_provenance` retains that root and the original source-subject
-limitation across subsequent `--records` ledger projections; changing the
-immediate input kind cannot make a check-derived no-action conclusion current.
+`check_output_provenance` retains that root, the original source-subject
+limitation, and the producer's `source_subject`, `base`, `base_commit`, `head`,
+and `mode` values when present across subsequent `--records` ledger
+projections. These copied values are unvalidated provenance, including malformed
+values; they do not establish currentness or completeness. Changing the immediate
+input kind cannot make a check-derived no-action conclusion current.
 
 ### Gap artifact source subject
 

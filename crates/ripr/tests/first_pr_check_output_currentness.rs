@@ -337,6 +337,104 @@ fn zero_record_foreign_check_preserves_the_input() -> Result<(), String> {
 }
 
 #[test]
+fn newly_discovered_foreign_write_changes_strong_producer_result() -> Result<(), String> {
+    let root = fixture()?;
+    fs::create_dir_all(root.join("hostile")).map_err(|e| e.to_string())?;
+    let source = root.join("hostile/settings.py");
+    let test = root.join("tests/test_settings.py");
+    let before = "RATES = {\"gold\": 10, \"silver\": 5}\n\n\ndef price(tier):\n    return RATES.get(tier, 0)\n";
+    let after = before.replace("\"silver\": 5", "\"silver\": 6");
+    let witness =
+        "from hostile.settings import price\n\ndef test_it():\n    assert price(\"silver\") == 5\n";
+    fs::write(&source, before).map_err(|e| e.to_string())?;
+    fs::write(&test, witness).map_err(|e| e.to_string())?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-qm", "table base"])?;
+    fs::write(&source, &after).map_err(|e| e.to_string())?;
+    git(&root, &["add", "hostile/settings.py"])?;
+    git(&root, &["commit", "-qm", "table change"])?;
+    let head = git(&root, &["rev-parse", "HEAD"])?;
+    let strong = check(&root)?;
+    assert_eq!(strong["summary"]["findings"], 1, "{strong}");
+    assert_eq!(strong["summary"]["exposed"], 1, "{strong}");
+    for state in ["missing", "malformed"] {
+        let mut altered = strong.clone();
+        if state == "missing" {
+            altered
+                .as_object_mut()
+                .ok_or("check object")?
+                .remove("source_subject");
+        } else {
+            altered["source_subject"] = serde_json::json!({"corpus": ["not an authority"]});
+        }
+        let altered_path = root.join("target").join(format!("{state}-input.json"));
+        fs::create_dir_all(root.join("target")).map_err(|e| e.to_string())?;
+        fs::write(
+            &altered_path,
+            serde_json::to_vec(&altered).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        let ledger_path = root.join("target").join(format!("{state}-ledger.json"));
+        let packet = first_pr(
+            &root,
+            &altered_path,
+            &root.join("target").join(state),
+            &ledger_path,
+        )?;
+        assert_ne!(
+            packet["selected"]["output_state"], "no_actionable_gap",
+            "{packet}"
+        );
+        let ledger: Value =
+            serde_json::from_slice(&fs::read(ledger_path).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+        assert_eq!(
+            ledger["check_output_provenance"].get("source_subject"),
+            altered.get("source_subject")
+        );
+    }
+    let input = root.with_extension("foreign-write-strong.json");
+    fs::write(
+        &input,
+        serde_json::to_vec(&strong).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        root.join("hostile/other.py"),
+        "from hostile.settings import RATES\n\nRATES[\"silver\"] = 5\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let changed = check(&root)?;
+    assert_eq!(changed["summary"]["findings"], 1, "{changed}");
+    assert_eq!(changed["summary"]["static_unknown"], 1, "{changed}");
+    assert_eq!(git(&root, &["rev-parse", "HEAD"])?, head);
+    assert_eq!(
+        fs::read_to_string(&source).map_err(|e| e.to_string())?,
+        after
+    );
+    assert_eq!(
+        fs::read_to_string(&test).map_err(|e| e.to_string())?,
+        witness
+    );
+    let packet = first_pr(
+        &root,
+        &input,
+        &root.join("target/foreign-write"),
+        &root.join("target/foreign-write-ledger.json"),
+    )?;
+    assert_ne!(
+        packet["selected"]["output_state"], "no_actionable_gap",
+        "{packet}"
+    );
+    fs::remove_file(root.join("hostile/other.py")).map_err(|e| e.to_string())?;
+    let restored = check(&root)?;
+    assert_eq!(restored["summary"]["exposed"], 1, "{restored}");
+    fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    fs::remove_file(input).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[test]
 fn current_strong_check_can_produce_no_action() -> Result<(), String> {
     let root = fixture()?;
     fs::write(root.join("tests/test_calculator.py"), STRONG).map_err(|e| e.to_string())?;
@@ -529,6 +627,12 @@ fn no_action_does_not_promote_unbound_or_stale_preview_check() -> Result<(), Str
     let rewrapped: Value =
         serde_json::from_slice(&fs::read(&rewrapped_ledger).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
+    for key in ["source_subject", "base", "base_commit", "head", "mode"] {
+        assert_eq!(
+            direct["check_output_provenance"][key], strong[key],
+            "producer {key} must survive projection: {direct}"
+        );
+    }
     assert_eq!(rewrapped["inputs"]["source_kind"], "records");
     assert_eq!(
         rewrapped["check_output_provenance"],
