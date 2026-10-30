@@ -17208,6 +17208,136 @@ fn analyze_diff_emits_test_extraction_partial_for_template_literal_title() -> Re
     Ok(())
 }
 
+/// #11132: a panic on the parse worker (an oxc or AST-consumer failure) is a
+/// join error, so the caller sees the typed `parse_worker_failed` refusal
+/// instead of the thread's death, and the process keeps running.
+#[test]
+fn parse_worker_panic_is_a_typed_refusal_not_a_process_failure() -> Result<(), String> {
+    let outcome = super::parse::parse_on_worker(
+        Path::new("src/boom.ts"),
+        "export const a = 1;\n",
+        |_file, _source, _allocator| -> usize {
+            std::panic::resume_unwind(Box::new("injected consumer panic"))
+        },
+    );
+    let Err(reason) = outcome else {
+        return Err("a panicking worker must not return Ok".to_string());
+    };
+    assert!(
+        reason.starts_with("static limit parse_worker_failed:"),
+        "typed worker-failure reason, got {reason:?}"
+    );
+    assert!(super::parse::is_worker_failure(&reason));
+    // The next parse on a fresh worker is unaffected.
+    let next = super::parse::parse_on_worker(
+        Path::new("src/ok.ts"),
+        "export const a = 1;\n",
+        |_file, source, _allocator| source.len(),
+    );
+    assert_eq!(next, Ok(20), "the failure must not poison later parses");
+    Ok(())
+}
+
+/// #11132: a worker that dies on a CHANGED file is disclosed as a typed
+/// `unsupported_syntax` finding plus a language-scope limitation naming the
+/// file, never as a clean result and never as an actionable repair signal.
+#[test]
+fn analyze_diff_contains_a_parse_worker_panic_on_a_changed_file() -> Result<(), String> {
+    let root = ts_unique_tempdir("workerpanic-changed")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    let _armed = super::parse::injected_worker_panic::arm(Path::new("src/calc.ts"), 0);
+
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root),
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/calc.ts", &[(2, "  return a + b;")])],
+    )?;
+    assert!(
+        result.limitations.iter().any(|limitation| {
+            limitation.path.as_deref() == Some("src/calc.ts")
+                && limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("parse_worker_failed"))
+        }),
+        "expected a parse_worker_failed limitation naming the file, got {:?}",
+        result.limitations
+    );
+    assert!(
+        !result.findings.is_empty(),
+        "the contained file still reports its limit as a finding"
+    );
+    for finding in &result.findings {
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::UnsupportedSyntax),
+            "{finding:?}"
+        );
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line == "actionability_category: unsupported_syntax"),
+            "a contained failure is never actionable: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
+
+/// #11132: a worker failure while extracting an UNCHANGED test file used to
+/// serve an empty extraction with no disclosure, so the file's tests vanished
+/// from the index and an owner they cover read as a confident false
+/// `no_static_path`. It is now the typed partial-extraction limitation.
+#[test]
+fn analyze_diff_discloses_a_test_extraction_worker_failure() -> Result<(), String> {
+    let root = ts_unique_tempdir("workerpanic-extract")?;
+    ts_write_file(
+        &root.join("src/calc.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/calc.test.ts"),
+        "import { add } from '../src/calc';\nit('adds', () => {\n  expect(add(1, 2)).toBe(3);\n});\n",
+    )?;
+    let run = |root: &Path| {
+        TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root.to_path_buf()),
+            &OraclePolicy::default(),
+            &[changed_with_lines("src/calc.ts", &[(2, "  return a + b;")])],
+        )
+    };
+    let is_extraction_failure = |limitation: &AnalysisLimitation| {
+        limitation.bounded_detail.as_deref().is_some_and(|detail| {
+            detail.contains("typescript_test_extraction_partial")
+                && detail.contains("test extraction unavailable (parse worker failed)")
+        })
+    };
+
+    // Control: the same workspace without a worker failure discloses nothing.
+    let control = run(&root)?;
+    assert!(
+        !control.limitations.iter().any(is_extraction_failure),
+        "no failure, no disclosure: {:?}",
+        control.limitations
+    );
+
+    // The first parse of the test file (its per-file facts) succeeds; the
+    // dedicated test extraction after it loses its worker.
+    let _armed = super::parse::injected_worker_panic::arm(Path::new("tests/calc.test.ts"), 1);
+    let failed = run(&root)?;
+    assert!(
+        failed.limitations.iter().any(is_extraction_failure),
+        "expected the extraction worker failure to be disclosed, got {:?}",
+        failed.limitations
+    );
+    Ok(())
+}
+
 /// Several unrelated test files with unindexed shapes collapse into ONE
 /// summary limitation carrying the file count, and the recovery names an
 /// inspection or rewrite rather than a bare retry.
