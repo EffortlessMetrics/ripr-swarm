@@ -9664,6 +9664,22 @@ fn a_len_local_over_a_literal_argument_names_the_boundary_equality() -> Result<(
     Ok(())
 }
 
+/// An annotated local and spacing before the call paren read like the plain
+/// form (#11103 review).
+#[test]
+fn an_annotated_len_local_names_the_boundary_equality() -> Result<(), String> {
+    let owner = "def truncate(s, limit):\n    visible: int = len (s)\n    if visible > limit:\n        return s[:limit]\n    return s\n";
+    let finding = classify_len_local_boundary(
+        owner,
+        "    assert truncate(\"abcdef\", 3) == \"abc\"\n    assert truncate(\"ab\", 5) == \"ab\"",
+    )?;
+    assert_eq!(
+        missing_boundary_discriminators(&finding),
+        vec!["visible == limit".to_string()]
+    );
+    Ok(())
+}
+
 /// Discriminating positive: a call whose string length equals the limit
 /// places the operands on the boundary, so nothing is missing.
 #[test]

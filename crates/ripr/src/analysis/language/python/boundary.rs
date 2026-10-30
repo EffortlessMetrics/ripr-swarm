@@ -498,12 +498,18 @@ fn len_local_parameter(
     let [(binding_index, binding)] = bindings.as_slice() else {
         return None;
     };
-    let value = binding
-        .strip_prefix(local)?
+    // `visible = len(s)` or the annotated `visible: int = len(s)`.
+    let suffix = binding.strip_prefix(local)?.trim_start();
+    let value = match suffix.strip_prefix(':') {
+        Some(annotated) => annotated.split_once('=')?.1.trim(),
+        None => suffix.strip_prefix('=')?.trim(),
+    };
+    let argument = value
+        .strip_prefix("len")?
         .trim_start()
-        .strip_prefix('=')?
+        .strip_prefix('(')?
+        .strip_suffix(')')?
         .trim();
-    let argument = value.strip_prefix("len(")?.strip_suffix(')')?.trim();
     let parameter_ok = !argument.is_empty()
         && argument.chars().all(is_python_identifier_char)
         && !argument.starts_with(|ch: char| ch.is_ascii_digit())
