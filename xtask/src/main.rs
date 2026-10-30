@@ -4541,6 +4541,10 @@ fn parse_pr_triage_pull_requests(text: &str) -> Result<Vec<PrTriagePullRequest>,
             labels,
             files,
             checks,
+            checks_rollup_available: item
+                .get("statusCheckRollup")
+                .and_then(Value::as_array)
+                .is_some(),
         });
     }
     prs.sort_by_key(|pr| pr.number);
@@ -4734,7 +4738,7 @@ fn pr_triage_validation_findings(prs: &[PrTriagePullRequest]) -> Vec<PrTriageFin
         let failed = pr
             .checks
             .iter()
-            .filter(|check| pr_check_failed(check))
+            .filter(|check| pr_triage_check_kind(check) == PrTriageCheckKind::Failed)
             .map(|check| format!("{}={}", check.name, check.conclusion))
             .collect::<Vec<_>>();
         if !failed.is_empty() {
@@ -4743,13 +4747,24 @@ fn pr_triage_validation_findings(prs: &[PrTriagePullRequest]) -> Vec<PrTriageFin
         let pending = pr
             .checks
             .iter()
-            .filter(|check| pr_check_pending(check))
+            .filter(|check| pr_triage_check_kind(check) == PrTriageCheckKind::Pending)
             .map(|check| check.name.clone())
             .collect::<Vec<_>>();
         if !pending.is_empty() {
             details.push(format!("pending checks: {}", pending.join(", ")));
         }
-        if pr.checks.is_empty() {
+        let unknown = pr
+            .checks
+            .iter()
+            .filter(|check| pr_triage_check_kind(check) == PrTriageCheckKind::Unknown)
+            .map(format_gh_pr_check_status)
+            .collect::<Vec<_>>();
+        if !unknown.is_empty() {
+            details.push(format!("unknown checks: {}", unknown.join(", ")));
+        }
+        if !pr.checks_rollup_available {
+            details.push("check rollup missing or malformed; evidence is unknown".to_string());
+        } else if pr.checks.is_empty() {
             details.push("no check rollup entries returned".to_string());
         }
         if let Some(body_warning) = pr_body_validation_warning(&pr.body) {
@@ -4842,11 +4857,17 @@ fn pr_triage_queue_disposition(
     } else if pr_has_finding(findings, pr.number, "incomplete validation")
         || pr.checks.iter().any(pr_check_failed)
         || pr.checks.iter().any(pr_check_pending)
+        || !pr.checks_rollup_available
+        || pr.checks.is_empty()
+        || pr
+            .checks
+            .iter()
+            .any(|check| pr_triage_check_kind(check) == PrTriageCheckKind::Unknown)
     {
         (
             "needs_fresh_validation",
-            "validation is pending, failing, absent, or not fully recorded",
-            "Wait for checks, inspect failures, or update the PR body with actual commands run.",
+            "validation is pending, failing, absent, unknown, or not fully recorded",
+            "Wait for checks, inspect failures or unknown evidence, or update the PR body with actual commands run.",
         )
     } else if pr.is_draft || pr.review_decision.eq_ignore_ascii_case("REVIEW_REQUIRED") {
         (
@@ -5084,7 +5105,7 @@ fn pr_triage_markdown(
                 pr.is_draft,
                 age,
                 markdown_escape_table(&pr.merge_state_status),
-                markdown_escape_table(&pr_checks_summary(&pr.checks)),
+                markdown_escape_table(&pr_triage_checks_summary(pr)),
                 pr.files.len()
             ));
         }
@@ -5200,7 +5221,11 @@ fn write_pr_triage_pull_request_json(body: &mut String, pr: &PrTriagePullRequest
     ));
     body.push_str(&format!(
         "      \"checks_summary\": \"{}\",\n",
-        json_escape(&pr_checks_summary(&pr.checks))
+        json_escape(&pr_triage_checks_summary(pr))
+    ));
+    body.push_str(&format!(
+        "      \"checks_rollup_available\": {},\n",
+        pr.checks_rollup_available
     ));
     body.push_str("      \"labels\": [");
     write_json_string_array(body, &pr.labels);
@@ -5302,22 +5327,61 @@ fn pr_age_label(pr: &PrTriagePullRequest, today: i64) -> String {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PrTriageCheckKind {
+    Passed,
+    Neutral,
+    Pending,
+    Failed,
+    Unknown,
+}
+
+fn pr_triage_check_kind(check: &PrTriageCheck) -> PrTriageCheckKind {
+    if pr_check_failed(check) {
+        PrTriageCheckKind::Failed
+    } else if pr_check_pending(check) {
+        PrTriageCheckKind::Pending
+    } else if gh_pr_check_unknown(check) {
+        PrTriageCheckKind::Unknown
+    } else if matches!(
+        check.conclusion.to_ascii_uppercase().as_str(),
+        "NEUTRAL" | "SKIPPED"
+    ) {
+        PrTriageCheckKind::Neutral
+    } else {
+        PrTriageCheckKind::Passed
+    }
+}
+
+fn pr_triage_checks_summary(pr: &PrTriagePullRequest) -> String {
+    if !pr.checks_rollup_available {
+        "unknown rollup".to_string()
+    } else {
+        pr_checks_summary(&pr.checks)
+    }
+}
+
 fn pr_checks_summary(checks: &[PrTriageCheck]) -> String {
     if checks.is_empty() {
         return "none".to_string();
     }
-    let failed = checks.iter().filter(|check| pr_check_failed(check)).count();
-    let pending = checks
-        .iter()
-        .filter(|check| pr_check_pending(check))
-        .count();
-    if failed > 0 {
-        format!("{failed} failed, {pending} pending")
-    } else if pending > 0 {
-        format!("{pending} pending")
-    } else {
-        format!("{} passed", checks.len())
+    let mut counts = [0usize; 5];
+    for check in checks {
+        counts[match pr_triage_check_kind(check) {
+            PrTriageCheckKind::Failed => 0,
+            PrTriageCheckKind::Pending => 1,
+            PrTriageCheckKind::Unknown => 2,
+            PrTriageCheckKind::Neutral => 3,
+            PrTriageCheckKind::Passed => 4,
+        }] += 1;
     }
+    counts
+        .into_iter()
+        .zip(["failed", "pending", "unknown", "neutral/skipped", "passed"])
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, label)| format!("{count} {label}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn format_pr_triage_ref(pr: &PrTriagePullRequest) -> String {

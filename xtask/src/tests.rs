@@ -30902,6 +30902,7 @@ fn triage_pr(number: u64, title: &str, files: &[&str]) -> PrTriagePullRequest {
         review_decision: String::new(),
         labels: Vec::new(),
         files: files.iter().map(|file| file.to_string()).collect(),
+        checks_rollup_available: true,
         checks: vec![PrTriageCheck {
             name: "rust".to_string(),
             status: "COMPLETED".to_string(),
@@ -58099,5 +58100,191 @@ fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String>
             ));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn pr_triage_unknown_check_is_not_a_pass_or_merge_candidate() -> Result<(), String> {
+    let prs = parse_pr_triage_pull_requests(
+        r#"[{"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"__typename":"CheckRun","name":"rust","status":"COMPLETED","conclusion":""}]}]"#,
+    )?;
+    assert_eq!(prs.len(), 1);
+    let today = days_from_civil(2026, 5, 14);
+    let findings = pr_triage_findings(&prs, today);
+    let markdown = pr_triage_markdown(&prs, &findings, today);
+    let value: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+        .map_err(|err| err.to_string())?;
+    assert_eq!(value["open_prs"][0]["checks_summary"], "1 unknown");
+    assert_eq!(
+        value["queue_disposition"][0]["disposition"],
+        "needs_fresh_validation"
+    );
+    assert!(markdown.contains("1 unknown"));
+    assert!(markdown.contains("unknown checks:"));
+    assert!(!markdown.contains("1 passed"));
+    Ok(())
+}
+
+#[test]
+fn pr_triage_parsed_check_states_reach_reports_and_queue() -> Result<(), String> {
+    let today = days_from_civil(2026, 5, 14);
+    for (check, summary, disposition) in [
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"SUCCESS"}),
+            "1 passed",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"NEUTRAL"}),
+            "1 neutral/skipped",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"SKIPPED"}),
+            "1 neutral/skipped",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"FUTURE"}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":""}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"status":"COMPLETED","conclusion":"SUCCESS"}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"MYSTERY","conclusion":"SUCCESS"}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"context":"ci","state":"SUCCESS"}),
+            "1 passed",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"context":"ci","state":"PENDING"}),
+            "1 pending",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"context":"ci","state":"FAILURE"}),
+            "1 failed",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"status":"IN_PROGRESS"}),
+            "1 pending",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"status":"COMPLETED","conclusion":"FAILURE"}),
+            "1 failed",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!(null),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+    ] {
+        let fixture = serde_json::json!([{"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN","statusCheckRollup":[check]}]);
+        let prs = parse_pr_triage_pull_requests(&fixture.to_string())?;
+        let findings = pr_triage_findings(&prs, today);
+        let markdown = pr_triage_markdown(&prs, &findings, today);
+        let json: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+            .map_err(|e| e.to_string())?;
+        assert_eq!(json["open_prs"][0]["checks_summary"], summary, "{fixture}");
+        assert_eq!(
+            json["queue_disposition"][0]["disposition"], disposition,
+            "{fixture}"
+        );
+        assert_eq!(
+            pr_triage_queue_dispositions(&prs, &[])[0].disposition,
+            disposition,
+            "{fixture}"
+        );
+        assert!(markdown.contains(summary), "{fixture}");
+        if summary == "1 unknown" {
+            assert!(markdown.contains("unknown checks:"), "{fixture}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_triage_rollup_availability_is_not_conflated_with_empty() -> Result<(), String> {
+    let today = days_from_civil(2026, 5, 14);
+    for (rollup, expected, available) in [
+        (None, "unknown rollup", false),
+        (Some(serde_json::json!(null)), "unknown rollup", false),
+        (Some(serde_json::json!({})), "unknown rollup", false),
+        (Some(serde_json::json!([])), "none", true),
+    ] {
+        let mut fixture = serde_json::json!({"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN"});
+        if let Some(rollup) = rollup {
+            fixture["statusCheckRollup"] = rollup;
+        }
+        let prs = parse_pr_triage_pull_requests(&serde_json::json!([fixture]).to_string())?;
+        let findings = pr_triage_findings(&prs, today);
+        let markdown = pr_triage_markdown(&prs, &findings, today);
+        let json: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+            .map_err(|e| e.to_string())?;
+        assert_eq!(json["open_prs"][0]["checks_summary"], expected);
+        assert_eq!(json["open_prs"][0]["checks_rollup_available"], available);
+        assert_eq!(
+            json["queue_disposition"][0]["disposition"],
+            "needs_fresh_validation"
+        );
+        assert_eq!(
+            pr_triage_queue_dispositions(&prs, &[])[0].disposition,
+            "needs_fresh_validation"
+        );
+        assert!(markdown.contains(expected));
+        assert!(markdown.contains(if available {
+            "no check rollup entries returned"
+        } else {
+            "check rollup missing or malformed"
+        }));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_triage_mixed_rollup_keeps_unknown_visible_alongside_other_results() -> Result<(), String> {
+    let fixture = serde_json::json!([{"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN","statusCheckRollup":[
+        {"name":"success","status":"COMPLETED","conclusion":"SUCCESS"},
+        {"name":"skip","status":"COMPLETED","conclusion":"SKIPPED"},
+        {"name":"pending","status":"IN_PROGRESS","conclusion":""},
+        {"name":"failure","status":"COMPLETED","conclusion":"FAILURE"},
+        {"name":"unknown","status":"COMPLETED","conclusion":"FUTURE"}
+    ]}]);
+    let prs = parse_pr_triage_pull_requests(&fixture.to_string())?;
+    let today = days_from_civil(2026, 5, 14);
+    let findings = pr_triage_findings(&prs, today);
+    let markdown = pr_triage_markdown(&prs, &findings, today);
+    let json: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+        .map_err(|e| e.to_string())?;
+    let summary = "1 failed, 1 pending, 1 unknown, 1 neutral/skipped, 1 passed";
+    assert_eq!(json["open_prs"][0]["checks_summary"], summary);
+    assert_eq!(
+        json["queue_disposition"][0]["disposition"],
+        "needs_fresh_validation"
+    );
+    assert!(markdown.contains(summary));
+    assert!(markdown.contains("unknown checks: unknown"));
+    assert!(json["findings"].as_array().unwrap().iter().any(|f| {
+        f["details"].as_array().unwrap().iter().any(|d| {
+            d.as_str()
+                .is_some_and(|d| d.contains("unknown checks: unknown"))
+        })
+    }));
     Ok(())
 }

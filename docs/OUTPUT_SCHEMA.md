@@ -13938,6 +13938,12 @@ Report packet index field contract:
 
 Field contract:
 
+- `open_prs[].checks_rollup_available` is true only when GitHub returned an
+  array, including a valid empty array. A missing, null, or non-array rollup
+  is unknown, not evidence that no checks exist. `checks_summary` distinguishes
+  passed, neutral/skipped, pending, failed, and unknown entries. An unknown
+  rollup or check calls for inspection; this advisory packet does not establish
+  required-check completeness or authorize a merge.
 - `queue_disposition[].disposition` is advisory. It may be
   `merge_candidate`, `needs_integration_review`, `needs_review`, `close_duplicate`,
   `superseded`, `needs_fresh_validation`, `needs_owner_decision`, or
