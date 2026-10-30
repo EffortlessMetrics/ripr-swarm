@@ -4940,7 +4940,9 @@ fn mcp_readiness_never_exceeds_the_cli_repair_gate() -> Result<(), String> {
         }
         if id == ARM {
             let refusal = refusal.ok_or("`ripr repair` must refuse the gripped arm")?;
-            if !refusal.contains("not repair-eligible") || !refusal.contains("already grip") {
+            if !refusal.contains("not ready for an automatic repair")
+                || !refusal.contains("already grip")
+            {
                 return Err(format!("CLI refusal changed shape: {refusal}"));
             }
             if item["repair_ineligibility"] != "seam_already_gripped"
