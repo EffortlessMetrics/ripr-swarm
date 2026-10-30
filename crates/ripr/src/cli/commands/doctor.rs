@@ -562,7 +562,7 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         report.ripr_version
     ));
     lines.push(format!(
-        "Root: {} · Rust {} MSRV",
+        "Root: {} · ripr MSRV: Rust {}",
         display_path(root),
         report.ripr_build_msrv
     ));
