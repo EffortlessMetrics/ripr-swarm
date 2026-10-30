@@ -10,6 +10,12 @@ name: Windows Watchdog Qualification
 # A shortened timer qualifies only the shorter bound, not the 44-minute one.
 on:
   workflow_dispatch:
+    inputs:
+      focused_hash:
+        description: "Run the isolated PR 11080 hash identity controls"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -20,6 +26,7 @@ concurrency:
 
 jobs:
   forced-stall:
+    if: ${{ !inputs.focused_hash }}
     name: forced-stall-${{ matrix.mode }}
     runs-on: windows-latest
     timeout-minutes: 15
@@ -103,3 +110,57 @@ jobs:
             target/sentinel.pid
             target/shard-1.*
           if-no-files-found: warn
+
+  focused-hash-11080:
+    name: focused-hash-11080
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.focused_hash }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CANDIDATE_SHA: ab6530408a4f538403dda961f77735ebaeeccd24
+      CARGO_BUILD_JOBS: 1
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ab6530408a4f538403dda961f77735ebaeeccd24
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.95.0
+      - name: Bind candidate and build exact test harness
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((git rev-parse HEAD).Trim() -ne $env:CANDIDATE_SHA) { throw 'candidate checkout mismatch' }
+          New-Item -ItemType Directory -Force -Path target | Out-Null
+          cargo test --locked -p xtask --bin xtask --no-run --message-format=json > target/focused-build.jsonl
+          if ($LASTEXITCODE -ne 0) { throw "test harness build failed: $LASTEXITCODE" }
+          $artifacts = @(Get-Content target/focused-build.jsonl | ForEach-Object {
+            $row = $_ | ConvertFrom-Json
+            if ($row.reason -eq 'compiler-artifact' -and $row.target.name -eq 'xtask' -and $row.profile.test -and $row.executable) { $row.executable }
+          } | Select-Object -Unique)
+          if ($artifacts.Count -ne 1) { throw "expected exactly one xtask test executable; got $($artifacts.Count)" }
+          $binary = $artifacts[0]
+          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash.ToLowerInvariant()
+          "candidate=$env:CANDIDATE_SHA test_binary=$binary sha256=$digest"
+          "FOCUSED_BINARY=$binary" >> $env:GITHUB_ENV
+          "FOCUSED_SHA256=$digest" >> $env:GITHUB_ENV
+      - name: Run exact hash and identity controls
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tests = @(
+            'reports::release_server::hash_reader_tests::retries_interruption_but_propagates_other_read_errors',
+            'reports::eval_sweep_refresh::python_eval_sweep_refresh::binary_swap_between_subjects_is_detected',
+            'reports::eval_sweep_refresh::python_eval_sweep_refresh::binary_path_must_name_existing_file'
+          )
+          foreach ($test in $tests) {
+            $output = & $env:FOCUSED_BINARY --exact $test 2>&1
+            $code = $LASTEXITCODE
+            $output | ForEach-Object { Write-Output $_ }
+            if ($code -ne 0) { throw "test $test exited $code" }
+            if (-not ($output | Where-Object { $_ -match '^test result: ok\. 1 passed; 0 failed; 0 ignored;' })) { throw "test $test did not report exactly one passing execution" }
+          }
+          $after = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:FOCUSED_BINARY).Hash.ToLowerInvariant()
+          if ($after -ne $env:FOCUSED_SHA256) { throw 'test harness changed during execution' }
+          "verified_test_binary_sha256=$after"
