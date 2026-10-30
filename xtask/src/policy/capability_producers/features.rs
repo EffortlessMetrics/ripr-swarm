@@ -10,9 +10,23 @@ pub(super) struct BuildSelection {
 }
 
 impl BuildSelection {
+    /// The selection-derived Cargo flags, owned here so the build invocation
+    /// and the reported rerun command cannot drift apart positionally.
+    pub(super) fn selected_flags(&self) -> Vec<String> {
+        let mut flags = Vec::new();
+        if self.no_default_features {
+            flags.push("--no-default-features".to_string());
+        }
+        if !self.features.is_empty() {
+            flags.push("--features".to_string());
+            flags.push(self.features.iter().cloned().collect::<Vec<_>>().join(","));
+        }
+        flags
+    }
+
     pub(super) fn rerun_command(&self) -> String {
-        let flags = self.cargo_args().into_iter().skip(4).collect::<Vec<_>>();
         let mut command = "cargo xtask check-capability-producers".to_string();
+        let flags = self.selected_flags();
         if !flags.is_empty() {
             command.push(' ');
             command.push_str(&flags.join(" "));
@@ -24,15 +38,7 @@ impl BuildSelection {
         let mut args = ["build", "-p", "ripr", "--quiet"]
             .map(String::from)
             .to_vec();
-        if self.no_default_features {
-            args.push("--no-default-features".to_string());
-        }
-        if !self.features.is_empty() {
-            args.extend([
-                "--features".to_string(),
-                self.features.iter().cloned().collect::<Vec<_>>().join(","),
-            ]);
-        }
+        args.extend(self.selected_flags());
         args
     }
 
