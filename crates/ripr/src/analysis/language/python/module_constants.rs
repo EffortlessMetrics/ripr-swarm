@@ -312,7 +312,9 @@ fn without_test_bodies(source: &str, statements: &[Stmt]) -> String {
     let mut pending: Vec<usize> = helpers
         .iter()
         .enumerate()
-        .filter(|(_, (name, _))| counts.get(name).copied().unwrap_or(0) > 1)
+        .filter(|(_, (name, _))| {
+            counts.get(name).copied().unwrap_or(0) > by_name.get(name).map_or(0, Vec::len)
+        })
         .map(|(index, _)| index)
         .collect();
     let mut kept = vec![false; helpers.len()];
@@ -325,8 +327,9 @@ fn without_test_bodies(source: &str, statements: &[Stmt]) -> String {
         for word in words(body) {
             let count = counts.entry(word).or_insert(0);
             *count += 1;
-            if *count > 1 {
-                pending.extend(by_name.get(word).into_iter().flatten().copied());
+            // One mention per `def` of the name is the declaration itself.
+            if let Some(indices) = by_name.get(word).filter(|found| *count > found.len()) {
+                pending.extend(indices.iter().copied());
             }
         }
     }

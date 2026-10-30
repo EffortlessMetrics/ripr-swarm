@@ -49,6 +49,8 @@ fn a_writer_inside_a_test_body_does_not_unsettle_the_argnames() -> Result<(), St
         "def _build(**kw):\n    for k, v in kw.items():\n        setattr(object(), k, v)\n",
         "def _drive(monkeypatch):\n    monkeypatch.setattr(object(), \"isatty\", lambda: True)\n\n\ndef test_uses(monkeypatch):\n    _drive(monkeypatch)\n",
         "async def _drive():\n    globals()[\"x\"] = 1\n",
+        // Two unreferenced helpers sharing a name only declare it.
+        "def _twin():\n    globals()[\"x\"] = 1\n\n\ndef _twin():\n    return 1\n",
         // Naming one helper at import keeps only that helper's body.
         "def _a():\n    globals()[\"x\"] = 1\n\n\ndef _b():\n    return 1\n\n\nrun(_b)\n",
     ] {
@@ -75,6 +77,10 @@ fn a_writer_anywhere_else_keeps_the_limit() -> Result<(), String> {
         "async def helper():\n    setattr(object(), \"x\", 1)\n\n\nrun(helper)\n",
         // A kept helper's body names a second helper, which is kept as well.
         "def inner():\n    setattr(object(), \"x\", 1)\n\n\ndef outer():\n    inner()\n\n\nouter()\n",
+        // A helper defined twice and called at import keeps both bodies.
+        "def _twin():\n    globals()[\"x\"] = 1\n\n\ndef _twin():\n    return 1\n\n\n_twin()\n",
+        // A comment naming a helper keeps it too (the safe direction).
+        "def _quiet():\n    setattr(object(), \"x\", 1)\n\n\n# _quiet\n",
         // A decorated helper may be invoked by its decorator.
         "@register\ndef helper():\n    setattr(object(), \"x\", 1)\n",
         // A class body and a non-test class's test-named method.

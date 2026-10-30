@@ -449,8 +449,9 @@ This order is the existing behavior and is normative:
   call or a decorator using it still is (#11102). A writer inside a `test*` body or an
   undecorated module-level helper does not count, because such a body runs only
   when something calls it, after the decorators were applied; a module that
-  names that function anywhere else (a call at import, an alias, an argument,
-  a decorator) keeps its writers (#11018, #11144). A canonical spelling whose root is not pinned that way
+  names that function outside a `test*` or helper body (a call at import, an
+  alias, an argument, a decorator; a name only another unreferenced body
+  mentions does not count) keeps its writers (#11018, #11144). A canonical spelling whose root is not pinned that way
   (another library's `mark`, a rebound or class-local root) leaves every
   argname unsettled. A bare decorator name (`@cases`), the mark's callee
   (`parametrize = pytest.mark.parametrize`), argnames and `indirect` may
