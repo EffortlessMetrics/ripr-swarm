@@ -13929,9 +13929,11 @@ fn assert_doctor_passes_without_rust_toolchain(
     let human = run_doctor_with_path(root, path, false)?;
     let stdout = String::from_utf8_lossy(&human.stdout);
     if !human.status.success()
-        || !stdout.contains(&format!("- Cargo.toml check skipped: {scope_reason}"))
-        || !stdout.contains(&format!("- cargo check skipped: {scope_reason}"))
-        || !stdout.contains(&format!("- rustc check skipped: {scope_reason}"))
+        || stdout
+            .matches(&format!("- Rust checks skipped: {scope_reason}\n"))
+            .count()
+            != 1
+        || stdout.contains("check skipped:")
         || stdout.contains("! no Cargo.toml")
         || !stdout.contains("✓ doctor checks passed")
     {
@@ -19855,12 +19857,13 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
         "python-only repo exposure must name the seam-inventory limit: {exposure}"
     );
     assert_eq!(exposure["metrics"]["seams_total"], 0);
+    // Pilot analyzed Python (the preview block above), so it must not also
+    // list Python as "Not scanned" (#11215).
     assert!(
-        stdout.contains(&format!(
-            "python: 2 files (preview; run the command below to check the diff)\n    route: {command}\n"
-        )),
+        stdout.contains("Python preview:\n  status: ready"),
         "{stdout}"
     );
+    assert!(!stdout.contains("Not scanned by pilot"), "{stdout}");
     // The Python repair card is the top recommendation, so the closing block
     // follows the card's route rather than sending the user to `ripr check`,
     // which only leads back to pilot (rc rehearsal py-pricing).
