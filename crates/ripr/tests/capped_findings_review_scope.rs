@@ -30,9 +30,10 @@ fn bounded_findings_cannot_authorize_review_scope() -> Result<(), String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_nanos();
-    let fixture = Fixture(
-        std::env::temp_dir().join(format!("ripr-capped-scope-{}-{stamp}", std::process::id())),
-    );
+    let path =
+        std::env::temp_dir().join(format!("ripr-capped-scope-{}-{stamp}", std::process::id()));
+    std::fs::create_dir(&path).map_err(|error| error.to_string())?;
+    let fixture = Fixture(path);
     let root = fixture.0.as_path();
     std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
     std::fs::write(
