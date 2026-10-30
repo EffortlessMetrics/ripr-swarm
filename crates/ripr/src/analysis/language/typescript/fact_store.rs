@@ -37,7 +37,7 @@ pub(crate) use crate::analysis::language::adapter::render_fact_cache_line;
 /// On-disk schema version of a `typescript-file-facts` envelope. Any change
 /// to a serialized fact spelling (field rename, type change, new label) is
 /// a schema change: bump this so stale entries read as misses.
-pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "2";
+pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "3";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. Parsing the
 /// file already happened by store time, so exhausting the budget only skips
@@ -493,6 +493,13 @@ fn header_from_prefix(prefix: &[u8]) -> Option<EntryHeader> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_version_pins_ast_probe_shape_facts() {
+        // #11250 added per-line probe shapes to the persisted facts, so
+        // envelopes written before them must read as misses.
+        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "3");
+    }
 
     #[test]
     fn envelope_round_trips_through_codec() -> Result<(), String> {

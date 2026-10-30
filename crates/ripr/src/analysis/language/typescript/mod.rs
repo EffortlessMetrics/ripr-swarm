@@ -1150,6 +1150,23 @@ impl TypeScriptAdapter {
                             &reexport_index,
                             alias_map_ref,
                             alias_load_gap.as_ref(),
+                            // #11250: an AST fact describes the source
+                            // line at this number; when the changed text
+                            // is not that line (a pre-change workspace, a
+                            // stale diff coordinate), the fact is absent
+                            // and the classifier keeps its line-text shape.
+                            source_by_normalized.get(&changed_norm).and_then(|source| {
+                                let disk_line = source.lines().nth(added.line.saturating_sub(1))?;
+                                (disk_line.trim() == added.text.trim()).then(|| {
+                                    extraction_cache::probe_shape_cached(
+                                        &changed.path,
+                                        source,
+                                        &options.root,
+                                        alias_map_ref,
+                                        added.line,
+                                    )
+                                })?
+                            }),
                         )
                     });
                 if let Some(mut finding) = resolved_finding {
@@ -1262,6 +1279,9 @@ impl TypeScriptAdapter {
                         &reexport_index,
                         alias_map_ref,
                         alias_load_gap.as_ref(),
+                        // Old-side text has no new-side AST fact; the
+                        // classifier keeps its line-text fallback (#11250).
+                        None,
                     )
                 },
             );

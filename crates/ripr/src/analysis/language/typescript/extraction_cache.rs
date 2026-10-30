@@ -185,6 +185,13 @@ impl FileFactsCache {
                     .iter()
                     .map(|member| member.identity.len())
                     .sum::<usize>(),
+            )
+            .saturating_add(
+                facts
+                    .phase_two
+                    .probe_shapes
+                    .len()
+                    .saturating_mul(std::mem::size_of::<super::owners::ProbeShapeFact>()),
             );
         key.source_len
             .saturating_add(key.path.len())
@@ -636,6 +643,22 @@ pub(crate) fn export_facts_cached(
 /// the #10051 phase-two cache). Worker refusal or failure degrades to
 /// `None` (uncached, degrading every consumer to "no facts" exactly as
 /// before).
+/// AST probe shape for one line of `(path, source)`, served from the
+/// combined facts cache (#11250). Parse-error or unavailable facts return
+/// `None`, so the classifier keeps its line-text fallback.
+pub(crate) fn probe_shape_cached(
+    relative: &Path,
+    source: &str,
+    workspace_root: &Path,
+    alias_map: Option<&TsAliasMap>,
+    line: usize,
+) -> Option<super::probe_shape::TypeScriptProbeShape> {
+    file_facts_cached(relative, source, workspace_root, alias_map)
+        .ok()
+        .filter(|facts| facts.parse_error.is_none())
+        .and_then(|facts| facts.phase_two.probe_shape_for_line(line).cloned())
+}
+
 pub(crate) fn phase_two_facts_cached(
     relative: &Path,
     source: &str,
@@ -650,6 +673,7 @@ pub(crate) fn phase_two_facts_cached(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::ProbeFamily;
 
     const BARREL_SOURCE: &str = "export { helper } from './helper';\nexport * from './other';\n";
     const ENUM_SOURCE: &str = "export enum Plan {\n    Basic = 1,\n    Pro = 2,\n}\n";
@@ -696,6 +720,43 @@ mod tests {
         assert_eq!(first.export_facts, second.export_facts);
         assert_eq!(first.phase_two, second.phase_two);
         assert_eq!(first.parse_error, second.parse_error);
+    }
+
+    fn ast_shape_at(
+        source: &str,
+        line: usize,
+    ) -> Option<super::super::probe_shape::TypeScriptProbeShape> {
+        let facts = file_facts_cached(Path::new("src/a.ts"), source, Path::new("."), None)
+            .expect("fixture must parse");
+        facts.phase_two.probe_shape_for_line(line).cloned()
+    }
+
+    #[test]
+    fn ast_shape_string_ternary_return_is_return_value() {
+        let source = "export function f(): string {\n  return \"a ? b : c\";\n}\n";
+        let shape = ast_shape_at(source, 2).expect("return line must have an AST shape");
+        assert_eq!(shape.family, ProbeFamily::ReturnValue);
+        assert!(shape.specific);
+    }
+
+    #[test]
+    fn ast_shape_statement_inside_switch_arm_takes_own_family() {
+        let source = "export function f(x: number): number {\n  switch (x) {\n    case 1: throw new Error(\"one\");\n    default: return x;\n  }\n}\n";
+        let thrown = ast_shape_at(source, 3).expect("throw line must have an AST shape");
+        assert_eq!(thrown.family, ProbeFamily::ErrorPath);
+        let returned = ast_shape_at(source, 4).expect("return line must have an AST shape");
+        assert_eq!(returned.family, ProbeFamily::ReturnValue);
+    }
+
+    #[test]
+    fn ast_shape_multiline_return_ternary_continuation_is_return_value() {
+        let source =
+            "export function f(n: number): number {\n  return n > 100\n    ? n - 20\n    : n;\n}\n";
+        let test_line = ast_shape_at(source, 2).expect("return line must have an AST shape");
+        assert_eq!(test_line.family, ProbeFamily::Predicate);
+        let continuation = ast_shape_at(source, 3).expect("continuation must have an AST shape");
+        assert_eq!(continuation.family, ProbeFamily::ReturnValue);
+        assert!(continuation.specific);
     }
 
     #[test]

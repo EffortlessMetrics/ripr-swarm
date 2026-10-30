@@ -2,7 +2,7 @@
 
 use super::*;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptProbeShape {
     pub(crate) family: ProbeFamily,
     pub(crate) delta: DeltaKind,

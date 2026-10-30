@@ -1871,6 +1871,27 @@ pub(crate) struct PhaseTwoFacts {
     pub(crate) enum_members: Vec<EnumMember>,
     /// 1-based inclusive line ranges of top-level ambient declarations.
     pub(crate) ambient_ranges: Vec<(usize, usize)>,
+    /// Per-line probe shapes derived from the AST (#11250), resolved so
+    /// each covered line carries exactly one shape. Lines with no fact
+    /// keep the classifier's line-text fallback.
+    pub(crate) probe_shapes: Vec<ProbeShapeFact>,
+}
+
+impl PhaseTwoFacts {
+    pub(crate) fn probe_shape_for_line(&self, line: usize) -> Option<&TypeScriptProbeShape> {
+        self.probe_shapes
+            .iter()
+            .find(|fact| fact.line == line)
+            .map(|fact| &fact.shape)
+    }
+}
+
+/// One line's AST-derived probe shape (#11250). Modeled on [`GapShape`]:
+/// computed from the single parse and persisted with the file facts.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ProbeShapeFact {
+    pub(crate) line: usize,
+    pub(crate) shape: TypeScriptProbeShape,
 }
 
 /// One unsupported owner shape: its disclosure label, byte span (for the
@@ -1959,7 +1980,259 @@ pub(crate) fn phase_two_facts_from_program(
     collect_gap_shapes(&program.body, &text, &mut facts.gap_shapes);
     collect_enum_members(&program.body, source, &text, &mut facts.enum_members);
     collect_ambient_ranges(&program.body, &text, &mut facts.ambient_ranges);
+    facts.probe_shapes = collect_probe_shapes(program, &text);
     facts
+}
+
+/// Collect AST probe-shape candidates and resolve them to one shape per
+/// line (#11250). Candidates apply in source-start order, so a node that
+/// starts later (a statement inside a switch arm, a conditional test
+/// inside a return) overwrites an enclosing node's shape for its lines,
+/// while lines only the enclosing node covers keep that node's shape (a
+/// multiline return-ternary continuation keeps the return's shape).
+fn collect_probe_shapes(
+    program: &oxc_ast::ast::Program<'_>,
+    source: &SourceText<'_>,
+) -> Vec<ProbeShapeFact> {
+    struct Collector<'s> {
+        source: &'s SourceText<'s>,
+        candidates: Vec<(u8, usize, usize, TypeScriptProbeShape)>,
+        concise_arrow_depth: usize,
+    }
+    impl Collector<'_> {
+        fn push(&mut self, span: oxc_span::Span, shape: TypeScriptProbeShape) {
+            self.candidates
+                .push((1, span.start as usize, span.end as usize, shape));
+        }
+        /// A guard test (`if`/`while`/conditional) outranks a statement
+        /// sharing its line (`if (s >= 404) { return 1; }` is the guard's
+        /// change, not the return's); other tests rank with statements so
+        /// a switch arm's own statement, starting later, wins its line.
+        fn predicate(&mut self, span: oxc_span::Span) {
+            self.candidates.push((
+                1,
+                span.start as usize,
+                span.end as usize,
+                TypeScriptProbeShape::new(ProbeFamily::Predicate, DeltaKind::Control),
+            ));
+        }
+        fn guard_predicate(&mut self, span: oxc_span::Span) {
+            self.candidates.push((
+                2,
+                span.start as usize,
+                span.end as usize,
+                TypeScriptProbeShape::new(ProbeFamily::Predicate, DeltaKind::Control),
+            ));
+        }
+    }
+    fn is_promise_reject(expression: &Expression<'_>) -> bool {
+        let Expression::CallExpression(call) = expression.get_inner_expression() else {
+            return false;
+        };
+        let Expression::StaticMemberExpression(member) = call.callee.get_inner_expression() else {
+            return false;
+        };
+        member.property.name.as_str() == "reject"
+            && matches!(member.object.get_inner_expression(), Expression::Identifier(id) if id.name.as_str() == "Promise")
+    }
+    fn value_shape(expression: &Expression<'_>) -> TypeScriptProbeShape {
+        match expression.get_inner_expression() {
+            Expression::AwaitExpression(awaited) if is_promise_reject(&awaited.argument) => {
+                TypeScriptProbeShape::new(ProbeFamily::ErrorPath, DeltaKind::Control)
+            }
+            expr if is_promise_reject(expr) => {
+                TypeScriptProbeShape::new(ProbeFamily::ErrorPath, DeltaKind::Control)
+            }
+            Expression::ObjectExpression(_) => {
+                TypeScriptProbeShape::new(ProbeFamily::FieldConstruction, DeltaKind::Value)
+            }
+            Expression::BinaryExpression(binary)
+                if matches!(
+                    binary.operator,
+                    oxc_ast::ast::BinaryOperator::LessThan
+                        | oxc_ast::ast::BinaryOperator::LessEqualThan
+                        | oxc_ast::ast::BinaryOperator::GreaterThan
+                        | oxc_ast::ast::BinaryOperator::GreaterEqualThan
+                ) =>
+            {
+                TypeScriptProbeShape::new(ProbeFamily::Predicate, DeltaKind::Control)
+            }
+            _ => TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value),
+        }
+    }
+    impl<'a> oxc_ast_visit::Visit<'a> for Collector<'_> {
+        fn visit_return_statement(&mut self, it: &oxc_ast::ast::ReturnStatement<'a>) {
+            let shape = it.argument.as_ref().map_or_else(
+                || TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value),
+                value_shape,
+            );
+            self.push(it.span, shape);
+            if let Some(argument) = &it.argument
+                && let Expression::ConditionalExpression(conditional) =
+                    argument.get_inner_expression()
+            {
+                self.guard_predicate(conditional.test.span());
+            }
+            oxc_ast_visit::walk::walk_return_statement(self, it);
+        }
+        fn visit_arrow_function_expression(
+            &mut self,
+            it: &oxc_ast::ast::ArrowFunctionExpression<'a>,
+        ) {
+            // A concise body is represented as an expression statement;
+            // it is a returned value, not a bare call statement.
+            if it.expression {
+                self.concise_arrow_depth += 1;
+                oxc_ast_visit::walk::walk_arrow_function_expression(self, it);
+                self.concise_arrow_depth -= 1;
+            } else {
+                oxc_ast_visit::walk::walk_arrow_function_expression(self, it);
+            }
+        }
+        fn visit_throw_statement(&mut self, it: &oxc_ast::ast::ThrowStatement<'a>) {
+            self.push(
+                it.span,
+                TypeScriptProbeShape::new(ProbeFamily::ErrorPath, DeltaKind::Control),
+            );
+            oxc_ast_visit::walk::walk_throw_statement(self, it);
+        }
+        fn visit_if_statement(&mut self, it: &oxc_ast::ast::IfStatement<'a>) {
+            self.guard_predicate(it.test.span());
+            oxc_ast_visit::walk::walk_if_statement(self, it);
+        }
+        fn visit_while_statement(&mut self, it: &oxc_ast::ast::WhileStatement<'a>) {
+            self.guard_predicate(it.test.span());
+            oxc_ast_visit::walk::walk_while_statement(self, it);
+        }
+        fn visit_do_while_statement(&mut self, it: &oxc_ast::ast::DoWhileStatement<'a>) {
+            self.guard_predicate(it.test.span());
+            oxc_ast_visit::walk::walk_do_while_statement(self, it);
+        }
+        fn visit_for_statement(&mut self, it: &oxc_ast::ast::ForStatement<'a>) {
+            if let Some(test) = &it.test {
+                self.predicate(test.span());
+            }
+            oxc_ast_visit::walk::walk_for_statement(self, it);
+        }
+        fn visit_switch_statement(&mut self, it: &oxc_ast::ast::SwitchStatement<'a>) {
+            self.predicate(it.discriminant.span());
+            oxc_ast_visit::walk::walk_switch_statement(self, it);
+        }
+        fn visit_switch_case(&mut self, it: &oxc_ast::ast::SwitchCase<'a>) {
+            if let Some(test) = &it.test {
+                self.predicate(test.span());
+            }
+            oxc_ast_visit::walk::walk_switch_case(self, it);
+        }
+        fn visit_catch_clause(&mut self, it: &oxc_ast::ast::CatchClause<'a>) {
+            self.push(
+                it.span,
+                TypeScriptProbeShape::new(ProbeFamily::ErrorPath, DeltaKind::Control),
+            );
+            oxc_ast_visit::walk::walk_catch_clause(self, it);
+        }
+        fn visit_expression_statement(&mut self, it: &oxc_ast::ast::ExpressionStatement<'a>) {
+            let inner = it.expression.get_inner_expression();
+            let awaited = match inner {
+                Expression::AwaitExpression(awaited) => Some(&awaited.argument),
+                _ => None,
+            };
+            let call_target = awaited.unwrap_or(inner);
+            if let Expression::ConditionalExpression(conditional) = inner {
+                self.guard_predicate(conditional.test.span());
+            } else if is_promise_reject(call_target) {
+                self.push(
+                    it.span,
+                    TypeScriptProbeShape::new(ProbeFamily::ErrorPath, DeltaKind::Control),
+                );
+            } else if self.concise_arrow_depth == 0
+                && let Expression::CallExpression(_call) = call_target.get_inner_expression()
+            {
+                // Computed callees keep a specific shape: the existing
+                // sink/discriminator guards already refuse a computed
+                // sink from the line text, and a non-specific shape
+                // would arm unrelated `!specific` post-overrides.
+                self.push(
+                    it.span,
+                    TypeScriptProbeShape::new(ProbeFamily::SideEffect, DeltaKind::Effect),
+                );
+            }
+            oxc_ast_visit::walk::walk_expression_statement(self, it);
+        }
+        fn visit_assignment_expression(&mut self, it: &oxc_ast::ast::AssignmentExpression<'a>) {
+            // Only member and plain binding `=` assignments construct a
+            // field value; compound assignments (`t += x`) and other
+            // targets (destructuring) keep the fallback, whose
+            // returned-state override owns compound writes.
+            if it.operator != oxc_ast::ast::AssignmentOperator::Assign
+                || !matches!(
+                    &it.left,
+                    oxc_ast::ast::AssignmentTarget::ComputedMemberExpression(_)
+                        | oxc_ast::ast::AssignmentTarget::StaticMemberExpression(_)
+                        | oxc_ast::ast::AssignmentTarget::AssignmentTargetIdentifier(_)
+                )
+            {
+                oxc_ast_visit::walk::walk_assignment_expression(self, it);
+                return;
+            }
+            // Computed targets keep a specific shape for the same reason
+            // as computed callees above: the sink guards refuse the sink,
+            // and a non-specific shape arms `!specific` post-overrides
+            // (the default-export-object corpus pins that credit).
+            self.push(
+                it.span,
+                TypeScriptProbeShape::new(ProbeFamily::FieldConstruction, DeltaKind::Value),
+            );
+            oxc_ast_visit::walk::walk_assignment_expression(self, it);
+        }
+        fn visit_variable_declarator(&mut self, it: &oxc_ast::ast::VariableDeclarator<'a>) {
+            // An object property needs no own candidate: a returned object
+            // already carries FieldConstruction from its return node, and
+            // a standalone property line keeps the line-text field shape.
+            // A property candidate would also claim a lookup-table
+            // declarator line that must stay non-specific (#11250).
+            if let Some(init) = &it.init
+                && let Expression::ArrowFunctionExpression(arrow) = init.get_inner_expression()
+                && arrow.expression
+                && let [Statement::ExpressionStatement(body)] = arrow.body.statements.as_slice()
+                && !matches!(
+                    body.expression.get_inner_expression(),
+                    Expression::ArrowFunctionExpression(_)
+                )
+            {
+                if let Expression::ConditionalExpression(conditional) =
+                    body.expression.get_inner_expression()
+                {
+                    self.guard_predicate(conditional.test.span());
+                }
+                let shape = value_shape(&body.expression);
+                self.push(body.expression.span(), shape);
+            }
+            oxc_ast_visit::walk::walk_variable_declarator(self, it);
+        }
+    }
+    let mut collector = Collector {
+        source,
+        candidates: Vec::new(),
+        concise_arrow_depth: 0,
+    };
+    oxc_ast_visit::Visit::visit_program(&mut collector, program);
+    collector
+        .candidates
+        .sort_by_key(|(tier, start, end, _)| (*tier, *start, std::cmp::Reverse(*end)));
+    let mut by_line: std::collections::BTreeMap<usize, TypeScriptProbeShape> =
+        std::collections::BTreeMap::new();
+    for (_, start, end, shape) in &collector.candidates {
+        let first = collector.source.line_for_offset(*start);
+        let last = collector.source.line_for_offset(*end);
+        for line in first..=last {
+            by_line.insert(line, shape.clone());
+        }
+    }
+    by_line
+        .into_iter()
+        .map(|(line, shape)| ProbeShapeFact { line, shape })
+        .collect()
 }
 
 /// Walk top-level statements for unsupported owner shapes, collecting every
