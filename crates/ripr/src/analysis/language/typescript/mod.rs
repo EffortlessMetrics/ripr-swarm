@@ -847,6 +847,7 @@ impl TypeScriptAdapter {
                         file: relative.to_path_buf(),
                         sample_line: test.line,
                         condition: test.conditional_registration.clone().unwrap_or_default(),
+                        sites: Vec::new(),
                     });
                 }
                 all_tests.extend(tests);
@@ -1425,11 +1426,17 @@ impl TypeScriptAdapter {
             .flat_map(|finding| finding.related_tests.iter())
             .map(|related| (normalized_path(&related.file), related.line))
             .collect();
-        let consulted_credit_gaps: Vec<&TypeScriptConditionalCreditGap> = if test_index_consumed {
-            consulted_credit_gaps(&conditional_credit_gaps, &consulted_test_files)
+        let consulted_credit_gaps: Vec<TypeScriptConditionalCreditGap> = if test_index_consumed {
+            credit_gaps_in_consulted_tests(
+                &consulted_credit_gaps(&conditional_credit_gaps, &consulted_test_files),
+                &all_tests,
+                &consulted_test_lines,
+            )
         } else {
             Vec::new()
         };
+        let consulted_credit_gaps: Vec<&TypeScriptConditionalCreditGap> =
+            consulted_credit_gaps.iter().collect();
         if let Some(limitation) = conditional_assertion_credit_summary(&consulted_credit_gaps)? {
             limitations.push(limitation);
         }
@@ -1831,6 +1838,62 @@ fn conditional_gap_summary(
 /// touch; a gap in a test file no finding relates to must not mark this
 /// analysis partial. Normalization matches the related-test path
 /// convention so separator spelling cannot split a match.
+/// Narrow file-scoped credit gaps to the tests the findings consulted
+/// (RIPR-SPEC-0243 rule 11). A conditional assertion sits inside one test's
+/// registration call; it cannot hide the oracle of a different test that
+/// the findings consulted in the same file, so a site enclosed only by
+/// other registered tests is dropped. Fail-closed: a site no registered
+/// test encloses (a hook, a helper, a describe-level branch), a gap without
+/// recorded sites, and any file whose tests come from an expanded suite
+/// factory (reported lines are not the walked source's) keep the whole
+/// file's disclosure.
+fn credit_gaps_in_consulted_tests(
+    gaps: &[&TypeScriptConditionalCreditGap],
+    all_tests: &[TypeScriptTest],
+    consulted_test_lines: &std::collections::BTreeSet<(String, usize)>,
+) -> Vec<TypeScriptConditionalCreditGap> {
+    gaps.iter()
+        .filter_map(|gap| {
+            let file = normalized_path(&gap.file);
+            let file_tests: Vec<&TypeScriptTest> = all_tests
+                .iter()
+                .filter(|test| normalized_path(&test.file) == file)
+                .collect();
+            if gap.sites.is_empty()
+                || file_tests
+                    .iter()
+                    .any(|test| test.factory_call_line.is_some())
+            {
+                return Some((*gap).clone());
+            }
+            let test_lines: std::collections::BTreeSet<usize> =
+                file_tests.iter().map(|test| test.line).collect();
+            let relevant: Vec<TypeScriptCreditSite> = gap
+                .sites
+                .iter()
+                .filter(|site| {
+                    let mut enclosing = site
+                        .enclosing_call_lines
+                        .iter()
+                        .filter(|line| test_lines.contains(line))
+                        .peekable();
+                    enclosing.peek().is_none()
+                        || enclosing
+                            .any(|line| consulted_test_lines.contains(&(file.clone(), *line)))
+                })
+                .cloned()
+                .collect();
+            let first = relevant.first()?;
+            Some(TypeScriptConditionalCreditGap {
+                file: gap.file.clone(),
+                sample_line: first.line,
+                condition: first.condition.clone(),
+                sites: relevant,
+            })
+        })
+        .collect()
+}
+
 fn consulted_credit_gaps<'a>(
     gaps: &'a [TypeScriptConditionalCreditGap],
     consulted_test_files: &std::collections::BTreeSet<String>,

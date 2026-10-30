@@ -326,13 +326,9 @@ fn extract_tests_expanding_suite_factories(
         // no credited assertion means the walker cannot disclose anything.
         let conditional_credit_gap = if tests.iter().any(|test| !test.assertions.is_empty()) {
             let source_text = SourceText::new(source);
-            let mut sample = None;
+            let mut sample = CreditSites::default();
             find_conditional_assertion_credit(&ret.program.body, &source_text, source, &mut sample);
-            sample.map(|(sample_line, condition)| TypeScriptConditionalCreditGap {
-                file: file.to_path_buf(),
-                sample_line,
-                condition,
-            })
+            sample.into_gap(file)
         } else {
             None
         };
@@ -5388,13 +5384,9 @@ pub(crate) fn detect_conditional_assertion_credit(
             return None;
         }
         let source = SourceText::new(source);
-        let mut sample = None;
+        let mut sample = CreditSites::default();
         find_conditional_assertion_credit(&ret.program.body, &source, &source, &mut sample);
-        sample.map(|(sample_line, condition)| TypeScriptConditionalCreditGap {
-            file: file.to_path_buf(),
-            sample_line,
-            condition,
-        })
+        sample.into_gap(file)
     }) else {
         return None;
     };
@@ -5410,6 +5402,39 @@ fn branch_statements_hold_assertion(statements: &[Statement<'_>], source: &Sourc
     statements_collect_assertion_probe(statements, source)
 }
 
+/// Every unevaluated-condition branch the walker finds in one test file, in
+/// source order, with the registration calls enclosing each (RIPR-SPEC-0243
+/// rule 11): which test a conditional assertion belongs to decides whether a
+/// finding that never consulted that test is affected by it.
+#[derive(Default)]
+struct CreditSites {
+    sites: Vec<TypeScriptCreditSite>,
+    /// Start lines of the call expressions the walker is currently inside.
+    calls: Vec<usize>,
+}
+
+impl CreditSites {
+    fn record(&mut self, line: usize, condition: String) {
+        self.sites.push(TypeScriptCreditSite {
+            line,
+            condition,
+            enclosing_call_lines: self.calls.clone(),
+        });
+    }
+
+    /// The file's gap: the first site as the displayed sample, all sites for
+    /// attribution. `None` when the file has no unevaluated branch.
+    fn into_gap(self, file: &Path) -> Option<TypeScriptConditionalCreditGap> {
+        let first = self.sites.first()?;
+        Some(TypeScriptConditionalCreditGap {
+            file: file.to_path_buf(),
+            sample_line: first.line,
+            condition: first.condition.clone(),
+            sites: self.sites,
+        })
+    }
+}
+
 /// Recursive statement walk mirroring the collection walker: blocks,
 /// `if`/`else`, loops, labels, `switch`, `try`/`catch`/`finally` and `with`.
 /// Records the first branch (in source order) whose condition is not a
@@ -5421,11 +5446,8 @@ fn find_conditional_assertion_credit(
     statements: &[Statement<'_>],
     source: &SourceText<'_>,
     raw: &str,
-    sample: &mut Option<(usize, String)>,
+    sample: &mut CreditSites,
 ) {
-    if sample.is_some() {
-        return;
-    }
     // Statements after an unconditional exit are dead; the collector withholds
     // their assertions, so no live conditional credit can sit there.
     let live_len = statements
@@ -5478,11 +5500,11 @@ fn find_conditional_assertion_credit(
                                 if_stmt.test.span().start as usize,
                                 if_stmt.test.span().end as usize,
                             );
-                            *sample = Some((
+                            sample.record(
                                 source.line_for_offset(if_stmt.span().start as usize),
                                 condition,
-                            ));
-                            return;
+                            );
+                            continue;
                         }
                         find_conditional_assertion_credit(
                             std::slice::from_ref(&if_stmt.consequent),
@@ -5522,11 +5544,11 @@ fn find_conditional_assertion_credit(
                         while_stmt.test.span().start as usize,
                         while_stmt.test.span().end as usize,
                     );
-                    *sample = Some((
+                    sample.record(
                         source.line_for_offset(while_stmt.span().start as usize),
                         condition,
-                    ));
-                    return;
+                    );
+                    continue;
                 }
                 find_conditional_assertion_credit(
                     std::slice::from_ref(&while_stmt.body),
@@ -5573,11 +5595,11 @@ fn find_conditional_assertion_credit(
                             )
                         })
                         .unwrap_or_default();
-                    *sample = Some((
+                    sample.record(
                         source.line_for_offset(for_stmt.span().start as usize),
                         condition,
-                    ));
-                    return;
+                    );
+                    continue;
                 }
                 find_conditional_assertion_credit(
                     std::slice::from_ref(&for_stmt.body),
@@ -5607,21 +5629,12 @@ fn find_conditional_assertion_credit(
             Statement::SwitchStatement(switch) => {
                 for case in &switch.cases {
                     find_conditional_assertion_credit(&case.consequent, source, raw, sample);
-                    if sample.is_some() {
-                        return;
-                    }
                 }
             }
             Statement::TryStatement(try_stmt) => {
                 find_conditional_assertion_credit(&try_stmt.block.body, source, raw, sample);
-                if sample.is_some() {
-                    return;
-                }
                 if let Some(handler) = &try_stmt.handler {
                     find_conditional_assertion_credit(&handler.body.body, source, raw, sample);
-                    if sample.is_some() {
-                        return;
-                    }
                 }
                 if let Some(finalizer) = &try_stmt.finalizer {
                     find_conditional_assertion_credit(&finalizer.body, source, raw, sample);
@@ -5642,9 +5655,6 @@ fn find_conditional_assertion_credit(
                 for declarator in &var.declarations {
                     if let Some(init) = &declarator.init {
                         find_conditional_assertion_credit_in_expression(init, source, raw, sample);
-                        if sample.is_some() {
-                            return;
-                        }
                     }
                 }
             }
@@ -5675,11 +5685,8 @@ fn find_conditional_assertion_credit_in_expression(
     expression: &Expression<'_>,
     source: &SourceText<'_>,
     raw: &str,
-    sample: &mut Option<(usize, String)>,
+    sample: &mut CreditSites,
 ) {
-    if sample.is_some() {
-        return;
-    }
     match expression {
         Expression::ArrowFunctionExpression(arrow) => {
             find_conditional_assertion_credit(&arrow.body.statements, source, raw, sample);
@@ -5690,22 +5697,22 @@ fn find_conditional_assertion_credit_in_expression(
             }
         }
         Expression::CallExpression(call) => {
+            // The call's start line is what a registered test reports as its
+            // own line, so a site records which registrations enclose it.
+            sample
+                .calls
+                .push(source.line_for_offset(call.span.start as usize));
             for argument in &call.arguments {
                 if let Some(expr) = argument.as_expression() {
                     find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
                 }
-                if sample.is_some() {
-                    return;
-                }
             }
+            sample.calls.pop();
         }
         Expression::NewExpression(call) => {
             for argument in &call.arguments {
                 if let Some(expr) = argument.as_expression() {
                     find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
-                }
-                if sample.is_some() {
-                    return;
                 }
             }
         }
@@ -5715,9 +5722,6 @@ fn find_conditional_assertion_credit_in_expression(
         Expression::SequenceExpression(sequence) => {
             for expr in &sequence.expressions {
                 find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
-                if sample.is_some() {
-                    return;
-                }
             }
         }
         Expression::LogicalExpression(logical) => {
@@ -5750,9 +5754,6 @@ fn find_conditional_assertion_credit_in_expression(
                     if let Some(expr) = argument.as_expression() {
                         find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
                     }
-                    if sample.is_some() {
-                        return;
-                    }
                 }
             }
         }
@@ -5773,9 +5774,6 @@ fn find_conditional_assertion_credit_in_expression(
                 if let Some(expr) = element.as_expression() {
                     find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
                 }
-                if sample.is_some() {
-                    return;
-                }
             }
         }
         Expression::ObjectExpression(object) => {
@@ -5787,9 +5785,6 @@ fn find_conditional_assertion_credit_in_expression(
                         raw,
                         sample,
                     );
-                }
-                if sample.is_some() {
-                    return;
                 }
             }
         }
