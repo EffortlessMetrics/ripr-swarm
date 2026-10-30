@@ -872,6 +872,38 @@ fn string_value(expression: &Expression<'_>) -> Option<String> {
     }
 }
 
+/// The registration resolution inputs of one statement list, built once per
+/// statement list (#10017): the admission's registration context, the names
+/// visible to a registration at this level, and whether `undefined` is
+/// unshadowed here. The renamed-alias gate (#10987) reads the same inputs the
+/// skip gates read, so both spellings of a registration decide identically.
+pub(crate) struct RegistrationScope {
+    context: TypeScriptAdmissionContext,
+    names: RegistrationNames,
+    unshadowed_undefined: bool,
+}
+
+impl RegistrationScope {
+    fn of(scope: &TestScope, unshadowed_undefined: bool) -> Self {
+        Self {
+            context: scope.admission.registration_context(),
+            names: RegistrationNames::new(
+                scope
+                    .levels
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(depth, level)| {
+                        level.iter().map(move |(name, _, phase)| {
+                            (name.clone(), depth == 0 && *phase == Phase::Declaration)
+                        })
+                    })
+                    .chain(scope.registration_levels.iter().flatten().cloned()),
+            ),
+            unshadowed_undefined,
+        }
+    }
+}
+
 pub(crate) fn collect_tests_from_statements<'s, 'a>(
     statements: &'s [Statement<'a>],
     file: &Path,
@@ -898,7 +930,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
     let mut iterables = Vec::new();
     let mut returned = false;
     let mut shared_bindings: Option<ScopeBindings> = None;
-    let mut registration_scope: Option<(TypeScriptAdmissionContext, RegistrationNames)> = None;
+    let mut registration_scope: Option<RegistrationScope> = None;
     for stmt in statements {
         if !returned {
             collect_const_iterables(stmt, &mut iterables);
@@ -1003,24 +1035,9 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                 // The context and the visible bindings are the same for every
                 // registration in this statement list, so they are built once
                 // (#10017).
-                let (context, names) = registration_scope.get_or_insert_with(|| {
-                    (
-                        scope.admission.registration_context(),
-                        RegistrationNames::new(
-                            scope
-                                .levels
-                                .iter()
-                                .enumerate()
-                                .flat_map(|(depth, level)| {
-                                    level.iter().map(move |(name, _, phase)| {
-                                        (name.clone(), depth == 0 && *phase == Phase::Declaration)
-                                    })
-                                })
-                                .chain(scope.registration_levels.iter().flatten().cloned()),
-                        ),
-                    )
-                });
-                context.registration_is_known_in(
+                let resolved = registration_scope
+                    .get_or_insert_with(|| RegistrationScope::of(scope, unshadowed_undefined));
+                resolved.context.registration_is_known_in(
                     call,
                     call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
                         || call_callee_is_active_each_declaration(
@@ -1028,7 +1045,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                             TestDeclarationRoot::Describe,
                         )
                         || conditional_describe_factory(call).is_some(),
-                    names,
+                    &resolved.names,
                 )
             }
         {
@@ -1048,13 +1065,19 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         {
             continue;
         }
-        if let Some((describe_name, body, guard)) = describe_body_from_statement(stmt, source)
-            .map(|(name, body)| (name, body, None))
-            .or_else(|| {
-                conditional_describe_body(stmt, source)
-                    .map(|(name, body, guard)| (name, body, Some(guard)))
-            })
-        {
+        if let Some((describe_name, body, guard)) = {
+            // The context and the visible bindings are the same for every
+            // registration in this statement list, so they are built once
+            // (#10017); the renamed-alias gate reads the same inputs (#10987).
+            let resolved = registration_scope
+                .get_or_insert_with(|| RegistrationScope::of(scope, unshadowed_undefined));
+            describe_body_from_statement(stmt, source, Some(resolved))
+                .map(|(name, body)| (name, body, None))
+                .or_else(|| {
+                    conditional_describe_body(stmt, source)
+                        .map(|(name, body, guard)| (name, body, Some(guard)))
+                })
+        } {
             // #10629: a `describe.skipIf(cond)` / `describe.runIf(cond)` suite
             // is indexed under its factory call as the guard, like an `if`.
             let guarded = guard.is_some();
@@ -1181,6 +1204,8 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                 .flatten()
                 .any(|(bound, _, _)| bound == name)
         });
+        let resolved = registration_scope
+            .get_or_insert_with(|| RegistrationScope::of(scope, unshadowed_undefined));
         if let Some(mut test) = test_from_statement(
             stmt,
             file,
@@ -1188,6 +1213,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             &scope.describe_names,
             &assertion_bindings,
             &functions,
+            Some(resolved),
         ) {
             if let Some(call) = statement_call(stmt) {
                 test.assertion_admission = scope.admission.admission_of(call, &test.assertions);
@@ -3107,14 +3133,18 @@ pub(crate) fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) ->
 /// The name and body of an active `describe` / `context` / `suite` statement.
 /// A title that is not a string literal (`describe(Div.name, fn)`, a template
 /// literal) is named by its bounded, single-line source text so the body is
-/// still walked (#4548).
+/// still walked (#4548). A renamed registration alias of a describe root
+/// (`const { describe: d } = runner`, #10987) is decided by the same
+/// admission authority as the skip gates.
 pub(crate) fn describe_body_from_statement<'a>(
     stmt: &'a Statement<'a>,
     source: &SourceText<'_>,
+    registration: Option<&RegistrationScope>,
 ) -> Option<(String, &'a oxc_allocator::Vec<'a, Statement<'a>>)> {
     let call = statement_call(stmt)?;
     if !call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
         && !call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+        && !renamed_registration_is_known(call, registration, TestDeclarationRoot::Describe)
     {
         return None;
     }
@@ -3325,11 +3355,17 @@ pub(crate) fn test_from_statement<'s, 'a>(
     describe_stack: &[String],
     bindings: &TypeScriptAssertionBindings,
     functions: &[DeclaredFunction<'s, 'a>],
+    registration: Option<&RegistrationScope>,
 ) -> Option<TypeScriptTest> {
     let call = statement_call(stmt)?;
     let referenced = referenced_callback_function(call, functions, source);
-    let (name, assertions) =
-        test_name_and_assertions_from_registration(call, referenced, source, bindings)?;
+    let (name, assertions) = test_name_and_assertions_from_registration(
+        call,
+        referenced,
+        source,
+        bindings,
+        registration,
+    )?;
     Some(TypeScriptTest {
         name: qualified_test_name(describe_stack, &name),
         local_name: name,
@@ -3609,19 +3645,92 @@ pub(crate) fn test_name_and_assertions_from_call(
     source: &SourceText<'_>,
     bindings: &TypeScriptAssertionBindings,
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
-    test_name_and_assertions_from_registration(call, None, source, bindings)
+    test_name_and_assertions_from_registration(call, None, source, bindings, None)
+}
+
+/// Whether `call` registers through a local the imports layer renamed to an
+/// active `root` member (`const { test: t } = runner`, `import { test as t
+/// }`, #10987). The token gate reads only the callee's spelling; the alias
+/// is the same registration target, so the admission context decides it,
+/// with the same runner-source and shadowing gates as the skip gates
+/// (`registration_is_known_in`). An alias of any other module's member
+/// (`{ test: t } = require('node:assert')`, `{ deepEqual: eq }`) resolves to
+/// no runner registration, and a local rebinding of the name shadows it.
+fn renamed_registration_is_known(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    registration: Option<&RegistrationScope>,
+    root: TestDeclarationRoot,
+) -> bool {
+    let Some(resolved) = registration else {
+        return false;
+    };
+    // The renamed local is the root of the callee chain (`t(...)`,
+    // `t.only(...)`); a member read off the namespace (`runner.test(...)`)
+    // is not a renamed spelling and stays unindexed as before.
+    let Some(local) = callee_root_name(&call.callee) else {
+        return false;
+    };
+    if root.matches_identifier(local) {
+        return false;
+    }
+    // The literal spellings refuse inactive modifiers (`t.skip`, `t.todo`)
+    // before a callback can donate assertions, and an aliased `.each` would
+    // lose the empty-table and table-row fences those spellings get. An alias
+    // therefore registers only bare or through an active modifier; every
+    // other member shape stays unindexed exactly as before (#11057 review).
+    if !alias_callee_chain_is_active(&call.callee) {
+        return false;
+    }
+    // Only an alias of a member the direct spelling accepts enters the
+    // admission decision; namespace objects and other members do not.
+    resolved
+        .context
+        .binds_renamed_registration_root(local, |member| root.matches_identifier(member))
+        // The token gate reads the options object inside
+        // `call_callee_is_active_declaration`, then the statement-level fence
+        // re-reads it against a shadowed `undefined`; a renamed spelling owes
+        // the same combined skip/todo fence.
+        && declaration_options_are_active_with_undefined(call, resolved.unshadowed_undefined)
+        && resolved.context.registration_is_known_in(
+            call,
+            matches!(root, TestDeclarationRoot::Describe),
+            &resolved.names,
+        )
+}
+
+/// Whether an alias's callee chain spells an active registration: the bare
+/// alias (`t(...)`) or active modifiers over it (`t.only(...)`). An inactive
+/// modifier (`t.skip`, `t.todo`, `.fails`) and an `.each` / `.skipIf` factory
+/// are refused: the literal spellings decide those through the inactive-
+/// modifier, empty-table and table-row fences, and an alias must not read as
+/// a registration they would refuse.
+fn alias_callee_chain_is_active(callee: &Expression<'_>) -> bool {
+    match callee.get_inner_expression() {
+        Expression::Identifier(_) => true,
+        Expression::StaticMemberExpression(member) => {
+            is_active_declaration_modifier(member.property.name.as_str())
+                && alias_callee_chain_is_active(&member.object)
+        }
+        _ => false,
+    }
 }
 
 /// `referenced` is the same-file function a `test(title, name)` registration
 /// runs; its body stands in for the inline callback.
+///
+/// `registration` carries the statement list's admission context and visible
+/// bindings (#10017), so a renamed registration alias (`const { test: t } =
+/// runner`, #10987) is decided by the same authority as the skip gates.
 fn test_name_and_assertions_from_registration(
     call: &oxc_ast::ast::CallExpression<'_>,
     referenced: Option<&oxc_ast::ast::Function<'_>>,
     source: &SourceText<'_>,
     bindings: &TypeScriptAssertionBindings,
+    registration: Option<&RegistrationScope>,
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
     if !call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
         && !call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+        && !renamed_registration_is_known(call, registration, TestDeclarationRoot::Test)
     {
         return None;
     }

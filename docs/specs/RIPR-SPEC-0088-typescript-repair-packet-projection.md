@@ -133,6 +133,12 @@ refs. It must not retain the blocked `gap_state: advisory`,
 `repair_route:`, `missing_actionability_fields:`, or non-empty
 `evidence_needed_to_promote:` lines for that packet-ready finding.
 
+The context packet's `missing` array uses the same validator-backed projection:
+when packet-ready, it omits the provisional preview packet-availability summary
+but retains actual missing discriminators and independent limitations. Blocked,
+unsupported, or stale-source findings retain their original missing entries.
+The projection does not infer a verdict from RIPR stage states or execute tests.
+
 ### Human output (explain + check human)
 
 For an **actionable** TypeScript finding (`repair_packet_ready: true`):
