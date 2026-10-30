@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_discount.ts:typescript_preview:2396aec1",
+      "canonical_gap_id": "gap:typescript:typescript_preview:2396aec1",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -164,8 +165,8 @@
       "stop_reasons": [],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",
-      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; the repair packet is complete and delegatable (advisory).",
-      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; the repair packet is complete and delegatable (advisory).",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only).",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only).",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",

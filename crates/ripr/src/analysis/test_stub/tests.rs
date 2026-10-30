@@ -1632,3 +1632,66 @@ fn returns_unit_recognizes_unit_and_unit_results_only() {
         assert!(!returns_unit(value), "{value}");
     }
 }
+
+#[test]
+fn impl_into_and_as_ref_parameters_get_a_concrete_stand_in() -> Result<(), String> {
+    // #8361: `impl Into<String>` was refused as `parameter_unsupported`, but
+    // the concrete target type is itself a valid argument.
+    let source = "pub fn label(name: impl Into<String>, path: impl AsRef<str>, n: u8) -> u8 {
+    let _ = (name.into(), path.as_ref());
+    if n > 3 { 1 } else { 0 }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "n > 3",
+        SeamKind::PredicateBoundary,
+        boundary("n > 3"),
+    )?;
+    let stub = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text.contains("let name: String = todo!("),
+        "{}",
+        stub.text
+    );
+    assert!(
+        stub.text.contains("let path: &str = todo!("),
+        "{}",
+        stub.text
+    );
+    assert!(!stub.text.contains("impl "), "{}", stub.text);
+    Ok(())
+}
+
+#[test]
+fn other_impl_trait_parameters_stay_refused() -> Result<(), String> {
+    for param in [
+        "w: impl std::fmt::Display",
+        "w: impl Into<Vec<u8>>",
+        "w: impl AsRef<Vec<u8>>",
+        "w: impl AsRef<Path>",
+        "w: &impl Into<String>",
+        "w: impl Into<impl Clone>",
+    ] {
+        let source = format!(
+            "pub fn f({param}, n: u8) -> u8 {{
+    if n > 3 {{ 1 }} else {{ 0 }}
+}}
+"
+        );
+        let seam = seam_at(
+            "src/lib.rs",
+            &source,
+            "n > 3",
+            SeamKind::PredicateBoundary,
+            boundary("n > 3"),
+        )?;
+        assert_eq!(
+            rust_test_stub(&seam, None, &source),
+            Err(TestStubRefusal::ParameterUnsupported),
+            "{param}"
+        );
+    }
+    Ok(())
+}

@@ -688,21 +688,50 @@ pub(super) fn oracle_is_pure_len_aggregate(oracle: &str, changed_literals: &str)
 
 /// Per-finding state that does not depend on the related rows: the test index
 /// and the owner's import-alias locals across every test. Built once so a
-/// caller that aligns many rows separately does not rebuild it per row.
+/// caller that aligns many rows separately does not rebuild it per row. The
+/// index covers every test, not one owner, so a run shares one across all of
+/// its owners and only the alias tokens are per owner.
 pub(super) struct AlignmentPrep<'a> {
-    lookup: TestLookup<'a>,
+    lookup: Rc<TestLookup<'a>>,
     alias_tokens: Vec<String>,
+}
+
+// Alignment preps and test indexes built on this thread, so a test can pin one
+// prep per owner and one index per run rather than one per changed line (#10914).
+#[cfg(test)]
+thread_local! {
+    pub(super) static ALIGNMENT_PREPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static ALIGNMENT_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl<'a> AlignmentPrep<'a> {
     pub(super) fn new(owner: &PythonOwner, all_tests: &'a [PythonTest]) -> Self {
+        Self::with_lookup(owner, all_tests, Self::lookup(all_tests))
+    }
+
+    /// The test index an [`AlignmentPrep`] reads, for a caller that shares one
+    /// across owners through [`AlignmentPrep::with_lookup`].
+    pub(super) fn lookup(all_tests: &'a [PythonTest]) -> Rc<TestLookup<'a>> {
+        #[cfg(test)]
+        ALIGNMENT_LOOKUPS.with(|lookups| lookups.set(lookups.get() + 1));
+        Rc::new(TestLookup::new(all_tests))
+    }
+
+    /// `lookup` must index exactly `all_tests`.
+    pub(super) fn with_lookup(
+        owner: &PythonOwner,
+        all_tests: &'a [PythonTest],
+        lookup: Rc<TestLookup<'a>>,
+    ) -> Self {
+        #[cfg(test)]
+        ALIGNMENT_PREPS.with(|preps| preps.set(preps.get() + 1));
         let mut alias_tokens: Vec<String> = all_tests
             .iter()
             .flat_map(|test| owner_import_aliases(owner, test))
             .collect();
         alias_tokens.retain(|token| token.len() >= 2);
         Self {
-            lookup: TestLookup::new(all_tests),
+            lookup,
             alias_tokens,
         }
     }
@@ -831,7 +860,7 @@ pub(super) fn classify_sink_alignment_prepared(
     // behavior family (a `pytest.raises` for a changed `return`) never
     // credits, whichever branch its text would pass.
     let focus = PythonAssertionFocus::for_change(family, line_text, old_line_text);
-    let test_lookup = &prep.lookup;
+    let test_lookup = &*prep.lookup;
     let mut units = alignment_units(
         &strong_tests,
         test_lookup,
@@ -1161,15 +1190,20 @@ pub(super) fn classify_sink_alignment_prepared(
             (method_owner_identity(unit)
                 || free_fn_module_identity(unit)
                 || calls_owner_through_module(test, owner))
-            .then(|| EffectReads::of(effect, test, owner))
+            .then(|| EffectReads::of(effect, test, owner, guard_entered))
         }))
     });
     let effect_observed = |unit: &AlignmentUnit<'_>| {
         helper_owner_supported(unit)
-            && effect_reads(unit)
-                .as_ref()
-                .as_ref()
-                .is_some_and(|reads| reads.observed_by(&unit.text, unit.line))
+            && effect_reads(unit).as_ref().as_ref().is_some_and(|reads| {
+                reads.observed_by(
+                    &unit.text,
+                    unit.line,
+                    unit.source_range,
+                    &unit.observed_operands,
+                    unit.helper_derived,
+                )
+            })
             && field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
             && !assertion_calls_stand_in(unit, owner)
@@ -1302,6 +1336,8 @@ struct AlignmentUnit<'a> {
     reported: String,
     /// The file line the assertion starts on, when it is a source assertion.
     line: Option<usize>,
+    source_range: Option<rustpython_parser::text_size::TextRange>,
+    observed_operands: Vec<(String, rustpython_parser::text_size::TextRange)>,
     kind: OracleKind,
     /// A mock assertion admitted only to observe a changed call's arguments.
     effect_only: bool,
@@ -1341,6 +1377,8 @@ fn alignment_units<'a>(
                     text: assertion.gate_text.clone(),
                     reported: assertion.text.clone(),
                     line: Some(assertion.line),
+                    source_range: assertion.source_range,
+                    observed_operands: assertion.observed_operands.clone(),
                     kind: assertion.oracle_kind.clone(),
                     effect_only: !strong,
                     helper_derived: assertion.helper_derived,
@@ -1360,6 +1398,8 @@ fn alignment_units<'a>(
                 text: text.clone(),
                 reported: text.clone(),
                 line: None,
+                source_range: None,
+                observed_operands: Vec::new(),
                 kind: related.oracle_kind.clone(),
                 effect_only: false,
                 // A legacy reported oracle must not wash out known helper

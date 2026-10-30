@@ -3,12 +3,12 @@ mode: fast
 root: fixtures/python_functools_memoization_not_indirection/input
 config: <cwd>/fixtures/python_functools_memoization_not_indirection/input/ripr.toml
 
-Summary: 2 probes (1 exposed, 1 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+Summary: 2 changed behaviors checked: 1 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
 
 Changed file(s) by language: python = 1
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Start here:
   State: preview language, advisory only
@@ -18,10 +18,9 @@ Start here:
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
-  Canonical gap: gap:python:src/memo.py:century_index:return_value:return_value:year%1000
+  Gap ID (for scripts): gap:python:src/memo.py:century_index:return_value:return_value:year%1000
   Changed behavior: return year % 1000
-  Missing discriminator (1 of 2): Related Python test reaches `century_index` but the strongest
-    extracted oracle is `unknown`; add or strengthen a focused assertion for the returned value
+  Missing check (1 of 2): Related Python test reaches `century_index` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the returned value
   Related test: tests/test_memo.py:8 test_century_index_smoke (has no assertion)
   Suggested test file: tests/test_memo.py
   Suggested test: test_century_index_smoke
@@ -34,11 +33,11 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
-      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
-      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
-      candidate line = changed line ripr considers for probes
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related Python test(s) found for owner `century_index`
     - infection yes: Changed Python return expression can alter the owner return value: `return year % 1000`
     - 5 more detail line(s) in --format human-full
@@ -50,7 +49,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).
-    - src/memo.py:6 (exposed)
+    - src/memo.py:6 (exposed); kind: return_value; reason: Related Python test reaches `format_year` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

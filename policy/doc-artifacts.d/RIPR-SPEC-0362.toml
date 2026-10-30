@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0362"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0362-gate-ledger-refusal-admission.md"
+status = "proposed"
+owner = "product-output"
+standalone_reason = "Issue #10733 records the gate/ledger refusal-admission contract: a saved producer-refusal envelope is refused at gap-ledger admission (blocked + named warning) and at every gate evaluate input (config_error), while complete-zero keeps its no_records/pass and bounded keeps its own named refusal."

@@ -33,10 +33,11 @@ use super::boundary::literal_value;
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
+use rustpython_parser::{Mode, Tok, lexer::lex};
 use std::sync::Arc;
 
 /// A module-scope name bound once to a scalar literal and never rebound.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonModuleConstant {
     pub(super) name: String,
     /// Canonical literal text (`10_000` becomes `10000`).
@@ -78,6 +79,76 @@ pub(super) fn module_object_bindings(source: &SourceText<'_>, statements: &[Stmt
         })
         .filter(|name| stable.holds(name))
         .collect()
+}
+
+/// A module-scope `NAME = <value>` binding nothing in the module rebinds,
+/// with the byte offset where its statement starts.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct PythonModuleValue<'a> {
+    pub(super) name: &'a str,
+    pub(super) value: &'a Expr,
+    pub(super) offset: usize,
+}
+
+/// The module-scope names a decorator may lean on (#10685).
+#[derive(Clone, Debug, Default)]
+pub(super) struct PythonModuleNames<'a> {
+    /// Plain `NAME = <value>` bindings nothing rebinds.
+    pub(super) values: Vec<PythonModuleValue<'a>>,
+    /// Every name bound exactly once at module scope (an import counts) and
+    /// never rebound, under the same conditions as [`module_literal_constants`].
+    pub(super) stable: std::collections::BTreeSet<String>,
+}
+
+impl PythonModuleNames<'_> {
+    pub(super) fn holds(&self, name: &str) -> bool {
+        self.stable.contains(name)
+    }
+}
+
+/// The module-scope names bound once and never rebound, and the plain
+/// `NAME = <value>` bindings among them. A decorator reads them (`@cases`,
+/// `parametrize(NAMES, ...)`, an `import pytest as pt` root, #10685).
+pub(super) fn module_stable_names<'a>(
+    source: &SourceText<'_>,
+    statements: &'a [Stmt],
+) -> PythonModuleNames<'a> {
+    let Some(stable) = StableNames::of(source, statements) else {
+        return PythonModuleNames::default();
+    };
+    let values = statements
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Assign(assign) => match assign.targets.as_slice() {
+                [Expr::Name(name)] => Some(PythonModuleValue {
+                    name: name.id.as_str(),
+                    value: assign.value.as_ref(),
+                    offset: usize::from(assign.range.start()),
+                }),
+                _ => None,
+            },
+            _ => None,
+        })
+        .filter(|value| stable.holds(value.name))
+        .collect();
+    PythonModuleNames {
+        values,
+        stable: stable
+            .counts
+            .keys()
+            .filter(|name| stable.holds(name))
+            .cloned()
+            .collect(),
+    }
+}
+
+/// Every name a class body binds in its own scope, nested `def` and `class`
+/// names included, or None when the walk cannot enumerate them. A decorator
+/// in a class body looks a name up there before the module.
+pub(super) fn class_scope_names(body: &[Stmt]) -> Option<Vec<String>> {
+    let mut bindings = ScopeBindings::default();
+    collect_scope_bindings(body, &mut bindings);
+    (!bindings.opaque).then_some(bindings.names)
 }
 
 /// The facts that decide whether a module-scope name can still be rebound.
@@ -171,6 +242,24 @@ impl ModuleBindingFacts {
     pub(super) fn may_assign_attribute(&self, name: &str) -> bool {
         self.opaque || self.attributes.contains(name) || self.attributes.contains("*")
     }
+
+    /// Whether a walrus or `global` anywhere in the module may bind `name`,
+    /// including into a class namespace, or the module is opaque.
+    pub(super) fn may_rebind(&self, name: &str) -> bool {
+        self.opaque || self.rebound.contains(name)
+    }
+
+    /// Whether the module assigns a dunder attribute (`X.__new__ = ...`),
+    /// which can change what a class builds or looks up (#9226).
+    pub(super) fn assigns_dunder(&self) -> bool {
+        self.opaque
+            || self.attributes.iter().any(|attribute| {
+                attribute == "*"
+                    || (attribute.len() > 4
+                        && attribute.starts_with("__")
+                        && attribute.ends_with("__"))
+            })
+    }
 }
 
 /// The constants still visible inside a function owner: those its parameters
@@ -222,7 +311,7 @@ pub(super) fn function_bound_names(
 }
 
 /// What a test file can do to a module constant's value, for one test.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonTestRebinding {
     /// Names the test cannot be trusted to hold at their imported value: its
     /// own parameters and locals. Names its module binds more than once are in
@@ -262,6 +351,9 @@ pub(super) struct PythonTestRebinding {
     /// A module `def`/`class` header (decorator, default, annotation, base) or
     /// a conditional import can run code at import (#10040 `no_call_path`).
     pub(super) header_reach: bool,
+    /// One import and one argument-free test with no definition-time
+    /// expressions; only bounded dunder truthiness consumes this fact.
+    pub(super) plain_test_module: bool,
 }
 
 impl PythonTestRebinding {
@@ -303,6 +395,7 @@ pub(super) fn python_test_rebinding(
         edited_in_diff: false,
         implicit_reach: false,
         header_reach: false,
+        plain_test_module: false,
     }
 }
 
@@ -314,6 +407,7 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
     let mut module = ScopeBindings::default();
     collect_scope_bindings(statements, &mut module);
     let dynamic = writes_namespace_dynamically(source);
+    let plain_test_module = super::dunder_truthiness::plain_test_module(statements);
     // A `global NAME` in any function (an autouse fixture, a helper) can
     // rebind an imported name before another test in the module runs.
     let mut globals = Vec::new();
@@ -347,6 +441,7 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
         rebinding.names.dedup();
         rebinding.module_names = Arc::clone(&module_names);
         rebinding.module_opaque = module.opaque || dynamic;
+        rebinding.plain_test_module = plain_test_module;
         rebinding.module_bound = Arc::clone(&module_bound);
         rebinding.attributes = Arc::clone(&attributes);
     }
@@ -429,24 +524,73 @@ fn contains_nested_scope(statements: &[Stmt]) -> bool {
 /// Whether `source` names a writer that can bind module names at runtime
 /// without an assignment statement, including `unittest.mock` patching
 /// (`patch("pkg.LIMIT", 5)`, `patch.object(pkg, "LIMIT", 5)`), and
-/// `importlib.reload`, which re-executes the module. Textual on
-/// purpose: a false match only leaves constants unresolved.
+/// `importlib.reload`, which re-executes the module. Reads code tokens, so a
+/// word in a comment or an ordinary string (a docstring saying "env vars",
+/// a comment about `--reload`) is not a writer (#10979); an f-string can run
+/// code, so its text still counts, and a module the lexer rejects falls back
+/// to the whole-text scan. A false match only leaves constants unresolved.
 fn writes_namespace_dynamically(source: &str) -> bool {
-    [
-        "exec",
-        "globals",
-        "vars",
-        "locals",
-        "setattr",
-        "__setattr__",
-        "delattr",
-        "reload",
-        "__dict__",
-        "patch",
-    ]
-    .into_iter()
-    .any(|identifier| mentions_identifier(source, identifier))
-        || source.contains("sys.modules")
+    // 0: nothing pending, 1: just read `sys`, 2: just read `sys.`.
+    let mut after_sys = 0;
+    for result in lex(source, Mode::Module) {
+        let Ok((token, range)) = result else {
+            return writes_namespace_in_text(source);
+        };
+        match &token {
+            Tok::Name { name } => {
+                if DYNAMIC_NAMESPACE_WRITERS.contains(&name.as_str())
+                    || (after_sys == 2 && name == "modules")
+                {
+                    return true;
+                }
+                after_sys = usize::from(name == "sys");
+            }
+            Tok::Dot if after_sys == 1 => after_sys = 2,
+            // `getattr(importlib, "reload")(m)` and `locate("importlib.reload")`
+            // name the writer only as a string, so a whitespace-free string
+            // with a writer name among its dotted parts still counts. Prose
+            // (a docstring saying "env vars") has whitespace and does not.
+            Tok::String { value, kind, .. }
+                if !kind.is_any_fstring()
+                    && !value.trim().contains(char::is_whitespace)
+                    && value
+                        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .any(|part| DYNAMIC_NAMESPACE_WRITERS.contains(&part)) =>
+            {
+                return true;
+            }
+            Tok::String { kind, .. } if kind.is_any_fstring() => {
+                let text = &source[usize::from(range.start())..usize::from(range.end())];
+                if writes_namespace_in_text(text) {
+                    return true;
+                }
+                after_sys = 0;
+            }
+            _ => after_sys = 0,
+        }
+    }
+    false
+}
+
+const DYNAMIC_NAMESPACE_WRITERS: [&str; 11] = [
+    "exec",
+    "eval",
+    "globals",
+    "vars",
+    "locals",
+    "setattr",
+    "__setattr__",
+    "delattr",
+    "reload",
+    "__dict__",
+    "patch",
+];
+
+fn writes_namespace_in_text(text: &str) -> bool {
+    DYNAMIC_NAMESPACE_WRITERS
+        .into_iter()
+        .any(|identifier| mentions_identifier(text, identifier))
+        || text.contains("sys.modules")
 }
 
 /// Attribute assignment/deletion targets, including unpacking, annotations,
@@ -459,7 +603,7 @@ pub(super) fn assigned_attributes(source: &str) -> Option<Vec<String>> {
     }
 }
 
-fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
+pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
     let mut attributes = Vec::new();
     visit_statements(statements, &mut |stmt| match stmt {
         Stmt::Assign(assign) => {
@@ -541,6 +685,37 @@ fn literal_assignment(source: &SourceText<'_>, stmt: &Stmt) -> Option<PythonModu
         value: literal_value(&text_for_range(source, value.range()))?,
         line: line_for_range_start(source, stmt.range()),
     })
+}
+
+/// Whether `name` is a module-scope name bound once, by the one `NAME = {...}`
+/// (or annotated) statement that starts on `line`, with the stability the
+/// scalar constants need (#9619). In-place mutation of the table is a separate
+/// question (`table_reads`).
+pub(super) fn module_table_binding_at(
+    source: &SourceText<'_>,
+    statements: &[Stmt],
+    name: &str,
+    line: usize,
+) -> bool {
+    let Some(stable) = StableNames::of(source, statements) else {
+        return false;
+    };
+    stable.holds(name)
+        && statements.iter().any(|stmt| {
+            let (target, value) = match stmt {
+                Stmt::Assign(assign) => match assign.targets.as_slice() {
+                    [target] => (target, Some(assign.value.as_ref())),
+                    _ => return false,
+                },
+                Stmt::AnnAssign(assign) if assign.simple => {
+                    (assign.target.as_ref(), assign.value.as_deref())
+                }
+                _ => return false,
+            };
+            matches!(target, Expr::Name(target) if target.id.as_str() == name)
+                && matches!(value, Some(Expr::Dict(_)))
+                && line_for_range_start(source, stmt.range()) == line
+        })
 }
 
 /// Every binding of a name in one scope, counted per occurrence. `opaque`

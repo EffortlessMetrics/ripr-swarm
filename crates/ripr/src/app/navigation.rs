@@ -65,6 +65,34 @@ pub(crate) struct GapRepairRoute {
     pub(crate) finding_id: String,
     pub(crate) gap_id: String,
     pub(crate) base: String,
+    /// Tracked production files that differ from HEAD in the analyzed tree
+    /// (#10698). The start refuses to begin while any exist, so the check
+    /// screen prints their commit before the start. Empty on a clean tree.
+    pub(crate) uncommitted_files: Vec<String>,
+}
+
+impl GapRepairRoute {
+    /// The commit step that must precede the gap-bound start when the analyzed
+    /// tree has uncommitted production edits (#10698). `None` on a clean tree.
+    ///
+    /// The command runs from any directory: `git -C <root>` anchors it at the
+    /// analyzed root, `--literal-pathspecs` keeps names like `src/[ab].py`
+    /// literal, and the files are shell-quoted and spelled relative to that root.
+    pub(crate) fn commit_prerequisite(&self, root_display: &str) -> Option<String> {
+        if self.uncommitted_files.is_empty() {
+            return None;
+        }
+        let files = self
+            .uncommitted_files
+            .iter()
+            .map(|file| shell_arg(file))
+            .collect::<Vec<_>>()
+            .join(" ");
+        Some(format!(
+            "git -C {} --literal-pathspecs commit -m \"<message>\" -- {files}",
+            shell_arg(root_display)
+        ))
+    }
 }
 
 /// Why the check pipeline offered no repair start for its selected finding
@@ -88,7 +116,18 @@ pub(crate) enum RepairRouteRefusal {
     /// candidate set exceeded the configured limit.
     SeamLimit,
     /// No classified seam in the finding's file binds this finding.
-    NoBindingSeam,
+    /// `seams_in_file` is how many classified seams the file holds, so the
+    /// advisory never says "no seam" where `ripr repair` lists seams (#10702).
+    NoBindingSeam { seams_in_file: usize },
+    /// The finding itself is `exposed`: the related tests already notice the
+    /// change, so there is nothing to repair whatever the seam view says
+    /// (#10702).
+    FindingAlreadyExposed,
+    /// `check` reads a gap or limitation for this change, while the
+    /// repository-wide seam view `ripr repair` reads already counts the bound
+    /// seam as gripped. The advisory names that one difference instead of
+    /// quoting repair's "no gap remains" beside check's gap (#10702).
+    SeamGrippedFindingNot,
     /// Several classified seams bind this finding; the check screen never
     /// picks one silently.
     SeveralBindingSeams,
@@ -100,6 +139,9 @@ pub(crate) enum RepairRouteRefusal {
         kind: super::task_first::RefusalKind,
         /// The producer-owned missing-evidence list behind a not-ready route.
         missing: Vec<String>,
+        /// A related test already supplies the changed boundary input and
+        /// only its oracle is weak (#10622).
+        boundary_input_observed: bool,
     },
 }
 
@@ -117,7 +159,7 @@ impl RepairRouteRefusal {
         let gate = || format!("run `{full_gate_command}` for the full gate's answer");
         match self {
             Self::NoCanonicalGap => {
-                "no repair start offered: this finding has no canonical gap, so there is \
+                "no repair start offered: this finding has no gap ID, so there is \
                  no seam to start a repair from; follow the Next step above"
                     .to_string()
             }
@@ -138,9 +180,27 @@ impl RepairRouteRefusal {
                     super::task_first::WIDEN_SEAM_BUDGET
                 )
             }
-            Self::NoBindingSeam => "no repair start offered: ripr found no seam in this \
+            Self::NoBindingSeam { seams_in_file: 0 } => {
+                "no repair start offered: ripr found no seam in this \
                  finding's file to bind it to, so there is no seam to start a repair from; \
                  follow the Next step above"
+                    .to_string()
+            }
+            Self::NoBindingSeam { seams_in_file } => format!(
+                "no repair start offered: ripr found {seams_in_file} {} in this finding's \
+                 file, but could not tie one to this finding's changed line, so it cannot pick one \
+                 for you; `ripr pilot` lists them, or follow the Next step above",
+                if *seams_in_file == 1 { "seam" } else { "seams" }
+            ),
+            Self::FindingAlreadyExposed => "no repair start offered: nothing to repair here; \
+                 the related tests already notice this change (exposed)"
+                .to_string(),
+            Self::SeamGrippedFindingNot => "no repair start offered: `ripr check` reads a gap \
+                 or limit for this change, but `ripr repair` judges the whole seam and finds \
+                 its tests already notice changes there (exposed), so it has no gap to start \
+                 from. The two read different evidence (your changed lines versus the whole \
+                 seam) and ripr does not start a repair on conflicting evidence; follow the \
+                 Next step above"
                 .to_string(),
             Self::SeveralBindingSeams => {
                 "no repair start offered: several seams bind this finding \
@@ -151,19 +211,51 @@ impl RepairRouteRefusal {
             Self::Ineligible {
                 kind: super::task_first::RefusalKind::RouteNotReady,
                 missing,
+                boundary_input_observed,
                 ..
             } => {
-                if missing.is_empty() {
+                let observed_boundary = *boundary_input_observed
+                    && missing
+                        .iter()
+                        .any(|item| super::task_first::is_boundary_value_discriminator(item));
+                if observed_boundary {
+                    // #10622: the input is already there; only the assertion
+                    // is weak, so do not say the boundary evidence is missing.
+                    // #10644: plain phrases for the human reader; the machine
+                    // `missing` list stays internal.
+                    let others: Vec<String> = missing
+                        .iter()
+                        .filter(|item| !super::task_first::is_boundary_value_discriminator(item))
+                        .map(|item| super::task_first::humanize_route_evidence(item))
+                        .collect();
+                    let also = if others.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" It is also still missing: {}.", others.join("; "))
+                    };
+                    format!(
+                        "no repair start offered: a related test already reaches the changed \
+                         boundary input, but ripr grades its assertion as a weak check, so ripr \
+                         cannot build a repair packet for this finding yet.{also} \
+                         Follow the Next step above, then rerun `ripr check`"
+                    )
+                } else if missing.is_empty() {
                     "no repair start offered: ripr cannot build a repair packet for this \
                      finding yet because the static evidence is not complete enough to name a \
                      safe test target; follow the Next step above, then rerun `ripr check`"
                         .to_string()
                 } else {
+                    // #10644: name each missing fact in plain words on this
+                    // human screen; the underlying list keeps internal codes.
+                    let plain: Vec<String> = missing
+                        .iter()
+                        .map(|item| super::task_first::humanize_route_evidence(item))
+                        .collect();
                     format!(
                         "no repair start offered: ripr cannot build a repair packet for this \
                          finding yet because it is still missing: {}; follow the Next step \
                          above, then rerun `ripr check`",
-                        missing.join("; ")
+                        plain.join("; ")
                     )
                 }
             }
@@ -197,9 +289,11 @@ pub(crate) struct FindingNavigation {
     list_prefix: String,
     stub_prefix: String,
     repair_suffix: String,
-    /// The `ripr agent stub` decision the check pipeline computed for its
-    /// selected finding (#5471). Absent means no route is printed.
-    stub_route: Option<StubRoute>,
+    /// The analyzed root as the printed commands spell it (`.` for legacy).
+    root_display: String,
+    /// Resolver decisions for the selected finding and typed ambiguities
+    /// within the displayed hidden window, each keyed by finding identity.
+    stub_routes: Vec<StubRoute>,
     /// The repair route the check pipeline computed for its selected
     /// finding (#8166 Slice C). Absent means no route is printed.
     repair_route: Option<RepairRoute>,
@@ -221,7 +315,8 @@ impl FindingNavigation {
             list_prefix: "ripr check".to_string(),
             stub_prefix: "ripr agent stub".to_string(),
             repair_suffix: String::new(),
-            stub_route: None,
+            root_display: ".".to_string(),
+            stub_routes: Vec::new(),
             repair_route: None,
             gap_repair_route: None,
             repair_route_refusal: None,
@@ -229,8 +324,8 @@ impl FindingNavigation {
     }
 
     /// Carry the check pipeline's stub-route decision to the renderer.
-    pub(crate) fn with_stub_route(mut self, stub_route: Option<StubRoute>) -> Self {
-        self.stub_route = stub_route;
+    pub(crate) fn with_stub_routes(mut self, stub_routes: Vec<StubRoute>) -> Self {
+        self.stub_routes = stub_routes;
         self
     }
 
@@ -279,6 +374,13 @@ impl FindingNavigation {
         )
     }
 
+    /// The commit step that must precede the gap-bound start when check
+    /// analyzed uncommitted production edits (#10698): the start refuses
+    /// while tracked production files differ from HEAD.
+    pub(crate) fn gap_repair_prerequisite(&self, route: &GapRepairRoute) -> Option<String> {
+        route.commit_prerequisite(&self.root_display)
+    }
+
     /// The `ripr repair` start for one seam identity. Repair reads the live
     /// tree at the bound root, so unlike explain/context it carries no
     /// diff scope: the item comes first, then `--root`.
@@ -289,9 +391,9 @@ impl FindingNavigation {
     /// The stub-route decision for `finding_id`, when one was computed for
     /// that finding.
     pub(crate) fn stub_route_for(&self, finding_id: &str) -> Option<&StubRouteDecision> {
-        self.stub_route
-            .as_ref()
-            .filter(|route| route.finding_id == finding_id)
+        self.stub_routes
+            .iter()
+            .find(|route| route.finding_id == finding_id)
             .map(|route| &route.decision)
     }
 
@@ -307,6 +409,10 @@ impl FindingNavigation {
     /// runnable test (#5355). It reads the working tree at the same root.
     /// `kind` is the finding's probe family, so the stub targets the seam
     /// the finding reported when its line holds several (#5471).
+    pub(crate) fn stub_seam_command(&self, seam_id: &str) -> String {
+        format!("{} --seam-id {}", self.stub_prefix, shell_arg(seam_id))
+    }
+
     pub(crate) fn stub_command(&self, file: &str, line: usize, kind: &str) -> String {
         format!(
             "{} --at {} --kind {}",
@@ -371,7 +477,8 @@ pub(crate) fn finding_navigation_with_worktree(
             " --root {}",
             shell_arg(&bound_root(&input.root.display().to_string()))
         ),
-        stub_route: None,
+        root_display: bound_root(&input.root.display().to_string()),
+        stub_routes: Vec::new(),
         repair_route: None,
         gap_repair_route: None,
         repair_route_refusal: None,
@@ -453,6 +560,97 @@ mod tests {
     use super::super::task_first::RefusalKind;
     use super::*;
     use std::path::PathBuf;
+
+    /// #10698: the printed commit step works from an unrelated working
+    /// directory and commits a tracked file whose name looks like a glob.
+    #[test]
+    fn commit_prerequisite_commits_literal_paths_from_a_decoy_directory() -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("test clock failed: {error}"))?
+            .as_nanos();
+        let base =
+            std::env::temp_dir().join(format!("ripr-commit-hint-{}-{stamp}", std::process::id()));
+        let root = base.join("repo with space");
+        let decoy = base.join("decoy");
+        std::fs::create_dir_all(root.join("src")).map_err(|error| format!("mkdir: {error}"))?;
+        std::fs::create_dir_all(&decoy).map_err(|error| format!("mkdir: {error}"))?;
+        let result = (|| -> Result<(), String> {
+            run_git(&root, &["init"])?;
+            run_git(
+                &root,
+                &["config", "user.email", "ripr-test@example.invalid"],
+            )?;
+            run_git(&root, &["config", "user.name", "RIPR Test"])?;
+            for file in ["src/[ab].py", "src/a.py", "src/b.py"] {
+                std::fs::write(root.join(file), "x = 1\n").map_err(|e| format!("write: {e}"))?;
+            }
+            run_git(&root, &["add", "."])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+            for file in ["src/[ab].py", "src/a.py", "src/b.py"] {
+                std::fs::write(root.join(file), "x = 2\n").map_err(|e| format!("write: {e}"))?;
+            }
+            let route = GapRepairRoute {
+                finding_id: "f".to_string(),
+                gap_id: "gap-1".to_string(),
+                base: "HEAD".to_string(),
+                uncommitted_files: vec!["src/[ab].py".to_string()],
+            };
+            let root_text = root.display().to_string();
+            let command = route
+                .commit_prerequisite(&root_text)
+                .ok_or("no commit step")?;
+            // The root anchors at the analyzed tree with the shared quoting
+            // (`shell_arg`: console quotes on Windows, single quotes on
+            // Unix), and the glob-lookalike pathspec stays literal — the
+            // quote form is owned by `shell_arg`, not spelled here (#10996).
+            let expected_prefix = format!("git -C {}", shell_arg(&root_text));
+            assert!(
+                command.starts_with(&expected_prefix)
+                    && command.contains("--literal-pathspecs commit"),
+                "Expected command to start with '{expected_prefix}' and contain '--literal-pathspecs commit'. Actual command: {command}"
+            );
+            let expected_suffix = format!("-- {}", shell_arg("src/[ab].py"));
+            assert!(
+                command.ends_with(&expected_suffix),
+                "Expected command to end with '{expected_suffix}'. Actual command: {command}"
+            );
+            let command = command.replace("<message>", "hint");
+            let status = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&command)
+                .current_dir(&decoy)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
+                .output()
+                .map_err(|error| format!("run commit: {error}"))?;
+            assert!(
+                status.status.success(),
+                "{command}: {}",
+                String::from_utf8_lossy(&status.stderr)
+            );
+            let porcelain = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(["status", "--porcelain"])
+                .output()
+                .map_err(|error| format!("status: {error}"))?;
+            let text = String::from_utf8_lossy(&porcelain.stdout).into_owned();
+            // Only the literal file was committed; the glob siblings stay dirty.
+            assert!(!text.contains("[ab].py"), "{text}");
+            assert!(
+                text.contains("src/a.py") && text.contains("src/b.py"),
+                "{text}"
+            );
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&base);
+        result
+    }
 
     /// The `--root` value a drill-in prints for a typed root: the resolved
     /// repository, quoted for the shell.
@@ -606,6 +804,7 @@ mod tests {
             reason: "not a headline repair target".to_string(),
             kind: RefusalKind::Other,
             missing: Vec::new(),
+            boundary_input_observed: false,
         }
         .advisory(gate);
         assert!(
@@ -622,6 +821,7 @@ mod tests {
                 .to_string(),
             kind: RefusalKind::RouteNotReady,
             missing: vec!["boundary_value".to_string(), "activation".to_string()],
+            boundary_input_observed: false,
         }
         .advisory(gate);
         assert_eq!(
@@ -629,6 +829,37 @@ mod tests {
             "no repair start offered: ripr cannot build a repair packet for this finding yet \
              because it is still missing: boundary_value; activation; follow the Next step \
              above, then rerun `ripr check`"
+        );
+        // #10622: a boundary input a related test already supplies is not "missing".
+        let internal = "producer-owned missing discriminator fact: boundary_value".to_string();
+        // Discriminating negative: boundary input not observed keeps the
+        // producer-owned wording.
+        let unobserved = RepairRouteRefusal::Ineligible {
+            reason: "repair route not ready".to_string(),
+            kind: RefusalKind::RouteNotReady,
+            missing: vec![internal.clone()],
+            boundary_input_observed: false,
+        }
+        .advisory(gate);
+        assert!(
+            unobserved.contains(
+                "still missing: a test assertion that pins the changed boundary value exactly"
+            ) && !unobserved.contains("producer-owned missing discriminator fact"),
+            "unobserved boundary renders the plain phrase, not the internal code: {unobserved}"
+        );
+        let observed = RepairRouteRefusal::Ineligible {
+            reason: "repair route not ready".to_string(),
+            kind: RefusalKind::RouteNotReady,
+            missing: vec![internal, "safe test target".to_string()],
+            boundary_input_observed: true,
+        }
+        .advisory(gate);
+        assert_eq!(
+            observed,
+            "no repair start offered: a related test already reaches the changed boundary \
+             input, but ripr grades its assertion as a weak check, so ripr cannot build a \
+             repair packet for this finding yet. It is also still missing: \
+             safe test target. Follow the Next step above, then rerun `ripr check`"
         );
         assert!(
             !not_ready.contains("repair route not ready")
@@ -640,6 +871,7 @@ mod tests {
             reason: "repair route not ready".to_string(),
             kind: RefusalKind::RouteNotReady,
             missing: Vec::new(),
+            boundary_input_observed: false,
         }
         .advisory(gate);
         assert!(
@@ -653,6 +885,7 @@ mod tests {
             reason: "the gate could not decide".to_string(),
             kind: RefusalKind::Unverified,
             missing: vec!["ignored".to_string()],
+            boundary_input_observed: false,
         }
         .advisory(gate);
         assert!(
@@ -666,7 +899,7 @@ mod tests {
         let no_gap = RepairRouteRefusal::NoCanonicalGap.advisory(gate);
         assert_eq!(
             no_gap,
-            "no repair start offered: this finding has no canonical gap, so there is no \
+            "no repair start offered: this finding has no gap ID, so there is no \
              seam to start a repair from; follow the Next step above"
         );
         assert!(
@@ -675,7 +908,7 @@ mod tests {
         );
         // #9244: with no binding seam the advisory names the Next step
         // instead of routing back to the gate.
-        let unbound = RepairRouteRefusal::NoBindingSeam.advisory(gate);
+        let unbound = RepairRouteRefusal::NoBindingSeam { seams_in_file: 0 }.advisory(gate);
         assert_eq!(
             unbound,
             "no repair start offered: ripr found no seam in this finding's file to bind it \
@@ -684,6 +917,34 @@ mod tests {
         assert!(
             !unbound.contains("ripr repair") && !unbound.contains("full gate's answer"),
             "no-binding-seam must not route back to the gate: {unbound}"
+        );
+        // #10702: seams exist in the file, so the advisory must not claim there are none.
+        let counted = RepairRouteRefusal::NoBindingSeam { seams_in_file: 3 }.advisory(gate);
+        assert!(
+            counted.contains("found 3 seams in this finding's file")
+                && !counted.contains("no seam in this finding's file")
+                && !counted.contains("found no seam"),
+            "{counted}"
+        );
+        let one = RepairRouteRefusal::NoBindingSeam { seams_in_file: 1 }.advisory(gate);
+        assert_eq!(
+            one,
+            "no repair start offered: ripr found 1 seam in this finding's file, but could not \
+             tie one to this finding's changed line, so it cannot pick one for you; `ripr \
+             pilot` lists them, or follow the Next step above"
+        );
+        let exposed = RepairRouteRefusal::FindingAlreadyExposed.advisory(gate);
+        assert_eq!(
+            exposed,
+            "no repair start offered: nothing to repair here; the related tests already \
+             notice this change (exposed)"
+        );
+        let disagree = RepairRouteRefusal::SeamGrippedFindingNot.advisory(gate);
+        assert!(
+            disagree.contains("`ripr check` reads a gap or limit")
+                && disagree.contains("conflicting evidence")
+                && !disagree.contains("no static gap remains"),
+            "{disagree}"
         );
         let config = RepairRouteRefusal::ConfigUnreadable.advisory(gate);
         assert!(

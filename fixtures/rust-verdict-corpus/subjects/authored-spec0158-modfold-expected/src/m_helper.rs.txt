@@ -1,0 +1,26 @@
+pub fn tier_helper(qty: u32) -> u32 {
+    if 10 <= qty {
+        5
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn big() -> u32 {
+        10
+    }
+
+    fn small() -> u32 {
+        9
+    }
+
+    #[test]
+    fn the_tenth_unit_earns_the_tier_m_helper() {
+        assert_eq!(tier_helper(big()), 5);
+        assert_eq!(tier_helper(small()), 0);
+    }
+}

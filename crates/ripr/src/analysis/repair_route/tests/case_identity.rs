@@ -112,3 +112,29 @@ fn case_mismatched_discriminator_cannot_authorize_a_repair_packet() {
     entry.evidence.missing_discriminators = original;
     assert!(repair_packet_eligibility(&entry).eligible());
 }
+
+/// #10622: the human check advisory recognises the boundary-value item through
+/// the producer's own format. Build the real not-ready readiness and assert the
+/// recogniser accepts what the producer emitted, so format drift fails here.
+#[test]
+fn boundary_value_missing_evidence_is_recognised_from_the_real_producer() {
+    let mut entry = classified_with(
+        boundary_seam(),
+        SeamGripClass::WeaklyGripped,
+        vec![rust_related_test(RelationReason::DirectOwnerCall)],
+    );
+    entry.evidence.missing_discriminators = Vec::new();
+    let missing = repair_packet_eligibility(&entry).readiness.missing_evidence;
+    assert!(
+        missing
+            .iter()
+            .any(|item| super::super::is_boundary_value_discriminator_evidence(item)),
+        "producer missing list must be recognised: {missing:?}"
+    );
+    assert!(!super::super::is_boundary_value_discriminator_evidence(
+        "safe test target"
+    ));
+    assert!(!super::super::is_boundary_value_discriminator_evidence(
+        &super::super::producer_discriminator_evidence("return_value")
+    ));
+}

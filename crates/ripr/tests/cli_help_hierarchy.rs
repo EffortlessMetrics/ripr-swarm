@@ -1633,6 +1633,8 @@ const CHECK_REFERENCE_FORMATS: &[&str] = &[
 ];
 const CHECK_REFERENCE_ENVIRONMENT: &[&str] = &[
     "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
+    "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES",
+    "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES",
     "RIPR_MAX_DIFF_INDEX_FILES",
     "RIPR_DIFF_NARROW_INDEX_FILES",
     "RIPR_DIFF_DEPENDENT_SCOPE",
@@ -1670,6 +1672,12 @@ fn check_help_is_one_screen_and_all_is_the_full_reference() -> Result<(), String
         "--mode MODE",
         "instant, draft (default), fast, deep, or ready",
         "--root PATH",
+        // #10515: discover the shipped analysis budget and recover before a
+        // first run reaches it. Repo seam walks bypass that budget.
+        "--timeout SECS",
+        "Wall-clock analysis budget (600s default; 0 disables;",
+        "excludes repo seam-inventory formats)",
+        "On analysis_timeout, raise/disable it or narrow the diff; re-run.",
         "--quiet",
         "Unknown totals show no percentage or ETA",
         "progress makes no speed claim",

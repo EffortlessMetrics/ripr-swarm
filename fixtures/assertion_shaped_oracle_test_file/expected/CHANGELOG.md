@@ -432,3 +432,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_oracle_test_file (28)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_shaped_oracle_test_file (29)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
