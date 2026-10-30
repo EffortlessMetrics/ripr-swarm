@@ -215,12 +215,17 @@ fn container_expectation_is_dead_against_scalar_ternary_arms_only() {
         ),
         ..test_owner("pick", "src/pick.ts")
     };
-    let Some(change) = ts_ternary_arm_change(
+    let change = ts_ternary_arm_change(
         &owner,
         "    return p > 5 ? 3 : 2;",
         Some("    return p > 5 ? 1 : 2;"),
-    ) else {
-        panic!("the one-arm ternary edit must read as a TernaryArmChange");
+    );
+    assert!(
+        change.is_some(),
+        "the one-arm ternary edit must read as a TernaryArmChange"
+    );
+    let Some(change) = change else {
+        return;
     };
     assert!(change.expected_is_dead("{ a: 3 }"));
     assert!(change.expected_is_dead("{}"));
