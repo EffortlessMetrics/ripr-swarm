@@ -46,14 +46,17 @@ suite('First-PR command safety', () => {
 
   test('preserves single-quoted redirect paths while normalizing inter-token whitespace', () => {
     const root = path.resolve('first-pr  workspace').replace(/\\/g, '/');
-    // Exercise the admitted single-quote grammar on either host; the Windows
-    // console form is pinned below with the host stubbed (#9526).
-    for (const command of [
-      `ripr agent packet --root . --gap-id 'gap:amount>=threshold' --json > '${root}/target/ripr/out.json'`,
-      ` \tripr  agent\tpacket --root . --gap-id gap:pricing --json \t>\t '${root}/target/ripr/out.json'\t `
-    ]) {
-      assert.strictEqual(firstPrCommandIsSafe(command, [root]), true, command);
-    }
+    const quotedOperator = `ripr agent packet --root . --gap-id 'gap:amount>=threshold' --json > '${root}/target/ripr/out.json'`;
+    const plainArgument = ` \tripr  agent\tpacket --root . --gap-id gap:pricing --json \t>\t '${root}/target/ripr/out.json'\t `;
+    withHost('linux', () => {
+      assert.strictEqual(firstPrCommandIsSafe(quotedOperator, [root]), true);
+      assert.strictEqual(firstPrCommandIsSafe(plainArgument, [root]), true);
+    });
+    withHost('win32', () => {
+      // cmd.exe treats > inside single quotes as a live redirect (#9738).
+      assert.strictEqual(firstPrCommandIsSafe(quotedOperator, [root]), false);
+      assert.strictEqual(firstPrCommandIsSafe(plainArgument, [root]), true);
+    });
   });
 
   test('admits the server\'s Windows console form only on a Windows host (#9526)', () => {
@@ -109,7 +112,11 @@ suite('First-PR command safety', () => {
   test('preserves quoted whitespace and redirect-like bytes as argument data', () => {
     const root = path.resolve('first-pr  workspace').replace(/\\/g, '/');
     const command = `ripr\tagent packet --root . --gap-id 'gap:a  >\tb' --json\t>\t'${root}/target/ripr/out.json'`;
-    assert.strictEqual(firstPrCommandIsSafe(command, [root]), true, command);
+    withHost('linux', () => assert.strictEqual(firstPrCommandIsSafe(command, [root]), true, command));
+    withHost('win32', () => {
+      assert.strictEqual(firstPrCommandIsSafe(command, [root]), false, command);
+      assert.strictEqual(packetStatus(command, root, 'selected').state, 'unsafeCommand');
+    });
   });
 });
 

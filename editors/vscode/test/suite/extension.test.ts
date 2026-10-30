@@ -2898,7 +2898,7 @@ suite('Extension Smoke', () => {
     const agentPacketTo = (target: string) => firstPrPacket({
       commands: {
         verify: 'cargo xtask fixtures boundary_gap',
-        agent_packet: `ripr agent packet --root . --gap-id 'gap:pr:amount>=threshold' --json > ${target}`
+        agent_packet: `ripr agent packet --root . --gap-id ${serverShellArg('gap:pr:amount>=threshold')} --json > ${target}`
       }
     });
     const anchoredPacket = await readFirstPrPacketStatus(workspaceRoot, firstPrReadFile(workspaceRoot, {
