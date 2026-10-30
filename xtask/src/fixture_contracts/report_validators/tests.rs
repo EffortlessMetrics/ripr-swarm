@@ -59,7 +59,10 @@ fn assistant_loop_health_stays_in_the_production_fixture_contract_gate() -> Resu
         let result = crate::fixture_contracts::check_fixture_contracts();
         // Removing the production validator call makes this assertion fail,
         // even though the separate _at invocation above still rejects it.
-        assert!(result.is_err(), "production gate accepted a malformed corpus");
+        assert!(
+            result.is_err(),
+            "production gate accepted a malformed corpus"
+        );
         let invalid_report = fs::read_to_string(&report_path).map_err(|error| error.to_string())?;
         assert!(invalid_report.contains(KIND_ERROR), "{invalid_report}");
 
@@ -69,7 +72,8 @@ fn assistant_loop_health_stays_in_the_production_fixture_contract_gate() -> Resu
         assert!(violations.is_empty(), "restored corpus: {violations:?}");
         fs::remove_file(&report_path).map_err(|error| error.to_string())?;
         crate::fixture_contracts::check_fixture_contracts()?;
-        let restored_report = fs::read_to_string(&report_path).map_err(|error| error.to_string())?;
+        let restored_report =
+            fs::read_to_string(&report_path).map_err(|error| error.to_string())?;
         assert!(!restored_report.contains(KIND_ERROR));
         Ok(())
     })
