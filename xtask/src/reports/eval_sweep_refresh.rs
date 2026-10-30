@@ -559,12 +559,11 @@ fn resolve_binary(supplied: &str) -> Result<BinaryIdentity, String> {
             "eval-sweep refresh --ripr-bin `{supplied}` does not name an existing file; supply the explicit built binary (e.g. target/debug/ripr.exe); PATH cannot select the analyzer\n{USAGE}"
         ));
     }
-    let bytes = std::fs::read(&absolute).map_err(|error| {
+    let binary_digest = super::release_server::sha256_file_io(&absolute).map_err(|error| {
         format!(
             "eval-sweep refresh cannot read the supplied binary `{supplied}` for its digest: {error}\n{USAGE}"
         )
     })?;
-    let binary_digest = sha256_hex(&bytes);
 
     let probe = capture_output_with_timeout(
         &absolute.to_string_lossy(),
@@ -608,9 +607,8 @@ fn resolve_binary(supplied: &str) -> Result<BinaryIdentity, String> {
 /// after EACH subject's run: a concurrent rebuild must never let rows keep a
 /// stale digest while executed bytes changed underneath them.
 fn binary_identity_drift(binary: &BinaryIdentity) -> Option<String> {
-    match std::fs::read(&binary.absolute) {
-        Ok(bytes) => {
-            let post_run_digest = sha256_hex(&bytes);
+    match super::release_server::sha256_file_io(&binary.absolute) {
+        Ok(post_run_digest) => {
             if post_run_digest == binary.binary_digest {
                 None
             } else {
@@ -3996,6 +3994,57 @@ mod python_eval_sweep_refresh {
                 }
             }
         }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn binary_identity_checks_full_multichunk_file() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_root("binary-multichunk");
+        super::discard_partial_dir(&root);
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let path = root.join("ripr-under-test");
+        // A working version probe with content extending past two hash buffers.
+        let mut bytes = b"#!/bin/sh\nprintf 'ripr 0.0.0-test\\n'\nexit 0\n#".to_vec();
+        bytes.extend(vec![b'x'; 20_000]);
+        std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .map_err(|error| error.to_string())?;
+        let binary = resolve_binary(&path.to_string_lossy())?;
+        assert_eq!(binary.binary_digest, sha256_hex(&bytes));
+        assert_eq!(binary.version, "ripr 0.0.0-test");
+        assert!(binary_identity_drift(&binary).is_none());
+
+        // Mutate only the final byte: checking a prefix or stale digest is insufficient.
+        let last = bytes.len() - 1;
+        bytes[last] = b'y';
+        std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
+        let drift = binary_identity_drift(&binary).ok_or("tail change was not detected")?;
+        assert!(drift.contains(&sha256_hex(&bytes)), "{drift}");
+        std::fs::remove_file(&path).map_err(|error| error.to_string())?;
+        let original_error = std::fs::read(&path)
+            .err()
+            .ok_or("missing file was readable")?;
+        assert_eq!(
+            binary_identity_drift(&binary),
+            Some(format!(
+                "binary could not be re-read after the run for its identity check: {original_error}"
+            ))
+        );
+        let directory_error = std::fs::read(&root).err().ok_or("directory was readable")?;
+        let directory_binary = BinaryIdentity {
+            absolute: root.clone(),
+            ..binary
+        };
+        assert_eq!(
+            binary_identity_drift(&directory_binary),
+            Some(format!(
+                "binary could not be re-read after the run for its identity check: {directory_error}"
+            ))
+        );
+        super::discard_partial_dir(&root);
         Ok(())
     }
 

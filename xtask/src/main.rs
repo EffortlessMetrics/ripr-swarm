@@ -81,6 +81,7 @@ mod work_selection_identity;
 mod work_synthesis_identity;
 mod work_wave_identity;
 pub(crate) use types::*;
+mod exact_schema_json;
 mod reports;
 mod ripr_swarm;
 mod run;

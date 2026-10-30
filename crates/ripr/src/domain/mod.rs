@@ -56,12 +56,16 @@ pub(crate) use command_spec::{
     command_tokens, python_pytest_verify_display, python_unittest_verify_display,
 };
 pub use confidence_basis::ConfidenceCap;
-pub(crate) use confidence_basis::{ConfidenceBasisEntry, basis_entries, why_capped_line};
+pub(crate) use confidence_basis::{
+    ConfidenceBasisEntry, ConfidenceBasisInputs, basis_entries, why_capped_line,
+};
 pub use diagnostic_witness::{
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticSourceLocation, DiagnosticWitness,
     DiagnosticWitnessLimitation,
 };
-pub(crate) use diagnostic_witness::{perl_suggested_related_test, python_suggested_related_test};
+pub(crate) use diagnostic_witness::{
+    contract_confidence, perl_suggested_related_test, python_suggested_related_test,
+};
 pub(crate) use evidence::BOUNDARY_INPUT_OBSERVED_SUMMARY;
 pub(crate) use evidence::indefinite_article;
 pub use evidence::{

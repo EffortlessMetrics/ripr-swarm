@@ -2018,6 +2018,26 @@ pub(super) fn submodule_receivers(
     owner: &PythonOwner,
     test_file: &Path,
 ) -> Vec<String> {
+    // Every owner module path joins segments of the owner's file path, so a
+    // bound name whose last segment that path never spells reaches none of
+    // them; this skips the allocations below for most imports (#10914).
+    let last = import.imported.rsplit('.').next().unwrap_or_default();
+    if !last.is_empty() && owner.file.to_str().is_some_and(|file| !file.contains(last)) {
+        debug_assert!(
+            submodule_receivers_scan(import, owner, test_file).is_empty(),
+            "`{last}` is absent from {} yet reaches it",
+            owner.file.display()
+        );
+        return Vec::new();
+    }
+    submodule_receivers_scan(import, owner, test_file)
+}
+
+fn submodule_receivers_scan(
+    import: &PythonImport,
+    owner: &PythonOwner,
+    test_file: &Path,
+) -> Vec<String> {
     if !import_module_may_be_owners(import, owner, test_file) {
         return Vec::new();
     }
@@ -2069,6 +2089,11 @@ pub(super) fn import_module_may_be_owners(
     owner: &PythonOwner,
     test_file: &Path,
 ) -> bool {
+    // Without an ambiguous src-layout name every module identifies the owner;
+    // answer before formatting the dotted submodule name.
+    if owner.ambiguous_src_modules.is_empty() {
+        return true;
+    }
     if import.source_module.is_empty() {
         return module_name_identifies_owner_for(owner, &import.imported, test_file);
     }
@@ -2395,6 +2420,11 @@ enum ClientRoute {
 }
 
 fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> Option<ClientRoute> {
+    // Only a routed owner has a route to match; skip parsing the body's
+    // client receivers for every other owner (#10914).
+    if owner.route_paths.is_empty() {
+        return None;
+    }
     let receivers = super::route_client::client_receivers(&test.body_text);
     let mut found = None;
     for (index, route) in owner.route_paths.iter().enumerate() {
