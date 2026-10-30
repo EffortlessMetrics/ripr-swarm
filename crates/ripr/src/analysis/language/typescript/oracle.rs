@@ -2873,6 +2873,10 @@ pub(crate) fn mock_call_count_assertions(test: &TypeScriptTest) -> Vec<bool> {
         })
         .collect();
     let count = observed.len();
+    let fallback: Vec<bool> = observed
+        .iter()
+        .map(|text| text.as_deref().is_some_and(is_mock_call_count_expression))
+        .collect();
     parse_on_worker(
         &test.file,
         &test.body_text,
@@ -2920,7 +2924,28 @@ pub(crate) fn mock_call_count_assertions(test: &TypeScriptTest) -> Vec<bool> {
             counts
         },
     )
-    .unwrap_or_else(|_| vec![false; count])
+    .unwrap_or(fallback)
+}
+
+/// `<path>.mock.callCount()` or `<path>.mock.calls.length` on a plain
+/// identifier path (no optional chaining, indexing or alias). Used only
+/// when the parse worker refuses, so a worker failure cannot restore the
+/// exact argument credit this demotion exists to withhold.
+fn is_mock_call_count_expression(text: &str) -> bool {
+    let text = text.trim();
+    let Some(path) = text
+        .strip_suffix(".mock.callCount()")
+        .or_else(|| text.strip_suffix(".mock.calls.length"))
+    else {
+        return false;
+    };
+    !path.is_empty()
+        && path.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+        })
 }
 
 #[cfg(test)]

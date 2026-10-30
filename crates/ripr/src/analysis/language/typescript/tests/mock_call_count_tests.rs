@@ -476,6 +476,23 @@ fn unconditional_block_mock_call_count_aliases_preserve_argument_and_added_call_
 }
 
 #[test]
+fn worker_refusal_falls_back_to_textual_mock_count_demotion() {
+    let source = node_test(
+        "assert.equal(fn.mock.calls.length, 1); assert.equal(fn.mock.callCount(), 1); assert.deepEqual(fn.mock.calls[0].arguments, [8]);",
+    );
+    let mut tests = extract_tests(Path::new("tests/notify.test.ts"), &source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 3);
+    // Force parse_on_worker's nesting-budget refusal without losing the
+    // already-extracted assertions.
+    tests[0].body_text = "(".repeat(3000);
+    assert_eq!(
+        mock_call_count_assertions(&tests[0]),
+        vec![true, true, false]
+    );
+}
+
+#[test]
 fn unused_block_mock_call_count_alias_does_not_capture_an_outer_argument_pin() -> Result<(), String>
 {
     let source = "import { test, mock } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { notify } from \"../src/notify\";\nlet count = 0;\ntest(\"notify\", () => {\n const fn = mock.fn((value: number) => { count = value; });\n notify(4, {send: fn});\n { const count = fn.mock.calls.length; }\n assert.equal(count, 8);\n});\n";
