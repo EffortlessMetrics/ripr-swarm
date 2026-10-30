@@ -861,7 +861,13 @@ fn macro_binding_sites_in_tree(
     for node in &binding_free.site_nodes {
         // `extern crate other as std;` at a crate root rebinds the name for
         // every file, so a standard-root glob elsewhere cannot be trusted.
-        if let Some(rename) = ast::ExternCrate::cast(node.clone()).and_then(|k| k.rename())
+        // `extern crate self as std;` names this crate, whose exported macros
+        // the workspace scan already reports, so it imports nothing foreign.
+        if let Some(krate) = ast::ExternCrate::cast(node.clone())
+            && krate
+                .name_ref()
+                .is_some_and(|name| name.text().trim_start_matches("r#") != "self")
+            && let Some(rename) = krate.rename()
             && rename.name().is_some_and(|name| {
                 matches!(
                     name.text().trim_start_matches("r#"),

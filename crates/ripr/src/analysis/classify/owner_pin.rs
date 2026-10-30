@@ -911,6 +911,27 @@ impl OwnerPinSyntax {
                         .refusal_trusting_comparison_macros(test, assertion, index)
                         .is_none()
             }
+            // Field construction: only a real shadow (a definition or import
+            // of the assertion name) or an opaque in-scope expansion that
+            // mentions it refuses credit. A site that only may rebind it
+            // (`#[macro_use] extern crate`, a glob import) does not, matching
+            // the operand-whitespace contracts on main; the return family
+            // keeps refusing on those sites.
+            Some(AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name))) => {
+                family == ProbeFamily::FieldConstruction
+                    && self
+                        .macro_binding_site(test, assertion.line, &name, index)
+                        .is_some_and(|(_, site)| {
+                            !rebinds(&site)
+                                && !matches!(
+                                    site.kind,
+                                    MacroBindingKind::MacroArgument(_)
+                                        | MacroBindingKind::MacroBody(_)
+                                        | MacroBindingKind::BodyBindsAny { .. }
+                                        | MacroBindingKind::ArgumentAttribute { .. }
+                                )
+                        })
+            }
             Some(_) => false,
         }
     }
@@ -942,50 +963,62 @@ impl OwnerPinSyntax {
             ));
         Some(match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name)) => {
-                let resolved_modules = self.resolved_module_declarations(index);
-                let resolved = |path: &Path, line: usize, declaration: &str| {
-                    resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
-                };
-                let test_roots = self.target_roots(index).roots(&test.file, index);
-                // #8255: the single ambiguity pass retained the earliest
-                // sites; a lookup completes that pass once when it stopped
-                // early, instead of rescanning the workspace per
-                // (name, test root).
-                let workspace = self
-                    .workspace_macro_site_in(&name, test_roots.as_ref(), index)
-                    .or_else(|| self.withheld.sites.get(&name).cloned())
-                    .or_else(|| {
-                        self.withheld
-                            .root_sites
-                            .iter()
-                            .find_map(|((site_name, root), site)| {
-                                (*site_name == name
-                                    && test_roots.as_ref().is_none_or(|roots| roots.contains(root)))
-                                .then(|| site.clone())
-                            })
-                    });
-                // A definition or `use` covering the test is a real
-                // rebinding; it outranks a workspace site that only may
-                // rebind the name, or the refusal would read as an analyzer
-                // limit (RIPR-SPEC-0240) for a macro that is really replaced.
-                let local = test_macro_binding_site(
-                    &name,
-                    test,
-                    assertion.line,
-                    index,
-                    &self.test_file_macro_sites,
-                    self.target_roots(index),
-                    &resolved,
-                );
-                let site = if local.as_ref().is_some_and(|(_, site)| rebinds(site)) {
-                    local
-                } else {
-                    workspace.or(local)
-                };
+                let site = self.macro_binding_site(test, assertion.line, &name, index);
                 AssertionRefusal::MacroBinding { name, site }
             }
             refusal => refusal,
         })
+    }
+
+    /// The binding site behind a `MacroBinding` refusal for `name`: a real
+    /// local rebinding outranks a workspace site that only may rebind it.
+    fn macro_binding_site(
+        &self,
+        test: &TestSummary,
+        assertion_line: usize,
+        name: &str,
+        index: &RustIndex,
+    ) -> Option<(PathBuf, MacroBindingSite)> {
+        let resolved_modules = self.resolved_module_declarations(index);
+        let resolved = |path: &Path, line: usize, declaration: &str| {
+            resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
+        };
+        let test_roots = self.target_roots(index).roots(&test.file, index);
+        // #8255: the single ambiguity pass retained the earliest
+        // sites; a lookup completes that pass once when it stopped
+        // early, instead of rescanning the workspace per
+        // (name, test root).
+        let workspace = self
+            .workspace_macro_site_in(name, test_roots.as_ref(), index)
+            .or_else(|| self.withheld.sites.get(name).cloned())
+            .or_else(|| {
+                self.withheld
+                    .root_sites
+                    .iter()
+                    .find_map(|((site_name, root), site)| {
+                        (*site_name == name
+                            && test_roots.as_ref().is_none_or(|roots| roots.contains(root)))
+                        .then(|| site.clone())
+                    })
+            });
+        // A definition or `use` covering the test is a real
+        // rebinding; it outranks a workspace site that only may
+        // rebind the name, or the refusal would read as an analyzer
+        // limit (RIPR-SPEC-0240) for a macro that is really replaced.
+        let local = test_macro_binding_site(
+            name,
+            test,
+            assertion_line,
+            index,
+            &self.test_file_macro_sites,
+            self.target_roots(index),
+            &resolved,
+        );
+        if local.as_ref().is_some_and(|(_, site)| rebinds(site)) {
+            local
+        } else {
+            workspace.or(local)
+        }
     }
 
     fn execution_context(
