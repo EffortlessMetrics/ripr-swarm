@@ -116,6 +116,20 @@ fn ledger_finding_with(
     )
 }
 
+/// Asserts the credit the case expects: `Exposed` when credited, withheld
+/// otherwise.
+fn assert_credit(finding: &Finding, credited: bool, label: &str) {
+    if credited {
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {finding:?}"
+        );
+    } else {
+        withheld(finding, label);
+    }
+}
+
 fn new_side(source: &str) -> String {
     source.replacen("return 2", "return 3", 1)
 }
@@ -702,201 +716,6 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             false,
         ),
         ("utf-8 declared", utf8_owner, vec![], true),
-        (
-            "pytest pythonpath",
-            functions.to_string(),
-            vec![
-                ("pytest.ini", "[pytest]\npythonpath = vendor.zip\n"),
-                ("vendor.zip", "PK"),
-            ],
-            false,
-        ),
-        (
-            "pyproject pythonpath of the workspace root",
-            functions.to_string(),
-            vec![(
-                "pyproject.toml",
-                "[tool.pytest.ini_options]\npythonpath = [\n    \".\",\n]\n",
-            )],
-            true,
-        ),
-        (
-            "pyproject pythonpath of an archive",
-            functions.to_string(),
-            vec![
-                (
-                    "pyproject.toml",
-                    "[tool.pytest.ini_options]\npythonpath = [\".\", \"vendor.zip\"]\n",
-                ),
-                ("vendor.zip", "PK"),
-            ],
-            false,
-        ),
-        (
-            "tox PYTHONPATH expansion",
-            functions.to_string(),
-            vec![(
-                "tox.ini",
-                "[testenv]\nsetenv =\n    PYTHONPATH = {toxinidir}/vendor\n",
-            )],
-            false,
-        ),
-        (
-            "extension in a second root",
-            functions.to_string(),
-            vec![
-                ("src/reach/__init__.py", ""),
-                (
-                    "src/reach/ledger.cpython-313-x86_64-linux-gnu.so",
-                    "\x7fELF",
-                ),
-            ],
-            false,
-        ),
-        (
-            "package extension in a second root",
-            functions.to_string(),
-            vec![
-                ("src/tool.py", "VALUE = 1\n"),
-                ("src/reach.abi3.so", "\x7fELF"),
-            ],
-            false,
-        ),
-        (
-            "pytest pythonpath of a workspace directory",
-            functions.to_string(),
-            vec![
-                ("pytest.ini", "[pytest]\npythonpath = vendor\n"),
-                ("vendor/ledger.py", "def render():\n    return \"|  |\"\n"),
-            ],
-            false,
-        ),
-        (
-            "pytest pythonpath of an extension-only root",
-            functions.to_string(),
-            vec![
-                ("pytest.ini", "[pytest]\npythonpath = src\n"),
-                ("src/ledger.cpython-313-x86_64-linux-gnu.so", "\x7fELF"),
-            ],
-            false,
-        ),
-        (
-            "package initializer extension in a second root",
-            functions.to_string(),
-            vec![
-                ("src/reach/tool.py", "VALUE = 1\n"),
-                (
-                    "src/reach/__init__.cpython-313-x86_64-linux-gnu.so",
-                    "\x7fELF",
-                ),
-            ],
-            false,
-        ),
-        (
-            "pytest pythonpath continued past a blank line",
-            functions.to_string(),
-            vec![
-                ("pytest.ini", "[pytest]\npythonpath = .\n\n    vendor.zip\n"),
-                ("vendor.zip", "PK"),
-            ],
-            false,
-        ),
-        (
-            "pytest pythonpath continued past a comment",
-            functions.to_string(),
-            vec![
-                (
-                    "pytest.ini",
-                    "[pytest]\npythonpath = .\n# vendored\n    vendor.zip\n",
-                ),
-                ("vendor.zip", "PK"),
-            ],
-            false,
-        ),
-        (
-            "pyproject pythonpath with a bracket in an entry",
-            functions.to_string(),
-            vec![(
-                "pyproject.toml",
-                "[tool.pytest.ini_options]\npythonpath = [\".\", \"]\"]\n",
-            )],
-            false,
-        ),
-        (
-            "pyproject pythonpath as a dotted key",
-            functions.to_string(),
-            vec![(
-                "pyproject.toml",
-                "tool.pytest.ini_options.pythonpath = [\"vendor.zip\"]\n",
-            )],
-            false,
-        ),
-        (
-            "pyproject pythonpath through addopts",
-            functions.to_string(),
-            vec![(
-                "pyproject.toml",
-                "[tool.pytest.ini_options]\naddopts = \"-o pythonpath=vendor.zip\"\n",
-            )],
-            false,
-        ),
-        (
-            "pytest addopts override",
-            functions.to_string(),
-            vec![
-                (
-                    "pytest.ini",
-                    "[pytest]\naddopts = -o \"python\"path=vendor.zip\n",
-                ),
-                ("vendor.zip", "PK"),
-            ],
-            false,
-        ),
-        (
-            "pyproject pythonpath under an escaped key",
-            functions.to_string(),
-            vec![(
-                "pyproject.toml",
-                "[tool.pytest.ini_options]\n\"\\u0070ythonpath\" = [\"vendor.zip\"]\n",
-            )],
-            false,
-        ),
-        (
-            "pyproject addopts under an escaped key",
-            functions.to_string(),
-            vec![(
-                "pyproject.toml",
-                "[tool.pytest.ini_options]\n\"\\u0061ddopts\" = \"-p vendor\"\n",
-            )],
-            false,
-        ),
-        (
-            "sourceless package in a test directory",
-            functions.to_string(),
-            vec![
-                ("tests/reach/__init__.pyc", "\x00"),
-                ("tests/reach/ledger.pyc", "\x00"),
-            ],
-            false,
-        ),
-        (
-            "pyproject without pytest settings",
-            functions.to_string(),
-            vec![("pyproject.toml", "[project]\nname = \"reach\"\n")],
-            true,
-        ),
-        (
-            "pytest pythonpath of its own directory",
-            functions.to_string(),
-            vec![("pytest.ini", "[pytest]\npythonpath = .\n")],
-            true,
-        ),
-        (
-            "pytest config without an import path",
-            functions.to_string(),
-            vec![("pytest.ini", "[pytest]\ntestpaths = tests\n")],
-            true,
-        ),
         ("lone carriage return owner", cr_owner, vec![], false),
         (
             "lone carriage return foreign",
@@ -943,6 +762,38 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             true,
         ),
     ]);
+    // Layouts over the plain owner, one per line: `+` credits and `-`
+    // withholds, then the label and each `path=text` file, joined by ` ;; `.
+    let layouts = [
+        "- pytest pythonpath ;; pytest.ini=[pytest]\npythonpath = vendor.zip\n ;; vendor.zip=PK",
+        "+ pyproject pythonpath of the workspace root ;; pyproject.toml=[tool.pytest.ini_options]\npythonpath = [\n    \".\",\n]\n",
+        "- pyproject pythonpath of an archive ;; pyproject.toml=[tool.pytest.ini_options]\npythonpath = [\".\", \"vendor.zip\"]\n ;; vendor.zip=PK",
+        "- tox PYTHONPATH expansion ;; tox.ini=[testenv]\nsetenv =\n    PYTHONPATH = {toxinidir}/vendor\n",
+        "- extension in a second root ;; src/reach/__init__.py= ;; src/reach/ledger.cpython-313-x86_64-linux-gnu.so=\x7fELF",
+        "- package extension in a second root ;; src/tool.py=VALUE = 1\n ;; src/reach.abi3.so=\x7fELF",
+        "- pytest pythonpath of a workspace directory ;; pytest.ini=[pytest]\npythonpath = vendor\n ;; vendor/ledger.py=def render():\n    return \"|  |\"\n",
+        "- pytest pythonpath of an extension-only root ;; pytest.ini=[pytest]\npythonpath = src\n ;; src/ledger.cpython-313-x86_64-linux-gnu.so=\x7fELF",
+        "- package initializer extension in a second root ;; src/reach/tool.py=VALUE = 1\n ;; src/reach/__init__.cpython-313-x86_64-linux-gnu.so=\x7fELF",
+        "- pytest pythonpath continued past a blank line ;; pytest.ini=[pytest]\npythonpath = .\n\n    vendor.zip\n ;; vendor.zip=PK",
+        "- pytest pythonpath continued past a comment ;; pytest.ini=[pytest]\npythonpath = .\n# vendored\n    vendor.zip\n ;; vendor.zip=PK",
+        "- pyproject pythonpath with a bracket in an entry ;; pyproject.toml=[tool.pytest.ini_options]\npythonpath = [\".\", \"]\"]\n",
+        "- pyproject pythonpath as a dotted key ;; pyproject.toml=tool.pytest.ini_options.pythonpath = [\"vendor.zip\"]\n",
+        "- pyproject pythonpath through addopts ;; pyproject.toml=[tool.pytest.ini_options]\naddopts = \"-o pythonpath=vendor.zip\"\n",
+        "- pytest addopts override ;; pytest.ini=[pytest]\naddopts = -o \"python\"path=vendor.zip\n ;; vendor.zip=PK",
+        "- pyproject pythonpath under an escaped key ;; pyproject.toml=[tool.pytest.ini_options]\n\"\\u0070ythonpath\" = [\"vendor.zip\"]\n",
+        "- pyproject addopts under an escaped key ;; pyproject.toml=[tool.pytest.ini_options]\n\"\\u0061ddopts\" = \"-p vendor\"\n",
+        "- sourceless package in a test directory ;; tests/reach/__init__.pyc=\x00 ;; tests/reach/ledger.pyc=\x00",
+        "+ pyproject without pytest settings ;; pyproject.toml=[project]\nname = \"reach\"\n",
+        "+ pytest pythonpath of its own directory ;; pytest.ini=[pytest]\npythonpath = .\n",
+        "+ pytest config without an import path ;; pytest.ini=[pytest]\ntestpaths = tests\n",
+    ];
+    let cases = cases.into_iter().chain(layouts.iter().map(|layout| {
+        let mut fields = layout.split(" ;; ");
+        let head = fields.next().unwrap_or_default();
+        let files = fields.filter_map(|file| file.split_once('=')).collect();
+        let label = head.get(2..).unwrap_or(head);
+        (label, functions.to_string(), files, head.starts_with('+'))
+    }));
     let extensions = [
         "reach/ledger.cpython-313-x86_64-linux-gnu.so",
         "reach/ledger.abi3.so",
@@ -979,15 +830,7 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             "    return 2",
             "    return 3",
         )?;
-        if credited {
-            assert_eq!(
-                finding.class,
-                ExposureClass::Exposed,
-                "{label}: {finding:?}"
-            );
-        } else {
-            withheld(&finding, label);
-        }
+        assert_credit(&finding, credited, label);
     }
     // A package owner: an `__init__` extension beside `__init__.py` is loaded
     // first.
@@ -1012,15 +855,7 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             "    return 2",
             "    return 3",
         )?;
-        if credited {
-            assert_eq!(
-                finding.class,
-                ExposureClass::Exposed,
-                "package owner: {finding:?}"
-            );
-        } else {
-            withheld(&finding, "__init__ extension");
-        }
+        assert_credit(&finding, credited, "__init__ extension");
     }
     // A namespace package owner: with no source in the root, only the root
     // scan sees a `reach` extension or sourceless pyc there, which the import
@@ -1037,15 +872,7 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
         ];
         files.extend(extension.map(|extension| (extension, "\x7fELF")));
         let finding = classify(&files, "reach/ledger.py", 2, "    return 2", "    return 3")?;
-        if credited {
-            assert_eq!(
-                finding.class,
-                ExposureClass::Exposed,
-                "namespace owner: {finding:?}"
-            );
-        } else {
-            withheld(&finding, "root extension");
-        }
+        assert_credit(&finding, credited, "root extension");
     }
     // pytest's prepend mode puts `tests/`, the first ancestor of a test in a
     // `tests/unit` package without `__init__.py`, first on `sys.path`, though
@@ -1073,15 +900,11 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
         ];
         files.extend(shadow.iter().map(|path| (*path, "")));
         let finding = classify(&files, "reach/ledger.py", 2, "    return 2", "    return 3")?;
-        if credited {
-            assert_eq!(
-                finding.class,
-                ExposureClass::Exposed,
-                "unit test owner {shadow:?}: {finding:?}"
-            );
-        } else {
-            withheld(&finding, "sourceless shadow in a source-free test root");
-        }
+        assert_credit(
+            &finding,
+            credited,
+            "sourceless shadow in a source-free test root",
+        );
     }
     // A top-level owner named for a standard-library module is never what
     // the test's import loads: the built-in importer runs first.
@@ -1095,15 +918,7 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             ("tests/test_render.py", test.as_str()),
         ];
         let finding = classify(&files, &owner, 2, "    return 2", "    return 3")?;
-        if credited {
-            assert_eq!(
-                finding.class,
-                ExposureClass::Exposed,
-                "{module} owner: {finding:?}"
-            );
-        } else {
-            withheld(&finding, module);
-        }
+        assert_credit(&finding, credited, module);
     }
     // A workspace file that puts an archive first on `sys.path` hands a
     // top-level owner's import another module; the inert helper keeps it.
@@ -1124,15 +939,7 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             ("tests/test_ledger.py", top_test),
         ];
         let finding = classify(&files, "ledger.py", 2, "    return 2", "    return 3")?;
-        if credited {
-            assert_eq!(
-                finding.class,
-                ExposureClass::Exposed,
-                "top-level owner: {finding:?}"
-            );
-        } else {
-            withheld(&finding, boot);
-        }
+        assert_credit(&finding, credited, boot);
     }
     // A module dict reached through `vars` and written under a built key.
     // `vars` also marks the file a dynamic writer, so the reflection words
