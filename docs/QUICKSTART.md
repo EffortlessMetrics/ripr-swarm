@@ -421,6 +421,9 @@ conversation (one comment, updated on every push; same-repository PRs only), the
 and the linked artifacts for the evidence and suggested test.
 The generated workflow is non-blocking by default; a policy gate is a separate,
 explicit adoption decision.
+
+Upgrading from 0.10? See the
+[0.10 to 0.11 upgrade guide](INSTALL_CHANNELS.md#upgrading-from-010-to-011).
 The workflow runs on `ubuntu-latest` and pins `shell: bash`, so its steps
 still parse if you move the job to another runner; only the Linux runner is
 covered by ripr's own tests.
