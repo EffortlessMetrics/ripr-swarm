@@ -1735,10 +1735,16 @@ fn normalize_fixture_json_output_for_host(value: &str, windows: bool) -> String 
 }
 
 /// Keys whose string values are filesystem paths in the check/gate JSON.
+///
+/// `evidence_path` names the reach/infect/propagate/observe trail, not a
+/// filesystem path: its strings quote asserted source text (`\"`, `\u{..}`),
+/// so matching its `path` substring would fold source backslashes on Windows
+/// and fork the goldens between hosts (#11119).
 fn is_path_bearing_json_key(key: &str) -> bool {
-    ["path", "file", "root", "dir"]
-        .iter()
-        .any(|needle| key.contains(needle))
+    key != "evidence_path"
+        && ["path", "file", "root", "dir"]
+            .iter()
+            .any(|needle| key.contains(needle))
 }
 
 pub(crate) fn normalize_fixture_human_output(value: &str) -> String {
@@ -3259,6 +3265,32 @@ mod tests {
         let source = r#"{"root":"vendor (x86)\\ripr\\src"}"#;
         let out = normalize_fixture_json_output_for_host(source, true);
         assert_eq!(out, r#"{"root":"vendor (x86)/ripr/src"}"#);
+    }
+
+    #[test]
+    fn normalize_json_windows_keeps_evidence_path_source_text() {
+        // `evidence_path` contains "path" but is a text trail quoting asserted
+        // source, so Windows must leave it identical to the other hosts while
+        // the sibling `sample_paths` array still folds (#11119).
+        let source =
+            r#"{"evidence_path":["a \"r \\\"e\\\"\"","u \\u{7b}"],"sample_paths":["s\\a.rs"]}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(
+            out,
+            r#"{"evidence_path":["a \"r \\\"e\\\"\"","u \\u{7b}"],"sample_paths":["s/a.rs"]}"#
+        );
+    }
+
+    #[test]
+    fn normalize_json_windows_tokenizer_handles_trailing_backslash_and_nesting() {
+        // A string ending in an escaped backslash must close at its quote, and
+        // nested values resolve against their own keys.
+        let source = r#"{"root":"C:\\r\\","n":{"note":"a\\b","dir":["x\\y"]},"k\"q":"v\\w"}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(
+            out,
+            r#"{"root":"C:/r/","n":{"note":"a\\b","dir":["x/y"]},"k\"q":"v\\w"}"#
+        );
     }
 
     #[test]
