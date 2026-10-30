@@ -2005,6 +2005,10 @@ impl SharedWorkflowArtifacts {
                         })?
                         .permissions();
                     if permissions.readonly() {
+                        #[allow(
+                            clippy::permissions_set_readonly_false,
+                            reason = "Windows-only cleanup: clearing the readonly flag so the backup can be removed; Unix mode bits are not affected inside cfg(windows)"
+                        )]
                         permissions.set_readonly(false);
                         std::fs::set_permissions(backup, permissions).map_err(|error| {
                             format!("make backup {} removable failed: {error}", backup.display())
@@ -5809,6 +5813,10 @@ mod repair_summary_tests {
         let mut permissions = std::fs::metadata(&path)
             .map_err(|error| error.to_string())?
             .permissions();
+        #[allow(
+            clippy::permissions_set_readonly_false,
+            reason = "test cleanup: undoing the readonly flag set above so the temporary tree can be removed; the file lives in a test-owned temp directory"
+        )]
         permissions.set_readonly(false);
         std::fs::set_permissions(&path, permissions).map_err(|error| error.to_string())?;
         std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
