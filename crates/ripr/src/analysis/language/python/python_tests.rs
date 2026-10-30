@@ -2548,6 +2548,28 @@ fn docstring_ranges_exclude_assigned_strings_and_fstrings() {
 }
 
 #[test]
+fn docstring_ranges_include_attribute_docstrings() {
+    let source = concat!(
+        "class Box:\n",
+        "    name: str\n",
+        "    \"\"\"Attribute docs.\n",
+        "    More attribute docs.\n",
+        "    \"\"\"\n",
+        "    size = 1\n",
+        "    \"\"\"Size docs.\"\"\"\n",
+        "    f(1)\n",
+        "    \"\"\"Not after a call statement.\"\"\"\n",
+    );
+    let facts = extract_source_facts(Path::new("src/box.py"), source);
+
+    assert_eq!(
+        facts.docstring_line_ranges,
+        vec![3..=5, 7..=7],
+        "a plain string right after an assignment is an attribute docstring"
+    );
+}
+
+#[test]
 fn analyze_diff_skips_detectable_generated_python_files() -> Result<(), String> {
     let root = unique_tempdir("analyze-diff-generated-file")?;
     let generated_rel = PathBuf::from("src/schema_pb2.py");
