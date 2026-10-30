@@ -14369,6 +14369,13 @@ Field contract:
 - `missing_artifact`, `malformed_artifact`, `stale_artifact`, `wrong_root`,
   `blocked_artifact`, and `timeout` require `status = "blocked"` and a
   bounded next command when one is known.
+- A root without `Cargo.toml` that `ripr doctor` detects as TypeScript or
+  JavaScript (for example a `package.json` plus `.ts` files) but that has no
+  enabling marker (`tsconfig.json` or `jsconfig.json` at the root, or
+  TypeScript under `src/` or `tests/`; `package.json` alone is not a marker)
+  reports `blocked_artifact` with
+  `selected.reason_code = "typescript_project_marker_missing"` and no next
+  command, not `wrong_root`. Its message names the missing marker.
 - For a check-output-derived or legacy preview/mixed, presentation-text, or unclassifiable
   records ledger with no selected repair, `blocked_artifact`
   carries `selected.reason_code = "source_currentness_unavailable"`
