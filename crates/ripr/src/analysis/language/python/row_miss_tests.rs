@@ -1678,6 +1678,7 @@ mod direct {
         PythonRelationKind, related_test_candidates, related_tests_for_candidates,
     };
     use super::super::row_miss::{RowMissChange, annotate_row_misses};
+    use super::super::sink_alignment::AlignmentPrep;
     use super::super::{PythonOwner, PythonTest, owner_for_changed_line};
     use crate::domain::{ExposureClass, RelatedTestMiss};
     use std::path::Path;
@@ -1754,7 +1755,7 @@ mod direct {
                 focus: &focus,
                 boundary_fact: None,
             },
-            &case.tests,
+            &AlignmentPrep::new(&case.owner, &case.tests),
         );
         candidates
             .iter()
@@ -2485,7 +2486,7 @@ mod direct {
                 literal_pair: None,
                 boundary_fact: Some(&fact),
             },
-            &case.tests,
+            &AlignmentPrep::new(&case.owner, &case.tests),
         );
         let row = |name: &str| rows.iter().find(|row| row.name == name);
         let off = row("test_off_boundary").ok_or("off-boundary row")?;
@@ -2539,7 +2540,7 @@ mod direct {
                     focus: &focus,
                     boundary_fact: None,
                 },
-                &case.tests,
+                &AlignmentPrep::new(&case.owner, &case.tests),
             );
             assert_eq!(rows.len(), stripped.len());
             for (row, base) in rows.iter().zip(&stripped) {
@@ -2592,7 +2593,7 @@ mod direct {
                 focus: &focus,
                 boundary_fact: None,
             },
-            &case.tests,
+            &AlignmentPrep::new(&case.owner, &case.tests),
         );
     }
 

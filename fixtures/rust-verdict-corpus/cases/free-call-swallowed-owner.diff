@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -31,7 +31,7 @@
+ }
+ 
+ fn swallowed_inner(x: i64) -> i64 {
+-    x + 5
++    x + 6
+ }
+ 
+ pub fn passed_in(x: i64, shift: fn(i64) -> i64) -> i64 {

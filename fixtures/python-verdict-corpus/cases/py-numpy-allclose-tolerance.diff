@@ -1,0 +1,12 @@
+diff --git a/src/extra.py b/src/extra.py
+--- a/src/extra.py
++++ b/src/extra.py
+@@ -7,7 +7,7 @@
+ 
+ 
+ def scaled(x):
+-    return x * 2.0
++    return x * 2.0 + 1e-12
+ 
+ 
+ def widen(text):

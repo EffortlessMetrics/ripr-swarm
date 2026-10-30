@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::super::extract::ShadowAuthority;
+use super::super::extract::arrow_row_oracles_for_fn;
 use super::super::extract::extract_pattern_words;
 use super::super::extract::retain_reached_oracles;
 use super::super::facts::FileFacts;
@@ -169,8 +170,8 @@ fn parser_oracles_for_function_uncached(
 
 /// Module scope of a file's functions, keyed by (fn-token line, name) as
 /// function and test facts record them.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(into = "ModuleItemScopesWire", from = "ModuleItemScopesWire")]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(from = "ModuleItemScopesWire")]
 pub(crate) struct ModuleItemScopes {
     /// Every fn that is a direct item of the file or of an inline
     /// `mod name { .. }`, mapped to the line span of its innermost inline
@@ -226,6 +227,10 @@ enum FnItemScope {
     },
 }
 
+/// Reference encoder for the differential test: serde's `into` clones the
+/// whole table, so the cache bytes come from the borrowing [`Serialize`] impl
+/// below.
+#[cfg(test)]
 impl From<ModuleItemScopes> for ModuleItemScopesWire {
     fn from(scopes: ModuleItemScopes) -> Self {
         let mut keys: BTreeSet<(usize, String)> = BTreeSet::new();
@@ -256,6 +261,55 @@ impl From<ModuleItemScopes> for ModuleItemScopesWire {
             })
             .collect();
         Self { fns }
+    }
+}
+
+/// Borrowing twin of [`FnScopeWire`]; the field order is the wire format.
+#[derive(serde::Serialize)]
+struct FnScopeWireRef<'a> {
+    line: usize,
+    name: &'a str,
+    item: FnItemScope,
+    local_use: bool,
+    deferred_code: bool,
+    cfg: bool,
+    direct_calls: Option<&'a BTreeSet<String>>,
+    bound_names: Option<&'a BTreeSet<String>>,
+}
+
+impl serde::Serialize for ModuleItemScopes {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut keys: BTreeSet<&(usize, String)> = BTreeSet::new();
+        keys.extend(self.item_fns.keys());
+        keys.extend(self.fns_with_local_use.iter());
+        keys.extend(self.fns_with_deferred_code.iter());
+        keys.extend(self.direct_calls.keys());
+        keys.extend(self.fns_with_cfg.iter());
+        keys.extend(self.bound_names.keys());
+        let fns: Vec<FnScopeWireRef<'_>> = keys
+            .into_iter()
+            .map(|key| FnScopeWireRef {
+                line: key.0,
+                name: &key.1,
+                item: match self.item_fns.get(key) {
+                    None => FnItemScope::NotItem,
+                    Some(None) => FnItemScope::TopLevel,
+                    Some(Some((start, end))) => FnItemScope::Module {
+                        start: *start,
+                        end: *end,
+                    },
+                },
+                local_use: self.fns_with_local_use.contains(key),
+                deferred_code: self.fns_with_deferred_code.contains(key),
+                cfg: self.fns_with_cfg.contains(key),
+                direct_calls: self.direct_calls.get(key),
+                bound_names: self.bound_names.get(key),
+            })
+            .collect();
+        let mut state = serializer.serialize_struct("ModuleItemScopesWire", 1)?;
+        state.serialize_field("fns", &fns)?;
+        state.end()
     }
 }
 
@@ -656,13 +710,17 @@ fn summarize_file_with_collectors(
                     &body,
                 ),
                 calls,
-                assertions: extract_parser_oracles(
-                    &function,
-                    text,
-                    &line_index,
-                    DropInScope::WholeFile,
-                    &file_decls,
-                ),
+                assertions: {
+                    let mut assertions = extract_parser_oracles(
+                        &function,
+                        text,
+                        &line_index,
+                        DropInScope::WholeFile,
+                        &file_decls,
+                    );
+                    assertions.extend(arrow_row_oracles_for_fn(&attrs, &function, start_line));
+                    assertions
+                },
                 literals,
                 attrs,
                 nested_fn_names,

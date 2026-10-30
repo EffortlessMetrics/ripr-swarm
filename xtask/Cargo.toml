@@ -20,6 +20,7 @@ toml = "1"
 flate2 = "1"
 tar = "0.4"
 zip = { version = "9", default-features = false, features = ["deflate"] }
+roxmltree = "0.21"
 
 [dev-dependencies]
 # Producer-to-policy SARIF controls must exercise Perl ingestion in the normal

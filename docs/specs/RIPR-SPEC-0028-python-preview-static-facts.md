@@ -53,6 +53,30 @@ The adapter may observe project marker filenames, but it does not parse
 `pyproject.toml` build metadata, install requirements, read virtualenv contents,
 read generated stubs, or consume runtime test output.
 
+Diff mode reads the workspace under a file-count cap
+(`RIPR_PYTHON_MAX_WORKSPACE_FILES`) and byte budgets. The count cap refuses only
+unchanged context: changed `.py` files are always kept. When the workspace
+exceeds the cap, the rest of it is filled from the files that may reach the diff
+(#10785): every `conftest.py` and the package `__init__.py` files above a
+changed file; files whose text names a name a changed file defines (a `def` or
+`class` name at any depth, a top-level assignment target, a word of a decorator
+route literal) or a pytest fixture a reaching test module or `conftest.py`
+defines over such a name (a `fixture as` decorator alias and an `import ... as`
+alias of the name count, and fixture hosts are rescanned as fixture names join);
+for a module-level change, files that import the
+changed module, and for a `__dunder__` method change, files that import from a
+package above it; and the workspace modules that a reaching test or a changed
+file imports. A refused
+file outside that set names nothing a related-test relation could match, so it
+does not make the run partial. A refused file inside it is a named
+`diff_scope_oversized` limitation that counts the refused reaching files and
+says changed files were kept. A changed route literal with no fixed word in it
+(`@app.get("/")`, `@app.get("/{item_id}")`), an unreadable changed file, a
+fixture closure that does not settle, or a workspace past the scan's own file
+bound keeps the earlier behavior: the earliest paths fill the cap and
+every refusal is disclosed. The byte budgets still apply to changed files and
+disclose their own refusals.
+
 ## Owner Facts
 
 Owners the adapter must recognise:
@@ -352,7 +376,10 @@ renamed fixture (`name=`) and a test that rebinds the parameter name make no
 edge, nor does a parameter that a pytest `parametrize` names as an argname,
 read syntactically (variable argvalues, `pytest.param(marks=...)` and
 unreadable `indirect` values still count) unless `indirect=` is the literal
-`True` or a literal list naming it. A class-level `parametrize` (on the test's
+`True` or a literal list naming it, directly or through one never-rebound
+module `NAME = <value>` binding (#10685). The mark, its argnames and its
+`indirect` are read through imports and module names as RIPR-SPEC-0238 L8
+describes. A class-level `parametrize` (on the test's
 class or a local ancestor) counts the same way. When a file defines the same
 fixture name twice the last definition wins, and the analyzer attaches at most
 eight fixture definitions to one test (an implementation limit, not a pytest
@@ -410,7 +437,10 @@ comments, strings, and docstrings:
   before the name, its closing bracket or the `=` / `in` / `as` after it, and
   a run of blanks after `for`, `as`, `def` or `class`, do not hide the rebind.
   A `for` or `as` inside a string or after a `#` comment is text, so
-  `assert "for" and ((r)) in [r]` stays a credited read. Known limits, none of
+  `assert "for" and ((r)) in [r]` stays a credited read. Loop-keyword masking
+  retains earlier lines for multiline literals while searching only the current
+  line; an unterminated literal supplies no parsed test or protocol-entry credit.
+  Known limits, none of
   them closed by this: a multi-line tuple target whose earlier elements sit on
   other lines (`(x,\n r) = ...`) is not seen, so the receiver stays credited
   (the credit-keeping direction); and a dict key at the start of a continuation
@@ -472,7 +502,53 @@ straight-line `assert` that holds with the old body and fails with the new one
 is the oracle, and only then is the lambda-syntax limit lifted. A changed
 parameter list, a default, a body outside the evaluator, a second binding or a
 test that shadows, patches or may skip the call keeps `unsupported_syntax`. A value no
-assertion distinguishes is never graded as a gap. A function defined under a
+assertion distinguishes is never graded as a gap. A default edit of a field in
+a plain `@dataclass` class (#9619) relates the same way: the class is a
+top-level `@dataclass` or `@dataclasses.dataclass` with no arguments, bases or
+keywords, imported from `dataclasses` and bound once; its body holds only
+annotated fields, a docstring, `pass` and methods, with no `__init__`,
+`__post_init__`, `__new__` or attribute hook and no `ClassVar`, `InitVar`,
+keyword-only or `init=False` field; and the edited line swaps one literal
+default under an unchanged name and annotation. A straight-line `assert` that
+builds the class from literals, leaves the field unset and reads it through an
+undecorated one-`return` method or an attribute is the oracle when it holds with
+the old default and fails with the new one. For this read the evaluator adds floats
+(`+`, `-`, `*`, `/`, comparisons and unary signs, declining integers beyond 2^53)
+and the unshadowed one-argument builtin `round`.
+An explicit value for the field, a field default that is `field(...)` or
+computed, a method outside the evaluator, a rebound class or field, or a test
+that shadows, writes or may skip the construction keeps `decorator_indirection`.
+The class body must also run nothing the model does not evaluate: a field call
+other than `field(default=<literal>)` or `field(default_factory=list|dict|set)`
+with the builtin unbound, an annotation other than an unbound builtin name, a
+non-literal parameter default or non-builtin annotation on any method (async
+included), or a decorator other than an unbound `property`, `classmethod` or
+`staticmethod` keeps the abstention, and a test that requests a fixture is not a
+reader (directly parametrized arguments are not fixture requests).
+An operator swap among `+`, `-` and `*` in the single `return` of an
+undecorated module function that calls an imported workspace function (#9619)
+is read without following the import: the line moves only the operator, so
+the call returns the same whole number `X` before and after. The call is a bare
+name that resolves to exactly one undecorated module-level function, bound once
+and rewritten nowhere, over parameters and literals, and the other operand is
+an expression over parameters and integer literals. A straight-line
+`assert owner(<literals>) == <integer>` of a test that names the owner through
+an import it does not rebind fixes `X` through the old operator (taking the
+assertion to hold before the diff, as for any passing test), and is the oracle
+when the new operator over that `X` gives another value; only then is the
+`missing_import_graph` limit lifted. An assertion both operators satisfy, a
+non-literal, keyword or short call, a second call, a division, a changed
+operand, side or argument, a decorated, unresolved, ambiguous or rebound
+callee or owner, a patched owner, any workspace file reachable from the owner's
+or the callee's module through imports that defines `__add__`, `__sub__`,
+`__mul__` or a reflected form (its result need not be the pinned number), or a
+test that rebinds, writes or may skip keeps `missing_import_graph`. The
+guarantee is bounded: the pass does not prove the call returns an ordinary
+integer. An exact integer assertion is taken to describe the returned value,
+and the abstention covers only arithmetic defined in reachable workspace
+files. A third-party or dynamically built type with its own `+`, `-` or `*` is
+not visible to this scan, and a pinned number it produced may not behave as the
+algebra assumes. A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only
 decided shapes are Python 2/3 version tuples, with `sys` the single plain
 import) is an ordinary function owner when its name has no other live
@@ -486,6 +562,29 @@ multiline setup remains eligible. A generator test lends no executed-body credit
 Formatted strings remain uncertain in this bounded admission because their
 expressions can carry generator syntax. Statement identity uses the reported
 source assertion, independently of the boolean oracle's normalized gate text.
+A workspace assignment to a function's `__code__`, `__defaults__`, `__kwdefaults__` or
+`__closure__` can replace a reader without rebinding its name, so it withholds the module
+constant's credit for scalar and table constants alike (#10626).
+
+A one-line module-level dict literal of unique `str` or `int` keys and scalar
+values (#9619) is a constant of the same kind, read only by a module function
+through `NAME.get(key[, default])` or `NAME[key]`; a test reading the table
+itself, a `bool` lookup key, a missing key without a default, a computed or
+spread entry and a multi-line literal decide nothing. The table is mutable in
+place, so credit also requires that no source mention `NAME` other than as an
+import or export, a `.get` read or a subscript read on a line that binds
+nothing (the owning module's defining statement aside): a store through a
+subscript, `update`/`setdefault`/`pop`, an alias, a renamed import, an
+f-string mention (multi-line included), a statement sharing a `;` line with an import, a lexing error, or a file using a reflective spelling (`getattr`, `dir`,
+`getmembers`, `locals`, `__globals__`, `attrgetter`, `eval`, `compile`, `inspect`, `gc`,
+`__code__`, `__defaults__`, `__kwdefaults__`, `__closure__`) that mentions the table or its
+module withholds credit. A reflective file withholds credit for the tables of every module in its import
+component (files linked by an import word naming another file's stem or package `__init__.py`, in either
+direction, plus every `conftest.py` component; import statements are read across parenthesized and backslash continuations by the lexer, so a bracket in a comment or string does not end one), because the module it reflects over may be another
+file's re-export, or be handed to it as an argument, with no word of the file naming it. A reflective
+file that also loads modules by a runtime name (`importlib`, `__import__`, `sys.modules`, `eval`, `exec`, `compile`, ...) withholds
+credit for every table. Reflection over modules outside that component keeps the credit. A definition after a `;` is discovered like one at the start of a line, so an explicit
+line continuation cannot hide a table from the foreign-store scan.
 Preceding assertions must evaluate true under the same bounded old/new scope
 before a later assertion can supply the value-flip credit.
 
@@ -617,7 +716,18 @@ parameter bound to a literal argument or literal default (positional, keyword,
 import-alias, and method calls after `self`). Literal owner arguments, and the
 boundary equality when observed, are recorded in `observed_values`. Otherwise
 the finding fails closed to `weakly_exposed` and the infection stage reads
-`weak`. When every non-literal operand is bound by some call, the boundary is
+`weak`. A rewrite that keeps the predicate true on exactly the same integers
+(`amount >= 100` -> `amount > 99`, one comparison of a name against an
+integer literal, the rest of the condition unchanged) changes no behavior,
+so a test must notice a wrong version of the new line. Python's mutation
+tool shifts a number literal up by one (mutmut `n` -> `n + 1`), and for
+`v > C` and `v <= C` (and their mirrors) that shifted bound first differs
+at `v == C + 1`. There `exposed` also needs a strong call that places the
+name at `C + 1`; otherwise the finding is `weakly_exposed` and names
+`v == C + 1` as the missing discriminator (#10842). `v >= C` and `v < C`
+shift onto the equality point and need no further row. A behavior change
+keeps the equality rule, because the equality row notices the edit itself
+(RIPR-SPEC-0238 example 39). When every non-literal operand is bound by some call, the boundary is
 named as the missing discriminator (`amount == threshold`, with the observed
 operand values in its reason). An operand ripr cannot bind (an attribute such
 as `item.on_hand`, a computed `len(name)`, a comprehension local, or a line
@@ -634,9 +744,13 @@ imported from the owner's module (`discounted_total(DISCOUNT_THRESHOLD)` or
 or its module binds that name again. The name stays unresolved when anything
 can rebind it: a second module-scope binding (including inside
 `if`/`try`/`for`/`with`), a `global` declaration or walrus target anywhere in
-the module, a star import, a module-scope `match`, any mention of a dynamic
-namespace writer (`exec`, `globals`, `vars`, `locals`, `setattr`,
-`sys.modules`, `__dict__`), a non-literal value, a parameter or local binding
+the module, a star import, a module-scope `match`, a dynamic
+namespace writer in code (`exec`, `eval`, `globals`, `vars`, `locals`,
+`setattr`, `__setattr__`, `delattr`, `reload`, `patch`, `sys.modules`,
+`__dict__`), whether called, named in an f-string, or named as a
+whitespace-free string such as `getattr(m, "exec")` (a word in a comment or in
+prose, like a docstring saying "env vars", is not a writer, #10979; a module
+the lexer rejects falls back to the whole-text scan), a non-literal value, a parameter or local binding
 of the same name in the owner, a nested `def`/`class`/`lambda` in the owner,
 or a related test file that assigns the attribute (`pricing.DISCOUNT_THRESHOLD
 = 5`). A call inside a `@pytest.mark.parametrize` (or `@mark.parametrize`)
@@ -648,10 +762,20 @@ list/tuple argvalues literal with rows of the right arity (`pytest.param(...)`
 unwrapped), stacked decorators as a product of at most 256 cases. A
 single-name list/tuple argnames takes tuple rows, as pytest unpacks them.
 Another decorator named `parametrize` (a plugin or project helper) records
-no cases. Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
+no cases; the mark is read through imports and module names as
+RIPR-SPEC-0238 L8 describes, and a mark whose root that read cannot pin to
+pytest records none for the whole test (#10867). Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
 with any keyword but `id=` (a `marks=` skip or xfail case may never run), a
 unittest method (pytest does not parametrize it), and an argname the test
-body may rebind leave the call unresolved. A rebinding is read from the
+body may rebind leave the call unresolved. A test whose first statement after
+a docstring unpacks one argname (`quantity, rate = case`, alone on its lines)
+reads as parametrized by the target names, each case's row split by arity,
+and the unpack is not a rebinding (#10832). Every row must be a tuple of
+scalar literals (a bare target also takes a scalar literal) and every
+decorator a pytest mark; a list row (mutable, so a fixture may change it), a
+row naming a value (which may shadow the owner), a row of another arity, a
+target that is another parameter, and a later statement that names the
+argname or rebinds a target keep the argname's cases as they are. A rebinding is read from the
 parsed test body: any assignment, tuple, loop, `with` or `except` target, an
 import or `del` of the argname drops it from the cases, and a nested `def` or
 `class`, a `match` or a star import drops all cases. Any `lambda` in the test,
@@ -690,7 +814,15 @@ Otherwise it is the `<expected value>` placeholder
 claimed. These facts are evidence only until a later
 repair-card contract supplies the test shape, verify command, receipt command,
 and edit boundaries. Heuristic-only links, no related-test paths, and static
-limits must not emit repair guidance.
+limits must not emit repair guidance. "Repair guidance" here means an
+actionable repair target: a repair card, agent packet, placement, test node,
+or verify/receipt command. It does not preclude generic non-repair-ready
+advice: for a directly resolvable plain-function owner with no statically
+linked test call, the adapter may name the owner and the honest ordered
+route (add a relevant test/assertion, run the project's native verifier,
+then refresh) while repair readiness stays suppressed (#10708). A decorated,
+routed, command-registered, or otherwise indirected owner stays silent, and a
+later transitive-reach limitation silences the advice again.
 
 ### Sink alignment visibility
 

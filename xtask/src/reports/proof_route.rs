@@ -659,26 +659,36 @@ fn proof_route_markdown(
 /// Where the pr-summary section looks for a local preflight receipt.
 const PROOF_PREFLIGHT_RECEIPT_PATH: &str = "target/ripr/reports/proof-preflight.json";
 
-/// Freshness verdict for the local preflight receipt relative to the current
-/// head commit. A stale receipt is never presented as current.
+/// Recorded execution and current command coverage are separate observations.
+/// This reader cannot establish cross-head applicability or authenticate execution.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PreflightReceiptStatus {
-    /// Receipt head SHA matches the current head: safe to surface.
-    Fresh {
+    Recorded {
+        receipt_head_sha: String,
+        receipt_base_sha: String,
         overall_status: String,
         passed: usize,
         failed: usize,
         not_run: usize,
-    },
-    /// Receipt exists but was produced for a different head commit.
-    Stale {
-        receipt_head_sha: String,
-        head_sha: String,
+        coverage: PreflightCoverage,
     },
     /// No receipt file on disk.
     Missing,
     /// Receipt file exists but cannot be read or parsed.
     Unreadable(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PreflightCoverage {
+    CurrentHead {
+        passed: usize,
+        failed: Vec<String>,
+        not_run: Vec<String>,
+        missing: Vec<String>,
+    },
+    DifferentHead {
+        head_sha: String,
+    },
 }
 
 /// Everything the pr-summary section renders, computed once.
@@ -708,7 +718,8 @@ fn compute_pr_summary_route() -> Result<ProofRouteSummary, String> {
     let head_sha = resolve_commit_sha(&options.head)?;
     let changed = changed_files(&options.base, &options.head)?;
     let route = route_proof(&packs, &lanes, &changed);
-    let receipt = preflight_receipt_status(Path::new(PROOF_PREFLIGHT_RECEIPT_PATH), &head_sha);
+    let receipt =
+        preflight_receipt_status(Path::new(PROOF_PREFLIGHT_RECEIPT_PATH), &head_sha, &route);
     Ok(ProofRouteSummary {
         base: options.base,
         head: options.head,
@@ -718,66 +729,135 @@ fn compute_pr_summary_route() -> Result<ProofRouteSummary, String> {
     })
 }
 
-fn preflight_receipt_status(path: &Path, head_sha: &str) -> PreflightReceiptStatus {
+fn preflight_receipt_status(
+    path: &Path,
+    head_sha: &str,
+    route: &ProofRoute,
+) -> PreflightReceiptStatus {
     if !path.exists() {
         return PreflightReceiptStatus::Missing;
     }
     match std::fs::read_to_string(path) {
-        Ok(text) => parse_preflight_receipt(&text, head_sha),
+        Ok(text) => parse_preflight_receipt(&text, head_sha, route),
         Err(err) => {
             PreflightReceiptStatus::Unreadable(format!("failed to read {}: {err}", path.display()))
         }
     }
 }
 
-/// Classify a preflight receipt against the current head SHA. Pure so the
-/// SHA-freshness contract is unit-testable without touching the filesystem.
-fn parse_preflight_receipt(text: &str, head_sha: &str) -> PreflightReceiptStatus {
-    let value: Value = match serde_json::from_str(text) {
-        Ok(value) => value,
-        Err(err) => {
-            return PreflightReceiptStatus::Unreadable(format!(
-                "malformed preflight receipt JSON: {err}"
-            ));
+/// Compare the retained command observations with the route already selected by
+/// the caller. A matching head alone says nothing about missing obligations.
+fn parse_preflight_receipt(
+    text: &str,
+    head_sha: &str,
+    route: &ProofRoute,
+) -> PreflightReceiptStatus {
+    read_preflight_receipt(text, head_sha, route).unwrap_or_else(PreflightReceiptStatus::Unreadable)
+}
+
+fn read_preflight_receipt(
+    text: &str,
+    head_sha: &str,
+    route: &ProofRoute,
+) -> Result<PreflightReceiptStatus, String> {
+    let value: Value = serde_json::from_str(text)
+        .map_err(|err| format!("malformed preflight receipt JSON: {err}"))?;
+    if value["schema_version"] != "0.1" || value["mode"] != "advisory-local-preflight" {
+        return Err("unsupported preflight receipt schema or mode".to_string());
+    }
+    let read_sha = |field: &str| -> Result<String, String> {
+        value[field]["sha"]
+            .as_str()
+            .filter(|sha| sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .map(str::to_ascii_lowercase)
+            .ok_or_else(|| format!("preflight receipt carries no valid {field}.sha"))
+    };
+    let receipt_head_sha = read_sha("head")?;
+    let receipt_base_sha = read_sha("base")?;
+    let rows = value["commands"]
+        .as_array()
+        .ok_or("preflight receipt commands must be an array")?;
+    let mut commands = BTreeMap::new();
+    for row in rows {
+        let command = row["command"]
+            .as_str()
+            .map(command_identity)
+            .filter(|command| !command.is_empty())
+            .ok_or("preflight receipt has an empty or invalid command")?;
+        let status = row["status"].as_str().unwrap_or_default();
+        let exit = row
+            .get("exit_code")
+            .ok_or("preflight command lacks exit_code")?;
+        let valid = match status {
+            "pass" => exit.as_i64() == Some(0),
+            // A timeout can record exit zero; the producer still records fail.
+            "fail" => exit.is_null() || exit.as_i64().is_some(),
+            "not_run" => exit.is_null(),
+            _ => false,
+        };
+        if !valid {
+            return Err("preflight command has an invalid status or exit_code".to_string());
+        }
+        if commands.insert(command, status).is_some() {
+            return Err("preflight receipt repeats a command identity".to_string());
+        }
+    }
+    let count = |status| commands.values().filter(|value| **value == status).count();
+    let passed = count("pass");
+    let failed = count("fail");
+    let not_run = count("not_run");
+    let overall_status = value["overall_status"].as_str().unwrap_or_default();
+    if !matches!(
+        (overall_status, failed, not_run),
+        ("pass", 0, 0) | ("fail", 1.., _)
+    ) {
+        return Err("preflight overall_status disagrees with command observations".to_string());
+    }
+    let coverage = if receipt_head_sha.eq_ignore_ascii_case(head_sha) {
+        // Use command argv identity, as the executor does with split_whitespace;
+        // shared commands required by several packs remain one obligation.
+        let required: BTreeSet<_> = route
+            .routed_packs
+            .iter()
+            .flat_map(|pack| &pack.required_commands)
+            .map(|command| command_identity(command))
+            .collect();
+        let mut passed = 0;
+        let mut failed = Vec::new();
+        let mut not_run = Vec::new();
+        let mut missing = Vec::new();
+        for command in required {
+            match commands.get(&command).copied() {
+                Some("pass") => passed += 1,
+                Some("fail") => failed.push(command),
+                Some("not_run") => not_run.push(command),
+                _ => missing.push(command),
+            }
+        }
+        PreflightCoverage::CurrentHead {
+            passed,
+            failed,
+            not_run,
+            missing,
+        }
+    } else {
+        PreflightCoverage::DifferentHead {
+            head_sha: head_sha.to_string(),
         }
     };
-    let Some(receipt_head_sha) = value
-        .get("head")
-        .and_then(|head| head.get("sha"))
-        .and_then(Value::as_str)
-    else {
-        return PreflightReceiptStatus::Unreadable(
-            "preflight receipt carries no head.sha".to_string(),
-        );
-    };
-    if receipt_head_sha != head_sha {
-        return PreflightReceiptStatus::Stale {
-            receipt_head_sha: receipt_head_sha.to_string(),
-            head_sha: head_sha.to_string(),
-        };
-    }
-    let overall_status = value
-        .get("overall_status")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown")
-        .to_string();
-    let empty = Vec::new();
-    let commands = value
-        .get("commands")
-        .and_then(Value::as_array)
-        .unwrap_or(&empty);
-    let count = |status: &str| {
-        commands
-            .iter()
-            .filter(|command| command.get("status").and_then(Value::as_str) == Some(status))
-            .count()
-    };
-    PreflightReceiptStatus::Fresh {
-        overall_status,
-        passed: count("pass"),
-        failed: count("fail"),
-        not_run: count("not_run"),
-    }
+    Ok(PreflightReceiptStatus::Recorded {
+        receipt_head_sha,
+        receipt_base_sha,
+        overall_status: overall_status.to_string(),
+        passed,
+        failed,
+        not_run,
+        coverage,
+    })
+}
+
+fn command_identity(command: &str) -> String {
+    command.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// First line of a (possibly multi-line) error, marked when truncated.
@@ -816,22 +896,46 @@ fn skipped_reason_summary(lanes: &[SkippedLane]) -> String {
 
 fn preflight_receipt_line(receipt: &PreflightReceiptStatus) -> String {
     match receipt {
-        PreflightReceiptStatus::Fresh {
+        PreflightReceiptStatus::Recorded {
+            receipt_head_sha,
+            receipt_base_sha,
             overall_status,
             passed,
             failed,
             not_run,
-        } => format!(
-            "Preflight receipt: fresh for current head — overall status `{overall_status}`; \
-             commands run: {passed} pass, {failed} fail ({not_run} not run).\n"
-        ),
-        PreflightReceiptStatus::Stale {
-            receipt_head_sha,
-            head_sha,
-        } => format!(
-            "Preflight receipt: no fresh preflight receipt (receipt head `{receipt_head_sha}` \
-             does not match current head `{head_sha}`).\n"
-        ),
+            coverage,
+        } => {
+            let mut body = format!(
+                "Preflight receipt: recorded head `{receipt_head_sha}`, base `{receipt_base_sha}` — \
+                 recorded overall status `{overall_status}`; commands: {passed} pass, {failed} fail \
+                 ({not_run} not run).\n"
+            );
+            match coverage {
+                PreflightCoverage::CurrentHead { passed, failed, not_run, missing } => {
+                    let required = passed + failed.len() + not_run.len() + missing.len();
+                    let status = if !failed.is_empty() { "fail" }
+                        else if !not_run.is_empty() || !missing.is_empty() { "unproven" }
+                        else if required == 0 { "not_required" }
+                        else { "pass" };
+                    body.push_str(&format!(
+                        "Current-head command coverage: `{status}` — {passed}/{required} required \
+                         commands recorded pass, {} fail, {} not run, {} missing.\n",
+                        failed.len(), not_run.len(), missing.len()
+                    ));
+                    for (label, commands) in [("Failed", failed), ("Not run", not_run), ("Missing", missing)] {
+                        if !commands.is_empty() {
+                            body.push_str(&format!("- {label}: {}\n", backticked_list(commands)));
+                        }
+                    }
+                    body.push_str("This compares recorded commands only; it does not authenticate the executed checkout, tools or configuration, or qualify a composed merge candidate.\n");
+                }
+                PreflightCoverage::DifferentHead { head_sha } => body.push_str(&format!(
+                    "Current applicability is not established for head `{head_sha}`. Retain the \
+                     original outcomes and assess material changes before reusing or refreshing affected proof.\n"
+                )),
+            }
+            body
+        }
         PreflightReceiptStatus::Missing => format!(
             "Preflight receipt: no fresh preflight receipt (none at `{PROOF_PREFLIGHT_RECEIPT_PATH}`).\n"
         ),
@@ -1379,62 +1483,6 @@ mod tests {
     }
 
     #[test]
-    fn pr_summary_section_includes_fresh_receipt_status() -> Result<(), String> {
-        let receipt_json = json!({
-            "head": {"rev": "HEAD", "sha": "head-sha"},
-            "overall_status": "fail",
-            "commands": [
-                {"command": "a", "status": "pass"},
-                {"command": "b", "status": "pass"},
-                {"command": "c", "status": "fail"},
-                {"command": "d", "status": "not_run"},
-            ],
-        });
-        let text = serde_json::to_string(&receipt_json)
-            .map_err(|err| format!("serialize receipt fixture: {err}"))?;
-        let receipt = parse_preflight_receipt(&text, "head-sha");
-        assert_eq!(
-            receipt,
-            PreflightReceiptStatus::Fresh {
-                overall_status: "fail".to_string(),
-                passed: 2,
-                failed: 1,
-                not_run: 1,
-            }
-        );
-        let summary = summary_for(&["docs/specs/SPEC-0001-example.md"], receipt)?;
-        let section = proof_route_section_markdown(&Ok(summary));
-        assert!(
-            section.contains("Preflight receipt: fresh for current head — overall status `fail`")
-        );
-        assert!(section.contains("commands run: 2 pass, 1 fail (1 not run)"));
-        assert!(!section.contains("no fresh preflight receipt"));
-        Ok(())
-    }
-
-    #[test]
-    fn pr_summary_section_never_presents_a_stale_receipt() -> Result<(), String> {
-        let text = r#"{"head": {"sha": "old-sha"}, "overall_status": "pass", "commands": []}"#;
-        let receipt = parse_preflight_receipt(text, "new-sha");
-        assert_eq!(
-            receipt,
-            PreflightReceiptStatus::Stale {
-                receipt_head_sha: "old-sha".to_string(),
-                head_sha: "new-sha".to_string(),
-            }
-        );
-        let summary = summary_for(&["docs/specs/SPEC-0001-example.md"], receipt)?;
-        let section = proof_route_section_markdown(&Ok(summary));
-        assert!(section.contains("no fresh preflight receipt"));
-        assert!(section.contains("receipt head `old-sha`"));
-        assert!(section.contains("current head `new-sha`"));
-        // A stale receipt's results are never surfaced as current.
-        assert!(!section.contains("overall status"));
-        assert!(!section.contains("commands run:"));
-        Ok(())
-    }
-
-    #[test]
     fn pr_summary_section_degrades_when_route_computation_fails() {
         let error = "bad proof route revision \"origin/main\": git exited 128\nextra detail line";
         let section = proof_route_section_markdown(&Err(error.to_string()));
@@ -1449,18 +1497,6 @@ mod tests {
         assert!(section.contains("advisory-report-only"));
         assert!(section.contains("- `cargo xtask proof route --base origin/main --head HEAD`"));
         assert!(section.contains("- `cargo xtask proof preflight --base origin/main --head HEAD`"));
-    }
-
-    #[test]
-    fn malformed_or_headless_receipts_are_unreadable_not_fresh() {
-        assert!(matches!(
-            parse_preflight_receipt("not json", "sha"),
-            PreflightReceiptStatus::Unreadable(_)
-        ));
-        assert!(matches!(
-            parse_preflight_receipt("{}", "sha"),
-            PreflightReceiptStatus::Unreadable(_)
-        ));
     }
 
     #[test]
@@ -1580,3 +1616,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "proof_route/receipt_tests.rs"]
+mod receipt_tests;
