@@ -588,6 +588,109 @@ line continuation cannot hide a table from the foreign-store scan.
 Preceding assertions must evaluate true under the same bounded old/new scope
 before a later assertion can supply the value-flip credit.
 
+A change to the single `return` of an undecorated module function or method
+that no test calls directly (#9226) relates as `module_value_call` to a test
+whose straight-line `assert <entry> == <literal>` holds with the old body and
+fails with the new one, evaluated through a chain of model callables. The
+changed line is the file's only changed line. A model callable is a top-level
+undecorated synchronous `def` with plain positional parameters (no defaults,
+`*args`, keywords, or annotations other than a bare name) whose body is one
+`return` after an optional docstring, bound once in the module, with no
+`yield`, `await` or `:=`. It may also be such a method of a model class: a
+top-level class with no bases, keywords or decorators, bound once, whose body
+holds only a docstring, `pass` and `def`s, with no method whose name starts
+with `__` (dunder or name-mangled), no method defined twice or bound by a
+walrus or `global`, and no `def` carrying a decorator, a default, or an
+annotation other than a bare name or string (each runs while the class body
+does), built as `Class()` with no arguments. Inside a callable a name is a parameter, and a call is a bare call
+of a model function or class of the module, or a method call on an instance
+of a model class (the method's receiver, a parameter holding one, or
+`Class()`), all with positional arguments. Values
+and operators are the module-value evaluator's integers, booleans and strings,
+plus `str * int` repetition (at most 4096 characters) and `.upper()`/`.lower()`
+of an ASCII string. The test reaches the entry through a function or class it
+imports with `from M import name` from the owner's module and does not rebind
+(`import pkg.mod as alias` and `from pkg import mod` read `mod` as a package
+attribute, which `pkg/__init__.py` may rebind, so they do not count), or through a local it binds once to `Class()`
+of a model class before the assertion and uses only as a method receiver (a
+local bound to a model function's result runs that function, so it is not one). The test is
+undecorated, defined once in its file, requests no fixture, has no autouse
+conftest fixture that may skip it, and runs nothing before the assertion but
+other assertions, `pass`, a docstring and its local bindings. A workspace file
+that writes or patches any name the chain runs, a code slot, or any dunder
+attribute (`__new__`, `__getattribute__`, ...; in the owner module too)
+decides nothing, and the finding keeps its verdict. So do `__class__`,
+`__bases__` or `eval` in the owner module, a call nesting deeper than 16, more
+than 4096 calls, and any name, call, operator or value outside that model.
+
+Reflection refuses the credit wherever it appears, in the owner module or in
+any other workspace file: a reflective spelling (`getattr`, `dir`,
+`getmembers`, `locals`, `inspect`, `gc`, `exec`, `compile`, `attrgetter`,
+...), a frame or a function's globals (`__globals__`, `f_globals`,
+`f_locals`, `_getframe`, `currentframe`, `f_back`, `tb_frame`,
+`get_referrers`, `get_referents`), `gc.get_objects`, `setattr`,
+`__setattr__`, `delattr`, `__dict__` and `vars`, or the import system
+(`sys` with `modules` or `path`, however imported, `addsitedir`,
+`meta_path`, `path_hooks`,
+`path_importer_cache`, `__path__`, `pkgutil`, `extend_path`, `importlib`, `__import__`,
+`import_module`, `exec_module`, `reload`). Such code can write a module
+namespace under a name built at runtime, or hand an importer a different
+module, so no name it mentions bounds what it changes. Another workspace file
+with the owner's module name (its file stem, or its package directory for
+`__init__.py`) refuses it too: under pytest's default `prepend` import mode,
+an extra import root, or a package `name/__init__.py` beside `name.py`, the
+test's import of the owner's dotted path may load that file instead. So does
+a compiled extension module of the owner's name beside it (`ledger.*.so`,
+`ledger.so`, `ledger.pyd`, or `__init__.*.so` for a package's `__init__.py`),
+which the import system loads before the source.
+A non-ASCII character in a name or an f-string, in the owner module or any
+other workspace file, refuses the credit: Python NFKC-normalises identifiers,
+so a fullwidth `_ｐad` rebinds `_pad`, while the credit's name matches are
+byte-exact. So does a PEP 263 encoding declaration other than UTF-8 in any of
+those files: in UTF-7 an all-ASCII comment can decode to a second line of
+code. A NUL byte or a carriage return not followed by a newline refuses it
+too: CPython breaks lines on a lone `\r`, so it and the scan disagree on
+which line holds a declaration. An unchecked-hash pyc (PEP 552) of any
+workspace source refuses it as well, since CPython loads it without comparing
+it with the source. Timestamp and checked-hash pycs are trusted the way
+CPython trusts them; the residual risk is a stale timestamp pyc after a
+same-size edit whose mtime lands in the compile second or is restored
+(`rsync -t`, `tar`, CI caches), which CPython itself would load. A pytest or
+tox configuration beside any workspace source, or above one, whose
+`pythonpath`, `python_paths` or `PYTHONPATH` setting names anything but its
+own directory refuses the credit: any other entry (an archive, a directory
+the workspace walk excludes, a root holding only compiled extensions, a path
+outside the workspace, an expansion such as `{toxinidir}`, or entries that
+cannot be read off its lines) can hold code the scan does not read.
+`pythonpath = ["."]` keeps it. Any `addopts` refuses too, since its shell
+split `-o pythonpath=...` can be quoted past any word match. TOML
+configurations are always parsed, so an escaped key counts, every
+`pythonpath` key at any depth counts and a mention outside such a key
+refuses; an INI value runs on across blank and comment lines, as iniconfig
+reads it. A compiled extension or sourceless `.pyc` in any directory that
+holds a source or lies above one (pytest's prepend mode can put any of them
+on `sys.path`) named like the owner or one of its packages (a
+compiled `__init__` counts as its package) refuses it, and so does one in a
+package directory below such a root along a dotted path the owner can be
+imported by (`tests/reach/ledger.pyc`, which pytest's prepend mode puts
+ahead of `reach/ledger.py`), as does a package directory named for the
+whole path with an initializer of any kind (`tests/reach/ledger/
+__init__.pyc`) other than the owner's own package. A test import whose
+top-level module is a standard-library name (`from math import floor`)
+never credits a workspace `math.py`: the built-in and frozen importers run
+before any path entry, and pytest has already imported many pure-Python
+stdlib modules.
+What the environment supplies is outside the static claim and stays a
+residual risk: a `PYTHONPATH` or `PYTEST_ADDOPTS` set by the caller (a
+Makefile, a noxfile, CI configuration, `.envrc`), a `.pth` file in site packages, or an installed
+non-editable copy that wins over the checkout (#10969). A test whose module has header effects is
+refused like one under a conftest with effects. Because these are
+whole-word matches over every workspace file, the credit rarely applies in
+repositories that use reflection anywhere; that is missed credit, not a
+wrong verdict.
+`__setattr__`, `delattr` and the frame words, like `setattr`, also mark a file
+as a dynamic writer for every module-value pass.
+
 A `def name(`, `async def name(`, or `class name(` header in a test defines a
 local; it is not a call of `name`.
 
@@ -744,9 +847,13 @@ imported from the owner's module (`discounted_total(DISCOUNT_THRESHOLD)` or
 or its module binds that name again. The name stays unresolved when anything
 can rebind it: a second module-scope binding (including inside
 `if`/`try`/`for`/`with`), a `global` declaration or walrus target anywhere in
-the module, a star import, a module-scope `match`, any mention of a dynamic
-namespace writer (`exec`, `globals`, `vars`, `locals`, `setattr`,
-`sys.modules`, `__dict__`), a non-literal value, a parameter or local binding
+the module, a star import, a module-scope `match`, a dynamic
+namespace writer in code (`exec`, `eval`, `globals`, `vars`, `locals`,
+`setattr`, `__setattr__`, `delattr`, `reload`, `patch`, `sys.modules`,
+`__dict__`), whether called, named in an f-string, or named as a
+whitespace-free string such as `getattr(m, "exec")` (a word in a comment or in
+prose, like a docstring saying "env vars", is not a writer, #10979; a module
+the lexer rejects falls back to the whole-text scan), a non-literal value, a parameter or local binding
 of the same name in the owner, a nested `def`/`class`/`lambda` in the owner,
 or a related test file that assigns the attribute (`pricing.DISCOUNT_THRESHOLD
 = 5`). A call inside a `@pytest.mark.parametrize` (or `@mark.parametrize`)

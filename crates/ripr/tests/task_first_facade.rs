@@ -2193,10 +2193,41 @@ fn repair_two_items_requires_explicit_selection() -> Result<(), String> {
         stderr.contains("select one of 2"),
         "must bound the selection to both candidates:\n{stderr}"
     );
+    // #10978: each candidate says where the change is and what it is, beside
+    // the exact command that picks it, instead of a bare hash.
+    for (location, code, seam) in [
+        (
+            "src/lib.rs:2",
+            "`amount >= discount_threshold`",
+            FIXTURE_SEAM,
+        ),
+        ("src/lib.rs:10", "`items >= free_threshold`", SECOND_SEAM),
+    ] {
+        assert!(
+            stderr.lines().any(|line| line.contains(location)
+                && line.contains(code)
+                && line.contains(&format!("ripr repair {seam}"))),
+            "candidate {seam} must show {location} and {code}:\n{stderr}"
+        );
+    }
     assert!(
         stderr.contains("ripr repair "),
         "must name the retry command:\n{stderr}"
     );
+    // From another directory the printed candidate commands must still select
+    // this workspace, so each carries the bound root.
+    let elsewhere = Fixture::dir("facade-two-elsewhere")?;
+    let remote = run_ripr(&elsewhere.root, &["repair", "--root", &root_arg])?;
+    let remote_stderr = stderr_text(&remote);
+    for seam in [FIXTURE_SEAM, SECOND_SEAM] {
+        assert!(
+            remote_stderr.lines().any(|line| {
+                line.contains(&format!("ripr repair {seam} --root "))
+                    && line.contains(root_arg.as_str())
+            }),
+            "candidate {seam} must carry the bound root:\n{remote_stderr}"
+        );
+    }
     assert!(
         attempt_ids(root).is_empty(),
         "no attempt may be created before selection"
@@ -2207,6 +2238,100 @@ fn repair_two_items_requires_explicit_selection() -> Result<(), String> {
     let ids = attempt_ids(root);
     assert_eq!(ids.len(), 1, "selection starts exactly one attempt");
     assert_eq!(read_manifest(root, &ids[0])?["seam_id"], FIXTURE_SEAM);
+    Ok(())
+}
+
+/// Populate a committed workspace whose only test is an assertion-free
+/// `#[should_panic]` test and whose changed guard (`b == 0` becomes `b == 1`)
+/// decides the panic it expects (#10703).
+fn populate_should_panic_fixture(root: &Path, extra_test: &str) -> Result<(), String> {
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    let lib = |guard: &str| {
+        format!(
+            "pub fn div(a: i32, b: i32) -> i32 {{\n    if {guard} {{\n        panic!(\"zero\");\n    }}\n    a / b\n}}\n"
+        )
+    };
+    std::fs::write(root.join("src/lib.rs"), lib("b == 0")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("tests/t.rs"),
+        format!(
+            "use boundary_gap_fixture::div;\n\n#[test]\n#[should_panic]\nfn t() {{\n    div(1, 0);\n}}\n{extra_test}"
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(root)?;
+    run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
+    git_commit(root, "should_panic base")?;
+    std::fs::write(root.join("src/lib.rs"), lib("b == 1")).map_err(|e| e.to_string())?;
+    run_git(root, &["add", "src"])?;
+    git_commit(root, "change the guard")?;
+    Ok(())
+}
+
+/// #10703: `check` names a `#[should_panic]`-only finding a limitation with no
+/// gap, and `repair` consumes the same predicate, so it declines with the same
+/// named limitation instead of starting an attempt. Both read the same
+/// binary, tree, base and diff (`--base HEAD~1` on both).
+#[test]
+fn repair_declines_the_should_panic_limitation_check_names() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-should-panic")?;
+    let root = &fixture.root;
+    populate_should_panic_fixture(root, "")?;
+    let root_arg = root.to_string_lossy().into_owned();
+
+    let check = run_ripr(root, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    let check_out = stdout_text(&check);
+    assert!(
+        check_out.contains("named limitation") && check_out.contains("should_panic"),
+        "check must name the should_panic limitation:\n{check_out}"
+    );
+    assert!(
+        check_out.contains("no repair start offered"),
+        "check must offer no repair start:\n{check_out}"
+    );
+
+    let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
+    let stderr = stderr_text(&repair);
+    assert_ne!(
+        repair.status.code(),
+        Some(0),
+        "repair must not start for a named limitation:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("should_panic") && stderr.contains("ripr check"),
+        "repair must decline with the same named limitation:\n{stderr}"
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "no attempt may start for a named limitation"
+    );
+    Ok(())
+}
+
+/// #10703 discriminating negative: the same changed guard with a weak
+/// asserting test beside the `#[should_panic]` test is a plain weak-grip gap
+/// for `check`, so the named-limitation predicate does not apply and `repair`
+/// still starts, exactly as it did before the limitation was shared.
+#[test]
+fn repair_still_starts_when_a_weak_asserting_test_sits_beside_should_panic() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-should-panic-weak")?;
+    let root = &fixture.root;
+    populate_should_panic_fixture(
+        root,
+        "\n#[test]\nfn ok() {\n    assert!(div(4, 2) > 0);\n}\n",
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let check = run_ripr(root, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    let check_out = stdout_text(&check);
+    assert!(
+        !check_out.contains("named limitation"),
+        "a weak asserting test keeps the plain gap:\n{check_out}"
+    );
+    let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&repair, 0, "repair starts for the plain weak gap");
+    assert_eq!(attempt_ids(root).len(), 1, "one attempt starts");
     Ok(())
 }
 

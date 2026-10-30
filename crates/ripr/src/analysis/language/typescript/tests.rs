@@ -19706,6 +19706,91 @@ fn describe_skip_if_and_run_if_index_their_tests_under_the_factory_guard() {
 }
 
 #[test]
+fn describe_run_if_indexes_an_untitled_callback_only_suite_under_the_factory_guard() {
+    let run_if = "describe.runIf(!process.env.CI)(() => {\n  it('adds three numbers', () => { expect(add(1, 2)).toBe(3); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), run_if);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "adds three numbers");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("describe.runIf(!process.env.CI)")
+    );
+    assert!(tests[0].assertions.is_empty(), "{tests:?}");
+    assert_eq!(
+        tests[0].assertion_admission,
+        TypeScriptAssertionAdmission::Unresolved
+    );
+    let skip_if = "describe.skipIf(!existsSync(dist))(() => {\n  it('built', () => { expect(add(1, 2)).toBe(3); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), skip_if);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "built");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("describe.skipIf(!existsSync(dist))")
+    );
+}
+
+#[test]
+fn describe_run_if_untitled_suite_with_an_inactive_options_object_is_not_descended() {
+    let source = "describe.runIf(c)(() => {\n  it('x', () => { expect(f(1)).toBe(2); });\n}, { skip: true });\ndescribe.runIf(c)(() => {\n  it('y', () => { expect(f(1)).toBe(2); });\n}, { skip: false });\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "y");
+}
+
+#[test]
+fn describe_run_if_untitled_callback_parameter_binding_a_runner_name_is_not_a_registration() {
+    let source = "describe.runIf(c)((test) => { test('x', () => { expect(f(1)).toBe(2); }); });\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert!(tests.is_empty(), "{tests:?}");
+}
+
+#[test]
+fn describe_run_if_untitled_callback_strict_directive_keeps_block_functions_block_local() {
+    let source = "describe.runIf(c)(() => {\n  'use strict';\n  { function describe() {} }\n  describe('real', () => {\n    it('x', () => { expect(f(1)).toBe(2); });\n  });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "x");
+}
+
+/// The untitled callback-only conditional suite
+/// (`describe.runIf(cond)(() => { ... })`) is indexed under its factory
+/// guard, so it must not fire the `typescript_test_extraction_partial`
+/// disclosure the unindexed shape did (#10982).
+#[test]
+fn analyze_diff_does_not_disclose_an_untitled_conditional_suite() -> Result<(), String> {
+    let root = ts_unique_tempdir("untitledrunif")?;
+    ts_write_file(
+        &root.join("src/math.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/math.test.ts"),
+        "import { add } from '../src/math';\ndescribe.runIf(!process.env.CI)(() => {\n  it('adds three numbers', () => {\n    expect(add(1, 2)).toBe(3);\n  });\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/math.ts", &[(2, "  return a + b;")])],
+    )?;
+    assert!(
+        !result.limitations.iter().any(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+        }),
+        "the untitled conditional suite must be indexed, got {:?}",
+        result.limitations
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
 fn describe_skip_if_accepts_an_options_argument_before_the_callback() {
     let source = "describe.skipIf(c)('a', { timeout: 5 }, () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\n";
     let tests = extract_tests(Path::new("tests/a.test.ts"), source);

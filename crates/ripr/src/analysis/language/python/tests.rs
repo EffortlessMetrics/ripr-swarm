@@ -4609,6 +4609,7 @@ fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), Str
                 body_text: "def caplog():\n    return Recorder()\n".to_string(),
                 imports: Vec::new(),
                 literal_construction: None,
+                inert_tool: None,
                 literal_params: None,
                 isolated: false,
                 scope_imports: Vec::new(),
@@ -5989,6 +5990,132 @@ fn classify_change_unresolved_pytest_fixture_fails_closed() -> Result<(), String
             .iter()
             .any(|entry| entry.contains("Static limit `unresolved_pytest_fixture`"))
     );
+    // The blocker is named so the reader knows which fixture to open (#10979).
+    assert!(
+        finding.evidence.iter().any(|entry| entry
+            == "unresolved_fixtures: discount_case (test_apply_discount_fixture_case)"),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// Classify the changed predicate against a parametrized pytest test whose
+/// module text is `module_text` (#10979).
+fn classify_parametrized_module(module_text: &str) -> Result<Finding, String> {
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+    );
+    let tests = extract_tests(Path::new("tests/test_pricing.py"), module_text);
+    assert_eq!(
+        tests.len(),
+        1,
+        "fixture must parse exactly one test: {tests:?}"
+    );
+    assert_eq!(
+        tests[0].direct_parametrized,
+        vec!["amount".to_string(), "expected".to_string()],
+        "fixture must read both parametrize argnames"
+    );
+    classify_change(
+        Path::new("src/pricing.py"),
+        2,
+        "    if amount >= threshold:",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed predicate inside owner should classify".to_string())
+}
+
+const PARAMETRIZED_TEST: &str = "@pytest.mark.parametrize((\"amount\", \"expected\"), [(5, 5), (50, 40)])\ndef test_apply_discount(amount, expected):\n    assert apply_discount(amount, 10) == expected\n";
+
+#[test]
+fn classify_change_parametrize_argnames_survive_prose_that_names_dynamic_writers()
+-> Result<(), String> {
+    // Words such as `vars` and `reload` in a docstring or a comment write
+    // nothing (#10979): the parametrize argnames are still values pytest
+    // passes to the test, not fixtures.
+    let module_text = format!(
+        "import pytest\nfrom src.pricing import apply_discount\n\n# Flask --reload/--no-reload and setattr are only prose here.\n{PARAMETRIZED_TEST}\ndef helper_other():\n    \"\"\"Env vars are plain strings; globals() and exec are not called.\"\"\"\n    assert apply_discount(5, 10) == 5\n"
+    );
+    let finding = classify_parametrized_module(&module_text)?;
+    assert_ne!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::UnresolvedPytestFixture),
+        "{:?}",
+        finding.evidence
+    );
+    assert_ne!(finding.class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn classify_change_parametrize_argnames_stay_unsettled_when_code_writes_the_namespace()
+-> Result<(), String> {
+    // The discriminating negative: the same module with a real dynamic
+    // writer in code, an f-string expression, or `sys.modules` keeps the
+    // fail-closed fixture limit.
+    for writer in [
+        "vars()\n",
+        "globals()[\"pytest\"] = object()\n",
+        "label = f\"{globals()}\"\n",
+        "import sys\nsys . modules[\"pytest\"] = object()\n",
+        "setattr(object(), \"x\", 1)\n",
+        "eval(\"globals().update(x=1)\")\n",
+        "import pydoc\npydoc.locate(\"importlib.reload\")(object())\n",
+        "getattr(object(), \"__setattr__\")(\"x\", 1)\n",
+    ] {
+        let module_text = format!(
+            "import pytest\nfrom src.pricing import apply_discount\n\n{writer}\n{PARAMETRIZED_TEST}"
+        );
+        let finding = classify_parametrized_module(&module_text)?;
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::UnresolvedPytestFixture),
+            "writer {writer:?} must keep the limit: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn classify_change_names_unsettled_indirect_values_apart_from_known_fixtures() -> Result<(), String>
+{
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+    );
+    // `indirect=` is a call ripr cannot read: `amount` is a parametrize value
+    // that may or may not pass through a fixture, while `rate` is a plain
+    // fixture the test takes (#10979).
+    let tests = extract_tests(
+        Path::new("tests/test_pricing.py"),
+        "import pytest\nfrom src.pricing import apply_discount\n\n@pytest.mark.parametrize(\"amount\", [5], indirect=flag())\ndef test_apply_discount(amount, rate):\n    assert apply_discount(amount, rate) == 5\n",
+    );
+    let finding = classify_change(
+        Path::new("src/pricing.py"),
+        2,
+        "    if amount >= threshold:",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed predicate inside owner should classify".to_string())?;
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::UnresolvedPytestFixture)
+    );
+    for expected in [
+        "unresolved_fixtures: rate (test_apply_discount)",
+        "unsettled_indirect_params: amount (test_apply_discount)",
+    ] {
+        assert!(
+            finding.evidence.iter().any(|entry| entry == expected),
+            "{expected} missing from {:?}",
+            finding.evidence
+        );
+    }
     Ok(())
 }
 
@@ -10866,6 +10993,7 @@ fn name_prefilter_keeps_a_fixture_only_mention() {
             body_text: "def order():\n    return make_order(1)\n".to_string(),
             imports: conftest_imports.clone(),
             literal_construction: None,
+            inert_tool: None,
             literal_params: None,
             isolated: false,
             scope_imports: Vec::new(),

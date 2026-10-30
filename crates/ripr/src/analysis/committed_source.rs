@@ -739,6 +739,26 @@ fn is_regular_file_mode(mode: &str) -> bool {
     mode == "100644" || mode == "100755"
 }
 
+/// POSIX single-quote `text` so a repair command pasted from a refusal targets
+/// the selected root even when it contains spaces or quotes.
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+/// Whether Git's stderr says the index file itself is damaged, as opposed to
+/// unreadable, misconfigured or a failure unrelated to the index.
+fn index_damage_reported(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    [
+        "index file smaller than expected",
+        "index file corrupt",
+        "bad index file",
+        "unknown index entry format",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
 fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<Vec<u8>, CoreError> {
     let describe = args.iter().take(2).copied().collect::<Vec<_>>().join(" ");
     let output = crate::git::run_git_output_with_optional_deadline_and_limit(
@@ -753,8 +773,23 @@ fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<V
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = stderr.lines().next().unwrap_or("unknown git error").trim();
+        // Exit 128 is Git's generic fatal. Only a diagnostic that says the
+        // index itself is damaged earns rebuild advice; a permission, config
+        // or revision failure keeps Git's reason alone, since deleting a valid
+        // index would discard staged work (#10567).
+        let repair = if output.status.code() == Some(128) && index_damage_reported(&stderr) {
+            let quoted = shell_quote(&root.to_string_lossy());
+            format!(
+                ". Git reports a damaged index. Rebuilding it from HEAD discards staged changes \
+                 that differ from HEAD, so first copy the index file Git names aside (`.git/index`, \
+                 or `index` under a linked worktree's gitdir). Then remove it, run \
+                 `git -C {quoted} reset` to rebuild it, re-stage what you need, and re-run."
+            )
+        } else {
+            String::new()
+        };
         return Err(format!(
-            "committed-source probe: `git {describe}` exited with {}: {detail}",
+            "committed-source probe: `git {describe}` exited with {}: {detail}{repair}",
             output.status
         )
         .into());

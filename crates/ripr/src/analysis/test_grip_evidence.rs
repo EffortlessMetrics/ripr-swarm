@@ -14,6 +14,7 @@
 mod boolean_boundary_pin;
 mod call_budget;
 mod owner_result_binding;
+mod panic_outcome;
 mod reach_limit;
 mod related_tests;
 pub(crate) mod shared_grips;
@@ -28,7 +29,7 @@ use value_contradiction::{
     exact_value_assertion_verdict_for_test,
 };
 pub(in crate::analysis) use value_contradiction::{
-    PointerReturnChange, change_is_invisible_to_every_assertion,
+    InvisibilityReason, PointerReturnChange, change_is_invisible_to_every_assertion,
 };
 
 pub(crate) use related_tests::CompactGripContext;
@@ -100,6 +101,23 @@ pub(crate) struct TestGripEvidence {
     /// bump.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) new_test_target: Option<NewTestTargetAdmission>,
+}
+
+impl TestGripEvidence {
+    /// Whether any stage summary names the typed static `limit`: the evidence
+    /// record's own marker that a named limitation, not a missing test,
+    /// explains the stage (#10703).
+    pub(crate) fn names_static_limit(&self, limit: crate::domain::StaticLimitKind) -> bool {
+        [
+            &self.reach,
+            &self.activate,
+            &self.propagate,
+            &self.observe,
+            &self.discriminate,
+        ]
+        .iter()
+        .any(|stage| stage.summary.contains(limit.as_str()))
+    }
 }
 
 const COMPACT_RELATED_TEST_LIMIT: usize = 12;
@@ -486,6 +504,24 @@ fn evidence_for_seam_with_context(
     // #8600: read over the full related set, the same set the stages read.
     let saturated = call_budget::any_saturated(related.iter().copied());
     call_budget::withhold(&mut evidence, saturated);
+    // #10703: the same named limit `check` applies to a `#[should_panic]`
+    // test whose panic may be the changed code's.
+    let panicking = panic_outcome::deciding_tests(
+        related_with_reason
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+            .map(|(indexed, _)| {
+                (
+                    indexed.test.name.as_str(),
+                    indexed.test.file.as_path(),
+                    indexed.test.start_line,
+                )
+            }),
+        owner_fn,
+        seam.display_line(),
+        context.index,
+    );
+    panic_outcome::withhold(seam, &mut evidence, &panicking);
     evidence
 }
 
@@ -1462,6 +1498,24 @@ pub(crate) fn compact_evidence_for_seam(
     // #8600: read over every ranked related test, before the compact cap.
     let saturated = call_budget::any_saturated(ranked.iter().map(|(indexed, _)| indexed.test));
     call_budget::withhold(&mut evidence, saturated);
+    // #10703: the same named limit `check` applies to a `#[should_panic]`
+    // test whose panic may be the changed code's.
+    let panicking = panic_outcome::deciding_tests(
+        ranked
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+            .map(|(indexed, _)| {
+                (
+                    indexed.test.name.as_str(),
+                    indexed.test.file.as_path(),
+                    indexed.test.start_line,
+                )
+            }),
+        owner_fn,
+        seam.display_line(),
+        context.index,
+    );
+    panic_outcome::withhold(seam, &mut evidence, &panicking);
     evidence
 }
 

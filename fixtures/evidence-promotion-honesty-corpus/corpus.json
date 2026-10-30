@@ -1018,6 +1018,26 @@
       ]
     },
     {
+      "id": "rust_relational_sibling_truth_unchanged",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/invisible_change_relational_sibling",
+      "vector": "relational_sibling_assertion_holds_on_both_versions_keeps_the_change_invisible",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_json_unrelated_equality",
       "language": "rust",
       "tier": "pure",
@@ -14890,6 +14910,19 @@
         { "type": "expected_finding_count", "count": 1 },
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "no_static_path" }
+      ]
+    },
+    {
+      "id": "rust_struct_literal_untouched_field_builder",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/struct_literal_untouched_field_builder",
+      "vector": "assertion_on_untouched_struct_literal_field_does_not_expose_a_changed_default",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
       ]
     }
   ]
