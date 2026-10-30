@@ -15,10 +15,11 @@ mod types;
 pub(crate) use current_change::{ChangeSeams, PilotCurrentChange};
 pub(crate) use language_routes::{PilotLanguageRoute, PilotLanguageRoutes, RUST_EXCLUDED_GUIDANCE};
 pub(crate) use render::{
-    render_pilot_summary_json, render_pilot_summary_md, render_pilot_terminal,
-    render_pilot_timeout_summary_json, render_pilot_timeout_summary_md,
-    render_pilot_timeout_terminal,
+    render_pilot_human_summaries, render_pilot_summary_json, render_pilot_timeout_summary_json,
+    render_pilot_timeout_summary_md, render_pilot_timeout_terminal,
 };
+#[cfg(test)]
+pub(crate) use render::{render_pilot_summary_md, render_pilot_terminal};
 pub(crate) use types::{
     PILOT_SUMMARY_SCHEMA_VERSION, PilotArtifacts, PilotPythonFirstUse, PilotSummaryContext,
 };

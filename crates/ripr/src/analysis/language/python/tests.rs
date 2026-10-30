@@ -11009,3 +11009,227 @@ fn name_prefilter_keeps_a_fixture_only_mention() {
         Some(PythonRelationKind::FixtureOwnerCall)
     );
 }
+
+#[test]
+fn comprehension_boundary_values_retain_each_test_file() -> Result<(), String> {
+    let owner_file = Path::new("src/agg.py");
+    let owners = extract_owners(owner_file, FILTER_BOUNDARY_OWNER);
+    let source = "import asyncio\nfrom src.agg import fetch_total\n\ndef test_total():\n    assert asyncio.run(fetch_total([3, 1, 4])) == 7\n";
+    let classify = |paths: &[&str]| -> Result<Vec<(Option<std::path::PathBuf>, usize)>, String> {
+        let tests: Vec<_> = paths
+            .iter()
+            .flat_map(|file| extract_tests(Path::new(file), source))
+            .collect();
+        assert_eq!(tests.len(), 2);
+        let mut origins = crate::value_origins::ValueOrigins::default();
+        let finding = classify::classify_change_with_value_origins(
+            owner_file,
+            6,
+            "    return sum(p for p in prices if p > 1)",
+            None,
+            &owners,
+            &tests,
+            PythonNoBehaviorContext::default(),
+            Some(FILTER_BOUNDARY_OWNER),
+            &mut origins,
+            None,
+        )
+        .ok_or_else(|| "filter change should classify".to_string())?;
+        assert_eq!(finding.class, ExposureClass::Exposed);
+        let files = origins
+            .files(&finding)
+            .ok_or_else(|| "missing value origins".to_string())?;
+        let element_files: Vec<_> = finding
+            .activation
+            .observed_values
+            .iter()
+            .zip(files)
+            .filter(|(fact, _)| fact.value == "prices = [3, 1, 4]")
+            .map(|(fact, file)| (file.clone(), fact.line))
+            .collect();
+        Ok(element_files)
+    };
+    let expected = vec![
+        (Some("tests/a.py".into()), 5),
+        (Some("tests/b.py".into()), 5),
+    ];
+    assert_eq!(classify(&["tests/a.py", "tests/b.py"])?, expected);
+    assert_eq!(classify(&["tests/b.py", "tests/a.py"])?, expected);
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_same_line_list_mutation_abstains() -> Result<(), String> {
+    let test = captured_records_test(
+        "msgs = caplog.messages\n    msgs[0] = \"low balance: 5\"; assert \"low balance: 5\" in msgs",
+    );
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"balance low: %s\", balance)",
+            &test
+        )?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_same_line_text_rebinding_abstains() -> Result<(), String> {
+    let test = captured_records_test(
+        "msgs = caplog.text\n    msgs = \"low balance: 5\"; assert \"low balance: 5\" in msgs",
+    );
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"balance low: %s\", balance)",
+            &test
+        )?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_binding_after_assertion_abstains() -> Result<(), String> {
+    for read in ["messages", "text"] {
+        let test = captured_records_test(&format!(
+            "assert \"low balance: 5\" in msgs\n    msgs = caplog.{read}",
+        ));
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{read}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_stores_in_assertions_abstain() -> Result<(), String> {
+    for tail in [
+        "assert (msgs := [\"low balance: 5\"]) and \"low balance: 5\" in msgs",
+        "assert f'{(msgs := [\"low balance: 5\"])}' != \"\" and \"low balance: 5\" in msgs",
+    ] {
+        let test = captured_records_test(&format!("msgs = caplog.messages\n    {tail}"));
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{tail}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_native_statement_bounds_reject_extra_uses() -> Result<(), String> {
+    for tail in [
+        "msgs[0] = \"low balance: 5\"; assert (\n        \"low balance: 5\" in msgs\n    )",
+        "tag = \"é\"; msgs[0] = \"low balance: 5\"; assert \"low balance: 5\" in msgs",
+        "assert \"low balance: 5\" in msgs; del msgs",
+        "assert \"low balance: 5\" in msgs; assert \"low balance: 5\" in msgs",
+        "match [\"low balance: 5\"]:\n        case msgs:\n            pass\n    assert \"low balance: 5\" in msgs",
+        "import logging as msgs\n    assert \"low balance: 5\" in msgs",
+        "try:\n        pass\n    except Exception as msgs:\n        pass\n    assert \"low balance: 5\" in msgs",
+        "assert [msgs := [\"low balance: 5\"] for _ in [0]] and \"low balance: 5\" in msgs",
+        "assert [True for msgs[0] in [\"low balance: 5\"]] and \"low balance: 5\" in msgs",
+    ] {
+        let test = captured_records_test(&format!("msgs = caplog.messages\n    {tail}"));
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{tail}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_valid_reads_keep_levels_absence_and_membership_semantics() -> Result<(), String>
+{
+    for read in ["messages", "text"] {
+        let test = captured_records_test(&format!(
+            "msgs = caplog.{read}\n    tag = \"é\"; assert (\n        \"low balance: 5\" in msgs\n    ), \"capture\""
+        ));
+        for body in [test.clone(), test.replace('\n', "\r\n"), test.replace(
+            "    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False",
+            "    caplog.set_level(logging.WARNING)\n    assert check_balance(5) is False",
+        )] {
+            for changed in [
+                "log.warning(\"balance low: %s\", balance)",
+                "log.info(\"low balance: %s\", balance)",
+            ] {
+                assert_eq!(classify_log_text_edit(AUDIT_OWNER, changed, &body)?, (ExposureClass::Exposed, None), "{read}: {body}");
+            }
+            let suffix = if read == "messages" { ExposureClass::Exposed } else { ExposureClass::WeaklyExposed };
+            assert_eq!(classify_log_text_edit(AUDIT_OWNER, "log.warning(\"low balance: %s (retry)\", balance)", &body)?, (suffix, None), "{read}: {body}");
+        }
+        let absence = captured_records_test(&format!(
+            "msgs = caplog.{read}\n    assert \"deprecated warning\" not in msgs"
+        ));
+        assert_eq!(
+            classify_log_text_edit(AUDIT_OWNER, "log.warning(\"deprecated warning\")", &absence)?,
+            (ExposureClass::Exposed, None),
+            "{read} absence"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_record_aliases_keep_native_comprehension_reads() -> Result<(), String> {
+    for assertion in [
+        "assert any(\"low balance\" in r.message for r in msgs)",
+        "assert any(r.getMessage() == \"low balance: 5\" for r in msgs)",
+        "assert \"low balance: 5\" in [r.message for r in msgs]",
+    ] {
+        // Select the records assertion, rather than a competing return oracle.
+        let test = captured_records_test(&format!("msgs = caplog.records\n    {assertion}"))
+            .replace("assert check_balance(5) is False", "check_balance(5)");
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (ExposureClass::Exposed, None),
+            "{assertion}"
+        );
+    }
+    let test = captured_records_test(
+        "msgs = caplog.records\n    assert not any(r.message == \"deprecated warning\" for r in msgs)",
+    )
+    .replace("assert check_balance(5) is False", "check_balance(5)");
+    assert_eq!(
+        classify_log_text_edit(AUDIT_OWNER, "log.warning(\"deprecated warning\")", &test)?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}

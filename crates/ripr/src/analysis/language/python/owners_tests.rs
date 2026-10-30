@@ -169,6 +169,23 @@ fn owner_from_function(
                 matches!(name.as_str(), "classmethod" | "staticmethod" | "property")
             })
     });
+    // A click command's decorators build a command that runs this body when
+    // invoked, so a helper it calls is reached through the command (#9226).
+    let click_command = !is_async
+        && decorator_names.len() == decorators.len()
+        && decorator_names
+            .iter()
+            .any(|decorator| matches!(decorator.as_str(), "click.command" | "click.group"))
+        && decorator_names.iter().all(|decorator| {
+            matches!(
+                decorator.as_str(),
+                "click.command" | "click.group" | "click.option" | "click.argument"
+            )
+        })
+        && context
+            .imports
+            .iter()
+            .any(super::cli_runner::is_plain_click_import);
     // A decorator whose name cannot be read still wraps the call.
     let binding_only = !is_async
         && decorator_names.len() == decorators.len()
@@ -224,7 +241,7 @@ fn owner_from_function(
         body,
         super::same_class_callees::method_receiver_name(&parameters, &decorators),
     );
-    let module_callees = if transparent_decorators {
+    let module_callees = if transparent_decorators || click_command {
         super::module_callees::bare_callees(&text_for_range(context.source, range), &parameters)
     } else {
         Vec::new()

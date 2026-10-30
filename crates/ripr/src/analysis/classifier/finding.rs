@@ -66,6 +66,11 @@ pub(in crate::analysis) fn build_finding_with_origins(
         reaching_summaries
     };
     let mut stop_reasons = stop_reasons(context.probe, context.owner_fn, &test_summaries);
+    // RIPR-SPEC-0048: a constant decided by evaluation has a reader and tests
+    // the evaluation read, so "no changed Rust line" no longer describes it.
+    if context.const_flow.is_some() {
+        stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
+    }
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
     let exact_oracle_covers_direct_sink = evidence.discriminate.state == StageState::Yes
         && matches!(
@@ -297,6 +302,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
     let (activation, files) = evidence.activation.into_public();
     let finding = Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: context.probe.id.0.clone(),
         canonical_gap: None,
         probe: context.probe.clone(),

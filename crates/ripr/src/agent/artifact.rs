@@ -28,6 +28,9 @@ pub(crate) const ARTIFACT_IDENTITY_SCHEMA_VERSION: &str = "1";
 /// before/after pair compares. A tracked lockfile, and every manifest, still
 /// moves the identity.
 pub(crate) const INPUT_IDENTITY_VERSION: &str = "v4";
+// Check findings v5 binds the actual selected languages and test scope.
+// Reject v4 findings artifacts, which omitted those run inputs.
+const CHECK_FINDINGS_INPUT_IDENTITY_VERSION: &str = "v5";
 pub(crate) const CONTENT_COMMITMENT_CANONICALIZATION: &str = "raw_json_placeholder_v1";
 pub(crate) const CONTENT_SHA256_PLACEHOLDER: &str =
     "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -59,14 +62,17 @@ pub(crate) struct RepoExposureArtifactContext {
     /// Full Rust inventory provenance supplied by that analysis, never
     /// computed by artifact serialization or inferred from these seams.
     pub(crate) corpus_key: Option<crate::analysis::seam_cache::RepoSeamCacheKey>,
+    pub(crate) analyzed_production_files: Option<Vec<PathBuf>>,
 }
 
 impl RepoExposureArtifactContext {
-    pub(crate) fn with_rust_corpus_key(
+    pub(crate) fn with_rust_inventory(
         mut self,
         key: Option<&crate::analysis::seam_cache::RepoSeamCacheKey>,
+        analyzed_production_files: &[PathBuf],
     ) -> Self {
         self.corpus_key = key.cloned();
+        self.analyzed_production_files = Some(analyzed_production_files.to_vec());
         self
     }
 
@@ -95,6 +101,7 @@ impl RepoExposureArtifactContext {
             base_revision,
             crate::config::repo_exposure_config_identity_hash(config),
             REPO_EXPOSURE_ANALYSIS_FORMAT,
+            INPUT_IDENTITY_VERSION,
         )
     }
 
@@ -114,6 +121,7 @@ impl RepoExposureArtifactContext {
             base_revision,
             crate::config::repo_exposure_config_identity_hash(config),
             REPO_SEAMS_ANALYSIS_FORMAT,
+            INPUT_IDENTITY_VERSION,
         )
     }
 
@@ -125,17 +133,31 @@ impl RepoExposureArtifactContext {
         root: PathBuf,
         mode: String,
         base_revision: Option<String>,
-        config: &crate::config::RiprConfig,
+        inputs: &crate::analysis_outcome::CheckFindingsInputs,
     ) -> Result<Self, String> {
         // The diff check consumes language selection and TypeScript settings
         // the Rust-only inventory never reads, so its identity covers every
         // finding-affecting field.
+        if inputs.perl_facts_used {
+            return Err("check-findings-json cannot bind the consumed Perl facts packet yet; use another report until packet identity is available".to_string());
+        }
+        let mut languages = inputs
+            .languages
+            .iter()
+            .map(|language| language.as_str())
+            .collect::<Vec<_>>();
+        languages.sort_unstable();
+        let config_identity = format!(
+            "{};unchanged_tests={};languages={:?}",
+            inputs.config_identity, inputs.include_unchanged_tests, languages
+        );
         Self::for_analysis_format(
             root,
             mode,
             base_revision,
-            crate::config::check_artifact_config_identity_hash(config),
+            config_identity,
             CHECK_FINDINGS_ANALYSIS_FORMAT,
+            CHECK_FINDINGS_INPUT_IDENTITY_VERSION,
         )
     }
 
@@ -145,6 +167,7 @@ impl RepoExposureArtifactContext {
         base_revision: Option<String>,
         config_identity: String,
         analysis_format: &str,
+        identity_version: &str,
     ) -> Result<Self, String> {
         let canonical_root = canonical_root(&root)?;
         let (manifest_identity, lockfile_identity) =
@@ -154,7 +177,7 @@ impl RepoExposureArtifactContext {
             );
         let input_canonical = format!(
             "identity_version={};mode={};profile={};base={:?};format={};manifest={:?};lockfile={:?};config={};analyzer={}",
-            INPUT_IDENTITY_VERSION,
+            identity_version,
             mode,
             mode,
             base_revision,
@@ -166,7 +189,7 @@ impl RepoExposureArtifactContext {
         );
         let input_identity = format!(
             "input:{}:{}",
-            INPUT_IDENTITY_VERSION,
+            identity_version,
             crate::config::config_fingerprint(&input_canonical)
         );
         Ok(Self {
@@ -175,6 +198,7 @@ impl RepoExposureArtifactContext {
             base_revision,
             input_identity,
             corpus_key: None,
+            analyzed_production_files: None,
         })
     }
 }
@@ -545,12 +569,14 @@ struct ArtifactIdentitySpec {
     kind: &'static str,
     format: &'static str,
     command: &'static str,
+    input_identity_version: &'static str,
 }
 
 const REPO_EXPOSURE_IDENTITY_SPEC: ArtifactIdentitySpec = ArtifactIdentitySpec {
     kind: "repo_exposure",
     format: REPO_EXPOSURE_ANALYSIS_FORMAT,
     command: REPO_EXPOSURE_PRODUCER_COMMAND,
+    input_identity_version: INPUT_IDENTITY_VERSION,
 };
 
 /// Validate one `agent verify` snapshot with the authority its declared
@@ -584,6 +610,7 @@ const CHECK_FINDINGS_IDENTITY_SPEC: ArtifactIdentitySpec = ArtifactIdentitySpec 
     kind: "check_findings",
     format: CHECK_FINDINGS_ANALYSIS_FORMAT,
     command: CHECK_FINDINGS_PRODUCER_COMMAND,
+    input_identity_version: CHECK_FINDINGS_INPUT_IDENTITY_VERSION,
 };
 
 /// One finding of a validated `check-findings-json` artifact, reduced to the
@@ -752,10 +779,12 @@ fn check_findings_gaps(
             "agent verify {label} artifact carries no analysis outcome, so a gap's absence cannot be read as closed"
         ));
     };
-    if outcome.analysis_complete != Some(true) || outcome.document_complete == Some(false) {
+    if !check_findings_outcome_is_complete(outcome.analysis_complete, outcome.document_complete) {
         return Err(format!(
-            "agent verify {label} artifact is incomplete (analysis_complete={:?}, document_complete={:?}); regenerate it before verifying",
-            outcome.analysis_complete, outcome.document_complete
+            "agent verify {label} artifact is incomplete (analysis_complete={:?}, document_complete={:?}); {}",
+            outcome.analysis_complete,
+            outcome.document_complete,
+            outcome.incomplete_next_step()
         ));
     }
     let mut gaps = Vec::new();
@@ -852,7 +881,7 @@ fn validate_artifact_identity(
     // accepted; a compatibility/migration boundary for earlier versions is
     // deferred until a real migration producer exists (#2921 deferred
     // negatives — no fabricated migration authority here).
-    let supported_prefix = format!("input:{INPUT_IDENTITY_VERSION}:");
+    let supported_prefix = format!("input:{}:", spec.input_identity_version);
     let Some(algorithm_and_digest) = identity
         .analysis
         .input_identity
@@ -1173,10 +1202,75 @@ struct CheckFindingsDocument {
     findings: Vec<CheckFindingsFinding>,
 }
 
+/// The one completeness predicate for a check-findings artifact (#11136): a
+/// gap's absence is only readable as closure when the producer reported a
+/// complete analysis and the findings document was not bounded. The verify and
+/// after phases consult it through [`check_findings_gaps`]; `ripr check`
+/// consults it before printing a gap-bound repair start, so a start is never
+/// offered for a before artifact the after phase will refuse.
+pub(crate) const fn check_findings_outcome_is_complete(
+    analysis_complete: Option<bool>,
+    document_complete: Option<bool>,
+) -> bool {
+    matches!(analysis_complete, Some(true)) && !matches!(document_complete, Some(false))
+}
+
 #[derive(serde::Deserialize)]
 struct CheckFindingsOutcome {
     analysis_complete: Option<bool>,
     document_complete: Option<bool>,
+    outcome: Option<CheckFindingsTypedOutcome>,
+}
+
+#[derive(serde::Deserialize)]
+struct CheckFindingsTypedOutcome {
+    limitations: Option<Vec<CheckFindingsLimitation>>,
+}
+
+#[derive(serde::Deserialize)]
+struct CheckFindingsLimitation {
+    kind: Option<String>,
+    path: Option<String>,
+    recovery: Option<CheckFindingsRecovery>,
+}
+
+#[derive(serde::Deserialize)]
+struct CheckFindingsRecovery {
+    detail: Option<String>,
+}
+
+impl CheckFindingsOutcome {
+    /// What the user does next: names the first producer limitation and its
+    /// recovery when the artifact carries one, instead of "regenerate it",
+    /// which reproduces the same incomplete artifact (#11136).
+    fn incomplete_next_step(&self) -> String {
+        if self.document_complete == Some(false) {
+            return "the findings document was bounded, so a gap's absence cannot be read as closed; rerun `ripr check` with RIPR_CHECK_FINDINGS_BYTES=0 for the full set, then start the repair again".to_string();
+        }
+        let limitation = self
+            .outcome
+            .as_ref()
+            .and_then(|outcome| outcome.limitations.as_ref())
+            .and_then(|limitations| limitations.first());
+        let Some(limitation) = limitation else {
+            return "the producer reported no complete analysis and named no limitation, so regenerating it would not help; resolve what `ripr check` reports as incomplete, then start the repair again".to_string();
+        };
+        let kind = limitation.kind.as_deref().unwrap_or("unnamed");
+        let location = limitation
+            .path
+            .as_deref()
+            .map(|path| format!(" in `{path}`"))
+            .unwrap_or_default();
+        let recovery = limitation
+            .recovery
+            .as_ref()
+            .and_then(|recovery| recovery.detail.as_deref())
+            .map(|detail| format!(" ({})", detail.trim_end_matches('.')))
+            .unwrap_or_default();
+        format!(
+            "the analysis is incomplete because of limitation `{kind}`{location}{recovery}; regenerating the artifact reproduces it, so resolve that limitation (or treat the repair packet as manual guidance and add the test by hand), then rerun `ripr check` and start the repair again"
+        )
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -1976,6 +2070,59 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn check_findings_incomplete_refusal_names_the_limitation_not_regenerate() -> Result<(), String>
+    {
+        let document = serde_json::json!({
+            "analysis_outcome": {
+                "analysis_complete": false,
+                "outcome": { "limitations": [{
+                    "kind": "unevaluated_condition",
+                    "path": "test/scule.test.ts",
+                    "recovery": { "detail": "Static analysis cannot evaluate the branch condition." }
+                }] }
+            },
+            "findings": []
+        });
+        let (outcome, findings) = findings_fixture(document)?;
+        let Err(message) = check_findings_gaps("before", outcome, &findings) else {
+            return Err("an incomplete analysis was accepted".to_string());
+        };
+        for needle in [
+            "unevaluated_condition",
+            "test/scule.test.ts",
+            "cannot evaluate the branch condition",
+            "regenerating the artifact reproduces it",
+        ] {
+            if !message.contains(needle) {
+                return Err(format!("refusal lacks `{needle}`: {message}"));
+            }
+        }
+        if message.contains("regenerate it before verifying") {
+            return Err(format!("refusal still says regenerate: {message}"));
+        }
+        let (bounded, findings) = findings_fixture(serde_json::json!({
+            "analysis_outcome": { "analysis_complete": true, "document_complete": false },
+            "findings": []
+        }))?;
+        let Err(bounded) = check_findings_gaps("before", bounded, &findings) else {
+            return Err("a bounded findings document was accepted".to_string());
+        };
+        if !bounded.contains("RIPR_CHECK_FINDINGS_BYTES=0") {
+            return Err(format!("bounded refusal lacks its recovery: {bounded}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_findings_outcome_completeness_is_one_predicate() {
+        assert!(check_findings_outcome_is_complete(Some(true), None));
+        assert!(check_findings_outcome_is_complete(Some(true), Some(true)));
+        assert!(!check_findings_outcome_is_complete(Some(true), Some(false)));
+        assert!(!check_findings_outcome_is_complete(Some(false), None));
+        assert!(!check_findings_outcome_is_complete(None, None));
     }
 
     #[test]
@@ -4429,7 +4576,12 @@ mod tests {
                     root.clone(),
                     "draft".to_string(),
                     None,
-                    config,
+                    &crate::analysis_outcome::CheckFindingsInputs {
+                        config_identity: crate::config::check_artifact_config_identity_hash(config),
+                        include_unchanged_tests: true,
+                        languages: vec![crate::domain::LanguageId::Rust],
+                        perl_facts_used: false,
+                    },
                 )
             };
             let exposure = |config: &crate::config::RiprConfig| {
@@ -4455,6 +4607,56 @@ mod tests {
         result?;
         cleanup?;
         Ok(())
+    }
+
+    #[test]
+    fn check_findings_binds_resolved_languages_and_refuses_unbound_packets() -> Result<(), String> {
+        use crate::analysis_outcome::CheckFindingsInputs;
+        use crate::domain::LanguageId;
+        let root = temporary_git_root()?;
+        let result = (|| {
+            commit_fixture_file(&root)?;
+            let config = crate::config::RiprConfig::default();
+            let inputs = CheckFindingsInputs {
+                config_identity: crate::config::check_artifact_config_identity_hash(&config),
+                include_unchanged_tests: true,
+                languages: vec![LanguageId::Rust],
+                perl_facts_used: false,
+            };
+            let identity = |inputs: &CheckFindingsInputs| {
+                RepoExposureArtifactContext::for_check_findings(
+                    root.clone(),
+                    "draft".to_string(),
+                    None,
+                    inputs,
+                )
+            };
+            let base = identity(&inputs)?.input_identity;
+            let mut changed = inputs.clone();
+            changed.languages.push(LanguageId::Perl);
+            assert_ne!(
+                base,
+                identity(&changed)?.input_identity,
+                "language selection is bound even when config fields stay fixed"
+            );
+            let reordered = CheckFindingsInputs {
+                languages: vec![LanguageId::Perl, LanguageId::Rust],
+                ..changed.clone()
+            };
+            assert_eq!(
+                identity(&changed)?.input_identity,
+                identity(&reordered)?.input_identity,
+                "language order is not semantic"
+            );
+            changed.perl_facts_used = true;
+            assert!(
+                identity(&changed).is_err(),
+                "an unbound consumed packet must not be certified"
+            );
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"))?;
+        result
     }
 
     /// (#2823 test 4) Movement of every semantic input — mode, base, config,

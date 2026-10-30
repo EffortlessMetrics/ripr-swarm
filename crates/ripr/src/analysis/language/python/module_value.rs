@@ -153,6 +153,13 @@ const FRAME_WALKERS: [&str; 9] = [
 /// import hook, or extend a package's `__path__` hands every importer a
 /// different module.
 pub(super) fn mentions_reflection(source: &str) -> bool {
+    mentions_reflection_with(&|identifier| mentions_identifier(source, identifier))
+}
+
+/// [`mentions_reflection`] through a whole-word `mentions` test, so a caller
+/// holding the source's sorted words looks each spelling up instead of
+/// scanning the source once per spelling (#10914).
+fn mentions_reflection_with(mentions: &dyn Fn(&str) -> bool) -> bool {
     REFLECTIVE_SPELLINGS
         .iter()
         .chain(&FRAME_WALKERS)
@@ -165,9 +172,8 @@ pub(super) fn mentions_reflection(source: &str) -> bool {
             "__dict__",
             "vars",
         ])
-        .any(|spelling| mentions_identifier(source, spelling))
-        || (mentions_identifier(source, "sys")
-            && (mentions_identifier(source, "modules") || mentions_identifier(source, "path")))
+        .any(|spelling| mentions(spelling))
+        || (mentions("sys") && (mentions("modules") || mentions("path")))
 }
 
 /// Words that replace what an `import` binds (#9226).
@@ -375,6 +381,8 @@ pub(super) struct ForeignLexes {
     /// [`unsafe_table_uses`] of every name, sorted: the uses of the
     /// workspace's tables are this list filtered to them.
     pub(super) unsafe_names: Vec<String>,
+    /// [`names_may_differ`], which lexes a source holding non-ASCII text.
+    pub(super) loose_names: bool,
 }
 
 impl ForeignLexes {
@@ -389,6 +397,7 @@ impl ForeignLexes {
             unsafe_names: unsafe_table_uses_lexed(source, &lexed, &|_| true, None)
                 .into_iter()
                 .collect(),
+            loose_names: names_may_differ(source),
         }
     }
 }
@@ -1074,46 +1083,51 @@ pub(super) fn names_stdlib_module(module: &str) -> bool {
         .any(|name| name == top)
 }
 
-/// Every top-level standard-library module name: CPython 3.13
-/// `sys.stdlib_module_names` plus the modules removed since 3.9.
+/// Every top-level standard-library module name from CPython 3.9 to 3.14:
+/// 3.13 `sys.stdlib_module_names`, the names 3.14 adds, the modules removed
+/// since 3.9, and the frozen `__hello__` family.
 const STDLIB_MODULE_NAMES: &str = "\
-__future__ _abc _aix_support _android_support _apple_support _ast _asyncio \
-_bisect _blake2 _bootlocale _bz2 _codecs _codecs_cn _codecs_hk \
-_codecs_iso2022 _codecs_jp _codecs_kr _codecs_tw _collections \
-_collections_abc _colorize _compat_pickle _compression _contextvars _csv \
-_ctypes _curses _curses_panel _datetime _dbm _decimal _elementtree \
-_frozen_importlib _frozen_importlib_external _functools _gdbm _hashlib \
-_heapq _imp _interpchannels _interpqueues _interpreters _io _ios_support \
-_json _locale _lsprof _lzma _markupbase _md5 _multibytecodec \
-_multiprocessing _opcode _opcode_metadata _operator _osx_support _overlapped \
-_pickle _posixshmem _posixsubprocess _py_abc _pydatetime _pydecimal _pyio \
-_pylong _pyrepl _queue _random _scproxy _sha1 _sha2 _sha3 _signal \
-_sitebuiltins _socket _sqlite3 _sre _ssl _stat _statistics _string _strptime \
-_struct _suggestions _symtable _sysconfig _thread _threading_local _tkinter \
-_tokenize _tracemalloc _typing _uuid _warnings _weakref _weakrefset _winapi \
-_wmi _zoneinfo abc antigravity argparse array ast asynchat asyncio asyncore \
-atexit audioop base64 bdb binascii bisect builtins bz2 cProfile calendar cgi \
-cgitb chunk cmath cmd code codecs codeop collections colorsys compileall \
+__future__ __hello__ __hello_alias__ __hello_only__ __phello__ \
+__phello_alias__ _abc _aix_support _android_support _apple_support _ast \
+_ast_unparse _asyncio _bisect _blake2 _bootlocale _bz2 _codecs _codecs_cn \
+_codecs_hk _codecs_iso2022 _codecs_jp _codecs_kr _codecs_tw _collections \
+_collections_abc _colorize _compat_pickle _compression _contextvars _crypt \
+_csv _ctypes _curses _curses_panel _datetime _dbm _decimal _dummy_thread \
+_elementtree _frozen_importlib _frozen_importlib_external _functools _gdbm \
+_hashlib _heapq _hmac _imp _interpchannels _interpqueues _interpreters _io \
+_ios_support _json _locale _lsprof _lzma _markupbase _md5 _msi \
+_multibytecodec _multiprocessing _opcode _opcode_metadata _operator \
+_osx_support _overlapped _pickle _posixshmem _posixsubprocess _py_abc \
+_py_warnings _pydatetime _pydecimal _pyio _pylong _pyrepl _queue _random \
+_remote_debugging _scproxy _sha1 _sha2 _sha3 _signal _sitebuiltins _socket \
+_sqlite3 _sre _ssl _stat _statistics _string _strptime _struct _suggestions \
+_symtable _sysconfig _testinternalcapi _thread _threading_local _tkinter \
+_tokenize _tracemalloc _types _typing _uuid _warnings _weakref _weakrefset \
+_winapi _wmi _xxtestfuzz _zoneinfo _zstd abc aifc annotationlib antigravity \
+argparse array ast asynchat asyncio asyncore atexit audioop base64 bdb \
+binascii binhex bisect builtins bz2 cProfile calendar cgi cgitb chunk cmath \
+cmd code codecs codeop collections colorsys compileall compression \
 concurrent configparser contextlib contextvars copy copyreg crypt csv ctypes \
-curses dataclasses datetime dbm decimal difflib dis distutils doctest email \
-encodings ensurepip enum errno faulthandler fcntl filecmp fileinput fnmatch \
-fractions ftplib functools gc genericpath getopt getpass gettext glob \
-graphlib grp gzip hashlib heapq hmac html http idlelib imaplib imghdr imp \
-importlib inspect io ipaddress itertools json keyword lib2to3 linecache \
-locale logging lzma mailbox mailcap marshal math mimetypes mmap modulefinder \
-msilib msvcrt multiprocessing netrc nis nntplib nt ntpath nturl2path numbers \
-opcode operator optparse os ossaudiodev pathlib pdb pickle pickletools pipes \
+curses dataclasses datetime dbm decimal difflib dis distutils doctest \
+dummy_threading email encodings ensurepip enum errno faulthandler fcntl \
+filecmp fileinput fnmatch formatter fractions ftplib functools gc \
+genericpath getopt getpass gettext glob graphlib grp gzip hashlib heapq hmac \
+html http idlelib imaplib imghdr imp importlib inspect io ipaddress \
+itertools json keyword lib2to3 linecache locale logging lzma macpath mailbox \
+mailcap marshal math mimetypes mmap modulefinder msilib msvcrt \
+multiprocessing netrc nis nntplib nt ntpath nturl2path numbers opcode \
+operator optparse os ossaudiodev parser pathlib pdb pickle pickletools pipes \
 pkgutil platform plistlib poplib posix posixpath pprint profile pstats pty \
 pwd py_compile pyclbr pydoc pydoc_data pyexpat queue quopri random re \
 readline reprlib resource rlcompleter runpy sched secrets select selectors \
 shelve shlex shutil signal site smtpd smtplib sndhdr socket socketserver \
 spwd sqlite3 sre_compile sre_constants sre_parse ssl stat statistics string \
-stringprep struct subprocess sunau symtable sys sysconfig syslog tabnanny \
-tarfile telnetlib tempfile termios textwrap this threading time timeit \
-tkinter token tokenize tomllib trace traceback tracemalloc tty turtle \
-turtledemo types typing unicodedata unittest urllib uu uuid venv warnings \
-wave weakref webbrowser winreg winsound wsgiref xdrlib xml xmlrpc zipapp \
-zipfile zipimport zlib zoneinfo ";
+stringprep struct subprocess sunau symbol symtable sys sysconfig syslog \
+tabnanny tarfile telnetlib tempfile termios test textwrap this threading \
+time timeit tkinter token tokenize tomllib trace traceback tracemalloc tty \
+turtle turtledemo types typing unicodedata unittest urllib uu uuid venv \
+warnings wave weakref webbrowser winreg winsound wsgiref xdrlib xml xmlrpc \
+xxsubtype zipapp zipfile zipimport zlib zoneinfo ";
 
 /// Whether two files would bind the same last module-name component: a
 /// file's stem, or its package directory's name for `__init__.py`. A file
@@ -1289,30 +1303,29 @@ fn scan_source<'a>(
         || DYNAMIC_WRITERS.iter().any(|writer| mentions(writer))
         || source.contains("sys.modules");
     let lexes = prior.and_then(|facts| facts.lexes.as_ref());
-    let table_unsafe: Vec<String> =
-        if tables.is_empty() || !words.iter().any(|word| tables.contains(*word)) {
-            Vec::new()
-        } else if let Some(lexes) = lexes {
-            let supplied: Vec<String> = lexes
-                .unsafe_names
-                .iter()
-                .filter(|name| tables.contains(name.as_str()))
-                .cloned()
-                .collect();
-            debug_assert_eq!(
-                supplied,
-                unsafe_table_uses(source, &|word| tables.contains(word), None)
-                    .into_iter()
-                    .collect::<Vec<_>>(),
-                "{}: supplied unsafe table uses differ from the source's",
-                file.display()
-            );
-            supplied
-        } else {
+    let table_unsafe: Vec<String> = if tables.is_empty() || !mentions_any_table(words, tables) {
+        Vec::new()
+    } else if let Some(lexes) = lexes {
+        let supplied: Vec<String> = lexes
+            .unsafe_names
+            .iter()
+            .filter(|name| tables.contains(name.as_str()))
+            .cloned()
+            .collect();
+        debug_assert_eq!(
+            supplied,
             unsafe_table_uses(source, &|word| tables.contains(word), None)
                 .into_iter()
-                .collect()
-        };
+                .collect::<Vec<_>>(),
+            "{}: supplied unsafe table uses differ from the source's",
+            file.display()
+        );
+        supplied
+    } else {
+        unsafe_table_uses(source, &|word| tables.contains(word), None)
+            .into_iter()
+            .collect()
+    };
     // Reflection reaches a module's dict without naming it, or with a name
     // built at runtime (`getattr(module, n)`, `dir(module)`,
     // `inspect.getmembers`, `locals()`, `fn.__globals__`).
@@ -1342,13 +1355,36 @@ fn scan_source<'a>(
                 None => import_words(source),
             }
         },
-        reflects: mentions_reflection(source),
-        loose_names: names_may_differ(source),
+        reflects: mentions_reflection_with(&mentions),
+        loose_names: match lexes {
+            Some(lexes) => {
+                debug_assert_eq!(
+                    lexes.loose_names,
+                    names_may_differ(source),
+                    "{}: supplied loose-name answer differs from the source's",
+                    file.display()
+                );
+                lexes.loose_names
+            }
+            None => names_may_differ(source),
+        },
         reflective_opaque: reflective
             && (source.contains("sys.modules")
                 || MODULE_LOADERS.iter().any(|loader| mentions(loader))),
     };
     (hides_import, indexed)
+}
+
+/// Whether one of the sorted distinct `words` names a table, probing from
+/// the smaller side: pandas holds a few tables and ~300 words per file.
+fn mentions_any_table(words: &[&str], tables: &std::collections::BTreeSet<String>) -> bool {
+    if tables.len() < words.len() {
+        tables
+            .iter()
+            .any(|table| words.binary_search(&table.as_str()).is_ok())
+    } else {
+        words.iter().any(|word| tables.contains(*word))
+    }
 }
 
 fn import_words(source: &str) -> Vec<&str> {

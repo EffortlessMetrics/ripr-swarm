@@ -333,7 +333,33 @@ parameter or local rebinding of the name, an attribute call, and comment or
 string text make no edge, nor does a caller wrapped by any decorator
 (including one whose name cannot be read, or a call form such as
 `@property(x)`) other than a bare `classmethod`, `staticmethod` or
-`property`, alone or combined; an `async def` caller is allowed (#4568).
+`property`, alone or combined, except that a top-level `click.command` or
+`click.group` function (decorated only by those and `click.option` /
+`click.argument`, with `import click` in its module) is a caller as well, since
+its decorators build a command that runs the body; an `async def` caller is
+allowed (#4568, #9226).
+A top-level `click.command` or `click.group` function that no test calls is
+related, with the weak `cli_runner_invoke` relation, to a test that passes it
+as the first argument of `<runner>.invoke(` (`runner.invoke(hello, [...])`),
+and, through the `helper_owner_call` hops above, so are the helpers it calls
+(#9226). The test must name the command through the provenance-checked import
+that every direct call uses; `<runner>` must be a local assigned exactly once
+to `CliRunner(...)` imported from `click.testing` or `typer.testing`, or a
+literal `CliRunner()` fixture that nothing else rewrites. A different module's
+`CliRunner`, a non-first argument, an attribute of the command, a rebound or
+parameter-shadowed name, a fixture with arguments or extra statements, an
+undecorated function and a command reached only by a group's subcommand name
+make no edge. The relation is uncertain, carries no oracle and never reaches
+`exposed`: the command's output is not credited, and a helper reached through
+the command is reach-only too (the invoke may never run the body, e.g.
+`--help`). `import click as c`, `from click import command` and group
+subcommands are not recognised.
+An owner left `no_static_path` while a test that imports its module (or a
+package above it) calls `.invoke(` on a recognised fresh `CliRunner` keeps its
+class but replaces the generic "No Python test references" line with one
+naming that test and saying ripr does not follow into command internals, and
+withdraws the add-a-test next step (#11069). No recognised invoke, no change.
+
 Known limits, all weak-only: a module-level rebinding such as
 `helper = wrap(helper)` is not detected, and a call inside a nested `def` or
 lambda counts as an edge of the enclosing owner.
@@ -548,7 +574,20 @@ integer. An exact integer assertion is taken to describe the returned value,
 and the abstention covers only arithmetic defined in reachable workspace
 files. A third-party or dynamically built type with its own `+`, `-` or `*` is
 not visible to this scan, and a pinned number it produced may not behave as the
-algebra assumes. A function defined under a
+algebra assumes. An edit that changes only the value of integer literals on a line that calls an
+imported symbol (`islice(seq, 0, None, n)` to `islice(seq, 1, None, n)`,
+`chunks[-1]` to `chunks[-2]`) lifts `missing_import_graph` on token equality
+alone: the old and new lines must lex to the same tokens except integer
+values, so no callee, keyword, operator, operand, string or float moved (#9226).
+The abstention is lifted only when a strong exact oracle observes the owner;
+no test, a smoke assertion or an assertion on another value keeps it. The callee
+is not evaluated, so a strong exact oracle that reaches the owner is
+not credited as `exposed`: the finding is `weakly_exposed` with no nameable
+discriminator, no canonical gap or flow sink, no `suggested_*` repair card and no
+next step. Any other limit that applies (rebind, dunder dispatch,
+heuristic-only relation, `caplog` evidence) still wins. Without the old
+line the limit stays.
+A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only
 decided shapes are Python 2/3 version tuples, with `sys` the single plain
 import) is an ordinary function owner when its name has no other live
@@ -853,7 +892,14 @@ namespace writer in code (`exec`, `eval`, `globals`, `vars`, `locals`,
 `__dict__`), whether called, named in an f-string, or named as a
 whitespace-free string such as `getattr(m, "exec")` (a word in a comment or in
 prose, like a docstring saying "env vars", is not a writer, #10979; a module
-the lexer rejects falls back to the whole-text scan), a non-literal value, a parameter or local binding
+the lexer rejects falls back to the whole-text scan; for the names a
+`parametrize` decorator reads at import, that is the `pytest` root, a `@cases` name and
+argnames, a writer inside the body of a `test*` function or a `test*` method of a
+`Test*` class is not counted because it runs after every decorator, while module
+scope, class bodies, helpers, fixtures and decorator arguments still count, and a
+test function named outside its own `def` keeps the whole-module scan; constants,
+object and table bindings read at call time keep it too, #11018),
+a non-literal value, a parameter or local binding
 of the same name in the owner, a nested `def`/`class`/`lambda` in the owner,
 or a related test file that assigns the attribute (`pricing.DISCOUNT_THRESHOLD
 = 5`). A call inside a `@pytest.mark.parametrize` (or `@mark.parametrize`)

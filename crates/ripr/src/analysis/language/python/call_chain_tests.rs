@@ -790,7 +790,18 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
     let cases = cases.into_iter().chain(layouts.iter().map(|layout| {
         let mut fields = layout.split(" ;; ");
         let head = fields.next().unwrap_or_default();
-        let files = fields.filter_map(|file| file.split_once('=')).collect();
+        let fields: Vec<&str> = fields.collect();
+        let files: Vec<_> = fields
+            .iter()
+            .filter_map(|file| file.split_once('='))
+            .collect();
+        // A malformed spec must fail here, not drop a file or an expectation.
+        assert!(
+            (head.starts_with("+ ") || head.starts_with("- "))
+                && !files.is_empty()
+                && files.len() == fields.len(),
+            "malformed layout {layout:?}"
+        );
         let label = head.get(2..).unwrap_or(head);
         (label, functions.to_string(), files, head.starts_with('+'))
     }));
@@ -908,7 +919,12 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
     }
     // A top-level owner named for a standard-library module is never what
     // the test's import loads: the built-in importer runs first.
-    for (module, credited) in [("ledger", true), ("math", false), ("json", false)] {
+    for (module, credited) in [
+        ("ledger", true),
+        ("math", false),
+        ("json", false),
+        ("annotationlib", false),
+    ] {
         let owner = format!("{module}.py");
         let test = format!(
             "from {module} import render\n\n\ndef test_render():\n    assert render() == \"|  |\"\n"

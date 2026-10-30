@@ -297,6 +297,25 @@ impl TypeScriptAdmissionContext {
         context.registration_is_known_in(call, expected_describe, &names)
     }
 
+    /// Whether `local` is bound by this context's imports to a member `family`
+    /// accepts: the renamed spelling of a registration root (`const { test: t
+    /// } = runner`, `import { test as t }`, #10987). A namespace object's own
+    /// name (`runner`) and imports of members outside `family` read as
+    /// nothing. The caller still decides the registration itself through
+    /// `registration_is_known_in`, which keeps the runner-source and
+    /// shadowing gates.
+    pub(crate) fn binds_renamed_registration_root(
+        &self,
+        local: &str,
+        family: impl Fn(&str) -> bool,
+    ) -> bool {
+        self.imports.iter().any(|import| {
+            !import.namespace
+                && import.local == local
+                && import.imported.as_deref().is_some_and(&family)
+        })
+    }
+
     /// The context a registration is resolved in: the runner imports only,
     /// with every other import and re-export carried as an enclosing name.
     /// Built once per statement list, not once per registration.

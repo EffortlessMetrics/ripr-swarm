@@ -198,7 +198,7 @@ fn heuristic_reference_rows_keep_no_miss() -> Result<(), String> {
 /// see setup files or runner plugins (`admission.rs` blind spots).
 #[test]
 fn established_no_assertion_row_keeps_no_miss() -> Result<(), String> {
-    let source = format!("{IMPORT}test('calls only', () => {{\n  applyDiscount(1);\n}});\n");
+    let source = format!("{IMPORT}test('calls only', () => {{\n  applyDiscount(100);\n}});\n");
     let finding = classify(&RETURN_CHANGE, &source)?;
     weakly(&finding);
     assert_eq!(miss_of(&finding, "calls only")?, None);
@@ -209,8 +209,9 @@ fn established_no_assertion_row_keeps_no_miss() -> Result<(), String> {
 /// admitted, so the row keeps no fabricated reason.
 #[test]
 fn custom_matcher_row_is_not_no_assertion() -> Result<(), String> {
-    let source =
-        format!("{IMPORT}test('custom', () => {{\n  expect(applyDiscount(1)).toBeEven();\n}});\n");
+    let source = format!(
+        "{IMPORT}test('custom', () => {{\n  expect(applyDiscount(100)).toBeEven();\n}});\n"
+    );
     let finding = classify(&RETURN_CHANGE, &source)?;
     weakly(&finding);
     assert_eq!(miss_of(&finding, "custom")?, None);
@@ -233,7 +234,7 @@ fn helper_call_row_is_not_no_assertion() -> Result<(), String> {
 #[test]
 fn weak_family_assertion_row_is_weak_assertion() -> Result<(), String> {
     let source = format!(
-        "{IMPORT}test('truthy', () => {{\n  expect(applyDiscount(1)).toBeTruthy();\n}});\n"
+        "{IMPORT}test('truthy', () => {{\n  expect(applyDiscount(100)).toBeTruthy();\n}});\n"
     );
     let finding = classify(&RETURN_CHANGE, &source)?;
     weakly(&finding);
@@ -248,7 +249,7 @@ fn weak_family_assertion_row_is_weak_assertion() -> Result<(), String> {
 #[test]
 fn medium_snapshot_row_is_not_weak_assertion() -> Result<(), String> {
     let source = format!(
-        "{IMPORT}test('snap', () => {{\n  expect(applyDiscount(1)).toMatchSnapshot();\n}});\n"
+        "{IMPORT}test('snap', () => {{\n  expect(applyDiscount(100)).toMatchSnapshot();\n}});\n"
     );
     let finding = classify(&RETURN_CHANGE, &source)?;
     weakly(&finding);
@@ -272,7 +273,7 @@ fn medium_mock_expectation_row_is_not_weak_assertion() -> Result<(), String> {
 #[test]
 fn mixed_rows_keep_their_own_miss() -> Result<(), String> {
     let source = format!(
-        "{IMPORT}test('truthy', () => {{\n  expect(applyDiscount(1)).toBeTruthy();\n}});\ntest('bare', () => {{\n  applyDiscount(2);\n}});\ntest('custom', () => {{\n  expect(applyDiscount(3)).toBeEven();\n}});\n"
+        "{IMPORT}test('truthy', () => {{\n  expect(applyDiscount(100)).toBeTruthy();\n}});\ntest('bare', () => {{\n  applyDiscount(100);\n}});\ntest('custom', () => {{\n  expect(applyDiscount(3)).toBeEven();\n}});\n"
     );
     let finding = classify(&RETURN_CHANGE, &source)?;
     weakly(&finding);
@@ -441,7 +442,7 @@ fn boundary_input_from_another_row_is_not_borrowed() -> Result<(), String> {
 #[test]
 fn strong_wrong_family_row_is_observation_unconfirmed() -> Result<(), String> {
     let source = format!(
-        "{IMPORT}test('throws', () => {{\n  expect(() => applyDiscount(1)).toThrow(RangeError);\n}});\n"
+        "{IMPORT}test('throws', () => {{\n  expect(() => applyDiscount(100)).toThrow(RangeError);\n}});\n"
     );
     let finding = classify(&RETURN_CHANGE, &source)?;
     weakly(&finding);
@@ -457,7 +458,7 @@ fn strong_wrong_family_row_is_observation_unconfirmed() -> Result<(), String> {
 #[test]
 fn wrong_family_strong_plus_relevant_weak_follows_the_relevant_assertion() -> Result<(), String> {
     let source = format!(
-        "{IMPORT}test('both', () => {{\n  expect(() => applyDiscount(1)).toThrow(RangeError);\n  expect(applyDiscount(1)).toBeTruthy();\n}});\n"
+        "{IMPORT}test('both', () => {{\n  expect(() => applyDiscount(100)).toThrow(RangeError);\n  expect(applyDiscount(100)).toBeTruthy();\n}});\n"
     );
     let finding = classify(&RETURN_CHANGE, &source)?;
     weakly(&finding);
@@ -707,7 +708,7 @@ fn unresolved_alias_row_keeps_no_miss() -> Result<(), String> {
 #[test]
 fn weak_only_wrong_family_row_keeps_no_miss() -> Result<(), String> {
     let source = rejected_source(
-        "test('throws', () => {\n  expect(() => applyDiscount(1)).toThrow();\n});\n",
+        "test('throws', () => {\n  expect(() => applyDiscount(100)).toThrow();\n});\n",
     );
     let finding = classify(&RETURN_CHANGE, &source)?;
     weakly(&finding);
@@ -740,7 +741,7 @@ fn stripping_the_miss_changes_no_decision_surface() -> Result<(), String> {
         (
             &RETURN_CHANGE,
             rejected_source(
-                "test('truthy', () => {\n  expect(applyDiscount(1)).toBeTruthy();\n});\ntest('throws', () => {\n  expect(() => applyDiscount(1)).toThrow(RangeError);\n});\n",
+                "test('truthy', () => {\n  expect(applyDiscount(100)).toBeTruthy();\n});\ntest('throws', () => {\n  expect(() => applyDiscount(100)).toThrow(RangeError);\n});\n",
             ),
         ),
         (

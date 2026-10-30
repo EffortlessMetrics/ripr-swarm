@@ -28,6 +28,8 @@ use super::{
     route,
 };
 mod admission;
+#[cfg(test)]
+mod assertion_helper_tests;
 mod assertion_selection;
 mod bounded_read;
 mod fact_serde;
@@ -195,6 +197,7 @@ use static_limits::{
     PythonStaticLimit, has_identifier_boundary, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
+mod cli_runner;
 mod transitive_reach;
 #[cfg(test)]
 use static_limits::{
@@ -529,6 +532,26 @@ struct PythonImport {
     source_module: String,
 }
 
+/// A helper's comparison is retained even when its execution/bindings cannot
+/// establish effect credit. Named states prevent fallback from laundering it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum PythonHelperOrigin {
+    Inline,
+    ValueHelper,
+    FieldHelperSupported,
+    FieldHelperRefused,
+}
+
+impl PythonHelperOrigin {
+    fn is_helper(self) -> bool {
+        self != Self::Inline
+    }
+
+    fn effect_only(self) -> bool {
+        matches!(self, Self::FieldHelperSupported | Self::FieldHelperRefused)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonAssertion {
     text: String,
@@ -543,7 +566,7 @@ struct PythonAssertion {
     callable_call: Option<String>,
     /// The existing helper-resolution pass supplied this assertion. Its
     /// comparison alone does not establish a deferred owner's execution.
-    helper_derived: bool,
+    helper_origin: PythonHelperOrigin,
     /// Native assertion/call span, relative to the containing test body.
     #[serde(with = "fact_serde::option_range")]
     source_range: Option<rustpython_parser::text_size::TextRange>,
@@ -1764,6 +1787,8 @@ mod deleted_lines_tests;
 mod fixtures_tests;
 
 #[cfg(test)]
+mod import_writer_tests;
+#[cfg(test)]
 mod inert_tool_fixture_tests;
 #[cfg(test)]
 mod literal_fixture_tests;
@@ -1791,7 +1816,13 @@ mod helper_inline_tests;
 mod literal_patch_tests;
 
 #[cfg(test)]
+mod cli_runner_tests;
+#[cfg(test)]
 mod helper_owner_call_tests;
+#[cfg(test)]
+mod imported_literal_tests;
+#[cfg(test)]
+mod test_body_writer_tests;
 
 #[cfg(test)]
 mod call_chain_tests;
