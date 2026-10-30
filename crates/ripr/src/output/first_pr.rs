@@ -1,8 +1,10 @@
 use crate::agent::command_specs::report_regeneration_command_spec_from_display;
-use crate::agent::loop_commands::{check_repo_exposure_command, display_path, shell_arg};
+use crate::agent::loop_commands::{
+    PILOT_BEFORE_SNAPSHOT_ARTIFACT, check_repo_exposure_command, display_path, shell_arg,
+};
 use crate::app::agent_status::pilot_select_command;
 use crate::config::{detect_python_project, detect_typescript_project};
-use crate::domain::CommandSpec;
+use crate::domain::{CommandSpec, LanguageId};
 use crate::output::gap_decision_ledger::projection_eligible_from_value;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state;
 use crate::output::receipt_write::receipt_write_command;
@@ -28,6 +30,10 @@ const DEFAULT_HEAD: &str = "HEAD";
 const START_HERE_JSON: &str = "start-here.json";
 const START_HERE_MD: &str = "start-here.md";
 const DEFAULT_REPO_EXPOSURE: &str = "target/ripr/reports/repo-exposure.json";
+/// The repo-exposure report `ripr pilot` writes (`repo-exposure-json` shape,
+/// the same producer as the default report). First-pr reads it as the gap
+/// ledger's input when the default report is absent (#3905).
+const PILOT_REPO_EXPOSURE: &str = PILOT_BEFORE_SNAPSHOT_ARTIFACT;
 const DEFAULT_REPO_EXPOSURE_LATENCY_JSON: &str = "target/ripr/reports/repo-exposure-latency.json";
 const DEFAULT_REPO_EXPOSURE_LATENCY_REPORT: &str = "target/ripr/reports/repo-exposure-latency.md";
 const DEFAULT_CHECK_OUTPUT: &str = "target/ripr/reports/check.json";
@@ -848,6 +854,38 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
     if !root.join("Cargo.toml").is_file() {
         if detect_python_project(root) || detect_typescript_project(root) {
             return None;
+        }
+        // `doctor` detects TypeScript or JavaScript from a `package.json` or
+        // shallow source files, but the no-config rule above enables the
+        // adapter only from a `tsconfig.json`/`jsconfig.json` marker or
+        // TypeScript below `src`/`tests` (`package.json` alone is deliberately
+        // not a marker). The root is the right one in that case, so name the
+        // missing marker instead of calling it a wrong root and looping back
+        // to `doctor` (#10713). A root `doctor` also detects as Python keeps
+        // `wrong_root` (its `package.json` is likely tooling), and Rust below
+        // the root still means a wrong root.
+        let doctor_languages = crate::cli::commands::detect_languages(root);
+        let doctor_javascript = doctor_languages.contains(&LanguageId::JavaScript);
+        if LanguageId::TypeScript.is_available()
+            && (doctor_javascript || doctor_languages.contains(&LanguageId::TypeScript))
+            && !doctor_languages.contains(&LanguageId::Python)
+            && !doctor_languages.contains(&LanguageId::Rust)
+            && crate::analysis::workspace_rust_files(root).is_empty()
+        {
+            let (kind, marker) = if doctor_javascript {
+                ("JavaScript", "jsconfig.json")
+            } else {
+                ("TypeScript", "tsconfig.json")
+            };
+            return Some(Selection::blocked_with_reason(
+                "blocked_artifact",
+                "typescript_project_marker_missing",
+                format!(
+                    "The first-pr root `{}` looks like a {kind} project, but first-pr needs a `tsconfig.json` or `jsconfig.json` at the root, or TypeScript files under `src/` or `tests/`; a `package.json` alone is not enough. This root is not necessarily wrong: add a `{marker}` (an empty `{{}}` is enough) and rerun `ripr first-pr`.",
+                    options.root
+                ),
+                None,
+            ));
         }
         // A Go or Java repository is the right root; sending it to `--root`
         // and doctor loops. Name the languages ripr cannot analyze instead.
@@ -1969,8 +2007,7 @@ fn missing_gap_ledger_selection(root: &Path, options: &FirstPrOptions) -> Select
         );
     }
 
-    let repo_exposure = resolve_path(root, DEFAULT_REPO_EXPOSURE);
-    if !repo_exposure.exists() {
+    if available_repo_exposure(root, options).is_none() {
         return missing_repo_exposure_selection(root, options);
     }
     missing_gap_ledger_artifact(
@@ -2807,7 +2844,33 @@ fn regenerate_gap_ledger_command(root: &Path, options: &FirstPrOptions) -> Strin
     if uses_check_output_gap_ledger(root) {
         return regenerate_check_output_gap_ledger_command(options);
     }
-    regenerate_repo_exposure_gap_ledger_command(options)
+    regenerate_repo_exposure_gap_ledger_command(
+        options,
+        available_repo_exposure(root, options).unwrap_or(DEFAULT_REPO_EXPOSURE),
+    )
+}
+
+/// The repo-exposure report the gap ledger is built from: the default report
+/// when present, else (only while the ledger itself is still missing) the
+/// report `ripr pilot` wrote (#3905) when it parses and carries the producer
+/// `artifact` identity, else `None`. Pilot writes an identity-less snapshot
+/// when its seam budget truncated the population, which is not comparable
+/// with the default report, so that one stays missing. A ledger that already
+/// exists is stale, timed out, wrong-rooted or malformed, and regenerating it
+/// from the same pilot snapshot would reproduce that state, so those routes
+/// keep naming the default report.
+fn available_repo_exposure(root: &Path, options: &FirstPrOptions) -> Option<&'static str> {
+    if resolve_path(root, DEFAULT_REPO_EXPOSURE).exists() {
+        return Some(DEFAULT_REPO_EXPOSURE);
+    }
+    (!resolve_path(root, &options.gap_ledger).exists()
+        && pilot_repo_exposure_is_identified(&resolve_path(root, PILOT_REPO_EXPOSURE)))
+    .then_some(PILOT_REPO_EXPOSURE)
+}
+
+fn pilot_repo_exposure_is_identified(path: &Path) -> bool {
+    path.is_file()
+        && read_json(path).is_ok_and(|report| report.get("artifact").is_some_and(Value::is_object))
 }
 
 /// A blocked ledger could not use its input, so regenerating the ledger
@@ -2825,7 +2888,7 @@ fn regenerate_blocked_gap_ledger_command(root: &Path, options: &FirstPrOptions) 
     format!(
         "{} && {}",
         regenerate_repo_exposure_command(&options.command_root()),
-        regenerate_repo_exposure_gap_ledger_command(options)
+        regenerate_repo_exposure_gap_ledger_command(options, DEFAULT_REPO_EXPOSURE)
     )
 }
 
@@ -2837,11 +2900,14 @@ fn uses_check_output_gap_ledger(root: &Path) -> bool {
 /// `ripr reports gap-ledger` resolves `--repo-exposure`, `--out` and
 /// `--out-md` against its working directory, so each anchors at the bound
 /// root that `--root` names (#3948, #4287).
-fn regenerate_repo_exposure_gap_ledger_command(options: &FirstPrOptions) -> String {
+fn regenerate_repo_exposure_gap_ledger_command(
+    options: &FirstPrOptions,
+    repo_exposure: &str,
+) -> String {
     format!(
         "ripr reports gap-ledger --root {} --repo-exposure {} --out {} --out-md {}",
         shell_arg(&options.command_root()),
-        options.anchored_arg(DEFAULT_REPO_EXPOSURE),
+        options.anchored_arg(repo_exposure),
         options.anchored_arg(&options.gap_ledger),
         options.anchored_arg(&with_extension(&options.gap_ledger, "md"))
     )
@@ -4110,6 +4176,98 @@ mod tests {
         cleanup(&repo)
     }
 
+    /// A pilot report with the producer identity pilot stamps on a complete run.
+    const PILOT_REPORT: &str = r#"{"artifact":{"kind":"repo-exposure"}}"#;
+
+    /// #3905: `ripr pilot` writes its own repo-exposure report, so the
+    /// `pilot` then `first-pr` route must not call that input missing. The
+    /// only missing artifact is the ledger, built from the pilot's report.
+    #[test]
+    fn pilot_repo_exposure_satisfies_first_pr_repo_exposure_input() -> Result<(), String> {
+        let repo = temp_repo("first-pr-pilot-repo-exposure")?;
+        fs::create_dir_all(repo.join("target/ripr/pilot"))
+            .map_err(|err| format!("mkdir pilot dir: {err}"))?;
+        fs::write(repo.join(PILOT_REPO_EXPOSURE), PILOT_REPORT)
+            .map_err(|err| format!("write pilot repo exposure: {err}"))?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "missing_artifact");
+        assert_eq!(packet["selected"]["artifact"]["id"], "gap_ledger");
+        // Only the dependent review cards follow the ledger; the repo
+        // exposure input is satisfied by the pilot's report.
+        let also_missing: Vec<&str> = packet["selected"]["also_missing"]
+            .as_array()
+            .map(|rows| rows.iter().filter_map(|row| row["id"].as_str()).collect())
+            .unwrap_or_default();
+        assert_eq!(also_missing, ["review_comments"]);
+        let command = packet["selected"]["regeneration_command"]
+            .as_str()
+            .ok_or_else(|| "regeneration command missing".to_string())?;
+        let pilot_arg = shell_arg(&anchored_redirect_target(".", PILOT_REPO_EXPOSURE));
+        assert!(
+            command.contains(&format!("--repo-exposure {pilot_arg}")),
+            "ledger command must read the pilot report: {command}"
+        );
+        assert!(
+            !command.contains("repo-exposure-json"),
+            "no repo-exposure regeneration is needed after pilot: {command}"
+        );
+        check_blocked_packet_is_current(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    /// #3905: the default report stays the preferred input when both exist,
+    /// and a ledger that already exists (here stale) never switches to the
+    /// pilot snapshot, since regenerating from it would reproduce the state.
+    #[test]
+    fn default_repo_exposure_wins_and_existing_ledger_keeps_default() -> Result<(), String> {
+        let repo = temp_repo("first-pr-default-over-pilot")?;
+        let options = FirstPrOptions::default();
+        assert_eq!(available_repo_exposure(&repo, &options), None);
+        let write = |path: &str| -> Result<(), String> {
+            let file = repo.join(path);
+            if let Some(parent) = file.parent() {
+                fs::create_dir_all(parent).map_err(|err| format!("mkdir {path}: {err}"))?;
+            }
+            fs::write(&file, PILOT_REPORT).map_err(|err| format!("write {path}: {err}"))
+        };
+        // A truncated pilot run writes no identity: that snapshot stays missing.
+        fs::create_dir_all(repo.join("target/ripr/pilot"))
+            .map_err(|err| format!("mkdir: {err}"))?;
+        fs::write(repo.join(PILOT_REPO_EXPOSURE), "{}").map_err(|err| format!("write: {err}"))?;
+        assert_eq!(available_repo_exposure(&repo, &options), None);
+        write(PILOT_REPO_EXPOSURE)?;
+        assert_eq!(
+            available_repo_exposure(&repo, &options),
+            Some(PILOT_REPO_EXPOSURE)
+        );
+        // An existing ledger: the pilot fallback is off and the command names
+        // the default report again.
+        write(DEFAULT_GAP_LEDGER)?;
+        assert_eq!(available_repo_exposure(&repo, &options), None);
+        let stale = regenerate_gap_ledger_command(&repo, &options);
+        let default_arg = shell_arg(&anchored_redirect_target(".", DEFAULT_REPO_EXPOSURE));
+        assert!(
+            stale.contains(&format!("--repo-exposure {default_arg}")),
+            "existing ledger must keep the default report: {stale}"
+        );
+        // Both reports and no ledger: the default report wins.
+        fs::remove_file(repo.join(DEFAULT_GAP_LEDGER)).map_err(|err| format!("rm: {err}"))?;
+        write(DEFAULT_REPO_EXPOSURE)?;
+        assert_eq!(
+            available_repo_exposure(&repo, &options),
+            Some(DEFAULT_REPO_EXPOSURE)
+        );
+        let command = regenerate_gap_ledger_command(&repo, &options);
+        assert!(
+            command.contains(&format!("--repo-exposure {default_arg}"))
+                && !command.contains("pilot/repo-exposure.json"),
+            "default report must win: {command}"
+        );
+        cleanup(&repo)
+    }
+
     #[test]
     fn missing_python_gap_ledger_uses_check_output_bridge() -> Result<(), String> {
         let repo = temp_python_repo("first-pr-python-missing-gap-ledger")?;
@@ -4284,6 +4442,138 @@ mod tests {
         let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
         assert_eq!(packet["status"], "blocked", "{packet}");
         assert_eq!(packet["selected"]["state"], "wrong_root", "{packet}");
+        cleanup(&repo)
+    }
+
+    /// #10713: `doctor` detects a `package.json` + `.ts` repository as
+    /// TypeScript, so first-pr must not call it a wrong root or send the
+    /// reader back to `doctor`; it names the marker the config rules need.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn package_json_only_typescript_root_names_the_missing_marker_not_wrong_root()
+    -> Result<(), String> {
+        let repo = write_temp_root(&env::temp_dir(), "first-pr-package-json-only-ts")?;
+        fs::write(
+            repo.join("package.json"),
+            r#"{"devDependencies":{"jest":"^30"}}"#,
+        )
+        .map_err(|err| format!("write package.json: {err}"))?;
+        fs::write(
+            repo.join("pricing.ts"),
+            "export const p = (x: number) => x;\n",
+        )
+        .map_err(|err| format!("write pricing.ts: {err}"))?;
+        fs::write(repo.join("pricing.test.ts"), "test('p', () => {});\n")
+            .map_err(|err| format!("write pricing.test.ts: {err}"))?;
+        init_git_repo_with_initial_files(
+            &repo,
+            &["package.json", "pricing.ts", "pricing.test.ts"],
+        )?;
+        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        assert!(
+            doctor_languages.contains(&LanguageId::TypeScript),
+            "fixture must be TypeScript to doctor: {doctor_languages:?}"
+        );
+        assert!(
+            !detect_typescript_project(&repo),
+            "package.json is not a marker"
+        );
+
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        let selected = &packet["selected"];
+        assert_eq!(packet["status"], "blocked", "{packet}");
+        assert_ne!(selected["state"], "wrong_root", "{packet}");
+        assert_eq!(
+            selected["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
+        let message = selected["message"].as_str().ok_or("missing message")?;
+        assert!(message.contains("add a `tsconfig.json`"), "{message}");
+        assert!(!message.contains("project marker"), "{message}");
+        assert!(!message.contains("Pass the repository root"), "{message}");
+        assert!(
+            selected["next_command"].is_null(),
+            "no doctor loop: {packet}"
+        );
+
+        // The named marker resolves it: the same root now takes the
+        // TypeScript route instead of the marker refusal.
+        fs::write(repo.join("tsconfig.json"), "{}\n")
+            .map_err(|err| format!("write tsconfig.json: {err}"))?;
+        // Pin the exact post-marker state reachable by reading the code: the
+        // marker makes `detect_typescript_project` true, so the root
+        // preflight recovers nothing and hands the root on to the
+        // TypeScript route. (Not compiled or run in the authoring sandbox.)
+        assert!(
+            detect_typescript_project(&repo),
+            "tsconfig.json is a marker"
+        );
+        assert!(
+            root_preflight_recovery(&repo, &options).is_none(),
+            "marker present: no root-level refusal"
+        );
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_ne!(
+            packet["selected"]["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
+        assert_ne!(packet["selected"]["state"], "wrong_root", "{packet}");
+        cleanup(&repo)
+    }
+
+    /// #10713: a JavaScript-only root (no `package.json`, no TypeScript) is
+    /// told to add `jsconfig.json`, not `tsconfig.json`.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn javascript_only_root_names_jsconfig_marker() -> Result<(), String> {
+        let repo = write_temp_root(&env::temp_dir(), "first-pr-js-only")?;
+        fs::write(repo.join("index.js"), "module.exports = (x) => x;\n")
+            .map_err(|err| format!("write index.js: {err}"))?;
+        init_git_repo_with_initial_files(&repo, &["index.js"])?;
+        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        assert!(
+            doctor_languages.contains(&LanguageId::JavaScript),
+            "fixture must be JavaScript to doctor: {doctor_languages:?}"
+        );
+        write_first_pr(&repo, &FirstPrOptions::default())?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        let selected = &packet["selected"];
+        assert_eq!(
+            selected["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
+        let message = selected["message"].as_str().ok_or("missing message")?;
+        assert!(message.contains("add a `jsconfig.json`"), "{message}");
+        cleanup(&repo)
+    }
+
+    /// #10713: a root `doctor` also detects as Python keeps `wrong_root`
+    /// even with a `package.json` (likely tooling), not the TypeScript hint.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn python_root_with_package_json_keeps_wrong_root() -> Result<(), String> {
+        let repo = write_temp_root(&env::temp_dir(), "first-pr-python-package-json")?;
+        fs::write(repo.join("package.json"), "{}")
+            .map_err(|err| format!("write package.json: {err}"))?;
+        fs::write(repo.join("app.py"), "def f():\n    return 1\n")
+            .map_err(|err| format!("write app.py: {err}"))?;
+        init_git_repo_with_initial_files(&repo, &["package.json", "app.py"])?;
+        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        assert!(
+            doctor_languages.contains(&LanguageId::Python),
+            "fixture must be Python to doctor: {doctor_languages:?}"
+        );
+        assert!(!detect_python_project(&repo), "shallow Python only");
+        write_first_pr(&repo, &FirstPrOptions::default())?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "wrong_root", "{packet}");
+        assert_ne!(
+            packet["selected"]["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
         cleanup(&repo)
     }
 

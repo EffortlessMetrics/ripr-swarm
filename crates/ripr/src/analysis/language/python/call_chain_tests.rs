@@ -21,7 +21,7 @@ fn write_file(path: &Path, contents: &str) -> Check {
 
 /// The finding for the one-line edit `old` -> `new` at `line` of `changed` in
 /// a workspace of `files`, where `files` holds the new side.
-fn classify(
+pub(super) fn classify(
     files: &[(&str, &str)],
     changed: &str,
     line: usize,
@@ -118,7 +118,7 @@ fn ledger_finding_with(
 
 /// Asserts the credit the case expects: `Exposed` when credited, withheld
 /// otherwise.
-fn assert_credit(finding: &Finding, credited: bool, label: &str) {
+pub(super) fn assert_credit(finding: &Finding, credited: bool, label: &str) {
     if credited {
         assert_eq!(
             finding.class,

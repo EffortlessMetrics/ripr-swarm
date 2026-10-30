@@ -76,6 +76,20 @@ review decision, and every page of review threads. Missing or malformed
 evidence refuses the result; a Result-only retry cannot reuse admission from
 an older attempt. Main/manual authorities and child-result checks remain.
 
+Same-head succession (#4986, #8082): as the last live read, the Result also
+lists the same workflow's runs for the same head (queue requests: the same
+queue-entry commit) and event. A newer run of the same request kind, a newer
+attempt of this run, a missing or duplicate own record, a failed or
+non-JSON read, an inconsistent count or an inventory beyond ten pages refuses,
+so the superseded invocation cannot report success. An ordinary label event is
+another run title and revokes nothing. Re-applying `merge-ready` creates a new
+run for the same head, which intentionally supersedes the earlier request: the
+label route stays valid, but only its newest run can qualify. Order is by run
+number, whatever the newer run's own outcome; the read uses the existing
+`actions: read` permission and changes no trigger or required context. It is a
+non-atomic read, not proof that the hosted race is closed or of which check
+GitHub selects for protection.
+
 This is a late eligibility check, not queue-cutover acceptance. The tree match
 binds the queued commit to the head GitHub reports live at admission; it does not
 establish that this is the head a reviewer judged ready, and its premise (GitHub's
@@ -1603,6 +1617,13 @@ start-here, the report index, and the changed-line annotations, each as a log
 group named after the step it replaced. `ripr help reports` lists its
 failure rules, and `--step NAME` reruns one step locally.
 
+When `ripr agent start` exits 3 for the top seam, the packet logs `RIPR agent
+loop skipped: ... declined` and moves on. Exit 3 means ripr declined (see
+[EXIT_CODES.md](EXIT_CODES.md)); it is an expected outcome, not a failed step,
+and no agent brief or packet is written for that seam (#11206). Any other
+nonzero exit from `agent start` is still logged as a failure with its exit
+code.
+
 The PR-guidance producer runs its `ripr check --format json` child with the
 findings-array byte budget disabled (`RIPR_CHECK_FINDINGS_BYTES=0`, #11143):
 `review-comments` needs the complete document and applies its own brief caps
@@ -1665,6 +1686,19 @@ configure the workflow, so changing a mode never means editing the file:
 - `RIPR_UPLOAD_SARIF` is set in the file, not as a variable. `"true"` uploads
   SARIF to the Security tab; set `"false"` if the repository does not use code
   scanning.
+
+Pilot deadline (#11205). `RIPR_PILOT_TIMEOUT_MS` is optional and not in the
+generated file. Add it to
+the workflow `env:` (positive milliseconds) when `ripr pilot` stops at its
+deadline on a large repository. The `ripr reports ci-packet` pilot step then
+passes it as an explicit `ripr pilot --timeout-ms` hard limit, with no
+automatic extension; unset keeps pilot's 30 s default plus its automatic
+extension, and a non-numeric or zero value is refused. When the pilot packet
+is the timeout partial, the step summary's First-run status names the pilot
+deadline as the cause of the missing artifacts, the effect, and this next
+step (#11205). Per-file facts computed before the deadline are written to
+`target/ripr/cache`, so restoring that directory between runs lets the retry
+resume.
 
 Permissions and job settings:
 
@@ -2496,7 +2530,8 @@ Release workflows handle extension publishing and server binary releases.
 
 ## Capability Producer Inventory
 
-`cargo xtask check-capability-producers [--registry-json <path>]` compares the
+`cargo xtask check-capability-producers [--registry-json <path>]
+[--no-default-features] [--features <lang-*,...>]` compares the
 binary-resident language capability registry (`ripr capabilities --json`, #5531)
 with repository inventory the in-crate tests cannot enumerate. It builds `ripr`
 and fails when:
@@ -2506,7 +2541,11 @@ and fails when:
 - a registered language has no cell, or a cell names an unregistered language;
 - a `lang-*` Cargo feature, a registry `required_feature` and an adapter
   directory under `analysis/language/` do not name the same producer set;
-- a cell `proof_refs` entry has no `docs/specs/RIPR-SPEC-NNNN-*.md`.
+- a cell `proof_refs` entry has no `docs/specs/RIPR-SPEC-NNNN-*.md`;
+- a language's `adapter_compiled` is absent, not boolean, or differs from the
+  selected Cargo language features (including a disabled adapter reported present).
+- a language claims another language's `required_feature`, even when swapped
+  availability flags agree with those forged assignments.
 
 It is separate from `check-capabilities`, which validates
 `metrics/capabilities.toml` against `docs/CAPABILITY_MATRIX.md` and joins explicit
@@ -2515,8 +2554,30 @@ support remain separate authorities. The producer inventory does not check cell
 states, tier ceilings or docs text
 (in-crate tests and `check-support-tiers`), framework-level producers (the
 per-language disposition tests), the registry's relation to
-`metrics/capabilities.toml`, or non-default feature builds. `--registry-json`
-reads a saved registry without building and can be stale; the report says so.
+`metrics/capabilities.toml`. One selected feature combination is checked per
+invocation. Defaults come from the real `crates/ripr/Cargo.toml`; explicit
+`--features` are additive unless `--no-default-features` is supplied. Only declared
+`lang-*` names are accepted. JavaScript and TypeScript share `lang-typescript`.
+`lang-rust` is mandatory, as enforced by the product's `lib.rs`; unsupported
+Rust-disabled selections are rejected before building or reading offline input.
+`--registry-json` reads a saved registry without building and can be stale; the
+report says so. The same feature flags specify its expected build, independently
+of the JSON's availability flags.
+
+Focused controls (run serially, after resource admission):
+
+```bash
+cargo xtask check-capability-producers --no-default-features --features lang-rust
+cargo xtask check-capability-producers --no-default-features --features lang-rust,lang-perl
+```
+
+The first requires Rust present and every preview producer absent; the second
+requires Rust and Perl present. Add `lang-python` or `lang-typescript` to the
+Rust-only selection (the latter requires both TypeScript and JavaScript) for
+individual optional-language controls.
+These extra invocations are opt-in; the existing hosted default invocation does
+not run a feature matrix. Unit controls pin all four language-feature cases and
+reject either direction of a changed availability flag.
 The producer inventory is not part of `precommit` or `check-pr`; those paths
 run the separate identity join through `check-capabilities`, which reads a
 source-built registry with default features. Producer inventory is hosted:
