@@ -100,9 +100,9 @@ impl ConfidenceCap {
         ];
         match class {
             ExposureClass::StaticUnknown => caps.push(Self::DiscriminatorNotEstablished),
-            ExposureClass::Exposed => {}
             _ if !inputs.has_related_test => caps.push(Self::NoRelatedTest),
             _ if !inputs.strong_oracle_present => caps.push(Self::OracleBelowStrong),
+            ExposureClass::Exposed => {}
             _ if !inputs.boundary_input_matched => caps.push(Self::BoundaryInputNotMatched),
             _ => caps.push(Self::ObservationNotConfirmed),
         }
@@ -194,5 +194,35 @@ mod tests {
         assert!(line.contains("no related test"), "{line}");
         assert!(line.contains("not on the same scale as Rust"), "{line}");
         assert!(why_capped_line(&[], None).is_none());
+    }
+
+    #[test]
+    fn exposed_without_a_strong_oracle_is_capped_on_the_oracle() {
+        let caps = ConfidenceCap::for_preview(&ExposureClass::Exposed, &inputs(true, false, true));
+        assert!(caps.contains(&ConfidenceCap::OracleBelowStrong), "{caps:?}");
+        let strong = ConfidenceCap::for_preview(&ExposureClass::Exposed, &inputs(true, true, true));
+        assert_ne!(caps, strong);
+    }
+
+    #[test]
+    fn remaining_arms_name_their_own_reason() {
+        let unknown =
+            ConfidenceCap::for_preview(&ExposureClass::StaticUnknown, &inputs(true, true, true));
+        assert_eq!(
+            unknown.last(),
+            Some(&ConfidenceCap::DiscriminatorNotEstablished)
+        );
+        let none =
+            ConfidenceCap::for_preview(&ExposureClass::WeaklyExposed, &inputs(false, false, true));
+        assert_eq!(none.last(), Some(&ConfidenceCap::NoRelatedTest));
+        let observed =
+            ConfidenceCap::for_preview(&ExposureClass::WeaklyExposed, &inputs(true, true, true));
+        assert_eq!(
+            observed.last(),
+            Some(&ConfidenceCap::ObservationNotConfirmed)
+        );
+        for cap in unknown.iter().chain(&none).chain(&observed) {
+            assert!(!cap.as_str().is_empty() && !cap.summary(None).is_empty());
+        }
     }
 }

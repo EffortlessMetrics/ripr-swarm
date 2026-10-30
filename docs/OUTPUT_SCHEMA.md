@@ -2955,9 +2955,11 @@ human formats render from the same full `CheckOutput` through their own
 existing bounds; per-finding caps (`related_tests`, `observed_values`) are
 unchanged and compose underneath (the budget counts already-capped payloads).
 
-
 ### `confidence_basis` and `confidence_why_capped` (additive, preview findings, #10700)
 
+The fields are reserved by the shared `Finding.confidence_basis` shape and are
+not populated by any adapter until the TypeScript/JavaScript classifier lands
+(#10700 part 2); until then no output carries them. Once populated,
 TypeScript/JavaScript preview findings carry a per-class constant `confidence`
 that is not on the same scale as Rust's. `confidence_basis` is a non-empty list
 of `{code, summary}` objects naming why the score is capped (codes:

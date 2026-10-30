@@ -118,6 +118,36 @@ mod tests {
     use super::{array_field, escape, field, float_field, number_field};
 
     #[test]
+    fn confidence_basis_fields_write_nothing_when_empty() {
+        let mut out = String::new();
+        super::confidence_basis_fields(&mut out, 1, &[], Some("ignored"));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn confidence_basis_fields_render_valid_escaped_json() -> Result<(), String> {
+        let entries = vec![
+            crate::domain::ConfidenceBasisEntry {
+                code: "a",
+                summary: "say \"hi\"\n".to_string(),
+            },
+            crate::domain::ConfidenceBasisEntry {
+                code: "b",
+                summary: "two".to_string(),
+            },
+        ];
+        let mut out = String::from("{\n");
+        super::confidence_basis_fields(&mut out, 1, &entries, Some("why \\ line"));
+        out.push_str("  \"next\": 1\n}");
+        let value: serde_json::Value =
+            serde_json::from_str(&out).map_err(|e| format!("{e}: {out}"))?;
+        assert_eq!(value["confidence_basis"][0]["summary"], "say \"hi\"\n");
+        assert_eq!(value["confidence_basis"][1]["code"], "b");
+        assert_eq!(value["confidence_why_capped"], "why \\ line");
+        Ok(())
+    }
+
+    #[test]
     fn escapes_json() {
         assert_eq!(escape("a\"b\n"), "a\\\"b\\n");
     }
