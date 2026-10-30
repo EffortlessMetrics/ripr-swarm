@@ -53,7 +53,7 @@ Repair placement
   suggested file: tests/test_pricing.py
   suggested test: test_discount
   pytest node: tests/test_pricing.py::test_discount
-  verify: python -m pytest tests/test_pricing.py::test_discount (high)
+  suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_pricing.py::test_discount
 Drill in:
   ripr explain --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast probe:shop_pricing.py:python_preview:b9038d35
   ripr context --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast --at probe:shop_pricing.py:python_preview:b9038d35

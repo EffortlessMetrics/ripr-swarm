@@ -28,7 +28,7 @@ Start here:
   Suggested test file: tests/test_sign.py
   Suggested test: test_positive_sign
   Test node: tests/test_sign.py::test_positive_sign
-  Verify command: python -m pytest tests/test_sign.py::test_positive_sign (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_else_arm_no_exposed_credit/input && python -m pytest tests/test_sign.py::test_positive_sign) (high)
   Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `not (x > 0)`
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
