@@ -57,8 +57,12 @@ number comes from the merge-group branch name
 (`gh-readonly-queue/<base>/pr-<n>-<sha>`) and the PR's labels are forwarded to
 the gate (`full-ci` still selects the advisory reports, `ripr-waive` still
 reaches the PR-evidence step). The resolver accepts a head-suffixed ref or a
-base-suffixed fallback; the latter does not authoritatively identify the queued
-H. Admission is per PR, so the queue must use a group size of 1; the queued commit must be a single
+base-suffixed fallback; neither ref spelling identifies the queued H, so the
+queued commit's tree must also equal the live head merged onto the group base
+(`git merge-tree --write-tree <base> <head>`, with the head fetched from the
+PR's own `refs/pull/<n>/head` and required to match the head read from the API).
+A different head, extra content, a merge conflict, a moved PR ref or missing
+history refuses. Admission is per PR, so the queue must use a group size of 1; the queued commit must be a single
 squash commit of the queued PR sitting directly on the group's `base_sha`, or
 admission refuses it, so a batch fails closed even if the ruleset is misconfigured. Batching needs per-PR admission (#8082) and is a follow-up. The
 `merge-ready` label request below still works until the label request is
@@ -72,9 +76,11 @@ review decision, and every page of review threads. Missing or malformed
 evidence refuses the result; a Result-only retry cannot reuse admission from
 an older attempt. Main/manual authorities and child-result checks remain.
 
-This is a late eligibility check, not queue-cutover acceptance. The current
-base-suffixed queue-ref fallback still uses a timestamp and does not establish
-the reviewed/admitted H or its composed G tree. Candidate-local admission code
+This is a late eligibility check, not queue-cutover acceptance. The tree match
+binds the queued commit to the head GitHub reports live at admission; it does not
+establish that this is the head a reviewer judged ready, and its premise (GitHub's
+squash tree equals `merge-tree(base, head)`) is checked here only on past
+squash merges and by local fixtures, not on a native queue entry. Candidate-local admission code
 also remains a trusted-source prerequisite. Neither these API freshness reads
 nor a tree match authenticates an arbitrary caller workflow or makes the final
 read and protected merge atomic. Preserve the installed gates until the
@@ -1280,6 +1286,36 @@ trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
 shape (no dispatch command, no `actions: write`), the in-flight check, and
 the `mergeable_state` column.
 
+### Main Health Sentinel
+
+Main's push gate is frequently cancelled before completing (on busy days most
+`Routed Rust Small` main-push runs cancel before any job starts), and the
+Hard-cut watch stays green on broken main by design: it judges the cut packet,
+not the build. A broken main whose push run cancels can therefore sit with no
+completed red signal anywhere for hours (#10991; incidents #8990, #8989, with
+live repeats through 2026-10-29).
+`.github/workflows/main-health-sentinel.yml` runs twice an hour (`9,39 * * * *`)
+and probes main directly: `cargo check --locked -p ripr` plus one focused
+binary smoke selector (`cli_smoke
+version_is_exact_and_precedes_help_or_output_flags`), cached, on a
+GitHub-hosted runner, with its own serialization group and a 30-minute job
+timeout. It is a probe, not a second build lane and not a required check: it
+holds no branch-protection or ruleset authority and dispatches nothing.
+Detection is bounded and honest: probe logs are teed with native `PIPESTATUS`
+statuses, a judge step fails the job on missing or empty evidence (a probe
+terminated at its step timeout reads as the timeout status 124 and classifies red
+with a tracker record; a probe that executed zero tests reports red, never
+success), the summary table is the
+per-fire audit trail, and the `main-red` tracking issue
+(`main-red: scheduled main-health sentinel found a broken main`) is the
+durable findable record — opened once, appended per confirming probe, and
+closed by the first green probe with the recovering run link. Worst-case
+detection latency is roughly forty minutes (interval plus probe). The
+`xtask/tests/main_health_sentinel_contract.rs` contract pins the advisory-only
+shape: scheduled-plus-dispatch triggers, serialization, timeout, repository
+guard, `issues: write` as the only write authority, the exact probe selector,
+zero-executed-test refusal, and the tracker lifecycle.
+
 ### Self-Hosted Runner Placement
 
 The everyday required Rust gate routes through `routed-rust.yml`
@@ -1566,6 +1602,16 @@ PR guidance, the comment plan, SARIF and badge renders, the gate, the ledgers,
 start-here, the report index, and the changed-line annotations, each as a log
 group named after the step it replaced. `ripr help reports` lists its
 failure rules, and `--step NAME` reruns one step locally.
+
+The PR-guidance producer runs its `ripr check --format json` child with the
+findings-array byte budget disabled (`RIPR_CHECK_FINDINGS_BYTES=0`, #11143):
+`review-comments` needs the complete document and applies its own brief caps
+before anything reaches the PR, while the default 1 MB budget would hand it a
+findings-bounded (`limited_findings_bound`) prefix that it — and every other
+gate-denominator consumer — must refuse fail-closed. The override covers only
+that child, so hand-run `ripr check` output keeps the ambient budget; set
+`RIPR_CHECK_FINDINGS_BYTES=0` yourself (or raise the byte value) when an
+outside-the-packet hand-off needs the full findings array.
 
 ```yaml
       - name: Run RIPR

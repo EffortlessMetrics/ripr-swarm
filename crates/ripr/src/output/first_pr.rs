@@ -3073,12 +3073,13 @@ mod tests {
         assert!(summary.contains(
             "Current evidence strength: Static evidence found related Rust test context"
         ));
-        assert!(summary.contains(
-            "Missing discriminator: Equality-boundary assertion for the changed behavior."
-        ));
-        assert!(summary.contains(
-            "Focused proof intent: Add a focused boundary assertion in `tests/pricing.rs`"
-        ));
+        assert!(
+            summary
+                .contains("Missing check: Equality-boundary assertion for the changed behavior.")
+        );
+        assert!(
+            summary.contains("Test to add: Add a focused boundary assertion in `tests/pricing.rs`")
+        );
         assert!(summary.contains(
             "Why this matters: A related Rust test reaches this change, but no equality-boundary assertion was found for the changed behavior."
         ));
@@ -4769,7 +4770,7 @@ mod tests {
             summary
                 .contains("Reason: The PR diff is empty, so no repairable Rust gap was selected.")
         );
-        assert!(summary.contains("Verify command: `not_applicable`"));
+        assert!(!summary.contains("not_applicable"));
         assert!(markdown.contains("## Start Here"));
         assert!(markdown.contains("- State: `empty_diff`"));
         // Default options run with preflight off, so no preflight gate
@@ -4960,7 +4961,7 @@ mod tests {
         let reason = packet["selected"]["reason"].as_str().unwrap_or_default();
         assert!(
             reason.contains(
-                "Static limitation `python_repair_card_unavailable` at `src/pricing.py:10`: this Python preview finding has no repair card (static evidence names no concrete missing discriminator)"
+                "Static limitation `python_repair_card_unavailable` at `src/pricing.py:10`: this Python preview finding has no repair card (static evidence cannot bind `DISCOUNT_THRESHOLD` to a test input, so the boundary equality cannot become a repair target)"
             ),
             "{reason}"
         );

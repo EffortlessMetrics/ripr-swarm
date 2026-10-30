@@ -3640,10 +3640,29 @@ fn read_macro_name_rebound(index: &crate::analysis::rust_index::RustIndex) -> bo
 /// [`read_macro_name_rebound`] for an arbitrary set of macro names, so a
 /// reader that trusts only the assertion macros by name asks the same
 /// parser-backed question about just those.
+///
+/// #10977: the scan is memoized on the index keyed by the sorted
+/// requested name set. The production callers use fixed sets, so one
+/// analysis holds at most a few entries and every probe after the first
+/// reuses the scan instead of walking the corpus again. The memoized
+/// answer is the same scan computed before, so binding-detection
+/// behavior is unchanged.
 pub(in crate::analysis) fn macro_names_rebound(
     index: &crate::analysis::rust_index::RustIndex,
     names: &[&str],
 ) -> bool {
+    let mut key: Vec<String> = names.iter().map(ToString::to_string).collect();
+    key.sort();
+    key.dedup();
+    index
+        .call_identity_memos
+        .macro_rebound(key, || rebound_scan(index, names))
+}
+
+/// The unmemoized whole-index rebound scan [`macro_names_rebound`]
+/// caches: whether any indexed file binds a requested macro name to
+/// something other than the standard macro.
+fn rebound_scan(index: &crate::analysis::rust_index::RustIndex, names: &[&str]) -> bool {
     index.files().iter().any(|(path, file)| {
         if file
             .macro_candidates
@@ -11529,5 +11548,95 @@ assert_eq!(input.amount, 100);"#
             credited_parameter(&later, &parameters, "x", &Some("x".to_string()), 2),
             Some("x".to_string())
         );
+    }
+
+    #[test]
+    fn rebound_answers_are_reused_per_requested_name_set() {
+        // #10977: the whole-index rebound scan is memoized per
+        // requested name set, so repeated probes of one analysis share
+        // the first scan instead of walking the corpus per probe.
+        use crate::analysis::classify::macro_names_rebound;
+        let mut index = crate::analysis::rust_index::RustIndex::default();
+        for (number, source) in [
+            "pub fn score(amount: i32) -> bool {\n    amount > 10\n}\n",
+            "#[test]\nfn score_boundary() {\n    assert!(score(20));\n    assert!(!score(5));\n}\n",
+        ]
+        .iter()
+        .enumerate()
+        {
+            index.insert_file_only(
+                PathBuf::from(format!("src/file{number}.rs")),
+                crate::analysis::facts::FileFacts {
+                    path: PathBuf::from(format!("src/file{number}.rs")),
+                    source: (*source).into(),
+                    ..Default::default()
+                },
+            );
+        }
+        let scans = || index.call_identity_memos.rebound_scan_count();
+        assert_eq!(scans(), 0);
+        // The first query scans; repeats, probe-scale repeats and a
+        // reordered spelling of the same set all reuse the one scan.
+        let rebound = ["assert", "assert_eq", "assert_ne"];
+        assert!(!macro_names_rebound(&index, &rebound));
+        assert_eq!(scans(), 1);
+        for _ in 0..8 {
+            assert!(!macro_names_rebound(&index, &rebound));
+        }
+        assert!(!macro_names_rebound(
+            &index,
+            &["assert_ne", "assert_eq", "assert"]
+        ));
+        assert_eq!(scans(), 1, "repeated probes must not rescan");
+        // A different requested set is its own entry: one more scan,
+        // then reuse again.
+        assert!(!macro_names_rebound(
+            &index,
+            &["assert", "assert_eq", "assert_ne", "println"]
+        ));
+        assert_eq!(scans(), 2);
+        assert!(!macro_names_rebound(
+            &index,
+            &["println", "assert_ne", "assert_eq", "assert"]
+        ));
+        assert_eq!(scans(), 2);
+    }
+
+    #[test]
+    fn rebound_memo_keeps_binding_detection_behavior() {
+        // #10977: the memoized answer reports the same binding a fresh
+        // scan would: a `macro_rules!` rebinding the name is rebound,
+        // and replacing the file on the same index (a rebuilt analysis)
+        // clears the memo and recomputes.
+        use crate::analysis::classify::macro_names_rebound;
+        let mut index = crate::analysis::rust_index::RustIndex::default();
+        let insert = |index: &mut crate::analysis::rust_index::RustIndex, source: &str| {
+            index.insert_file_only(
+                PathBuf::from("src/lib.rs"),
+                crate::analysis::facts::FileFacts {
+                    path: PathBuf::from("src/lib.rs"),
+                    source: source.into(),
+                    ..Default::default()
+                },
+            );
+        };
+        insert(&mut index, "macro_rules! assert {\n    () => {};\n}\n");
+        assert!(macro_names_rebound(&index, &["assert"]));
+        assert!(macro_names_rebound(&index, &["assert"]));
+        assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
+        // Replacing the file clears the memo, so the same index recomputes
+        // instead of serving the rebound answer for the clean sources.
+        // The counter reaching 1 proves the clear reset the memo (a stale
+        // entry would skip the scan and stay at 0); the clean `false` value
+        // proves the post-replacement query recomputed on the new sources
+        // (a stale entry would still answer `true`). The repeat query then
+        // proves reuse-after-recompute holds at 1. The clean-index control
+        // in the reuse test above reads the same macro-free shape as
+        // unbound, fixing the expected value.
+        insert(&mut index, "pub fn score() -> bool {\n    1 > 0\n}\n");
+        assert!(!macro_names_rebound(&index, &["assert"]));
+        assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
+        assert!(!macro_names_rebound(&index, &["assert"]));
+        assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
     }
 }

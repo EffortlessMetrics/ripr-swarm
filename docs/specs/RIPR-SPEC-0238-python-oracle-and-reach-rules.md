@@ -443,9 +443,12 @@ This order is the existing behavior and is normative:
   binding the root, is spelled `pytest.mark.parametrize` or
   `mark.parametrize`. An import root counts only when the module binds it
   exactly once (that import) and the enclosing class body does not bind
-  it; a canonical spelling whose root is not pinned that way (another
-  library's `mark`, a rebound or class-local root) leaves every argname
-  unsettled. A bare decorator name (`@cases`), the mark's callee
+  it, and the module has no dynamic writer (`setattr`, `globals()`,
+  `patch`). A writer name that only appears in an `import` statement
+  (`from unittest.mock import patch`) is not a write; an aliased import, a
+  call or a decorator using it still is (#11102); a canonical spelling whose root is not pinned that way
+  (another library's `mark`, a rebound or class-local root) leaves every
+  argname unsettled. A bare decorator name (`@cases`), the mark's callee
   (`parametrize = pytest.mark.parametrize`), argnames and `indirect` may
   each be one module-scope `NAME = <value>` binding that nothing in the
   module rebinds, bound before the test and not shadowed by the enclosing
@@ -490,6 +493,22 @@ This order is the existing behavior and is normative:
   later statement names the fixture, rebinds a target name or defines a
   nested scope. The test then reads as `@pytest.mark.parametrize` over the
   target names with the rows as cases, and the unpack is not a rebinding.
+  A fixture is also resolved when it is an inert test tool (#11016, a
+  `click.testing.CliRunner` fixture such as pallets/click's `runner`): its
+  only decorator is `@pytest.fixture` or `@pytest.fixture(scope="function")`,
+  the def is synchronous and takes nothing or a lone `request` it does not
+  read, and its body is an optional docstring and `return CliRunner(<literals>)`
+  with `CliRunner` imported by an absolute, unaliased `from click.testing`
+  (or `typer.testing`) import and bound once. The test is a module-level
+  pytest test that takes the fixture without a default, does not rebind it,
+  and carries no decorator other than a pytest mark. The scope rules above
+  hold, and in addition no scope file or workspace module it imports (plain
+  or `from`, followed through the modules those import) uses `CliRunner`
+  other than to import or construct it (`CliRunner.invoke = fake`,
+  `setattr(CliRunner, ...)`, an alias, or a patch string naming it), and no
+  such module spells the fixture in a fixture or
+  compound statement or is opaque. The runner only invokes commands, so it
+  hides no discriminator or expected value.
   Any other shape keeps the limit; a third-party plugin fixture outside
   the workspace is not visible to this read;
 - L9: `opaque_custom_assertion_helper`: an eligible candidate has a
@@ -786,6 +805,21 @@ mutant calibrates the rule; ripr reports only the static shape.
     claim precise generator execution. Raw assertions and mock expectations
     keep their existing rules. Synchronous function-result helpers retain
     the ordinary substituted-assertion reading.
+    For helpers whose definition reads a parameter field, credit additionally
+    requires a direct field compared with a literal expected operand, retained
+    helper/class/module/receiver bindings, and an eager straight-line test body.
+    Defining-module attribute writes join caller rebinding facts, including the
+    original imported constructor name when the caller uses an import alias.
+    Copies or aliases used as expected values, replaced helpers or methods,
+    overwritten fields, deferred calls, definition-time calls and multiline
+    call-shaped literal text do not establish field-helper credit. Supported
+    field helpers use only changed-effect observation; a method-name token
+    cannot restore credit. The observed receiver's own call must precede its
+    helper call, including when several receivers or same-line statements exist.
+    A refused helper's origin survives the reported-oracle fallback; an unrelated
+    raw assertion retains its own origin. This bounded rule does not change the
+    existing generic parameter/result-helper interpretation or claim general
+    Python alias analysis or arbitrary helper execution.
 18. **A self-computed expected value does not credit.** Following
     RIPR-SPEC-0035, an assertion does not credit when every compared
     operand that names the owner is computed with a top-level

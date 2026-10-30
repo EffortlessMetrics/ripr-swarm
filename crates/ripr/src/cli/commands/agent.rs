@@ -1870,7 +1870,31 @@ fn run_agent_repair_phase(
             }
             let mut policy =
                 crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
-                    .map_err(|error| before_phase_refusal(&seam_id, &root, &error))?;
+                    .map_err(|error| {
+                        // Only a packet that names no editable test target gets
+                        // the plain next-step text; a malformed packet or an
+                        // invalid edit surface keeps its own diagnostic.
+                        if !crate::app::task_first::is_missing_edit_target_error(&error) {
+                            return error;
+                        }
+                        // #10978: say where the change is and what to do next.
+                        // The exact diagnostic stays last, because `ripr agent
+                        // card` reports the same text as its blocker.
+                        let seam = before_report
+                            .classified
+                            .iter()
+                            .find(|entry| entry.seam.id().as_str() == seam_id);
+                        let source = seam.and_then(|entry| {
+                            std::fs::read_to_string(root.join(entry.seam.file())).ok()
+                        });
+                        let plain = crate::app::task_first::no_test_route_refusal(
+                            &root,
+                            &seam_id,
+                            seam,
+                            source.as_deref(),
+                        );
+                        format!("{plain} (Detail: {error})")
+                    })?;
             crate::app::repair_attempt::include_explicit_store_operational_write(
                 &mut policy,
                 &root,
@@ -2840,7 +2864,12 @@ fn repair_after_cage_recovery_lines(
                 violations.len() - CAGE_RECOVERY_MAX_VIOLATIONS
             ));
         }
-        lines.extend(untracked_output_hints(root, store, after));
+        lines.extend(untracked_output_hints(
+            root,
+            store,
+            after,
+            gap_base.is_some(),
+        ));
     }
     let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
     let restart = crate::app::gap_bound_repair::repair_start_command(
@@ -2924,6 +2953,7 @@ fn untracked_output_hints(
     root: &Path,
     store: Option<&Path>,
     after: &crate::app::repair_attempt::RepairAttemptAfter,
+    gap_bound: bool,
 ) -> Vec<String> {
     use crate::edit_cage::EditCageViolationKind;
 
@@ -2959,8 +2989,13 @@ fn untracked_output_hints(
     if untracked.is_empty() {
         return hints;
     }
+    let packet = if gap_bound {
+        crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT
+    } else {
+        crate::agent::loop_commands::WORKFLOW_AGENT_PACKET_ARTIFACT
+    };
     hints.push(format!(
-        "{} {} not tracked by Git when the before phase ran. If {} a file you redirected ripr output into (for example `> packet.json` or `2> before.err`), the edit cage counts it as an edit: delete it, and redirect `agent repair` output outside the checkout or under target/ripr/ (the before phase already writes the packet to target/ripr/workflow/agent-packet.json).",
+        "{} {} not tracked by Git when the before phase ran. If {} a file you redirected ripr output into (for example `> packet.json` or `2> before.err`), the edit cage counts it as an edit: delete it, and redirect `agent repair` output outside the checkout or under target/ripr/ (the before phase already writes the packet to {packet}).",
         untracked.join(", "),
         if untracked.len() == 1 { "was" } else { "were" },
         if untracked.len() == 1 {
@@ -3373,29 +3408,6 @@ fn run_gap_bound_before_phase(
     Ok(())
 }
 
-/// A before phase refused because the seam's repair packet cannot bound a
-/// test-only edit. Names the seam and the reason in plain words, says that
-/// nothing was started, states the observable packet field (#4332 — the
-/// producer-jargon cause alone leaves the agent guessing what to look at),
-/// points at the surfaces that only offer a repair start for seams that
-/// pass this check, names the root-pinned `agent stub` forward route for
-/// the same state (#7735 — the pick-another-seam advice is a dead end when
-/// no seam can start a repair; `--root` keeps the route usable from any
-/// directory because the before phase does not require the shell to sit at
-/// the workspace, and `--kind` pins the probe family so a line holding
-/// several gap families cannot stub another seam), states the inline-test
-/// boundary with its remedy — an ambiguous multi-module inline layout
-/// proposes no target, while one governed inline module would qualify
-/// (#5210) — and points at the repair help carrying the scope boundary.
-fn before_phase_refusal(seam_id: &str, root: &Path, error: &str) -> String {
-    use crate::agent::loop_commands::{bound_root, shell_arg};
-
-    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
-    format!(
-        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface). Pick a seam whose `ripr pilot` output or review card shows a repair start; when none does — for example a crate whose inline tests are spread over several `#[cfg(test)]` modules, where the ambiguous layout proposes no target and one governed inline module would qualify — add a `tests/`-surface test file, or move this gap forward with `ripr agent stub --root {root_arg} --at FILE:LINE --kind KIND` (FILE:LINE and KIND are the finding location and probe family `ripr check` prints for the same state). Repair scope, including the inline-test boundary, is in `ripr agent repair --help`. Cause: {error}"
-    )
-}
-
 /// What the before phase prints on stdout once its attempt is published: with
 /// `--json`, the packet envelope augmented with the additive `repair_attempt`
 /// continuation (#4329) so a driver that captures only stdout can complete
@@ -3641,6 +3653,10 @@ fn resolve_agent_start_out_dir(root: &Path, out_dir: &Path) -> PathBuf {
 #[cfg(all(test, unix))]
 #[path = "agent_root_tests.rs"]
 mod root_tests;
+
+#[cfg(test)]
+#[path = "agent_refusal_tests.rs"]
+mod refusal_tests;
 
 #[cfg(test)]
 mod tests {

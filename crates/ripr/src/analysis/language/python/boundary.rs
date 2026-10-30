@@ -246,7 +246,7 @@ pub(super) fn python_boundary_evidence(
         observed_values.extend(rows.iter().filter_map(|row| {
             let elements = row.elements.get(filter.iterable)?;
             Some(ValueFact {
-                file: None,
+                file: Some(row.file.clone()),
                 line: row.line,
                 text: row.text.clone(),
                 value: format!("{} = [{}]", filter.iterable, elements.join(", ")),

@@ -82,6 +82,15 @@ pub(crate) fn build_typescript_limitation_leaderboard_report(
                 summary.findings_total = parsed_summary.findings_total;
                 summary.typescript_family_findings_total =
                     parsed_summary.typescript_family_findings_total;
+                if parsed_summary.document_bounded {
+                    warnings.push(format!(
+                        "Check output does not establish a complete findings document; treat this \
+                         leaderboard as incomplete. Counts cover only the {} supplied findings. \
+                         Omitted findings may change limitation counts and rankings. Re-run \
+                         ripr check with RIPR_CHECK_FINDINGS_BYTES=0 and regenerate this report.",
+                        parsed_summary.findings_total,
+                    ));
+                }
                 true
             }
             Err(err) => {
@@ -237,6 +246,7 @@ pub(crate) fn render_typescript_limitation_leaderboard_markdown(
 struct ParsedCheckOutputSummary {
     findings_total: usize,
     typescript_family_findings_total: usize,
+    document_bounded: bool,
 }
 
 fn collect_limitations_from_check_output(
@@ -253,6 +263,8 @@ fn collect_limitations_from_check_output(
     let mut summary = ParsedCheckOutputSummary {
         findings_total: findings.len(),
         typescript_family_findings_total: 0,
+        document_bounded: super::gate::discloses_limited_findings_bound(&value)
+            || super::gate::discloses_bounded_analysis_document(&value),
     };
     for finding in findings {
         let mut finding_limitations = limitation_kinds_from_evidence(finding);
