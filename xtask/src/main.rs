@@ -4200,7 +4200,7 @@ fn gh_pr_safe_next_action(
     }
     let merge_state = pr.merge_state_status.to_ascii_uppercase();
     match merge_state.as_str() {
-        "CLEAN" => "merge",
+        "CLEAN" => "inspect final merge gates",
         "BLOCKED" | "DRAFT" | "HAS_HOOKS" | "UNKNOWN" | "UNSTABLE" => "wait",
         "DIRTY" => "inspect failure",
         _ => "inspect failure",

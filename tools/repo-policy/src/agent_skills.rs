@@ -243,10 +243,15 @@ pub fn check() -> Result<(), String> {
             for finding in review_route_findings(skill, &skill_text) {
                 findings.push(format!("{provider}: {relative} {finding}"));
             }
-            if skill == "finish-pr" && !skill_text.contains("REVIEW_READY") {
-                findings.push(format!(
-                    "{provider}: {relative} can converge without REVIEW_READY"
-                ));
+            if skill == "finish-pr" {
+                if !skill_text.contains("REVIEW_READY") {
+                    findings.push(format!(
+                        "{provider}: {relative} can converge without REVIEW_READY"
+                    ));
+                }
+                for finding in shared_finish_pr_route_findings(&skill_text) {
+                    findings.push(format!("{provider}: {relative} {finding}"));
+                }
             }
             if skill == "review-pr" {
                 validate_review_pr_contract(provider, &relative, &skill_text, &mut findings);
@@ -491,6 +496,18 @@ fn closed_marker_findings(text: &str, prefix: &str, required: &[&str]) -> Vec<St
         }
     }
     findings
+}
+
+// Structural routing only: this does not establish semantic agreement or agent compliance.
+fn shared_finish_pr_route_findings(skill_text: &str) -> Vec<String> {
+    [
+        "../../../docs/PR_AUTOMATION.md#pr-body-admission-contract",
+        "../../../docs/PR_AUTOMATION.md#review-conversation-inventory",
+    ]
+    .iter()
+    .filter(|route| !skill_text.contains(**route))
+    .map(|route| format!("is missing shared finish-pr route `{route}`"))
+    .collect()
 }
 
 fn validate_root_review_route(provider: &str, routing_text: &str, findings: &mut Vec<String>) {
@@ -874,6 +891,17 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn shared_finish_pr_routes_reject_missing_owner() {
+        let complete = "../../../docs/PR_AUTOMATION.md#pr-body-admission-contract\n../../../docs/PR_AUTOMATION.md#review-conversation-inventory";
+        assert!(shared_finish_pr_route_findings(complete).is_empty());
+        let missing = complete.replace(
+            "../../../docs/PR_AUTOMATION.md#review-conversation-inventory",
+            "",
+        );
+        assert_eq!(shared_finish_pr_route_findings(&missing).len(), 1);
     }
 
     #[test]

@@ -68,10 +68,12 @@ Use the actual installed request interface. The intended #4984/#4985/#4986 flow 
 explicit late qualification, normally at most 20 minutes of complete CI execution,
 then a separate current-repository/product/integration judgment and protected
 expected-head squash. Queue time is separate. No routine auto-merge or merge queue.
-`merge-ready` is a request spelling under discussion; `premerge-ci-request` and
-`request-premerge-ci` are proposals, not installed commands. #8082 owns the staged
-caller/skills integration. Preserve live required enforcement until its qualified
-cutover; this root update does not change triggers, settings or result producers.
+The checked-in `routed-rust.yml` requests PR qualification on the `merge-ready`
+label event; Ready alone does not request it. The same source includes merge-group
+support for a proposed cutover, not evidence that a queue is active. Verify the
+actual deployed request path and run state without reading administrative settings.
+`premerge-ci-request` and `request-premerge-ci` remain proposals, not installed
+commands. Preserve current enforcement; this guidance changes no triggers or settings.
 
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future
@@ -83,10 +85,13 @@ head. Reconcile existing native request/run/attempt state before creating more w
 The same useful lead normally stays with its candidate through an ordinary CI wait,
 inspects complete results and current review/Conversation findings, makes the final
 judgment, performs the authorized protected merge and reads back the landing.
-Separate decisions do not require separate agents or a new routine human approval.
+The final judgment does not require a new routine human approval, but an independent
+substantive exact-head LLM review is required before merge. A different name alone
+does not establish independence, and the author's self-review is not its substitute.
 Use supported waits/events or bounded checks without tight polling. Retain context
 and ownership; a real interruption or exhausted window gets an exact continuation,
-not duplicate CI or an uncertain merge write repeated blindly.
+not duplicate CI or an uncertain merge write repeated blindly. Follow the shared
+[failure and retry protocol](docs/agent-context/remote-wait-discipline.md#failure-retry-and-uncertain-writes).
 
 Inspect submitted reviews, all inline threads including outdated unresolved ones,
 and ordinary Conversation comments. Repair or refute material findings with current
@@ -256,9 +261,10 @@ alternatives may be compared with focused proof; select one to land before expen
 qualification. Do not create rival implementations merely to consume parallel
 capacity. Disjoint pieces may be delegated through one integrating candidate owner.
 
-An issue claim is one ordinary comment (branch, PR and candidate/qualification state), live for 3 hours of claimant activity and
-then takeable with a note; duplicate drafts are tolerated, but only one PR per claim, chosen on merit, goes to qualification (see
-`prepare-issue` Issue claim comment).
+Coordinate the actual candidate and writer through the issue or PR as needed. An
+untouched PR may be investigated for takeover after the user-authorized interval,
+but elapsed time alone does not transfer ownership or establish abandonment;
+inspect current activity and preserve unique work (see `prepare-issue`).
 
 Do not create repository-global active-goal, current-writer, current-stage,
 liveness, lease, lock, candidate-frontier, or worker-state files. GitHub issues,
@@ -287,7 +293,10 @@ Routine commit, ordinary branch push, PR creation/update, review/CI repair,
 protected squash merge and lane cleanup inside an authorized delivery goal do
 not require repeated approval. Settings/rulesets/secrets, shared-history rewrite,
 durable-evidence deletion and public release actions need applicable explicit
-authorization. Use PR-visible checks and reviews, not protection or ruleset
+authorization. Ordinary branch/PR publication is not registry publication.
+Release-specific merges, package qualification and publication follow the user's
+applicable approval rule; where not expressly requested, obtain approval immediately
+before the action. Use PR-visible checks and reviews, not protection or ruleset
 settings, for routine progression; never weaken or bypass server enforcement.
 
 ## Evidence and actionability
@@ -358,7 +367,9 @@ stimulus and oracle grip, rendered/public behavior, runtime/schema/docs/output
 parity, platform-relevant branches, and exact-head job/artifact evidence. A
 clean self-review records what was inspected and uses a `COMMENT` disposition on
 the author's PR; GitHub's inability to request changes from the author is not
-approval.
+approval. An independent substantive exact-head LLM review is required before
+merge; the author's self-review is not a substitute, and a different name alone
+does not establish independence.
 
 Review binds only to committed Git objects. Record completed source/oracle review
 separately from missing hosted proof or provider evidence. A final-merge review can

@@ -41,6 +41,28 @@ review artifacts described here. Machine-readable receipts record which gates
 and report commands ran so agents and reviewers can inspect evidence without
 reading raw logs.
 
+## PR body admission contract
+
+Agent-authored bodies must also include, verbatim and with real values
+(not empty, `TBD`, or `<...>` placeholders), every
+`.github/pull_request_template.md` Source-of-truth Links line
+(`Proposal:`, `Spec:`, `ADR:`, `Plan item:`,
+`Governing issue or accepted claim:`,
+`Acceptance delta (one sentence):`) and Candidate Relationships line
+(`Candidate branch (GitHub PR head is authoritative after publication):`,
+`Stack parent or prerequisite PR (if any):`,
+`Proposed replacement of PR (if any; not yet accepted):`,
+`Acceptance retained from a replaced candidate (if any):`,
+`Accepted winner and losing candidate disposition (when decided):`)
+before first Ready. Where a line does not apply, state that explicitly
+(for example `none`) instead of deleting or leaving it blank; the two
+admission-gated lines (`Governing issue or accepted claim:` and
+`Acceptance delta (one sentence):`) always need a real value. Before
+first Ready, validate the body offline and fix every line it names:
+`gh pr view <number> --json body > pr-body.json` then
+`cargo xtask check-pr-shape --body-file pr-body.json` (or
+`--body-env <var>` holding the raw body or that JSON).
+
 ## Draft to Ready handoff
 
 Publish a coherent candidate as Draft. The delivery owner completes this order
@@ -549,7 +571,7 @@ branch-protection or ruleset settings, then writes
 `target/ripr/reports/gh-pr-status.md` and
 `target/ripr/reports/gh-pr-status.json` with the merge state, outstanding
 rollup checks, failed checks, behind-main state, review status, Droid status, and a
-safe next action: `wait`, `inspect integration`, `inspect failure`, or `merge`.
+safe next action: `wait`, `inspect integration`, `inspect failure`, or `inspect final merge gates`. The last action requests the independent final judgment and normal server-enforced merge path; it is not merge authority or an instruction to wait for administrative settings. The advisory JSON `safe_next_action` value changed from `merge`; external consumers must handle the new value.
 `BEHIND` requests integration judgment after Draft, review-required and pending
 waits; it does not establish that a branch update is needed. The packet retains the current head commit and each latest review's original
 commit, with `current_head`, `stale_for_head`, or `subject_unavailable` attribution.
@@ -566,6 +588,8 @@ from returned reviews/comments without treating either as review completion.
 Historical response subjects remain unattributed; the packet head is collection
 context only. This does not add a provider gate or change the advisory action.
 See [provider observation fields](OUTPUT_SCHEMA.md#github-pr-status-provider-observations).
+### Review conversation inventory
+
 For unresolved inline conversations and their next actions, use the read-only
 [finish-pr conversation inventory](../.agents/skills/finish-pr/references/review-conversations.md).
 It paginates threads and keeps outdated unresolved findings visible; it does not

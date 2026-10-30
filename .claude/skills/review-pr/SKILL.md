@@ -102,7 +102,7 @@ Use `review-pr` when:
 - automated review and CI results need an accountable synthesis;
 - a prior inspection covered another head or only part of the diff.
 
-The lead Claude context may perform the pass directly. Delegate only when another context changes the available evidence, oracle, tools, threat model, platform access, or failure perspective. The lead verifies the returned evidence and owns the final disposition.
+Independent substantive exact-head LLM review is required before merge. A different name alone is not independence: the reviewer must make an independent judgment, challenging the actual candidate and evidence rather than echoing the author. An author self-review, even when posted as `COMMENT`, does not replace it; an independent review may record its disposition in a `COMMENT`. The accountable lead verifies the review and owns the disposition. If a permitted independent review is unavailable, retain `REVIEW_INCOMPLETE` while continuing independent authorized work.
 
 # Workflow
 

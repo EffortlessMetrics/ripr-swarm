@@ -13661,8 +13661,12 @@ stale reviews stay visible; they are not silently attributed to the new head.
 
 This attribution is advisory. It does not establish substantive or independent
 review, required approval counts, protection satisfaction, integration proof,
-or permission to merge. The retained current-head control preserves the
-existing advisory action; the command performs no PR mutation.
+or permission to merge. A CLEAN packet's `safe_next_action` is now
+`inspect final merge gates`, not `merge`; external consumers of schema `0.1`
+must handle the changed value. An empty rollup still leaves required-context
+completeness unknown. The action calls for final judgment and the normal
+server-enforced merge route when eligible, not settings discovery or an endless
+wait. The command performs no PR mutation.
 
 ## Report Packet Index
 

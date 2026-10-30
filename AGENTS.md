@@ -53,8 +53,10 @@ squash merge and cleanup of lane-created state need no repeated permission.
 Existing explicit limits still apply. Shared-history rewrites, deletion of
 durable evidence, settings/rulesets/secrets, tags, public releases, registry or
 marketplace publication, signing and release-credential actions require the
-applicable explicit authorization. Continue reversible preparation while a
-separate authorization is pending.
+applicable explicit authorization. Ordinary branch/PR publication is not registry
+publication. Release-specific merges, package qualification and publication follow
+the user's applicable approval rule; where not expressly requested, obtain approval
+immediately before the action. Continue reversible preparation while pending.
 
 Ordinary `ripr-swarm` PRs squash merge. A behind-only branch or unrelated main
 movement does not justify restacking or rerunning unaffected proof. Reconcile
@@ -175,10 +177,12 @@ Use the actual installed request interface. The intended #4984/#4985/#4986 flow 
 explicit late qualification, normally at most 20 minutes of complete CI execution,
 then a separate current-repository/product/integration judgment and protected
 expected-head squash. Queue time is separate. No routine auto-merge or merge queue.
-`merge-ready` is a request spelling under discussion; `premerge-ci-request` and
-`request-premerge-ci` are proposals, not installed commands. #8082 owns the staged
-caller/skills integration. Preserve live required enforcement until its qualified
-cutover; this root update does not change triggers, settings or result producers.
+The checked-in `routed-rust.yml` requests PR qualification on the `merge-ready`
+label event; Ready alone does not request it. The same source includes merge-group
+support for a proposed cutover, not evidence that a queue is active. Verify the
+actual deployed request path and run state without reading administrative settings.
+`premerge-ci-request` and `request-premerge-ci` remain proposals, not installed
+commands. Preserve current enforcement; this guidance changes no triggers or settings.
 
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future
@@ -190,10 +194,13 @@ head. Reconcile existing native request/run/attempt state before creating more w
 The same useful lead normally stays with its candidate through an ordinary CI wait,
 inspects complete results and current review/Conversation findings, makes the final
 judgment, performs the authorized protected merge and reads back the landing.
-Separate decisions do not require separate agents or a new routine human approval.
+The final judgment does not require a new routine human approval, but an independent
+substantive exact-head LLM review is required before merge. A different name alone
+does not establish independence, and the author's self-review is not its substitute.
 Use supported waits/events or bounded checks without tight polling. Retain context
 and ownership; a real interruption or exhausted window gets an exact continuation,
-not duplicate CI or an uncertain merge write repeated blindly.
+not duplicate CI or an uncertain merge write repeated blindly. Follow the shared
+[failure and retry protocol](docs/agent-context/remote-wait-discipline.md#failure-retry-and-uncertain-writes).
 
 Inspect submitted reviews, all inline threads including outdated unresolved ones,
 and ordinary Conversation comments. Repair or refute material findings with current
@@ -335,9 +342,10 @@ merely because its full hosted matrix cannot run locally.
 Use focused tests, a narrow compile, `cargo xtask check-fast` and
 `cargo xtask precommit` for candidate shaping. Read the emitted reports and
 independently verify `check-fast`'s base/diff selector; zero selected paths after
-a selector failure is not pass. Establish an inherited baseline before changing
-code and reproduce an apparent base failure on the exact base before attributing
-it. Follow `build-candidate` for the bounded sequence.
+a selector failure is not pass. Use relevant existing baseline evidence; reproduce an apparent base failure on
+the exact base before attributing it as inherited. An unavailable or irrelevant
+baseline build need not block a safe candidate repair. Follow `build-candidate`
+for the bounded sequence.
 
 Hosted PR CI owns the required merge-gate matrix. Do not serially duplicate the
 whole matrix locally before publishing. Use `cargo xtask ci-full` for an
@@ -484,9 +492,11 @@ Use the complete `review-pr` procedure: semantic owner and consumers, stimulus
 and oracle challenge, rendered behavior, runtime/schema/docs/output parity,
 platform branches, actual check steps, denominators and artifact identity.
 
-A differently named agent is not inherently independent. Add a reviewer when
-it changes source/oracle/context/tools/platform/failure perspective. Self-review
-on the author's PR uses `COMMENT` with an explicit disposition. Reviewer quota,
+An independent substantive exact-head LLM review is required before merge. A
+differently named agent is not inherently independent: the judgment must challenge
+the candidate from an independent perspective, not simply echo its author. An
+author's self-review uses `COMMENT` with an explicit disposition and does not
+replace the independent review. Reviewer quota,
 unavailability or skipped output is missing review for that provider, not clean
 review and not an indefinite stop when an adequate allowed alternative exists.
 A clean review records surfaces, risks, invariants, validation and residuals;
@@ -502,8 +512,9 @@ Keep implementation/test/oracle/public-claim/generated/conflict/integration/head
 currentness dimensions separate. Unrelated main movement invalidates nothing
 by itself. Output-shape changes need all affected goldens and independent semantic
 justification; do not re-bless a wrong result or merge stale bytes already
-superseded upstream. If CI fails on untouched code, reproduce the exact base and
-route the inherited repair separately.
+superseded upstream. If CI fails on untouched code and inheritance is plausible, compare the exact
+relevant base before attributing it as inherited, and route a demonstrated inherited
+repair separately. Preserve uncertainty when the comparison is unavailable.
 
 For routine PR progression, inspect the exact current head, PR-visible checks,
 reviews, conversations and merge state; do not read branch-protection or ruleset
