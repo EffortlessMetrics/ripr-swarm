@@ -1079,6 +1079,7 @@ zeroed `summary`, same empty `findings`, same
 | `diff_input_unsupported` | `analysis/diff-input` | The shared diff parser refused a region, admission, or truncated textual section of an `agent brief --diff` or `--base` input; no brief selection ran. |
 | `git_invocation_timeout` | `analysis/git-timeout` | A git invocation exceeded its cooperative deadline and was terminated. |
 | `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished; no findings were produced (#5369). |
+| `analysis_worker_stopped` | `analysis/worker-stopped` | The `ripr check` analysis worker thread stopped without producing a result, almost always a panic whose message the panic hook printed on stderr; no findings were produced and the result is never a clean pass (#11116). Re-run, report with the panic output, and narrow the diff or base range. |
 | `analysis_failed` | `analysis/failure` | Honest fallback for any other failure: the run produced no findings, with no claim about which stage stopped. |
 
 The scope-guard identities (`diff_scope_oversized`, `repo_scope_oversized`)
