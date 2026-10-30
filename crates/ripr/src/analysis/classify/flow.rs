@@ -370,6 +370,20 @@ fn return_value_sink(
             owner,
         );
     }
+    // RIPR-SPEC-0360: a zero-initialized accumulator the owner returns as its
+    // tail carries the update's change to the return.
+    if let Some(function) = owner_fn
+        && let Some(offset) = probe.location.line.checked_sub(function.start_line)
+        && let Some(accumulator) =
+            crate::analysis::syntax::loop_accumulator::loop_accumulator_at(&function.body, offset)
+    {
+        return flow_sink(
+            FlowSinkKind::ReturnValue,
+            return_sink_text(&accumulator.local),
+            probe.location.line,
+            owner,
+        );
+    }
     if !is_obvious_return_expression(&probe.expression) {
         return flow_sink(
             FlowSinkKind::Unknown,
@@ -540,15 +554,51 @@ fn tail_if_branch_value(
             .to_string()
     };
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
-    let signature = masked.lines().next()?;
+    let first_line = masked.lines().next()?;
+    let offset = probe.location.line.checked_sub(function.start_line)?;
+    // #10711: a body written on the signature line
+    // (`fn f(x: u32) -> u32 { if x > 1 { 1 } else { 0 } }`) is the same tail
+    // expression as the rustfmt layout, so the layout does not change the
+    // sink. The inline body is the text between the signature's body brace
+    // and the line's closing brace; nothing else may follow.
+    let inline_body = if offset == 0 {
+        // The body brace is the one matching the line's final `}`, found by
+        // walking back with brace depth: a `{` earlier in the signature
+        // (`-> [u32; { N + 1 }]`) is not the body's.
+        let close = first_line.trim_end().strip_suffix('}')?.len();
+        let mut depth = 0usize;
+        let open = first_line[..close]
+            .char_indices()
+            .rev()
+            .find_map(|(at, ch)| match ch {
+                '}' => {
+                    depth += 1;
+                    None
+                }
+                '{' if depth == 0 => Some(at),
+                '{' => {
+                    depth -= 1;
+                    None
+                }
+                _ => None,
+            })?;
+        if masked.lines().nth(1).is_some() {
+            return None;
+        }
+        Some(open + 1..close)
+    } else {
+        None
+    };
+    let signature = inline_body
+        .as_ref()
+        .map_or(first_line, |range| &first_line[..range.start]);
     if !signature_returns_value(signature) {
         return None;
     }
-    let offset = probe.location.line.checked_sub(function.start_line)?;
-    if offset == 0 {
-        return None;
-    }
-    let changed_line = masked.lines().nth(offset)?;
+    let changed_line = match &inline_body {
+        Some(range) => first_line.get(range.clone())?,
+        None => masked.lines().nth(offset)?,
+    };
     let changed = changed_line.trim();
     // The probe must be the `if` condition itself, not text that merely
     // appears inside a branch value on the same line.
@@ -565,13 +615,19 @@ fn tail_if_branch_value(
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
-    if rest != ["}"] {
+    if inline_body.is_none() && rest != ["}"] {
         return None;
     }
     // Branch spans come from the masked line (strings/comments cannot hide a
     // brace there); branch text comes from the raw line at the same offsets,
     // because masking blanks string and char literals that are valid values.
-    let raw_line = function.body.lines().nth(offset).unwrap_or(changed_line);
+    let raw_full = function.body.lines().nth(offset);
+    let raw_line = match &inline_body {
+        Some(range) => raw_full
+            .and_then(|line| line.get(range.clone()))
+            .unwrap_or(changed_line),
+        None => raw_full.unwrap_or(changed_line),
+    };
     let (then_range, after_then) = braced_block_range(changed_line)?;
     // A one-line `else if` ladder is the same tail expression with more arms:
     // each continuation is `else if <cond> { .. }` until the final
@@ -1684,6 +1740,83 @@ mod tests {
         assert_eq!(sinks.len(), 1);
         assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
         assert_eq!(sinks[0].text, "0");
+    }
+
+    /// #10711: the same tail `if` written on the signature line has the same
+    /// sink as the rustfmt layout, on the owner's own line.
+    #[test]
+    fn tail_if_on_the_signature_line_flows_like_the_rustfmt_layout() {
+        let compact =
+            tail_owner("pub fn grade(score: u32) -> u32 { if score > 50 { 1 } else { 0 } }");
+        let formatted =
+            tail_owner("pub fn grade(score: u32) -> u32 {\n    if score > 50 { 1 } else { 0 }\n}");
+
+        let compact_sinks = local_flow_sinks(
+            &probe(ProbeFamily::Predicate, "score > 50", 1),
+            Some(&compact),
+        );
+        let formatted_sinks = local_flow_sinks(
+            &probe(ProbeFamily::Predicate, "score > 50", 2),
+            Some(&formatted),
+        );
+
+        assert_eq!(compact_sinks.len(), 1);
+        assert_eq!(compact_sinks[0].kind, FlowSinkKind::ReturnValue);
+        assert_eq!(compact_sinks[0].text, "1");
+        assert_eq!(compact_sinks[0].line, 1);
+        assert_eq!(compact_sinks[0].kind, formatted_sinks[0].kind);
+        assert_eq!(compact_sinks[0].text, formatted_sinks[0].text);
+    }
+
+    /// A brace inside the signature (a const-generic array length) is not the
+    /// body's opening brace.
+    #[test]
+    fn tail_if_on_the_signature_line_finds_the_body_brace_past_signature_braces() {
+        let owner = tail_owner(
+            "pub fn pick<const N: usize>(score: u32) -> [u32; { N + 1 }] { if score > 50 { first } else { second } }",
+        );
+
+        let sinks = local_flow_sinks(
+            &probe(ProbeFamily::Predicate, "score > 50", 1),
+            Some(&owner),
+        );
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].text, "first");
+    }
+
+    /// The inline body range is computed on the masked line and applied to the
+    /// raw line. Masking keeps every byte offset (comments and string bytes
+    /// become spaces, one per byte), so non-ASCII text and a trailing comment
+    /// do not shift the extracted branch text.
+    #[test]
+    fn tail_if_on_the_signature_line_keeps_branch_text_with_non_ascii_and_comments() {
+        let owner = tail_owner(
+            "pub fn label(x: i32) -> &'static str { if x > 1 { \"h\u{e9}llo \u{2713}\" } else { \"low\" } } // \u{fc}n\u{ef} } {",
+        );
+
+        let sinks = local_flow_sinks(&probe(ProbeFamily::Predicate, "x > 1", 1), Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].text, "\"h\u{e9}llo \u{2713}\"");
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+        assert_eq!(masked.len(), owner.body.len());
+    }
+
+    #[test]
+    fn tail_if_on_the_signature_line_fails_closed_for_a_unit_owner() {
+        let owner = tail_owner("pub fn bump(score: u32) -> () { if score > 50 { 1 } else { 0 } }");
+
+        let sinks = local_flow_sinks(
+            &probe(ProbeFamily::Predicate, "score > 50", 1),
+            Some(&owner),
+        );
+
+        assert!(
+            sinks
+                .iter()
+                .all(|sink| sink.kind != FlowSinkKind::ReturnValue)
+        );
     }
 
     #[test]

@@ -189,6 +189,11 @@ pub(in crate::analysis) fn current_path_witness_with(
                     && !opaque_path_text(&probe.expression)
                     && !opaque_path_text(&sink.text)
                     || unchanged_closure_tail(probe, sink)
+                    // RIPR-SPEC-0360: the update binds to the returned local
+                    // by name; a `.await` in its term is a dot the path
+                    // identity above would read as a qualified path.
+                    || (accumulates_into_returned_local(probe, sink)
+                        && !opaque_path_text(&probe.expression))
                     // #7063: the payload-carrying source and its
                     // variant-named sink share no path identity.
                     || constructs_its_error_on_its_line(probe, sink, declared_error_variant)))
@@ -199,6 +204,7 @@ pub(in crate::analysis) fn current_path_witness_with(
     let sink_identity = normalize_semantic_text(&sink.text);
     let edge_status = if is_question_mark_sink(sink)
         || returns_itself_on_its_line(probe, sink)
+        || accumulates_into_returned_local(probe, sink)
         || constructs_its_error_on_its_line(probe, sink, declared_error_variant)
     {
         EdgeStatus::Established
@@ -354,16 +360,53 @@ pub(in crate::analysis) fn constant_tail_witness(
                 // value; whether the pinned input runs all of `e` is the
                 // owner pin's question.
                 Some(line) => (line, "spawn_join_owner_tail"),
-                None => (
-                    short_circuit_owner_tail_line(owner, &probe.expression, &identity)?,
-                    "short_circuit_owner_tail",
-                ),
+                // RIPR-SPEC-0265 rule 5: a closure that is the owner's whole
+                // body is the value the owner returns; whether the pinned
+                // expression applies it on inputs that tell its operators
+                // apart is the owner pin's question.
+                None => {
+                    match super::owner_pin::returned_closure::owner_returned_closure_tail(owner)
+                        .filter(|tail| tail.tail_is(&probe.expression))
+                    {
+                        Some(tail) => (
+                            owner.start_line + tail.tail_line_offset,
+                            "returned_closure_owner_tail",
+                        ),
+                        None => (
+                            short_circuit_owner_tail_line(owner, &probe.expression, &identity)?,
+                            "short_circuit_owner_tail",
+                        ),
+                    }
+                }
             },
         },
     };
+    direct_tail_witness(probe, owner, sinks, tail_line, limitation)
+}
+
+/// #9870: the exact Result.map rewrite forwards its callback's payload.
+/// Observation remains the existing per-test Ok owner-return pin's decision.
+pub(in crate::analysis) fn result_map_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+    sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    let line = super::owner_pin::result_map::admitted_rewrite(probe, owner, index)?;
+    direct_tail_witness(probe, owner, sinks, line, "result_map_callback_payload")
+}
+
+fn direct_tail_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    sinks: &[FlowSinkFact],
+    tail_line: usize,
+    limitation: &str,
+) -> Option<PropagationWitnessV1> {
     if tail_line != probe.location.line {
         return None;
     }
+    let identity = normalize_semantic_text(&probe.expression);
     let sink = sinks.iter().find(|sink| {
         sink.owner.as_ref() == Some(&owner.id)
             && sink.kind == FlowSinkKind::ReturnValue
@@ -823,6 +866,35 @@ fn returns_itself_on_its_line(probe: &Probe, sink: &FlowSinkFact) -> bool {
         && source.strip_prefix("return ").is_some_and(|payload| {
             let payload = payload.trim();
             call_free_constructor(payload) && payload == normalize_semantic_text(&sink.text)
+        })
+}
+
+/// RIPR-SPEC-0360: the changed statement adds into (or subtracts from) the
+/// local that the flow producer named as the owner's returned tail on the
+/// statement's own line. Only `loop_accumulator_at` makes flow emit that
+/// sink for an update statement, so equal names bind the update to the
+/// return. Whether a test observes the sum is reveal's question.
+fn accumulates_into_returned_local(probe: &Probe, sink: &FlowSinkFact) -> bool {
+    if probe.family != ProbeFamily::ReturnValue
+        || sink.kind != FlowSinkKind::ReturnValue
+        || sink.line != probe.location.line
+    {
+        return false;
+    }
+    let source = normalize_semantic_text(&probe.expression);
+    let source = source.trim().trim_end_matches(';').trim_end();
+    let local = normalize_semantic_text(&sink.text);
+    ["+=", "-="].iter().any(|op| {
+        source
+            .strip_prefix(local.as_str())
+            .is_some_and(|rest| rest.trim_start().starts_with(op))
+    }) || source
+        .strip_prefix(local.as_str())
+        .and_then(|rest| rest.trim_start().strip_prefix('='))
+        .is_some_and(|rest| {
+            rest.trim_start()
+                .strip_prefix(local.as_str())
+                .is_some_and(|rest| rest.trim_start().starts_with(['+', '-']))
         })
 }
 
@@ -1577,6 +1649,7 @@ fn subject_field_collection_read(subject: &str, path: &str) -> Option<FieldColle
 ///   `self.m(..)` whose body (from `method_body`, through further `self`
 ///   calls) may do so. A method `method_body` cannot resolve counts as a
 ///   write.
+#[cfg(test)]
 pub(in crate::analysis) fn pushed_literal_collection_path(
     body: &str,
     start_line: usize,
@@ -1584,6 +1657,24 @@ pub(in crate::analysis) fn pushed_literal_collection_path(
     expression: &str,
     method_body: &dyn Fn(&str) -> Option<String>,
 ) -> Option<String> {
+    pushed_literal_site(body, start_line, line, expression, method_body).map(|site| site.path)
+}
+
+/// The push [`pushed_literal_collection_path`] confirms: the field path it
+/// writes and the path of the struct or variant literal it pushes
+/// (`Line`, `Event::Shipped`).
+pub(in crate::analysis) struct PushedLiteralSite {
+    pub(in crate::analysis) path: String,
+    pub(in crate::analysis) literal: String,
+}
+
+pub(in crate::analysis) fn pushed_literal_site(
+    body: &str,
+    start_line: usize,
+    line: usize,
+    expression: &str,
+    method_body: &dyn Fn(&str) -> Option<String>,
+) -> Option<PushedLiteralSite> {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let line_start = masked
         .split_inclusive('\n')
@@ -1631,8 +1722,12 @@ pub(in crate::analysis) fn pushed_literal_collection_path(
             let path = field_collection_write_path(body.get(call_line_start..=paren)?)?;
             let call_end = masked.len() - after_literal.len();
             let mut visited = Vec::new();
-            (!may_write_field(&masked[call_end..], path, method_body, &mut visited))
-                .then(|| path.to_string())
+            (!may_write_field(&masked[call_end..], path, method_body, &mut visited)).then(|| {
+                PushedLiteralSite {
+                    path: path.to_string(),
+                    literal: literal_path.get(..path_len).unwrap_or_default().to_string(),
+                }
+            })
         })
 }
 
@@ -2225,6 +2320,104 @@ pub(in crate::analysis) fn assertion_whole_collection_equality(
             (!names_ident(other, &read.binding)).then_some(read)
         })
         .collect()
+}
+
+/// #7697: whether `assert_eq!` compares the field collection `path` of the
+/// binding that ran the owner against the same field of a second binding the
+/// test filled by hand. The second binding must start from a bare
+/// `Type::default()` / `Type::new()` and take only `push`/`extend`/`insert`
+/// calls: a helper or another method may build it through the owner, which
+/// the test text does not show, so both sides would change together.
+pub(in crate::analysis) fn assertion_compares_hand_built_field(
+    test_body: &str,
+    assertion_text: &str,
+    path: &str,
+    owner_name: &str,
+) -> bool {
+    let Some(payload) = macro_payload(assertion_text, "assert_eq").map(str::trim_start) else {
+        return false;
+    };
+    let Some(first) = first_call_argument(payload) else {
+        return false;
+    };
+    let Some(second) = payload
+        .strip_prefix(first.as_str())
+        .and_then(|rest| rest.trim_start().strip_prefix(','))
+        .and_then(first_call_argument)
+    else {
+        return false;
+    };
+    let (Some(a), Some(b)) = (
+        whole_collection_read(&first, path),
+        whole_collection_read(&second, path),
+    ) else {
+        return false;
+    };
+    if a.getter.is_some() || b.getter.is_some() || a.binding == b.binding {
+        return false;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(test_body);
+    let ran_owner = |binding: &str| masked.contains(&format!("{binding}.{owner_name}("));
+    let (a_ran, b_ran) = (ran_owner(&a.binding), ran_owner(&b.binding));
+    let expected = match (a_ran, b_ran) {
+        (true, false) => &b.binding,
+        (false, true) => &a.binding,
+        _ => return false,
+    };
+    binding_is_hand_built(&masked, expected)
+}
+
+/// `let [mut] binding = Type::default()|Type::new();` and every later
+/// `binding.` use is a field path, optionally ending in `push`, `extend` or
+/// `insert` calls.
+fn binding_is_hand_built(masked_body: &str, binding: &str) -> bool {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut declared = false;
+    for (at, _) in masked_body.match_indices(binding) {
+        if masked_body[..at].chars().next_back().is_some_and(is_ident)
+            || masked_body[at + binding.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_ident)
+        {
+            continue;
+        }
+        let before = masked_body[..at].trim_end();
+        let rest = &masked_body[at + binding.len()..];
+        if before.ends_with("let") || before.ends_with("let mut") {
+            let Some(init) = rest.trim_start().strip_prefix('=') else {
+                return false;
+            };
+            let init = init.trim_start();
+            let end = init.find(';').unwrap_or(init.len());
+            let init = init[..end].trim();
+            let constructor = init
+                .strip_suffix("::default()")
+                .or_else(|| init.strip_suffix("::new()"))
+                .is_some_and(|ty| !ty.is_empty() && ty.chars().all(|ch| is_ident(ch) || ch == ':'));
+            if !constructor || declared {
+                return false;
+            }
+            declared = true;
+            continue;
+        }
+        if let Some(after_dot) = rest.strip_prefix('.') {
+            let segment_end = after_dot
+                .find(|ch: char| !(is_ident(ch) || ch == '.'))
+                .unwrap_or(after_dot.len());
+            let chain = &after_dot[..segment_end];
+            if after_dot[segment_end..].starts_with('(') {
+                let method = chain.rsplit('.').next().unwrap_or(chain);
+                if !matches!(method, "push" | "extend" | "insert") {
+                    return false;
+                }
+            }
+        } else {
+            // Passed or moved somewhere else (`helper(&mut expected)`).
+            return false;
+        }
+    }
+    declared
 }
 
 fn whole_collection_read(side: &str, path: &str) -> Option<FieldCollectionRead> {
@@ -4378,9 +4571,74 @@ mod tests {
         }
     }
 
+    /// #7697: the expected collection must be filled by hand on a binding
+    /// that never ran the owner and was built only with `push`-style calls.
+    #[test]
+    fn hand_built_expected_collection_is_the_only_independent_side() {
+        let assertion = "assert_eq!(order.lines, expected.lines);";
+        let check = |body: &str, assertion: &str| {
+            assertion_compares_hand_built_field(body, assertion, "lines", "add")
+        };
+        let hand_built = "let mut order = Order::default();\n let mut expected = Order::default();\n expected.lines.push(Line { sku: \"A\".to_string() });\n order.add(\"a\", 1);";
+        assert!(check(hand_built, assertion));
+        assert!(check(
+            hand_built,
+            "assert_eq!(expected.lines, order.lines);"
+        ));
+        for body in [
+            // The expected side is built through the owner.
+            "let mut order = Order::default();\n let mut expected = Order::default();\n expected.add(\"a\", 1);\n order.add(\"a\", 1);",
+            // A helper builds the expected side.
+            "let mut order = Order::default();\n let expected = fixture();\n order.add(\"a\", 1);",
+            // A helper receives the expected binding.
+            "let mut order = Order::default();\n let mut expected = Order::default();\n fill(&mut expected);\n order.add(\"a\", 1);",
+            // A method other than a push builds it.
+            "let mut order = Order::default();\n let mut expected = Order::default();\n expected.seed();\n order.add(\"a\", 1);",
+            // Neither side ran the owner.
+            "let mut order = Order::default();\n let mut expected = Order::default();\n expected.lines.push(Line { sku: \"A\".to_string() });",
+        ] {
+            assert!(!check(body, assertion), "{body}");
+        }
+        // A getter, a literal or a helper call is not a plain read.
+        for text in [
+            "assert_eq!(order.lines(), expected.lines);",
+            "assert_eq!(order.lines, fixture().lines);",
+            "assert_eq!(order.lines, vec![Line { sku: \"A\".to_string() }]);",
+            "assert_ne!(order.lines, expected.lines);",
+        ] {
+            assert!(!check(hand_built, text), "{text}");
+        }
+    }
+
     /// #7131: a field credits through a pushed collection only when its
     /// literal is the whole `push` argument on a field path of `self` and
     /// nothing after the push writes that field again.
+    #[test]
+    fn pushed_literal_site_names_the_literal_that_encloses_the_probe() {
+        let site = |body: &str, line: usize, expression: &str| {
+            pushed_literal_site(body, 1, line, expression, &|_| None)
+                .map(|site| (site.path, site.literal))
+        };
+        let plain =
+            "fn add(&mut self) {\n    self.lines.push(Line { sku: sku.to_uppercase(), qty });\n}";
+        assert_eq!(
+            site(plain, 2, "sku: sku.to_uppercase()"),
+            Some(("lines".to_string(), "Line".to_string()))
+        );
+        let variant = "fn add(&mut self) {\n    self.log.push(Event::Shipped { sku: sku.to_uppercase() });\n}";
+        assert_eq!(
+            site(variant, 2, "sku: sku.to_uppercase()"),
+            Some(("log".to_string(), "Event::Shipped".to_string()))
+        );
+        // A closed push inside the initializer must not stand in for the
+        // outer literal that holds the changed field.
+        let nested = "fn add(&mut self) {\n    self.lines.push(Line { sku: { self.audit.push(Tag { id: 1 }); sku.to_uppercase() }, qty });\n}";
+        assert_eq!(
+            site(nested, 2, "sku.to_uppercase()"),
+            Some(("lines".to_string(), "Line".to_string()))
+        );
+    }
+
     #[test]
     fn pushed_literal_collection_path_needs_the_whole_pushed_literal() {
         let path = |body: &str, line: usize| {

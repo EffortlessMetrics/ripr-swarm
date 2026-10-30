@@ -29,6 +29,7 @@
 //! still has to observe the sink through the ordinary evidence stages.
 
 mod macro_argument;
+mod qualified_hop;
 mod returned_ledger;
 pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
 #[cfg(test)]
@@ -77,6 +78,14 @@ impl<'a> HelperEval<'a> {
             depth: 0,
             states: Vec::new(),
         }
+    }
+
+    /// The source text of the file that holds `helper`, when the index has it.
+    pub(super) fn source_of(&self, helper: &FunctionSummary) -> Option<String> {
+        self.index
+            .files()
+            .get(&helper.file)
+            .map(|facts| facts.source.to_string())
     }
 
     /// Enter the evaluation of `helper` over `inputs`: refuse a state
@@ -160,6 +169,20 @@ pub(crate) struct HelperHop {
     /// forwards the callee's result, binds no argument rows, and has no
     /// `arguments`.
     pub(crate) through_macro: bool,
+    /// Bound by the own-module qualified-call route (#8999). Its receiver
+    /// entry needs the stricter identity rules, and the hop establishes only
+    /// reach, never result forwarding. Preserve this provenance through chains.
+    pub(crate) module_qualified: bool,
+    /// Some indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
+    /// something other than the standard macro (a `macro_rules!`, an
+    /// import, a glob or `#[macro_use]`), so no bare macro in the caller
+    /// is trusted to be transparent (#10351).
+    pub(crate) transparent_macros_rebound: bool,
+    /// The `.unwrap_or_else(<path>)` handler paths in the caller's body whose
+    /// target is one workspace function that only diverges (#9638), so an
+    /// `Ok` value passes through that unwrap unchanged. Resolved once at hop
+    /// construction, where the index is in hand; empty when none qualifies.
+    pub(crate) diverging_handlers: Vec<String>,
 }
 
 /// The resolved chain for one helper. `stop_above` names the first
@@ -994,6 +1017,9 @@ pub(crate) fn resolve_chain(
             arguments: Vec::new(),
             receiver: None,
             through_macro: true,
+            module_qualified: false,
+            transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+            diverging_handlers: diverging_handlers(caller, callee_name, index),
         };
         return extend_chain(hop, callee_name, index, workspace_complete, visited);
     }
@@ -1089,6 +1115,11 @@ fn chain_through_caller(
         if let Some(hop) = method_hop(caller, callee_name, index) {
             return extend_chain(hop, callee_name, index, workspace_complete, visited);
         }
+        // #8999: a call spelled through an own-crate module path that
+        // resolves to the callee's module.
+        if let Some(hop) = qualified_hop::qualified_free_hop(caller, callee_name, index) {
+            return extend_chain(hop, callee_name, index, workspace_complete, visited);
+        }
         return stopped(format!(
             "call site for `{callee_name}` in `{}` is not statically splittable",
             caller.name
@@ -1108,6 +1139,9 @@ fn chain_through_caller(
         arguments,
         receiver: None,
         through_macro: false,
+        module_qualified: false,
+        transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+        diverging_handlers: diverging_handlers(caller, callee_name, index),
     };
     extend_chain(hop, callee_name, index, workspace_complete, visited)
 }
@@ -1166,6 +1200,159 @@ pub(crate) fn mentions_only_as_receiver_call(text: &str, name: &str) -> bool {
 /// Whether any hop of `chain` is a method hop (#9329).
 pub(crate) fn chain_has_method_hop(chain: &HelperChain) -> bool {
     chain.hops.iter().any(|hop| hop.receiver.is_some())
+}
+
+/// #9638: whether `test` enters `chain` through a receiver call of a hop
+/// caller that is a method (`pool.grow(8)` for `fn grow(&mut self, ..) {
+/// self.try_grow(..) }`), the form the free-call test in `find_related_tests`
+/// cannot see. Every condition fails closed.
+///
+/// Checked here, each pinned by a `helper_wrapper_reach` negative:
+///
+/// - the entry is an inherent method (`impl Type`, not a trait impl) whose
+///   first parameter text is `self`, `&self` or `&mut self` (so an associated fn without a receiver is refused), in production source
+///   (no evidence role, no `#[cfg(test)]` item or impl);
+/// - no hop from the owner up to the entry goes through a macro argument;
+/// - the test's only mentions of the name are receiver calls (never a path
+///   call or function value) that no test-local binding shadows;
+/// - every receiver is established as a value of the entry's own impl type: a
+///   `let` the test binds only to that type's constructor or struct literal,
+///   or an inline constructor, read by the owner-pin receiver reader. A std
+///   or external receiver, a parameter, a rebound name or a foreign import of
+///   the type never relates the test (`Vec::len` is not a forwarder `len`).
+///
+/// Not decided here (upstream chain construction, not pinned by a negative in
+/// this rule): that the entry is the one workspace function of its name and
+/// that each hop is a direct or identity-bound `self.` call. The in-package
+/// condition is applied by `find_related_tests`, and a test in another
+/// package is refused end to end (`forwarder_method_called_from_another_package_is_not_related`),
+/// though no single guard of it is mutation-pinned.
+///
+/// This only relates the test. Whether the entry's result reaches an oracle
+/// is still decided by the forwarding rules, which refuse a method entry
+/// they cannot read.
+pub(crate) fn test_calls_method_entry(
+    index: &RustIndex,
+    test: &crate::analysis::facts::TestSummary,
+    chain: &HelperChain,
+) -> bool {
+    use crate::analysis::facts::FunctionContainer;
+    chain.hops.iter().enumerate().any(|(at, hop)| {
+        let entry = &hop.caller;
+        matches!(entry.item.container, FunctionContainer::Inherent { .. })
+            && !entry.source_role.is_evidence_role()
+            && chain.hops[..=at]
+                .iter()
+                .all(|below| !below.through_macro && !below.module_qualified)
+            && super::activation::signature_parameter_texts(entry)
+                .first()
+                .is_some_and(|first| matches!(first.trim(), "self" | "&self" | "&mut self"))
+            && !entry
+                .attrs
+                .iter()
+                .chain(&entry.impl_attrs)
+                .any(|attr| attr.replace(' ', "").contains("cfg(test)"))
+            && test.calls.iter().any(|call| {
+                call.name == entry.name
+                    && mentions_only_as_receiver_call(&call.text, &entry.name)
+                    && !test_call_is_shadowed(index, test, &entry.name, call.line)
+                    && receivers_are_entry_type(index, test, entry, &call.text)
+            })
+    })
+}
+
+/// #9638 (false-credit review F1): every `.<entry>(` on the call line has a
+/// receiver the test built as a value of the entry's own impl type.
+/// A receiver whose type is not established (`vec![1].len()`, a `HashSet`, a
+/// `String`, an iterator, a parameter or field) never relates the test: a
+/// method name alone is not type identity. Reads the owner-pin receiver
+/// reader, which also refuses a foreign or aliased import of the type.
+fn receivers_are_entry_type(
+    index: &RustIndex,
+    test: &crate::analysis::facts::TestSummary,
+    entry: &FunctionSummary,
+    line: &str,
+) -> bool {
+    let Some(entry_type) = impl_self_type(entry) else {
+        return false;
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(line);
+    let needle = format!(".{}(", entry.name);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mentions = masked
+        .match_indices(entry.name.as_str())
+        .filter(|(at, _)| {
+            !masked[..*at].chars().next_back().is_some_and(is_word)
+                && !masked[at + entry.name.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word)
+        })
+        .count();
+    let dots: Vec<usize> = masked.match_indices(&needle).map(|(at, _)| at).collect();
+    if dots.is_empty() || dots.len() != mentions {
+        return false;
+    }
+    let scope = super::owner_pin::OwnerScope::new(&entry.name, entry.start_line, &entry.file);
+    dots.into_iter().all(|dot| {
+        receiver_expression(&masked, dot)
+            .and_then(|receiver| {
+                super::owner_pin::test_receiver_named_type(test, &receiver, scope, index)
+            })
+            .is_some_and(|named| named == entry_type)
+    })
+}
+
+/// The receiver expression ending at the `.` at `dot`: an identifier, or a
+/// bracketed constructor (`Pool::default()`, `Pool { .. }`) with its type
+/// path. `None` for a field or chained receiver (`a.b.grow(..)`,
+/// `make().grow(..)` is a call head, read as `make()`), which is not read.
+fn receiver_expression(masked: &str, dot: usize) -> Option<String> {
+    let before = masked[..dot].trim_end();
+    let is_path = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':';
+    let last = before.chars().next_back()?;
+    let start = if last == ')' || last == '}' {
+        let (open, close) = if last == ')' { ('(', ')') } else { ('{', '}') };
+        let mut depth = 0usize;
+        let mut opener = None;
+        for (at, ch) in before.char_indices().rev() {
+            if ch == close {
+                depth += 1;
+            } else if ch == open {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    opener = Some(at);
+                    break;
+                }
+            }
+        }
+        let opener = opener?;
+        let head = before[..opener].trim_end();
+        let head_len = head
+            .chars()
+            .rev()
+            .take_while(|ch| is_path(*ch))
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if head_len == 0 {
+            return None;
+        }
+        head.len() - head_len
+    } else if last.is_ascii_alphanumeric() || last == '_' {
+        before.len()
+            - before
+                .chars()
+                .rev()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .map(char::len_utf8)
+                .sum::<usize>()
+    } else {
+        return None;
+    };
+    if masked[..start].trim_end().ends_with('.') {
+        return None;
+    }
+    Some(before[start..].to_string())
 }
 
 /// The receiver self forms a method hop admits. `&mut self` is refused: the
@@ -1296,6 +1483,9 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
         arguments,
         receiver: Some(receiver.to_string()),
         through_macro: false,
+        module_qualified: false,
+        transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+        diverging_handlers: diverging_handlers(caller, callee_name, index),
     })
 }
 
@@ -1360,6 +1550,37 @@ pub(crate) fn test_reaches_through_chain(
     reached.then_some(chain)
 }
 
+/// Whether `body` opens a raw string (`r"`, `r#"`, `br"`, `cr##"`). The
+/// `r` must start the token: the `r` ending an identifier or an ordinary
+/// literal (`"other"`, `"user"`) is not an opener, and `r#parse` is a raw
+/// identifier, not a raw string. A literal that merely contains `r#"` still
+/// matches, which only refuses (missed credit), never credits.
+fn has_raw_string_opener(body: &str) -> bool {
+    let bytes = body.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    bytes.iter().enumerate().any(|(index, &byte)| {
+        if byte != b'r' {
+            return false;
+        }
+        // A `b` or `c` prefix belongs to the opener, not to an identifier.
+        let token_start = match index.checked_sub(1).map(|at| bytes[at]) {
+            Some(b'b' | b'c') => index - 1,
+            _ => index,
+        };
+        if token_start
+            .checked_sub(1)
+            .is_some_and(|at| is_ident(bytes[at]))
+        {
+            return false;
+        }
+        let mut next = index + 1;
+        while bytes.get(next) == Some(&b'#') {
+            next += 1;
+        }
+        bytes.get(next) == Some(&b'"')
+    })
+}
+
 /// Evaluate a helper's return value over bound exact inputs (#3296,
 /// the boolean/return predicate family). V1 supports a body whose
 /// final expression is a bare binding established by simple single-line
@@ -1411,6 +1632,39 @@ pub(crate) fn helper_return_value(
             continue;
         }
         let cleaned = trimmed.trim_end_matches(';').trim();
+        // Masking blanks a string literal, so a line that is one whole
+        // literal reads empty here; it is the tail, not a skipped line.
+        if cleaned.is_empty() && strict_literal(raw_line.trim().trim_end_matches(';')).is_some() {
+            // Masking also blanks the interior of a multi-line raw string,
+            // and an `async` body or an early `return` makes the last
+            // literal something other than the value the call yields.
+            let word = |name: &str| {
+                masked
+                    .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                    .any(|token| token == name)
+            };
+            // A `;` makes it a discarded expression statement, not the
+            // value the helper yields; the binding tail below decides.
+            if raw_line.trim().ends_with(';') {
+                continue;
+            }
+            if !super::match_transfer::is_single_literal(raw_line.trim().trim_end_matches(';'))
+                || has_raw_string_opener(&helper.body)
+                // Masking blanks block-comment text exactly like a string,
+                // so a quoted line inside `/* ... */` would read as a tail.
+                || helper.body.contains("/*")
+                || word("async")
+                || word("return")
+                || tail.is_some()
+            {
+                return None;
+            }
+            if tail.is_some() {
+                return None;
+            }
+            tail = Some(raw_line.trim().trim_end_matches(';').trim().to_string());
+            continue;
+        }
         if cleaned.is_empty()
             || cleaned.starts_with("//")
             || cleaned.starts_with('#')
@@ -1431,6 +1685,17 @@ pub(crate) fn helper_return_value(
         tail = Some(raw_line.trim().trim_end_matches(';').trim().to_string());
     }
     let tail = tail?;
+    // A helper whose tail is one strict literal returns it whatever its
+    // inputs are (`fn pick(_kind: &str) -> &'static str { "alpha" }`).
+    // Only a whole-token literal counts, so no operation is evaluated.
+    if let Some(literal) =
+        strict_literal(&tail).filter(|text| super::match_transfer::is_single_literal(text))
+    {
+        return match super::value_transfer::evaluate_initializer(&literal, inputs) {
+            super::value_transfer::EvalOutcome::Exact { value, .. } => Some(value),
+            _ => None,
+        };
+    }
     let is_identifier = !tail.is_empty()
         && tail
             .chars()
@@ -1607,8 +1872,11 @@ pub(crate) fn chain_entry_pin_admits(
         crate::domain::RelationReason,
     )],
     index: &RustIndex,
-    test: &crate::analysis::facts::TestSummary,
-    assertion: &crate::analysis::facts::OracleFact,
+    (test, assertion): (
+        &crate::analysis::facts::TestSummary,
+        &crate::analysis::facts::OracleFact,
+    ),
+    identity: &std::cell::OnceCell<bool>,
 ) -> bool {
     use crate::domain::OracleKind;
     if !matches!(assertion.kind, OracleKind::ExactValue) || !helper_only_reach(related_tests) {
@@ -1647,26 +1915,6 @@ pub(crate) fn chain_entry_pin_admits(
             }
             _ => {}
         }
-    }
-    // The entry pin is the method-hop claim (#5352): a free-function
-    // wrapper chain keeps its documented no-return-credit reading
-    // (RIPR-SPEC-0159), so every hop must be an identity-bound method
-    // call site.
-    let every_hop_is_a_method_site = chain.hops.iter().enumerate().all(|(step, hop)| {
-        let callee = match step.checked_sub(1) {
-            None => owner_name,
-            Some(below) => match chain.hops.get(below) {
-                Some(lower) => lower.caller.name.as_str(),
-                None => return false,
-            },
-        };
-        method_call_site(&hop.call_text, callee).is_some()
-    });
-    if !every_hop_is_a_method_site {
-        return false;
-    }
-    if !chain_forwards_to_observed_hops(owner_name, chain, related_tests, index) {
-        return false;
     }
     let Some(entry) = chain.hops.last() else {
         return false;
@@ -1712,7 +1960,25 @@ pub(crate) fn chain_entry_pin_admits(
         (false, true) => &operands[0],
         _ => return false,
     };
-    !super::owner_pin::expected_reaches_owner(test, &assertion.text, expected, entry_name)
+    if super::owner_pin::expected_reaches_owner(test, &assertion.text, expected, entry_name) {
+        return false;
+    }
+    // The entry pin is the method-hop claim (#5352), or a chain of free
+    // direct calls whose bare-name identity is established (#9638). The
+    // chain checks run last: they read whole source files, and the identity
+    // answer is the same for every assertion of a probe (`identity` memoizes it).
+    let every_hop_is_a_method_site = chain.hops.iter().enumerate().all(|(step, hop)| {
+        hop_callee(chain, owner_name, step)
+            .is_some_and(|callee| method_call_site(&hop.call_text, callee).is_some())
+    });
+    if !every_hop_is_a_method_site
+        && !*identity.get_or_init(|| {
+            free_call_chain_is_identity_bound(owner_name, chain, related_tests, index)
+        })
+    {
+        return false;
+    }
+    chain_forwards_return_to_observed_hops(owner_name, chain, related_tests, index, identity)
 }
 
 /// Whether `operand` is exactly one direct call of `name` (`entry(1)`),
@@ -2162,6 +2428,270 @@ pub(crate) fn chain_forwards_to_observed_hops(
         || asserting_method_entry(owner_name, hops, index).is_some()
 }
 
+/// The function the hop at `step` calls: the owner for the first hop, the
+/// previous hop's caller above it.
+fn hop_callee<'a>(chain: &'a HelperChain, owner_name: &'a str, step: usize) -> Option<&'a str> {
+    match step.checked_sub(1) {
+        None => Some(owner_name),
+        Some(below) => chain
+            .hops
+            .get(below)
+            .map(|lower| lower.caller.name.as_str()),
+    }
+}
+
+/// Whether every observed hop of `chain` is a plain free call whose bare name
+/// can only mean the chain's function (#9638): the callee is the one
+/// workspace function of its name, declared in the caller's own file and
+/// module scope outside any `impl`, is not imported, macro-defined, rebound
+/// by any pattern (parameters included), `const`, `static` or `use` in the
+/// caller, and no hop is a method call or a macro argument.
+fn free_call_chain_is_identity_bound(
+    owner_name: &str,
+    chain: &HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+    index: &RustIndex,
+) -> bool {
+    let observed = observed_hops(chain, related_tests);
+    !observed.is_empty()
+        && observed.iter().enumerate().all(|(step, hop)| {
+            // A method or macro-argument hop never forwards (the forwarding
+            // check refuses it), so only the call form is read here.
+            hop_callee(chain, owner_name, step).is_some_and(|callee| {
+                is_direct_call_site(&hop.call_text, callee)
+                    && caller_names_callee_only_as_a_call(&hop.caller.body, callee)
+                    && callee_declared_beside_caller(callee, &hop.caller, index)
+            })
+        })
+        && hops_call_the_indexed_callees(owner_name, observed, index)
+}
+
+/// Callee and caller sit in the same enclosing scopes, none of them an `impl`
+/// (a bare call never names an associated fn) or a function body or other
+/// opaque block (which may hold a shadowing `use` or item).
+fn scopes_allow_a_bare_call(callee: &[BlockScope], caller: &[BlockScope]) -> bool {
+    callee == caller
+        && !callee
+            .iter()
+            .any(|scope| matches!(scope, BlockScope::Impl(_) | BlockScope::Opaque(_)))
+}
+
+/// Whether every whole-word occurrence of `callee` in the caller's masked
+/// text (signature included) is a direct call `callee(` that no `fn` or
+/// raw-identifier prefix turns into a declaration, and the text holds no `use`
+/// item or macro definition. A
+/// pattern (`(inner, _)`, `&inner`, `Some(inner)`, `S { inner }`), a closure
+/// parameter, a `const`/`static` of the name and a block-level glob import all
+/// leave an occurrence that is not a call, or a `use`, and answer `false`.
+fn caller_names_callee_only_as_a_call(caller_text: &str, callee: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(caller_text);
+    if masked.len() != caller_text.len() || callee.is_empty() {
+        return false;
+    }
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    if contains_word(&masked, "use") || contains_word(&masked, "macro_rules") {
+        return false;
+    }
+    masked.match_indices(callee).all(|(at, _)| {
+        let before = &masked[..at];
+        let after = &masked[at + callee.len()..];
+        if before.chars().next_back().is_some_and(is_word)
+            || after.chars().next().is_some_and(is_word)
+        {
+            return true;
+        }
+        let previous_word = before
+            .trim_end()
+            .rsplit(|ch: char| !is_word(ch))
+            .next()
+            .unwrap_or("");
+        // `fn inner(..)` and `struct inner(..)` declare the name with a `(`
+        // after it; every other binding form (`let`, `const`, `static`,
+        // patterns, parameters) leaves an occurrence that no `(` follows.
+        after.trim_start().starts_with('(')
+            && ![
+                "fn", "struct", "enum", "union", "type", "trait", "mod", "macro",
+            ]
+            .contains(&previous_word)
+            && !before.trim_end().ends_with(['#', '.', '|', '&', ':'])
+    })
+}
+
+/// Whether the one workspace function `callee_name` is declared in the same
+/// file and the same module scope as `caller`, neither inside an `impl`, so a
+/// bare call of its name from `caller` can only mean that item (a `use`, glob
+/// import or other module's function of the name cannot take its place).
+fn callee_declared_beside_caller(
+    callee_name: &str,
+    caller: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let Some(callee) = index
+        .functions()
+        .iter()
+        .find(|function| function.name == callee_name)
+    else {
+        return false;
+    };
+    // A callee in another file has no `fn <name>` on that line of the caller's
+    // file (two such functions would make the name non-unique), so its scopes
+    // read `None` below and the answer is `false`.
+    let Some(file) = index.files().get(&caller.file) else {
+        return false;
+    };
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&file.source);
+    let scopes = |function: &FunctionSummary| {
+        scopes_enclosing_fn(&masked, function.start_line, &function.name)
+    };
+    match (scopes(callee), scopes(caller)) {
+        (Some(callee_scopes), Some(caller_scopes)) => {
+            scopes_allow_a_bare_call(&callee_scopes, &caller_scopes)
+        }
+        _ => false,
+    }
+}
+
+/// [`chain_forwards_to_observed_hops`] for a return-value owner, where a hop
+/// may also hand the call's result on shifted by a decimal integer literal
+/// (`inner(x) + 1`, `1 + inner(x)`, `inner(x) - 1`) when the owner and every
+/// observed hop caller declare a builtin integer return type (#9638). Adding
+/// or subtracting a constant is injective on an integer type, wrapping or
+/// panicking on overflow, so an exact value at the entry still moves with the
+/// owner's. A custom type (`impl Add<i32>`), a float, a string, any other
+/// operator and any other operand keep the strict reading.
+pub(crate) fn chain_forwards_return_to_observed_hops(
+    owner_name: &str,
+    chain: &HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+    index: &RustIndex,
+    identity: &std::cell::OnceCell<bool>,
+) -> bool {
+    if chain_forwards_to_observed_hops(owner_name, chain, related_tests, index) {
+        return true;
+    }
+    let hops = observed_hops(chain, related_tests);
+    hops_forward_owner_result_with(owner_name, hops, true)
+        && owner_and_hops_return_builtin_integers(owner_name, hops, index)
+        && *identity.get_or_init(|| {
+            free_call_chain_is_identity_bound(owner_name, chain, related_tests, index)
+        })
+}
+
+/// The owner and every hop caller declare a builtin integer return type that
+/// no workspace type of that name shadows.
+fn owner_and_hops_return_builtin_integers(
+    owner_name: &str,
+    hops: &[HelperHop],
+    index: &RustIndex,
+) -> bool {
+    const INTEGERS: &[&str] = &[
+        "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+    ];
+    let integer_return = |function: &FunctionSummary| {
+        super::owner_pin::declared_return_type(&function.body).is_some_and(|returned| {
+            let returned = returned.trim();
+            INTEGERS.contains(&returned)
+                && super::owner_pin::workspace_type_name_count(returned, index) == 0
+                && !index.files().get(&function.file).is_some_and(|file| {
+                    let masked =
+                        crate::analysis::language::mask_rust_comments_and_strings(&file.source);
+                    let scopes = scopes_enclosing_fn(&masked, function.start_line, &function.name);
+                    file_use_binds_name(&file.source, returned, scopes.as_deref())
+                })
+        })
+    };
+    // Uniqueness of each name is the identity check's, which callers AND in.
+    index
+        .functions()
+        .iter()
+        .find(|function| function.name == owner_name)
+        .is_some_and(integer_return)
+        && hops.iter().all(|hop| integer_return(&hop.caller))
+}
+
+/// Whether some `use` item of `source` binds `name`, by path or rename
+/// (`use ext::Wide as i64;`, `use ext::i64;`), or is a glob import that could
+/// bring such a name in (`use ext::*;`). A `super::*` / `self::*` glob stands
+/// for the parent module's imports, which this file cannot show, so it is
+/// exempt only where it sits in a scope that does not enclose the function
+/// (an inline `mod tests { use super::*; }` beside it); a glob at file top
+/// level or in the function's own module, or one whose scope cannot be read
+/// (`function_scopes` is `None`), answers `true`.
+fn file_use_binds_name(source: &str, name: &str, function_scopes: Option<&[BlockScope]>) -> bool {
+    let is_parent_glob = |path: &str| matches!(path, "super::*" | "self::*");
+    let imports = super::reveal::flattened_use_paths(source);
+    let binds = imports.iter().any(|import| {
+        if import.path.ends_with('*') {
+            return !is_parent_glob(import.path.as_str());
+        }
+        import
+            .alias
+            .as_deref()
+            .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or(""))
+            == name
+    });
+    if binds {
+        return true;
+    }
+    if !imports.iter().any(|import| is_parent_glob(&import.path)) {
+        return false;
+    }
+    let Some(function_scopes) = function_scopes else {
+        return true;
+    };
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    masked.match_indices("use").any(|(at, _)| {
+        if masked[..at].chars().next_back().is_some_and(is_word)
+            || masked[at + 3..].chars().next().is_some_and(is_word)
+        {
+            return false;
+        }
+        let end = masked[at..]
+            .find(';')
+            .map_or(masked.len(), |found| at + found + 1);
+        let statement = &masked[at..end];
+        if !super::reveal::flattened_use_paths(statement)
+            .iter()
+            .any(|import| is_parent_glob(&import.path))
+        {
+            return false;
+        }
+        scopes_before(&masked, at)
+            .is_none_or(|glob_scopes| function_scopes.starts_with(&glob_scopes))
+    })
+}
+
+/// `text` (masked) is one exact direct call of `callee` with a decimal
+/// integer literal added or subtracted: `call + 1`, `1 + call`, `call - 1`.
+fn is_integer_offset_of_call(text: &str, callee: &str) -> bool {
+    let is_literal = |operand: &str| {
+        let operand = operand.trim();
+        !operand.is_empty()
+            && operand.starts_with(|ch: char| ch.is_ascii_digit())
+            && operand.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+    };
+    let text = text.trim();
+    if direct_call_paren(text, callee) == Some(0) {
+        let Some(close) = matching_close(text, callee.len()) else {
+            return false;
+        };
+        let rest = text[close + 1..].trim_start();
+        return ["+", "-"].iter().any(|op| {
+            rest.strip_prefix(op)
+                .is_some_and(|operand| !operand.starts_with(['=', '>']) && is_literal(operand))
+        });
+    }
+    text.split_once('+')
+        .is_some_and(|(literal, call)| is_literal(literal) && is_exact_call(call.trim(), callee))
+}
+
 /// The returned-ledger proof covers only the first caller. It may replace that
 /// hop's ordinary dropped-result explanation only when no higher hop is observed.
 /// Keep higher forwarding failures visible until their identity is established.
@@ -2253,13 +2783,14 @@ pub(crate) fn chain_passes_effect_target_to_observed_hops(
         .map(|(index, _)| index)
         .collect();
     // #6614: a macro-argument hop passes no state the analyzer can follow.
+    // #8999: qualified-hop identity establishes reach, not effect propagation.
     // #9329: a method hop hands its callee the receiver's state as well as
     // its arguments; the effect target is not followed through it.
     if tracked.is_empty()
         || hops.is_empty()
         || hops
             .iter()
-            .any(|hop| hop.through_macro || hop.receiver.is_some())
+            .any(|hop| hop.through_macro || hop.module_qualified || hop.receiver.is_some())
     {
         return false;
     }
@@ -2411,13 +2942,22 @@ fn hops_call_the_indexed_callees(owner_name: &str, hops: &[HelperHop], index: &R
 }
 
 fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
+    hops_forward_owner_result_with(owner_name, hops, false)
+}
+
+fn hops_forward_owner_result_with(
+    owner_name: &str,
+    hops: &[HelperHop],
+    integer_offset: bool,
+) -> bool {
     !hops.is_empty()
         && hops.iter().enumerate().all(|(step, hop)| {
             // #6614: a macro-argument hop is not expanded; whether the
             // macro hands the callee's result on is unknown.
+            // #8999: a module-qualified hop has no result-forwarding proof.
             // #9329: a method hop never forwards: its caller makes a
             // receiver call whose result no tail-forwarding rule reads.
-            if hop.through_macro || hop.receiver.is_some() {
+            if hop.through_macro || hop.module_qualified || hop.receiver.is_some() {
                 return false;
             }
             let callee = match step.checked_sub(1) {
@@ -2427,12 +2967,204 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
                     None => return false,
                 },
             };
-            caller_tail_forwards_call(&hop.caller, callee, &hop.call_text)
+            caller_tail_forwards_call(
+                &hop.caller,
+                callee,
+                &hop.call_text,
+                &hop.diverging_handlers,
+                integer_offset,
+            )
+                // #10284: a caller that binds its callee's name
+                // (`let is_bulk = |_| true;`) calls the binding, and a
+                // user macro may expand to an early `return` the textual
+                // return scan cannot see.
+                && !caller_rebinds_parameter(&hop.caller.body, callee)
+                && !caller_invokes_opaque_macro(&hop.caller.body, hop.transparent_macros_rebound)
                 && hop.arguments.iter().all(|argument| {
                     !is_identifier(argument.trim())
                         || !caller_rebinds_parameter(&hop.caller.body, argument.trim())
                 })
         })
+}
+
+/// Standard macros whose expansion holds no `return` of its own: any
+/// `return` in their arguments is caller text the return scan already
+/// reads. Panicking ones (`assert!`, `panic!`) end the test, they do not
+/// change the forwarded value. Each is a parser-checked
+/// [`TRUSTED_MACRO_NAMES`](crate::analysis::syntax::TRUSTED_MACRO_NAMES)
+/// entry, so [`transparent_macro_name_rebound`] can establish its identity.
+const TRANSPARENT_STD_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "panic",
+    "unreachable",
+    "todo",
+    "unimplemented",
+    "print",
+    "println",
+    "eprint",
+    "eprintln",
+    "dbg",
+    "format",
+    "format_args",
+    "write",
+    "writeln",
+    "vec",
+    "matches",
+    "concat",
+    "stringify",
+];
+
+/// Whether any indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
+/// something other than the standard macro, by the parser-backed binding
+/// scan the trusted-assertion reading uses. An out-of-line module counts as
+/// unresolved, which only withholds forwarding credit. A caller with no
+/// `!` invokes no macro, so the index scan is skipped for it.
+fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool {
+    caller_body.contains('!')
+        && index.files().iter().any(|(path, file)| {
+            if file.macro_candidates.as_deref().is_some_and(|candidates| {
+                TRANSPARENT_STD_MACROS
+                    .iter()
+                    .all(|name| !candidates.may_bind(name))
+            }) {
+                return false;
+            }
+            !crate::analysis::syntax::trusted_macro_binding_sites(
+                &file.source,
+                index.macro_scope_crates(),
+                TRANSPARENT_STD_MACROS,
+                &|_, _| false,
+                &|krate| index.drop_in_manifests.verified_root(path, krate),
+            )
+            .is_empty()
+        })
+}
+
+/// Method-entry reach permits only evaluated assertion/collection macros.
+/// Forwarding-transparent macros such as `matches!` can bind caller patterns,
+/// and `stringify!` never evaluates its tokens, so they establish no entry.
+pub(super) fn body_has_unresolved_macro_bindings(body: &str, index: &RustIndex) -> bool {
+    macro_invocation_is_unestablished(
+        body,
+        transparent_macro_name_rebound(body, index),
+        &[
+            "assert",
+            "assert_eq",
+            "assert_ne",
+            "debug_assert",
+            "debug_assert_eq",
+            "debug_assert_ne",
+            "vec",
+        ],
+    )
+}
+
+/// Whether `body` invokes a macro whose expansion is not known to hold no
+/// `return` (#10284). Only a bare [`TRANSPARENT_STD_MACROS`] name, with no
+/// rebinding anywhere in the index, is transparent. A path-qualified macro
+/// is opaque even under `std::` or `tracing::`: a crate alias
+/// (`use crate as tracing;`) can route the path to an exported user macro,
+/// and ripr does not resolve path roots here (#10351).
+fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> bool {
+    macro_invocation_is_unestablished(body, transparent_macros_rebound, TRANSPARENT_STD_MACROS)
+}
+
+fn macro_invocation_is_unestablished(body: &str, macros_rebound: bool, permitted: &[&str]) -> bool {
+    // Expression keywords may precede a prefix `!` (`if !(a)`, `return !(b)`);
+    // any other path before `!` and a delimiter is a macro path, even with
+    // whitespace between (`bail ! (qty)` is valid Rust).
+    const PREFIX_KEYWORDS: &[&str] = &["if", "while", "match", "return", "in", "break", "yield"];
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    masked.match_indices('!').any(|(at, _)| {
+        let is_invocation = masked.get(at + 1..).is_some_and(|rest| {
+            rest.trim_start_matches(is_rust_whitespace)
+                .starts_with(['(', '[', '{'])
+        });
+        if !is_invocation {
+            return false;
+        }
+        let (segments, global) = macro_path_before(masked.get(..at).unwrap_or_default());
+        let [name] = segments.as_slice() else {
+            // No path is no macro; a qualified path (`dep :: r#println!`,
+            // `::m!`) may name any crate's macro, so it is opaque.
+            return !segments.is_empty();
+        };
+        if global {
+            return true;
+        }
+        if PREFIX_KEYWORDS.contains(name) {
+            return false;
+        }
+        macros_rebound || !permitted.contains(&name.trim_start_matches("r#"))
+    })
+}
+
+/// Rust's lexer whitespace (Pattern_White_Space). It includes U+200E and
+/// U+200F, which `str::trim` keeps; trimming with anything narrower lets
+/// `dep::\u{200E} println!` read as a bare `println!` or hides the `!` of
+/// `bail!\u{200E}(qty)` from the invocation check.
+fn is_rust_whitespace(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n'
+            | '\u{0B}'
+            | '\u{0C}'
+            | '\r'
+            | ' '
+            | '\u{85}'
+            | '\u{200E}'
+            | '\u{200F}'
+            | '\u{2028}'
+            | '\u{2029}'
+    )
+}
+
+/// The macro path that ends `head`, read token by token from the end:
+/// identifier segments (a raw one keeps its `r#`) joined by `::`
+/// with any whitespace or masked comment between them. Returns the
+/// segments, root first, and whether the path starts with `::`.
+fn macro_path_before(head: &str) -> (Vec<&str>, bool) {
+    // Any non-ASCII character other than whitespace counts as identifier
+    // text, so `éprintln` stays one token instead of yielding `println`.
+    let is_ident =
+        |c: char| c.is_alphanumeric() || c == '_' || (!c.is_ascii() && !is_rust_whitespace(c));
+    let mut segments = Vec::new();
+    let mut rest = head.trim_end_matches(is_rust_whitespace);
+    loop {
+        let start = rest
+            .char_indices()
+            .rev()
+            .find(|(_, c)| !is_ident(*c))
+            .map_or(0, |(index, c)| index + c.len_utf8());
+        if rest.get(start..).is_none_or(str::is_empty) {
+            break;
+        }
+        // Keep a raw marker on the segment: `r#if!` is a macro, not `if`.
+        let start = match rest.get(..start) {
+            Some(before) if before.ends_with("r#") => start - 2,
+            _ => start,
+        };
+        segments.push(rest.get(start..).unwrap_or_default());
+        rest = rest
+            .get(..start)
+            .unwrap_or_default()
+            .trim_end_matches(is_rust_whitespace);
+        match rest.strip_suffix("::") {
+            Some(before) => rest = before.trim_end_matches(is_rust_whitespace),
+            None => break,
+        }
+        if !rest.ends_with(is_ident) {
+            segments.reverse();
+            return (segments, true);
+        }
+    }
+    segments.reverse();
+    (segments, false)
 }
 
 /// Whether `receiver` is exactly one receiver expression: `self`, or a
@@ -2473,7 +3205,481 @@ fn receiver_is_whole_expression(receiver: &str) -> bool {
     false
 }
 
-fn caller_tail_forwards_call(caller: &FunctionSummary, callee: &str, call_text: &str) -> bool {
+/// `<head>.unwrap_or_else(<handler>)` as `(head, handler)` when the call is the
+/// whole of `tail` (masked text).
+fn split_unwrap_or_else(tail: &str) -> Option<(&str, &str)> {
+    const NEEDLE: &str = ".unwrap_or_else(";
+    let tail = tail.trim();
+    let positions: Vec<usize> = tail.match_indices(NEEDLE).map(|(at, _)| at).collect();
+    positions.into_iter().rev().find_map(|at| {
+        let open = at + NEEDLE.len() - 1;
+        (matching_close(tail, open)? + 1 == tail.len())
+            .then(|| (tail[..at].trim_end(), tail[open + 1..tail.len() - 1].trim()))
+    })
+}
+
+/// The `.unwrap_or_else(<path>)` handlers in `caller`'s body that resolve to
+/// one workspace function which only diverges (#9638).
+fn diverging_handlers(
+    caller: &FunctionSummary,
+    callee_name: &str,
+    index: &RustIndex,
+) -> Vec<String> {
+    const NEEDLE: &str = ".unwrap_or_else(";
+    let body: &str = &caller.body;
+    if !body.contains("unwrap_or_else") || !callee_returns_std_result_or_option(callee_name, index)
+    {
+        return Vec::new();
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    if masked.len() != body.len() {
+        return Vec::new();
+    }
+    let mut handlers = Vec::new();
+    for (at, _) in masked.match_indices(NEEDLE) {
+        let open = at + NEEDLE.len() - 1;
+        let Some(close) = matching_close(&masked, open) else {
+            continue;
+        };
+        let path = masked[open + 1..close].trim();
+        if !handlers.iter().any(|known| known == path) && handler_diverges(path, caller, index) {
+            handlers.push(path.to_string());
+        }
+    }
+    handlers
+}
+
+/// Whether `callee_name` is the one workspace function of its name and
+/// declares a `Result<..>` or `Option<..>` return, with no workspace type of
+/// either name, so `.unwrap_or_else(..)` on its result is the std method and
+/// not a same-named method of a custom type.
+fn callee_returns_std_result_or_option(callee_name: &str, index: &RustIndex) -> bool {
+    if !callee_is_unique(callee_name, index) {
+        return false;
+    }
+    let Some(callee) = index
+        .functions()
+        .iter()
+        .find(|function| function.name == callee_name)
+    else {
+        return false;
+    };
+    let Some(returned) = super::owner_pin::declared_return_type(&callee.body) else {
+        return false;
+    };
+    let returned = returned.trim();
+    ["Result", "Option"].iter().any(|std_type| {
+        returned
+            .strip_prefix(std_type)
+            .is_some_and(|rest| rest.starts_with('<'))
+            && super::owner_pin::workspace_type_name_count(std_type, index) == 0
+            && index
+                .files()
+                .get(&callee.file)
+                .is_some_and(|file| !file_rebinds_prelude_name(&file.source, std_type))
+    })
+}
+
+/// Whether `source` has a `use` that binds `name` (`Result` / `Option`) to
+/// anything but the standard item, or a glob import that could bring an
+/// external one in (`use dep::*;`, `use dep::prelude::*;`). `use super::*;`
+/// and `use self::*;` add nothing the parent module's own imports do not
+/// already bring, and those are checked as part of the same file.
+fn file_rebinds_prelude_name(source: &str, name: &str) -> bool {
+    let std_path = |path: &str| {
+        let path = path.trim_start_matches("::");
+        let module = if name == "Result" { "result" } else { "option" };
+        ["std", "core"]
+            .iter()
+            .any(|root| path == format!("{root}::{module}::{name}"))
+    };
+    super::reveal::flattened_use_paths(source)
+        .iter()
+        .any(|import| {
+            if import.path.ends_with('*') {
+                return !matches!(import.path.as_str(), "super::*" | "self::*");
+            }
+            let bound = import
+                .alias
+                .as_deref()
+                .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or(""));
+            bound == name && !std_path(&import.path)
+        })
+}
+
+/// One enclosing brace block of an item: an inline `mod`, an `impl` block
+/// (its header kept for the generics check), or anything else (a function
+/// body, `trait`, `extern`, a block), identified by its opening brace so two
+/// different blocks never compare equal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BlockScope {
+    Module(String),
+    Impl(String),
+    Opaque(usize),
+}
+
+/// The block scopes enclosing the `fn <name>` item declared on 1-based `line`
+/// of the masked `source`, outermost first. `None` when the item cannot be
+/// located on that line or the braces do not balance.
+fn scopes_enclosing_fn(masked: &str, line: usize, name: &str) -> Option<Vec<BlockScope>> {
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let line_start: usize = masked
+        .split_inclusive('\n')
+        .take(line.checked_sub(1)?)
+        .map(str::len)
+        .sum();
+    let line_text = masked.get(line_start..)?.split('\n').next()?;
+    let fn_at = line_start
+        + line_text.match_indices("fn").map(|(at, _)| at).find(|at| {
+            let after = &line_text[at + 2..];
+            !line_text[..*at].chars().next_back().is_some_and(is_word)
+                && after.starts_with(char::is_whitespace)
+                && after
+                    .trim_start()
+                    .strip_prefix(name)
+                    .is_some_and(|rest| !rest.chars().next().is_some_and(is_word))
+        })?;
+    scopes_before(masked, fn_at)
+}
+
+/// The block scopes open at byte `offset` of the masked `source`, outermost
+/// first; `None` when the braces do not balance.
+fn scopes_before(masked: &str, offset: usize) -> Option<Vec<BlockScope>> {
+    let mut stack: Vec<BlockScope> = Vec::new();
+    for (at, character) in masked[..offset].char_indices() {
+        match character {
+            '{' => {
+                let statement_start = masked[..at]
+                    .rfind([';', '{', '}'])
+                    .map_or(0, |found| found + 1);
+                stack.push(classify_block_head(&masked[statement_start..at], at));
+            }
+            '}' => {
+                stack.pop()?;
+            }
+            _ => {}
+        }
+    }
+    Some(stack)
+}
+
+/// Classify the item head before a `{`: a module, an impl block, or opaque.
+/// Whole-word parsing after attributes and visibility/safety qualifiers; a
+/// head that is neither is opaque, so uncertainty never matches a scope.
+fn classify_block_head(head: &str, brace_at: usize) -> BlockScope {
+    let mut rest = head.trim();
+    while let Some(attribute) = rest.strip_prefix("#[") {
+        let mut depth = 1usize;
+        let mut end = None;
+        for (at, character) in attribute.char_indices() {
+            match character {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(at);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        match end {
+            Some(end) => rest = attribute[end + 1..].trim_start(),
+            None => return BlockScope::Opaque(brace_at),
+        }
+    }
+    loop {
+        let trimmed = rest.trim_start();
+        if let Some(after) = trimmed.strip_prefix("pub") {
+            let after_pub = after.trim_start();
+            rest = if after_pub.starts_with('(') {
+                match matching_close(after_pub, 0) {
+                    Some(close) => &after_pub[close + 1..],
+                    None => return BlockScope::Opaque(brace_at),
+                }
+            } else if after.starts_with(char::is_whitespace) {
+                after_pub
+            } else {
+                return BlockScope::Opaque(brace_at);
+            };
+            continue;
+        }
+        if let Some(after) = trimmed.strip_prefix("unsafe")
+            && after.starts_with(char::is_whitespace)
+        {
+            rest = after;
+            continue;
+        }
+        rest = trimmed;
+        break;
+    }
+    let mut words = rest.split_whitespace();
+    match words.next() {
+        Some("mod") => match (words.next(), words.next()) {
+            (Some(name), None) if is_identifier(name) => BlockScope::Module(name.to_string()),
+            _ => BlockScope::Opaque(brace_at),
+        },
+        Some(first) if first == "impl" || first.starts_with("impl<") => {
+            BlockScope::Impl(rest.to_string())
+        }
+        _ => BlockScope::Opaque(brace_at),
+    }
+}
+
+/// The scopes other than `impl` blocks, for comparing where two items live.
+fn non_impl_scopes(scopes: &[BlockScope]) -> Vec<&BlockScope> {
+    scopes
+        .iter()
+        .filter(|scope| !matches!(scope, BlockScope::Impl(_)))
+        .collect()
+}
+
+/// Whether `path` (`name` or `Type::name`) names the one workspace function
+/// of its name, a free function or an inherent associated function of that
+/// type, that only diverges, with no local binding, rename or foreign import
+/// of the name in the caller's file. Module-qualified, generic and external
+/// paths, and every closure, are refused.
+fn handler_diverges(path: &str, caller: &FunctionSummary, index: &RustIndex) -> bool {
+    let segments: Vec<&str> = path.split("::").collect();
+    let (qualifier, name) = match segments.as_slice() {
+        [name] => (None, *name),
+        [qualifier, name] => (Some(*qualifier), *name),
+        _ => return false,
+    };
+    if !is_identifier(name)
+        || qualifier.is_some_and(|q| !is_identifier(q))
+        || !callee_is_unique(name, index)
+        || caller_rebinds_parameter(&caller.body, name)
+    {
+        return false;
+    }
+    let qualifier_type = match qualifier {
+        Some("Self") => match impl_self_type(caller) {
+            Some(own) => Some(own),
+            None => return false,
+        },
+        Some(other) => Some(other.to_string()),
+        None => None,
+    };
+    let Some(handler) = index
+        .functions()
+        .iter()
+        .find(|function| function.name == name)
+    else {
+        return false;
+    };
+    let placed = match (&qualifier_type, &handler.item.container) {
+        (None, crate::analysis::facts::FunctionContainer::Free) => true,
+        (Some(ty), crate::analysis::facts::FunctionContainer::Inherent { .. }) => {
+            impl_self_type(handler).as_deref() == Some(ty.as_str())
+        }
+        _ => false,
+    };
+    if !placed || handler.source_role.is_evidence_role() {
+        return false;
+    }
+    let Some(file) = index.files().get(&caller.file) else {
+        return false;
+    };
+    // The handler must sit in the caller's own file and inline module, so a
+    // bare or type-qualified name resolves to it without an import, and the
+    // caller's body must not glob-import or re-declare the name.
+    let masked_file = crate::analysis::language::mask_rust_comments_and_strings(&file.source);
+    let (Some(handler_scopes), Some(caller_scopes)) = (
+        scopes_enclosing_fn(&masked_file, handler.start_line, &handler.name),
+        scopes_enclosing_fn(&masked_file, caller.start_line, &caller.name),
+    ) else {
+        return false;
+    };
+    if handler.file != caller.file
+        || non_impl_scopes(&handler_scopes) != non_impl_scopes(&caller_scopes)
+        || !name_only_used_as_handler(caller, path, name)
+        || qualifier
+            .is_some_and(|q| !qualifier_is_workspace_type(caller, path, q, &caller_scopes, index))
+    {
+        return false;
+    }
+    let shadowed = |item: &str| {
+        super::reveal::flattened_use_paths(&file.source)
+            .iter()
+            .any(|import| import.alias.as_deref() == Some(item))
+            || super::reveal::file_imports_foreign_callee_name(
+                &file.source,
+                item,
+                &index.package_names,
+            )
+    };
+    if shadowed(name) || qualifier_type.as_deref().is_some_and(shadowed) {
+        return false;
+    }
+    function_only_diverges(handler, index)
+}
+
+/// The qualifier `q` of a `q::name` handler names the workspace type, not a
+/// generic parameter or a local item: it appears in the caller only as the
+/// handler path's qualifier, and the enclosing `impl` header does not
+/// introduce it as a generic parameter (not independently pinned by a test: a
+/// same-impl generic of the type's own name does not form a bound chain).
+fn qualifier_is_workspace_type(
+    caller: &FunctionSummary,
+    path: &str,
+    qualifier: &str,
+    caller_scopes: &[BlockScope],
+    index: &RustIndex,
+) -> bool {
+    // `Self` names the enclosing impl's type: judge that type by name, with
+    // the same exactly-one-type and generics conditions, without the
+    // other-mention rule (`Self { .. }` is ordinary in an impl).
+    let self_type = if qualifier == "Self" {
+        match impl_self_type(caller) {
+            Some(own) => own,
+            None => return false,
+        }
+    } else {
+        qualifier.to_string()
+    };
+    let qualifier = self_type.as_str();
+    if (path.split("::").next() != Some("Self")
+        && !name_only_used_as_handler(caller, path, qualifier))
+        || super::owner_pin::workspace_type_name_count(qualifier, index) != 1
+    {
+        return false;
+    }
+    // Every enclosing `impl` block's generics, not the nearest `impl` word.
+    // The exactly-one-type count above and these generics are defense in
+    // depth: no test pins either on its own, since the scope and import
+    // checks refuse the same fixtures.
+    caller_scopes.iter().all(|scope| match scope {
+        BlockScope::Impl(header) => {
+            let generics = header["impl".len()..].trim_start();
+            !(generics.starts_with('<')
+                && matching_close_angle(generics)
+                    .is_some_and(|close| contains_word(&generics[..close], qualifier)))
+        }
+        _ => true,
+    })
+}
+
+/// Index of the `>` closing the `<` that starts `text`.
+fn matching_close_angle(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, character) in text.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Every whole-word mention of `name` in the caller (signature and body) is
+/// the handler argument `path` of an `.unwrap_or_else(path)` call, and the
+/// body glob-imports nothing: a parameter, nested `fn`/`const`/`static`/`let`
+/// or glob-imported item of that name would be the one the call resolves to.
+fn name_only_used_as_handler(caller: &FunctionSummary, path: &str, name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&caller.body);
+    if masked.contains("::*") {
+        return false;
+    }
+    let call = format!(".unwrap_or_else({path})");
+    let rest = masked.replace(&call, ".unwrap_or_else()");
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    !rest.match_indices(name).any(|(at, _)| {
+        !rest[..at].chars().next_back().is_some_and(is_word)
+            && !rest[at + name.len()..].chars().next().is_some_and(is_word)
+    })
+}
+
+/// Whether any indexed file declares or renames an item named `std` (a
+/// `mod std`, `use x as std`, `extern crate x as std`, a local `fn std`, ...),
+/// so a `std::process::..` path may not name the standard library.
+fn std_name_rebound(index: &RustIndex) -> bool {
+    const DECLARERS: &[&str] = &[
+        "mod", "as", "struct", "enum", "fn", "const", "static", "type", "union", "trait", "let",
+        "crate",
+    ];
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    index.files().values().any(|file| {
+        if !file.source.contains("std") {
+            return false;
+        }
+        // Any `use` item whose bound name is `std` and whose path is not the
+        // bare `std` crate (`use ext::std;`, `use ext::{a, std};`,
+        // `use crate::std;`, `use ::ext::std;`).
+        if super::reveal::flattened_use_paths(&file.source)
+            .iter()
+            .any(|import| {
+                let bound = import
+                    .alias
+                    .as_deref()
+                    .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or(""));
+                bound == "std" && import.path.trim_start_matches("::") != "std"
+            })
+        {
+            return true;
+        }
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(&file.source);
+        masked.match_indices("std").any(|(at, _)| {
+            !masked[..at].chars().next_back().is_some_and(is_word)
+                && !masked[at + 3..].chars().next().is_some_and(is_word)
+                && masked[..at]
+                    .split_whitespace()
+                    .next_back()
+                    .is_some_and(|previous| DECLARERS.contains(&previous))
+        })
+    })
+}
+
+/// Whether `function` can never return normally: its whole body is one
+/// unconditional `panic!`-family macro or process exit. A `-> !` signature is
+/// not read: a function returning `!` does not type-check as an
+/// `unwrap_or_else` handler for a value-returning forwarder.
+fn function_only_diverges(function: &FunctionSummary, index: &RustIndex) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
+    let (Some(open), Some(close)) = (masked.find('{'), masked.rfind('}')) else {
+        return false;
+    };
+    if close <= open {
+        return false;
+    }
+    let statement = masked[open + 1..close].trim();
+    let statement = statement.strip_suffix(';').unwrap_or(statement).trim();
+    let macro_call = ["panic!", "unreachable!", "unimplemented!", "todo!"]
+        .iter()
+        .find(|name| statement.starts_with(**name))
+        .is_some_and(|name| {
+            let rest = &statement[name.len()..];
+            rest.starts_with(['(', '[', '{'])
+                && matching_close(rest, 0).is_some_and(|end| end + 1 == rest.len())
+        });
+    if macro_call {
+        return !transparent_macro_name_rebound(&function.body, index);
+    }
+    !std_name_rebound(index)
+        && ["std::process::abort", "std::process::exit"]
+            .iter()
+            .any(|name| {
+                statement.strip_prefix(name).is_some_and(|rest| {
+                    rest.starts_with('(')
+                        && matching_close(rest, 0).is_some_and(|end| end + 1 == rest.len())
+                })
+            })
+}
+
+fn caller_tail_forwards_call(
+    caller: &FunctionSummary,
+    callee: &str,
+    call_text: &str,
+    diverging_handlers: &[String],
+    integer_offset: bool,
+) -> bool {
     let body: &str = &caller.body;
     let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
     if masked.len() != body.len() || callee.is_empty() {
@@ -2516,7 +3722,22 @@ fn caller_tail_forwards_call(caller: &FunctionSummary, callee: &str, call_text: 
     let Some(raw_tail) = raw_inner.get(tail_start + lead..tail_start + lead + tail.len()) else {
         return false;
     };
+    // #9638: `<call>.unwrap_or_else(<handler>)` hands the call's `Ok` value
+    // through unchanged when the handler is a path to a workspace function
+    // that only diverges; any other handler substitutes a value.
+    let tail = match split_unwrap_or_else(tail) {
+        Some((head, handler)) => {
+            if !diverging_handlers.iter().any(|known| known == handler) {
+                return false;
+            }
+            head
+        }
+        None => tail,
+    };
     if is_exact_call(tail, callee) {
+        return true;
+    }
+    if integer_offset && is_integer_offset_of_call(tail, callee) {
         return true;
     }
     // #5352: the identity-bound method hop forwards when the tail is
@@ -2813,7 +4034,7 @@ fn matching_close(text: &str, open: usize) -> Option<usize> {
     None
 }
 
-fn is_identifier(text: &str) -> bool {
+pub(super) fn is_identifier(text: &str) -> bool {
     text.chars()
         .next()
         .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
@@ -3658,9 +4879,116 @@ mod tests {
                 arguments: Vec::new(),
                 receiver: None,
                 through_macro: false,
+                module_qualified: false,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
             }],
             stop_above: None,
         }
+    }
+
+    #[test]
+    fn method_entry_checks_only_the_prefix_the_test_enters() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "pub struct Pool {}\nimpl Pool {\n    pub fn grow(&mut self) -> usize { 1 }\n}\npub fn above() {}\n#[test]\nfn enters_lower() {\n    let mut pool = Pool {};\n    assert_eq!(pool.grow(), 1);\n}\n";
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(path, facts)].into_iter().collect(),
+            ..Default::default()
+        });
+        let hop = |name, module_qualified| -> Result<HelperHop, String> {
+            Ok(HelperHop {
+                caller: index
+                    .functions()
+                    .iter()
+                    .find(|item| item.name == name)
+                    .ok_or_else(|| format!("missing caller {name}"))?
+                    .clone(),
+                call_text: String::new(),
+                arguments: Vec::new(),
+                receiver: None,
+                through_macro: false,
+                module_qualified,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
+            })
+        };
+        // Exercise the entry consumer directly: production chain selection may
+        // prune an unused upper caller before this boundary is reached.
+        let mut chain = HelperChain {
+            hops: vec![hop("grow", false)?, hop("above", true)?],
+            stop_above: None,
+        };
+        let test = index.tests().iter().next().ok_or("missing test")?;
+        assert!(test_calls_method_entry(&index, test, &chain));
+        chain.hops[0].module_qualified = true;
+        assert!(!test_calls_method_entry(&index, test, &chain));
+        Ok(())
+    }
+
+    // #10284 review: keyword-prefixed negation is not a macro, while a
+    // user macro stays opaque with or without space before its `!`.
+    #[test]
+    fn opaque_macro_detection_separates_keywords_from_macro_paths() {
+        for body in [
+            "if !(a && b) { 1 } else { 0 }",
+            "return !(flag);",
+            "while !(done) {}",
+            "let same = a != b;",
+            "assert_eq!(a, b); write!(out, \"x\"); vec![1]",
+            "let s = \"bail!(x)\"; // bail!(x)",
+        ] {
+            assert!(!caller_invokes_opaque_macro(body, false), "{body}");
+        }
+        for body in [
+            "bail!(x);",
+            "bail ! (x);",
+            "bail !\n{ x };",
+            "crate::m::bail![x];",
+            // #10351 review: a bare logging name may be a crate's own
+            // early-returning macro, and a path root may be a crate alias
+            // (`use crate as tracing;`), so no path-qualified macro is
+            // trusted.
+            "info!(qty);",
+            "helpers::info!(qty);",
+            "tracing::info!(qty);",
+            "log::warn!(qty);",
+            "std::println!(\"x\");",
+            // #10351 review: spacing, comments and raw identifiers do not
+            // turn a qualified path into a bare trusted name.
+            "dep :: println!(qty);",
+            "dep::r#println!(qty);",
+            "dep /* c */ :: r#println ! (qty);",
+            "::println!(qty);",
+            // #10351 review: a non-ASCII identifier is one token, not its
+            // ASCII tail.
+            "éprintln!(qty);",
+            "r#éprintln!(qty);",
+            "dep::éprintln!(qty);",
+            // #10351 review: U+200E/U+200F are Rust whitespace, so they
+            // neither cut a qualified path nor hide an invocation.
+            "dep::\u{200E} println!(qty);",
+            "dep\u{200F}::println!(qty);",
+            "bail_at_ten!\u{200E}(qty);",
+            "bail_at_ten\u{200F}!(qty);",
+        ] {
+            assert!(caller_invokes_opaque_macro(body, false), "{body}");
+        }
+        // Once any file rebinds a standard name, no bare macro is trusted.
+        assert!(caller_invokes_opaque_macro("println!(\"x\");", true));
+        assert!(!caller_invokes_opaque_macro("let same = a != b;", true));
+        assert!(!caller_invokes_opaque_macro("r#println!(\"x\");", false));
+        assert_eq!(macro_path_before("x; éprintln"), (vec!["éprintln"], false));
+        assert_eq!(
+            macro_path_before("x; dep    :: r#m "),
+            (vec!["dep", "r#m"], false)
+        );
+        assert!(caller_invokes_opaque_macro("r#if!(x);", false));
+        assert_eq!(macro_path_before("x; :: m"), (vec!["m"], true));
+        assert_eq!(macro_path_before("let s = a"), (vec!["a"], false));
+        assert_eq!(macro_path_before("(a) "), (Vec::<&str>::new(), false));
     }
 
     // #6694 / #6672: an exact oracle on the wrapper's result stands for the
@@ -3672,6 +5000,10 @@ mod tests {
             "pub fn order_discount(qty: u32) -> u32 {\n    if is_bulk(qty) {\n        5\n    } else {\n        0\n    }\n}",
             "pub fn order_discount(qty: u32) -> u32 {\n    // a comment; with a semicolon\n    if !is_bulk(qty) { 0 } else { 5 }\n}",
             "pub fn w(qty: u32) -> u32 {\n    let _unused = 3;\n    capped(qty, 10)\n}",
+            // #10284 controls: unshadowed bare standard macros expand to no
+            // `return` of their own, and a `!=` is not a macro.
+            "pub fn w(qty: u32) -> u32 {\n    println!(\"{qty}\");\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    debug_assert!(qty != 0);\n    if !is_bulk(qty) { 0 } else { 5 }\n}",
             // Controls for the value comparison: distinct values forward.
             "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 05 } else { 6 }\n}",
             "pub fn w(qty: u32) -> &str {\n    if is_bulk(qty) { \"b\" } else { \"a\" }\n}",
@@ -3714,6 +5046,12 @@ mod tests {
             "pub fn w(qty: u32) -> Option<bool> {\n    let q = Some(qty)?;\n    Some(is_bulk(q))\n}",
             // method call with the same name is not the hop
             "pub fn w(qty: u32) -> bool {\n    self.is_bulk(qty)\n}",
+            // #10284: a local binding shadows the callee
+            "pub fn w(qty: u32) -> u32 {\n    let is_bulk = |_q: u32| true;\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            // #10284: a user macro may hide an early `return`
+            "pub fn w(qty: u32) -> u32 {\n    bail_at_ten!(qty);\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    crate::bail![qty];\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    bail_at_ten ! (qty);\n    if is_bulk(qty) { 5 } else { 0 }\n}",
         ] {
             assert!(
                 !chain_forwards_owner_result("is_bulk", &one_hop_chain(body)),
@@ -3904,6 +5242,9 @@ mod tests {
             arguments: Vec::new(),
             receiver: None,
             through_macro: false,
+            module_qualified: false,
+            transparent_macros_rebound: false,
+            diverging_handlers: Vec::new(),
         };
         let chain = HelperChain {
             hops: vec![hop(lower.clone()), hop(upper)],
@@ -3986,6 +5327,9 @@ mod tests {
                     arguments: Vec::new(),
                     receiver: None,
                     through_macro: false,
+                    module_qualified: false,
+                    transparent_macros_rebound: false,
+                    diverging_handlers: Vec::new(),
                 }],
                 stop_above: None,
             }
@@ -4212,5 +5556,142 @@ mod tests {
             }
         }
         Ok(())
+    }
+    fn scopes(source: &str, line: usize, name: &str) -> Option<Vec<BlockScope>> {
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
+        scopes_enclosing_fn(&masked, line, name)
+    }
+
+    #[test]
+    fn a_bare_call_binds_only_within_one_plain_module_scope() {
+        let module = || BlockScope::Module("m".to_string());
+        assert!(scopes_allow_a_bare_call(&[], &[]));
+        assert!(scopes_allow_a_bare_call(&[module()], &[module()]));
+        assert!(!scopes_allow_a_bare_call(&[module()], &[]));
+        let imp = || BlockScope::Impl("impl Unit".to_string());
+        assert!(!scopes_allow_a_bare_call(&[imp()], &[imp()]));
+        assert!(!scopes_allow_a_bare_call(
+            &[BlockScope::Opaque(3)],
+            &[BlockScope::Opaque(3)]
+        ));
+    }
+
+    #[test]
+    fn a_use_binding_a_builtin_integer_name_or_a_glob_is_found() {
+        for source in [
+            "use ext::Wide as i64;\n",
+            "use ext::i64;\n",
+            "use ext::{a, i64};\n",
+            "use ext::*;\n",
+            "pub use ext::prelude::*;\n",
+            "use std::io::*;\n",
+        ] {
+            assert!(file_use_binds_name(source, "i64", Some(&[])), "{source}");
+        }
+        for source in [
+            "use ext::Wide as Other;\n",
+            "use ext::{a, b};\n",
+            "use ext::i32;\n",
+            "fn f() {}\n",
+        ] {
+            assert!(!file_use_binds_name(source, "i64", Some(&[])), "{source}");
+        }
+        // A parent glob is exempt only beside, never around, the function.
+        let tests_glob = "fn f() {}\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
+        assert!(!file_use_binds_name(tests_glob, "i64", Some(&[])));
+        assert!(file_use_binds_name(tests_glob, "i64", None));
+        for source in [
+            "use super::*;\nfn f() {}\n",
+            "use self::*;\nfn f() {}\n",
+            "mod m {\n    use super::*;\n    fn f() {}\n}\n",
+        ] {
+            let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
+            let line = source.lines().position(|l| l.contains("fn f")).unwrap_or(0) + 1;
+            let scopes = scopes_enclosing_fn(&masked, line, "f");
+            assert!(
+                file_use_binds_name(source, "i64", scopes.as_deref()),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_callee_named_only_as_a_call_survives_the_binding_scan() {
+        let named = |text: &str| caller_names_callee_only_as_a_call(text, "inner");
+        assert!(named("fn outer(x: i64) -> i64 {\n    inner(x) + 1\n}"));
+        assert!(named(
+            "fn outer(x: i64) -> i64 {\n    inner(x) + inner(1)\n}"
+        ));
+        // A longer name that contains the callee is a different identifier.
+        assert!(named(
+            "fn outer(x: i64) -> i64 {\n    inner_two(x) + inner(1)\n}"
+        ));
+        for refused in [
+            "fn outer(x: i64, inner: fn(i64) -> i64) -> i64 {\n    inner(x)\n}",
+            "fn outer(x: i64, (inner, _y): (fn(i64) -> i64, i64)) -> i64 {\n    inner(x)\n}",
+            "fn outer(x: i64, mut inner: fn(i64) -> i64) -> i64 {\n    inner(x)\n}",
+            "fn outer(x: i64, &inner: &fn(i64) -> i64) -> i64 {\n    inner(x)\n}",
+            "fn outer(x: i64, ref inner: fn(i64) -> i64) -> i64 {\n    inner(x)\n}",
+            "fn outer(x: i64, [inner, _]: [fn(i64) -> i64; 2]) -> i64 {\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    const inner: fn(i64) -> i64 = |v| v;\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    static inner: fn(i64) -> i64 = |v| v;\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    let (inner, _) = (|v: i64| v, 0);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    let inner = |v: i64| v;\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    fn inner(v: i64) -> i64 {\n        v\n    }\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    use other::*;\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    use other::inner as inner;\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    macro_rules! helper { () => {}; }\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    r#inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    struct inner(i64);\n    inner(x).0\n}",
+            "fn outer(x: i64) -> i64 {\n    enum inner { A(i64) }\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    union inner(i64);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    type inner(i64);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    trait inner(i64);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    mod inner(i64);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    macro inner(i64);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    other::inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    x.inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    match Some(x) { Some(inner) => inner(x), None => 0 }\n}",
+            "fn outer(x: i64) -> i64 {\n    (|inner: fn(i64) -> i64| inner(x))(|v| v)\n}",
+        ] {
+            assert!(!named(refused), "{refused}");
+        }
+    }
+
+    #[test]
+    fn enclosing_scopes_read_modules_impls_and_function_bodies_by_whole_word() {
+        let source = "mod a {\n    pub fn die() {}\n}\nfn outer(_x: impl Copy) {\n    impl Z {\n        fn grow2() {}\n    }\n}\nfn implode() {\n    fn inner() {}\n}\nimpl<T: Tr> W<T> {\n    fn m() {}\n}\n";
+        assert_eq!(
+            scopes(source, 2, "die"),
+            Some(vec![BlockScope::Module("a".to_string())])
+        );
+        // `outer`'s `impl Copy` argument does not hide its own body, and the
+        // nested `impl Z` block is an impl scope inside it.
+        let nested = scopes(source, 6, "grow2");
+        assert!(matches!(
+            nested.as_deref(),
+            Some([BlockScope::Opaque(_), BlockScope::Impl(header)]) if header == "impl Z"
+        ));
+        // A name that merely contains `impl` is still a function body.
+        assert!(matches!(
+            scopes(source, 10, "inner").as_deref(),
+            Some([BlockScope::Opaque(_)])
+        ));
+        assert!(matches!(
+            scopes(source, 13, "m").as_deref(),
+            Some([BlockScope::Impl(header)]) if header.starts_with("impl<T")
+        ));
+        // An item missing from its line is not located.
+        assert_eq!(scopes(source, 1, "die"), None);
+    }
+
+    #[test]
+    fn enclosing_scopes_distinguish_one_line_modules() {
+        let source = "mod a { pub fn die() {} } fn grow() {}\n";
+        assert_eq!(
+            scopes(source, 1, "die"),
+            Some(vec![BlockScope::Module("a".to_string())])
+        );
+        assert_eq!(scopes(source, 1, "grow"), Some(Vec::new()));
     }
 }

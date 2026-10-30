@@ -31,7 +31,13 @@ remain separate states.
 
 The PR's owning lead carries review, repair, qualification and landing through
 the applicable protected route without asking for routine repo permission again.
-One writer owns each candidate; independent readers may challenge it. Do not
+One writer owns each candidate through its authorized issue-to-merge outcome,
+with evolving directed review stages inline in the main context. Optional
+in-session subagents and advisory bots (for example `ub-review`; see `CI.md`) add evidence; they are not mandatory
+reviewer identities or substitutes for owner review. Preserve actual required
+reviews and checks. Routine repairs, evidence comments and finish-through do
+not require parent payload approval; coordinate actual overlapping writers and
+consequential changes. Do not
 force-push another writer's branch, start a competing repair or make a second
 candidate merely to keep an agent occupied.
 
@@ -169,10 +175,15 @@ next transition on the existing incident.
 After landing, read back M and the accepted candidate; verify the corresponding
 tree and claim closure. A returned merge acknowledgment is not the readback.
 An incidental post-merge compile can detect a fault but is not pre-merge
-composition proof. Do not add a routine full post-merge replay; separately
-admitted main health retains its existing one-hour-AND-ten-merges cadence until
-an explicit policy change. Release synchronization into `ripr`, packaging,
-publication and installed verification remain separate transactions.
+composition proof. Under #4984, the selected merge-queue-only qualification
+direction supersedes the former one-hour-AND-ten-merges automatic main-health
+target. Retain historical observations with their original subjects and scope;
+they do not authorize routine full post-merge replay. Current installed workflow
+and required-check obligations remain binding until verified cutover; this
+document does not disable a workflow. Named incident, deep and release proof
+retain their separate purposes and authority. Release synchronization into
+`ripr`, packaging, publication and installed verification remain separate
+transactions.
 
 A small clear review fix belongs in the candidate. A genuinely out-of-scope gap
 gets an existing or new evidenced issue; a valid later nit is not erased by an

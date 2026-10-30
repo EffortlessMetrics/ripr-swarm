@@ -75,7 +75,7 @@ fn validate_repo_scope_diff_inputs(
     } else {
         Err(crate::core_error::CoreError::base_unresolvable(format!(
             "check: base revision {base:?} does not resolve to a commit in {}",
-            input.root.display()
+            crate::output::path::human_path(&input.root)
         )))
     }
 }
@@ -1553,7 +1553,10 @@ fn check_inner(
                         input.base.clone(),
                         &config,
                     )?
-                    .with_rust_corpus_key(report.corpus_key.as_ref());
+                    .with_rust_inventory(
+                        report.corpus_key.as_ref(),
+                        &report.analyzed_production_files,
+                    );
                 analysis::cancellation::begin_cli_publication()?;
                 let stdout = std::io::stdout();
                 let mut handle = stdout.lock();
@@ -1846,8 +1849,9 @@ fn check_inner(
     let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
         // #8547: both routes read seams of the selected finding's file
         // (the repair route adds its related-test evidence files); they
-        // share one bounded seam index built once for this invocation,
-        // repair first so its wider file set covers the stub route's.
+        // share a bounded seam index, repair first. Selected and listed
+        // hidden stub subjects reuse covered files; an uncovered file may
+        // replace the index. Hidden work is bounded by the displayed window.
         let mut seam_index = None;
         let repair_route = crate::app::task_first::check_repair_route(
             &limited_check_input.root,
@@ -1855,14 +1859,14 @@ fn check_inner(
             &output,
             &mut seam_index,
         );
-        let stub_route = app::test_stub::check_stub_route(
+        let stub_routes = app::test_stub::check_stub_routes(
             &limited_check_input.root,
             &config,
             &output,
             &mut seam_index,
         );
         navigation
-            .with_stub_route(stub_route)
+            .with_stub_routes(stub_routes)
             // #8166 Slice C: the repair line reuses the producer-owned
             // admission gate over the live seam inventory, for the same
             // live-files reason as the stub route above. Other formats
@@ -2130,6 +2134,10 @@ pub(super) fn gap_check_findings_snapshot(
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "check_argv_refusal_tests.rs"]
+mod argv_refusal_tests;
 
 #[cfg(test)]
 mod candidate_tree_tests {

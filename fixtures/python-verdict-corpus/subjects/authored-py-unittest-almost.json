@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-py-unittest-almost",
+  "origin": "authored",
+  "version_label": "authored@b6491843",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "cde568e6929fb37e682e43a28de1c6a9b007fd97366a78c965990c15581540e0"
+    },
+    {
+      "path": "shop/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "shop/fees.py",
+      "sha256": "54f0c13401dbbd1727977182d1871897ae1f50678a54a34ea487c20fddef9a05"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/checks.py",
+      "sha256": "3a52deb98226f33731d26843862121441475cfe4fc606fdcb304882651f66ccf"
+    },
+    {
+      "path": "tests/test_fees.py",
+      "sha256": "4dbd56119d1aadb631c6c7ebbce9549d06ff60529050c91c1e06e7f84f3074ef"
+    }
+  ]
+}

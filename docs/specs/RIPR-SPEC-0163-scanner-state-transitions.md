@@ -32,6 +32,10 @@ even when every related test row pins the exact state.
   arguments) is the same one raw call operands use, and the argument
   binding stays strict — a literal or the owner's bound parameter. A
   computed argument still stops by name (RIPR-SPEC-0159 edge).
+- A bare `_` state pattern is the catch-all arm; it matches any current
+  state, in source order like every other arm. Rust requires it to make
+  a match over `&str` states exhaustive, so a compiling string-state
+  scanner ends with `(_, _) => ...`.
 - State tokens are plain string literals (`"text"`) or path-qualified
   identifiers (`Scan::Word`). A **bare single-segment identifier is
   refused in every position** — pattern, next state, and initializer
@@ -93,17 +97,27 @@ even when every related test row pins the exact state.
 
 ## Acceptance Examples
 
-- Accept: `test -> classify("ab ") -> scan_state(input)` with a
-  string-state scanner — the operand resolves per row
-  (`"ab"` -> `"word"`, `"ab "` -> `"text"`), the boundary equality is
-  observed, and the finding exposes with the hop in the provenance.
-- Accept: `Scan::Text`/`Scan::Word` qualified-path states evaluate
-  identically to string states.
-- Reject: a computed argument (`scan_state(input.trim())`), a
-  computed next state (`=> next_for(input)`), a bare-identifier state
-  (`=> input`), a data-dependent iterable, an input beyond the step
-  bound, or any unrecognized loop-body line — each keeps the operand
-  unknown and the finding at its fail-closed class.
+1. Accept: `test -> classify("ab ") -> scan_state(input)` with a
+   string-state scanner — the operand resolves per row
+   (`"ab"` -> `"word"`, `"ab "` -> `"text"`), the boundary equality is
+   observed, and the finding exposes with the hop in the provenance.
+2. Accept: `Scan::Text`/`Scan::Word` qualified-path states evaluate
+   identically to string states, including against the compared enum
+   variant (`final_state == Scan::Word`): the operand reads as the
+   scanner's `"Scan::Word"` token, so the boundary equality is observed and
+   the finding exposes.
+3. Reject: a computed argument (`scan_state(input.trim())`) keeps the
+   operand unknown and the finding at its fail-closed class.
+4. Reject: a computed next state (`=> next_for(input)`) keeps the operand
+   unknown and the finding at its fail-closed class.
+5. Reject: a bare-identifier state (`=> input`) keeps the operand unknown
+   and the finding at its fail-closed class.
+6. Reject: a data-dependent iterable keeps the operand unknown and the
+   finding at its fail-closed class.
+7. Reject: an input beyond the step bound keeps the operand unknown and the
+   finding at its fail-closed class.
+8. Reject: any unrecognized loop-body line keeps the operand unknown and the
+   finding at its fail-closed class.
 
 ## Test Mapping
 
@@ -121,9 +135,10 @@ local-with-call-initializer operand jump); fixtures
   unresolved, matching the #3295 `Unsupported` precedent; the shared
   RIPR-SPEC-0001 unresolved boundary input wording names it.
 - No enum-type semantics: qualified-path states compare as normalized
-  text tokens, and the right-hand operand still binds only through the
-  existing literal machinery (a bare path operand on the right remains
-  unresolved — a named limitation of this slice).
+  text tokens. The right-hand operand binds through the existing literal
+  machinery, or, when the left side evaluated to a quoted path token, as
+  that path spelled (`Scan::Word`, #10108). A SCREAMING_CASE tail stays a
+  constant, and a path beside any other left value stays unresolved.
 - No change to the helper-chain relation stage (RIPR-SPEC-0159 owns
   reach and rows; this spec only consumes them).
 

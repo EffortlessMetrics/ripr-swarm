@@ -12,9 +12,16 @@
   "findings": [
     {
       "id": "probe:src_limiter.ts:typescript_preview:aa93aed4",
+      "canonical_gap_id": "gap:typescript:typescript_preview:aa93aed4",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "boundary_input_not_matched", "summary": "no observed call supplies the changed boundary input"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_limiter.ts:typescript_preview:aa93aed4",
         "family": "predicate",
@@ -139,9 +146,16 @@
     },
     {
       "id": "probe:src_limiter.ts:typescript_preview:ab3c5e25",
+      "canonical_gap_id": "gap:typescript:typescript_preview:ab3c5e25",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "oracle_below_strong", "summary": "related tests hold no exact-value oracle (weak or smoke assertion)"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_limiter.ts:typescript_preview:ab3c5e25",
         "family": "error_path",
@@ -232,7 +246,7 @@
         "verify": {
           "command": "npx --no-install jest tests/limiter.test.ts"
         },
-        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+        "why_not_actionable": "related test `parseLimit parses a numeric limit` asserts a different kind of behavior than this change, so ripr cannot safely choose which test to edit"
       },
       "preview_actionability": {
         "actionability_category": "incomplete_repair_packet",
@@ -265,7 +279,7 @@
         "repair_packet_ready": false,
         "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
         "unlock_condition": null,
-        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+        "why_not_actionable": "related test `parseLimit parses a numeric limit` asserts a different kind of behavior than this change, so ripr cannot safely choose which test to edit"
       },
       "stop_reasons": [],
       "oracle_kind": "unknown",

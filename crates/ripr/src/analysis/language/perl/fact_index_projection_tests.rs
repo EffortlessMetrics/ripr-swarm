@@ -28,8 +28,9 @@ fn digest(packet: &PerlFactPacket) -> (String, usize) {
     let findings = packet_to_findings_with_currentness(packet, &BTreeMap::new(), |_, _| {
         crate::domain::SourceCurrentness::UnresolvedSubject
     });
-    // These snapshots predate `analysis_scope` (#9941) and the absent
-    // related-test support field (#5564). Retain their original field set.
+    // These snapshots predate `analysis_scope` (#9941), `confidence_basis` (#10700), the absent related-test
+    // support field (#5564) and the related-test `role` (#5563). Retain their
+    // original field set.
     let rendered = pre_index_debug(&format!("{findings:#?}"));
     let mut hasher = Sha256::new();
     hasher.update(rendered.as_bytes());
@@ -37,8 +38,11 @@ fn digest(packet: &PerlFactPacket) -> (String, usize) {
 }
 
 // Ignore later default metadata while retaining the original projection bytes.
-// `Some` support and equally named text outside RelatedTest direct fields stay
-// observable. The indentation is the derived pretty-Debug layout, not a parser
+// A row's absent support and its default `role: Contributing` (the
+// compatibility value older artifacts read as, and the only role the Perl
+// projection produces) are additive fields the pre-index implementation did not
+// have. `Some` support, `ExaminedOnly` and equally named text outside
+// RelatedTest direct fields stay observable. The indentation is the derived pretty-Debug layout, not a parser
 // for arbitrary source or user text.
 fn pre_index_debug(rendered: &str) -> String {
     let mut related_test_indent = None;
@@ -55,7 +59,14 @@ fn pre_index_debug(rendered: &str) -> String {
         if related_test_indent == Some(indent) && matches!(trimmed, "}," | "}") {
             related_test_indent = None;
         }
-        if trimmed != "analysis_scope: Diff," && !absent_support {
+        let default_role = related_test_indent.is_some_and(|item_indent| {
+            indent == item_indent + 4 && trimmed == "role: Contributing,"
+        });
+        if trimmed != "analysis_scope: Diff,"
+            && trimmed != "confidence_basis: [],"
+            && !absent_support
+            && !default_role
+        {
             lines.push(line);
         }
     }
@@ -72,6 +83,11 @@ enum Shape {
 
 /// An ingestion-valid packet with exactly `CAP` entries in every capped array.
 fn capped_packet(shape: Shape) -> Result<PerlFactPacket, String> {
+    sized_packet(shape, CAP)
+}
+
+/// The same packet shape with `size` entries in every capped array.
+fn sized_packet(shape: Shape, size: usize) -> Result<PerlFactPacket, String> {
     let mut packet = consume(FIXTURE)?;
     let file = packet.files.first().cloned().ok_or("file")?;
     let owner = packet.owners.first().cloned().ok_or("owner")?;
@@ -91,7 +107,7 @@ fn capped_packet(shape: Shape) -> Result<PerlFactPacket, String> {
     packet.limitations.clear();
     packet.dynamic_boundaries.clear();
 
-    for i in 0..CAP {
+    for i in 0..size {
         let mut f = file.clone();
         f.file_id = format!("file:f-{i}");
         f.path = format!("lib/My/App-{i}.pm");
@@ -112,7 +128,7 @@ fn capped_packet(shape: Shape) -> Result<PerlFactPacket, String> {
 
         let mut t = test.clone();
         t.test_id = format!("test:t-{i}");
-        t.file_id = format!("file:f-{}", (i + 1) % CAP);
+        t.file_id = format!("file:f-{}", (i + 1) % size);
         packet.tests.push(t);
 
         let mut k = oracle.clone();
@@ -155,7 +171,10 @@ fn capped_packet(shape: Shape) -> Result<PerlFactPacket, String> {
         packet.oracles.len(),
         packet.relations.len(),
     ] {
-        assert_eq!(len, CAP, "every capped array sits exactly at the cap");
+        assert_eq!(
+            len, size,
+            "every capped array sits exactly at the requested size"
+        );
     }
     Ok(packet)
 }
@@ -204,20 +223,35 @@ fn duplicates_packet() -> Result<PerlFactPacket, String> {
 }
 
 fn check(packet: &PerlFactPacket, expected: &str, label: &str) {
-    let started = std::time::Instant::now();
     let (actual, findings) = digest(packet);
-    let elapsed = started.elapsed();
     assert!(findings > 0, "{label}: projection produced findings");
     assert_eq!(actual, expected, "{label}: findings digest");
-    if label != "duplicates" {
-        // The pre-index code took 41 s (distributed) and 28 s (star) on this
-        // input in a debug build under load; the indexed path takes ~1-2 s.
-        // The bound sits between them, so the old quadratic scans fail it.
-        assert!(
-            elapsed < std::time::Duration::from_secs(12),
-            "{label}: full projection at the cap took {elapsed:?}"
-        );
-    }
+}
+
+/// The pre-index code took 41 s (distributed) and 28 s (star) at the cap in a
+/// debug build under load, while the indexed path takes ~1-2 s: the old
+/// scans were quadratic, so doubling the packet quadrupled the time. Compare
+/// half the cap with the full cap on the same runner instead of bounding
+/// seconds, so runner speed cancels out.
+fn assert_projection_scales(shape: Shape, label: &str) -> Result<(), String> {
+    let half = sized_packet(shape, CAP / 2)?;
+    let full = sized_packet(shape, CAP)?;
+    crate::testing::scale::assert_growth_within(label, CAP / 2, CAP, 3, |size| {
+        let packet = if size == CAP { &full } else { &half };
+        let (_, findings) = digest(packet);
+        assert!(findings > 0, "{label}: projection produced findings");
+    });
+    Ok(())
+}
+
+#[test]
+fn distributed_projection_time_grows_linearly_with_the_packet() -> Result<(), String> {
+    assert_projection_scales(Shape::Distributed, "distributed")
+}
+
+#[test]
+fn star_projection_time_grows_linearly_with_the_packet() -> Result<(), String> {
+    assert_projection_scales(Shape::Star, "star")
 }
 
 #[test]
@@ -312,5 +346,146 @@ fn pre_index_debug_preserves_non_default_related_test_support() -> Result<(), St
     let mut hasher = Sha256::new();
     hasher.update(rendered.as_bytes());
     assert_ne!(hex_bytes(&hasher.finalize()), DUPLICATES_DIGEST);
+    Ok(())
+}
+
+#[test]
+fn pre_index_debug_normalizes_only_default_related_test_role() {
+    let rendered = r#"[
+    Finding {
+        analysis_scope: Diff,
+        role: Contributing,
+        related_tests: [
+            RelatedTest {
+                name: "role: Contributing, and RelatedTest {",
+                role_extra: Contributing,
+                detail: OtherRecord {
+                    role: Contributing,
+                },
+                role: Contributing,
+                miss_support: None,
+            },
+            RelatedTest {
+                role: ExaminedOnly,
+                miss_support: Some(
+                    RelatedTestMissSupport {
+                        value: "role: Contributing,",
+                        flow_sink: None,
+                    },
+                ),
+            },
+        ],
+        other_records: [
+            OtherRecord {
+                role: Contributing,
+            },
+        ],
+        other: OtherRecord {
+            role: Contributing,
+        },
+    },
+]"#;
+    let expected = r#"[
+    Finding {
+        role: Contributing,
+        related_tests: [
+            RelatedTest {
+                name: "role: Contributing, and RelatedTest {",
+                role_extra: Contributing,
+                detail: OtherRecord {
+                    role: Contributing,
+                },
+            },
+            RelatedTest {
+                role: ExaminedOnly,
+                miss_support: Some(
+                    RelatedTestMissSupport {
+                        value: "role: Contributing,",
+                        flow_sink: None,
+                    },
+                ),
+            },
+        ],
+        other_records: [
+            OtherRecord {
+                role: Contributing,
+            },
+        ],
+        other: OtherRecord {
+            role: Contributing,
+        },
+    },
+]"#;
+    let normalized = pre_index_debug(rendered);
+    assert_eq!(normalized, expected);
+    // A role strip that ignored context would also drop the finding-level,
+    // nested and later-sibling `role: Contributing,` lines.
+    let broad_strip = normalized
+        .lines()
+        .filter(|line| !line.contains("role: Contributing,"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_ne!(broad_strip, expected);
+}
+
+fn first_related(
+    findings: &mut [crate::domain::Finding],
+) -> Option<&mut crate::domain::RelatedTest> {
+    findings
+        .iter_mut()
+        .flat_map(|finding| finding.related_tests.iter_mut())
+        .next()
+}
+
+#[test]
+fn pre_index_debug_preserves_non_default_related_test_role_support_and_name() -> Result<(), String>
+{
+    let packet = duplicates_packet()?;
+    let mut findings = packet_to_findings_with_currentness(&packet, &BTreeMap::new(), |_, _| {
+        crate::domain::SourceCurrentness::UnresolvedSubject
+    });
+    let digest_of = |findings: &[crate::domain::Finding]| {
+        let rendered = pre_index_debug(&format!("{findings:#?}"));
+        let mut hasher = Sha256::new();
+        hasher.update(rendered.as_bytes());
+        (rendered, hex_bytes(&hasher.finalize()))
+    };
+    // Control: the produced rows are all the default role, which the pinned
+    // digest describes.
+    assert!(
+        findings
+            .iter()
+            .flat_map(|finding| finding.related_tests.iter())
+            .all(
+                |row| row.role == crate::domain::RelatedTestRole::Contributing
+                    && row.miss_support.is_none()
+            )
+    );
+    let (_, original) = digest_of(&findings);
+    assert_eq!(original, DUPLICATES_DIGEST);
+    first_related(&mut findings)
+        .ok_or("expected a related test")?
+        .role = crate::domain::RelatedTestRole::ExaminedOnly;
+    let (examined, examined_digest) = digest_of(&findings);
+    assert!(examined.contains("role: ExaminedOnly,"));
+    assert_ne!(examined_digest, original);
+    first_related(&mut findings)
+        .ok_or("expected a related test")?
+        .miss_support = Some(crate::domain::RelatedTestMissSupport {
+        value: "row-owned miss_support: None, and role: Contributing, evidence".to_string(),
+        flow_sink: None,
+    });
+    let (supported, supported_digest) = digest_of(&findings);
+    assert!(supported.contains("role: ExaminedOnly,"));
+    assert!(supported.contains("miss_support: Some("));
+    assert!(supported.contains("row-owned miss_support: None, and role: Contributing, evidence"));
+    assert_ne!(supported_digest, examined_digest);
+    first_related(&mut findings)
+        .ok_or("expected a related test")?
+        .name
+        .push_str(" role: Contributing,");
+    let (renamed, renamed_digest) = digest_of(&findings);
+    assert!(renamed.contains(" role: Contributing,"));
+    assert_ne!(renamed_digest, supported_digest);
     Ok(())
 }

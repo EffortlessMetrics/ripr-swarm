@@ -30,6 +30,7 @@ mod typescript_repo_mode_repair_failclosed;
 fn sample_finding(file: &str, line: usize) -> Finding {
     Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: "probe:src_lib_rs:42:error_path".to_string(),
         canonical_gap: None,
         probe: Probe {
@@ -91,7 +92,7 @@ fn sample_finding(file: &str, line: usize) -> Finding {
     }
 }
 
-fn check_output_with(findings: Vec<Finding>) -> CheckOutput {
+pub(crate) fn check_output_with(findings: Vec<Finding>) -> CheckOutput {
     CheckOutput {
         value_origins: Default::default(),
         harness_projections: Vec::new(),

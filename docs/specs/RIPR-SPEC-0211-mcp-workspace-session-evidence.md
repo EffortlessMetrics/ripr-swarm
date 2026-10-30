@@ -13,6 +13,9 @@ Linked issues:
 
 - #7314 (optional tool arguments reject explicit null consistently with
   their advertised non-null input types)
+- #9895 (a SIGTERM (or SIGINT) arriving mid-refresh must not leave the
+  in-flight git child behind: the server entry installs cooperative
+  process-lifetime interrupts on Unix)
 - #9895 (a client-supplied pagination cursor on the static catalog lists
   fails closed instead of being accepted and silently ignored)
 - #3089 (this slice: status, refresh, bounded gap list, and evidence
@@ -72,6 +75,11 @@ official SDK transport:
   correlated `-32602` Invalid Params error naming the field before session
   lookup. Omitted fields retain their defaults, valid values reach session
   lookup, and a subsequent request can recover on the same connection.
+- The `tools/call` `arguments` member is also omittable, but when present
+  must be an object. Explicit null is Invalid Params (`-32602`), including
+  for no-argument tools and `ripr_refresh`, before tool dispatch. Both
+  lifecycles retain metadata and request-ID validation precedence; valid
+  omission and an empty object keep their existing tool-specific behavior.
 - The catalog lists (`tools/list`, `prompts/list`, `resources/list`,
   `resources/templates/list`) are static and complete: the server returns
   every entry in one response and never issues a `nextCursor`. A
@@ -97,6 +105,36 @@ official SDK transport:
   session for one message; a normal `initialize` still completes afterwards,
   and stdin EOF remains the clean exit. Each attempt consumes at least one
   inbound frame, so recovery always makes progress and never spins.
+- External termination requests settle instead of orphaning children
+  (#9895, Unix). The server entry installs process-lifetime cooperative
+  interrupts for SIGINT and SIGTERM before serving: the first signal of
+  either kind requests cancellation of the in-flight bounded attempt — the
+  child waits (git probes, the Perl exporter, cat-file batch reads)
+  observe the flag at their poll cadence, terminate the owned process
+  tree, and unwind, so no git child outlives an interrupted `ripr_refresh`
+  — and the refresh settles on the same session with the typed failure in
+  its `attempt` block (a completed document, `isError` false per the #5254
+  commit contract).
+  A sequential repeated signal before attempt settlement restores native
+  termination as the escape; process exit itself stays transport-owned
+  (stdin EOF). One atomic terminal exchange consumes the attempt's signal:
+  a signal observed during final projection converts an otherwise successful
+  result to the typed cancellation, and a signal after that boundary belongs
+  to the next attempt. Configuration refusals also settle the pending signal.
+  Repeated native death can bypass cooperative cleanup and leave active children;
+  it is an escape, not a cleanup guarantee. Process-group containment covers
+  descendants that remain in the owned group, not deliberate group/session escape.
+  Later refreshes remain usable. Installation is serialized and idempotent.
+  Only MCP attempt tokens opt into Unix process groups; captured analysis
+  workers retain that choice and other callers preserve their prepared groups.
+  Cleanup observes leader exit without reaping, signals the owned group, then
+  reaps and disarms further group signals. This also settles pipe holders when
+  a primary exits early. Targets lacking the safe non-reaping observation
+  refuse contained spawn before creating a child. On non-Unix targets the
+  install is a no-op: containment there is the job-object ownership in
+  `process_owner`, whose std API cannot express kill-on-job-close, so an
+  abrupt external termination can still outlive a git child (recorded
+  residual).
 - After a successful `initialize` handshake, `ping` is routed by method
   name. A request whose `params._meta` carries the handshake fields this
   server requires pre-init (`io.modelcontextprotocol/protocolVersion`,
@@ -166,6 +204,57 @@ official SDK transport:
   typed failures and never become snapshots; `partial_with_limitations`
   commits with its typed limitations so complete-zero and incomplete-zero
   remain distinct.
+- `ripr_refresh` takes one more optional argument, `source` (#7357), with
+  the closed values `committed` and `worktree`. Omission and `committed`
+  are the same request and keep every behavior and identity above. A value
+  outside the closed set, including an empty string, a different case, a
+  non-string or an explicit null, is Invalid Params (`-32602`); nothing is
+  coerced. `worktree` routes the same attempt through the shared
+  `check_workspace_worktree_with_config` producer: the diff from the
+  resolved (or explicit) base to the saved working tree, covering staged
+  and unstaged tracked edits. Unsaved editor buffers are outside, and
+  untracked files stay excluded unless the existing intent-to-add
+  mechanism (`git add -N <paths>`) makes them visible; the scope
+  disclosure names them with that remedy. The server adds no Git or
+  worktree digest of its own and still does not watch the worktree.
+  - Requested and captured source are distinct facts. The session records
+    the requested source when an attempt starts
+    (`session.current_desired_input.source: "worktree"`, emitted only for a
+    worktree request); each snapshot records the source it was captured
+    under. The refresh result adds `requested_source` and `captured_source`
+    (`null` before any snapshot) once a worktree source is requested or
+    captured, and snapshot summaries (`snapshot`, `last_completed_snapshot`,
+    `last_known_good`) add `source: "worktree"` for a worktree capture.
+    A failed attempt keeps the last-known-good snapshot with its own tag: a
+    failed worktree request never relabels a retained committed snapshot,
+    and a failed committed request never relabels a retained worktree one.
+    Source-less callers see the unchanged v1 shapes.
+  - The source kind is part of a worktree snapshot's identity (the committed
+    identity payload is unchanged, so existing committed identities do not
+    move). Equal findings captured under a committed and a worktree source
+    are different snapshots, so a snapshot id pinned before a switch fails
+    `stale_snapshot` after it and a committed -> worktree -> committed
+    sequence cannot reuse the other kind's result. The identity is as strong
+    as the producer's outcome identity (a diff-byte commitment) plus the
+    canonical items; it is not a complete consumed-source commitment.
+  - A worktree snapshot discloses that limit instead of claiming
+    currentness: its `scope` always exists, with `analyzed` naming the
+    saved tracked-worktree diff, `uncommitted_edits: "saved tracked edits
+    included"`, `consumed_source_commitment: "not_established"` and
+    `repair_cards: "withheld"`. Because no consumed-source commitment spans
+    the findings and the later live-file seam inventory, a worktree refresh
+    gathers no inventory and binds no card producers: every item's
+    `repair_packet_ready` is false. Otherwise-ready items receive the typed
+    `worktree_source_not_committed` reason; existing finding-level refusal
+    reasons retain precedence. `ripr_prepare_repair` therefore creates no
+    attempt, and `ripr_get_repair_card` refuses with the
+    existing `incomplete_inventory` code and a detail naming the
+    tracked-worktree source. Findings, list and gap evidence are served as
+    for a committed snapshot. Committing the change and refreshing without
+    `source` restores cards and readiness. Establishing worktree repair
+    cards, same-HEAD edit invalidation by consumed bytes and
+    source-movement-between-producers controls remain open under #7357's
+    producer-seam prerequisites (#1765 / #1602).
 - The snapshot identity is `snapshot:sha256:` over the typed outcome digest,
   the sorted canonical item identities, and each item's evidence digest:
   equivalent roots at equivalent inputs share one portable identity, while
@@ -199,7 +288,12 @@ official SDK transport:
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
   limit; replay cannot cross a completed refresh that replaced the snapshot.
-- Gap-list success and refusal documents use `ripr-mcp-gap-list-v3`.
+- Gap-list success and refusal documents use `ripr-mcp-gap-list-v4`.
+  v4 adds `omitted_page` and the `omitted_offset` argument (#9360): the
+  omission disclosure pages on its own axis, at most 200 identities and 16 KiB per response, so
+  a large truncated selection no longer fails the listing with
+  `result_too_large`. `continuation.next_omitted_page` replays the snapshot pin, filters, item
+  window and limit, and `next_page` keeps `omitted_offset`; walking `omitted_page.next_offset` covers every omission once.
   The former v1 success schema closed its top level with
   `additionalProperties: false`, so adding `filtered` and `filters` cannot
   retain strict v1 compatibility. Clients must rediscover `tools/list`, accept
@@ -463,6 +557,13 @@ unknown route into a recognized one.
 
 ## Test Mapping
 
+- `crates/ripr/src/mcp/workspace.rs::tests::omission_disclosure_pages_independently_of_items`
+  — with more omitted identities than one window, each response carries at
+  most 200, `omitted_page`/`continuation.next_omitted_page` walk every
+  omission exactly once, and a past-end window is empty and closed (#9360).
+  `long_omitted_identities_are_byte_fitted_and_fully_walked` and
+  `continuation_routes_preserve_the_other_axis` pin the byte budget and the
+  two-axis replay.
 - `crates/ripr/src/mcp/workspace.rs::tests::status_serves_per_language_completeness_from_the_view`
   and `status_without_a_view_keeps_the_unchanged_shape` — literal
   `language_completeness` rows and absence without a view.
@@ -558,6 +659,18 @@ unknown route into a recognized one.
 - `crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio`
   — the #7314 schema/dispatch contract for all six optional argument
   positions, with omission, valid-type, wrong-type and recovery controls.
+- `crates/ripr/tests/mcp_interrupts.rs::cooperative_interrupt_lifecycle`
+  (Linux) — real stdio and gated git children cover SIGINT, SIGTERM,
+  early-primary pipe holders, typed failure, last-good retention, same-session
+  recovery and an independently owned surviving sentinel. Identity-pinned
+  process handles and adopted descendant wait statuses distinguish product
+  settlement from harness cleanup.
+- `crates/ripr/src/cli/interrupt.rs::tests` — isolated native signal controls,
+  concurrent installation, repeated mixed/TERM escape, terminal signal epochs
+  and bounded adverse harness controls.
+- `crates/ripr/src/process_owner.rs::tests` — non-reaping cleanup ordering,
+  successful output/status, refusal after custody loss, repeated cleanup and
+  preservation of caller process groups.
 - `crates/ripr/tests/mcp_stdio.rs::catalog_list_cursors_fail_closed_over_stdio`
   — a `cursor` on `tools/list`, `prompts/list`, `resources/list`, or
   `resources/templates/list` is a `-32602` whose message explains the list
@@ -597,3 +710,18 @@ unknown route into a recognized one.
   snapshot resource)
 - zero committed snapshots for `unsupported_input` / `analysis_failed`
   outcomes (negative invariant)
+
+## Source-preserving recovery follow-up (#10799)
+
+Single-gap overflow recovery is captured with its evidence snapshot and reused
+at the raw-document, tool-envelope and resource-envelope boundaries. The CLI
+renderer binds the captured root, effective base and explicit source; a newer
+failed request cannot relabel it. The route is a bounded current-state rerun,
+not immutable replay. The 4096-byte recovery-text budget refuses an oversized complete route
+with an explicit non-command limitation rather than truncating executable text.
+
+For failed saved-worktree refresh, MCP retry examples retain the requested
+worktree source when the operator corrects or omits a base. Discovery states
+the committed default separately from opt-in saved tracked edits. Unsaved and
+untracked exclusions, withheld worktree cards/readiness and the consumed-source
+commitment limitation remain unchanged.

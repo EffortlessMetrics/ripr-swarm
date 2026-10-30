@@ -19,7 +19,7 @@
 
 use super::decision::confidence_score;
 use super::reveal::ASSERTION_CONTEXT_UNESTABLISHED;
-use crate::analysis::facts::{FunctionContainer, TestFact};
+use crate::analysis::facts::{FunctionContainer, TestFact, cfg_predicates};
 use crate::analysis::rust_index::RustIndex;
 use crate::domain::*;
 
@@ -27,6 +27,11 @@ use crate::domain::*;
 /// refused for an analyzer limit. The post-pass removes it from the finding.
 pub(in crate::analysis) const REFUSALS_ARE_ANALYZER_LIMITS: &str =
     "gap_admission: every refused related assertion rests on an analyzer limit";
+
+/// Classifier-to-post-pass marker (#5431): a weaker oracle was admitted
+/// beside a refused `assert_eq!` that calls the owner, and every such
+/// refusal rests on an analyzer limit.
+pub(in crate::analysis) const MIXED_REFUSAL_IS_ANALYZER_LIMIT: &str = "gap_admission: an owner-calling assertion was refused for an analyzer limit beside an admitted weaker oracle";
 
 const LIMIT: StaticLimitKind = StaticLimitKind::RustAssertionContextUnresolved;
 const JUDGED_TEST_LIMIT: usize = 3;
@@ -55,6 +60,35 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
         LIMIT,
         &first_unresolved_edge,
         next_step(&judged, macro_name),
+        &judged,
+    );
+    true
+}
+
+/// #5431: a `weakly_exposed` gap asks for a stronger assertion, but a refused
+/// `assert_eq!` on the owner may already be that assertion. Withhold the gap
+/// when the refusal rests on an analyzer limit. Returns `true` when the
+/// finding was rewritten to `static_unknown`.
+pub(in crate::analysis) fn withhold_mixed_refusal_gap(finding: &mut Finding) -> bool {
+    let before = finding.evidence.len();
+    finding
+        .evidence
+        .retain(|line| line != MIXED_REFUSAL_IS_ANALYZER_LIMIT);
+    let marked = finding.evidence.len() != before;
+    if !(marked
+        && finding.static_limit_kind.is_none()
+        && finding.class == ExposureClass::WeaklyExposed)
+    {
+        return false;
+    }
+    let judged = judged_tests(finding);
+    let first_unresolved_edge =
+        "whether the refused related `assert_eq!` compares the changed value exactly";
+    withhold_gap(
+        finding,
+        LIMIT,
+        first_unresolved_edge,
+        next_step(&judged, "assert_eq"),
         &judged,
     );
     true
@@ -896,6 +930,60 @@ const PANIC_MACROS: [&str; 10] = [
     "debug_assert_ne",
 ];
 
+/// The one predicate behind the `#[should_panic]` named limitation
+/// (RIPR-SPEC-0240, #10703): the labels (`name` (file:line)) of the
+/// directly-calling, assertion-free, non-ignored `#[should_panic]` tests among
+/// `direct_related` whose expected panic the owner can raise at or after
+/// `changed_line`. The finding pass (`check`) and the seam evidence pass
+/// (`repair`) both call this, so neither calls a gap what the other withholds.
+/// Empty means the predicate does not apply.
+pub(in crate::analysis) fn should_panic_tests_deciding_changed_panic<'a>(
+    owner: &crate::analysis::facts::FunctionFact,
+    changed_line: usize,
+    direct_related: impl IntoIterator<Item = (&'a str, &'a std::path::Path, usize)>,
+    index: &RustIndex,
+) -> Vec<String> {
+    let body = owner.body.as_str();
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let tail_start: usize = body
+        .split_inclusive('\n')
+        .take(changed_line.saturating_sub(owner.start_line))
+        .map(str::len)
+        .sum();
+    let invocations = panic_macro_arguments(&masked, tail_start);
+    if invocations.is_empty() {
+        return Vec::new();
+    }
+    // An `expected` message counts only when it is a literal argument of a
+    // panicking macro invoked on or after the changed line: a message raised
+    // before the change, or a literal the owner never panics with, does not
+    // depend on it.
+    let owner_literals: Vec<String> = invocations
+        .into_iter()
+        .filter_map(|arguments| body.get(arguments))
+        .flat_map(string_literal_contents)
+        .collect();
+    direct_related
+        .into_iter()
+        .filter(|(name, file, line)| {
+            index.tests().iter().any(|test| {
+                test.name == *name
+                    && test.file == *file
+                    && test.start_line == *line
+                    && test.assertions.is_empty()
+                    && !is_ignored(test)
+                    && expects_owner_panic(test, &owner_literals)
+            })
+        })
+        .map(|(name, file, line)| {
+            format!(
+                "`{name}` ({}:{line})",
+                file.display().to_string().replace('\\', "/")
+            )
+        })
+        .collect()
+}
+
 /// RIPR-SPEC-0240: a `#[should_panic]` test with no assertion still has an
 /// oracle, the panic outcome. When such a test calls the owner directly and
 /// the owner can panic at or after the changed line, a changed guard may
@@ -924,49 +1012,13 @@ pub(in crate::analysis) fn withhold_should_panic_gap(
     }) else {
         return false;
     };
-    let body = owner.body.as_str();
-    let masked = crate::analysis::extract::mask_comments_and_strings(body);
-    let tail_start: usize = body
-        .split_inclusive('\n')
-        .take(changed_line - owner.start_line)
-        .map(str::len)
-        .sum();
-    let invocations = panic_macro_arguments(&masked, tail_start);
-    if invocations.is_empty() {
-        return false;
-    }
-    // An `expected` message counts only when it is a literal argument of a
-    // panicking macro invoked on or after the changed line: a message raised
-    // before the change, or a literal the owner never panics with, does not
-    // depend on it.
-    let owner_literals: Vec<String> = invocations
-        .into_iter()
-        .filter_map(|arguments| body.get(arguments))
-        .flat_map(string_literal_contents)
-        .collect();
-    let panicking: Vec<String> = finding
+    let direct_related = finding
         .related_tests
         .iter()
-        .filter(|related| {
-            related.relation_reason == Some(RelationReason::DirectOwnerCall)
-                && index.tests().iter().any(|test| {
-                    test.name == related.name
-                        && test.file == related.file
-                        && test.start_line == related.line
-                        && test.assertions.is_empty()
-                        && !is_ignored(test)
-                        && expects_owner_panic(test, &owner_literals)
-                })
-        })
-        .map(|related| {
-            format!(
-                "`{}` ({}:{})",
-                related.name,
-                related.file.display().to_string().replace('\\', "/"),
-                related.line
-            )
-        })
-        .collect();
+        .filter(|related| related.relation_reason == Some(RelationReason::DirectOwnerCall))
+        .map(|related| (related.name.as_str(), related.file.as_path(), related.line));
+    let panicking =
+        should_panic_tests_deciding_changed_panic(owner, changed_line, direct_related, index);
     if panicking.is_empty() {
         return false;
     }
@@ -1090,7 +1142,9 @@ fn panic_macro_arguments(masked: &str, from: usize) -> Vec<std::ops::Range<usize
 pub(in crate::analysis) fn is_ignored(test: &TestFact) -> bool {
     test.attrs.iter().any(|attr| {
         let compact: String = attr.chars().filter(|ch| !ch.is_whitespace()).collect();
-        compact == "#[ignore]" || compact.starts_with("#[ignore=")
+        compact == "#[ignore]"
+            || compact.starts_with("#[ignore=")
+            || cfg_predicates::attribute_introduces_bare(attr, "ignore")
     })
 }
 
@@ -1218,6 +1272,7 @@ mod tests {
             });
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:gap-admission".to_string(),
             canonical_gap: None,
             probe: Probe {

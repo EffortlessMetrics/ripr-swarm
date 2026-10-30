@@ -1,0 +1,19 @@
+//! The changed binding is shadowed before the equality.
+
+pub fn width_matches_rebound(text: &str, width: usize) -> bool {
+    let end = text.len();
+    let end = end + 0;
+    end == width
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_length_is_compared_b_rebound() {
+        assert!(width_matches_rebound("abc", 3));
+        assert!(!width_matches_rebound("abcd", 3));
+        assert!(!width_matches_rebound("ab", 3));
+    }
+}

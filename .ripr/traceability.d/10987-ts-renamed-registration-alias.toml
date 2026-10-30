@@ -1,0 +1,9 @@
+# Registers the renamed registration alias fix (#10987).
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::a_renamed_registration_alias_indexes_like_the_direct_forms",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::a_renamed_describe_pick_walks_its_suite",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::a_renamed_alias_credits_only_the_registration_target_it_names",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::a_renamed_alias_owes_the_inactive_and_each_fences",
+]

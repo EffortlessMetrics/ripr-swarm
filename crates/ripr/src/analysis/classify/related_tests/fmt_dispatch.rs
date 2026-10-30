@@ -71,6 +71,11 @@ pub(super) fn is_fmt_dispatch_owner(owner: &FunctionSummary) -> bool {
     fmt_owner(owner).is_some()
 }
 
+/// Display owner identity shared by pin admission and its fallback refusal.
+pub(in crate::analysis) fn is_display_fmt_owner(owner: &FunctionSummary) -> bool {
+    matches!(fmt_owner(owner), Some((FmtTrait::Display, _)))
+}
+
 /// Cheap lexical prefilter for the candidate index: the body may format.
 pub(super) fn body_may_dispatch_fmt(body: &str) -> bool {
     ["format", "write", "print", "to_string"]
@@ -309,10 +314,11 @@ fn to_string_dispatch_at(masked: &str, at: usize, self_type: &str) -> bool {
     )
 }
 
-/// Whether the changed expression differs from its prior text only inside
-/// string literals. A literal fragment of a `write!` is written whatever the
-/// test passes in, so an exact pin sees it; a changed argument may leave the
-/// output equal for the one value the test chose (`self.0 * 2` at `0`).
+/// Whether one fixed output fragment of an ordinary format template changed.
+/// The original lexical admission stays the withholding ceiling for placeholder,
+/// argument and cancelling-fragment edits. Token validation prevents quotes in
+/// raw strings, characters or comments from hiding them, and also admits a real
+/// fixed-fragment edit the lexical scanner mis-parsed (a `'"'` argument).
 pub(in crate::analysis) fn changes_only_string_literals(
     before: Option<&str>,
     after: Option<&str>,
@@ -320,30 +326,195 @@ pub(in crate::analysis) fn changes_only_string_literals(
     let (Some(before), Some(after)) = (before, after) else {
         return false;
     };
-    let outside = |text: &str| {
-        let mut kept = String::new();
-        let mut in_string = false;
-        let mut escaped = false;
-        for c in text.chars() {
-            if in_string {
-                if escaped {
-                    escaped = false;
-                } else if c == '\\' {
-                    escaped = true;
-                } else if c == '"' {
-                    in_string = false;
-                    kept.push('"');
+    let (Some(outside_before), Some(outside_after)) =
+        (outside_strings(before), outside_strings(after))
+    else {
+        return false;
+    };
+    if before == after || outside_before != outside_after {
+        return false;
+    }
+    let (Some((kept_before, template_before)), Some((kept_after, template_after))) =
+        (format_template(before), format_template(after))
+    else {
+        return false;
+    };
+    let (Some((groups_before, text_before)), Some((groups_after, text_after))) = (
+        format_fragments(&template_before),
+        format_fragments(&template_after),
+    ) else {
+        return false;
+    };
+    if kept_before != kept_after
+        || groups_before != groups_after
+        || text_before.len() != text_after.len()
+    {
+        return false;
+    }
+    // Exactly one fixed fragment differs by written source. A change confined
+    // to line-continuation bytes rides the fragment it joins, so it counts as a
+    // spelling-only edit of that fragment.
+    text_before
+        .iter()
+        .zip(&text_after)
+        .filter(|(a, b)| a != b)
+        .count()
+        == 1
+}
+
+/// Original literal-only lexical boundary, retained as an admission ceiling.
+fn outside_strings(text: &str) -> Option<String> {
+    let mut kept = String::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    for c in text.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+                kept.push('"');
+            }
+        } else {
+            kept.push(c);
+            in_string = c == '"';
+        }
+    }
+    (!in_string).then_some(kept)
+}
+
+/// Decode the first ordinary string token (the eligible tail's template) into
+/// characters paired with their source spelling, validating every string
+/// literal and preserving all other source bytes. In particular, argument-string
+/// edits are not a fixed-output witness: precision can suppress their change.
+/// Raw strings stay outside this bounded reading.
+fn format_template(text: &str) -> Option<(String, Vec<(char, String)>)> {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, AstToken, IsString},
+    };
+    let parsed = crate::analysis::syntax::parse_clean_source_file(&format!(
+        "fn ripr_format_edit() {{ {text}; }}"
+    ))?;
+    let mut kept = String::new();
+    let mut template = None;
+    for element in parsed.tree().syntax().descendants_with_tokens() {
+        let Some(token) = element.into_token() else {
+            continue;
+        };
+        if let Some(string) = ast::String::cast(token.clone()) {
+            // Token-tree literals need explicit escape validation even when
+            // the outer macro parses cleanly. Reject suffixes and raw forms.
+            if !token.text().starts_with('"') || !token.text().ends_with('"') {
+                return None;
+            }
+            let value = string.value().ok()?;
+            if template.is_none() {
+                let text = token.text();
+                let mut chars: Vec<(char, String)> = Vec::new();
+                let mut valid = true;
+                let mut at = None;
+                string.escaped_char_ranges(&mut |range, decoded| {
+                    let (start, end) = (usize::from(range.start()), usize::from(range.end()));
+                    let (Ok(c), Some(source)) = (decoded, text.get(start..end)) else {
+                        valid = false;
+                        return;
+                    };
+                    // Skipped bytes (a line continuation) stay with the enclosing
+                    // item; a leading one has no item to join and fails closed.
+                    let previous = at.unwrap_or(1);
+                    if previous < start {
+                        match (chars.last_mut(), text.get(previous..start)) {
+                            (Some(last), Some(gap)) => last.1.push_str(gap),
+                            _ => valid = false,
+                        }
+                    }
+                    at = Some(end);
+                    chars.push((c, source.to_owned()));
+                });
+                if let (Some(end), Some(close)) = (at, text.len().checked_sub(1))
+                    && end < close
+                    && let (Some(last), Some(gap)) = (chars.last_mut(), text.get(end..close))
+                {
+                    last.1.push_str(gap);
                 }
-            } else {
-                kept.push(c);
-                in_string = c == '"';
+                let decoded: String = chars.iter().map(|(c, _)| *c).collect();
+                if !valid || decoded != value {
+                    return None;
+                }
+                template = Some(chars);
+                kept.push_str("\"\"");
+                continue;
             }
         }
-        (kept, in_string)
-    };
-    let (kept_before, open_before) = outside(before);
-    let (kept_after, open_after) = outside(after);
-    !open_before && !open_after && kept_before == kept_after && before != after
+        kept.push_str(token.text());
+    }
+    Some((kept, template?))
+}
+
+/// Ordered groups and fixed fragments as source spellings, with doubled braces
+/// reading as literal braces. A group or fragment is compared by the source it
+/// is written in, so re-spelling a placeholder (`{}` as `\u{7b}\u{7d}`) is an
+/// edit to the group while re-spelling a fixed character is an edit to its
+/// fragment. Comparing one changed fragment avoids cancellation across
+/// placeholders (e.g. `1{}` to `{}1` for the value 1). This does not interpret
+/// the full Rust format-specifier grammar.
+fn format_fragments(template: &[(char, String)]) -> Option<(Vec<String>, Vec<String>)> {
+    let mut groups = Vec::new();
+    let mut fragments = Vec::new();
+    let mut fragment = String::new();
+    let mut at = 0;
+    while at < template.len() {
+        let (c, source) = (&template[at].0, &template[at].1);
+        at += 1;
+        match c {
+            '{' if template.get(at).map(|next| next.0) == Some('{') => {
+                fragment.push_str(source);
+                fragment.push_str(&template[at].1);
+                at += 1;
+            }
+            '{' => {
+                fragments.push(std::mem::take(&mut fragment));
+                let mut group = source.clone();
+                let mut spec = false;
+                loop {
+                    let (next, next_source) = template.get(at)?;
+                    at += 1;
+                    if *next == '{' {
+                        return None;
+                    }
+                    group.push_str(next_source);
+                    if *next == ':' && !spec {
+                        spec = true;
+                        // a fill character may be a brace: `{:{<3}` is one group
+                        if let (Some(fill), Some(align)) = (template.get(at), template.get(at + 1))
+                            && matches!(align.0, '<' | '^' | '>')
+                        {
+                            group.push_str(&fill.1);
+                            group.push_str(&align.1);
+                            at += 2;
+                        }
+                        continue;
+                    }
+                    if *next == '}' {
+                        break;
+                    }
+                }
+                groups.push(group);
+            }
+            '}' if template.get(at).map(|next| next.0) == Some('}') => {
+                fragment.push_str(source);
+                fragment.push_str(&template[at].1);
+                at += 1;
+            }
+            '}' => return None,
+            _ => fragment.push_str(source),
+        }
+    }
+    fragments.push(fragment);
+    Some((groups, fragments))
 }
 
 /// RIPR-SPEC-0297: `assert_eq!(value.to_string(), "literal")` pins the whole
@@ -748,21 +919,25 @@ fn constructs_self(expr: &str, self_type: &str) -> bool {
     };
     let opens = matches!(next, Some(b'(' | b'{'));
     match segments.as_slice() {
-        // `Site(..)` / `m::Site { .. }`: only module (lowercase) prefixes may
+        // `Site(..)` / `crate::Site { .. }`: only an in-crate prefix may
         // precede the type, so `Error::Site(..)` (a variant named like the
-        // type) is not a `Site`.
-        [prefix @ .., last]
-            if opens
-                && *last == self_type
-                && prefix
-                    .iter()
-                    .all(|segment| segment.starts_with(|c: char| c.is_ascii_lowercase())) =>
-        {
-            true
+        // type) and `other_crate::Site { .. }` (a foreign type sharing the
+        // name) are not a `Site`.
+        [prefix @ .., last] if opens && *last == self_type && in_crate_prefix(prefix) => true,
+        [prefix @ .., ty, variant] => {
+            *ty == self_type && is_variant_name(variant) && in_crate_prefix(prefix)
         }
-        [.., ty, variant] => *ty == self_type && is_variant_name(variant),
         _ => false,
     }
+}
+
+/// Whether a path prefix keeps naming the local type: empty, or only
+/// `crate`, `self` or `super` (the rule `binding_has_type` applies to
+/// annotations).
+fn in_crate_prefix(prefix: &[&str]) -> bool {
+    prefix
+        .iter()
+        .all(|segment| matches!(*segment, "crate" | "self" | "super"))
 }
 
 /// What a macro argument can be typed from: the statements finished before
@@ -865,8 +1040,12 @@ fn binding_has_type(scope: Scope<'_>, binding: &str, self_type: &str) -> bool {
     };
     let pattern = &statement[..eq];
     if let Some(colon) = pattern.find(':') {
-        return type_head(&pattern[colon + 1..])
-            .is_some_and(|(segments, _)| segments.last() == Some(&self_type));
+        // A path-qualified annotation (`other_crate::Merge`) may name a type
+        // of another crate or module that merely shares the local type's
+        // name; only an in-crate prefix keeps the annotation the local type.
+        return type_head(&pattern[colon + 1..]).is_some_and(|(segments, _)| {
+            segments.last() == Some(&self_type) && in_crate_prefix(&segments[..segments.len() - 1])
+        });
     }
     let init = statement[eq + 1..].trim();
     initializer_is_one_head_expr(init)
@@ -1164,6 +1343,201 @@ mod tests {
         assert_eq!(memo.builds_for_test(), 3, "bound index still hits");
     }
 
+    /// Related tests of a helper `sanitize_label` whose one caller is the
+    /// `fmt` of `impls[0]`, reached through a one-hop helper chain (#8999).
+    fn helper_reasons(impls: &[&str], bodies: &[&str]) -> Vec<(String, RelationReason)> {
+        helper_reasons_via(impls, bodies, &[(true, false)])
+    }
+
+    /// Like `helper_reasons`, with the chain given from the helper upward as
+    /// `(is_fmt_hop, through_macro)`. A non-fmt hop is a free `wrapper`.
+    fn helper_reasons_via(
+        impls: &[&str],
+        bodies: &[&str],
+        hops: &[(bool, bool)],
+    ) -> Vec<(String, RelationReason)> {
+        use crate::analysis::classify::helper_transfer::{HelperChain, HelperHop};
+        let mut files = std::collections::BTreeMap::new();
+        let source = "pub struct Merge;\npub struct Other;\n";
+        files.insert(
+            PathBuf::from("src/error.rs"),
+            FileFacts {
+                path: PathBuf::from("src/error.rs"),
+                source: source.into(),
+                ..FileFacts::default()
+            },
+        );
+        let mut helper = fmt_function("src/error.rs", "unused");
+        helper.id = SymbolId("src/error.rs::sanitize_label".to_string());
+        helper.name = "sanitize_label".to_string();
+        let fmts: Vec<FunctionSummary> = impls
+            .iter()
+            .map(|header| fmt_function("src/error.rs", header))
+            .collect();
+        let chain = HelperChain {
+            hops: hops
+                .iter()
+                .map(|&(is_fmt, through_macro)| {
+                    let mut caller = fmts[0].clone();
+                    if !is_fmt {
+                        caller.id = SymbolId("src/error.rs::wrapper".to_string());
+                        caller.name = "wrapper".to_string();
+                    }
+                    HelperHop {
+                        caller,
+                        call_text: "sanitize_label(l)".to_string(),
+                        arguments: vec!["l".to_string()],
+                        receiver: None,
+                        through_macro,
+                        module_qualified: false,
+                        transparent_macros_rebound: false,
+                        diverging_handlers: Vec::new(),
+                    }
+                })
+                .collect(),
+            stop_above: None,
+        };
+        let mut functions = vec![helper.clone()];
+        functions.extend(fmts);
+        let tests: Vec<TestSummary> = bodies
+            .iter()
+            .enumerate()
+            .map(|(at, body)| test_with_body(&format!("t{at}"), body))
+            .collect();
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            functions,
+            tests,
+            files,
+            ..Default::default()
+        });
+        let mut probe = probe();
+        probe.owner = Some(helper.id.clone());
+        probe.expression = "s.replace('\\n', \" \")".to_string();
+        find_related_tests(&probe, Some(&helper), &index, true, Some(&chain), None)
+            .into_iter()
+            .map(|(test, reason)| (test.name.clone(), reason))
+            .collect()
+    }
+
+    #[test]
+    fn a_helper_called_only_by_display_fmt_is_reached_by_formatting_the_type() {
+        let reasons = helper_reasons(
+            &["fmt::Display for Merge"],
+            &[
+                "let merge: Merge = Merge::new(vec![]);\nassert_eq!(\n    merge.to_string(),\n    \"a\"\n);",
+                "let merge = Merge { labels: vec![] };\nassert_eq!(format!(\"{}\", merge), \"a\");",
+                // Refused: another type, the other trait's placeholder, an
+                // untyped factory, and a test that never formats the value.
+                "let other = Other;\nassert_eq!(other.to_string(), \"a\");",
+                "let merge = Merge;\nassert_eq!(format!(\"{:?}\", merge), \"a\");",
+                "let merge = Merge::new(vec![]);\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = Merge;\nassert_eq!(merge.len(), 0);",
+                // A path-qualified initializer names the local type only
+                // with an in-crate prefix, like an annotation.
+                "let merge = crate::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = self::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = super::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = other_crate::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = other_crate::Merge(vec![]);\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = other_crate::Merge::Variant;\nassert_eq!(merge.to_string(), \"a\");",
+                // A path-qualified annotation names the local type only with
+                // an in-crate prefix.
+                "let merge: crate::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge: other_crate::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge: shared::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
+            ],
+        );
+        let helper_calls: Vec<&str> = reasons
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(
+            helper_calls,
+            ["t0", "t1", "t12", "t6", "t7", "t8"],
+            "{reasons:?}"
+        );
+        assert!(
+            !reasons
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::DirectOwnerCall),
+            "reaching a helper through fmt is never a direct owner call: {reasons:?}"
+        );
+    }
+
+    #[test]
+    fn a_macro_argument_hop_carries_no_formatting_reach() {
+        let body = "let merge: Merge = Merge::new(vec![]);\nassert_eq!(merge.to_string(), \"a\");";
+        let direct = helper_reasons_via(&["fmt::Display for Merge"], &[body], &[(true, false)]);
+        assert!(
+            direct
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "premise: the same test reaches through a call hop: {direct:?}"
+        );
+        let through_macro =
+            helper_reasons_via(&["fmt::Display for Merge"], &[body], &[(true, true)]);
+        // The macro hop sits below the fmt hop: the helper is only named as a
+        // macro token argument of `wrapper`, which `fmt` calls.
+        let below = helper_reasons_via(
+            &["fmt::Display for Merge"],
+            &[body],
+            &[(false, true), (true, false)],
+        );
+        assert!(
+            !below
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{below:?}"
+        );
+        let above = helper_reasons_via(
+            &["fmt::Display for Merge"],
+            &[body],
+            &[(false, false), (true, false)],
+        );
+        assert!(
+            above
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "premise: direct hops below the fmt hop keep the reach: {above:?}"
+        );
+        assert!(
+            !through_macro
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{through_macro:?}"
+        );
+    }
+
+    #[test]
+    fn a_helper_chain_entry_that_is_not_a_fmt_owner_is_not_reached_by_formatting() {
+        // The chain entry is `fmt` of a trait other than Display/Debug.
+        let reasons = helper_reasons(
+            &["fmt::LowerHex for Merge"],
+            &["let merge = Merge;\nassert_eq!(merge.to_string(), \"a\");"],
+        );
+        assert!(
+            !reasons
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{reasons:?}"
+        );
+    }
+
+    #[test]
+    fn two_display_impls_for_the_entry_type_fail_closed() {
+        let reasons = helper_reasons(
+            &["fmt::Display for Merge", "fmt::Display for Merge"],
+            &["let merge = Merge;\nassert_eq!(merge.to_string(), \"a\");"],
+        );
+        assert!(
+            !reasons
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{reasons:?}"
+        );
+    }
+
     #[test]
     fn debug_format_of_constructed_value_reaches_debug_fmt() {
         let related = reasons(
@@ -1330,6 +1704,80 @@ mod tests {
             "write!(f, \"{}C\", self.0)",
             "write!(f, \"{}F\", self.1)"
         ));
+        // A changed placeholder is an argument edit in disguise (#9836): the
+        // same value may print the same under `{}`, `{:?}` and `{0}`.
+        assert!(!same(
+            "write!(f, \"{}\u{b0}C\", self.0)",
+            "write!(f, \"{:?}\u{b0}C\", self.0)"
+        ));
+        assert!(!same(
+            "write!(f, \"{}\u{b0}C\", self.0)",
+            "write!(f, \"{0}\u{b0}C\", self.0)"
+        ));
+        // An added or removed group, and an escape traded for a group.
+        assert!(!same("write!(f, \"C\")", "write!(f, \"{}C\", self.0)"));
+        assert!(!same("write!(f, \"{{}}\")", "write!(f, \"{}\", self.0)"));
+        // Text beside identical groups stays text; multiple changed fragments refuse.
+        assert!(same(
+            "write!(f, \"{} C\", self.0)",
+            "write!(f, \"{} F\", self.0)"
+        ));
+        assert!(!same(
+            "write!(f, \"{{{}}}\", self.0)",
+            "write!(f, \"[{}]\", self.0)"
+        ));
+        // Argument-string edits conservatively refuse: precision may hide them.
+        assert!(!same(
+            "write!(f, \"{}\", \"a}\")",
+            "write!(f, \"{}\", \"b}\")"
+        ));
+        assert!(!same(
+            "write!(f, \"{}\", \"a}\")",
+            "write!(f, \"{:?}\", \"a}\")"
+        ));
+        // Unchanged argument braces cannot hide a real template-fragment edit.
+        assert!(same(
+            r#"write!(f, "{} C", "a}")"#,
+            r#"write!(f, "{} F", "a}")"#
+        ));
+        // Nested width/precision arguments (`{:{}}`) are valid syntax this reader
+        // does not interpret: a named conservative gap that withholds credit.
+        assert!(!same(
+            r#"write!(f, "{:{}}C", self.0, w)"#,
+            r#"write!(f, "{:{}}F", self.0, w)"#
+        ));
+        assert!(!same(
+            r#"write!(f, "{:.{}}C", self.0, w)"#,
+            r#"write!(f, "{:.{}}F", self.0, w)"#
+        ));
+        // A lone brace is not format text ripr reads.
+        assert!(!same("write!(f, \"a}\")", "write!(f, \"b}\")"));
+        // A brace is a valid fill character before an alignment marker (#9836).
+        assert!(same(
+            r#"write!(f, "{:{<3}C", self.0)"#,
+            r#"write!(f, "{:{<3}F", self.0)"#
+        ));
+        assert!(same(
+            r#"write!(f, "{:}>3}C", self.0)"#,
+            r#"write!(f, "{:}>3}F", self.0)"#
+        ));
+        assert!(same(
+            r#"write!(f, "{:x<3}C", self.0)"#,
+            r#"write!(f, "{:x<3}F", self.0)"#
+        ));
+        // Changing the fill, or dropping the alignment so the brace is no fill, is a group edit.
+        assert!(!same(
+            r#"write!(f, "{:{<3}C", self.0)"#,
+            r#"write!(f, "{:}<3}F", self.0)"#
+        ));
+        assert!(!same(
+            r#"write!(f, "{:{<3}C", self.0)"#,
+            r#"write!(f, "{:{3}F", self.0)"#
+        ));
+        assert!(!same(
+            r#"write!(f, "{:{{}}C", self.0)"#,
+            r#"write!(f, "{:{{}}F", self.0)"#
+        ));
         // Nothing changed, or no prior text.
         assert!(!same("write!(f, \"x\")", "write!(f, \"x\")"));
         assert!(!super::changes_only_string_literals(
@@ -1338,6 +1786,92 @@ mod tests {
         ));
         // An unterminated literal is not read.
         assert!(!same("write!(f, \"x)", "write!(f, \"y)"));
+    }
+
+    #[test]
+    fn line_continuations_stay_with_their_enclosing_fragment_or_group() {
+        let same = |before: &str, after: &str| {
+            super::changes_only_string_literals(Some(before), Some(after))
+        };
+        // Fixed output sits beside the skipped bytes: a spelling-only edit.
+        assert!(same(
+            "write!(f, \"x\\\n   y{}\", self.0)",
+            "write!(f, \"xy{}\", self.0)"
+        ));
+        // Skipped bytes inside a group belong to that group, so editing them
+        // edits the placeholder.
+        assert!(!same(
+            "write!(f, \"{\\\n   }C\", self.0)",
+            "write!(f, \"{}F\", self.0)"
+        ));
+        // A leading continuation has no item to join and is not read.
+        assert!(!same(
+            "write!(f, \"\\\n   {}C\", self.0)",
+            "write!(f, \"{}F\", self.0)"
+        ));
+    }
+
+    #[test]
+    fn literal_only_credit_refuses_hidden_or_unchanged_runtime_edits() {
+        let same = |before: &str, after: &str| {
+            super::changes_only_string_literals(Some(before), Some(after))
+        };
+        for (before, after) in [
+            (
+                r#"write!(f, "\u{7b}\u{7d}C", self.0)"#,
+                r#"write!(f, "\u{7b}:?\u{7d}C", self.0)"#,
+            ),
+            (
+                r#"write!(f, "\x7b\x7dC", self.0)"#,
+                r#"write!(f, "\x7b0\x7dC", self.0)"#,
+            ),
+            (
+                r##"write!(f, r#"quoted"marker"{}C"#, self.0)"##,
+                r##"write!(f, r#"quoted"marker"{:?}C"#, self.0)"##,
+            ),
+            (
+                r#"write!(f, "{}\qC", self.0)"#,
+                r#"write!(f, "{}\qF", self.0)"#,
+            ),
+            (
+                r#"write!(f, "{}\u{zz}C", self.0)"#,
+                r#"write!(f, "{}\u{zz}F", self.0)"#,
+            ),
+            (
+                r#"write!(f, "{}\u{110000}C", self.0)"#,
+                r#"write!(f, "{}\u{110000}F", self.0)"#,
+            ),
+            (
+                r#"write!(f, "{}\u{C", self.0)"#,
+                r#"write!(f, "{}\u{F", self.0)"#,
+            ),
+            (
+                r#"write!(f, "{}{}{}", '"', self.0, '"')"#,
+                r#"write!(f, "{}{}{}", '"', self.1, '"')"#,
+            ),
+            (
+                r#"write!(f, "{}x{}", "", "")"#,
+                r#"write!(f, "{}{}x", "", "")"#,
+            ),
+            (r#"write!(f, "{:.0}", "a}")"#, r#"write!(f, "{:.0}", "b}")"#),
+        ] {
+            assert!(!same(before, after), "{before} -> {after}");
+        }
+        assert!(same(
+            r#"write!(f, "{}°C", self.0)"#,
+            r#"write!(f, "{}\u{b0}F", self.0)"#
+        ));
+        // Re-spelling a placeholder edits no fixed fragment: not literal-only.
+        assert!(!same(
+            r#"write!(f, "{}C", self.0)"#,
+            r#"write!(f, "\u{7b}\u{7d}C", self.0)"#
+        ));
+        // A spelling-only rewrite of fixed text prints the same output: the pin
+        // stays valid (corpus row `idiom-display-string-pin`), so it is not withheld.
+        assert!(same(
+            r#"write!(f, "{}°C", self.0)"#,
+            r#"write!(f, "{}\u{b0}C", self.0)"#
+        ));
     }
 
     #[test]
@@ -1563,13 +2097,17 @@ mod tests {
         for body in [
             "format!(\"{:?}\", Error::DecodeError(inner));".to_string(),
             "let e = Error::DecodeError(inner);\nformat!(\"{:?}\", e);".to_string(),
+            // A module prefix may be another crate's module (#8999): only
+            // bare, `crate`, `self` and `super` prefixes name the local type.
+            "format!(\"{:?}\", m::DecodeError(inner));".to_string(),
+            "let e = crate::m::DecodeError(inner);\nformat!(\"{:?}\", e);".to_string(),
         ] {
             assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
         }
         for body in [
             "format!(\"{:?}\", DecodeError(inner));",
-            "format!(\"{:?}\", m::DecodeError(inner));",
-            "let e = crate::m::DecodeError(inner);\nformat!(\"{:?}\", e);",
+            "format!(\"{:?}\", crate::DecodeError(inner));",
+            "let e = super::DecodeError(inner);\nformat!(\"{:?}\", e);",
         ] {
             assert!(direct(&reasons(&owner, 0, &[body]), "t0"), "{body}");
         }

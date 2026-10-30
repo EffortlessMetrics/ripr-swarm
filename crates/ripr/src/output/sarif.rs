@@ -16,7 +16,7 @@ use crate::domain::{
 };
 use crate::output::next_step::reconcile_next_step;
 use crate::output::observed_values::{bounded_observed_values, elided_observed_values_total};
-use crate::output::path::{display_path_text, repository_relative_path};
+use crate::output::path::{display_path_text, path_display_lossy, repository_relative_path};
 use crate::output::perl_preview_card::perl_preview_card_json;
 use crate::output::preview_actionability::{
     preview_actionability_for, preview_actionability_json_value,
@@ -277,7 +277,10 @@ pub(crate) fn render_refusal_sarif(
     properties.insert("run_status".to_string(), json!("refused"));
     properties.insert("refusal_identity".to_string(), json!(notice.identity));
     properties.insert("repair_route".to_string(), json!(notice.repair_route));
-    properties.insert("root".to_string(), json!(root.display().to_string()));
+    properties.insert(
+        "root".to_string(),
+        json!(crate::output::path::display_path(root)),
+    );
     if let Some(base) = base {
         properties.insert("base".to_string(), json!(base));
     }
@@ -1136,7 +1139,7 @@ fn sarif_uri_reference(path: &str) -> String {
 }
 
 fn normalize_path(path: &Path) -> String {
-    let raw = path.to_string_lossy().replace('\\', "/");
+    let raw = path_display_lossy(path);
     raw.strip_prefix("./").unwrap_or(&raw).to_string()
 }
 
@@ -1401,6 +1404,7 @@ mod tests {
             base_ref: "origin/main".to_string(),
             base_commit: Some("1a2b3c4d5e6f".to_string()),
             merge_base_commit: Some("9f8e7d6c5b4a".to_string()),
+            loaded_diff_origin: None,
             head_commit: Some("5d6e7f8a9b0c".to_string()),
             working_tree: true,
         });
@@ -2460,6 +2464,7 @@ weakly_gripped = "note"
     fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "finding:discount".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -2808,6 +2813,27 @@ weakly_gripped = "note"
             props["omitted_not_current"], 1,
             "the not-current sibling still counts: {props}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn refusal_sarif_root_renders_through_display_path() -> Result<(), String> {
+        // #9806: `properties.root` uses the check-JSON renderer, which escapes
+        // `%` on every host, so the raw `display()` spelling fails here.
+        let notice = crate::core_error::CoreError::base_unresolvable(
+            "the base `deadbeef` does not resolve to a commit",
+        )
+        .refusal_notice();
+        let rendered = render_refusal_sarif(&notice, std::path::Path::new("repo%41"), None);
+        let sarif = parse_json(&rendered)?;
+        let root = sarif
+            .pointer("/runs/0/properties/root")
+            .and_then(Value::as_str);
+        if root != Some("repo%2541") {
+            return Err(format!(
+                "refusal SARIF root must use display_path spelling, got {root:?}"
+            ));
+        }
         Ok(())
     }
 }

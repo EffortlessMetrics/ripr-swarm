@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "Every u8 value is formatted and compared with to_string(), so any boundary change at 100 fails test_format_u8. Withholding observation credit for an assertion inside a loop is a defensible static limit, but reporting reachable_unrevealed (a repairable gap with 'no assertion observes the changed behavior') is a false actionable verdict.",
+  "reasoning": "Every u8 value is formatted and compared with to_string(), so any boundary change at 100 fails test_format_u8. Withholding observation credit for an assertion inside a loop is a defensible static limit, but reporting reachable_unrevealed (a repairable gap with 'no assertion observes the changed behavior') is a false actionable verdict. The abstention is by design, not a missed analysis: serde_core/src/lib.rs includes a build-script output (`include!(concat!(env!(\"OUT_DIR\"), \"/private.rs\"))`), which leaves the crate's module placement unclosed, so ripr cannot verify that the std/core facade globs leave `assert_eq!` untouched and does not credit the assertion. The generated file could define its own `assert_eq!`; narrowing that refusal would leak false credit. `limited` stays the acceptable verdict (#9619).",
   "labeling_observation": {
     "ripr_commit": "a7a089e",
     "full_checkout_verdict": "gap",

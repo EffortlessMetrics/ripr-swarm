@@ -40,8 +40,9 @@ The TypeScript preview adapter:
   to the owner, because none of these tests references `applyDiscount`
   (RIPR-SPEC-0027: a test is related only when it references the owner;
   proximity and names only rank tests that already do);
-- classifies the change `no_static_path` with reach `no` and the missing
-  reference named (`No test references \`applyDiscount(\``);
+- classifies the change `no_static_path` with reach `no` and names
+  `applyDiscount(` as lacking an established static test link, without
+  turning that result into a universal claim that no test exists;
 - keeps partial-token names out of related-test evidence;
 - preserves `language = "typescript"` and `language_status = "preview"`;
 - remains syntax-first and advisory.

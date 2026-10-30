@@ -1,0 +1,5 @@
+//! The reader of `OTHER_FILE_LIMIT` lives outside the file that declares it.
+
+pub fn within_other_limit(n: u32) -> bool {
+    n < crate::OTHER_FILE_LIMIT
+}

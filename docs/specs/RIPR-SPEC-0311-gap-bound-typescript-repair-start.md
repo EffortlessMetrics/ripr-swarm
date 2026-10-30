@@ -1,4 +1,4 @@
-# RIPR-SPEC-0311: A complete TypeScript packet offers a gap-bound repair start
+# RIPR-SPEC-0311: A complete TypeScript or Python packet offers a gap-bound repair start
 
 Status: proposed
 
@@ -21,6 +21,8 @@ Linked plan:
 Linked issues:
 
 - #9103
+- #10373 (Python gap-bound start, item 9)
+- #10698 (commit step before a start a dirty tree would refuse, item 10)
 
 Linked PRs:
 
@@ -59,9 +61,11 @@ existed with no way to begin the attempt.
    and `--root`; a static-limited finding is refused here too, as `ripr check`
    would not offer it.
 3. Flags are exclusive: `--gap-id` excludes `--seam-id`, requires `--base` and
-   `--phase before`, accepts only a canonical TypeScript preview gap id,
-   refuses Python gaps with their existing terminal reason, and refuses the
-   Python repair-trust flags.
+   `--phase before`, accepts only a canonical TypeScript preview gap id or a
+   canonical Python gap id (item 9), refuses other non-Rust gaps with their
+   existing terminal reason, and refuses the Python repair-trust flags: a
+   gap-bound start is the unbound flow for both languages, and the governed
+   Python repair-trust binding (RIPR-SPEC-0176) stays seam-scoped.
 4. Acceptance writes `before.check-findings.json` and `gap-repair-packet.json`
    (packet `seam_id` is the gap id) and a manifest with `seam_id` = gap id and
    `gap_binding.base`. The edit cage is derived from the packet's test
@@ -120,10 +124,40 @@ existed with no way to begin the attempt.
    static exposure evidence: it runs no test, reports no runtime mutation
    outcome and makes no sufficiency claim (`verification_not_run`,
    `runtime_mutation_execution: false`).
+9. Python Gap-Bound Start (#10373): a Python finding that is not
+   static-limited offers the same start when the gap record the gap ledger
+   projects from that run's check JSON (`check_output_gap_records`, the
+   projection `ripr reports gap-ledger --check-output` uses) is the single
+   record for its canonical gap and passes `validate_agent_gap_record_packet`.
+   `ripr check` prints `ripr agent repair --gap-id gap:python:... --base B
+   --phase before`; the before phase re-runs the check, renders its check
+   JSON and resolves the gap through the same lookup, so the printed start
+   and the accepted start consult one admission. A forged or vanished Python
+   gap is refused ("names no current Python gap") with no attempt. The after,
+   verify and receipt phases are the language-neutral ones above. `ripr
+   repair` and `agent repair --seam-id` given a Python gap still state the
+   Rust-only seam reason and point at the gap-bound start; `agent status`
+   after a pilot names the start check prints.
+10. Commit Step Before A Dirty Start (#10698): the start refuses to begin
+    while tracked files outside the packet's allowed edit surface differ from
+    HEAD. When `ripr check` analyzed such a tree, it prints
+    `git -C ROOT --literal-pathspecs commit -m "<message>" -- FILES` before
+    the start, naming exactly the files the start's own premise check refuses,
+    shell-quoted and spelled relative to ROOT, so the command works from any
+    working directory and treats a name like `src/[ab].py` literally. The
+    pilot-routing warnings in `agent status` name the same step. On a clean
+    tree the start prints bare. When the packet, policy, HEAD or Git cannot
+    establish the prerequisite, the start is withheld with a reason. A dirty
+    worktree start binds the diff origin captured by the loader, so committing
+    cannot move a symbolic base. A clean committed-history check can use its
+    requested base; a committed-only check with dirty files outside the
+    allowed edit surface withholds the start and asks for a fresh check after
+    those files are committed or restored.
 
 ## Required Evidence
 
-- Parser tests: exclusivity, bad prefix, Python rejected.
+- Parser tests: exclusivity, bad prefix, Python accepted with `--base`,
+  other non-Rust gaps rejected.
 - Edit-cage tests with a TypeScript gap packet (test file accepted,
   production and non-test files refused).
 - Manifest round-trip with and without `gap_binding`.
@@ -138,6 +172,15 @@ existed with no way to begin the attempt.
   forged `bound_gap` and an edited closure are refused with no receipt written;
   a not-closed, absent or cage-refused finish writes no receipt; the closure
   rule and receipt rendering have unit negatives.
+- Python installed journey (#10373): check prints the start; seam routes
+  point at it; a forged gap is refused with no attempt; the before phase
+  replays to exactly one attempt; a committed boundary test closes the gap
+  (`weakly_exposed -> exposed`) and writes the receipt; status after a pilot
+  names the same start. A refused variant (tests removed, so the finding is
+  static-limited) is offered no start, its `--gap-id` start is refused as not
+  ready, and no attempt or workflow artifact is left (#10432). Unit negatives
+  cover the subject predicate, every fail-closed lookup branch and a record
+  the shared validator refuses.
 
 ## Non-Goals
 
@@ -173,6 +216,10 @@ existed with no way to begin the attempt.
 ## Test Mapping
 
 - `crates/ripr/tests/installed_python_typescript_journeys.rs`:
+  `dirty_python_repair_start_keeps_original_diff_after_commit`,
+  `dirty_typescript_start_uses_diverged_merge_base`,
+  `dirty_python_check_withholds_start_when_git_inspection_fails`,
+  `committed_python_dirty_file_requires_fresh_check`,
   `typescript_literal_threshold_packet_is_complete_and_controls_fail_closed`,
   `gap_bound_after_phase_closes_the_gap_on_positive_evidence`,
   `gap_bound_after_phase_refuses_a_gap_that_is_not_closed_and_stays_retryable`,
@@ -181,7 +228,24 @@ existed with no way to begin the attempt.
   `gap_bound_after_phase_stops_when_the_retry_budget_is_spent`,
   `gap_bound_after_phase_human_output_names_closure_and_replaces_a_stale_receipt`,
   `gap_bound_receipt_requires_the_verify_closure_and_rejects_forgery`,
-  `typescript_status_warning_keeps_the_no_start_claim_for_refused_variants`.
+  `typescript_status_warning_reports_unconfirmed_start_for_refused_variants`,
+  `python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start`,
+  `python_status_after_pilot_names_the_gap_bound_start`,
+  `python_refused_variant_is_offered_no_gap_bound_start`.
+- `crates/ripr/src/app/navigation.rs`:
+  `commit_prerequisite_commits_literal_paths_from_a_decoy_directory`;
+  `crates/ripr/src/app/task_first.rs`:
+  `dirty_paths_outside_surface_mirror_the_start_premise_check`,
+  `commit_hint_paths_are_relative_to_the_analyzed_root`;
+  `crates/ripr/src/app/agent_status.rs`:
+  `pilot_routing_messages_name_the_commit_before_a_start_on_a_dirty_tree`;
+  `crates/ripr/src/output/human.rs`:
+  `gap_bound_start_names_the_commit_first_on_a_dirty_tree`.
+- `crates/ripr/src/app/gap_bound_repair.rs` unit tests
+  `python_gap_subjects_need_a_printable_tail` and
+  `a_python_lookup_fails_closed_without_one_validated_record`,
+  `a_python_record_the_shared_validator_refuses_is_not_a_start`,
+  `a_python_start_sees_every_finding_that_shares_its_gap`.
 - `crates/ripr/src/cli/agent.rs`, `crates/ripr/src/app/repair_attempt/mod.rs`,
   `crates/ripr/src/app/agent_status.rs` and
   `crates/ripr/src/output/agent_seam_packets.rs` unit tests named in the
@@ -192,8 +256,8 @@ existed with no way to begin the attempt.
 - `crates/ripr/src/app/gap_bound_repair.rs`: lookup, start spelling, manual
   verify route, and `default_check_gap_start`, the admission `ripr agent
   status` consults so its `pilot_routed_to_check_no_repair_target` warning
-  names the start check prints and keeps the "offers no start" claim only when
-  check offers none (#10001).
+  names the start check prints, or reports that it could not confirm a start
+  and directs the user to check the current route (#10001).
 - `crates/ripr/src/cli/commands/agent.rs`: `run_gap_bound_before_phase`.
 - `crates/ripr/src/app/repair_attempt/mod.rs`: `RepairAttemptGapBinding`,
   `begin_gap_bound_repair_attempt_with_identity`,

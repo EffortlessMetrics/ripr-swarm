@@ -44,10 +44,19 @@ pub(crate) struct ReExportIndex {
     /// barrel was invisible and the emitted guidance claimed no test
     /// referenced the owner at all).
     star_edges: HashSet<(String, String)>,
+    /// `export * as ns from './source'`: (module, `ns`) -> source module. The
+    /// exported name binds the source module's namespace object, not one of
+    /// its names, so only a member call through it reaches the source's
+    /// exports (RIPR-SPEC-0095).
+    namespace_exports: HashMap<(String, String), String>,
     /// Names each module exports from its own declarations.
     local_exports: HashMap<String, HashSet<String>>,
     /// Normalized module paths of every workspace file seen by the index.
     modules: HashSet<String>,
+    /// Modules whose export facts were actually available. Missing, refused,
+    /// or unparsable sources cannot establish the absence of a competing star
+    /// export. Kept separate from discovery, which still owns path precedence.
+    indexed_modules: HashSet<String>,
     /// Extension stripping can collapse distinct real files. General owner
     /// discovery keeps its existing behavior; strict enum identity refuses.
     ambiguous_enum_modules: HashSet<String>,
@@ -116,6 +125,7 @@ impl ReExportIndex {
             index.modules.insert(module.clone());
             index.local_exports.entry(module).or_default().insert(name);
         }
+        index.indexed_modules = index.modules.clone();
         index
     }
 
@@ -123,8 +133,9 @@ impl ReExportIndex {
     ///
     /// Indexes explicit named re-exports and star re-exports from relative
     /// (or tsconfig-aliased) in-repo specifiers, plus each module's own
-    /// exported names. `export * as ns from`, type-only re-exports and
-    /// non-relative package specifiers are ignored (fail-closed).
+    /// exported names, and `export * as ns from` namespace exports.
+    /// Type-only re-exports and non-relative package specifiers are ignored
+    /// (fail-closed).
     ///
     /// `sources` is the Phase-1 workspace source cache: every file is read at
     /// most once per analysis run. Files absent from the cache (unreadable or
@@ -143,6 +154,7 @@ impl ReExportIndex {
     ) -> Self {
         let mut entries: HashMap<(String, String), (String, String)> = HashMap::new();
         let mut star_edges: HashSet<(String, String)> = HashSet::new();
+        let mut namespace_exports: HashMap<(String, String), String> = HashMap::new();
         let mut local_exports: HashMap<String, HashSet<String>> = HashMap::new();
         let mut enum_bindings = HashMap::new();
         let mut enum_imports = HashMap::new();
@@ -151,6 +163,7 @@ impl ReExportIndex {
             .iter()
             .map(|file| normalized_module_path(file))
             .collect();
+        let mut indexed_modules = modules.clone();
         let mut module_files = HashMap::new();
         let mut ambiguous_enum_modules = HashSet::new();
         for file in workspace_files {
@@ -164,10 +177,13 @@ impl ReExportIndex {
             }
         }
         for relative in workspace_files {
+            let module = normalized_module_path(relative);
             if is_test(relative) {
+                indexed_modules.remove(&module);
                 continue;
             }
             let Some(source) = sources.get(relative) else {
+                indexed_modules.remove(&module);
                 continue;
             };
             // Per-file facts come from the content-keyed combined cache
@@ -181,13 +197,16 @@ impl ReExportIndex {
                 workspace_root,
                 alias_map,
             ) else {
+                indexed_modules.remove(&module);
                 continue;
             };
             for (key, value) in file_facts.entries {
                 entries.entry(key).or_insert_with(|| value);
             }
             star_edges.extend(file_facts.star_edges);
-            let module = normalized_module_path(relative);
+            for (key, target) in file_facts.namespace_exports {
+                namespace_exports.entry(key).or_insert(target);
+            }
             for (name, members) in file_facts.enum_bindings {
                 enum_bindings.insert((module.clone(), name), members);
             }
@@ -208,8 +227,10 @@ impl ReExportIndex {
         Self {
             entries,
             star_edges,
+            namespace_exports,
             local_exports,
             modules,
+            indexed_modules,
             ambiguous_enum_modules,
             enum_bindings,
             enum_imports,
@@ -246,7 +267,7 @@ impl ReExportIndex {
         // Owner.imports also carries synthetic re-export records for call
         // discovery. A re-export creates no local binding, so only the
         // actual-only imports collected from this module can anchor a root.
-        let imports = if normalized_path(file) == normalized_path(&test.file) {
+        let imports: &[TypeScriptImport] = if normalized_path(file) == normalized_path(&test.file) {
             &test.imports_in_file
         } else {
             self.enum_imports.get(&module)?
@@ -318,7 +339,7 @@ impl ReExportIndex {
             return None;
         };
         let unstable_roots: Vec<String> = if normalized_path(file) == normalized_path(&test.file) {
-            test.unstable_member_roots_in_file.clone()
+            test.unstable_member_roots_in_file.to_vec()
         } else {
             self.unstable_enum_roots
                 .iter()
@@ -573,6 +594,11 @@ impl ReExportIndex {
         enum_context: Option<&EnumBindingContext<'_>>,
     ) -> ExportResolution {
         let module = self.canonical_module(module);
+        if !self.indexed_modules.contains(&module) {
+            // Unknown is contagious across star siblings; NotFound would
+            // falsely make a known sibling's binding unique on a partial index.
+            return ExportResolution::Unknown;
+        }
         if mocked(&module)
             || (enum_context.is_some() && self.ambiguous_enum_modules.contains(&module))
             || (enum_context.is_some_and(|context| context.check_stability)
@@ -748,28 +774,10 @@ impl ReExportIndex {
             };
             return source_module == &owner_module && original_name == &owner.name;
         }
-        if test
-            .mocks_in_file
-            .iter()
-            .any(|source| source == UNRESOLVED_MOCK_SPECIFIER)
-        {
+        let Some(mocked_modules) = self.mocked_module_names(test, alias_map, workspace_root) else {
             return false;
-        }
-        let mocked_modules: Vec<String> = test
-            .mocks_in_file
-            .iter()
-            .filter_map(|source| {
-                normalized_relative_import_module(&test.file, source, alias_map, workspace_root)
-            })
-            .map(|module| self.canonical_module(&module))
-            .collect();
-        let mocked = |module: &str| {
-            mocked_modules.iter().any(|mocked| mocked == module)
-                || test
-                    .mocks_in_file
-                    .iter()
-                    .any(|source| root_relative_mock_names_module(source, module))
         };
+        let mocked = |module: &str| mock_names_module(test, &mocked_modules, module);
         let mut stack = Vec::new();
         let ExportResolution::Found(target_module, target_name) =
             self.resolve_export(&import_module, imported_name, 0, &mut stack, &mocked)
@@ -784,17 +792,252 @@ impl ReExportIndex {
             && (target_name == owner.name
                 || (target_name == "default" && owner.exported_as_default))
     }
+
+    /// Canonical modules the test mocks; `None` when a mock specifier could
+    /// not be resolved, which makes every chain undecidable.
+    fn mocked_module_names(
+        &self,
+        test: &TypeScriptTest,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> Option<Vec<String>> {
+        if test
+            .mocks_in_file
+            .iter()
+            .any(|source| source == UNRESOLVED_MOCK_SPECIFIER)
+        {
+            return None;
+        }
+        Some(
+            test.mocks_in_file
+                .iter()
+                .filter_map(|source| {
+                    normalized_relative_import_module(&test.file, source, alias_map, workspace_root)
+                })
+                .map(|module| self.canonical_module(&module))
+                .collect(),
+        )
+    }
+
+    /// Resolve `name`, exported by `module`, to the module whose namespace
+    /// object it binds (`export * as name from './source'`), through the same
+    /// bounded graph a named export follows: a named re-export of the
+    /// namespace name, then star sources. A module that also exports `name`
+    /// from its own declarations, two star sources that disagree, a mocked
+    /// module, a cycle or an over-deep chain all resolve to `None`.
+    fn resolve_namespace_export(
+        &self,
+        module: &str,
+        name: &str,
+        hops: usize,
+        stack: &mut Vec<(String, String)>,
+        mocked: &dyn Fn(&str) -> bool,
+    ) -> Option<String> {
+        let module = self.canonical_module(module);
+        if mocked(&module) || hops > MAX_REEXPORT_HOPS {
+            return None;
+        }
+        let frame = (module.clone(), name.to_string());
+        if stack.contains(&frame) {
+            return None;
+        }
+        if let Some(target) = self.namespace_exports.get(&frame) {
+            return Some(self.canonical_module(target));
+        }
+        if self
+            .local_exports
+            .get(&module)
+            .is_some_and(|names| names.contains(name))
+        {
+            return None;
+        }
+        stack.push(frame.clone());
+        let resolved = self.resolve_namespace_export_hop(&module, name, hops, stack, mocked);
+        stack.pop();
+        resolved
+    }
+
+    fn resolve_namespace_export_hop(
+        &self,
+        module: &str,
+        name: &str,
+        hops: usize,
+        stack: &mut Vec<(String, String)>,
+        mocked: &dyn Fn(&str) -> bool,
+    ) -> Option<String> {
+        if let Some((original, source)) = self.entries.get(&(module.to_string(), name.to_string()))
+        {
+            if source == module {
+                return None;
+            }
+            return self.resolve_namespace_export(source, original, hops + 1, stack, mocked);
+        }
+        if name == "default" {
+            return None;
+        }
+        let mut found: Option<String> = None;
+        for (_, star_source) in self.star_edges.iter().filter(|(from, _)| from == module) {
+            // Another star source that exports `name` as an ordinary binding
+            // makes the name ambiguous, whichever source binds a namespace.
+            if !matches!(
+                self.resolve_export(star_source, name, hops + 1, &mut stack.clone(), mocked),
+                ExportResolution::NotFound
+            ) {
+                return None;
+            }
+            match self.resolve_namespace_export(star_source, name, hops + 1, stack, mocked) {
+                None => {}
+                Some(target) => match &found {
+                    None => found = Some(target),
+                    Some(existing) if *existing == target => {}
+                    Some(_) => return None,
+                },
+            }
+        }
+        found
+    }
+
+    /// Apply [`Self::with_namespace_reexport_imports`] to every test, one
+    /// rewritten list per file's shared import list.
+    pub(crate) fn rewrite_namespace_reexport_imports(
+        &self,
+        tests: &mut [TypeScriptTest],
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) {
+        if self.namespace_exports.is_empty() {
+            return;
+        }
+        let mut rewritten: HashMap<*const Vec<TypeScriptImport>, Option<Shared<TypeScriptImport>>> =
+            HashMap::new();
+        for test in tests {
+            let imports = rewritten
+                .entry(test.imports_in_file.identity())
+                .or_insert_with(|| {
+                    self.with_namespace_reexport_imports(test, alias_map, workspace_root)
+                        .map(Shared::from)
+                });
+            if let Some(imports) = imports {
+                test.imports_in_file = imports.clone();
+            }
+        }
+    }
+
+    /// The test's imports with each named import of a namespace re-export
+    /// (`import { units } from './barrel'` where the barrel has `export * as
+    /// units from './units'`) replaced by the namespace import of the target
+    /// module it stands for, so every namespace-receiver rule (`units.f(...)`
+    /// reach, identity, observation) reads it as `import * as units from
+    /// './units'`. `None` when no import changes. A mocked module on the
+    /// chain, a mock the test cannot resolve, an ambiguous or over-deep chain
+    /// all leave the import as written.
+    pub(crate) fn with_namespace_reexport_imports(
+        &self,
+        test: &TypeScriptTest,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> Option<Vec<TypeScriptImport>> {
+        if self.namespace_exports.is_empty() {
+            return None;
+        }
+        let mocked_modules = self.mocked_module_names(test, alias_map, workspace_root)?;
+        let mocked = |module: &str| mock_names_module(test, &mocked_modules, module);
+        let mut changed = false;
+        let imports: Vec<TypeScriptImport> = test
+            .imports_in_file
+            .iter()
+            .map(|import| {
+                let namespace_target = (!import.namespace)
+                    .then_some(import.imported.as_deref())
+                    .flatten()
+                    .filter(|imported| *imported != "default")
+                    .and_then(|imported| {
+                        let module = normalized_relative_import_module(
+                            &test.file,
+                            &import.source,
+                            alias_map,
+                            workspace_root,
+                        )?;
+                        self.resolve_namespace_export(
+                            &module,
+                            imported,
+                            0,
+                            &mut Vec::new(),
+                            &mocked,
+                        )
+                    });
+                match namespace_target {
+                    Some(target) if !mocked(&target) => {
+                        changed = true;
+                        TypeScriptImport {
+                            source: relative_module_specifier(&test.file, &target),
+                            imported: Some(NAMESPACE_REEXPORT_IMPORTED.to_string()),
+                            local: import.local.clone(),
+                            namespace: true,
+                        }
+                    }
+                    _ => import.clone(),
+                }
+            })
+            .collect();
+        changed.then_some(imports)
+    }
+}
+
+/// `imported` of a namespace import synthesized from a namespace re-export
+/// (`export * as ns from`); a name no module exports and the owner relation
+/// reads to report `re_export_chain_followed` instead of a direct import.
+pub(crate) const NAMESPACE_REEXPORT_IMPORTED: &str = "*";
+
+/// A relative specifier from `test_file` to the normalized module path
+/// `module`, in the form `normalized_relative_import_module` resolves back.
+fn relative_module_specifier(test_file: &Path, module: &str) -> String {
+    let test_dir: Vec<String> =
+        normalized_path(test_file.parent().unwrap_or_else(|| Path::new("")))
+            .split('/')
+            .filter(|part| !part.is_empty() && *part != ".")
+            .map(ToString::to_string)
+            .collect();
+    let target: Vec<&str> = module.split('/').filter(|part| !part.is_empty()).collect();
+    let common = test_dir
+        .iter()
+        .zip(&target)
+        .take_while(|(a, b)| a.as_str() == **b)
+        .count();
+    let ups = test_dir.len() - common;
+    let mut specifier = if ups == 0 {
+        "./".to_string()
+    } else {
+        "../".repeat(ups)
+    };
+    specifier.push_str(&target[common..].join("/"));
+    specifier
+}
+
+fn mock_names_module(test: &TypeScriptTest, mocked_modules: &[String], module: &str) -> bool {
+    mocked_modules.iter().any(|mocked| mocked == module)
+        || test
+            .mocks_in_file
+            .iter()
+            .any(|source| root_relative_mock_names_module(source, module))
 }
 
 /// Export facts of one parsed module, collected on the parse worker.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ModuleExportFacts {
     pub(crate) entries: Vec<((String, String), (String, String))>,
     pub(crate) star_edges: Vec<(String, String)>,
+    pub(crate) namespace_exports: Vec<((String, String), String)>,
     pub(crate) local_exports: Vec<String>,
     pub(crate) enum_bindings: Vec<(String, Vec<String>)>,
     pub(crate) enum_imports: Vec<TypeScriptImport>,
     pub(crate) unstable_enum_roots: Vec<String>,
+    /// Whether the module has a value-level `export ... from` (#10725
+    /// review). Its target resolves on disk and can resolve back to this
+    /// very module (`export { a as b } from './'`), so the entries alone
+    /// cannot tell a re-export from an own rename.
+    #[serde(default)]
+    pub(crate) re_exports_from_source: bool,
 }
 
 impl ModuleExportFacts {
@@ -812,6 +1055,12 @@ impl ModuleExportFacts {
         };
         string_pair_bytes(&self.entries)
             .saturating_add(tuple_bytes(&self.star_edges))
+            .saturating_add(
+                self.namespace_exports
+                    .iter()
+                    .map(|((module, name), target)| module.len() + name.len() + target.len())
+                    .sum::<usize>(),
+            )
             .saturating_add(
                 self.local_exports
                     .iter()
@@ -919,21 +1168,31 @@ pub(crate) fn module_export_facts(
                 // `export * from './owner'` — record the star hop.
                 // `export * as ns from './owner'` namespaces the module value,
                 // so the named-forwarding contract a star hop carries does not
-                // apply; it stays unindexed (fail-closed), as does a
-                // type-only `export type * from`.
-                if export_all.exported.is_some()
-                    || export_all.export_kind == ImportOrExportKind::Type
-                {
+                // apply; it is recorded apart as a namespace export. A
+                // type-only `export type * from` stays unindexed
+                // (fail-closed).
+                if export_all.export_kind == ImportOrExportKind::Type {
                     continue;
                 }
+                facts.re_exports_from_source = true;
                 let star_source = export_all.source.value.to_string();
-                if let Some(resolved) = normalized_relative_import_module(
+                let Some(resolved) = normalized_relative_import_module(
                     relative,
                     &star_source,
                     alias_map,
                     Some(workspace_root),
-                ) {
-                    facts.star_edges.push((module.clone(), resolved));
+                ) else {
+                    continue;
+                };
+                match &export_all.exported {
+                    Some(exported) => {
+                        if let Some(name) = module_export_name_text(exported) {
+                            facts
+                                .namespace_exports
+                                .push(((module.clone(), name), resolved));
+                        }
+                    }
+                    None => facts.star_edges.push((module.clone(), resolved)),
                 }
             }
             Statement::ExportDefaultDeclaration(_) => {
@@ -972,6 +1231,7 @@ pub(crate) fn module_export_facts(
                     }
                     continue;
                 };
+                facts.re_exports_from_source = true;
                 let source_str = re_source.value.to_string();
                 // Resolve the source module relative to the intermediate
                 // file's dir. Pass alias_map so tsconfig-aliased paths can be
@@ -1209,16 +1469,9 @@ pub(crate) fn related_test_candidates<'a>(
             .into_iter()
             .map(|index| &all_tests[index as usize])
             .filter(|test| in_owner_package(test))
-            .filter(|test| {
-                module_entry_relation(test, owner, reexport_index, alias_map, workspace_root)
-            })
-            .map(|test| {
-                related_candidate(
-                    test,
-                    TypeScriptRelationKind::ModuleEntryCall,
-                    owner,
-                    alias_map,
-                    workspace_root,
+            .filter_map(|test| {
+                module_entry_relation(test, owner, reexport_index, alias_map, workspace_root).map(
+                    |relation| related_candidate(test, relation, owner, alias_map, workspace_root),
                 )
             })
             .collect();
@@ -1348,7 +1601,18 @@ pub(crate) fn owner_call_relation(
         }
         import_references_owner_call(import, test, owner)
     }) {
-        return Some(TypeScriptRelationKind::ImportedOwnerCall);
+        // A namespace import synthesized from `export * as ns from` reached
+        // the owner through a re-export, so it discloses as one.
+        let through_namespace_reexport = test.imports_in_file.iter().any(|import| {
+            import.imported.as_deref() == Some(NAMESPACE_REEXPORT_IMPORTED)
+                && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+                && import_references_owner_call(import, test, owner)
+        });
+        return Some(if through_namespace_reexport {
+            TypeScriptRelationKind::ReExportChainFollowed
+        } else {
+            TypeScriptRelationKind::ImportedOwnerCall
+        });
     }
     // Dynamic `const m = await import("./owner")` member access (#4103
     // under-credit): the import expression produces no static import record,
@@ -1423,10 +1687,38 @@ fn module_entry_relation(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
-) -> bool {
-    owner.module_entries.iter().any(|entry| {
+) -> Option<TypeScriptRelationKind> {
+    // A test that reaches the owner through any ordinary entry keeps the weak
+    // `ModuleEntryCall` reading; `DecoratedMethodCall` holds only when every
+    // entry the test reaches is a decorated method.
+    let mut decorated = false;
+    let mut ordinary = false;
+    // A test that replaces the changed method, or a sibling on the chain to it,
+    // runs the replacement and not the class code (#9942): a spy that fabricates
+    // the value, an assignment on an instance or the prototype, or a
+    // `defineProperty`. A bare call-through spy still runs the real method.
+    let replaced = owner
+        .module_entries
+        .iter()
+        .any(|entry| entry.class_member.is_some())
+        && std::iter::once(owner.name.as_str())
+            .chain(
+                owner
+                    .module_entries
+                    .iter()
+                    .filter(|entry| entry.class_member.is_some())
+                    .map(|entry| entry.name.as_str()),
+            )
+            .any(|name| {
+                test_spies_owner_with_fabrication_for_owner(test, name, false)
+                    || class_entries::assigns_member_named(&test.body_text, name)
+            });
+    if replaced {
+        return None;
+    }
+    for entry in &owner.module_entries {
         let entry_owner = module_entry_owner(owner, entry);
-        owner_call_relation(
+        if owner_call_relation(
             test,
             &entry_owner,
             reexport_index,
@@ -1434,7 +1726,19 @@ fn module_entry_relation(
             workspace_root,
         )
         .is_some_and(TypeScriptRelationKind::uses_oracle)
-    })
+        {
+            if entry.decorated.is_some() {
+                decorated = true;
+            } else {
+                ordinary = true;
+            }
+        }
+    }
+    match (ordinary, decorated) {
+        (true, _) => Some(TypeScriptRelationKind::ModuleEntryCall),
+        (false, true) => Some(TypeScriptRelationKind::DecoratedMethodCall),
+        (false, false) => None,
+    }
 }
 
 /// The owner as a test of `entry` sees it: same module, the entry's exported
@@ -1443,6 +1747,24 @@ pub(crate) fn module_entry_owner(
     owner: &TypeScriptOwner,
     entry: &TypeScriptModuleEntry,
 ) -> TypeScriptOwner {
+    if let Some(decorated) = entry.decorated.as_ref() {
+        // A method the decorator wraps: a test reaches it through a receiver
+        // the test constructs, like any instance method of that class.
+        return TypeScriptOwner {
+            name: entry.name.clone(),
+            owner_kind: OwnerKind::Method,
+            class_name: Some(decorated.class_name.clone()),
+            class_default_export: decorated.default_export,
+            exported_as_default: false,
+            default_object_member: false,
+            method_kind: TypeScriptMethodKind::Ordinary,
+            module_entries: Vec::new(),
+            params: Vec::new(),
+            arity: None,
+            source_text: None,
+            ..owner.clone()
+        };
+    }
     if let Some(method_kind) = entry.class_member {
         // A sibling method of the owner's own class: a test reaches it
         // through a receiver the test constructs, like any instance method.
@@ -1623,13 +1945,14 @@ pub(crate) fn receiver_owner_call_relation(
     // A receiver built in the enclosing scope (`const cart = new Cart()` in a
     // `describe`, `cart = new Cart()` in a `beforeEach`) is the object the
     // body calls, unless the body declares or reassigns that name itself.
-    for binding in &test.scope_bindings {
+    for binding in test.scope_bindings.iter() {
+        let body = binding_scan_body(test, binding);
         if binding
             .constructed_by
             .as_ref()
             .is_some_and(|constructor| constructor_names.contains(constructor))
-            && !local_identifier_declared_in_test_body(&test.body_text, &binding.name)
-            && !super::tests_extract::identifier_written_in(&test.body_text, &binding.name)
+            && !local_identifier_declared_in_test_body(body, &binding.name)
+            && !super::tests_extract::identifier_written_in(body, &binding.name)
         {
             push_unique_string(&mut receiver_names, binding.name.clone());
         }
@@ -1652,6 +1975,62 @@ pub(crate) fn receiver_owner_call_relation(
             .any(|receiver| contains_member_read_name(&test.body_text, receiver, &owner.name));
     }
     false
+}
+
+/// The receivers the test authenticates for a method owner: locals built from
+/// the owner's class (`const svc = new Svc()`, in the body or an enclosing
+/// scope) for an instance method, the class names for a static one. A member
+/// call through any other receiver is another binding.
+pub(crate) fn owner_method_receiver_names(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<String> {
+    match owner.owner_kind {
+        OwnerKind::ClassMethod => {
+            class_names_for_class_method_owner(test, owner, alias_map, workspace_root)
+        }
+        OwnerKind::Method => {
+            let constructor_names =
+                constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
+            let mut receivers =
+                receiver_names_for_constructor_calls(&test.body_text, &constructor_names);
+            for binding in test.scope_bindings.iter() {
+                if binding
+                    .constructed_by
+                    .as_ref()
+                    .is_some_and(|constructor| constructor_names.contains(constructor))
+                    && !local_identifier_declared_in_test_body(
+                        binding_scan_body(test, binding),
+                        &binding.name,
+                    )
+                    && !super::tests_extract::identifier_written_in(
+                        binding_scan_body(test, binding),
+                        &binding.name,
+                    )
+                {
+                    push_unique_string(&mut receivers, binding.name.clone());
+                }
+            }
+            // An inline `new Cls().method()` is authenticated by its class.
+            for constructor in &constructor_names {
+                push_unique_string(&mut receivers, format!("new {constructor}"));
+            }
+            receivers
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The text a shadow or write scan of `binding` covers. A destructured
+/// fixture parameter is the binding itself, not a declaration that shadows
+/// it, so its scan starts after the parameter list.
+fn binding_scan_body<'t>(test: &'t TypeScriptTest, binding: &TypeScriptScopeBinding) -> &'t str {
+    binding
+        .parameter_end
+        .and_then(|end| test.body_text.get(end..))
+        .unwrap_or(&test.body_text)
 }
 
 pub(crate) fn class_method_owner_call_relation(
@@ -1678,7 +2057,7 @@ pub(crate) fn class_method_owner_call_relation(
 /// scope (a `describe` body or parameter, a loop header, a hook write, a
 /// test callback parameter) rebinds `name` for this test, so a call through
 /// `name` reaches that binding rather than an import or owner of the name.
-fn enclosing_scope_shadows(test: &TypeScriptTest, name: &str) -> bool {
+pub(crate) fn enclosing_scope_shadows(test: &TypeScriptTest, name: &str) -> bool {
     test.scope_bindings
         .iter()
         .any(|binding| binding.name == name && !binding.file_level)
@@ -2977,6 +3356,7 @@ fn ts_relation_to_domain(
         // The test calls a same-module export that calls the owner: the
         // TypeScript form of a production helper that delegates to the owner.
         TypeScriptRelationKind::ModuleEntryCall => RelationReason::HelperOwnerCall,
+        TypeScriptRelationKind::DecoratedMethodCall => RelationReason::HelperOwnerCall,
         // Heuristic relations: no strong domain mapping — emit None to preserve
         // the existing behaviour for these lower-confidence relation kinds.
         TypeScriptRelationKind::ModuleValueUse
@@ -2992,7 +3372,8 @@ fn ts_relation_to_domain(
         | TypeScriptRelationKind::ClassMethodCall => RelationConfidence::High,
         TypeScriptRelationKind::ImportedOwnerCall
         | TypeScriptRelationKind::ReExportChainFollowed
-        | TypeScriptRelationKind::ModuleEntryCall => RelationConfidence::Medium,
+        | TypeScriptRelationKind::ModuleEntryCall
+        | TypeScriptRelationKind::DecoratedMethodCall => RelationConfidence::Medium,
         TypeScriptRelationKind::ModuleValueUse
         | TypeScriptRelationKind::SameFileProximity
         | TypeScriptRelationKind::DescribeName

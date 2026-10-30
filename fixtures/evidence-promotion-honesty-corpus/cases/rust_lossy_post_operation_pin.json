@@ -1,0 +1,20 @@
+{
+  "id": "rust_lossy_post_operation_pin",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/rust_lossy_post_operation_pin",
+  "vector": "a_pin_the_lossy_last_operation_hides_the_change_from_cannot_credit_the_return_value",
+  "probe_family": "return_value",
+  "assertions": [
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}

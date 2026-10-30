@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..0000000 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -47,7 +47,7 @@
+ pub struct Ring;
+ 
+ impl Limits for Ring {
+-    const MAX: u32 = 4;
++    const MAX: u32 = 5;
+ }
+ 
+ pub struct Wrap<T>(PhantomData<T>);

@@ -1,0 +1,107 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/owner_self_body_same_name_no_unseen_reach/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":1,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:99b5f2434c42c2ec2c0baab7dd5e9ef712fd01880e437abe95b9babd73f069e4","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:6fb64460",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Wrapper::get:predicate_boundary:predicate:self.inner.get==10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Wrapper::get:predicate_boundary:predicate:self.inner.get==10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Wrapper::get",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "self.inner.get==10"
+
+      },
+      "classification": "no_static_path",
+      "severity": "warning",
+      "confidence": 0.43,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:6fb64460",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 9,
+        "expression": "self.inner.get() > 10"
+       },
+      "ripr": {
+        "reach": {"state":"no","confidence":"medium","summary":"No test is seen calling get; tests share only its file or a name token: other_test"},
+        "infect": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can activate this change"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: 10"},
+        "observe": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can observe this change"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can discriminate this change"}
+       },
+      "evidence_path": ["reach no: No test is seen calling get; tests share only its file or a name token: other_test", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Changed behavior appears to influence returned value: 10", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches returned value: 10 (line 10)", "related test src/lib.rs:26 other_test uses strong exact value oracle: assert_eq!(other(9), 5);", "source assertion argument value 5 at line 27", "source assertion argument value 9 at line 27"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"10","line":10}
+      ],
+      "evidence": ["Changed behavior appears to influence returned value: 10", "No test is seen calling get; tests share only its file or a name token: other_test", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
+      "missing": ["No detected boundary input for the changed predicate", "No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "27": "assert_eq!(other(9), 5);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 27,
+            "value": "5",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 27,
+            "value": "9",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 27,
+          "value": "5",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 27,
+          "value": "9",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "other_test",
+          "file": "src/lib.rs",
+          "line": 26,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(other(9), 5);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
+      "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

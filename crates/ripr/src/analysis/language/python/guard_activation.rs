@@ -632,21 +632,29 @@ fn lines_inside_triple_quotes(lines: &[&str]) -> Vec<bool> {
 /// multi-line string. Its condition is unreadable and masking skips it, so a
 /// walk must fail open rather than step over it (#9919).
 fn masked_header_opens_string(trimmed: &str, masked: bool, starts_in_code: bool) -> bool {
+    // Read the keyword boundary, not a required ASCII space: Python accepts
+    // `for\ts in ...`, `for(s)in ...` and `while(...)` on these headers.
+    let keyword = trimmed
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .next();
     masked
         && starts_in_code
         && (is_block_opener(trimmed)
-            || [
-                "if ",
-                "elif ",
-                "else",
-                "while ",
-                "async for ",
-                "async with ",
-                "match ",
-                "case ",
-            ]
-            .iter()
-            .any(|prefix| trimmed.starts_with(prefix)))
+            || trimmed.starts_with("else")
+            || matches!(
+                keyword,
+                Some(
+                    "if" | "elif"
+                        | "while"
+                        | "for"
+                        | "with"
+                        | "def"
+                        | "class"
+                        | "async"
+                        | "match"
+                        | "case"
+                )
+            ))
 }
 
 /// Per line: whether it is masked, and whether it begins in code.
@@ -1046,12 +1054,24 @@ fn for_target_rebinds(trimmed: &str, name: &str) -> bool {
 /// call bound, so a call-argument boundary read is unknown. Over-refuses by
 /// design; it never awards credit.
 pub(super) fn name_rebound_in_owner(owner_source: &str, owner: &PythonOwner, name: &str) -> bool {
+    !owner_binding_lines(owner_source, owner, name).is_empty()
+}
+
+/// Every owner-body line (zero-based index into `owner_source`, trimmed text)
+/// that binds `name`, by the same over-refusing reading as
+/// [`name_rebound_in_owner`].
+pub(super) fn owner_binding_lines<'a>(
+    owner_source: &'a str,
+    owner: &PythonOwner,
+    name: &str,
+) -> Vec<(usize, &'a str)> {
     owner_source
         .lines()
+        .enumerate()
         .skip(owner.start_line)
         .take(owner.end_line.saturating_sub(owner.start_line))
-        .map(str::trim)
-        .any(|line| {
+        .map(|(index, line)| (index, line.trim()))
+        .filter(|(_, line)| {
             // A condition header ends in `:`, which the annotated-assignment
             // reading of `name:` would take for a rebinding; only a walrus
             // can bind inside one.
@@ -1063,6 +1083,7 @@ pub(super) fn name_rebound_in_owner(owner_source: &str, owner: &PythonOwner, nam
             }
             line_rebinds_parameter(line, name) || for_target_rebinds(line, name)
         })
+        .collect()
 }
 
 /// One `left <op> right` comparison under a row's literal bindings, or None

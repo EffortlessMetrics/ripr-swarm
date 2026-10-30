@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/macro_site_scoped_rest_limit/input
 
-Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 2 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 2 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach gate: pins
@@ -23,9 +28,10 @@ Finding 1: NOTE ./src/lib.rs:4
 Changed
   before: 11 <= value
   after:  10 <= value
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/lib.rs::gate
 Static exposure
   static_unknown (note, confidence 0.64)
@@ -37,9 +43,10 @@ Evidence
 Weakness
   - A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
-  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
 Static limitation
   rust_assertion_context_unresolved — A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add an ungated test that uses the standard assertion macro on the changed value, and remove any glob import that rebinds that macro.
 Limitation detail
   last established edge: related tests `pins` (tests/buf_tests.rs:10)
   first unresolved edge: whether the refused related assertions run as the standard `assert_eq!`
@@ -56,9 +63,10 @@ Finding 2: NOTE ./src/lib.rs:4
 Changed
   before: 11 <= value
   after:  10 <= value
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::gate
 Static exposure
   static_unknown (note, confidence 0.64)
@@ -70,9 +78,10 @@ Evidence
 Weakness
   - A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
-  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
 Static limitation
   rust_assertion_context_unresolved — A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add an ungated test that uses the standard assertion macro on the changed value, and remove any glob import that rebinds that macro.
 Limitation detail
   last established edge: related tests `pins` (tests/buf_tests.rs:10)
   first unresolved edge: whether the refused related assertions run as the standard `assert_eq!`

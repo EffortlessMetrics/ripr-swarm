@@ -154,6 +154,28 @@ not establish test-only role.
 Attribute-driven membership is authoritative; filenames, imports,
 and macro suffixes never classify.
 
+For the existing workspace wrapper-macro alias rule, a direct automatic
+`src/bin/<name>.rs` target uses its own root alias for `#[crate::test]`
+(#10141). Manifest authority must confirm automatic binary discovery and
+the existing default-target constraints, including Cargo's edition-specific
+automatic-discovery default. The new route refuses missing
+manifest authority, local reexport prefixes, shadowed macro-crate prefixes,
+globs, and packages with indexed module/include edges or an incomplete
+module scan. Nested binary helpers and explicit targets with automatic
+discovery disabled remain unresolved. Library and sibling-binary aliases
+cannot supply the binary's binding. Existing unique proc-macro and cfg
+checks still apply; this does not trace a macro expansion or resolve an
+unchanged dependency outside the index.
+
+For a binary-root alias, manifest dependency authority must bind the imported
+crate name to the indexed proc-macro library; a registry, wrong-path, missing,
+or ambiguous dependency does not gain credit from a workspace namesake. In a
+committed-history analysis, Cargo manifest authority comes from the committed
+snapshot. A changed Cargo configuration that cannot be resolved against that
+snapshot, including a symlinked manifest or Cargo configuration, refuses the
+new binary route. The alias must directly name the macro in the dependency;
+intermediate paths remain unresolved rather than assuming a reexport.
+
 Diff lines without a function owner consume the composer's existing
 `SourceRoleProvenance` (#3695). They are evidence-only when the provenance
 has no unresolved edge and contains a test-required edge, and the child
@@ -383,25 +405,28 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
 
 ## Acceptance Examples
 
-- Accept: `benches/exposure.rs` changed → indexed, counted as a changed
-  file, zero production findings.
-- Accept: a manifest-built `build.rs` or `xtask/src/main.rs` changed →
-  probes seeded and the editor pins them; a `build.rs` under
-  `build = false` or outside any package seeds nothing; `fixtures/**/build.rs`,
-  `metrics/**/source.after.rs`, and `benches/common/mod.rs` stay evidence.
-- Accept: `[[test]] path="src/contract_test.rs"` → helper in it is
-  evidence; `src/unconfirmed_test.rs` without a declaration → production.
-- Accept: `production_like_targets = ["tests/api_contract.rs"]` → that
-  file analyzed as production; `tests/other.rs` stays evidence.
-- Accept: a `custom_harness` registration on a declared
-  `harness = false` target (explicit custom path or name-only entry on
-  the conventional layout) → file-wide evidence role with adapter
-  subjects; the same registration against an undeclared or
-  `harness = true` target → typed limitation, no demotion, and a
-  production-classified target keeps seeding production seams while an
-  evidence-layout target keeps its evidence role (#3608).
-- Reject: a bench harness call (`criterion_main!`) becoming an
-  obligation; a `test_*.rs` name alone excluding a production file.
+1. Accept: `benches/exposure.rs` changed → indexed, counted as a changed
+   file, zero production findings.
+2. Accept: a manifest-built `build.rs` or `xtask/src/main.rs` changed →
+   probes seeded and the editor pins them.
+3. Accept: a `build.rs` under `build = false` or outside any package seeds
+   nothing; `fixtures/**/build.rs`, `metrics/**/source.after.rs`, and
+   `benches/common/mod.rs` stay evidence.
+4. Accept: `[[test]] path="src/contract_test.rs"` → helper in it is
+   evidence.
+5. Accept: `src/unconfirmed_test.rs` without a declaration → production.
+6. Accept: `production_like_targets = ["tests/api_contract.rs"]` → that
+   file analyzed as production; `tests/other.rs` stays evidence.
+7. Accept: a `custom_harness` registration on a declared
+   `harness = false` target (explicit custom path or name-only entry on
+   the conventional layout) → file-wide evidence role with adapter
+   subjects; the same registration against an undeclared or
+   `harness = true` target → typed limitation, no demotion, and a
+   production-classified target keeps seeding production seams while an
+   evidence-layout target keeps its evidence role (#3608).
+8. Reject: a bench harness call (`criterion_main!`) becoming an
+   obligation.
+9. Reject: a `test_*.rs` name alone excluding a production file.
 
 ## Test Mapping
 
