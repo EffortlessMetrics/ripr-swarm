@@ -3,12 +3,17 @@ mode: fast
 root: fixtures/typescript_reassigned_setup_hook/input
 config: <cwd>/fixtures/typescript_reassigned_setup_hook/input/ripr.toml
 
-Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 1 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 1 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Changed file(s) by language: typescript = 1
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 WARNING src/cart.ts:3
   id: probe:src_cart.ts:typescript_preview:3b511579
@@ -16,9 +21,10 @@ WARNING src/cart.ts:3
 Changed
   after:      return 1;
 
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  typescript:src/cart.ts::total
 
 Language
@@ -39,6 +45,7 @@ Preview actionability
 
 Static exposure
   no_static_path (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach no: 0 related test(s) found for owner `total`
