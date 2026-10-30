@@ -1120,7 +1120,6 @@ jobs:
           ADMISSION_CHANGED_FILES: ${{ needs.admission.outputs.changed_files }}
           ADMISSION_CHANGED_LINES: ${{ needs.admission.outputs.changed_lines }}
           REF: ${{ github.ref }}
-          LABEL_NAME: ${{ github.event.label.name }}
           QUALIFICATION_RESULT: ${{ needs.qualification.result }}
           QUALIFICATION_EXECUTE: ${{ needs.qualification.outputs.execute }}
           QUALIFICATION_PRIOR_RESULT: ${{ needs.qualification.outputs.prior_result }}
