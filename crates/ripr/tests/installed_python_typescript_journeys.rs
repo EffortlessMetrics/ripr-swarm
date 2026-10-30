@@ -539,10 +539,17 @@ fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -
         "test node",
     )?;
     // The printed verification route is the module form, never the bare console script.
+    #[cfg(not(windows))]
     need(
         &check,
-        "Verify command: python -m pytest tests/test_pricing.py::",
-        "module-form verify",
+        "Verify command (Bash): (cd -P -- ",
+        "root-bound module-form verify",
+    )?;
+    #[cfg(windows)]
+    need(
+        &check,
+        "Suggested command (unverified; inspect and run from the selected root): python -m pytest ",
+        "manual Windows verify",
     )?;
     // #10373: the finding's GapRecord passes the shared agent-packet
     // validator, so check prints the gap-bound start instead of the #9102
@@ -3097,5 +3104,163 @@ fn gap_bound_after_phase_stops_when_the_retry_budget_is_spent() -> Result<(), St
     if stderr.contains("--seam-id") {
         return Err(format!("budget stop leaks --seam-id:\n{stderr}"));
     }
+    Ok(())
+}
+
+/// Execute the actual printed action from a decoy directory using a local
+/// argv/cwd-checking python stand-in. The real pytest run is separate proof.
+#[cfg(all(unix, feature = "lang-python"))]
+#[test]
+fn python_printed_verify_runs_in_selected_root_from_foreign_cwd() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let (guard, root, decoy) =
+        materialize("blind_journey_installed_python", "head", "py-action", None)?;
+    let quoted_parent = guard.0.join("sélected ' root");
+    std::fs::rename(root.parent().ok_or("root has no parent")?, &quoted_parent)
+        .map_err(|e| e.to_string())?;
+    let root = quoted_parent.join("repo");
+    let root_arg = root.to_str().ok_or("non-UTF8 root")?;
+    let (ok, check) = ripr(&decoy, &["check", "--root", root_arg, "--base", "HEAD~1"])?;
+    if !ok {
+        return Err(format!("check failed: {check}"));
+    }
+    let action = check
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Verify command (Bash): "))
+        .and_then(|line| line.strip_suffix(" (high)"))
+        .ok_or("missing printed verify action")?;
+    let bin = guard.0.join("bin");
+    std::fs::create_dir(&bin).map_err(|e| e.to_string())?;
+    let python = bin.join("python");
+    std::fs::write(&python, "#!/bin/sh\n[ \"$1\" = -m ] && [ \"$2\" = pytest ] || exit 9\n[ \"$PWD\" = \"$EXPECTED_ROOT\" ] || exit 8\n[ \"$3\" = \"$EXPECTED_NODE\" ] || exit 6\nfile=${3%%::*}\n[ -f \"$file\" ] || exit 7\nprintf 'selected one fixture test\\n'\n").map_err(|e| e.to_string())?;
+    std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| e.to_string())?;
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let run = |cwd: &Path, script: &str, expected_root: &str, expected_node: &str| {
+        Command::new("bash")
+            .args(["-c", script])
+            .current_dir(cwd)
+            .env("PATH", &path)
+            .env("EXPECTED_ROOT", expected_root)
+            .env("EXPECTED_NODE", expected_node)
+            .output()
+            .map_err(|e| e.to_string())
+    };
+    for cwd in [&decoy, &root] {
+        let result = run(
+            cwd,
+            action,
+            root_arg,
+            "tests/test_pricing.py::test_above_boundary_gets_discount",
+        )?;
+        if !result.status.success()
+            || !String::from_utf8_lossy(&result.stdout).contains("selected one fixture test")
+        {
+            return Err(format!("action failed from {}: {result:?}", cwd.display()));
+        }
+    }
+    // The OS follows the symlink before applying `..`; a logical shell cd
+    // would instead land in a/repo, not the repository ripr analyzed.
+    std::fs::create_dir(quoted_parent.join("x")).map_err(|e| e.to_string())?;
+    let alias_parent = guard.0.join("a");
+    std::fs::create_dir(&alias_parent).map_err(|e| e.to_string())?;
+    std::fs::create_dir(alias_parent.join("repo")).map_err(|e| e.to_string())?;
+    std::os::unix::fs::symlink(quoted_parent.join("x"), alias_parent.join("link"))
+        .map_err(|e| e.to_string())?;
+    let alias = alias_parent.join("link/../repo");
+    let alias_arg = alias.to_str().ok_or("non-UTF8 alias")?;
+    let (ok, alias_check) = ripr(&decoy, &["check", "--root", alias_arg, "--base", "HEAD~1"])?;
+    if !ok {
+        return Err(format!("alias check failed: {alias_check}"));
+    }
+    let alias_action = alias_check
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Verify command (Bash): "))
+        .and_then(|line| line.strip_suffix(" (high)"))
+        .ok_or("missing alias action")?;
+    let result = run(
+        &decoy,
+        alias_action,
+        root_arg,
+        "tests/test_pricing.py::test_above_boundary_gets_discount",
+    )?;
+    if !result.status.success()
+        || !String::from_utf8_lossy(&result.stdout).contains("selected one fixture test")
+    {
+        return Err(format!(
+            "symlink-parent action selected the wrong root: {result:?}"
+        ));
+    }
+    let prefix = action
+        .strip_prefix("(cd -P -- ")
+        .and_then(|s| s.split_once(" && "))
+        .ok_or("unexpected action")?
+        .0;
+    let wrong = action.replacen(prefix, &format!("'{}'", decoy.display()), 1);
+    let result = run(
+        &decoy,
+        &wrong,
+        root_arg,
+        "tests/test_pricing.py::test_above_boundary_gets_discount",
+    )?;
+    if result.status.code() != Some(8) || !result.stdout.is_empty() {
+        return Err(format!("wrong-root action was not rejected: {result:?}"));
+    }
+    let missing = action.replacen(prefix, &format!("'{}/missing'", guard.0.display()), 1);
+    let result = run(
+        &decoy,
+        &missing,
+        root_arg,
+        "tests/test_pricing.py::test_above_boundary_gets_discount",
+    )?;
+    if result.status.success() || !result.stdout.is_empty() {
+        return Err(format!("missing-root action ran: {result:?}"));
+    }
+    // A limited finding has placement evidence but no Python repair card.
+    // Execute the action copied from the full output, not the digest.
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/python_dynamic_namespace_reload");
+    let limited_root = guard.0.join("limited ' root");
+    copy_tree(&fixture.join("input"), &limited_root)?;
+    let limited_root_arg = limited_root.to_str().ok_or("non-UTF8 limited root")?;
+    let diff = fixture.join("diff.patch");
+    let (ok, full) = ripr(
+        &decoy,
+        &[
+            "check",
+            "--root",
+            limited_root_arg,
+            "--diff",
+            diff.to_str().ok_or("non-UTF8 diff")?,
+            "--mode",
+            "fast",
+            "--format",
+            "human-full",
+        ],
+    )?;
+    if !ok {
+        return Err(format!("limited full check failed: {full}"));
+    }
+    let full_action = full
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("verify (Bash): "))
+        .and_then(|line| line.strip_suffix(" (high)"))
+        .ok_or_else(|| format!("missing rooted full-output action: {full}"))?;
+    let result = run(
+        &decoy,
+        full_action,
+        limited_root_arg,
+        "tests/test_pricing.py::test_discount",
+    )?;
+    if !result.status.success()
+        || !String::from_utf8_lossy(&result.stdout).contains("selected one fixture test")
+    {
+        return Err(format!("full-output action failed: {result:?}"));
+    }
+    decoy_untouched(&decoy)?;
     Ok(())
 }

@@ -22902,6 +22902,79 @@ async fn hover_without_evidence_names_an_unsaved_buffer() -> Result<(), String> 
 }
 
 #[tokio::test]
+async fn code_lens_is_withdrawn_for_an_unsaved_buffer_and_restored_when_buffer_matches_analyzed_content()
+-> Result<(), String> {
+    // Lenses anchor at the analyzed saved file's line. Diagnostics and hover
+    // already pause for a divergent buffer; a lens that stayed would sit on
+    // the wrong line after any edit that shifts lines.
+    let fixture = quarantine_fixture("dirty-lens")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+    let lens_count = |uri: &tower_lsp_server::ls_types::Uri| {
+        let params = tower_lsp_server::ls_types::CodeLensParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            work_done_progress_params: Default::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+        async move {
+            backend
+                .code_lens(params)
+                .await
+                .map_err(|err| format!("code lens failed: {err}"))
+                .map(|lenses| lenses.map_or(0, |lenses| lenses.len()))
+        }
+    };
+    if lens_count(&fixture.uri_a).await? == 0 {
+        return Err("a clean document must keep its lens".to_string());
+    }
+
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            2,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    if lens_count(&fixture.uri_a).await? != 0 {
+        return Err("a divergent buffer must not keep a lens on stale lines".to_string());
+    }
+    if lens_count(&fixture.uri_b).await? == 0 {
+        return Err("a clean sibling document must keep its lens".to_string());
+    }
+
+    // Reverting the buffer to the analyzed saved content lifts the pause.
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            3,
+            QUARANTINE_TEXT_A,
+        ))
+        .await;
+    if lens_count(&fixture.uri_a).await? == 0 {
+        return Err("a buffer matching the analyzed content must restore its lens".to_string());
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() -> Result<(), String>
 {
     // A formatter, `git checkout` or coding agent rewrites an open file and the
