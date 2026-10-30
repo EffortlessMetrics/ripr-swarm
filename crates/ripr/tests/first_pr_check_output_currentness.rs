@@ -337,6 +337,33 @@ fn zero_record_foreign_check_preserves_the_input() -> Result<(), String> {
 }
 
 #[test]
+fn current_strong_check_can_produce_no_action() -> Result<(), String> {
+    let root = fixture()?;
+    fs::write(root.join("tests/test_calculator.py"), STRONG).map_err(|e| e.to_string())?;
+    let produced = check(&root)?;
+    assert_eq!(produced["summary"]["exposed"], 1, "{produced}");
+    let input = root.with_extension("current-strong.json");
+    fs::write(
+        &input,
+        serde_json::to_vec(&produced).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let packet = first_pr(
+        &root,
+        &input,
+        &root.join("target/current-strong"),
+        &root.join("target/current-strong-ledger.json"),
+    )?;
+    assert_eq!(
+        packet["selected"]["output_state"], "no_actionable_gap",
+        "{packet}"
+    );
+    fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    fs::remove_file(input).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[test]
 fn no_action_does_not_promote_unbound_or_stale_preview_check() -> Result<(), String> {
     let a = fixture()?;
     let b = a.with_extension("other");
