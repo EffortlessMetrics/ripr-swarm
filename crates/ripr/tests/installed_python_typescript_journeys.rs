@@ -1740,9 +1740,18 @@ fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<
             serde_json::from_str(&status).map_err(|error| error.to_string())?;
         let row = document["repair_attempts"]
             .as_array()
-            .and_then(|rows| rows.first())
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["attempt_id"].as_str() == Some(attempt.attempt_id.as_str()))
+            })
             .ok_or_else(|| format!("no attempt in {status}"))?;
-        Ok(row["head_current"] == true)
+        let field = row
+            .get("head_current")
+            .ok_or_else(|| format!("missing currentness in {status}"))?;
+        if !field.is_null() && !field.is_boolean() {
+            return Err(format!("invalid currentness in {status}"));
+        }
+        Ok(field == true)
     };
     if !current()? {
         return Err("newly finished attempt was not current".to_string());
@@ -1776,38 +1785,41 @@ fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<
     let retained_path = attempt.root.join(retained);
     let retained_bytes = std::fs::read(&retained_path).map_err(|error| error.to_string())?;
     std::fs::write(&retained_path, b"forged").map_err(|error| error.to_string())?;
-    let (ok, status) = ripr(
-        &attempt.decoy,
-        &["agent", "status", "--root", &attempt.root_arg, "--json"],
-    )?;
-    expect_exit(
-        ok,
-        true,
-        "status with forged retained snapshot and live projection",
-    )?;
-    let document: serde_json::Value =
-        serde_json::from_str(&status).map_err(|error| error.to_string())?;
-    let row = &document["repair_attempts"][0];
-    if row["head_current"] == true || row["disposition"] == "finished" {
-        return Err(format!(
-            "forged retained snapshot was trusted with live projection: {status}"
-        ));
-    }
+    let unavailable = || -> Result<(), String> {
+        let (ok, status) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "status with invalid retained snapshot")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&status).map_err(|error| error.to_string())?;
+        let row = document["repair_attempts"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["attempt_id"].as_str() == Some(attempt.attempt_id.as_str()))
+            })
+            .ok_or_else(|| format!("attempt missing: {status}"))?;
+        let current = row.get("head_current").ok_or("missing currentness")?;
+        let disposition = row
+            .get("disposition")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("missing disposition")?;
+        if (!current.is_null() && !current.is_boolean())
+            || current == true
+            || disposition == "finished"
+            || row
+                .pointer("/receipt/unavailable")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+        {
+            return Err(format!("invalid retained snapshot was trusted: {status}"));
+        }
+        Ok(())
+    };
+    unavailable()?;
     std::fs::remove_file(&retained_path).map_err(|error| error.to_string())?;
-    let (ok, missing_status) = ripr(
-        &attempt.decoy,
-        &["agent", "status", "--root", &attempt.root_arg, "--json"],
-    )?;
-    expect_exit(ok, true, "status with deleted retained snapshot")?;
-    let missing: serde_json::Value =
-        serde_json::from_str(&missing_status).map_err(|error| error.to_string())?;
-    if missing["repair_attempts"][0]["head_current"] == true
-        || missing["repair_attempts"][0]["disposition"] == "finished"
-    {
-        return Err(format!(
-            "deleted retained snapshot was trusted: {missing_status}"
-        ));
-    }
+    unavailable()?;
     std::fs::write(&retained_path, b"forged").map_err(|error| error.to_string())?;
     std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
     let forged = current();
