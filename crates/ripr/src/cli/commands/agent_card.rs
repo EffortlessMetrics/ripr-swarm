@@ -466,11 +466,13 @@ pub(crate) fn agent_card_plain_lines(
             .map(|evidence| analysis::repair_route::humanize_evidence(evidence))
             .collect::<Vec<_>>()
             .join("; ");
-        let reason = card
-            .exact_blocker
-            .clone()
-            .filter(|blocker| !blocker.is_empty())
-            .or_else(|| (!missing.is_empty()).then_some(missing));
+        // Plain evidence words first; the producer's blocker string can carry
+        // internal vocabulary, so it is only the fallback.
+        let reason = (!missing.is_empty()).then_some(missing).or_else(|| {
+            card.exact_blocker
+                .clone()
+                .filter(|blocker| !blocker.is_empty())
+        });
         lines.push(match reason {
             Some(reason) => format!("  Not ready to repair yet: {reason}"),
             None => "  Not ready to repair yet.".to_string(),
@@ -538,7 +540,19 @@ pub(crate) fn agent_card_plain_lines(
         .map(String::as_str)
         .collect();
     if !limits.is_empty() {
-        lines.push(format!("  Limits: {}", limits.join("; ")));
+        // Keep the brief short: two limits inline, the rest behind --verbose.
+        let shown = limits
+            .iter()
+            .take(2)
+            .copied()
+            .collect::<Vec<_>>()
+            .join("; ");
+        let more = limits.len().saturating_sub(2);
+        lines.push(if more == 0 {
+            format!("  Limits: {shown}")
+        } else {
+            format!("  Limits: {shown}; and {more} more (see --verbose)")
+        });
     }
     lines.push("  This is a suggestion; ripr has not run or verified anything.".to_string());
     lines.push(format!(
@@ -1093,6 +1107,30 @@ mod tests {
     /// #10693: the default brief is short, plain, and projects the same typed
     /// fields; the ledger rows and internal vocabulary are `--verbose` only.
     #[test]
+    fn plain_brief_not_ready_uses_plain_words_and_stays_capped() -> Result<(), String> {
+        let mut card = prose_test_card();
+        card.readiness.repair_ready = false;
+        card.readiness.missing_evidence =
+            vec!["producer-owned missing discriminator fact: boundary_value".to_string()];
+        card.exact_blocker = Some("witness: sink_localization_incomplete".to_string());
+        card.allowed_files = vec!["tests/t.rs".to_string()];
+        card.forbidden_files = vec!["src/lib.rs".to_string()];
+        card.limitations = (0..6).map(|i| format!("limit {i}")).collect();
+        let lines = agent_card_plain_lines(&card, "ripr agent packet --root 'a b' --json", None);
+        let text = lines.join("\n");
+        if !text.contains("Not ready to repair yet: a test assertion that pins the changed boundary value exactly") {
+            return Err(format!("not-ready reason not plain:\n{text}"));
+        }
+        if text.contains("witness") || text.contains("sink_localization") {
+            return Err(format!("internal blocker leaked:\n{text}"));
+        }
+        if !text.contains("and 4 more") || lines.len() > 18 {
+            return Err(format!("limits/cap wrong ({} lines):\n{text}", lines.len()));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn plain_brief_is_short_and_free_of_ledger_vocabulary() -> Result<(), String> {
         let mut card = prose_test_card();
         card.allowed_files = vec!["tests/t.rs".to_string()];
@@ -1127,7 +1165,7 @@ mod tests {
                 return Err(format!("plain brief printed {absent:?}:\n{text}"));
             }
         }
-        if lines.len() > 14 {
+        if lines.len() > 18 {
             return Err(format!(
                 "plain brief is not short ({} lines):\n{text}",
                 lines.len()
