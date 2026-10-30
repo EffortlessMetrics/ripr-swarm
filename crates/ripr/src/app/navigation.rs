@@ -101,13 +101,25 @@ impl GapRepairRoute {
 /// the state instead of leaving the repair line's absence silent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RepairRouteRefusal {
+    GapRouteUnavailable {
+        reason: &'static str,
+    },
+    /// The run's analysis is incomplete (#11136): the after phase refuses a
+    /// before artifact like that, so no gap-bound start is printed.
+    /// `limitation` names the cause and the recovery.
+    AnalysisIncomplete {
+        limitation: String,
+    },
     /// The finding has no canonical gap to bind a seam from.
     NoCanonicalGap,
     /// The finding's file belongs to a language adapter whose findings the
     /// seam inventory behind `ripr repair` cannot bind (#9102). The
     /// inventory is built from the Rust index only, so no seam exists for
     /// this file; a terminal state, not a stale id.
-    NoSeamInventory { language: String, file: String },
+    NoSeamInventory {
+        language: String,
+        file: String,
+    },
     /// The root's typed config could not be loaded.
     ConfigUnreadable,
     /// Classifying seams in the finding's file failed.
@@ -118,7 +130,9 @@ pub(crate) enum RepairRouteRefusal {
     /// No classified seam in the finding's file binds this finding.
     /// `seams_in_file` is how many classified seams the file holds, so the
     /// advisory never says "no seam" where `ripr repair` lists seams (#10702).
-    NoBindingSeam { seams_in_file: usize },
+    NoBindingSeam {
+        seams_in_file: usize,
+    },
     /// The finding itself is `exposed`: the related tests already notice the
     /// change, so there is nothing to repair whatever the seam view says
     /// (#10702).
@@ -158,6 +172,12 @@ impl RepairRouteRefusal {
     pub(crate) fn advisory(&self, full_gate_command: &str) -> String {
         let gate = || format!("run `{full_gate_command}` for the full gate's answer");
         match self {
+            Self::GapRouteUnavailable { reason } => format!(
+                "no repair start offered: {reason}; inspect the current workspace and rerun `ripr check`"
+            ),
+            Self::AnalysisIncomplete { limitation } => format!(
+                "no repair start offered: the analysis is incomplete ({limitation}), so a repair started now could not be verified afterward; resolve that, rerun `ripr check`, or add the missing test by hand from the packet above"
+            ),
             Self::NoCanonicalGap => {
                 "no repair start offered: this finding has no gap ID, so there is \
                  no seam to start a repair from; follow the Next step above"

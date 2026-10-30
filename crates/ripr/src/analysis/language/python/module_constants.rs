@@ -34,6 +34,7 @@ use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use rustpython_parser::{Mode, Tok, lexer::lex};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// A module-scope name bound once to a scalar literal and never rebound.
@@ -50,7 +51,7 @@ pub(super) fn module_literal_constants(
     source: &SourceText<'_>,
     statements: &[Stmt],
 ) -> Vec<PythonModuleConstant> {
-    let Some(stable) = StableNames::of(source, statements) else {
+    let Some(stable) = StableNames::of(source, statements, false) else {
         return Vec::new();
     };
     statements
@@ -65,7 +66,7 @@ pub(super) fn module_literal_constants(
 /// can mutate through an attribute write that a test imports and reads back.
 /// The same no-rebinding conditions as [`module_literal_constants`] apply.
 pub(super) fn module_object_bindings(source: &SourceText<'_>, statements: &[Stmt]) -> Vec<String> {
-    let Some(stable) = StableNames::of(source, statements) else {
+    let Some(stable) = StableNames::of(source, statements, false) else {
         return Vec::new();
     };
     statements
@@ -113,7 +114,7 @@ pub(super) fn module_stable_names<'a>(
     source: &SourceText<'_>,
     statements: &'a [Stmt],
 ) -> PythonModuleNames<'a> {
-    let Some(stable) = StableNames::of(source, statements) else {
+    let Some(stable) = StableNames::of(source, statements, true) else {
         return PythonModuleNames::default();
     };
     let values = statements
@@ -160,11 +161,22 @@ struct StableNames {
 }
 
 impl StableNames {
-    /// None when the module binds names this walk cannot see.
-    fn of(source: &SourceText<'_>, statements: &[Stmt]) -> Option<Self> {
+    /// None when the module binds names this walk cannot see. `import_time`
+    /// is set only for reads a decorator makes when the module is imported;
+    /// call-time reads (constants, object and table bindings) keep the
+    /// whole-module writer scan because a test body can rewrite them.
+    fn of(source: &SourceText<'_>, statements: &[Stmt], import_time: bool) -> Option<Self> {
         let mut bindings = ScopeBindings::default();
         collect_scope_bindings(statements, &mut bindings);
-        if bindings.opaque || writes_namespace_dynamically(source) {
+        // A decorator reads these names when the module is imported; a writer
+        // inside a test body runs later, so only the rest of the module
+        // counts (#11018).
+        let scanned = if import_time {
+            without_test_bodies(source, statements)
+        } else {
+            source.to_string()
+        };
+        if bindings.opaque || writes_namespace_dynamically(&scanned) {
             return None;
         }
         let mut globals = Vec::new();
@@ -194,6 +206,105 @@ impl StableNames {
             && !self.attributes.iter().any(|attribute| attribute == name)
             && !self.walrus.iter().any(|target| target == name)
     }
+}
+
+/// `source` with the body of every `test*` function and every `test*` method
+/// of a `Test*` class blanked (decorators, signatures and all other code
+/// stay). A test body runs only when pytest calls it, after every decorator in
+/// the module was applied, so a namespace writer there cannot change what a
+/// decorator read at import. Module scope, class bodies, helpers, fixtures and
+/// decorator arguments are untouched, so those writers still count. A module
+/// that names a test function outside its own `def` (called at import, used as a
+/// decorator) keeps the whole-module scan (#11018).
+fn without_test_bodies(source: &str, statements: &[Stmt]) -> String {
+    let mut ranges = Vec::new();
+    let mut names: Vec<&str> = Vec::new();
+    for statement in statements {
+        match statement {
+            Stmt::FunctionDef(function)
+                if function.name.starts_with("test")
+                    && !is_fixture(source, &function.decorator_list) =>
+            {
+                ranges.extend(body_range(&function.body));
+                names.push(function.name.as_str());
+            }
+            Stmt::AsyncFunctionDef(function)
+                if function.name.starts_with("test")
+                    && !is_fixture(source, &function.decorator_list) =>
+            {
+                ranges.extend(body_range(&function.body));
+                names.push(function.name.as_str());
+            }
+            Stmt::ClassDef(class) if class.name.starts_with("Test") => {
+                for member in &class.body {
+                    match member {
+                        Stmt::FunctionDef(method)
+                            if method.name.starts_with("test")
+                                && !is_fixture(source, &method.decorator_list) =>
+                        {
+                            ranges.extend(body_range(&method.body));
+                            names.push(method.name.as_str());
+                        }
+                        Stmt::AsyncFunctionDef(method)
+                            if method.name.starts_with("test")
+                                && !is_fixture(source, &method.decorator_list) =>
+                        {
+                            ranges.extend(body_range(&method.body));
+                            names.push(method.name.as_str());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if ranges.is_empty() {
+        return source.to_string();
+    }
+    let mut blanked = source.as_bytes().to_vec();
+    for (start, end) in ranges {
+        let end = end.min(blanked.len());
+        for byte in blanked.get_mut(start..end).unwrap_or_default() {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    // Whole statements were replaced byte for byte by spaces, so the text is
+    // valid UTF-8; the fallback is only a guard.
+    let Ok(blanked) = String::from_utf8(blanked) else {
+        return source.to_string();
+    };
+    // A test function named anywhere but its own `def` (called at import,
+    // used as a decorator) may run before the decorators: scan everything.
+    if names
+        .iter()
+        .any(|name| identifier_offsets(&blanked, name).count() > 1)
+    {
+        return source.to_string();
+    }
+    blanked
+}
+
+/// A `test*`-named function that a decorator spelling `fixture` makes a
+/// fixture runs when a test requests it, not as a test; it is not blanked.
+fn is_fixture(source: &str, decorators: &[Expr]) -> bool {
+    decorators.iter().any(|decorator| {
+        let range = decorator.range();
+        source
+            .get(usize::from(range.start())..usize::from(range.end()))
+            .is_none_or(|text| text.contains("fixture"))
+    })
+}
+
+fn body_range(body: &[Stmt]) -> Option<(usize, usize)> {
+    let first = body.first()?;
+    let last = body.last()?;
+    Some((
+        usize::from(first.range().start()),
+        usize::from(last.range().end()),
+    ))
 }
 
 /// How a module binds its names, for the conditional-definition and
@@ -530,13 +641,32 @@ fn contains_nested_scope(statements: &[Stmt]) -> bool {
 /// code, so its text still counts, and a module the lexer rejects falls back
 /// to the whole-text scan. A false match only leaves constants unresolved.
 fn writes_namespace_dynamically(source: &str) -> bool {
+    let mut tokens = Vec::new();
+    for result in lex(source, Mode::Module) {
+        match result {
+            Ok(pair) => tokens.push(pair),
+            Err(_) => return writes_namespace_in_text(source),
+        }
+    }
     // 0: nothing pending, 1: just read `sys`, 2: just read `sys.`.
     let mut after_sys = 0;
-    for result in lex(source, Mode::Module) {
-        let Ok((token, range)) = result else {
-            return writes_namespace_in_text(source);
-        };
-        match &token {
+    // An `import` statement binds a name; it writes nothing (#11102).
+    let mut in_import = false;
+    let mut line_start = true;
+    for (index, (token, range)) in tokens.iter().enumerate() {
+        match token {
+            Tok::Newline | Tok::Semi => {
+                in_import = false;
+                line_start = true;
+                after_sys = 0;
+                continue;
+            }
+            Tok::Indent | Tok::Dedent => continue,
+            Tok::Import | Tok::From if line_start => in_import = true,
+            // `from unittest.mock import patch` only names the writer; an
+            // alias (`import patch as p`) hides later calls, so it counts.
+            Tok::Name { .. }
+                if in_import && !matches!(tokens.get(index + 1), Some((Tok::As, _))) => {}
             Tok::Name { name } => {
                 if DYNAMIC_NAMESPACE_WRITERS.contains(&name.as_str())
                     || (after_sys == 2 && name == "modules")
@@ -544,8 +674,14 @@ fn writes_namespace_dynamically(source: &str) -> bool {
                     return true;
                 }
                 after_sys = usize::from(name == "sys");
+                line_start = false;
+                continue;
             }
-            Tok::Dot if after_sys == 1 => after_sys = 2,
+            Tok::Dot if after_sys == 1 => {
+                after_sys = 2;
+                line_start = false;
+                continue;
+            }
             // `getattr(importlib, "reload")(m)` and `locate("importlib.reload")`
             // name the writer only as a string, so a whitespace-free string
             // with a writer name among its dotted parts still counts. Prose
@@ -564,10 +700,11 @@ fn writes_namespace_dynamically(source: &str) -> bool {
                 if writes_namespace_in_text(text) {
                     return true;
                 }
-                after_sys = 0;
             }
-            _ => after_sys = 0,
+            _ => {}
         }
+        after_sys = 0;
+        line_start = false;
     }
     false
 }
@@ -612,8 +749,13 @@ pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
 /// `Runner = CliRunner` and a string such as `"click.testing.CliRunner.invoke"`
 /// all name a class in a way that can change what it builds. A module the
 /// lexer rejects names every identifier it contains, so nothing is hidden.
-pub(super) fn names_used_beyond_construction(source: &str) -> Vec<String> {
-    let mut names = Vec::new();
+/// Only names `watched` accepts are kept, each once: the caller asks about a
+/// fixed set of classes, and every file's facts are stored and decoded.
+pub(super) fn watched_names_used_beyond_construction(
+    source: &str,
+    watched: &dyn Fn(&str) -> bool,
+) -> Vec<String> {
+    let mut names = BTreeSet::new();
     let mut tokens = Vec::new();
     for result in lex(source, Mode::Module) {
         match result {
@@ -621,8 +763,10 @@ pub(super) fn names_used_beyond_construction(source: &str) -> Vec<String> {
             Err(_) => {
                 return source
                     .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-                    .filter(|word| !word.is_empty())
+                    .filter(|word| !word.is_empty() && watched(word))
                     .map(str::to_string)
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
                     .collect();
             }
         }
@@ -651,21 +795,22 @@ pub(super) fn names_used_beyond_construction(source: &str) -> Vec<String> {
                         || index
                             .checked_sub(1)
                             .and_then(|before| tokens.get(before))
-                            .is_some_and(|before| matches!(before, Tok::Def | Tok::Class))) =>
+                            .is_some_and(|before| matches!(before, Tok::Def | Tok::Class)))
+                    && watched(name.as_str()) =>
             {
-                names.push(name.to_string());
+                names.insert(name.to_string());
             }
             Tok::String { value, .. } => names.extend(
                 value
                     .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-                    .filter(|word| !word.is_empty())
+                    .filter(|word| !word.is_empty() && watched(word))
                     .map(str::to_string),
             ),
             _ => {}
         }
         line_start = false;
     }
-    names
+    names.into_iter().collect()
 }
 
 /// The dotted modules a file imports, at any nesting depth: `import a.b` names
@@ -795,7 +940,7 @@ pub(super) fn module_table_binding_at(
     name: &str,
     line: usize,
 ) -> bool {
-    let Some(stable) = StableNames::of(source, statements) else {
+    let Some(stable) = StableNames::of(source, statements, false) else {
         return false;
     };
     stable.holds(name)

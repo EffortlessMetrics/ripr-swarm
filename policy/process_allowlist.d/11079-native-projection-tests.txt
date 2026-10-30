@@ -1,0 +1,4 @@
+crates/ripr/tests/capped_findings_review_scope.rs|Command::new|1|cli-tests|#11079: runs the built ripr binary for bounded and unbounded review and gate controls in an isolated temporary repository; no shell or network.
+crates/ripr/tests/check_findings_language_identity.rs|Command::new|1|cli-tests|#11079: runs the built ripr binary for complete check-findings identity and verify controls in an isolated temporary repository; no shell or network.
+crates/ripr/tests/parser_declined_baseline_native.rs|Command::new|1|cli-tests|#11079: runs the built ripr binary for parser-declined review, gate and baseline controls in an isolated temporary repository; no shell or network.
+crates/ripr/tests/parser_declined_baseline_native.rs|use std::process::Command|1|cli-tests|#11079: imports the built ripr binary launcher for isolated native parser and baseline controls.

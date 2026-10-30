@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — boundary_pairing_sibling_element (4)
+
+Reason:
+RIPR-SPEC-0122: incomplete evidence stage tokens render as plain words in the human repair advisory (#11025)
+
+Command:
+`cargo xtask goldens bless boundary_pairing_sibling_element --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -1,0 +1,8 @@
+diff --git a/src/display.rs b/src/display.rs
+--- a/src/display.rs
++++ b/src/display.rs
+@@ -6,3 +6,3 @@
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+-        write!(f, "\u{7b}\u{7d}°C", self.0)
++        write!(f, "\u{7b}:?\u{7d}°C", self.0)
+     }

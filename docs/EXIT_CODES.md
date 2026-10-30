@@ -6,7 +6,7 @@ ripr uses three ordinary command exit codes, plus standalone Unix check interrup
 |------|---------|
 | `0`  | The command completed. |
 | `2`  | The command could not complete: usage, parse, operational, or internal error. |
-| `3`  | The command ran successfully and reached a blocking decision or a typed refusal. |
+| `3`  | ripr declined: the command ran and reached a blocking result, or a request it will not run (the output says why). |
 | `130` | Supported standalone Unix `check` analysis was interrupted. |
 
 `ripr check` is advisory: it exits `0` whether or not it found gaps, including

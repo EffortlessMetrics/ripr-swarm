@@ -2913,6 +2913,69 @@ mod tests {
         Ok(dir)
     }
 
+    fn synthetic_fixture_channels(
+        label: &str,
+        diff: &[u8],
+        config: Option<&[u8]>,
+        source: &[u8],
+    ) -> Result<std::path::PathBuf, String> {
+        let dir = synthetic_fixture(label, source, true)?;
+        std::fs::write(dir.join("diff.patch"), diff).map_err(|e| e.to_string())?;
+        if let Some(bytes) = config {
+            std::fs::write(dir.join("input/ripr.toml"), bytes).map_err(|e| e.to_string())?;
+        }
+        Ok(dir)
+    }
+
+    fn eol_crlf(dir: &std::path::Path, rel: &str) -> BTreeMap<String, GitEolInfo> {
+        let mut eol = BTreeMap::new();
+        eol.insert(
+            normalize_path(&dir.join(rel)),
+            GitEolInfo {
+                index: "lf".into(),
+                worktree: "crlf".into(),
+                attrs: "text=auto eol=lf".into(),
+            },
+        );
+        eol
+    }
+
+    #[test]
+    fn crlf_guard_fires_per_channel_independently() -> Result<(), String> {
+        // A: diff.patch only.
+        let dir = synthetic_fixture_channels(
+            "8614-chan-diff",
+            b"diff --git a/x b/x\r\n+fn a() {}\r\n",
+            None,
+            b"fn a() {}\n",
+        )?;
+        let v = crlf_guard_violations_with(&dir, &eol_crlf(&dir, "diff.patch"), &BTreeSet::new());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(v[0].contains("diff.patch"), "{v:?}");
+        // B: loaded config only (input/ripr.toml is the file --root loads first).
+        let dir = synthetic_fixture_channels(
+            "8614-chan-config",
+            b"diff\n",
+            Some(b"[languages]\r\nenabled = [\"rust\", \"python\"]\r\n"),
+            b"fn a() {}\n",
+        )?;
+        let v =
+            crlf_guard_violations_with(&dir, &eol_crlf(&dir, "input/ripr.toml"), &BTreeSet::new());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(v[0].contains("ripr.toml"), "{v:?}");
+        // C: source input only (existing lib.rs case, kept as the C pin).
+        let dir =
+            synthetic_fixture_channels("8614-chan-source", b"diff\n", None, b"fn a() {}\r\n")?;
+        let v =
+            crlf_guard_violations_with(&dir, &eol_crlf(&dir, "input/src/lib.rs"), &BTreeSet::new());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(v[0].contains("lib.rs"), "{v:?}");
+        Ok(())
+    }
+
     #[test]
     fn crlf_guard_fires_on_synthetic_crlf_input() -> Result<(), String> {
         // #8614 deterministic control: CRLF bytes + git saying i/lf w/crlf.
@@ -3454,7 +3517,9 @@ mod tests {
         let no_seam_untied = "assertion_shaped_control_production_caller";
         let missing_exposed = "assertion_shaped_control_production_owner";
         let inventory_exposed = "currentness_matrix_python_deleted_statement";
-        let no_gap_exposed = "currentness_matrix_typescript_deleted_statement";
+        // Retired by the TypeScript/JavaScript re-bless (#10700, #10885): the
+        // no-gap-ID -> exposed entries were deleted, so it no longer aliases.
+        let retired_no_gap = "currentness_matrix_typescript_deleted_statement";
         assert!(compare(
             no_seam_exposed,
             &old_no_seam,
@@ -3479,8 +3544,8 @@ mod tests {
             "this finding has no gap ID, so there is no seam",
         )?;
         assert!(
-            compare(no_gap_exposed, &no_gap, &exposed, "human.txt")?,
-            "no gap ID -> exposed"
+            !compare(retired_no_gap, &no_gap, &exposed, "human.txt")?,
+            "retired no gap ID -> exposed migration is drift again"
         );
         let missing = write_exposed(
             "missing.txt",

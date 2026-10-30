@@ -2584,7 +2584,10 @@ impl RustAdapter {
             let related_test_candidate_index = classify::RelatedTestCandidateIndex::new(&index)
                 .with_analysis_root(&options.root)
                 .with_withheld_macro_bindings(std::mem::take(&mut withheld_macro_bindings))
-                .with_diff_touched(diff_touched.clone());
+                .with_diff_touched(diff_touched.clone())
+                .with_changed_consts(classify::ChangedConsts::from_changed_files(
+                    &analyzable_changed_files,
+                ));
             let token = cancellation::current_token();
             let overlay = committed_source::current_overlay();
             let graph_counter = classify::InheritedGraphCounter::capture();
@@ -7433,6 +7436,7 @@ fn absent_delimiter_boundary_returns_head() {
         let stage = |state| StageEvidence::new(state, Confidence::Low, "stage");
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib.rs:predicate:test".to_string(),
             canonical_gap: None,
             probe: Probe {

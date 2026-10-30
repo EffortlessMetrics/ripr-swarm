@@ -1,0 +1,13 @@
+# Registers the non-UTF-8 routed path recovery matrix (#10568) under RIPR-SPEC-0116.
+[[extend]]
+id = "RIPR-SPEC-0116"
+tests = [
+  "crates/ripr/tests/hostile_repos.rs::non_utf8_tracked_path_recovery_works_in_every_mode",
+  "crates/ripr/tests/hostile_repos.rs::non_utf8_untracked_path_recovery_is_a_filesystem_rename",
+  "crates/ripr/tests/hostile_repos.rs::non_utf8_ignored_path_recovery_is_a_filesystem_rename",
+  "crates/ripr/tests/hostile_repos.rs::non_utf8_unrouted_bin_does_not_refuse",
+  "crates/ripr/src/analysis/committed_source/tests.rs::non_utf8_path_refusal_names_recovery_without_claiming_tracked",
+]
+code = [
+  "crates/ripr/src/analysis/committed_source.rs",
+]

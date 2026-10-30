@@ -19,13 +19,13 @@ Start here:
     result of a call (`age_from_env(18)`), whose value ripr does not evaluate statically, so it
     cannot tell which side of the boundary that call reaches; activation/infection is unknown
   Related test (1 of 2 matched rows): tests/api.rs:11 adults_are_adults
-  Next step: Open the related test and trace its input through the local or computed operand
-    (including default and empty cases) to see which side of the changed condition it exercises,
-    then name an input that would exercise the other side. ripr.toml does not support
-    fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap.
-    Compare the original and changed implementations with a focused run using the project's
-    configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
-    unknown
+  Next step: Open the related test, check whether it reaches the changed code, and inspect other
+    existing tests. Trace their inputs through the local or computed operand (including default and
+    empty cases) to see which side of the changed condition they exercise, then name an input that
+    would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or
+    strengthen a test only if this inspection finds a gap. Compare the original and changed
+    implementations with a focused run using the project's configured test runner (`cargo test` for
+    ordinary Cargo tests). Static classification may remain unknown
   Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -44,7 +44,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_call_chain_literal_input/input --diff <cwd>/fixtures/rust_call_chain_literal_input/diff.patch --mode fast probe:src_lib.rs:predicate:596620ae
   ripr context --root <cwd>/fixtures/rust_call_chain_literal_input/input --diff <cwd>/fixtures/rust_call_chain_literal_input/diff.patch --mode fast --at probe:src_lib.rs:predicate:596620ae
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_call_chain_literal_input/input --at src/lib.rs:2 --kind predicate
 
