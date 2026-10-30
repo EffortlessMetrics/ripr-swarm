@@ -41,3 +41,13 @@ def test_reversed_after_inline_with_rebind():
     r = numeric_range(0)
     with manager() as (x, (r)): pass
     assert list(reversed(r)) == [1]
+
+
+class manager:
+    """Minimal runtime context manager for the emitted verify command."""
+
+    def __enter__(self):
+        return 0, [1]
+
+    def __exit__(self, *exc):
+        return False

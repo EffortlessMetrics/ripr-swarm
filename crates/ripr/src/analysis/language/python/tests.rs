@@ -8053,6 +8053,10 @@ fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<()
         "from src.nr import numeric_range\n\n\ndef test_nonadjacent_list():\n    r = numeric_range(0)\n    [a, [r]] = [2, [[1]]]\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_nonadjacent_loop():\n    r = numeric_range(0)\n    for (x, (r)) in [(2, [1])]:\n        pass\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_nonadjacent_with():\n    r = numeric_range(0)\n    with manager() as (x, (r)):\n        pass\n    assert list(reversed(r)) == [1]\n",
+        // Async headers reach the same fallback arms; a dropped arm or a parse
+        // failure leaves the receiver credited and fails this loop.
+        "from src.nr import numeric_range\n\n\ndef test_async_inline_loop():\n    r = numeric_range(0)\n    async for (x, (r)) in [(2, [1])]: pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_async_inline_with():\n    r = numeric_range(0)\n    async with manager() as (x, (r)): pass\n    assert list(reversed(r)) == [1]\n",
         // Another dunder's entry point does not reach `__reversed__`.
         "from src.nr import numeric_range\n\n\ndef test_len():\n    assert len(numeric_range(0)) == 0\n",
         // An unrelated receiver.
