@@ -99,8 +99,8 @@ item instance: a same-marker sibling must end the old HTML-block scope. Outer
 ancestry remains stable when only an inner sibling changes. Inline raw regions
 retain their documented separate lifetime; state is not reset at every leaf.
 `container-instance-rendering.json` retains 628 actual-consumer/diagnostic bodies,
-including all112 independent cases; the external cross-product proof covers10080
-bodies and the prior23738 inputs. Container instance identity is parser ownership
+including all 112 independent cases; the external cross-product proof covers 10080
+bodies and the prior 23738 inputs. Container instance identity is parser ownership
 metadata, not producer identity or a new evidence schema. Fences, indented
 code, HTML blocks, headings, list/container transitions and blank lines retain
 their boundaries even when their content is opaque. Masked lines are projected
@@ -109,8 +109,8 @@ status for an unclosed top-level fence is separate from literal source control
 characters. CR, LF and CRLF are interpreted as physical line endings. The
 existing declaration recognition/reduction then consumes that projection.
 The `structural-leaf-rendering.json` fixture retains 785 actual-consumer/diagnostic
-controls; the external proof retains the full20567 scalar cases, including all5760
-independent bodies and3942 added spacing/nesting/leaf cross-products. Copied-workflow
+controls; the external proof retains the full 20567 scalar cases, including all 5760
+independent bodies and 3942 added spacing/nesting/leaf cross-products. Copied-workflow
 flattening, column-stripping and occupancy-erasure mutations discriminate these
 requirements. Same-leaf inline examples remain valid opaque examples.
 
