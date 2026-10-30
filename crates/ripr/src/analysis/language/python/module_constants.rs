@@ -641,13 +641,32 @@ fn contains_nested_scope(statements: &[Stmt]) -> bool {
 /// code, so its text still counts, and a module the lexer rejects falls back
 /// to the whole-text scan. A false match only leaves constants unresolved.
 fn writes_namespace_dynamically(source: &str) -> bool {
+    let mut tokens = Vec::new();
+    for result in lex(source, Mode::Module) {
+        match result {
+            Ok(pair) => tokens.push(pair),
+            Err(_) => return writes_namespace_in_text(source),
+        }
+    }
     // 0: nothing pending, 1: just read `sys`, 2: just read `sys.`.
     let mut after_sys = 0;
-    for result in lex(source, Mode::Module) {
-        let Ok((token, range)) = result else {
-            return writes_namespace_in_text(source);
-        };
-        match &token {
+    // An `import` statement binds a name; it writes nothing (#11102).
+    let mut in_import = false;
+    let mut line_start = true;
+    for (index, (token, range)) in tokens.iter().enumerate() {
+        match token {
+            Tok::Newline | Tok::Semi => {
+                in_import = false;
+                line_start = true;
+                after_sys = 0;
+                continue;
+            }
+            Tok::Indent | Tok::Dedent => continue,
+            Tok::Import | Tok::From if line_start => in_import = true,
+            // `from unittest.mock import patch` only names the writer; an
+            // alias (`import patch as p`) hides later calls, so it counts.
+            Tok::Name { .. }
+                if in_import && !matches!(tokens.get(index + 1), Some((Tok::As, _))) => {}
             Tok::Name { name } => {
                 if DYNAMIC_NAMESPACE_WRITERS.contains(&name.as_str())
                     || (after_sys == 2 && name == "modules")
@@ -655,8 +674,14 @@ fn writes_namespace_dynamically(source: &str) -> bool {
                     return true;
                 }
                 after_sys = usize::from(name == "sys");
+                line_start = false;
+                continue;
             }
-            Tok::Dot if after_sys == 1 => after_sys = 2,
+            Tok::Dot if after_sys == 1 => {
+                after_sys = 2;
+                line_start = false;
+                continue;
+            }
             // `getattr(importlib, "reload")(m)` and `locate("importlib.reload")`
             // name the writer only as a string, so a whitespace-free string
             // with a writer name among its dotted parts still counts. Prose
@@ -675,10 +700,11 @@ fn writes_namespace_dynamically(source: &str) -> bool {
                 if writes_namespace_in_text(text) {
                     return true;
                 }
-                after_sys = 0;
             }
-            _ => after_sys = 0,
+            _ => {}
         }
+        after_sys = 0;
+        line_start = false;
     }
     false
 }
@@ -725,7 +751,7 @@ pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
 /// lexer rejects names every identifier it contains, so nothing is hidden.
 /// Only names `watched` accepts are kept, each once: the caller asks about a
 /// fixed set of classes, and every file's facts are stored and decoded.
-pub(super) fn names_used_beyond_construction(
+pub(super) fn watched_names_used_beyond_construction(
     source: &str,
     watched: &dyn Fn(&str) -> bool,
 ) -> Vec<String> {

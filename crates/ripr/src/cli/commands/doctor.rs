@@ -493,6 +493,30 @@ fn tool_probe_renderer_fix(evidence: &str) -> Option<&'static str> {
     })
 }
 
+/// Plain wording for the analysis-profile cargo/rustc notes on the compact
+/// screen (#10696). The JSON evidence keeps the producer string; this only
+/// rewrites the two known `<state>; <effect>; project verification ...`
+/// shapes and passes anything else through unchanged.
+fn plain_toolchain_note(text: &str) -> String {
+    const BUILD_TAIL: &str = "; project verification and source builds require their own toolchain";
+    let Some(head) = text.strip_suffix(BUILD_TAIL) else {
+        return text.to_string();
+    };
+    let Some((state, effect)) = head.split_once("; ") else {
+        return text.to_string();
+    };
+    let state = state.replace(" timed out after ", " did not answer within ");
+    if effect.contains("does not run rustc") {
+        format!("{state}. ripr does not need rustc to analyze your code; your own builds do.")
+    } else if effect.contains("cargo metadata") {
+        format!(
+            "{state}. ripr still analyzes, but skips test-target details that need `cargo metadata`; your own builds need cargo."
+        )
+    } else {
+        text.to_string()
+    }
+}
+
 fn compact_tilde_line(text: &str) -> String {
     format!("~ {}", display_text(text))
 }
@@ -561,11 +585,9 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         doctor_profile_name(profile),
         report.ripr_version
     ));
-    lines.push(format!(
-        "Root: {} · ripr MSRV: Rust {}",
-        display_path(root),
-        report.ripr_build_msrv
-    ));
+    // The build minimum is ripr's own source-build requirement (#10696); it
+    // stays in the JSON report, not on the first screen.
+    lines.push(format!("Root: {}", display_path(root)));
     lines.push(String::new());
 
     // Failures first, each with its own fix line (#8168).
@@ -711,7 +733,9 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
                         } else {
                             "-"
                         },
-                        display_text(check.evidence.as_deref().unwrap_or(check.name.as_str()))
+                        plain_toolchain_note(&display_text(
+                            check.evidence.as_deref().unwrap_or(check.name.as_str())
+                        ))
                     ));
                 }
                 output::doctor::DoctorCheckStatus::Fail => {}
@@ -3782,16 +3806,20 @@ mod tests {
     }
 
     #[test]
-    fn header_labels_msrv_as_ripr_own_build_msrv() {
-        // #11114: the header MSRV is ripr's own build MSRV, not the analyzed
-        // workspace's, and the label must say so.
+    fn header_keeps_the_build_msrv_off_the_first_screen() {
+        // #11114 / #10696: ripr's own build MSRV stays in the JSON report; the
+        // header line beside the analyzed root must not read as the
+        // workspace's MSRV.
         let report = passing_report();
         let environment = empty_environment();
         let lines = render_screen(&report, &environment, false, true);
-        let expected = format!("Root: . · ripr MSRV: Rust {}", report.ripr_build_msrv);
-        assert_eq!(lines.get(1), Some(&expected), "{lines:?}");
+        assert_eq!(
+            lines.get(1).map(String::as_str),
+            Some("Root: ."),
+            "{lines:?}"
+        );
         assert!(
-            !lines.iter().any(|line| line.contains("· MSRV")),
+            !lines.iter().take(3).any(|line| line.contains("MSRV")),
             "{lines:?}"
         );
     }
@@ -3975,6 +4003,35 @@ mod tests {
             !lower.contains("install") && !lower.contains("rustup"),
             "timeout is not a missing-tool install: {timeout:?}"
         );
+    }
+
+    /// #10696 review: each recognized evidence shape is rewritten, and any
+    /// other text (older or newer producer wording) passes through unchanged.
+    #[test]
+    fn plain_toolchain_note_rewrites_known_shapes_and_passes_the_rest_through() {
+        let tail = "; project verification and source builds require their own toolchain";
+        let rustc = plain_toolchain_note(&format!(
+            "rustc timed out after 5s; the installed binary's static analysis does not run rustc{tail}"
+        ));
+        assert_eq!(
+            rustc,
+            "rustc did not answer within 5s. ripr does not need rustc to analyze your code; your own builds do."
+        );
+        let cargo = plain_toolchain_note(&format!(
+            "cargo not available; static analysis continues, but evidence that reads `cargo metadata` in the selected root is withheld{tail}"
+        ));
+        assert!(
+            cargo.starts_with("cargo not available. ripr still analyzes"),
+            "{cargo}"
+        );
+        assert!(!cargo.contains("project verification"), "{cargo}");
+        for other in [
+            "git version 2.43.0",
+            "rustc not available; some future effect wording; project verification and source builds require their own toolchain",
+            "rustc not available; the installed binary's static analysis does not run rustc",
+        ] {
+            assert_eq!(plain_toolchain_note(other), other);
+        }
     }
 
     #[test]

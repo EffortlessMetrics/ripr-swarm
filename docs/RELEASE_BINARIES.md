@@ -66,6 +66,34 @@ targets before writing the aggregate receipt. This proves payload and archive
 shape for the exact candidate; it does not establish a public release, wheel,
 npm package, or native runtime compatibility floor.
 
+### Linux x64 npm native package
+
+From the same clean committed checkout, the Linux x64 producer can wrap the
+staged final payload and its producer build receipt without publishing:
+
+```bash
+cargo xtask release-server-archive --npm-payload-dir <payload-directory> \
+  --payload-identity <payload-identity.json> --producer-receipt <producer-build.json> \
+  --build-identity <selected-target-build-identity.json> --qualified-archive <server-archive.tar.gz> \
+  --out-dir <new-output-directory>
+```
+
+The command requires the successful selected-target build identity from the
+qualification workflow and its matching archive. It binds their candidate,
+version, target, readback flag, workflow, archive and payload hashes to the
+current checkout and producer receipt. The command maps the flat
+`ripr` file to the launcher's `bin/ripr`, writes a deterministic npm tarball,
+and checks its extracted metadata, inventory, executable mode and payload
+digests. It records the payload aggregate, identity and producer receipt hashes
+separately from the tarball hash in `npm-native-receipt.json`. Existing output
+files are not overwritten. This is a Linux x64 package artifact only: it does
+not establish installed channel parity, a compatibility floor or publication.
+The build identity must be retained with the successful workflow run and
+artifact evidence; its JSON fields alone do not authenticate their origin. If
+the process is killed between the package and receipt writes, remove the
+incomplete output package before retrying; a package without its receipt is not
+a successful producer result.
+
 ## Exact-candidate qualification (read-only)
 
 Use `.github/workflows/server-archive-qualification.yml` when archive shape

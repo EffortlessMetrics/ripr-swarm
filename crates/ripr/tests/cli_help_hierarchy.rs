@@ -970,7 +970,7 @@ fn default_help_discloses_exit_codes_and_global_verbose() -> Result<(), String> 
         for needle in [
             "Exit codes: 0 completed",
             "2 could not complete",
-            "3 blocking decision or typed refusal",
+            "3 ripr declined",
             "130 interrupted",
             "docs/EXIT_CODES.md",
             "-v, --verbose",

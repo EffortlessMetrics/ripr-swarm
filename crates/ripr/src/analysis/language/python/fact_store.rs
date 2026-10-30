@@ -34,7 +34,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// On-disk schema version of a `python-file-facts` envelope. Any change to a
 /// serialized fact spelling (field rename, type change, new label) is a
 /// schema change: bump this so stale entries read as misses.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "5";
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "7";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the
@@ -372,7 +372,7 @@ impl PythonFileFactStore {
         let approx_bytes = bytes.len();
         if self
             .remaining_store_bytes
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
                 remaining.checked_sub(approx_bytes)
             })
             .is_err()
@@ -397,5 +397,7 @@ pub(super) fn served_view(mut facts: PythonSourceFacts) -> PythonSourceFacts {
     facts
 }
 
+#[cfg(test)]
+mod budget_tests;
 #[cfg(test)]
 mod tests;

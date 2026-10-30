@@ -172,8 +172,19 @@ fn classification(source: &str, exposed: bool, label: &str) -> Result<(), String
     let tests = finding["related_tests"]
         .as_array()
         .ok_or("missing related tests")?;
-    assert_eq!(tests.len(), 1, "{label}: one related test: {json}");
-    assert_eq!(tests[0]["file"], "src/lib.rs", "{label}");
+    assert_eq!(
+        tests.len(),
+        if label == "split_field_observers" {
+            2
+        } else {
+            1
+        },
+        "{label}: related assertion rows: {json}"
+    );
+    assert!(
+        tests.iter().all(|test| test["file"] == "src/lib.rs"),
+        "{label}"
+    );
     assert_eq!(finding["canonical_gap"]["owner"], "build", "{label}");
     assert_eq!(
         finding["classification"] == "exposed",
@@ -189,10 +200,22 @@ fn classification(source: &str, exposed: bool, label: &str) -> Result<(), String
                 .as_str()
                 .is_some_and(|text| text.starts_with("retries:"))
     });
-    assert_eq!(
-        misses_field, !exposed,
-        "{label}: exact changed field credit: {json}"
-    );
+    if label == "split_field_observers" {
+        // Activation recognizes the relational field read, but reveal must
+        // not combine its weak oracle with the sibling field's strong one.
+        assert!(!misses_field, "{label}: field read is present: {json}");
+        assert!(
+            finding["ripr"]["discriminate"]["summary"]
+                .as_str()
+                .is_some_and(|summary| summary.contains("oracle_confirmation_mixed")),
+            "{label}: {json}"
+        );
+    } else {
+        assert_eq!(
+            misses_field, !exposed,
+            "{label}: exact changed field credit: {json}"
+        );
+    }
     if !exposed && !matches!(label, "uncalled" | "shadowed_macro") {
         assert_eq!(
             finding["classification"], "weakly_exposed",
@@ -209,6 +232,10 @@ fn classification(source: &str, exposed: bool, label: &str) -> Result<(), String
 #[test]
 fn independent_expected_binding_observes_the_changed_field() -> Result<(), String> {
     for (label, body) in [
+        (
+            "direct_retries_field",
+            "let c = build(3);\nassert_eq!(c.retries, 4);",
+        ),
         (
             "retained",
             "let c = build(3);\nlet e = Config { retries: 4, name: \"x\".into() };\nassert_eq!(c, e);",
@@ -245,6 +272,10 @@ fn independent_expected_binding_observes_the_changed_field() -> Result<(), Strin
 #[test]
 fn dependent_or_replaced_expected_bindings_keep_conservative_credit() -> Result<(), String> {
     for (label, body) in [
+        (
+            "split_field_observers",
+            "let c = build(3);\nassert_eq!(c.name, \"x\");\nassert!(c.retries > 0);",
+        ),
         (
             "dependent",
             "let c = build(3);\nlet e = Config { retries: c.retries, name: \"x\".into() };\nassert_eq!(c, e);",
