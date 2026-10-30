@@ -407,8 +407,7 @@ fn inventory_failure_degrades_to_withheld_custody_and_keeps_findings() -> Result
 /// file is simply not consumed). Either way no card is served for an
 /// unobserved path.
 #[test]
-fn deleted_tracked_rust_file_never_establishes_custody_over_an_unobserved_path()
--> Result<(), String> {
+fn deleted_tracked_rust_file_keeps_custody_and_card_producers_consistent() -> Result<(), String> {
     let fixture = install_fixture("deleted-file")?;
     write(
         &fixture.root,

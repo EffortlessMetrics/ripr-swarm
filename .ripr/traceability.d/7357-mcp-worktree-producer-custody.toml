@@ -12,7 +12,7 @@ tests = [
   "crates/ripr/src/mcp/worktree_custody_tests.rs::tracked_source_file_equal_result_staged_edit_moves_commitment_and_stales_pinned_ids",
   "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_and_worktree_refreshes_do_not_share_custody_or_identity",
   "crates/ripr/src/mcp/worktree_custody_tests.rs::inventory_failure_degrades_to_withheld_custody_and_keeps_findings",
-  "crates/ripr/src/mcp/worktree_custody_tests.rs::deleted_tracked_rust_file_never_establishes_custody_over_an_unobserved_path",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::deleted_tracked_rust_file_keeps_custody_and_card_producers_consistent",
 ]
 
 [[extend]]

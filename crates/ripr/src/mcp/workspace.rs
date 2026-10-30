@@ -1489,9 +1489,10 @@ fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
 }
 
 /// The scope disclosure for a saved tracked-worktree snapshot (#7357). It
-/// always exists: the snapshot never covers unsaved editor buffers, untracked
-/// files or gitignored files, so a clean or empty result is never an
-/// all-clear. When the findings and the seam inventory were shown to have
+/// always exists: the snapshot never covers unsaved editor buffers or
+/// gitignored files, and never analyzes untracked files as findings (the seam
+/// inventory reads untracked Rust files and binds their bytes into the
+/// commitment), so a clean or empty result is never an all-clear. When the findings and the seam inventory were shown to have
 /// consumed the same Rust source bytes it says so and repair cards stay
 /// available behind their per-item gates; otherwise it names why custody is
 /// not established, withholds cards and claims no currentness beyond the
@@ -1507,7 +1508,7 @@ fn worktree_scope_disclosure(snapshot: &Snapshot) -> Value {
         SourceCustody::Established { .. } => json!({
             "analyzed": analyzed,
             "uncommitted_edits": "saved tracked edits included",
-            "note": "this snapshot analyzed saved staged and unstaged tracked edits. The findings producer and the seam inventory recorded the same raw Rust source bytes for the analyzed files, and that commitment is part of the snapshot identity, so a repair card or readiness never mixes two saved states; unsaved editor buffers, untracked files and gitignored files are outside it. The server does not watch the worktree: edits after the refresh are not detected, so refresh again",
+            "note": "this snapshot analyzed saved staged and unstaged tracked edits. The findings producer and the seam inventory recorded the same raw Rust source bytes for the analyzed files, and that commitment is part of the snapshot identity, so a repair card or readiness never mixes two saved states; unsaved editor buffers and gitignored files are outside it, and untracked files are never analyzed as findings (the seam inventory reads untracked Rust files, so their bytes are bound into the commitment). The server does not watch the worktree: edits after the refresh are not detected, so refresh again",
             "consumed_source_commitment": "established",
             "repair_cards": "available",
         }),
