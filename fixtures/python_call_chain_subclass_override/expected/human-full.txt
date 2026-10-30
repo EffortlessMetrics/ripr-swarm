@@ -1,0 +1,60 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_call_chain_subclass_override/input
+config: <cwd>/fixtures/python_call_chain_subclass_override/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 1 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING reach/ledger.py:3
+  id: probe:reach_ledger.py:python_preview:872af001
+
+Changed
+  after:          return 3
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  python:reach/ledger.py::Ledger._ledger_pad
+  gap id (for scripts): gap:python:reach/ledger.py:Ledger._ledger_pad:return_value:return_value:3
+
+Language
+  language: python
+  status: preview
+  owner kind: method
+
+Static exposure
+  no_static_path (warning, confidence 0.40)
+
+Evidence
+  - reach no: 0 related Python test(s) found for owner `_ledger_pad`
+  - infection yes: Changed Python return expression can alter the owner return value: `return 3`
+  - propagation yes: Changed Python return value is already at the owner output boundary
+  - observation no: Strongest extracted Python oracle kind: `unknown` (rank 0)
+  - discriminator no: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape
+  - local flow reaches returned value: return 3 (line 3)
+
+Weakness
+  - No Python test references `_ledger_pad(`; add a pytest or unittest test that calls the changed owner
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_call_chain_subclass_override/input --diff <cwd>/fixtures/python_call_chain_subclass_override/diff.patch --mode fast probe:reach_ledger.py:python_preview:872af001
+  ripr context --root <cwd>/fixtures/python_call_chain_subclass_override/input --diff <cwd>/fixtures/python_call_chain_subclass_override/diff.patch --mode fast --at probe:reach_ledger.py:python_preview:872af001
+
+
+Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
+  analyzed: 1 changed expression(s) and 0 statically linked related test(s). This is not a coverage
+  assessment. A test may already exercise these changes through macros, helper-call chains, or
+  integration tests that ripr's static model does not yet trace; if none does, add co-located tests
+  that observe the changed behavior.
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

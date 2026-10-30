@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0366"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0366-python-per-file-fact-store.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #10914 records that Python diff-mode check re-extracts every workspace file on every run; the spec pins the content-keyed per-file store, its interned envelope shape, integrity and admission rules, and warm-run disclosure, as the Python twin of RIPR-SPEC-0363."

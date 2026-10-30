@@ -1,0 +1,12 @@
+# RIPR-SPEC-0243 rule 23: a Playwright fixture that constructs a class is the receiver of its tests (#9619).
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/playwright_fixture_tests.rs::a_fixture_that_constructs_a_class_binds_the_parameter_to_it",
+  "crates/ripr/src/analysis/language/typescript/tests/playwright_fixture_tests.rs::a_renamed_destructuring_binds_the_local_name",
+  "crates/ripr/src/analysis/language/typescript/tests/playwright_fixture_tests.rs::a_fixture_that_does_more_than_construct_binds_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/playwright_fixture_tests.rs::a_file_that_overrides_or_merges_fixtures_binds_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/playwright_fixture_tests.rs::a_registration_that_is_not_the_extended_test_binds_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/playwright_fixture_tests.rs::a_test_not_imported_from_playwright_binds_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/playwright_fixture_tests.rs::a_class_rebound_in_the_file_binds_nothing",
+]

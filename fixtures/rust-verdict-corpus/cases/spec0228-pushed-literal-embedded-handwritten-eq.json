@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0228-pushed-literal-embedded-handwritten-eq",
+  "subject_id": "authored-spec0228-customeq-expected",
+  "diff": "cases/spec0228-pushed-literal-embedded-handwritten-eq.diff",
+  "anchor": {
+    "file": "src/c_embed.rs",
+    "line": 25
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "owner_call_then_assert_eq_whole_collection_with_embedded_handwritten_partial_eq",
+  "hard_case": "the pushed element derives PartialEq but embeds a type whose hand-written eq ignores case",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.lines.push(EmbLine { sku: EmbSku(sku.to_lowercase()), qty });",
+        "mutated_line": "self.lines.push(EmbLine { sku: EmbSku(sku.to_lowercase()), qty });",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the recorded sku is lowercase, but the derived EmbLine::eq runs EmbSku::eq, which ignores case"
+      },
+      {
+        "replacement": "self.lines.push(EmbLine { sku: EmbSku(String::new()), qty });",
+        "mutated_line": "self.lines.push(EmbLine { sku: EmbSku(String::new()), qty });",
+        "outcome": "tests_failed",
+        "failing_test": "c_embed::tests::add_records_the_line_c_embed",
+        "equivalence_review": "not equivalent: c_embed::tests::add_records_the_line_c_embed fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "add_records_the_line_c_embed compares whole collections; EmbLine derives eq but its sku field is EmbSku, whose hand-written eq ignores case, so the lowercase mutant survives.",
+  "labeling_observation": {
+    "ripr_commit": "0f73182cd3",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0228#24"
+  ]
+}

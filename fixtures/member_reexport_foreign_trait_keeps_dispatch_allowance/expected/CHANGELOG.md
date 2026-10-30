@@ -51,3 +51,68 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — member_reexport_foreign_trait_keeps_dispatch_allowance (5)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless member_reexport_foreign_trait_keeps_dispatch_allowance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — member_reexport_foreign_trait_keeps_dispatch_allowance (6)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless member_reexport_foreign_trait_keeps_dispatch_allowance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — member_reexport_foreign_trait_keeps_dispatch_allowance (7)
+
+Reason:
+RIPR-SPEC-0122: #10920 review - the weak-infection hint claimed no test input tells the versions apart; the admitted relational sibling case (#10916) has asserted inputs that evaluate differently, so the hint now states the assertion-level fact
+
+Command:
+`cargo xtask goldens bless member_reexport_foreign_trait_keeps_dispatch_allowance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — member_reexport_foreign_trait_keeps_dispatch_allowance (8)
+
+Reason:
+RIPR-SPEC-0122: when the missing-check line reports no boundary input, the proximity next step names that missing input instead of reading as unrelated (#10978)
+
+Command:
+`cargo xtask goldens bless member_reexport_foreign_trait_keeps_dispatch_allowance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — member_reexport_foreign_trait_keeps_dispatch_allowance (9)
+
+Reason:
+RIPR-SPEC-0122: loosen the no-boundary-input next-step wording to the changed condition, not only comparisons (#10978)
+
+Command:
+`cargo xtask goldens bless member_reexport_foreign_trait_keeps_dispatch_allowance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

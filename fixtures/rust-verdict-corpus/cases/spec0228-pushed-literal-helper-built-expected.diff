@@ -1,0 +1,12 @@
+diff --git a/src/p_helper.rs b/src/p_helper.rs
+--- a/src/p_helper.rs
++++ b/src/p_helper.rs
+@@ -11,7 +11,7 @@
+ 
+ impl Order {
+     pub fn add_item(&mut self, sku: &str, qty: u32) {
+-        self.lines.push(Line { sku: sku.to_uppercase(), qty });
++        self.lines.push(Line { sku: str::to_uppercase(sku), qty });
+     }
+ }
+ 

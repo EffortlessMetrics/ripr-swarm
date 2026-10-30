@@ -3155,6 +3155,7 @@ fn score_loaded_corpus(
     };
     let gate_failure =
         known_false::apply_known_false_gate(dir, cases.is_some(), &report.rows, gate_failure)?;
+    let gate_failure = known_false::apply_growth_gate(dir, cases.is_some(), gate_failure)?;
     let drift = expected_drift(&expected_dir, &report, cases.is_none())?;
     if drift.is_empty() {
         return gate_failure.map_or(Ok(()), Err);

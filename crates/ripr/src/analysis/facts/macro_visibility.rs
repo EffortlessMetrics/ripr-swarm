@@ -29,6 +29,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
+#[cfg(test)]
+mod prefilter_tests;
+
 /// Child modules followed through `#[macro_use]` and parents followed
 /// upward. A deeper chain is refused.
 const MAX_DEPTH: usize = 4;
@@ -73,6 +76,42 @@ impl Clone for MacroVisibility {
     }
 }
 
+/// Whether `source` could contain a call `name!` of one of `names`. A
+/// superset of what `first_macro_call` finds, so a `false` skips its parse
+/// without changing the answer: the name at identifier boundaries, followed
+/// by `!`, or by `/` for a comment before the `!`, past any whitespace. Any
+/// non-ASCII byte next to the name counts as a maybe, since the lexer reads
+/// some Unicode characters (U+200E, U+0085, ...) as whitespace there.
+fn may_call_generator(source: &str, names: &BTreeSet<String>) -> bool {
+    let bytes = source.as_bytes();
+    let is_ident = |byte: u8| byte == b'_' || byte.is_ascii_alphanumeric();
+    names.iter().any(|name| {
+        // Raw names can overlap in a token tree: `r#ar#r#r!` contains
+        // a rejected spelling inside `r#ar` and then the token `r#r`.
+        // The `r#` prefix cannot overlap itself, so scan each prefix and
+        // check the full name without losing the later token.
+        let needle = if name.starts_with("r#") {
+            "r#"
+        } else {
+            name.as_str()
+        };
+        source.match_indices(needle).any(|(start, _)| {
+            if !source[start..].starts_with(name) {
+                return false;
+            }
+            if start > 0 && is_ident(bytes[start - 1]) {
+                return false;
+            }
+            let rest = &source[start + name.len()..];
+            let Some(next) = rest.bytes().find(|byte| !byte.is_ascii_whitespace()) else {
+                return false;
+            };
+            // `next` begins an identifier when the name was only a prefix.
+            next == b'!' || next == b'/' || next >= 0x80
+        })
+    })
+}
+
 impl MacroVisibility {
     pub(crate) fn new(files: impl Iterator<Item = (PathBuf, Arc<str>)>) -> Self {
         let sources: BTreeMap<PathBuf, Arc<str>> = files.collect();
@@ -98,14 +137,37 @@ impl MacroVisibility {
 
     /// The `macro_rules!` items `file` sees from other files, or nothing.
     pub(crate) fn imported_macros(&self, file: &Path) -> ImportedMacros {
+        self.imported_macros_with_parser(file, first_macro_call)
+    }
+
+    fn imported_macros_with_parser(
+        &self,
+        file: &Path,
+        find_first_call: impl FnOnce(&str, &BTreeSet<String>) -> Option<usize>,
+    ) -> ImportedMacros {
         let Some(source) = self.sources.get(file) else {
             return ImportedMacros::default();
         };
+        // first_macro_call already rejects absent name substrings. This
+        // stronger gate also avoids parsing incidental hits such as `at`
+        // or `t_` when the generator is `t`; the parser still decides maybes.
+        if !may_call_generator(source, &self.generators) {
+            return ImportedMacros::default();
+        }
         // A `#[macro_use]` module declared after the first call is not in
         // scope at it.
-        let Some(first_call) = first_macro_call(source, &self.generators) else {
+        let Some(first_call) = find_first_call(source, &self.generators) else {
             return ImportedMacros::default();
         };
+        self.resolve_imported_macros(file, source, first_call)
+    }
+
+    fn resolve_imported_macros(
+        &self,
+        file: &Path,
+        source: &str,
+        first_call: usize,
+    ) -> ImportedMacros {
         let mut walk = Walk::default();
         let Some(own) = self.scope(file).filter(|scope| !scope.opaque) else {
             return ImportedMacros::default();
@@ -864,6 +926,33 @@ mod tests {
                 .collect();
             let imported = visibility(&refs).imported_definitions(Path::new(invoking));
             assert!(defines_t(&imported), "{invoking}: {imported:?}");
+        }
+    }
+
+    #[test]
+    fn the_call_precheck_never_hides_a_call_the_parser_finds() {
+        let names: BTreeSet<String> = ["t".to_string()].into();
+        for call in [
+            "t!(a);",
+            "t !(a);",
+            "t\n!(a);",
+            "t /* c */ !(a);",
+            "t // c\n!(a);",
+            "mod m { t!(a); }",
+            "fn f() { let _ = (t!(a)); }",
+        ] {
+            assert!(may_call_generator(call, &names), "{call}");
+            assert!(first_macro_call(call, &names).is_some(), "{call}");
+        }
+        for other in [
+            "fn t() {}",
+            "let t = 1;",
+            "at!(a);",
+            "t_!(a);",
+            "t",
+            "x!(t);",
+        ] {
+            assert!(!may_call_generator(other, &names), "{other}");
         }
     }
 
