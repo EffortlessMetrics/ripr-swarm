@@ -11055,6 +11055,8 @@ fn comprehension_boundary_values_retain_each_test_file() -> Result<(), String> {
     ];
     assert_eq!(classify(&["tests/a.py", "tests/b.py"])?, expected);
     assert_eq!(classify(&["tests/b.py", "tests/a.py"])?, expected);
+    Ok(())
+}
 
 #[test]
 fn caplog_snapshot_same_line_list_mutation_abstains() -> Result<(), String> {
