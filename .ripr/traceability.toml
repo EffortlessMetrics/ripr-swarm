@@ -13810,6 +13810,7 @@ id = "RIPR-SPEC-0194"
 name = "repair card default cli handoff"
 spec = "docs/specs/RIPR-SPEC-0194-repair-card-default-handoff.md"
 tests = [
+  "crates/ripr/src/cli/commands/agent_card.rs::tests::prose_groups_equal_detail_routes_without_hiding_state",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_projects_every_family_with_packet_route",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_omits_next_action_when_route_gate_is_closed",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_preserves_static_limitations_without_cage_admission",
