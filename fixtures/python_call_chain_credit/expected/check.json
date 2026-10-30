@@ -1,0 +1,101 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_call_chain_credit/input",
+  "config_path": "<cwd>/fixtures/python_call_chain_credit/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:f69acac3f31c0be5e4be091c9cf0d60305f3db08942dec820be41b83c51c5a3e","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:reach_ledger.py:python_preview:872af001",
+      "canonical_gap_id": "gap:python:reach/ledger.py:Ledger._ledger_pad:return_value:return_value:3",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:reach/ledger.py:Ledger._ledger_pad:return_value:return_value:3",
+        "language": "python",
+        "file": "reach/ledger.py",
+        "owner": "Ledger._ledger_pad",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "3"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
+      "probe": {
+        "id": "probe:reach_ledger.py:python_preview:872af001",
+        "family": "return_value",
+        "delta": "value",
+        "file": "reach/ledger.py",
+        "line": 3,
+        "expression": "        return 3",
+        "owner": "python:reach/ledger.py::Ledger._ledger_pad"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `_ledger_pad`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python return expression can alter the owner return value: `return 3`"},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `_ledger_pad`", "infection yes: Changed Python return expression can alter the owner return value: `return 3`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return 3 (line 3)", "related test tests/test_ledger.py:4 test_render_ledger uses strong exact value oracle: assert ledger.render_ledger() == \"|  |\""],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return 3","line":3}
+      ],
+      "evidence": ["owner: Ledger._ledger_pad", "owner_kind: method", "test_framework: pytest (test_render_ledger)", "test_verify_command: python -m pytest tests/test_ledger.py::test_render_ledger (test_render_ledger)", "related_test_relation: module_value_call (test_render_ledger)", "module_value_read: `Ledger._ledger_pad` 2 -> 3 through `ledger.render_ledger` fails `assert ledger.render_ledger() == \"|  |\"` (test_render_ledger)", "test_oracle: exact_value strong (test_render_ledger)"],
+      "missing": ["Related Python test reaches `_ledger_pad` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_render_ledger",
+          "file": "tests/test_ledger.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert ledger.render_ledger() == \"|  |\""
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "suggested_next_action": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "method",
+      "observed_sink": "assert ledger.render_ledger() == \"|  |\"",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_module_value",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["reach/ledger.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"reach/ledger.py","digest":"sha256:7eb82b862ee61be781328ea48db3b056c1185d0874e091a491e316a568939d8e"}]}
+}
