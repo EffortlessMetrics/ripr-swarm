@@ -306,7 +306,6 @@ fn dirty_python_check_withholds_start_when_git_inspection_fails() -> Result<(), 
     let (ok, normal) = ripr(&decoy, &args)?;
     expect_exit(ok, true, "normal check")?;
     gap_start_tokens(&normal).ok_or_else(|| format!("normal check had no start: {normal}"))?;
-
     let bin = guard.0.join("git-wrapper");
     std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
     let wrapper = bin.join("git");
@@ -336,7 +335,10 @@ fn dirty_python_check_withholds_start_when_git_inspection_fails() -> Result<(), 
     let output = ripr_output_env(
         &decoy,
         &args,
-        &[("PATH", path), ("RIPR_TEST_REAL_GIT", git.into_os_string())],
+        &[
+            ("PATH", path.clone()),
+            ("RIPR_TEST_REAL_GIT", git.clone().into_os_string()),
+        ],
     )?;
     let text = String::from_utf8_lossy(&output.stdout).into_owned();
     expect_exit(
@@ -352,6 +354,35 @@ fn dirty_python_check_withholds_start_when_git_inspection_fails() -> Result<(), 
     if gap_start_tokens(&text).is_some() {
         return Err(format!("failed inspection offered a start: {text}"));
     }
+    // Status's routed-pilot consumer must preserve the same uncertainty.
+    fixture_git_ok(&root, &["update-ref", "refs/remotes/origin/main", "HEAD~1"])?;
+    let pilot = root.join("target/ripr/pilot/pilot-summary.json");
+    std::fs::create_dir_all(pilot.parent().ok_or("pilot parent missing")?)
+        .map_err(|e| e.to_string())?;
+    std::fs::write(&pilot, r#"{"status":"complete","top_actionable_seams":[],"python_first_use":null,"language_routes":{"state":"required","routes":[{"language":"python","enabled":true,"command":"ripr check --root ."}]},"next":{"repair_command":null}}"#).map_err(|e| e.to_string())?;
+    let (status_ok, normal_status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+    expect_exit(status_ok, true, "normal status")?;
+    need(
+        &normal_status,
+        "prints the gap-bound start",
+        "normal status route",
+    )?;
+    let status = ripr_output_env(
+        &decoy,
+        &["agent", "status", "--root", &root_arg],
+        &[("PATH", path), ("RIPR_TEST_REAL_GIT", git.into_os_string())],
+    )?;
+    let status_text = String::from_utf8_lossy(&status.stdout);
+    expect_exit(
+        status.status.success(),
+        true,
+        "status with failed inspection",
+    )?;
+    need(
+        &status_text,
+        "status could not confirm a gap-bound start",
+        "status uncertainty",
+    )?;
     Ok(())
 }
 
