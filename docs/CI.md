@@ -1617,6 +1617,13 @@ start-here, the report index, and the changed-line annotations, each as a log
 group named after the step it replaced. `ripr help reports` lists its
 failure rules, and `--step NAME` reruns one step locally.
 
+When `ripr agent start` exits 3 for the top seam, the packet logs `RIPR agent
+loop skipped: ... declined` and moves on. Exit 3 means ripr declined (see
+[EXIT_CODES.md](EXIT_CODES.md)); it is an expected outcome, not a failed step,
+and no agent brief or packet is written for that seam (#11206). Any other
+nonzero exit from `agent start` is still logged as a failure with its exit
+code.
+
 The PR-guidance producer runs its `ripr check --format json` child with the
 findings-array byte budget disabled (`RIPR_CHECK_FINDINGS_BYTES=0`, #11143):
 `review-comments` needs the complete document and applies its own brief caps
