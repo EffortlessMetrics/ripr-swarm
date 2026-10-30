@@ -292,8 +292,8 @@ with reach `weak`):
 - the trait gives `NAME` a default value and the edited impl is not the only
   definition the call can reach;
 - the impl block is generic, `cfg`-gated, or nested inside a function;
-- the reader overrides the provided function inside the edited impl, so the
-  default body is not the code that runs;
+- the reader function is overridden inside the edited `impl`, so the default
+  body is not the code that runs;
 - a branch or the `if` condition is unevaluable (a call, lookup or `match`);
 - the expected value in the test is `Type::NAME` or computed from it.
 
