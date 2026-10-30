@@ -284,6 +284,9 @@ fn expand_call(call: &LocalMacroCall) -> Option<ExpandedCall> {
         return None;
     }
     let statement = single_assertion_statement(&arm.transcriber)?;
+    if transcriber_makes_its_own_call(statement, &names) {
+        return None;
+    }
     let expanded = substitute_fragments(statement, &names, &arguments)?;
     // The expansion replaces the call's text in place, so a line break in
     // either would shift every later line, and a call split from its `;` by a
@@ -302,6 +305,55 @@ fn expand_call(call: &LocalMacroCall) -> Option<ExpandedCall> {
     Some(ExpandedCall {
         statement: expanded,
         oracle,
+    })
+}
+
+/// Whether the transcriber calls something whose inputs the call's arguments
+/// do not supply: `assert_eq!(surcharge(5), $expected)` runs `surcharge(5)`
+/// whatever the call site wrote, so the call line's own inputs say nothing
+/// about what the assertion exercises and the expansion would be graded
+/// against the wrong ones. A call is the call site's own when every argument
+/// holds a `$fragment` (`gate($x)`, `gate($x + 1)`); a method on a bare
+/// fragment (`$value.len()`), the `Some`/`Ok`/`Err` constructors and nested
+/// macros are read too. Any other head, capitalised or not, may be the owner.
+fn transcriber_makes_its_own_call(statement: &str, names: &[String]) -> bool {
+    let masked = mask_comments_and_strings(statement);
+    masked.match_indices('(').any(|(open, _)| {
+        let before = &masked[..open];
+        let head = before
+            .trim_end_matches(|character: char| character.is_alphanumeric() || character == '_');
+        let callee = &before[head.len()..];
+        if callee.is_empty() || matches!(callee, "Some" | "Ok" | "Err") {
+            return false;
+        }
+        if let Some(receiver) = head.strip_suffix('.') {
+            let name = receiver
+                .rsplit(|character: char| !(character.is_alphanumeric() || character == '_'))
+                .next()
+                .unwrap_or_default();
+            if receiver.ends_with(&format!("${name}"))
+                && names.iter().any(|fragment| fragment == name)
+            {
+                return false;
+            }
+        }
+        let mut depth = 0usize;
+        let close = masked[open..]
+            .char_indices()
+            .find_map(|(offset, character)| {
+                match character {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                (depth == 0).then_some(open + offset)
+            });
+        let Some(close) = close else {
+            return true;
+        };
+        let inner = &masked[open + 1..close];
+        let arguments = split_top_level(inner, inner);
+        arguments.is_empty() || arguments.iter().any(|argument| !argument.contains('$'))
     })
 }
 

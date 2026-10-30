@@ -37,6 +37,34 @@ const SAFE_TEST_TARGET_EVIDENCE: &str = "safe test target";
 /// through unchanged rather than inventing a taxonomy.
 pub(crate) fn humanize_evidence(evidence: &str) -> String {
     const FACT_PREFIX: &str = "producer-owned missing discriminator fact: ";
+    // #10691: the internal "observable sink" noun becomes plain words on the
+    // human screens; the machine list keeps the stable code.
+    if evidence == "observable sink localization" {
+        return "a way to follow the changed value to something a test can check".to_string();
+    }
+    // #11025: the stage the static chain stopped at, in plain words. The
+    // machine list keeps the stable `incomplete evidence stage: <stage>` code;
+    // a stage this table does not know passes through unchanged.
+    if let Some(stage) = evidence.strip_prefix("incomplete evidence stage: ") {
+        let phrase = match stage {
+            "activation" => Some("a test input that reaches the changed code"),
+            "propagation" => {
+                Some("a test that follows the changed value through to something it can check")
+            }
+            "observation" => Some("a test that observes the changed behavior"),
+            "discrimination" => {
+                Some("a test assertion that would fail if the changed behavior were wrong")
+            }
+            "opaque" => {
+                Some("code ripr cannot see into statically, so a test must check it by hand")
+            }
+            "unknown" => Some("more static evidence about the changed behavior"),
+            _ => None,
+        };
+        if let Some(phrase) = phrase {
+            return phrase.to_string();
+        }
+    }
     if let Some(kind) = evidence.strip_prefix(FACT_PREFIX) {
         let phrase = match kind {
             "boundary_value" => "a test assertion that pins the changed boundary value exactly",
@@ -120,6 +148,10 @@ pub(crate) enum RepairPacketIneligibility {
     /// Producer-owned route readiness did not reach `Ready` with a
     /// selected target.
     RouteNotReady,
+    /// The seam's evidence names a static limitation `check` reports as a
+    /// limitation rather than a gap (today: a `#[should_panic]` test whose
+    /// panic outcome is unresolved, #10703), so there is no gap to repair.
+    NamedStaticLimitation,
 }
 
 /// Producer-owned repair-packet eligibility: the single authority for the
@@ -153,6 +185,11 @@ pub(crate) fn repair_packet_eligibility(entry: &ClassifiedSeam) -> RepairPacketE
         Some(RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved)
     } else if target_unresolved {
         Some(RepairPacketIneligibility::CrossLanguageTestTargetUnresolved)
+    } else if entry
+        .evidence
+        .names_static_limit(crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved)
+    {
+        Some(RepairPacketIneligibility::NamedStaticLimitation)
     } else if !readiness.is_repair_ready() {
         Some(RepairPacketIneligibility::RouteNotReady)
     } else {
@@ -257,6 +294,20 @@ pub(crate) fn producer_discriminator_evidence(kind: &str) -> String {
     format!("{PRODUCER_DISCRIMINATOR_EVIDENCE}: {kind}")
 }
 
+/// The `ripr agent stub --kind` spelling for a missing discriminator item
+/// whose gap has a working hand-written route, if any.
+pub(crate) fn stub_kind_for_missing_evidence(item: &str) -> Option<&'static str> {
+    let kind = item
+        .strip_prefix(PRODUCER_DISCRIMINATOR_EVIDENCE)?
+        .strip_prefix(": ")?;
+    match kind {
+        "return_value" => Some("return_value"),
+        "error_variant" => Some("error_path"),
+        "boundary_value" => Some("predicate"),
+        _ => None,
+    }
+}
+
 /// Whether a readiness evidence item names the boundary-value discriminator.
 pub(crate) fn is_boundary_value_discriminator_evidence(item: &str) -> bool {
     item == producer_discriminator_evidence(
@@ -265,6 +316,54 @@ pub(crate) fn is_boundary_value_discriminator_evidence(item: &str) -> bool {
         }
         .as_str(),
     )
+}
+
+/// The seam-side twin of `check`'s boundary-observed weak-oracle gate (#10683;
+/// `domain::boundary_input_observed_with_weak_oracle` is the finding side): a
+/// weakly gripped predicate boundary whose activation is observed, with no
+/// missing boundary fact left to name, and whose only credited related oracle
+/// is a weak check on a direct, admitted existing Rust test. Returns that test:
+/// the remaining work is strengthening its assertion, not writing a new test.
+/// Guidance only; repair eligibility is decided by `repair_packet_eligibility`
+/// and stays fail-closed (this seam has no discriminator fact, so it is never
+/// repair-ready).
+pub(crate) fn boundary_observed_weak_oracle_test(
+    entry: &ClassifiedSeam,
+) -> Option<&RelatedTestGrip> {
+    let evidence = &entry.evidence;
+    if entry.seam.kind() != SeamKind::PredicateBoundary
+        || entry.class != SeamGripClass::WeaklyGripped
+        || evidence.activate.state != StageState::Yes
+        || !evidence.missing_discriminators.is_empty()
+        // Parity with the finding-side gate: the discriminate stage must
+        // itself grade the oracle weak.
+        || evidence.discriminate.state != StageState::Weak
+        || cross_language_oracle_visibility_unresolved(entry)
+        || cross_language_test_target_unresolved(entry)
+        // The activation stage aggregates observed boundary values across all
+        // related tests, so with several related tests the observer of the
+        // boundary input may not be the weakly asserting one. Name a test only
+        // when it is the sole related test, so the observer is unambiguous;
+        // otherwise withhold the claim (previous guidance applies).
+        || evidence.related_tests.len() != 1
+        || evidence.related_tests.iter().any(|test| {
+            matches!(
+                test.oracle_strength,
+                OracleStrength::Strong | OracleStrength::Medium
+            )
+        })
+    {
+        return None;
+    }
+    evidence
+        .related_tests
+        .iter()
+        .find(|test| {
+            test.relation_reason == RelationReason::DirectOwnerCall
+                && test.test_target.is_some()
+                && test.oracle_strength == OracleStrength::Weak
+        })
+        .map(Arc::as_ref)
 }
 
 fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> RepairRouteReadiness {
@@ -988,6 +1087,11 @@ mod tests {
                 "producer-owned missing discriminator fact: call_site",
                 "a test that reaches the changed call",
             ),
+            // #10691: the internal "observable sink" noun is rendered in words.
+            (
+                "observable sink localization",
+                "a way to follow the changed value to something a test can check",
+            ),
         ];
         for (internal, plain) in cases {
             if humanize_evidence(internal) != plain {
@@ -1006,6 +1110,35 @@ mod tests {
     }
 
     #[test]
+    fn humanize_evidence_maps_each_evidence_stage_to_plain_words() -> Result<(), String> {
+        let cases = [
+            ("activation", "a test input that reaches the changed code"),
+            (
+                "propagation",
+                "a test that follows the changed value through to something it can check",
+            ),
+            ("observation", "a test that observes the changed behavior"),
+            (
+                "discrimination",
+                "a test assertion that would fail if the changed behavior were wrong",
+            ),
+            (
+                "opaque",
+                "code ripr cannot see into statically, so a test must check it by hand",
+            ),
+            ("unknown", "more static evidence about the changed behavior"),
+        ];
+        for (stage, plain) in cases {
+            let internal = format!("incomplete evidence stage: {stage}");
+            let got = humanize_evidence(&internal);
+            if got != plain || got.contains("evidence stage") {
+                return Err(format!("{internal:?} must render {plain:?}, got {got:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn humanize_evidence_falls_back_and_passes_non_fact_strings_through() -> Result<(), String> {
         let unknown = humanize_evidence("producer-owned missing discriminator fact: future_kind");
         if unknown.contains("producer-owned") || unknown.contains("future_kind") {
@@ -1013,7 +1146,11 @@ mod tests {
                 "unknown kind must not leak internal spelling, got {unknown:?}"
             ));
         }
-        for already_plain in ["safe test target", "incomplete evidence stage: activation"] {
+        // #11025: a stage this table does not know passes through unchanged.
+        for already_plain in [
+            "safe test target",
+            "incomplete evidence stage: future_stage",
+        ] {
             if humanize_evidence(already_plain) != already_plain {
                 return Err(format!(
                     "non-fact evidence must pass through unchanged, got {:?}",

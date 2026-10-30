@@ -76,12 +76,66 @@ fn local_assertion_macro_that_does_not_expand_exactly_stays_capped_at_unknown()
             "($x:expr, $y:expr) => {{ assert_eq!($x, $y); }};",
             "assert_gate!(gate(11), gate(11));",
         ),
+        (
+            "a call the transcriber makes with its own input",
+            "($want:expr) => { assert_eq!(gate(5), $want); };",
+            "assert_gate!(true);",
+        ),
+        (
+            "a call under a capitalised name",
+            "($want:expr) => { assert_eq!(Gate(5), $want); };",
+            "assert_gate!(true);",
+        ),
+        (
+            "a call whose input is only partly the call site's",
+            "($x:expr) => { assert_eq!(gate(5, $x), true); };",
+            "assert_gate!(11);",
+        ),
+        (
+            "a call on a value the call site does not supply",
+            "($want:expr) => { assert_eq!(vec![gate(5)].len(), $want); };",
+            "assert_gate!(1);",
+        ),
     ] {
         let index = index_for(&module_with(
             &format!("macro_rules! assert_gate {{\n        {definition}\n    }}"),
             call,
         ))?;
         assert_eq!(
+            strengths(&index, "probe")?,
+            vec![OracleStrength::Unknown],
+            "{shape}"
+        );
+    }
+    Ok(())
+}
+
+/// The call site's own inputs stay read: a call whose every argument holds a
+/// fragment, a method on a fragment and the std constructors expand.
+#[test]
+fn a_transcriber_call_fed_by_the_call_site_expands() -> Result<(), Box<dyn Error>> {
+    for (shape, definition, call) in [
+        (
+            "a call on a fragment",
+            "($x:expr, $want:expr) => { assert_eq!(gate($x + 1), $want); };",
+            "assert_gate!(10, true);",
+        ),
+        (
+            "a constructor around a fragment call",
+            "($x:expr, $want:expr) => { assert_eq!(Some(gate($x)), $want); };",
+            "assert_gate!(11, Some(true));",
+        ),
+        (
+            "a method on a fragment",
+            "($x:expr, $want:expr) => { assert_eq!($x.len(), $want); };",
+            "assert_gate!(items, 3);",
+        ),
+    ] {
+        let index = index_for(&module_with(
+            &format!("macro_rules! assert_gate {{\n        {definition}\n    }}"),
+            call,
+        ))?;
+        assert_ne!(
             strengths(&index, "probe")?,
             vec![OracleStrength::Unknown],
             "{shape}"

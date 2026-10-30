@@ -1,0 +1,16 @@
+[[extend]]
+id = "RIPR-SPEC-0117"
+tests = [
+  "crates/ripr/src/analysis/facts/macro_visibility/prefilter_tests.rs::overlapping_raw_names_do_not_hide_a_parser_established_call",
+  "crates/ripr/src/analysis/facts/macro_visibility/prefilter_tests.rs::lexical_matrix_keeps_every_parser_established_call",
+  "crates/ripr/src/analysis/facts/macro_visibility/prefilter_tests.rs::identifier_lookalikes_and_inert_spellings_are_not_parser_calls",
+  "crates/ripr/src/analysis/facts/macro_visibility/prefilter_tests.rs::filtered_imports_preserve_unicode_raw_and_token_tree_calls",
+  "crates/ripr/src/analysis/facts/macro_visibility/prefilter_tests.rs::the_production_route_skips_parsing_only_for_proven_absence",
+  "crates/ripr/src/analysis/facts/macro_visibility/prefilter_tests.rs::filtered_group_and_path_imports_preserve_the_complete_splice",
+  "crates/ripr/src/analysis/facts/macro_visibility/prefilter_tests.rs::identical_input_resolver_measurement",
+  "crates/ripr/tests/macro_imported_tests.rs::an_exported_generator_named_in_a_use_group_reads_like_the_hand_written_test",
+]
+code = [
+  "crates/ripr/src/analysis/facts/macro_visibility.rs",
+  "crates/ripr/src/analysis/syntax/macro_scope.rs",
+]

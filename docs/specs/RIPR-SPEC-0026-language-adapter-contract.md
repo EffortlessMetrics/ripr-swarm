@@ -94,6 +94,18 @@ Additive optional fields:
   `rust_integration_public_api_path_unresolved`,
   `rust_macro_reach_unresolved`,
   `python_transitive_reach_unresolved`).
+- `confidence_basis` (list of `{code, summary}`) and `confidence_why_capped`
+  (one line): why a preview finding's per-class constant `confidence` is
+  capped (#10700). Omitted when empty, which is always the case for Rust.
+  Stable `code` values: `preview_stages_not_modeled` and
+  `syntax_first_no_type_resolution` (every preview finding), then at most one
+  evidence reason chosen in this order: `discriminator_not_established`
+  (`static_unknown`), `infection_not_established` (`infection_unknown`),
+  `propagation_not_established` (`propagation_unknown`), `no_related_test`, `oracle_below_strong` (no strong
+  oracle, including for `exposed`), `boundary_input_not_matched`,
+  `observation_not_confirmed`. The basis explains the score only: it never
+  changes the score, the class, actionability or repair-packet readiness, and
+  a preview score is not on the same scale as Rust's `confidence`.
 
 Reports gaining these fields:
 
@@ -144,7 +156,11 @@ project root. Python project detection is the first such exception;
 TypeScript project detection follows it, selecting the TypeScript adapter
 from a root `tsconfig.json` or `jsconfig.json`, or from detectable
 TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`; not generated names,
-`.d.ts` declarations or excluded directories) below root `src` or `tests`. `package.json` and
+`.d.ts` declarations or excluded directories) below root `src` or `tests`. The same
+test applies to each non-hidden, non-excluded directory one level below the root and to
+each child of `packages/`, `apps/`, `libs/` and `libraries/`; vendored and
+excluded trees never select it, nor do deeper ones; below the root, hidden
+directories are skipped too. `package.json` and
 JavaScript source files without a `tsconfig.json` or `jsconfig.json` do not
 select it (a `jsconfig.json` does mark a JavaScript project). A binary built without
 `lang-typescript` ignores the detector silently. A
@@ -257,6 +273,9 @@ Follow-up fixtures and tests cover:
 - Rust fixture/golden regression suite (must remain unchanged).
 - Additive optional field roundtrip tests for `language`,
   `language_status`, `owner_kind`, and `static_limit_kind`.
+- `confidence_basis` reason selection per class and oracle state, wire
+  rendering (empty writes nothing; non-empty is valid escaped JSON), and
+  serde skip-when-empty on `Finding`.
 - Language router fixtures for `.rs`, `.ts`, `.tsx`, `.mts`, `.cts`,
   `.js`, `.jsx`, `.mjs`, `.cjs`, `.py`, unmatched extensions, and excluded
   paths.

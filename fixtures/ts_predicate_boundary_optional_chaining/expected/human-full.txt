@@ -3,12 +3,17 @@ mode: fast
 root: fixtures/ts_predicate_boundary_optional_chaining/input
 config: <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input/ripr.toml
 
-Summary: 3 probe(s), 3 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed
+Summary: 3 changed behavior(s) checked: 3 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Changed file(s) by language: typescript = 1
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 6 changed line(s), 3 candidate line(s), 3 probe(s), 3 finding(s)
+  Counts: 1 changed file(s), 6 changed line(s), 3 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
 
 INFO src/guards.ts:2
   id: probe:src_guards.ts:typescript_preview:7098c2ff
@@ -16,9 +21,10 @@ INFO src/guards.ts:2
 Changed
   after:      if (order?.role === "admin") {
 
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  typescript:src/guards.ts::userIsAdmin
 
 Language
@@ -38,6 +44,7 @@ Preview actionability
 
 Static exposure
   exposed (info, confidence 0.60)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related test(s) found for owner `userIsAdmin`
@@ -84,9 +91,10 @@ INFO src/guards.ts:9
 Changed
   after:      if (name ?? "temp") {
 
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  typescript:src/guards.ts::pickLabel
 
 Language
@@ -106,6 +114,7 @@ Preview actionability
 
 Static exposure
   exposed (info, confidence 0.60)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related test(s) found for owner `pickLabel`
@@ -152,9 +161,10 @@ INFO src/guards.ts:15
 Changed
   after:      yield total >= 50;
 
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  typescript:src/guards.ts::thresholdsAbove
 
 Language
@@ -174,6 +184,7 @@ Preview actionability
 
 Static exposure
   exposed (info, confidence 0.60)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related test(s) found for owner `thresholdsAbove`

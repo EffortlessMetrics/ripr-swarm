@@ -17,6 +17,30 @@ use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use std::collections::BTreeSet;
 
+/// The operand static evidence cannot bind to a test input when a weakly
+/// exposed Python boundary finding declines its repair card: the Missing check
+/// names the equality (`amount == DISCOUNT_THRESHOLD`) but one side reads
+/// `observed <operand> values: unresolved`. #11103 keeps the decline
+/// fail-closed (no gap id, no card) and only names the unbindable operand in
+/// the Safe-next-action text instead of the generic line.
+pub(crate) fn unresolved_boundary_operand(missing: &[String]) -> Option<String> {
+    missing.iter().find_map(|line| {
+        if !line.contains("changed predicate boundary") {
+            return None;
+        }
+        line.split("; ").find_map(|segment| {
+            segment
+                .strip_prefix("observed ")
+                // The Missing check is prose: the final segment ends with a
+                // sentence period after `unresolved`.
+                .map(|rest| rest.trim_end_matches('.'))
+                .and_then(|rest| rest.strip_suffix("values: unresolved"))
+                .map(|operand| operand.trim().to_string())
+                .filter(|operand| !operand.is_empty())
+        })
+    })
+}
+
 use super::sections::{one_line, render_finding_digest_with_config};
 
 pub(crate) struct HumanTriage<'a> {
@@ -55,7 +79,9 @@ impl HumanTriageState {
         match self {
             Self::TopGap => "a test gap to inspect or repair",
             Self::NoActionableGap => "no gap selected for repair",
-            Self::StaticLimited => "limited by static analysis",
+            Self::StaticLimited => {
+                "ripr cannot tell from reading the code whether tests would notice this"
+            }
             Self::PreviewLimited => "preview language, advisory only",
             Self::MissingScope => "nothing in scope",
         }
@@ -197,9 +223,9 @@ pub(crate) fn render_human_triage(
                 finding.class == ExposureClass::NoStaticPath && finding.static_limit_kind.is_none()
             });
             out.push_str(if plain_no_path {
-                "  Safe next action: review the unresolved static path and existing tests before treating this as repair-ready\n"
+                "  Safe next action: look at the reason below and the existing tests before adding a test\n"
             } else {
-                "  Safe next action: inspect the named static limitation before treating this as repair-ready\n"
+                "  Safe next action: look at the reason below before adding a test\n"
             });
         }
         NextActionCheckCase::PreviewAdvisory => {
@@ -331,18 +357,7 @@ pub(crate) fn render_human_triage(
                 out.push_str(&format!("  {command}\n"));
                 super::push_powershell_variant(out, "  ", &command);
             }
-            let stub_eligible = finding.class != ExposureClass::Exposed
-                && finding.static_limit_kind
-                    != Some(StaticLimitKind::RustAssertionContextUnresolved)
-                && !super::sections::untraced_reach_weak_finding(finding)
-                && finding.probe.offers_stub_route()
-                && finding
-                    .probe
-                    .location
-                    .file
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    == Some("rs");
+            let stub_eligible = offers_test_stub(finding);
             // The test route is mentioned beside a held repair start only
             // when a runnable stub is actually rendered below.
             let stub_rendered = stub_eligible
@@ -430,6 +445,16 @@ pub(crate) fn render_human_triage(
                         out.push_str(&format!("  {command}\n"));
                         super::push_powershell_variant(out, "  ", &command);
                     }
+                    Some(StubRouteDecision::Ambiguous { reason, seam_ids }) => {
+                        push_ambiguous_stub_choices(
+                            out,
+                            navigation,
+                            &finding.id,
+                            reason,
+                            seam_ids,
+                            "",
+                        );
+                    }
                     Some(StubRouteDecision::Refused { reason }) => {
                         out.push_str(&format!("No test stub here: {reason}\n"));
                     }
@@ -486,12 +511,28 @@ pub(crate) fn render_human_triage(
                 String::new()
             };
             out.push_str(&format!(
-                "    - {}:{} ({}{})\n",
+                "    - {}:{} ({}{}); kind: {}; reason: {}\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
                 finding.class.plain_label(),
-                currentness
+                currentness,
+                finding.probe.family.as_str(),
+                hidden_finding_reason(finding)
             ));
+            if offers_test_stub(finding)
+                && let Some(FindingDrillIn::Commands(navigation)) = drill_in
+                && let Some(StubRouteDecision::Ambiguous { reason, seam_ids }) =
+                    navigation.stub_route_for(&finding.id)
+            {
+                push_ambiguous_stub_choices(
+                    out,
+                    navigation,
+                    &finding.id,
+                    reason,
+                    seam_ids,
+                    "      ",
+                );
+            }
         }
         let remaining = triage.omitted.len() - listed;
         if remaining > 0 {
@@ -509,6 +550,74 @@ pub(crate) fn render_human_triage(
 /// this window the list discloses the remainder instead of printing every
 /// identity.
 const HIDDEN_FINDINGS_LISTED: usize = 20;
+
+/// Share display eligibility across the selected row and hidden routing.
+fn offers_test_stub(finding: &Finding) -> bool {
+    finding.is_candidate_actionable()
+        && finding.class != ExposureClass::Exposed
+        && finding.static_limit_kind != Some(StaticLimitKind::RustAssertionContextUnresolved)
+        && crate::output::next_step::unresolved_edge_guidance(finding).is_none()
+        && !super::sections::untraced_reach_weak_finding(finding)
+        && finding.probe.offers_stub_route()
+        && finding
+            .probe
+            .location
+            .file
+            .extension()
+            .and_then(|ext| ext.to_str())
+            == Some("rs")
+}
+
+pub(super) fn hidden_stub_route_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'a Finding> {
+    triage
+        .omitted
+        .iter()
+        .take(HIDDEN_FINDINGS_LISTED)
+        .copied()
+        .filter(|finding| offers_test_stub(finding))
+        .collect()
+}
+
+fn push_ambiguous_stub_choices(
+    out: &mut String,
+    navigation: &crate::app::FindingNavigation,
+    finding_id: &str,
+    reason: &str,
+    seam_ids: &[String],
+    indent: &str,
+) {
+    out.push_str(&format!(
+        "{indent}Choose a test-stub seam for {finding_id}: {reason}\n"
+    ));
+    let child = format!("{indent}  ");
+    out.push_str(&format!("{child}These syntax choices are unvalidated; their commands may refuse, including for already-gripped seams.\n"));
+    out.push_str(&format!(
+        "{child}They do not establish a repair binding or close a static limitation.\n"
+    ));
+    for seam_id in seam_ids {
+        let command = navigation.stub_seam_command(seam_id);
+        out.push_str(&format!("{child}{command}\n"));
+        super::push_powershell_variant(out, &child, &command);
+    }
+}
+
+fn hidden_finding_reason(finding: &Finding) -> String {
+    let reason = finding
+        .static_limit_kind
+        .map(|kind| kind.describe())
+        .or_else(|| finding.missing.first().map(String::as_str))
+        .unwrap_or_else(|| match finding.class {
+            ExposureClass::NoStaticPath => &finding.ripr.reach.summary,
+            ExposureClass::InfectionUnknown => &finding.ripr.infect.summary,
+            ExposureClass::PropagationUnknown => &finding.ripr.propagate.summary,
+            ExposureClass::Exposed => &finding.ripr.reveal.discriminate.summary,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed => {
+                &finding.ripr.reveal.discriminate.summary
+            }
+            ExposureClass::StaticUnknown => &finding.ripr.infect.summary,
+        });
+    one_line(reason)
+}
 
 /// The currentness mix of the omitted set. `unresolved_subject` is the
 /// explicit unknown (#3281) — not base-side evidence — so the #4320
@@ -976,11 +1085,11 @@ fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str
         .language
         .map_or("preview-language", LanguageId::display_name);
     let manual_step = match finding.class {
-        ExposureClass::NoStaticPath => "add a test that calls it by hand",
-        // An unknown class is a visibility limit (for example the Bun bridge's
-        // cross-language gap), not a known weak test: ask for the same check
-        // the Python static-limit line names, not a test edit.
-        ExposureClass::StaticUnknown
+        // A missing static path or unknown class is a visibility limit, not
+        // proof that a test is absent or weak. Inspect existing observations
+        // before prescribing a test edit; readiness remains unchanged.
+        ExposureClass::NoStaticPath
+        | ExposureClass::StaticUnknown
         | ExposureClass::InfectionUnknown
         | ExposureClass::PropagationUnknown => "check by hand whether a test observes this change",
         _ => "add or strengthen a test by hand",
@@ -998,7 +1107,7 @@ fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str
     let specific = specific
         .strip_prefix("is not agent-packet eligible: ")
         .unwrap_or(specific);
-    let reason = one_line(specific);
+    let reason = one_line(&super::evidence_lines::plain_internal_wording(specific));
     format!(
         "  Safe next action: this {language} preview finding's repair packet is not ready ({reason}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; {manual_step}, then rerun `ripr check`\n"
     )
@@ -1048,10 +1157,23 @@ fn python_preview_safe_action(finding: &Finding) -> String {
         // #5531: the typed repo scope, not placement, is why no card exists.
         (scope_reason, "add or strengthen a test by hand")
     } else if finding.activation.missing_discriminators.is_empty() {
-        (
-            "static evidence names no concrete missing discriminator".to_string(),
-            "add or strengthen a test by hand",
-        )
+        // #11103: the boundary decline already names the equality in the
+        // Missing check but cannot bind one operand to a test input, so no
+        // repair card exists. Name that operand instead of the generic line;
+        // routing stays fail-closed (no gap id, no card).
+        if let Some(operand) = unresolved_boundary_operand(&finding.missing) {
+            (
+                format!(
+                    "static evidence cannot bind `{operand}` to a test input, so the boundary equality cannot become a repair target"
+                ),
+                "add or strengthen a test by hand",
+            )
+        } else {
+            (
+                "static evidence names no concrete missing discriminator".to_string(),
+                "add or strengthen a test by hand",
+            )
+        }
     } else {
         (
             "its test placement or related-test evidence is incomplete".to_string(),
@@ -1290,15 +1412,16 @@ mod tests {
     use super::*;
     use crate::app::Mode;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, NextActionClass, Probe,
-        ProbeFamily, ProbeId, RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation,
-        StageEvidence, StageState, Summary, SymbolId,
+        ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, LanguageStatus,
+        NextActionClass, Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence,
+        SourceCurrentness, SourceLocation, StageEvidence, StageState, Summary, SymbolId,
     };
     use std::path::PathBuf;
 
     fn test_finding(id: &str) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: id.to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -1371,6 +1494,136 @@ mod tests {
             partial_scope: None,
             analyzed_revisions: None,
         }
+    }
+
+    #[test]
+    fn limited_journey_hidden_rows_name_kind_and_reason() {
+        let top = super::super::tests::sample_finding();
+        let mut hidden = test_finding("finding:hidden");
+        hidden.probe.family = ProbeFamily::Predicate;
+        hidden.probe.location = SourceLocation::new("src/lib.rs", 42, 1);
+        hidden.class = ExposureClass::InfectionUnknown;
+        hidden.missing = vec!["No detected boundary input for the changed predicate".to_string()];
+        let mut output = test_output(vec![top, hidden]);
+        output.summary.probes = 2;
+        output.summary.findings = 2;
+        output.summary.weakly_exposed = 1;
+        output.summary.infection_unknown = 1;
+        let rendered = super::super::render(&output);
+        let row = rendered
+            .lines()
+            .find(|line| line.contains("    - src/lib.rs:42"));
+        assert!(
+            row.is_some_and(|line| line.contains("kind: predicate")
+                && line.contains("reason: No detected boundary input")),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn limited_journey_hidden_unique_route_is_not_rendered() {
+        use crate::app::test_stub::{StubRoute, StubRouteDecision};
+        let top = super::super::tests::sample_finding();
+        let mut hidden = test_finding("finding:hidden-unique");
+        hidden.class = ExposureClass::WeaklyExposed;
+        hidden.probe.family = ProbeFamily::Predicate;
+        hidden.probe.location.line = 42;
+        hidden.recommended_next_step = Some("inspect the boundary".to_string());
+        assert!(offers_test_stub(&hidden), "eligible hidden subject");
+        let output = test_output(vec![top.clone(), hidden.clone()]);
+        let triage = HumanTriage {
+            state: HumanTriageState::TopGap,
+            selected: Some(&top),
+            omitted: vec![&hidden],
+        };
+        let render = |decision| {
+            let navigation =
+                crate::app::FindingNavigation::legacy().with_stub_routes(vec![StubRoute {
+                    finding_id: hidden.id.clone(),
+                    decision,
+                }]);
+            let drill_in = FindingDrillIn::Commands(navigation);
+            let mut text = String::new();
+            render_human_triage(
+                &mut text,
+                &triage,
+                &output,
+                &RiprConfig::default(),
+                Some(&drill_in),
+                CheckDiffProvenance::CommittedHistory,
+            );
+            text
+        };
+        let unique = render(StubRouteDecision::Stub {
+            file: "src/lib.rs".to_string(),
+            line: 42,
+            kind: "predicate",
+        });
+        let hidden_block = unique
+            .split_once("Hidden:")
+            .map(|(_, block)| block)
+            .unwrap_or_default();
+        assert!(hidden_block.contains("src/lib.rs:42"));
+        assert!(!hidden_block.contains("ripr agent stub"), "{unique}");
+        let ambiguous = render(StubRouteDecision::Ambiguous {
+            reason: "choose the intended predicate".to_string(),
+            seam_ids: vec![
+                "0123456789abcdef".to_string(),
+                "fedcba9876543210".to_string(),
+            ],
+        });
+        assert!(ambiguous.contains("Choose a test-stub seam for finding:hidden-unique:"));
+        assert!(ambiguous.contains("--seam-id 0123456789abcdef"));
+        assert!(ambiguous.contains("--seam-id fedcba9876543210"));
+        assert!(ambiguous.contains("syntax choices are unvalidated"));
+        assert!(ambiguous.contains("commands may refuse, including for already-gripped seams"));
+    }
+
+    #[test]
+    fn limited_journey_hidden_stub_candidates_preserve_currentness_and_window() {
+        let mut rows = (0..21)
+            .map(|index| {
+                let mut finding = test_finding(&format!("hidden:{index}"));
+                finding.class = ExposureClass::WeaklyExposed;
+                finding.probe.family = ProbeFamily::Predicate;
+                finding.source_currentness = match index % 3 {
+                    0 => SourceCurrentness::BaseDeleted,
+                    1 => SourceCurrentness::MovedOrRenamed,
+                    _ => SourceCurrentness::UnresolvedSubject,
+                };
+                finding
+            })
+            .collect::<Vec<_>>();
+        rows[20].source_currentness = SourceCurrentness::CandidateCurrent;
+        let candidates = |rows: &[Finding]| {
+            let triage = HumanTriage {
+                state: HumanTriageState::NoActionableGap,
+                selected: None,
+                omitted: rows.iter().collect(),
+            };
+            hidden_stub_route_findings(&triage)
+                .iter()
+                .map(|finding| finding.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            candidates(&rows).is_empty(),
+            "take the displayed window before eligibility filtering"
+        );
+        rows[0].source_currentness = SourceCurrentness::CandidateCurrent;
+        assert_eq!(candidates(&rows), vec!["hidden:0"]);
+        rows[0].static_limit_kind = Some(StaticLimitKind::RustAssertionContextUnresolved);
+        assert!(candidates(&rows).is_empty());
+        rows[0].static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+        rows[0].recommended_next_step = Some("inspect".to_string());
+        rows[0].evidence =
+            vec!["limitation_first_unresolved_edge: entry `outer` -> owner `inner`".to_string()];
+        assert!(candidates(&rows).is_empty());
+        rows[0].static_limit_kind = None;
+        rows[0]
+            .stop_reasons
+            .push(crate::domain::StopReason::TransitiveReachUnresolved);
+        assert!(candidates(&rows).is_empty());
     }
 
     #[test]
@@ -1751,6 +2004,7 @@ mod tests {
             base_ref: "master".to_string(),
             base_commit: Some("abc".to_string()),
             merge_base_commit: None,
+            loaded_diff_origin: None,
             head_commit: Some("abc".to_string()),
             working_tree: false,
         });
@@ -2043,15 +2297,15 @@ mod tests {
         ]);
         let rendered = super::super::render(&output);
         assert!(
-            rendered.contains("    - src/sample.rs:7 (weak, lower-priority candidate)\n"),
+            rendered.contains("    - src/sample.rs:7 (weak, lower-priority candidate); kind:"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lib.rs:26 (weak, base-side)\n"),
+            rendered.contains("    - src/lib.rs:26 (weak, base-side); kind:"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lib.rs:31 (weak, unresolved currentness)\n"),
+            rendered.contains("    - src/lib.rs:31 (weak, unresolved currentness); kind:"),
             "{rendered}"
         );
     }
@@ -2105,7 +2359,10 @@ mod tests {
             None,
             CheckDiffProvenance::CommittedHistory,
         );
-        assert!(!out.contains("limited by static analysis"), "{out}");
+        assert!(
+            !out.contains("ripr cannot tell from reading the code"),
+            "{out}"
+        );
         assert!(out.contains("src/lib.rs"), "{out}");
     }
 
@@ -2223,7 +2480,10 @@ mod tests {
             None,
             CheckDiffProvenance::CommittedHistory,
         );
-        assert!(!out.contains("limited by static analysis"), "{out}");
+        assert!(
+            !out.contains("ripr cannot tell from reading the code"),
+            "{out}"
+        );
         assert!(out.contains("src/lib.rs"), "{out}");
     }
 
@@ -2420,7 +2680,10 @@ mod tests {
             None,
             CheckDiffProvenance::CommittedHistory,
         );
-        assert!(out.contains("limited by static analysis"), "{out}");
+        assert!(
+            out.contains("ripr cannot tell from reading the code whether tests would notice this"),
+            "{out}"
+        );
     }
 
     /// #9346 review: the witnessed whole-function shape with an explicit
@@ -2588,6 +2851,52 @@ mod tests {
         assert!(
             !rendered.contains("(weak, unresolved currentness)"),
             "{rendered}"
+        );
+    }
+
+    #[test]
+    fn unresolved_boundary_operand_names_the_unbindable_side() {
+        // #11103: the boundary decline names the equality in the Missing
+        // check but one side reads `values: unresolved`.
+        assert_eq!(
+            unresolved_boundary_operand(&["A strong Python oracle reaches `discounted_total`, but static evidence does not place a related test input at the changed predicate boundary. No strong related test call places amount equal to DISCOUNT_THRESHOLD; observed amount values: 20000, 5000; observed DISCOUNT_THRESHOLD values: unresolved.".to_string()]),
+            Some("DISCOUNT_THRESHOLD".to_string())
+        );
+        // Other weak shapes keep the generic line.
+        assert_eq!(
+            unresolved_boundary_operand(&["Only heuristic Python test links were found for `owner`; verify the suggested test location.".to_string()]),
+            None
+        );
+        assert_eq!(unresolved_boundary_operand(&[]), None);
+    }
+
+    #[test]
+    fn preview_safe_action_names_the_unbindable_boundary_operand() {
+        // #11103: fail-closed decline, specific wording.
+        let mut finding = test_finding("finding:boundary-decline");
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.language = Some(LanguageId::Python);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.missing = vec!["A strong Python oracle reaches `discounted_total`, but static evidence does not place a related test input at the changed predicate boundary. No strong related test call places amount equal to DISCOUNT_THRESHOLD; observed amount values: 20000; observed DISCOUNT_THRESHOLD values: unresolved.".to_string()];
+        let action = python_preview_safe_action(&finding);
+        assert!(
+            action.contains("static evidence cannot bind `DISCOUNT_THRESHOLD` to a test input, so the boundary equality cannot become a repair target"),
+            "{action}"
+        );
+        assert!(
+            !action.contains("names no concrete missing discriminator"),
+            "{action}"
+        );
+        // A weak finding without the unresolved-operand shape keeps the
+        // generic line.
+        let mut generic = test_finding("finding:generic-decline");
+        generic.class = ExposureClass::WeaklyExposed;
+        generic.language = Some(LanguageId::Python);
+        generic.language_status = Some(LanguageStatus::Preview);
+        let generic_action = python_preview_safe_action(&generic);
+        assert!(
+            generic_action.contains("static evidence names no concrete missing discriminator"),
+            "{generic_action}"
         );
     }
 }

@@ -5961,7 +5961,11 @@ fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), Str
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
-    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/entry.ts")],
+    );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
 
@@ -6020,7 +6024,12 @@ fn analyze_diff_bounds_workspace_budget_disclosure_with_true_total() -> Result<(
         ts_write_file(&root.join(format!("src/pkg_{index:02}.ts")), source)?;
     }
     let options = ts_analysis_options(root.clone());
-    let result = TypeScriptAdapter::analyze_diff_with_read_limits(&options, &[], 1024, 32);
+    let result = TypeScriptAdapter::analyze_diff_with_read_limits(
+        &options,
+        &[changed("src/entry.ts")],
+        1024,
+        32,
+    );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
     let disclosure = result
@@ -6112,7 +6121,7 @@ fn analyze_diff_bounds_capped_read_disclosure_with_stable_sample_and_total() -> 
     let options = ts_analysis_options(root.clone());
     let result = TypeScriptAdapter::analyze_diff_with_read_limits(
         &options,
-        &[],
+        &[changed("src/entry.ts")],
         64,
         DEFAULT_TS_MAX_WORKSPACE_READ_BYTES,
     );
@@ -6344,7 +6353,11 @@ fn analyze_diff_surfaces_over_limit_tsconfig_read_as_named_limitation() -> Resul
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
-    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/entry.ts")],
+    );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
 
@@ -6422,7 +6435,11 @@ fn analyze_diff_surfaces_absolute_base_url_as_named_limitation() -> Result<(), S
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
-    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/entry.ts")],
+    );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
 
@@ -8578,6 +8595,107 @@ fn ava_truthy_is_smoke_only() {
     assert_eq!(assertions[0].oracle_strength, OracleStrength::Smoke);
 }
 
+/// An all-literal array expected value is a concrete discriminator, not a
+/// dynamic argument (`t.deepEqual(x, [10, 20, 30])`).
+#[test]
+fn ava_deep_equal_all_literal_array_is_not_dynamic() {
+    let source = "t.deepEqual(score(10, 3), [10, -20, [30, 'a']]);";
+    let allocator = Allocator::default();
+    let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+    let assertions = collect_expect_assertions_in_statements(
+        &parse_result.program.body,
+        &SourceText::new(source),
+        Some("t"),
+    );
+    assert_eq!(assertions.len(), 1);
+    assert!(!assertions[0].has_dynamic_matcher_arg, "{assertions:?}");
+    assert!(assertions[0].expected_value_or_variant.is_some());
+}
+
+/// Discriminating negative: arrays holding an identifier, call, spread, object
+/// or hole stay dynamic.
+#[test]
+fn ava_deep_equal_non_literal_arrays_stay_dynamic() {
+    for expected in ["[10, x]", "[10, f()]", "[...xs]", "[{a: 1}]", "[1, , 2]"] {
+        let source = format!("t.deepEqual(score(10, 3), {expected});");
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, &source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(&source),
+            Some("t"),
+        );
+        assert_eq!(assertions.len(), 1, "{expected}");
+        assert!(
+            assertions[0].has_dynamic_matcher_arg,
+            "`{expected}` must stay dynamic: {assertions:?}"
+        );
+    }
+}
+
+/// AVA `t.is` / `strictEqual` compare by reference: an array literal is never
+/// the value a call returns, so it stays a dynamic argument there, while
+/// `deepEqual` accepts it.
+#[test]
+fn ava_reference_equality_array_literal_stays_dynamic() {
+    for (method, dynamic) in [
+        ("is", true),
+        ("strictEqual", true),
+        ("deepEqual", false),
+        ("equal", true),
+    ] {
+        let source = format!("t.{method}(score(10, 3), [1, 2]);");
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, &source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(&source),
+            Some("t"),
+        );
+        assert_eq!(assertions.len(), 1, "{method}");
+        assert_eq!(assertions[0].has_dynamic_matcher_arg, dynamic, "{method}");
+    }
+}
+
+/// Jest: `toEqual` / `toStrictEqual` accept an all-literal array (including
+/// `[]`); `toBe` / `toMatchObject` and arrays holding a non-literal such as
+/// `[-x]` stay dynamic.
+#[test]
+fn jest_array_expected_values_are_literal_only_for_deep_equality() {
+    for (call, dynamic) in [
+        ("expect(f(1)).toEqual([1, 2])", false),
+        ("expect(f(1)).toStrictEqual([1, 'a', [2]])", false),
+        ("expect(f(1)).toEqual([])", false),
+        ("expect(f(1)).toBe([1])", true),
+        ("expect(f(1)).toMatchObject([1])", true),
+        ("expect(f(1)).toEqual([-x])", true),
+        ("expect(f(1)).toEqual([1, y])", true),
+    ] {
+        let source = format!("{call};");
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, &source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(&source),
+            None,
+        );
+        assert_eq!(assertions.len(), 1, "{call}");
+        assert_eq!(assertions[0].has_dynamic_matcher_arg, dynamic, "{call}");
+    }
+}
+
+/// A zero or empty array matches a field's initial state just like a scalar
+/// zero, so it never pins a field update.
+#[test]
+fn zero_like_expected_values_include_empty_and_zero_arrays() {
+    for zero in ["0", "''", "null", "[]", "[ ]", "[0, 0]", "[[], '']"] {
+        assert!(ts_expected_is_zero_like(zero), "{zero}");
+    }
+    for live in ["1", "[1]", "[0, 1]", "['a']", "[10]", "[[0], 2]"] {
+        assert!(!ts_expected_is_zero_like(live), "{live}");
+    }
+}
+
 /// Tape / node:test positive equality aliases use the same receiver-gated path
 /// as AVA: `t.equal(...)`, `t.strictEqual(...)`, and positive deep-equality
 /// forms are exact-value oracles when the receiver matches the test callback
@@ -8775,6 +8893,152 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
     assert_evidence_contains(&finding, "typescript_oracle_confidence: medium");
     // repair_packet_ready stays false
     assert_evidence_contains(&finding, "repair_route:");
+    Ok(())
+}
+
+/// Discriminating negative for the family-scoped limit (RIPR-SPEC-0104): a dynamic
+/// error-family expectation (AVA `throwsAsync` with a dynamic option) cannot hide
+/// a discriminator for a changed predicate, so it must NOT raise
+/// `typescript_dynamic_assertion_unresolved`. The sibling test above keeps a
+/// dynamic value-family assertion raising the limit.
+#[test]
+fn named_limitation_dynamic_assertion_not_emitted_for_other_family_assertion() -> Result<(), String>
+{
+    let owner = test_owner("clamp", "src/clamp.ts");
+    // Manually construct a test with a dynamic matcher arg
+    let test = TypeScriptTest {
+        name: "clamps below minimum".to_string(),
+        local_name: "clamps below minimum".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/clamp.test.ts"),
+        line: 1,
+        reach_body_text: None,
+        body_text: "const expected = computeExpected(0);\nclamp(-5, 0, 10);\nexpect(clamp(-5, 0, 10)).toBe(expected);".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "throwsAsync".to_string(),
+            argument_count: 1,
+            line: 3,
+            oracle_kind: OracleKind::BroadError,
+            oracle_strength: OracleStrength::Weak,
+            mock_payload: None,
+            error_payload: None,
+            observed_expression: Some("clamp(-5, 0, 10)".to_string()),
+            expected_value_or_variant: None,
+            has_dynamic_matcher_arg: true,
+            dynamic_expected_text: None,
+            oracle_confidence: OracleConfidence::Medium,
+            rendered_call: None,
+            loose_number_expected: false,
+            expected_object_const: None,
+            compares_reference_identity: false,
+        }],
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
+        assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
+        factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/clamp".to_string(),
+            imported: Some("clamp".to_string()),
+            local: "clamp".to_string(),
+            namespace: false,
+        }].into(),
+    };
+    let finding = classify_change(
+        Path::new("src/clamp.ts"),
+        2,
+        "    if (value < min) {",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert_evidence_lacks(
+        &finding,
+        "typescript_limitation: typescript_dynamic_assertion_unresolved",
+    );
+    Ok(())
+}
+
+/// Retained-case control for the family-scoped limit: a dynamic error-family
+/// assertion on an error-path seam still raises
+/// `typescript_dynamic_assertion_unresolved`.
+#[test]
+fn named_limitation_dynamic_assertion_emitted_for_error_family_assertion_on_error_seam()
+-> Result<(), String> {
+    let owner = test_owner("clamp", "src/clamp.ts");
+    // Manually construct a test with a dynamic matcher arg
+    let test = TypeScriptTest {
+        name: "clamps below minimum".to_string(),
+        local_name: "clamps below minimum".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/clamp.test.ts"),
+        line: 1,
+        reach_body_text: None,
+        body_text: "const expected = computeExpected(0);\nclamp(-5, 0, 10);\nexpect(clamp(-5, 0, 10)).toBe(expected);".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toThrow".to_string(),
+            argument_count: 1,
+            line: 3,
+            oracle_kind: OracleKind::ExactErrorVariant,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            observed_expression: Some("clamp(-5, 0, 10)".to_string()),
+            expected_value_or_variant: None,
+            has_dynamic_matcher_arg: true,
+            dynamic_expected_text: None,
+            oracle_confidence: OracleConfidence::Medium,
+            rendered_call: None,
+            loose_number_expected: false,
+            expected_object_const: None,
+            compares_reference_identity: false,
+        }],
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
+        assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
+        factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/clamp".to_string(),
+            imported: Some("clamp".to_string()),
+            local: "clamp".to_string(),
+            namespace: false,
+        }].into(),
+    };
+    let finding = classify_change(
+        Path::new("src/clamp.ts"),
+        2,
+        "    throw new RangeError(\"below minimum\");",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_dynamic_assertion_unresolved",
+    );
     Ok(())
 }
 
@@ -11437,15 +11701,164 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
     );
     assert_eq!(
         finding.missing.first().map(String::as_str),
-        Some("No test references `applyDiscount(` — add a test that calls the changed owner.")
+        Some(
+            "No statically linked test call to `applyDiscount(` was established; inspect existing test calls and their import/export paths."
+        )
+    );
+    // #10708: the ordinary owner with no static link carries the honest
+    // ordered next step — owner name, add-test route, native verifier,
+    // then refresh — without claiming universal test absence or naming an
+    // unevidenced file/command. Classification, confidence, related-test
+    // evidence and repair eligibility stay put.
+    let step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "owner with no static link must carry guidance".to_string())?;
+    for expected in [
+        "no statically linked test calls `applyDiscount(`",
+        "inspect existing test calls and their import/export paths",
+        "if no suitable test exists, add a test",
+        "add a test that calls the changed owner",
+        "asserts the changed behavior with `toBe` / `toEqual`",
+        "run the project's native test command",
+        "rerun `ripr check`",
+    ] {
+        assert!(
+            step.contains(expected),
+            "next step must contain {expected:?}; got: {step}"
+        );
+    }
+    for forbidden in [
+        "vitest run",
+        "npx vitest",
+        "tests/owner.test.ts",
+        "test_owner",
+    ] {
+        assert!(
+            !step.contains(forbidden),
+            "no invented exact file/command may appear; found {forbidden:?} in: {step}"
+        );
+    }
+    assert!(
+        !step.contains("no test references the changed owner"),
+        "must not claim universal test absence; got: {step}"
     );
     assert!(
-        finding
-            .recommended_next_step
-            .as_deref()
-            .is_some_and(|next| next.contains("no test references the changed owner")),
-        "control keeps the generic next step, got: {:?}",
-        finding.recommended_next_step
+        (finding.confidence - 0.4).abs() < f32::EPSILON,
+        "no-static-path confidence stays 0.4; got {}",
+        finding.confidence
+    );
+    assert!(finding.related_tests.is_empty());
+    Ok(())
+}
+
+/// #10708: a directly resolved ordinary function owner with no static link
+/// carries the honest ordered next step — owner-named add-test/call and
+/// assertion, native verifier, then refresh — while classification,
+/// confidence, related-test evidence and repair eligibility stay put.
+#[test]
+fn untested_function_owner_guidance_names_owner_and_ordered_route() -> Result<(), String> {
+    let tests = [exact_value_test("shippingFee", "result", "0")];
+    let finding = classify_boundary_line("shippingFee", "  if (total >= 50) {", &tests)?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert!(
+        (finding.confidence - 0.4).abs() < f32::EPSILON,
+        "no-static-path confidence stays 0.4; got {}",
+        finding.confidence
+    );
+    assert!(finding.related_tests.is_empty());
+    assert_eq!(finding.static_limit_kind, None);
+    // Repair eligibility stays suppressed: the NoStaticPath actionability
+    // lands advisory (the preview card's `repair_packet_ready` remains
+    // false, pinned by the fixture goldens), so no packet may be emitted
+    // on this evidence.
+    assert_evidence_contains(&finding, "gap_state: advisory");
+    let step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "owner with no static link must carry guidance".to_string())?;
+    for expected in [
+        "no statically linked test calls `shippingFee(`",
+        "inspect existing test calls and their import/export paths",
+        "if no suitable test exists, add a test",
+        "add a test that calls the changed owner",
+        "asserts the changed behavior with `toBe` / `toEqual`",
+        "run the project's native test command",
+        "rerun `ripr check`",
+    ] {
+        assert!(
+            step.contains(expected),
+            "next step must contain {expected:?}; got: {step}"
+        );
+    }
+    for forbidden in [
+        "vitest run",
+        "npx vitest",
+        "tests/lib.test.ts",
+        "test_shipping",
+    ] {
+        assert!(
+            !step.contains(forbidden),
+            "no invented exact file/command may appear; found {forbidden:?} in: {step}"
+        );
+    }
+    assert!(
+        !step.contains("no test references the changed owner"),
+        "must not claim universal test absence; got: {step}"
+    );
+    Ok(())
+}
+
+/// #10708 negative controls: method, class-method, module-initializer and
+/// alias/static-limit lanes keep their own qualifiers — the ordinary-owner
+/// wording must not leak into them, and unresolved/transitive relations
+/// keep their uncertainty without the direct-call advice.
+#[test]
+fn qualified_owner_lanes_keep_their_own_guidance() -> Result<(), String> {
+    // Method owner keeps the receiver-uncertainty qualifier.
+    let mut method = test_owner("total", "src/cart.ts");
+    method.owner_kind = OwnerKind::Method;
+    let method_step = no_static_path_recommendation(&method);
+    assert!(
+        method_step.contains("receiver"),
+        "method guidance must keep the receiver qualifier; got: {method_step}"
+    );
+    assert!(
+        !method_step.contains("no statically linked test calls"),
+        "method guidance must not use the ordinary-owner wording; got: {method_step}"
+    );
+    // Class-method owner keeps its own qualifier.
+    let mut class_method = test_owner("build", "src/owners.ts");
+    class_method.owner_kind = OwnerKind::ClassMethod;
+    class_method.class_name = Some("Cart".to_string());
+    let class_step = no_static_path_recommendation(&class_method);
+    assert!(
+        class_step.contains("class-method relation"),
+        "class-method guidance must keep its qualifier; got: {class_step}"
+    );
+    assert!(
+        !class_step.contains("no statically linked test calls"),
+        "class-method guidance must not use the ordinary-owner wording; got: {class_step}"
+    );
+    // Module-initializer owner keeps its own observer qualifier.
+    let mut module_fn = test_owner("CART_LIMIT", "src/cart.ts");
+    module_fn.owner_kind = OwnerKind::ModuleFunction;
+    let module_step = no_static_path_recommendation(&module_fn);
+    assert!(
+        module_step.contains("module initializer observer"),
+        "module-function guidance must keep its qualifier; got: {module_step}"
+    );
+    assert!(
+        !module_step.contains("no statically linked test calls"),
+        "module-function guidance must not use the ordinary-owner wording; got: {module_step}"
+    );
+    // Alias-gap disclosure keeps its own unresolved-import route.
+    let ordinary = test_owner("applyDiscount", "src/owner.ts");
+    let ordinary_step = no_static_path_recommendation(&ordinary);
+    assert!(
+        ordinary_step.contains("no statically linked test calls `applyDiscount(`"),
+        "ordinary-owner guidance must name the owner; got: {ordinary_step}"
     );
     Ok(())
 }
@@ -13864,7 +14277,7 @@ fn spec_0027_unrelated_test_does_not_reach_the_boundary_witness() -> Result<(), 
     assert_eq!(finding.ripr.reach.state, StageState::No);
     assert!(
         finding.missing.iter().any(|line| line
-            == "No test references `shippingFee(` — add a test that calls the changed owner."),
+            == "No statically linked test call to `shippingFee(` was established; inspect existing test calls and their import/export paths."),
         "no_static_path must name the missing owner reference: {:?}",
         finding.missing
     );
@@ -16248,6 +16661,323 @@ fn expected_side_is_live_unique_line_still_folds_liveness() {
     );
 }
 
+/// Point a `direct_test_with_assertion` test at `src/clamp.ts` so it relates
+/// to the `clamp` owner by a direct imported call.
+fn retarget_to_clamp(test: &mut TypeScriptTest) {
+    test.file = PathBuf::from("tests/clamp.test.ts");
+    test.imports_in_file = vec![TypeScriptImport {
+        source: "../src/clamp".to_string(),
+        imported: Some("clamp".to_string()),
+        local: "clamp".to_string(),
+        namespace: false,
+    }]
+    .into();
+}
+
+/// A wrong-family dynamic assertion no longer raises the limitation, but it
+/// must not change the class: with a pinned literal assertion beside it, the
+/// finding keeps the class it had. (The retained-case control above shows a
+/// right-family dynamic assertion still raises the limit.)
+#[test]
+fn wrong_family_dynamic_assertion_with_pinned_literal_keeps_class() -> Result<(), String> {
+    let owner = test_owner("clamp", "src/clamp.ts");
+    let mut test = direct_test_with_assertion(
+        "clamps",
+        "clamp",
+        "clamp(-5, 0, 10);\nexpect(clamp(-5, 0, 10)).toBe(0);",
+        "toBe",
+        1,
+        OracleKind::ExactValue,
+        OracleStrength::Strong,
+    );
+    retarget_to_clamp(&mut test);
+    test.assertions[0].line = 2;
+    test.assertions[0].observed_expression = Some("clamp(-5, 0, 10)".to_string());
+    test.assertions[0].expected_value_or_variant = Some("0".to_string());
+    test.assertions[0].oracle_confidence = OracleConfidence::High;
+    let mut dynamic_wrong_family = test.assertions[0].clone();
+    dynamic_wrong_family.matcher = "throwsAsync".to_string();
+    dynamic_wrong_family.line = 3;
+    dynamic_wrong_family.oracle_kind = OracleKind::BroadError;
+    dynamic_wrong_family.oracle_strength = OracleStrength::Weak;
+    dynamic_wrong_family.expected_value_or_variant = None;
+    dynamic_wrong_family.has_dynamic_matcher_arg = true;
+    test.assertions.push(dynamic_wrong_family);
+    let finding = classify_change(
+        Path::new("src/clamp.ts"),
+        2,
+        "    if (value < min) {",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert_evidence_lacks(
+        &finding,
+        "typescript_limitation: typescript_dynamic_assertion_unresolved",
+    );
+    // The class is the one the finding had with the limitation: the narrowing
+    // changes which limitation is listed, never the exposure class, and the
+    // actionability gate stays the evidence-based projection (unchanged).
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// The family condition scopes the dynamic-assertion limitation only: a
+/// table-driven test whose only dynamic assertion is wrong-family keeps
+/// `typescript_table_case_unresolved` exactly as before.
+#[test]
+fn table_case_limitation_is_not_narrowed_by_the_family_condition() -> Result<(), String> {
+    let owner = test_owner("clamp", "src/clamp.ts");
+    let mut test = direct_test_with_assertion(
+        "clamps rows",
+        "clamp",
+        "test.each([[1, 1]])('row', (v, e) => {\n  expect(clamp(v, 0, 10)).toThrow(e);\n});",
+        "toThrow",
+        1,
+        OracleKind::BroadError,
+        OracleStrength::Weak,
+    );
+    retarget_to_clamp(&mut test);
+    test.assertions[0].line = 2;
+    test.assertions[0].observed_expression = Some("clamp(v, 0, 10)".to_string());
+    test.assertions[0].has_dynamic_matcher_arg = true;
+    let finding = classify_change(
+        Path::new("src/clamp.ts"),
+        2,
+        "    if (value < min) {",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_table_case_unresolved",
+    );
+    assert_evidence_lacks(
+        &finding,
+        "typescript_limitation: typescript_dynamic_assertion_unresolved",
+    );
+    Ok(())
+}
+
+/// End to end through the parser: an all-literal `toEqual([...])` array
+/// removes the dynamic limit, and an array holding an identifier keeps it.
+#[test]
+fn literal_array_to_equal_removes_the_dynamic_limit_and_identifier_array_keeps_it()
+-> Result<(), String> {
+    for (source, limited) in [
+        ("expect(clamp(-5, 0, 10)).toEqual([0, 1]);", false),
+        ("expect(clamp(-5, 0, 10)).toEqual([0, y]);", true),
+    ] {
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(source),
+            None,
+        );
+        let mut test = direct_test_with_assertion(
+            "clamps",
+            "clamp",
+            format!("clamp(-5, 0, 10);\n{source}"),
+            "toEqual",
+            1,
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        retarget_to_clamp(&mut test);
+        test.assertions = assertions
+            .into_iter()
+            .map(|mut assertion| {
+                assertion.line = 2;
+                assertion
+            })
+            .collect();
+        let finding = classify_change(
+            Path::new("src/clamp.ts"),
+            2,
+            "    if (value < min) {",
+            &[test_owner("clamp", "src/clamp.ts")],
+            &[test],
+            None,
+            &ReExportIndex::empty(),
+            None,
+        )
+        .ok_or_else(|| "expected a finding".to_string())?;
+        let has = finding
+            .evidence
+            .iter()
+            .any(|line| line == "typescript_limitation: typescript_dynamic_assertion_unresolved");
+        assert_eq!(has, limited, "{source}: {:?}", finding.evidence);
+    }
+    Ok(())
+}
+
+/// A pinned empty or zero-like array does not witness a field update (it can
+/// match the field's initial state); a nonzero scalar pin still does.
+#[test]
+fn field_update_pinned_by_zero_like_array_stays_unwitnessed() {
+    let owner = TypeScriptOwner {
+        name: "record".to_string(),
+        file: PathBuf::from("src/stats.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Method,
+        class_name: Some("Stats".to_string()),
+        arity: Some(1),
+        params: vec!["n".to_string()],
+        source_text: Some(
+            concat!("record(n: number): void {\n", "    this.hits = n;\n", "}",).to_string(),
+        ),
+        ..test_owner("record", "src/stats.ts")
+    };
+    let change = FieldUpdateChange {
+        field: "hits".to_string(),
+        class_name: "Stats".to_string(),
+    };
+    let witnessed = |expected: &str, matcher: &str| {
+        let mut test = direct_test_with_assertion(
+            "records",
+            "record",
+            format!(
+                "const stats = new Stats();\nstats.record(3);\nexpect(stats.hits).{matcher}({expected});"
+            ),
+            matcher,
+            1,
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        test.assertions[0].line = 3;
+        test.assertions[0].observed_expression = Some("stats.hits".to_string());
+        test.assertions[0].expected_value_or_variant = Some(expected.to_string());
+        let candidate = TypeScriptRelatedCandidate::with_owner_path(
+            &test,
+            TypeScriptRelationKind::DirectOwnerCall,
+            TypeScriptOwnerPathDisposition::TrustedOwnerPath,
+        );
+        ts_field_update_witnessed(&change, &owner, &[candidate])
+    };
+    assert!(
+        witnessed("3", "toBe"),
+        "control: a nonzero scalar pin witnesses"
+    );
+    for zero in ["[]", "[0]", "[0, 0]", "0"] {
+        assert!(!witnessed(zero, "toEqual"), "{zero} must stay unwitnessed");
+    }
+}
+
+/// An array expectation equals no scalar arm, so it cannot witness a changed
+/// ternary arm; the matching scalar pin still does.
+#[test]
+fn array_expectation_does_not_witness_a_changed_ternary_arm() {
+    let owner = TypeScriptOwner {
+        name: "pick".to_string(),
+        file: PathBuf::from("src/pick.ts"),
+        start_line: 1,
+        end_line: 3,
+        owner_kind: OwnerKind::Function,
+        arity: Some(1),
+        params: vec!["p".to_string()],
+        source_text: Some(
+            concat!(
+                "export function pick(p: number): number {\n",
+                "    return p > 5 ? 3 : 2;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..test_owner("pick", "src/pick.ts")
+    };
+    let change = ts_ternary_arm_change(
+        &owner,
+        "    return p > 5 ? 3 : 2;",
+        Some("    return p > 5 ? 1 : 2;"),
+    );
+    assert!(
+        change.is_some(),
+        "the one-arm ternary edit must read as a TernaryArmChange"
+    );
+    let Some(change) = change else {
+        return;
+    };
+    let witnessed = |expected: &str, matcher: &str| {
+        let mut test = direct_test_with_assertion(
+            "picks",
+            "pick",
+            format!("expect(pick(7)).{matcher}({expected});"),
+            matcher,
+            1,
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        test.assertions[0].line = 1;
+        test.assertions[0].observed_expression = Some("pick(7)".to_string());
+        test.assertions[0].expected_value_or_variant = Some(expected.to_string());
+        let candidate = TypeScriptRelatedCandidate::with_owner_path(
+            &test,
+            TypeScriptRelationKind::DirectOwnerCall,
+            TypeScriptOwnerPathDisposition::TrustedOwnerPath,
+        );
+        ts_arm_change_witnessed(
+            &change,
+            &owner,
+            &[candidate],
+            &ReExportIndex::empty(),
+            None,
+            None,
+        )
+    };
+    assert!(
+        witnessed("3", "toBe"),
+        "control: the new arm value witnesses"
+    );
+    assert!(!witnessed("[3]", "toEqual"));
+    assert!(!witnessed("[]", "toEqual"));
+}
+
+/// A pinned literal array is a dead witness against scalar numeric branches.
+#[test]
+fn expected_side_is_live_treats_an_array_expectation_as_dead_for_scalar_branches() {
+    let owner = boundary_witness_owner();
+    for expected in ["[90]", "[ 100 ]", "[]"] {
+        assert_eq!(
+            expected_side_is_live(
+                &owner,
+                "  if (total >= 100) {",
+                "total",
+                "100",
+                &["100".to_string()],
+                expected,
+            ),
+            Some(false),
+            "{expected}"
+        );
+    }
+    // Control: a non-numeric, non-array expectation stays undetermined.
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "  if (total >= 100) {",
+            "total",
+            "100",
+            &["100".to_string()],
+            "expectedTotal",
+        ),
+        None
+    );
+}
+
 /// A test that still pins the pre-change value at the boundary input fails
 /// against the changed code, so its expectation tells the two behaviors
 /// apart: live. An expectation equal under both behaviors, or neither, is
@@ -16688,7 +17418,7 @@ fn same_stem_tests_that_only_call_a_sibling_owner_are_not_related() -> Result<()
     );
     assert!(
         finding.missing.iter().any(|line| line
-            == "No test references `loyaltyPrice(` — add a test that calls the changed owner."),
+            == "No statically linked test call to `loyaltyPrice(` was established; inspect existing test calls and their import/export paths."),
         "no_static_path must name the missing owner reference: {:?}",
         finding.missing
     );
@@ -16891,7 +17621,7 @@ it("tiers", () => {
 // `no_static_path` and the advice "add a test that calls the changed owner"
 // points at tests that already exist.
 
-fn ts_analysis_options(root: PathBuf) -> AnalysisOptions {
+pub(super) fn ts_analysis_options(root: PathBuf) -> AnalysisOptions {
     AnalysisOptions {
         root,
         base: None,
@@ -18958,7 +19688,9 @@ mod dropped_term_tests;
 mod enum_member_tests;
 mod error_payload_tests;
 mod function_reference_callback_tests;
+mod gap_reach_config_tests;
 mod guard_entry_tests;
+mod infection_tests;
 mod instance_class_tests;
 mod issue7507_shadow_tests;
 mod literal_matcher_tests;
@@ -19539,6 +20271,91 @@ fn describe_skip_if_and_run_if_index_their_tests_under_the_factory_guard() {
 }
 
 #[test]
+fn describe_run_if_indexes_an_untitled_callback_only_suite_under_the_factory_guard() {
+    let run_if = "describe.runIf(!process.env.CI)(() => {\n  it('adds three numbers', () => { expect(add(1, 2)).toBe(3); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), run_if);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "adds three numbers");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("describe.runIf(!process.env.CI)")
+    );
+    assert!(tests[0].assertions.is_empty(), "{tests:?}");
+    assert_eq!(
+        tests[0].assertion_admission,
+        TypeScriptAssertionAdmission::Unresolved
+    );
+    let skip_if = "describe.skipIf(!existsSync(dist))(() => {\n  it('built', () => { expect(add(1, 2)).toBe(3); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), skip_if);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "built");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("describe.skipIf(!existsSync(dist))")
+    );
+}
+
+#[test]
+fn describe_run_if_untitled_suite_with_an_inactive_options_object_is_not_descended() {
+    let source = "describe.runIf(c)(() => {\n  it('x', () => { expect(f(1)).toBe(2); });\n}, { skip: true });\ndescribe.runIf(c)(() => {\n  it('y', () => { expect(f(1)).toBe(2); });\n}, { skip: false });\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "y");
+}
+
+#[test]
+fn describe_run_if_untitled_callback_parameter_binding_a_runner_name_is_not_a_registration() {
+    let source = "describe.runIf(c)((test) => { test('x', () => { expect(f(1)).toBe(2); }); });\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert!(tests.is_empty(), "{tests:?}");
+}
+
+#[test]
+fn describe_run_if_untitled_callback_strict_directive_keeps_block_functions_block_local() {
+    let source = "describe.runIf(c)(() => {\n  'use strict';\n  { function describe() {} }\n  describe('real', () => {\n    it('x', () => { expect(f(1)).toBe(2); });\n  });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "x");
+}
+
+/// The untitled callback-only conditional suite
+/// (`describe.runIf(cond)(() => { ... })`) is indexed under its factory
+/// guard, so it must not fire the `typescript_test_extraction_partial`
+/// disclosure the unindexed shape did (#10982).
+#[test]
+fn analyze_diff_does_not_disclose_an_untitled_conditional_suite() -> Result<(), String> {
+    let root = ts_unique_tempdir("untitledrunif")?;
+    ts_write_file(
+        &root.join("src/math.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/math.test.ts"),
+        "import { add } from '../src/math';\ndescribe.runIf(!process.env.CI)(() => {\n  it('adds three numbers', () => {\n    expect(add(1, 2)).toBe(3);\n  });\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/math.ts", &[(2, "  return a + b;")])],
+    )?;
+    assert!(
+        !result.limitations.iter().any(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+        }),
+        "the untitled conditional suite must be indexed, got {:?}",
+        result.limitations
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
 fn describe_skip_if_accepts_an_options_argument_before_the_callback() {
     let source = "describe.skipIf(c)('a', { timeout: 5 }, () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\n";
     let tests = extract_tests(Path::new("tests/a.test.ts"), source);
@@ -19658,4 +20475,163 @@ fn finding_resting_only_on_a_guarded_test_reads_static_unknown() -> Result<(), S
     );
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
+}
+
+fn cart_add_owner() -> TypeScriptOwner {
+    TypeScriptOwner {
+        name: "add".to_string(),
+        owner_kind: OwnerKind::Method,
+        class_name: Some("Cart".to_string()),
+        params: vec!["amount".to_string()],
+        arity: Some(1),
+        source_text: Some(
+            concat!(
+                "add(amount: number): number {\n",
+                "    this.total += amount * 2;\n",
+                "    return this.total;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..boundary_witness_owner()
+    }
+}
+
+/// #10850: a changed compound assignment to returned state is judged on its
+/// operand, and only when both statements use the same target and operator.
+#[test]
+fn returned_state_operands_pair_an_edited_operand_of_the_same_operator() {
+    let owner = cart_add_owner();
+    assert_eq!(
+        classifier::returned_state_operands(
+            "    this.total += amount * 2;",
+            Some("    this.total += amount;"),
+            &owner,
+        ),
+        Some(("amount", "amount * 2"))
+    );
+    // A different operator changes how the prior state combines with the operand.
+    assert_eq!(
+        classifier::returned_state_operands(
+            "    this.total -= amount * 2;",
+            Some("    this.total += amount;"),
+            &owner,
+        ),
+        None
+    );
+    // A parameter the owner rebinds is not the call's argument.
+    let rebinding = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "add(amount: number): number {\n",
+                "    amount = amount + 1;\n",
+                "    this.total += amount * 2;\n",
+                "    return this.total;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..cart_add_owner()
+    };
+    assert_eq!(
+        classifier::returned_state_operands(
+            "    this.total += amount * 2;",
+            Some("    this.total += amount;"),
+            &rebinding,
+        ),
+        None
+    );
+    // An added statement has no old operand to compare.
+    assert_eq!(
+        classifier::returned_state_operands("    this.total += amount * 2;", None, &owner),
+        None
+    );
+}
+
+/// #10850: a state update is read through whatever plain receiver the test
+/// calls the method on; a chained receiver is left unnamed.
+#[test]
+fn instance_call_receivers_name_plain_receivers_only() {
+    assert_eq!(
+        classifier::instance_call_receivers("cart.add(0)", "add"),
+        vec!["cart".to_string()]
+    );
+    assert_eq!(
+        classifier::instance_call_receivers("a.add(1) + b.add(2)", "add"),
+        vec!["a".to_string(), "b".to_string()]
+    );
+    assert!(classifier::instance_call_receivers("a.b.add(1)", "add").is_empty());
+    assert!(classifier::instance_call_receivers("add(1)", "add").is_empty());
+}
+
+/// #10931: a diff with no file this adapter would analyze returns the empty
+/// complete result without walking or reading the workspace. A source over the
+/// read cap would otherwise surface as a workspace limitation on a docs edit.
+#[test]
+fn diff_without_analyzable_files_skips_the_workspace() -> Result<(), String> {
+    let root = ts_unique_tempdir("skip-workspace-docs-only")?;
+    ts_write_file(
+        &root.join("src/huge.ts"),
+        &format!("export const value = {};\n", "x".repeat(200)),
+    )?;
+    let options = ts_analysis_options(root.clone());
+    let analyze = |files: &[ChangedFile]| {
+        TypeScriptAdapter::analyze_diff_with_read_limits(&options, files, 64, 1024)
+    };
+    let docs_only = analyze(&[changed("docs/guide.mdx"), changed("package.json")]);
+    let excluded = analyze(&[
+        changed("node_modules/pkg/index.ts"),
+        changed("src/api.generated.ts"),
+    ]);
+    let ts_edit = analyze(&[changed("src/huge.ts")]);
+    let _ = std::fs::remove_dir_all(&root);
+    for (label, result) in [("docs-only", docs_only?), ("excluded", excluded?)] {
+        if !result.limitations.is_empty()
+            || !result.findings.is_empty()
+            || result.changed_files != 0
+        {
+            return Err(format!(
+                "{label} diff must return the empty complete result, got {:?}",
+                result.limitations
+            ));
+        }
+    }
+    let ts_edit = ts_edit?;
+    if !ts_edit
+        .limitations
+        .iter()
+        .any(|limitation| limitation.path.as_deref() == Some("src/huge.ts"))
+    {
+        return Err(format!(
+            "a changed TypeScript file must still read the workspace and name the capped file, got {:?}",
+            ts_edit.limitations
+        ));
+    }
+    Ok(())
+}
+
+/// #10931: each reason a changed file reaches Phase 2 keeps the workspace walk:
+/// a JavaScript file, a declared hand-written file under an excluded directory
+/// and a Rust file a Bun bridge profile reads against the TypeScript tests.
+#[test]
+fn diff_needs_workspace_for_every_file_the_loop_would_analyze() {
+    let needs = |paths: &[&str], handwritten: &[&str]| {
+        let files: Vec<ChangedFile> = paths.iter().map(|path| changed(path)).collect();
+        let handwritten: Vec<String> = handwritten.iter().map(|path| path.to_string()).collect();
+        diff_needs_typescript_workspace(&files, &handwritten)
+    };
+    assert!(needs(&["README.md", "src/lib.js"], &[]));
+    assert!(needs(&["README.md", "src/lib.tsx"], &[]));
+    assert!(!needs(&["README.md", "Cargo.toml", "src/lib.rs"], &[]));
+    assert!(!needs(&["dist/bundle.ts"], &[]));
+    assert!(needs(&["dist/bundle.ts"], &["dist/bundle.ts"]));
+    assert!(!needs(&["src/api.generated.ts"], &[]));
+    let bridge = BUN_RUST_CROSS_LANGUAGE_BRIDGE_PROFILES
+        .iter()
+        .map(|profile| profile.rust_file)
+        .next();
+    assert!(
+        bridge.is_some_and(|file| needs(&[file], &[])),
+        "a Bun bridge Rust file must keep the workspace walk"
+    );
 }

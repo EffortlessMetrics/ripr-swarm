@@ -124,6 +124,17 @@ Test discovery:
   `node:test` `suite(...)`, as test and describe roots with the same active
   modifiers (`.only`, `.concurrent`, `.sequential`); `.skip`, `xit`, and
   `xcontext` register nothing (#4548)
+- a renamed registration alias the imports layer admits (`const { test: t } =
+  require('node:test')`, `import { test as t }`): the alias registers like
+  the direct spelling, bare or through an active modifier, with the same
+  runner-source, shadowing, skip/todo-options and inactive-modifier fences
+  (#10987). The namespace object's own name, a member read off it
+  (`runner.test(...)`), and an aliased `.each` factory register nothing
+  through this path
+- AVA's macro form, a named macro between the title and the callback
+  (`test(name, macro, async (t) => {})`, `test(name, ns.macro, fn)`): the
+  function third argument is the callback (#10964) for a root bound to AVA's `test`, and only an inline function; a macro without a
+  function third argument stays argument 1
 - an options object between the title and the callback
   (`it(name, { timeout }, fn)`, `describe(name, { concurrency }, fn)`); a
   trailing timeout (`test(name, fn, 5000)`) keeps argument 1 as the callback;
@@ -197,19 +208,44 @@ Test discovery:
   `./x.js` to `x.ts`. Anything the scan cannot follow keeps the disclosure: an
   unresolved relative import, a computed `import()` / `require()`,
   `import.meta.glob` / `require.context` / `createRequire`, a bare specifier a
-  tsconfig path, workspace package or the root package name could resolve, a
-  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, a relative
-  `extends`, a package-level `paths`, any bundler, transpiler or test-runner
-  config that declares an alias or module directory, a Rust change related
-  through the Bun bridge, and a closure over 400 files. The conditional
+  tsconfig path, workspace package or the root package name could resolve
+  (a self-import follows the adapter's resolver, then `package.json` `exports`
+  targets that are indexed sources; an unscanned build output relates nothing,
+  and a missing entry, pattern or absent `exports` keeps the gap), a
+  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, an `extends`
+  chain that is an npm package base, unreadable, or declares `paths`,
+  `baseUrl` or `rootDirs` (a workspace-relative chain without them does not
+  remap; JSONC keys are decoded), a project `references` entry the scan does
+  not visit, a `paths` in the root config that did not load, any bundler,
+  transpiler or test-runner config that declares an `alias` key (a
+  hyphenated lint-rule name such as `no-this-alias` does not) or module
+  directory, a Rust change related through the Bun
+  bridge, and a closure over 400 files. A nested package tsconfig that
+  declares `paths` or an unvisited `extends` remaps only files beneath its own
+  directory: a closure that reaches one keeps the gap, other gap files stay
+  scoped. The conditional
   assertion credit and owner-extraction disclosures keep their own scopes.
 - a symlink or junction the walk does not follow is counted for
   `typescript_workspace_links_skipped` / `typescript_repo_links_skipped`
   (#10614) unless it is a link to an existing regular file whose own name the
   adapter would not index (a docs `index.md -> README.md`): the walk indexes by
   the entry's own path, so such a link hides no test or source. A directory
-  link, a source-named link, a dangling link and a link whose target cannot be
-  read stay counted.
+  link is not counted either when it aliases a directory the walk already
+  visits (#10829): its canonical target is a listable directory inside the
+  canonical root with no excluded component (`.tools/skills ->
+  ../.agent/skills`), so its files are indexed at their real path, unless an
+  indexed file reaches it (#10829, #10899): a string or template literal (decoded, so
+  `'..\u002falias/sum'` counts) that is a relative specifier (`./x`, `../x`)
+  resolving lexically from the importing file's directory to the link or a path
+  beneath it (`../alias/sum` with `alias -> src`, `'../my lib/sum'`) names a path
+  the walk never indexes, so the alias is counted. The specifier is resolved
+  rather than matched by characters, so the link's real target spelled by prose,
+  a comment or a bare string is not an import through it. An absolute-looking
+  literal counts when it spells `/<link name>` as a component; an unreadable or
+  oversized indexed file counts; so does a file that does not parse cleanly and
+  has `/<link name>` in its text or a `\u`, `\x` or octal escape. A directory link that leaves the root, points into an excluded directory or at a
+  directory the walk cannot list, a source-named link, a dangling link and a
+  link whose target cannot be read stay counted.
 - a file named `*.d.ts`, `*.d.mts` or `*.d.cts` is parsed as a TypeScript
   declaration file (#10812): its top-level declarations are ambient, so
   `export const x: T;` is not a parse error there. The same text in an

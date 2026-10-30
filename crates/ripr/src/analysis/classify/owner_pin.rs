@@ -76,12 +76,12 @@ use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, ItemNesting, MacroBindingCandidates,
-    MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, TRUSTED_MACRO_NAMES,
-    attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
-    err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
-    owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
-    source_binds_value_name, source_declares_value_name, source_imported_claims_macros,
-    trusted_macro_binding_site_sets, trusted_macro_binding_sites,
+    MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, RootShadow,
+    TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, drop_in_assertion_leaf,
+    empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
+    local_empty_macro_names, macro_binding_scan, owner_pin_assertions, parse_clean_source_file,
+    pattern_pins, returns_leave_the_function, source_binds_value_name, source_declares_value_name,
+    source_imported_claims_macros, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -374,6 +374,8 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// run. A doctest is its own crate, so the file holding the comment
     /// declares no function its assertions could be read under.
     doctest_pins: SyncMemo<BTreeMap<(PathBuf, usize), OwnerPinAssertions>>,
+    /// Only generation-owned provider receipts can populate this source view.
+    proptest_pins: SyncMemo<BTreeMap<(PathBuf, usize), OwnerPinAssertions>>,
     /// Per file: the exact pattern pins of its tests through a verified
     /// local `assert_matches!` (#6616), parsed once per run.
     pattern_pins: SyncMemo<BTreeMap<PathBuf, PatternPins>>,
@@ -1351,6 +1353,11 @@ impl OwnerPinSyntax {
         if let Some(refusal) = self.source_provenance_refusal(test, index) {
             return Err(Box::new(refusal));
         }
+        if index.proptest_source(test).is_some() {
+            // These ordinary assertion spellings are a checked interpretation
+            // of $crate-bound property assertions, not caller macro imports.
+            return Ok(BTreeSet::new());
+        }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
@@ -1554,6 +1561,32 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> Option<AssertionRefusal> {
+        if let Some((source, offset)) = index.proptest_source(test) {
+            if let Some(refusal) = self.source_provenance_refusal(test, index) {
+                return Some(refusal);
+            }
+            let (Some(start), Some(end), Some(line)) = (
+                test.start_line.checked_sub(offset),
+                test.end_line.checked_sub(offset),
+                assertion.line.checked_sub(offset),
+            ) else {
+                return Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::UnidentifiedTest,
+                ));
+            };
+            return self
+                .proptest_pins
+                .borrow_mut()
+                .entry((test.file.clone(), test.start_line))
+                .or_insert_with(|| owner_pin_assertions(source, &assertion_context_macros()))
+                .refusal(
+                    (start, end, &test.name),
+                    &test.body,
+                    (line, &assertion.text),
+                    &BTreeSet::new(),
+                )
+                .map(AssertionRefusal::Syntax);
+        }
         let ambiguous = match self.context_ambiguities(test, assertion.line, index) {
             Ok(ambiguous) => ambiguous,
             Err(refusal) => return Some(*refusal),
@@ -4682,9 +4715,7 @@ impl OwnerReturnPin {
                 }
                 let shadowed_by_std = match &receiver_type {
                     ReceiverType::ByteSlice => BYTE_SLICE_METHODS.contains(&self.name.as_str()),
-                    ReceiverType::Named(_) => {
-                        BY_VALUE_PRELUDE_METHODS.contains(&self.name.as_str())
-                    }
+                    ReceiverType::Named(_) => method_may_dispatch_through_prelude(&self.name),
                 };
                 !shadowed_by_std
                     && trait_scope.as_ref().is_none_or(|scope| {
@@ -5554,6 +5585,16 @@ pub(in crate::analysis) fn function_declaration_is_async(
         .source_syntax
         .get(index, &owner.file)?
         .declaration_is_async(owner)
+}
+
+/// A whole free call, not an unrelated method or associated call with the
+/// same name and a free call nested inside its arguments. Definition identity
+/// remains the caller's authority.
+pub(super) fn is_whole_free_owner_call(operand: &str, name: &str) -> bool {
+    matches!(
+        owner_call_shape(operand, name),
+        Some(CallShape::Bare | CallShape::Path(_))
+    )
 }
 
 /// The operand as a complete call of `name`: `name(..)` or `recv.name(..)`
@@ -9008,12 +9049,85 @@ pub(in crate::analysis) fn file_renames_to(source: &str, name: &str) -> bool {
     if !source.contains(name) {
         return false;
     }
+    if let Some(renamed) = renamed_names_memoized(source)
+        && let Some(plain) = plain_rename_target(name)
+    {
+        return renamed.contains(plain);
+    }
+    file_renames_to_uncached(source, name)
+}
+
+fn file_renames_to_uncached(source: &str, name: &str) -> bool {
     let masked = mask_comments_and_strings(source);
     let spans = rename_item_spans(&masked);
     whole_word_offsets(&masked, "as").into_iter().any(|offset| {
         starts_with_word(masked[offset + "as".len()..].trim_start(), name)
             && spans.iter().any(|span| span.contains(&offset))
     })
+}
+
+/// `name` when it is one identifier, optionally raw (`r#name`): the only
+/// spellings whose "starts the word after `as`" test is a token equality.
+fn plain_rename_target(name: &str) -> Option<&str> {
+    let bare = name.strip_prefix("r#").unwrap_or(name);
+    is_plain_identifier(bare).then_some(name)
+}
+
+/// The identifier (with an `r#` prefix kept) that follows `as`, if any.
+fn word_after_as(rest: &str) -> &str {
+    let rest = rest.trim_start();
+    let body = rest.strip_prefix("r#").unwrap_or(rest);
+    let len = body
+        .bytes()
+        .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        .count();
+    &rest[..rest.len() - body.len() + len]
+}
+
+/// Every word that follows an `as` inside a renaming item of `source`,
+/// computed once per distinct source text. A pilot asks `file_renames_to`
+/// for each (seam, test, type) triple; masking and scanning the whole test
+/// file each time dominated ripgrep's evidence stage. Content-keyed and verified against the stored text, so a
+/// changed file can never read a stale answer; bounded so a long-lived
+/// process cannot grow without limit. `None` if the lock is poisoned.
+fn renamed_names_memoized(source: &str) -> Option<Arc<BTreeSet<String>>> {
+    use std::hash::{Hash, Hasher};
+    // The full text is kept beside its answer and compared on a hit, so a
+    // hash collision can only miss, never hand one file another's renames
+    // (which would drop a refusal).
+    type Entry = (Arc<str>, Arc<BTreeSet<String>>);
+    static MEMO: std::sync::Mutex<BTreeMap<u64, Entry>> = std::sync::Mutex::new(BTreeMap::new());
+    const MAX_ENTRIES: usize = 2048;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source.hash(&mut hasher);
+    let key = hasher.finish();
+    if let Ok(memo) = MEMO.lock()
+        && let Some((text, found)) = memo.get(&key)
+        && &**text == source
+    {
+        return Some(Arc::clone(found));
+    }
+    let masked = mask_comments_and_strings(source);
+    let spans = rename_item_spans(&masked);
+    let renamed: BTreeSet<String> = whole_word_offsets(&masked, "as")
+        .into_iter()
+        .filter(|offset| spans.iter().any(|span| span.contains(offset)))
+        .flat_map(|offset| {
+            let word = word_after_as(&masked[offset + "as".len()..]);
+            // `as r#Foo` also starts the word `r`, as the uncached check reads it.
+            let bare_r = word.starts_with("r#").then_some("r");
+            std::iter::once(word).chain(bare_r)
+        })
+        .filter(|word| !word.is_empty())
+        .map(str::to_string)
+        .collect();
+    let renamed = Arc::new(renamed);
+    let mut memo = MEMO.lock().ok()?;
+    if memo.len() >= MAX_ENTRIES {
+        memo.clear();
+    }
+    memo.insert(key, (Arc::from(source), Arc::clone(&renamed)));
+    Some(renamed)
 }
 
 /// The byte spans in `masked` where an `as` may rename: every `use ..;`
@@ -9198,6 +9312,58 @@ fn free_call_reaches_definition(
         }
 }
 
+/// Executable helper admission shares lexical call identity and item refusal,
+/// without imposing production-owner pin Cargo/cfg prerequisites on same-file
+/// test helpers. Every caller supplies an actual parsed call site.
+pub(in crate::analysis) fn same_file_free_helper_call_reaches_owner(
+    caller: &TestSummary,
+    helper: &FunctionSummary,
+    prefix: Option<&str>,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    if caller.file != helper.file
+        || index
+            .files()
+            .get(&helper.file)
+            .is_none_or(|facts| facts.used_lexical_fallback)
+    {
+        return false;
+    }
+    let Some(identity) = super::call_identity::shared_same_file_helper_identity(index, helper)
+    else {
+        return false;
+    };
+    let qualifier = prefix.map(path_prefix_segments).unwrap_or_default();
+    if identity.resolve_same_file_call(caller, index, &qualifier) != CallTarget::Owner {
+        return false;
+    }
+    let masked_body = mask_comments_and_strings(&caller.body);
+    if prefix.is_none()
+        && (test_body_shadows_owner(caller, &helper.name)
+            || binds_outside_let(&masked_body, &helper.name)
+            || bound_by_macro(&masked_body, &helper.name))
+    {
+        return false;
+    }
+    let Some(nesting) = syntax.item_nesting(index, &helper.file, &helper.name, helper.start_line)
+    else {
+        return false;
+    };
+    let binding = FreeOwnerBinding {
+        name: &helper.name,
+        owner_file: &helper.file,
+        owner_start_line: helper.start_line,
+    };
+    binding.resolved_module_delivers_owner(
+        helper.file.clone(),
+        nesting.modules.clone(),
+        &nesting.modules,
+        index,
+        syntax,
+    )
+}
+
 /// Whether the file declares a type alias `type name`.
 fn file_aliases_type(source: &str, name: &str) -> bool {
     if !source.contains(name) {
@@ -9284,18 +9450,26 @@ impl OwnerPinSyntax {
                 &index.source_syntax.get(index, file)?.tree()?,
             )))
         };
+        // Build outside the index-wide lock; re-lock and keep the first entry
+        // stored for this exact source so concurrent callers share one table.
+        if let Ok(memo) = index.call_identity_memos.owner_file_scopes.lock()
+            && let Some((known_source, scopes)) = memo.get(file)
+            && Arc::ptr_eq(known_source, source)
+        {
+            return scopes.clone();
+        }
+        let scopes = compute();
         match index.call_identity_memos.owner_file_scopes.lock() {
             Ok(mut memo) => {
-                if let Some((known_source, scopes)) = memo.get(file)
+                if let Some((known_source, stored)) = memo.get(file)
                     && Arc::ptr_eq(known_source, source)
                 {
-                    return scopes.clone();
+                    return stored.clone();
                 }
-                let scopes = compute();
                 memo.insert(file.to_path_buf(), (Arc::clone(source), scopes.clone()));
                 scopes
             }
-            Err(_) => compute(),
+            Err(_) => scopes,
         }
     }
 }
@@ -13242,7 +13416,7 @@ impl UnitStructFacts {
 /// Items a derive or attribute proc macro emits stay invisible, as for
 /// every other pin rule, as do items an out-of-workspace `macro_rules!`
 /// invocation emits (#7160).
-fn unit_struct_value(
+pub(super) fn unit_struct_value(
     name: &str,
     test_file: &Path,
     index: &RustIndex,
@@ -13855,6 +14029,7 @@ fn parent_chain_shadows_item(
             return true;
         };
         parent_root_shadows_item(
+            index,
             &parent.source,
             &edge.parent,
             base,
@@ -13874,6 +14049,7 @@ fn parent_chain_shadows_item(
 /// owner) is the production declaration's scope, never a shadow; every
 /// other declaring root refuses.
 fn parent_root_shadows_item(
+    index: &RustIndex,
     parent_source: &str,
     parent_file: &Path,
     base: &str,
@@ -13881,43 +14057,75 @@ fn parent_root_shadows_item(
     kind: ShadowKind,
     owner_ancestors: &[PathBuf],
 ) -> bool {
-    let masked = mask_comments_and_strings(parent_source);
-    // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
-    let raw = format!("r#{base}");
-    // Aliases and renames rebind a type name only; a trait is shadowed by a
-    // declaration (#7087), matching the in-file trait check (#7053).
-    let declared = match kind {
-        ShadowKind::Type => {
-            declares_type(&masked, base)
-                || file_aliases_type(parent_source, base)
-                || file_renames_to(parent_source, base)
-        }
-        ShadowKind::Trait => declares_trait(&masked, base),
-    };
-    if !declared && !masked.contains(raw.as_str()) {
+    // A parent that never mentions the name cannot declare, alias or rename
+    // it, so it is answered from the text before a snapshot (and its parse)
+    // is created for a file nothing else needed (#10809).
+    if !parent_source.contains(base) {
         return false;
     }
-    let Some(parse) = parse_clean_source_file(parent_source) else {
-        return true;
-    };
-    let root = parse.tree().syntax().clone();
-    let root_items: Vec<ast::Item> = root.children().filter_map(ast::Item::cast).collect();
-    if !root_items
-        .iter()
-        .any(|item| module_item_names(item, base, kind))
-        && !root_items.iter().any(|item| {
-            if kind == ShadowKind::Trait || !matches!(item, ast::Item::Use(_)) {
-                return false;
+    // The mask, the parse and the root-item scan depend only on the parent
+    // file and the name, and every related test of every probe asks about the
+    // same few parents, so they are answered once per file snapshot (#10809).
+    // The owner exemptions below differ per call and stay out of the memo.
+    let snapshot = index.source_syntax.get(index, parent_file);
+    let candidate = || {
+        let masked_here;
+        let masked: &str = match snapshot.as_deref() {
+            Some(snapshot) => snapshot.masked_source(|| mask_comments_and_strings(parent_source)),
+            None => {
+                masked_here = mask_comments_and_strings(parent_source);
+                &masked_here
             }
-            let text = item.syntax().text().to_string();
-            // `r#Window` denotes `Window`: a raw-identifier alias rebinds
-            // the name too.
-            file_renames_to(&text, base) || file_renames_to(&text, raw.as_str())
-        })
-    {
-        return false;
+        };
+        // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
+        let raw = format!("r#{base}");
+        // Aliases and renames rebind a type name only; a trait is shadowed by a
+        // declaration (#7087), matching the in-file trait check (#7053).
+        let declared = match kind {
+            ShadowKind::Type => {
+                declares_type(masked, base)
+                    || file_aliases_type(parent_source, base)
+                    || file_renames_to(parent_source, base)
+            }
+            ShadowKind::Trait => declares_trait(masked, base),
+        };
+        if !declared && !masked.contains(raw.as_str()) {
+            return RootShadow::NotShadowing;
+        }
+        let Some(root) = parent_root_node(snapshot.as_deref(), parent_source) else {
+            return RootShadow::Unparseable;
+        };
+        let root_items: Vec<ast::Item> = root.children().filter_map(ast::Item::cast).collect();
+        if !root_items
+            .iter()
+            .any(|item| module_item_names(item, base, kind))
+            && !root_items.iter().any(|item| {
+                if kind == ShadowKind::Trait || !matches!(item, ast::Item::Use(_)) {
+                    return false;
+                }
+                let text = item.syntax().text().to_string();
+                // `r#Window` denotes `Window`: a raw-identifier alias rebinds
+                // the name too.
+                file_renames_to(&text, base) || file_renames_to(&text, raw.as_str())
+            })
+        {
+            return RootShadow::NotShadowing;
+        }
+        RootShadow::Declared
+    };
+    let answer = match snapshot.as_deref() {
+        Some(snapshot) => snapshot.root_shadow(base, kind == ShadowKind::Trait, candidate),
+        None => candidate(),
+    };
+    match answer {
+        RootShadow::NotShadowing => return false,
+        RootShadow::Unparseable => return true,
+        RootShadow::Declared => {}
     }
-    if owner.file == parent_file && owner_at_file_root(&root, parent_source, owner) {
+    if owner.file == parent_file
+        && parent_root_node(snapshot.as_deref(), parent_source)
+            .is_some_and(|root| owner_at_file_root(&root, parent_source, owner))
+    {
         return false;
     }
     // A trait is commonly declared in an ancestor file of the file holding
@@ -13930,6 +14138,19 @@ fn parent_root_shadows_item(
         return false;
     }
     true
+}
+
+/// The root of a parent file's clean parse: the snapshot's shared green tree
+/// when the file is indexed, a fresh parse otherwise. `None` when the file
+/// does not parse cleanly.
+fn parent_root_node(
+    snapshot: Option<&crate::analysis::syntax::SourceSnapshot>,
+    source: &str,
+) -> Option<SyntaxNode> {
+    match snapshot {
+        Some(snapshot) => snapshot.tree().map(|tree| tree.syntax().clone()),
+        None => parse_clean_source_file(source).map(|parse| parse.tree().syntax().clone()),
+    }
 }
 
 /// The files whose module scope encloses the owner's file: the file itself
@@ -14522,6 +14743,10 @@ const BYTE_SLICE_METHODS: &[&str] = &[
 /// cannot see which std traits a workspace type implements (derives,
 /// blanket impls), so a named receiver never credits a pin through these
 /// names.
+pub(super) fn method_may_dispatch_through_prelude(name: &str) -> bool {
+    BY_VALUE_PRELUDE_METHODS.contains(&name)
+}
+
 const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
     "all",
     "any",
