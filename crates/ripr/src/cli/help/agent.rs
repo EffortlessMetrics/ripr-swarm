@@ -11,7 +11,7 @@ Advanced and compatibility workflows:
   brief      Rank the seams in a working set so an agent starts at the strongest one.
   packet     Expand one visible seam into the existing agent seam packet JSON.
   card       Hand off one visible seam as the compact default repair card.
-  stub       Write a compiling Rust test stub for one gap, ready to fill and run.
+  stub       Write a compiling Rust test stub for one gap, ready to fill and run (Rust files only).
   verify     Compare before/after repo-exposure JSON for agent verification.
   verify-execute
              Run the one validated, bounded, read-only verify command that a packet names.
@@ -30,7 +30,8 @@ The same transaction with explicit phases:
   ripr agent repair --attempt ID --phase after
 
 From a Rust `ripr check` finding, `ripr agent stub --at FILE:LINE` (the location
-the finding prints) gives a ready-to-run test for that gap in one step.
+the finding prints) gives a ready-to-run test for that gap in one step. Stub
+generation supports Rust files only; a Python or TypeScript path exits `3`.
 
 `--seam-id` takes a seam ID from `ripr pilot --root .` or `ripr agent status`,
 and `--phase before` also accepts a `ripr check` finding ID (`probe:...` or
@@ -148,7 +149,7 @@ failures (an unreadable config or a failed probe) stay exit `2` with human
 prose only, like the sibling verify and repair commands.
 "#;
 
-pub(super) const AGENT_STUB_HELP: &str = r#"Write a compiling Rust test stub for one gap, ready to fill and run.
+pub(super) const AGENT_STUB_HELP: &str = r#"Write a compiling Rust test stub for one gap, ready to fill and run (Rust files only).
 
 Usage: ripr agent stub [--root PATH] (--seam-id ID | --at FILE:LINE [--kind FAMILY]) [--write] [--json]
 

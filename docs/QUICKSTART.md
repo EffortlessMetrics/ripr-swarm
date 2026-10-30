@@ -297,6 +297,11 @@ project marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
 auto-enables the preview. From a Python repository on a branch with a change
 to inspect:
 
+0. Add `/target/ripr/` (or `/target/`) to `.gitignore`: ripr writes its
+   artifacts under `target/ripr`, and `check`, `pilot` and `agent repair` all
+   create it. Do this before the first run so `git add -A` never commits
+   ripr's own reports.
+
 ```bash
 ripr check
 ```
@@ -312,10 +317,8 @@ ripr pilot --root .
 
 When the Rust ranking is empty, pilot's top recommendation is the Python
 repair card (`language: python (preview)`) and its `Next, in order:` route;
-run the steps it prints. Both commands write under `target/ripr/`; in a
-project without a Cargo `target/` convention, add `/target/ripr/` to
-`.gitignore` (doctor and pilot say so on the first run when no ignore rule
-covers it).
+run the steps it prints. Both commands write under `target/ripr/` (see step 0; doctor and pilot
+also say so on the first run when no ignore rule covers it).
 
 A repository with no marker leaves the preview disabled; `check` then skips
 Python files and prints:
@@ -331,6 +334,60 @@ enabled = ["python"]
 
 Enable it exactly as printed when the repository has no marker. Python
 repair routes and their evidence limits are described in
+[Known Limits](#known-limits) and
+[Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
+
+For Python and TypeScript the repair route is: `ripr check` -> `ripr agent
+repair --gap-id <gap> --base <base> --phase before` (check prints the exact
+command) -> edit the one named test file -> commit it -> `ripr continue
+--attempt <id>`. `ripr repair` (seam-based) and `ripr agent stub` are
+Rust-only.
+
+### TypeScript first hour (preview)
+
+TypeScript analysis is `preview`: its evidence is advisory, not Rust-grade. A
+TypeScript project needs no `ripr.toml` — when the repository root has a
+`tsconfig.json` or `jsconfig.json` (or TypeScript source under `src/` or
+`tests/`), the CLI auto-enables the preview. From a TypeScript repository on
+a branch with a change to inspect:
+
+0. Add `/target/ripr/` (or `/target/`) to `.gitignore`: ripr writes its
+   artifacts under `target/ripr`, and `check`, `pilot` and `agent repair` all
+   create it.
+
+```bash
+ripr check
+```
+
+`check` analyzes the changed TypeScript files; its top finding is labeled
+`State: preview language, advisory only` and, when the repair packet is
+complete, names the test file, the missing case and a verify command such as
+`npx --no-install vitest run tests/pricing.test.ts`. It also prints the route
+under `Next: drill into the top finding:`. Start the repair with the
+`ripr agent repair` line it prints:
+
+```bash
+ripr agent repair --gap-id gap:typescript:... --base main --phase before
+```
+
+Edit only the one test file the packet names (production code stays
+unchanged), **commit** the test, then run the `ripr continue` line the
+command printed:
+
+```bash
+ripr continue --attempt repair-attempt-...
+```
+
+`continue` runs the after phase: when the gap reads `exposed` it writes the
+receipt under `target/ripr/reports/`. It compares static evidence only and
+does not run your tests, so run the verify command from `check` yourself and
+keep the test only if it passes.
+
+`ripr repair` (seam-based) and `ripr agent stub` are Rust-only: on a
+TypeScript path `ripr repair` points back to `ripr check`, and `ripr agent
+stub --at src/file.ts:N` exits `3` with `stub generation supports Rust files
+only`. A repository with a `ripr.toml` that sets `enabled = ["rust"]` keeps
+TypeScript off. Evidence limits are described in
 [Known Limits](#known-limits) and
 [Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
 
@@ -522,6 +579,7 @@ route is required, and ordinary real-repository route yield and success remain
 unestablished. Python analysis is `preview`, with selected pytest/unittest
 repair routes at `usable alpha`. Only complete weak-evidence routes get repair
 cards; zero cards is normal for unsupported or non-repairable findings.
+`ripr repair` and `ripr agent stub` support Rust files only.
 
 TypeScript is enabled automatically for TypeScript-shaped repositories without a
 `ripr.toml`; JavaScript is an opt-in preview. Diff analysis recognizes:
