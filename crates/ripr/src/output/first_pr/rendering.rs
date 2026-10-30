@@ -176,7 +176,10 @@ pub(super) fn start_here_cli_summary(
                         .unwrap_or_else(|| "Required artifact".to_string());
                     let path =
                         string_path(artifact, &["path"]).unwrap_or_else(|| "unknown".to_string());
-                    out.push_str(&format!("Also missing: {label} at `{path}`\n"));
+                    out.push_str(&format!(
+                        "Also missing: {label} at `{path}`{}\n",
+                        needed_when_suffix(artifact)
+                    ));
                     if let Some(command) = string_path(artifact, &["regeneration_command"]) {
                         push_recovery_command(&mut out, "Then run", &command);
                     }
@@ -699,6 +702,12 @@ fn top_gap_language_label(selected: &Value) -> &'static str {
     }
 }
 
+fn needed_when_suffix(artifact: &Value) -> String {
+    string_path(artifact, &["needed_when"])
+        .map(|condition| format!(" (needed when {condition})"))
+        .unwrap_or_default()
+}
+
 fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
     out.push_str("## Start Here\n\n");
     out.push_str("- State: `missing_artifact`\n");
@@ -727,7 +736,10 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
                 .and_then(Value::as_str)
                 .unwrap_or("required artifact");
             let path = artifact.get("path").and_then(Value::as_str).unwrap_or("");
-            out.push_str(&format!("- Also missing: {label} at `{path}`\n"));
+            out.push_str(&format!(
+                "- Also missing: {label} at `{path}`{}\n",
+                needed_when_suffix(artifact)
+            ));
             if let Some(command) = artifact.get("regeneration_command").and_then(Value::as_str) {
                 push_recovery_command(out, "- Then run", command);
             }

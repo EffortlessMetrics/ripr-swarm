@@ -576,22 +576,43 @@ fn render_start_here_packet_with_selection(
     }
 
     let mut selected = selection.to_json();
-    // The repo-exposure report and gap ledger are both prerequisites for the
-    // first Rust start-here selection. Keep the primary recovery route, but
-    // disclose the second missing input now instead of making the operator
-    // discover it on the next invocation. Other artifact rows are optional
+    // The repo-exposure report, gap ledger and PR repair cards form one Rust
+    // recovery chain. Keep the primary recovery route, but disclose every
+    // later missing input in dependency order now (#3905) instead of making
+    // the operator discover each on the next invocation. This reads artifact
+    // presence only; it runs no analysis. Other artifact rows are optional
     // until a particular selection needs them.
-    if selected["artifact"]["id"] == "repo_exposure"
-        && let Some(ledger) = artifacts
+    let chain: &[&str] = match selected["artifact"]["id"].as_str() {
+        Some("repo_exposure") => &["gap_ledger", "review_comments"],
+        Some("gap_ledger") => &["review_comments"],
+        _ => &[],
+    };
+    if !chain.is_empty() && !uses_check_output_gap_ledger(root) {
+        let also_missing = chain
             .iter()
-            .find(|artifact| artifact["id"] == "gap_ledger" && artifact["status"] == "missing")
-    {
-        selected["also_missing"] = json!([{
-            "id": "gap_ledger",
-            "label": "Gap decision ledger",
-            "path": options.gap_ledger,
-            "regeneration_command": ledger["regeneration_command"]
-        }]);
+            .filter_map(|id| {
+                artifacts
+                    .iter()
+                    .find(|artifact| artifact["id"] == *id && artifact["status"] == "missing")
+            })
+            .map(|artifact| {
+                let mut entry = json!({
+                    "id": artifact["id"],
+                    "label": artifact["label"],
+                    "path": artifact["path"],
+                    "regeneration_command": artifact["regeneration_command"]
+                });
+                // The cards are only consulted when the ledger names no
+                // repair start, so say so instead of implying a fixed step.
+                if artifact["id"] == "review_comments" {
+                    entry["needed_when"] = json!("the gap ledger names no repair start");
+                }
+                entry
+            })
+            .collect::<Vec<_>>();
+        if !also_missing.is_empty() {
+            selected["also_missing"] = Value::Array(also_missing);
+        }
     }
 
     let mut packet = json!({
@@ -3416,6 +3437,36 @@ mod tests {
             "Also missing: Gap decision ledger at `target/ripr/reports/gap-decision-ledger.json`"
         ));
         assert!(summary.contains("Then run: `ripr reports gap-ledger"));
+        // #3905: the third step of the chain is disclosed in the same run,
+        // after the ledger, with its conditional need and literal command.
+        assert_eq!(
+            packet["selected"]["also_missing"][1]["id"],
+            "review_comments"
+        );
+        assert_eq!(
+            packet["selected"]["also_missing"][1]["path"],
+            DEFAULT_REVIEW_COMMENTS
+        );
+        assert!(
+            packet["selected"]["also_missing"][1]["regeneration_command"]
+                .as_str()
+                .is_some_and(|command| command.contains("ripr review-comments"))
+        );
+        assert_eq!(
+            packet["selected"]["also_missing"].as_array().map(Vec::len),
+            Some(2)
+        );
+        assert!(summary.contains(
+            "Also missing: PR repair cards at `target/ripr/review/comments.json` (needed when the gap ledger names no repair start)"
+        ));
+        assert!(summary.contains("Then run: `ripr review-comments"));
+        let ledger_at = summary
+            .find("Also missing: Gap decision ledger")
+            .ok_or_else(|| summary.clone())?;
+        let cards_at = summary
+            .find("Also missing: PR repair cards")
+            .ok_or_else(|| summary.clone())?;
+        assert!(ledger_at < cards_at, "ledger precedes cards: {summary}");
         // Resolve both positions: the recovery command carries a `(Bash)`
         // label once a PowerShell variant exists, so an unlabeled `find`
         // returns `None` and `None < Some(_)` would pass vacuously.
@@ -3735,7 +3786,14 @@ mod tests {
         assert_eq!(packet["selected"]["state"], "missing_artifact");
         assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
         assert_eq!(packet["selected"]["artifact"]["id"], "gap_ledger");
-        assert!(packet["selected"].get("also_missing").is_none());
+        assert_eq!(
+            packet["selected"]["also_missing"].as_array().map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            packet["selected"]["also_missing"][0]["id"],
+            "review_comments"
+        );
         assert!(
             packet["selected"]["regeneration_command"]
                 .as_str()
@@ -5099,6 +5157,28 @@ mod tests {
             return Err("fixture ledger must not yield a top gap".to_string());
         }
         write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger)
+    }
+
+    /// #3905 negative: the chain is only disclosed ahead of the missing
+    /// artifact. With the ledger present and only the cards missing, the
+    /// single recovery step is unchanged and nothing is listed as also missing.
+    #[test]
+    fn single_missing_review_cards_lists_no_also_missing() -> Result<(), String> {
+        let repo = temp_repo("first-pr-single-missing-cards")?;
+        write_no_top_gap_ledger(&repo)?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "missing_artifact");
+        assert_eq!(packet["selected"]["artifact"]["id"], "review_comments");
+        assert!(packet["selected"].get("also_missing").is_none());
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(!summary.contains("Also missing"), "{summary}");
+        cleanup(&repo)
     }
 
     fn position(haystack: &str, needle: &str) -> Result<usize, String> {
