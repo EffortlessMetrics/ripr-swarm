@@ -1,0 +1,12 @@
+diff --git a/src/core.ts b/src/core.ts
+--- a/src/core.ts
++++ b/src/core.ts
+@@ -67,7 +67,7 @@
+ }
+ 
+ export function wrappedSwallow(a: number, b: number): number {
+-  return a * b;
++  return b * a;
+ }
+ 
+ export function wrappedThrough(a: number, b: number): number {

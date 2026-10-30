@@ -336,14 +336,8 @@ fn branch_classes(owner_source: &str, line_text: &str) -> Option<(String, String
         return None;
     }
     let target = blank(line_text);
-    // The changed line must open the if-body and leave it open: a one-line
-    // `if (c) { return a; }` would hand the scan the enclosing block.
-    let opens = target.matches('{').count();
-    let closes = target.matches('}').count();
-    if !target.trim_end().ends_with('{') || opens != closes + 1 {
-        return None;
-    }
-    // Only an `if` hands control to the next statement when it fails; a
+    // A one-line `if (c) { return a; }` is refused by `branch_return_expressions`
+    // itself (#7433). Only an `if` hands control to the next statement when it fails; a
     // changed `case`, `for` or `while` line has other successors.
     let head = target.trim_start();
     if !["if (", "if(", "else if (", "else if("]

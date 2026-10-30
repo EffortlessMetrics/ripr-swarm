@@ -403,6 +403,12 @@ pub fn fix_kind_name(fix_kind: &FixKind) -> &'static str {
 pub fn check_workflows_impl() -> Result<(), String> {
     let budgets = read_workflow_budgets("policy/workflow_allowlist.txt")?;
     let runtime_allowlist = read_count_allowlist("policy/workflow_action_runtime_allowlist.txt")?;
+    let unpinned_allowlist = read_count_allowlist(UNPINNED_ACTION_ALLOWLIST)?;
+    if !unpinned_allowlist.is_empty() {
+        return Err(format!(
+            "{UNPINNED_ACTION_ALLOWLIST} must remain empty after burn-down (#9529); pin third-party actions instead of restoring exceptions"
+        ));
+    }
     let mut violations = Vec::new();
 
     // Share only this invocation's YAML inputs; unbudgeted files still reach
@@ -432,6 +438,15 @@ pub fn check_workflows_impl() -> Result<(), String> {
         ));
         violations.extend(workflow_bare_self_hosted_violations(&normalized, &text));
         violations.extend(workflow_plain_scalar_comment_violations(&normalized, &text));
+        violations.extend(workflow_unpinned_action_violations(
+            &normalized,
+            &text,
+            &unpinned_allowlist,
+        ));
+        violations.extend(workflow_level_write_permission_violations(
+            &normalized,
+            &text,
+        ));
         violations.extend(scratch_gc_concurrency_violations(&normalized, &text));
         for block in extract_workflow_run_blocks(&text) {
             if block.non_empty_lines > budget.max_non_empty_lines {
@@ -458,6 +473,11 @@ pub fn check_workflows_impl() -> Result<(), String> {
             }
         }
     }
+    let workflow_paths: BTreeSet<String> = workflows.iter().map(|(path, _)| path.clone()).collect();
+    violations.extend(unpinned_allowlist_missing_file_violations(
+        &unpinned_allowlist,
+        &workflow_paths,
+    ));
     violations.extend(composite_action_run_block_violations(&budgets)?);
     violations.extend(repository_owned_review_thread_mutation_violations()?);
     validate_assistant_loop_health_fixture_corpus(&mut violations)?;
@@ -602,12 +622,57 @@ pub fn scratch_gc_concurrency_violations(path: &str, text: &str) -> Vec<String> 
 /// re-enter unnoticed. Repository-owned delegated automation is scanned too,
 /// so a local composite action or xtask helper cannot hide the mutation.
 pub fn workflow_review_thread_mutation_violations(path: &str, text: &str) -> Vec<String> {
-    if text.lines().any(review_thread_mutation_line) {
+    if text_has_review_thread_mutation(text) {
         return vec![format!(
             "{path}: workflow contains a review-thread resolution mutation; review-thread resolution requires explicit adjudication outside automated workflow mutation"
         )];
     }
     Vec::new()
+}
+
+/// Scans each line and every window of up to four consecutive lines, so a
+/// token split across lines (a folded YAML query, a multi-line concatenation)
+/// is still found.
+pub fn text_has_review_thread_mutation(text: &str) -> bool {
+    scan_review_thread_windows(text, true)
+}
+
+fn scan_review_thread_windows(text: &str, join_literals: bool) -> bool {
+    let lines: Vec<&str> = text.lines().collect();
+    (0..lines.len()).any(|start| {
+        let end = (start + 4).min(lines.len());
+        (start + 1..=end).any(|stop| {
+            let window = lines[start..stop].join("\n");
+            review_thread_mutation_line(&window)
+                || (join_literals
+                    && is_graphql_call(&window)
+                    && review_thread_mutation_line(&quoted_literals(&window)))
+        })
+    })
+}
+
+/// A split token only matters when the same window issues a GraphQL call, so
+/// unrelated adjacent quoted strings (two `echo` lines) stay allowed.
+fn is_graphql_call(window: &str) -> bool {
+    let lowered = window.to_ascii_lowercase();
+    lowered.contains("graphql") || lowered.contains("mutation")
+}
+
+/// Concatenates only the quoted string literals of `text`, so a token assigned
+/// to two separate variables is joined without the variable names between its
+/// halves.
+fn quoted_literals(text: &str) -> String {
+    let mut out = String::new();
+    let mut quote: Option<char> = None;
+    for character in text.chars() {
+        match quote {
+            Some(open) if character == open => quote = None,
+            Some(_) => out.push(character),
+            None if character == '\'' || character == '"' => quote = Some(character),
+            None => {}
+        }
+    }
+    out
 }
 
 pub fn review_thread_mutation_line(line: &str) -> bool {
@@ -692,6 +757,185 @@ pub fn workflow_plain_scalar_comment_violations(path: &str, text: &str) -> Vec<S
         }
     }
     violations
+}
+
+/// Retired exceptions to the third-party action SHA-pin rule (#9303, #9529).
+pub const UNPINNED_ACTION_ALLOWLIST: &str = "policy/workflow_unpinned_action_allowlist.txt";
+
+/// Third-party `uses:` references in one workflow, as `(line, action@ref)`.
+///
+/// First-party `actions/*`, local `./` actions and comments are not third-party.
+/// A `uses:` is recognised only as a step/job key (optionally after `- `), so
+/// the same text inside a `run:` string or a comment is not mistaken for one.
+fn third_party_action_refs(text: &str) -> Vec<(usize, String)> {
+    let mut refs = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let trimmed = trimmed.strip_prefix("- ").unwrap_or(trimmed).trim_start();
+        let Some(value) = trimmed.strip_prefix("uses:") else {
+            continue;
+        };
+        let value = value.split(" #").next().unwrap_or("").trim();
+        let value = value.trim_matches(|c| c == '"' || c == '\'');
+        if value.is_empty() || value.starts_with("./") || value.starts_with("actions/") {
+            continue;
+        }
+        refs.push((index + 1, value.to_string()));
+    }
+    refs
+}
+
+fn is_full_commit_sha(reference: &str) -> bool {
+    reference.len() == 40
+        && reference
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Fail a third-party action (or reusable workflow) that is not pinned to a
+/// full 40-hex commit SHA.
+///
+/// A tag or branch is mutable: whoever controls it can change the code that
+/// runs beside this job's `GITHUB_TOKEN` and secrets. First-party `actions/*`
+/// follow the existing tag policy (`deprecated_workflow_action_refs`). Existing
+/// exceptions were held in `policy/workflow_unpinned_action_allowlist.txt` with
+/// a per-file count. The production entry point now requires that retired
+/// allowlist to remain empty, including rows whose count is zero (#9529).
+pub fn workflow_unpinned_action_violations(
+    path: &str,
+    text: &str,
+    allowlist: &BTreeMap<(String, String), usize>,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut found: BTreeMap<String, usize> = BTreeMap::new();
+    for (line_number, reference) in third_party_action_refs(text) {
+        let pinned = reference
+            .rsplit_once('@')
+            .is_some_and(|(_, tail)| is_full_commit_sha(tail));
+        if pinned {
+            continue;
+        }
+        *found.entry(reference.clone()).or_default() += 1;
+        if !allowlist.contains_key(&(path.to_string(), reference.clone())) {
+            violations.push(format!(
+                "{path}:{line_number} third-party action `{reference}` is not pinned to a full commit SHA; pin `owner/repo@<40-hex> # <ref>` (resolve the ref to its commit); {UNPINNED_ACTION_ALLOWLIST} must remain empty"
+            ));
+        }
+    }
+    for ((allowed_path, reference), allowed) in allowlist {
+        if allowed_path != path {
+            continue;
+        }
+        let count = found.get(reference).copied().unwrap_or(0);
+        if count > *allowed {
+            violations.push(format!(
+                "{path} uses unpinned `{reference}` {count} time(s), allowed {allowed} in {UNPINNED_ACTION_ALLOWLIST}"
+            ));
+        } else if count < *allowed {
+            violations.push(format!(
+                "{UNPINNED_ACTION_ALLOWLIST} allows `{reference}` {allowed} time(s) in {path} but only {count} remain; lower or remove the row"
+            ));
+        }
+    }
+    violations
+}
+
+/// Drop a YAML trailing comment: ` #` or a tab-then-`#` starts one.
+fn strip_yaml_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b'#' && (index == 0 || matches!(bytes[index - 1], b' ' | b'\t')) {
+            return &line[..index];
+        }
+    }
+    line
+}
+
+fn yaml_scalar(value: &str) -> &str {
+    value.trim().trim_matches(|c| c == '"' || c == '\'')
+}
+
+/// Fail a workflow whose top-level `permissions:` grants `contents: write`
+/// (block or flow style) or `write-all`.
+///
+/// A workflow-wide write token reaches every job, including secret-holding
+/// ones (#9303). Grant write at job level, on the job that needs it.
+pub fn workflow_level_write_permission_violations(path: &str, text: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    // The document's top level is the indent of its first real key, so a
+    // uniformly indented file cannot hide a workflow-level `permissions:`.
+    let base = text
+        .lines()
+        .map(strip_yaml_comment)
+        .find(|line| !line.trim().is_empty())
+        .map_or(0, |line| line.len() - line.trim_start().len());
+    let mut in_block = false;
+    for (index, raw) in text.lines().enumerate() {
+        let line_number = index + 1;
+        let line = strip_yaml_comment(raw).trim_end();
+        if line.trim().is_empty() {
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        if indent == base
+            && let Some(value) = line.trim_start().strip_prefix("permissions:")
+        {
+            in_block = true;
+            let value = yaml_scalar(value);
+            if value == "write-all" {
+                violations.push(format!(
+                    "{path}:{line_number} workflow-level `permissions: write-all`; grant scopes per job"
+                ));
+            }
+            if let Some(flow) = value.strip_prefix('{') {
+                let flow = flow.trim_end_matches('}');
+                let grants_write = flow.split(',').any(|entry| {
+                    entry.split_once(':').is_some_and(|(key, v)| {
+                        yaml_scalar(key) == "contents" && yaml_scalar(v) == "write"
+                    })
+                });
+                if grants_write {
+                    violations.push(format!(
+                        "{path}:{line_number} workflow-level `contents: write` reaches every job; declare it on the job that needs it"
+                    ));
+                }
+            }
+            continue;
+        }
+        if !in_block {
+            continue;
+        }
+        if indent <= base {
+            in_block = false;
+            continue;
+        }
+        if let Some((key, value)) = line.trim().split_once(':')
+            && yaml_scalar(key) == "contents"
+            && yaml_scalar(value) == "write"
+        {
+            violations.push(format!(
+                "{path}:{line_number} workflow-level `contents: write` reaches every job; declare it on the job that needs it"
+            ));
+        }
+    }
+    violations
+}
+
+/// Allowlist rows naming a workflow file that no longer exists would silently
+/// keep their exception; the per-file ratchet never sees them.
+pub fn unpinned_allowlist_missing_file_violations(
+    allowlist: &BTreeMap<(String, String), usize>,
+    existing_paths: &BTreeSet<String>,
+) -> Vec<String> {
+    allowlist
+        .keys()
+        .filter(|(path, _)| !existing_paths.contains(path))
+        .map(|(path, reference)| {
+            format!(
+                "{UNPINNED_ACTION_ALLOWLIST} has a row for `{reference}` in {path}, which is not a checked-in workflow; remove the row"
+            )
+        })
+        .collect()
 }
 
 pub fn workflow_bare_self_hosted_violations(path: &str, text: &str) -> Vec<String> {
@@ -813,6 +1057,11 @@ pub fn routed_rust_job_block_any(
     let job_header = format!("{job}:");
     let mut in_block = false;
     for line in workflow.lines() {
+        // Comments are not workflow structure: a guard word in a `#` line must
+        // neither satisfy a predicate nor open or close a job block.
+        if line.trim_start().starts_with('#') {
+            continue;
+        }
         let job_level_key = line.starts_with("  ")
             && !line.starts_with("   ")
             && line.trim_end().ends_with(':')
@@ -927,26 +1176,59 @@ pub fn routed_rust_workflow_contract_violations(
 pub enum RoutedRustEventRoute {
     BookkeepingOnly,
     LaunchFullGate,
+    /// A non-request label event: the workflow runs but allocates no work and
+    /// posts only `Merge-ready Nonrequest`, never the required context.
+    NonrequestLabel,
     WorkflowNotTriggered,
 }
 
 pub const ROUTED_RUST_READY_EVENT: &str = "labeled";
 
-pub const ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET: &str = "group: ${{ github.event_name != 'pull_request' && format('{0}-{1}-{2}', github.workflow, github.ref, github.event_name) || (github.event.label.name == 'merge-ready' && format('qualification-{0}-{1}', github.repository, github.event.pull_request.number) || format('metadata-{0}', github.run_id)) }}";
-pub const ROUTED_RUST_READY_CANCEL_SNIPPET: &str = "cancel-in-progress: false";
-pub const ROUTED_RUST_RESULT_NAME: &str = "${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
+/// The merge-queue activity type that requests the same qualification once per
+/// queue entry (#4986). It coexists with the label request while the
+/// repository cuts over to the merge queue.
+pub const ROUTED_RUST_QUEUE_EVENT: &str = "checks_requested";
+
+/// The queue-entry resolver must read the PR out of the merge-group ref.
+pub const ROUTED_RUST_QUEUE_ENTRY_SNIPPET: &str =
+    "GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}";
+
+/// The only label whose event requests the protected qualification (#4986).
+pub const ROUTED_RUST_REQUEST_LABEL: &str = "merge-ready";
+
+/// Result job name for every pull_request label event that is not a request.
+pub const ROUTED_RUST_NONREQUEST_RESULT_NAME: &str = "Merge-ready Nonrequest";
+
+/// The result job name expression: the required context only for main/manual
+/// runs and an explicit merge-ready request, a different name otherwise.
+pub const ROUTED_RUST_RESULT_NAME_EXPRESSION: &str = "name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
+
+/// Job-level request guard that withholds route, docs detection and admission
+/// (and therefore every implementation job) from nonrequest label events.
+pub const ROUTED_RUST_REQUEST_GUARD_SNIPPET: &str =
+    "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'";
+
+pub const ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET: &str = "group: ${{ github.event_name == 'pull_request' && github.event.label.name != 'merge-ready' && format('{0}-{1}-nonrequest-{2}', github.workflow, github.event.pull_request.number, github.run_id) || format('{0}-{1}-{2}', github.workflow, github.event.pull_request.number || github.ref, github.event_name) }}";
+
+pub const ROUTED_RUST_READY_CANCEL_SNIPPET: &str =
+    "cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
 
 pub const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored Label Event";
 
 pub const ROUTED_RUST_DRAFT_GUARD_SNIPPET: &str = "github.event.pull_request.draft";
 
 pub fn routed_rust_pull_request_types(workflow: &str) -> Option<Vec<String>> {
+    routed_rust_event_types(workflow, "pull_request")
+}
+
+pub fn routed_rust_event_types(workflow: &str, event: &str) -> Option<Vec<String>> {
     // Parse the repository's static inline on.pull_request.types declaration.
     // A commented declaration, dispatch input, or job's block-scalar text must
     // not impersonate event admission. Unsupported layouts return None so the
     // policy caller can reject unauditable declarations.
     let mut in_events = false;
     let mut in_pull_request = false;
+    let header = format!("  {event}:");
     for raw in workflow.lines() {
         let line = raw.split(" #").next()?.trim_end();
         if line.trim().is_empty() || line.trim_start().starts_with('#') {
@@ -963,7 +1245,7 @@ pub fn routed_rust_pull_request_types(workflow: &str) -> Option<Vec<String>> {
             break;
         }
         if line.starts_with("  ") && !line.starts_with("   ") {
-            in_pull_request = line == "  pull_request:";
+            in_pull_request = line == header;
             continue;
         }
         if in_pull_request && let Some(types) = line.strip_prefix("    types:") {
@@ -998,62 +1280,121 @@ pub fn routed_rust_event_route(
     action: Option<&str>,
     label: Option<&str>,
 ) -> RoutedRustEventRoute {
-    if event_name != "pull_request" {
-        return RoutedRustEventRoute::WorkflowNotTriggered;
+    if event_name == "merge_group" {
+        let action = action.unwrap_or("");
+        if !routed_rust_event_types(workflow, "merge_group")
+            .is_some_and(|types| types.iter().any(|value| value == action))
+        {
+            return RoutedRustEventRoute::WorkflowNotTriggered;
+        }
     }
-    let action = action.unwrap_or("");
-    if let Some(types) = routed_rust_pull_request_types(workflow)
-        && !types.iter().any(|value| value == action)
-    {
-        return RoutedRustEventRoute::WorkflowNotTriggered;
+    if event_name == "pull_request" {
+        let action = action.unwrap_or("");
+        if let Some(types) = routed_rust_pull_request_types(workflow)
+            && !types.iter().any(|value| value == action)
+        {
+            return RoutedRustEventRoute::WorkflowNotTriggered;
+        }
+        if action == "labeled"
+            && !label.is_some_and(|value| value.eq_ignore_ascii_case(ROUTED_RUST_REQUEST_LABEL))
+        {
+            return RoutedRustEventRoute::NonrequestLabel;
+        }
     }
-    if action == "labeled" && label.is_some_and(|label| label.eq_ignore_ascii_case("merge-ready")) {
-        RoutedRustEventRoute::LaunchFullGate
-    } else {
-        RoutedRustEventRoute::BookkeepingOnly
-    }
+    RoutedRustEventRoute::LaunchFullGate
 }
 
-/// Enforce the native explicit-label admission law declared by
-/// `.github/workflows/routed-rust.yml` (#4986).
+/// Enforce the merge-ready request law declared by
+/// `.github/workflows/routed-rust.yml` (#4986, #8082).
 ///
-/// Ready is a UI state. Labeled requests use an event-bound result name; other
-/// labels must not emit skipped success under the protected name. Concurrency
-/// isolates metadata and native run reconciliation supplies sequential dedup.
-/// The exported compatibility function name predates this admission law.
+/// An explicit `merge-ready` label event is the sole pull-request qualification
+/// request. A skipped required job reports success, so this validator fails
+/// closed on every path that could let another event produce the protected
+/// required context: only `labeled` is subscribed, the result job name is an
+/// expression yielding the required name solely for a merge-ready request (or
+/// main/manual runs), route, docs detection and admission are withheld from
+/// other labels, and the result job always runs so a nonrequest exists only
+/// under a different name.
 pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    match routed_rust_event_types(workflow, "merge_group") {
+        None => violations.push(
+            ".github/workflows/routed-rust.yml must declare an inline merge_group types array so the merge-queue admission contract is auditable (#4986)".to_string(),
+        ),
+        Some(types) if types != [ROUTED_RUST_QUEUE_EVENT] => violations.push(format!(
+            ".github/workflows/routed-rust.yml merge_group types must be exactly `[{ROUTED_RUST_QUEUE_EVENT}]`; found {types:?} (#4986)"
+        )),
+        Some(_) => {}
+    }
+    if !workflow.contains(ROUTED_RUST_QUEUE_ENTRY_SNIPPET) {
+        violations.push(format!(
+            ".github/workflows/routed-rust.yml admission must resolve the queued PR from the merge-group ref (`{ROUTED_RUST_QUEUE_ENTRY_SNIPPET}`) so claim and scope admission (#8192) still bind the merged candidate"
+        ));
+    }
     let has_pull_request_trigger = workflow
         .lines()
         .map(str::trim)
         .any(|line| line == "pull_request:");
     if !has_pull_request_trigger {
-        return Vec::new();
+        return violations;
     }
     let Some(types) = routed_rust_pull_request_types(workflow) else {
-        return vec![
-            ".github/workflows/routed-rust.yml must declare an inline pull_request types array so the explicit-label admission contract is auditable (#4986)".to_string(),
-        ];
+        violations.push(
+            ".github/workflows/routed-rust.yml must declare an inline pull_request types array so the Ready-only admission contract is auditable (#4986)".to_string(),
+        );
+        return violations;
     };
-    let mut violations = Vec::new();
-    let request_only = [ROUTED_RUST_READY_EVENT];
+    for (label, snippet) in [
+        (
+            "forward the queued PR's labels to the gate",
+            "pr-labels: ${{ needs.admission.outputs.labels }}",
+        ),
+        (
+            "apply the fork guard to queued PRs before selecting self-hosted runners",
+            "{ [ \"$EVENT_NAME\" = \"pull_request\" ] || [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\" != \"$REPOSITORY\" ]",
+        ),
+        (
+            "refuse merge groups that carry more than one queued PR",
+            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+        ),
+        (
+            "bind the queue ref sha to the live head or group base",
+            "[ \"$ref_sha\" = \"$head\" ] || [ \"$ref_sha\" = \"$GROUP_BASE_SHA\" ]",
+        ),
+        (
+            "check the live head is not newer than the queued commit",
+            "[ \"$ref_sha\" != \"$head\" ]",
+        ),
+        (
+            "refuse a live head not older than the queued commit",
+            "[[ \"$pushed_at\" < \"$queued_at\" ]] || { echo \"::error::PR #${pr} head",
+        ),
+    ] {
+        if !workflow.contains(snippet) {
+            violations.push(format!(
+                ".github/workflows/routed-rust.yml must {label} (`{snippet}`) (#4986)"
+            ));
+        }
+    }
+    let ready_only = [ROUTED_RUST_READY_EVENT];
     let unexpected: Vec<&str> = types
         .iter()
         .map(String::as_str)
-        .filter(|value| !request_only.contains(value))
+        .filter(|value| !ready_only.contains(value))
         .collect();
-    if !unexpected.is_empty() || types.len() != request_only.len() {
+    if !unexpected.is_empty() || types.len() != ready_only.len() {
         violations.push(format!(
-            ".github/workflows/routed-rust.yml pull_request types must be exactly `[{ROUTED_RUST_READY_EVENT}]`; unexpected activity types: {unexpected:?}. Only the explicit merge-ready label event is a request; ordinary PR updates stay withheld; preserved main/manual profiles remain separate (#4986)"
+            ".github/workflows/routed-rust.yml pull_request types must be exactly `[{ROUTED_RUST_READY_EVENT}]`; unexpected activity types: {unexpected:?}. The `{ROUTED_RUST_REQUEST_LABEL}` label event is the sole pull-request qualification request and every other pull_request activity type must stay withheld (#4986)"
         ));
     }
     if !workflow.contains(ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET) {
         violations.push(
-            ".github/workflows/routed-rust.yml must isolate qualification and per-run metadata concurrency so unrelated labels cannot displace pending qualification (#4986)".to_string(),
+            ".github/workflows/routed-rust.yml must keep the event-qualified concurrency group with a unique per-run nonrequest group so push and manual work cannot replace each other and an ordinary label cannot cancel a merge-ready qualification (#4986)".to_string(),
         );
     }
     if !workflow.contains(ROUTED_RUST_READY_CANCEL_SNIPPET) {
         violations.push(
-            ".github/workflows/routed-rust.yml must keep `cancel-in-progress: false` and reconcile sequential requests using native run evidence (#4986)".to_string(),
+            ".github/workflows/routed-rust.yml must keep `cancel-in-progress: ${{ github.event_name == 'pull_request' }}` so a repeated merge-ready request replaces the prior admission attempt without cancelling push or manual runs (#4986)".to_string(),
         );
     }
     for job in ROUTED_RUST_IMPLEMENTATION_JOBS {
@@ -1074,7 +1415,7 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             in_job_condition && normalized.contains("always()")
         }) {
             violations.push(format!(
-                ".github/workflows/routed-rust.yml implementation job `{job}` must not use `always()` in its job condition; a job-level `always()` survives cancellation, so cancelled requests cannot start additional product work. Use `!cancelled()` (#6729)"
+                ".github/workflows/routed-rust.yml implementation job `{job}` must not use `always()` in its job condition; a job-level `always()` survives cancellation, so a repeated merge-ready request queues behind the obsolete head's full gate. Use `!cancelled()` (#6729)"
             ));
         }
     }
@@ -1085,27 +1426,33 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
     }
     if workflow.contains(ROUTED_RUST_IGNORED_LABEL_RESULT_NAME) {
         violations.push(
-            ".github/workflows/routed-rust.yml must not post the retired `Ripr Rust Small Ignored Label Event` pseudo-result; the required context is either earned by an exact requested integration run; unrelated labels use a non-required name (#4986)".to_string(),
+            ".github/workflows/routed-rust.yml must not post the retired `Ripr Rust Small Ignored Label Event` pseudo-result; the required context is either earned by a merge-ready request run or absent (#4986)".to_string(),
         );
     }
-    if !routed_rust_job_block_any(workflow, "result", |line| line == "    if: always()") {
-        violations.push("routed result must always evaluate actual requests; a job-level skip can manufacture required success".to_owned());
-    }
+    // The result job must run for every event (never skipped, a skipped
+    // required job reports success) and carry the single name expression.
     if !routed_rust_job_block_any(workflow, "result", |line| {
-        line.starts_with("    needs: [admission,") && line.contains("windows-subset")
-    }) {
-        violations.push(
-            "routed result must depend on native admission and selected Windows evidence"
-                .to_owned(),
-        );
-    }
-    let required_name_line = format!("    name: {ROUTED_RUST_RESULT_NAME}");
-    if !routed_rust_job_block_any(workflow, "result", |line| {
-        line == required_name_line.as_str()
+        line.trim() == ROUTED_RUST_RESULT_NAME_EXPRESSION
     }) {
         violations.push(format!(
-            ".github/workflows/routed-rust.yml result job must post event-bound `{ROUTED_RUST_REQUIRED_RESULT_NAME}` only for actual requests, and a distinct non-required name for unrelated labels (#4986)"
+            ".github/workflows/routed-rust.yml result job must be named by exactly `{ROUTED_RUST_RESULT_NAME_EXPRESSION}` so `{ROUTED_RUST_REQUIRED_RESULT_NAME}` is posted only for main/manual runs and a `{ROUTED_RUST_REQUEST_LABEL}` request and every other label event posts `{ROUTED_RUST_NONREQUEST_RESULT_NAME}` (#4986)"
         ));
+    }
+    if !routed_rust_job_block_any(workflow, "result", |line| {
+        line.trim_end() == "    if: always()"
+    }) {
+        violations.push(
+            ".github/workflows/routed-rust.yml result job must keep the job-level `if: always()` so the required context is reported (failed) rather than skipped when a prerequisite is skipped or cancelled (#4986)".to_string(),
+        );
+    }
+    for job in ["route", "detect-docs-only", "admission"] {
+        if !routed_rust_job_block_any(workflow, job, |line| {
+            line.contains(ROUTED_RUST_REQUEST_GUARD_SNIPPET)
+        }) {
+            violations.push(format!(
+                ".github/workflows/routed-rust.yml job `{job}` must carry the request guard `{ROUTED_RUST_REQUEST_GUARD_SNIPPET}` so a nonrequest label event allocates no qualification work (#4986)"
+            ));
+        }
     }
     violations
 }
@@ -1898,3 +2245,7 @@ pub struct PolicyReportSpec<'a> {
 
 #[cfg(test)]
 mod workflow_tests;
+
+#[cfg(test)]
+#[path = "../test_support.rs"]
+mod test_support;

@@ -1,0 +1,44 @@
+{
+  "case_id": "shape-async-port-upper-bound-unexercised",
+  "subject_id": "authored-ts-vitest-shapes",
+  "diff": "cases/shape-async-port-upper-bound-unexercised.diff",
+  "anchor": {
+    "file": "src/parsePort.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "vitest_rejects_tothrow_far_input",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "if (!Number.isInteger(n) || n < 1 || n > 65536) {",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: The rejection test uses 70000, far above both limits; 65536 is never tried."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The rejection test uses 70000, far above both limits; 65536 is never tried. The edited package's test command still passes, so no test notices the change and a gap is the honest verdict.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

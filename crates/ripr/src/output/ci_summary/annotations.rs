@@ -94,6 +94,13 @@ fn string(value: &Value) -> Result<&str, Fail> {
 #[cfg(test)]
 mod tests {
     use super::render_workflow_annotations;
+    use serde_json::{Value, json};
+
+    const TITLE: &str = "title=RIPR targeted test guidance";
+
+    fn rendered(document: &Value) -> Result<String, String> {
+        render_workflow_annotations(document).map_err(|(_, err)| err)
+    }
 
     #[test]
     fn control_character_paths_drop_the_placement_and_name_the_location() -> Result<(), String> {
@@ -119,5 +126,182 @@ mod tests {
             )
         );
         Ok(())
+    }
+
+    #[test]
+    fn a_document_without_placed_comments_prints_nothing() -> Result<(), String> {
+        // Constructs: each document parses as the shape its case names.
+        let no_key = json!({});
+        let not_a_list = json!({ "comments": "none" });
+        let empty = json!({ "comments": [] });
+        let unplaced = json!({ "comments": [
+            { "reason": "no placement" },
+            { "placement": null, "reason": "null placement" },
+            { "placement": { "path": "src/a.rs" }, "reason": "no line" },
+            { "placement": { "line": 3 }, "reason": "no path" },
+            { "placement": { "path": false, "line": 3 }, "reason": "false path" },
+            { "placement": { "path": "src/a.rs", "line": false }, "reason": "false line" }
+        ] });
+        assert!(no_key.get("comments").is_none());
+        assert!(not_a_list["comments"].is_string());
+        assert_eq!(empty["comments"].as_array().map(Vec::len), Some(0));
+        assert_eq!(unplaced["comments"].as_array().map(Vec::len), Some(6));
+        for document in [&no_key, &not_a_list, &empty, &unplaced] {
+            assert_eq!(rendered(document)?, "");
+        }
+        // Discriminating control: the same shape with both fields present places.
+        let placed = json!({ "comments": [
+            { "placement": { "path": "src/a.rs", "line": 3 }, "reason": "placed" }
+        ] });
+        assert_eq!(
+            rendered(&placed)?,
+            format!("::warning file=src/a.rs,line=3,{TITLE}::placed\n")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_missing_or_falsy_reason_falls_back_to_the_default_text() -> Result<(), String> {
+        let placement = json!({ "path": "src/a.rs", "line": 1 });
+        let document = json!({ "comments": [
+            { "placement": placement },
+            { "placement": placement, "reason": null },
+            { "placement": placement, "reason": false },
+            { "placement": placement, "reason": "" }
+        ] });
+        assert_eq!(document["comments"].as_array().map(Vec::len), Some(4));
+        let default =
+            format!("::warning file=src/a.rs,line=1,{TITLE}::RIPR targeted test guidance\n");
+        // An empty string is truthy in jq, so it is kept, not defaulted.
+        let kept_empty = format!("::warning file=src/a.rs,line=1,{TITLE}::\n");
+        assert_eq!(
+            rendered(&document)?,
+            format!("{default}{default}{default}{kept_empty}")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_repair_start_is_named_only_when_the_field_is_present() -> Result<(), String> {
+        let with = |repair: Value| {
+            json!({ "comments": [{
+                "placement": { "path": "src/a.rs", "line": 2 },
+                "reason": "Pin it.",
+                "llm_guidance": { "repair_command": repair }
+            }] })
+        };
+        let present = with(json!("ripr agent repair --seam-id s1"));
+        assert_eq!(
+            present["comments"][0]["llm_guidance"]["repair_command"],
+            "ripr agent repair --seam-id s1"
+        );
+        assert_eq!(
+            rendered(&present)?,
+            format!(
+                "::warning file=src/a.rs,line=2,{TITLE}::Pin it. Start the repair: ripr agent repair --seam-id s1\n"
+            )
+        );
+        // The literal string "null", an empty command and null stay absent.
+        let absent = format!("::warning file=src/a.rs,line=2,{TITLE}::Pin it.\n");
+        for repair in [json!("null"), json!(""), Value::Null, json!(false)] {
+            let document = with(repair);
+            assert!(document["comments"][0]["llm_guidance"].is_object());
+            assert_eq!(rendered(&document)?, absent);
+        }
+        // Control: no guidance object at all is also absent.
+        let bare = json!({ "comments": [{
+            "placement": { "path": "src/a.rs", "line": 2 }, "reason": "Pin it."
+        }] });
+        assert!(bare["comments"][0].get("llm_guidance").is_none());
+        assert_eq!(rendered(&bare)?, absent);
+        Ok(())
+    }
+
+    #[test]
+    fn placement_and_message_text_are_escaped_for_their_slot() -> Result<(), String> {
+        let document = json!({ "comments": [{
+            "placement": { "path": "a:b,c%d.rs", "line": "7" },
+            "reason": "50% done\r\nnext: a,b"
+        }] });
+        assert_eq!(document["comments"][0]["placement"]["line"], "7");
+        // A string line is used raw; property text escapes `:` `,` `%`; data
+        // text escapes only `%` and line breaks.
+        assert_eq!(
+            rendered(&document)?,
+            format!("::warning file=a%3Ab%2Cc%25d.rs,line=7,{TITLE}::50%25 done%0D%0Anext: a,b\n")
+        );
+        // A numeric line prints as compact JSON, and zero is still placed.
+        let numeric = json!({ "comments": [{
+            "placement": { "path": "a.rs", "line": 0 }, "reason": "r"
+        }] });
+        assert_eq!(
+            rendered(&numeric)?,
+            format!("::warning file=a.rs,line=0,{TITLE}::r\n")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_unplaceable_path_without_a_line_names_the_file_alone() -> Result<(), String> {
+        let document = json!({ "comments": [{
+            "placement": { "path": "a\u{7}b.rs", "line": 0 },
+            "reason": "r",
+            "llm_guidance": { "repair_command": "fix it" }
+        }] });
+        assert_eq!(document["comments"][0]["placement"]["line"], 0);
+        assert_eq!(
+            rendered(&document)?,
+            format!(
+                "::warning {TITLE}::Location (file name has control characters, so not placed): a\\u{{07}}b.rs. r Start the repair: fix it\n"
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_value_of_the_wrong_type_stops_the_output_with_the_lines_so_far() {
+        let good = json!({
+            "placement": { "path": "src/a.rs", "line": 1 }, "reason": "first"
+        });
+        let first_line = format!("::warning file=src/a.rs,line=1,{TITLE}::first\n");
+        let message = "comments.json holds a value whose type the annotation format cannot encode";
+        let bad_cases = [
+            // placement is a string, so `.placement.path` is a type error.
+            json!({ "placement": "src/a.rs", "reason": "x" }),
+            // a non-string path or reason cannot go through gsub.
+            json!({ "placement": { "path": 5, "line": 1 }, "reason": "x" }),
+            json!({ "placement": { "path": "a.rs", "line": 1 }, "reason": 5 }),
+            // a non-string repair command cannot be appended to the reason.
+            json!({
+                "placement": { "path": "a.rs", "line": 1 }, "reason": "x",
+                "llm_guidance": { "repair_command": 5 }
+            }),
+            // guidance that is not an object breaks the lookup itself.
+            json!({
+                "placement": { "path": "a.rs", "line": 1 }, "reason": "x",
+                "llm_guidance": "text"
+            }),
+            // a comment that is not an object breaks `.placement`.
+            json!("not an object"),
+        ];
+        for bad in bad_cases {
+            let document = json!({ "comments": [good, bad, good] });
+            assert_eq!(document["comments"].as_array().map(Vec::len), Some(3));
+            // Control: the good comment alone renders.
+            assert_eq!(
+                render_workflow_annotations(&json!({ "comments": [good] })),
+                Ok(first_line.clone())
+            );
+            assert_eq!(
+                render_workflow_annotations(&document),
+                Err((first_line.clone(), message.to_string())),
+                "{bad}"
+            );
+        }
+        // A top-level value that is not an object fails before any line.
+        assert_eq!(
+            render_workflow_annotations(&json!(["x"])),
+            Err((String::new(), message.to_string()))
+        );
     }
 }

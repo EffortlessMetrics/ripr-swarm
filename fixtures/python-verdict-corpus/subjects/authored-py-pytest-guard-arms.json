@@ -1,0 +1,57 @@
+{
+  "subject_id": "authored-py-pytest-guard-arms",
+  "origin": "authored",
+  "version_label": "authored@2026-10-18",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "guards/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "guards/flag_quote.py",
+      "sha256": "ca36509103b5885f3f9e13493c5dd5c6a6f61e2c1632e8c5ce8ceeeffce438d1"
+    },
+    {
+      "path": "guards/quote_force.py",
+      "sha256": "e5a192303404271ce1bfe84f508ff0b4efe2f246de83873a73709287b5f4b109"
+    },
+    {
+      "path": "guards/quote_high.py",
+      "sha256": "ab058e4652e1cb662a7d2e7c6ca0075ce4e10b74f8f0c37b9d2eb735759cb73c"
+    },
+    {
+      "path": "guards/quote_low.py",
+      "sha256": "8d175a7458107eeaf31fb41d953f3001835dbc5a7b7b0676fe82d3d86f848978"
+    },
+    {
+      "path": "guards/quote_rebound.py",
+      "sha256": "ef53f7fc720d73dde40e7d1f51e99332f5ff498c61418a8f07da8aa61b02de48"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "40b21c4613725bc4cf74fff52a2e03e5cde1497e37004f1287064c0ed93e0fb3"
+    },
+    {
+      "path": "tests/test_flag_quote.py",
+      "sha256": "1ba17d456f0088368461c3077ba821e76f2cd4f1c40c55548ed9b98c49915e63"
+    },
+    {
+      "path": "tests/test_quote_force.py",
+      "sha256": "637d04255fc02deb6f8803af5385ba88b5b80025a2bc163d1e97906d64c07f25"
+    },
+    {
+      "path": "tests/test_quote_high.py",
+      "sha256": "8fa038d7c87f697f34e286cffd56e5d33da9779067def6e51f0e922e3eaafafc"
+    },
+    {
+      "path": "tests/test_quote_low.py",
+      "sha256": "79a7818ce99a95a0569e99211d4dd32a4bf64905dcd441865119c76cbbd36753"
+    },
+    {
+      "path": "tests/test_quote_rebound.py",
+      "sha256": "a732147964fd777df1dc478a7626da47075018aa0bc72dbb822af2e99c3a886f"
+    }
+  ]
+}

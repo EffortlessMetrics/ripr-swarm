@@ -1,7 +1,7 @@
 use super::{
-    AGENT_VERIFY_SCHEMA_VERSION, AgentVerifyArtifactBinding, TARGETED_TEST_OUTCOME_SCHEMA_VERSION,
-    TargetedTestOutcomeMovement, TargetedTestOutcomeReport, TargetedTestOutcomeSeam, review,
-    stage_delta_json, targeted_test_outcome_gap_summary_json,
+    AGENT_VERIFY_SCHEMA_VERSION, AgentVerifyArtifactBinding, AgentVerifyBoundGap,
+    TARGETED_TEST_OUTCOME_SCHEMA_VERSION, TargetedTestOutcomeMovement, TargetedTestOutcomeReport,
+    TargetedTestOutcomeSeam, review, stage_delta_json, targeted_test_outcome_gap_summary_json,
 };
 use serde_json::Value;
 
@@ -44,10 +44,23 @@ pub(crate) fn render_targeted_test_outcome_json(
     super::super::json::render_pretty_with_newline(&value, "targeted-test outcome")
 }
 
+#[cfg(test)]
 pub(crate) fn render_agent_verify_json_with_currentness(
     report: &TargetedTestOutcomeReport,
     artifact_currentness: Option<&str>,
     binding: &AgentVerifyArtifactBinding,
+) -> Result<String, String> {
+    render_agent_verify_json_with_bound_gap(report, artifact_currentness, binding, None)
+}
+
+/// The verify document, plus a `bound_gap` object when the run was bound to
+/// one canonical gap (`agent verify --gap-id`). Absent otherwise, so the
+/// unbound document is byte-identical to before.
+pub(crate) fn render_agent_verify_json_with_bound_gap(
+    report: &TargetedTestOutcomeReport,
+    artifact_currentness: Option<&str>,
+    binding: &AgentVerifyArtifactBinding,
+    bound_gap: Option<&AgentVerifyBoundGap>,
 ) -> Result<String, String> {
     let improved = report
         .moved
@@ -66,7 +79,7 @@ pub(crate) fn render_agent_verify_json_with_currentness(
         .map(agent_verify_movement_json)
         .collect::<Vec<_>>();
 
-    let value = serde_json::json!({
+    let mut value = serde_json::json!({
         "schema_version": AGENT_VERIFY_SCHEMA_VERSION,
         "tool": "ripr",
         "status": "advisory",
@@ -91,6 +104,19 @@ pub(crate) fn render_agent_verify_json_with_currentness(
         "new_gaps": report.new.iter().map(|seam| agent_verify_seam_json(seam, "new")).collect::<Vec<_>>(),
         "resolved_gaps": report.removed.iter().map(|seam| agent_verify_seam_json(seam, "resolved")).collect::<Vec<_>>()
     });
+    if let (Some(gap), Some(object)) = (bound_gap, value.as_object_mut()) {
+        object.insert(
+            "bound_gap".to_string(),
+            serde_json::json!({
+                "gap_id": gap.gap_id.as_str(),
+                "before_classification": gap.before_classification.as_str(),
+                "after_classification": gap.after_classification.as_str(),
+                "file": gap.file.as_str(),
+                "line": gap.line,
+                "closed": true
+            }),
+        );
+    }
     super::super::json::render_pretty_with_newline(&value, "agent verify")
 }
 

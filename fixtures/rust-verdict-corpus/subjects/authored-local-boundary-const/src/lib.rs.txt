@@ -1,0 +1,20 @@
+//! A function-local const shadows a file constant of the same name.
+
+pub const KB: u64 = 1_000;
+
+pub fn tier_alias(bytes: u64) -> &'static str {
+    const KB: u64 = 2_000;
+    let unit = KB;
+    if bytes >= unit { "unit" } else { "byte" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_local_alias_is_two_thousand_not_the_file_constant() {
+        assert_eq!(tier_alias(1_000), "byte");
+        assert_eq!(tier_alias(2_500), "unit");
+    }
+}

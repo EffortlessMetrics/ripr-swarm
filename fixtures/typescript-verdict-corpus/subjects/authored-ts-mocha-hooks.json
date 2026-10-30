@@ -1,0 +1,69 @@
+{
+  "subject_id": "authored-ts-mocha-hooks",
+  "origin": "authored",
+  "version_label": "authored@2026-10-22",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": ".mocharc.json",
+      "sha256": "53e49e0c2ea96ebdae40dd09504536971ec5fd0c7719c9629fe8c61ec5b222f9"
+    },
+    {
+      "path": "package.json",
+      "sha256": "7d79b27840fffefb089fb612ce5b88af2d268d9c3bf27cd48a80d4fbc11e85fb"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/basket.ts",
+      "sha256": "3b77988a0eddbc469ed5cf45420b723df564167ed1f0600a2aa45388f6e0f40b"
+    },
+    {
+      "path": "src/clamp.ts",
+      "sha256": "2156bdb870ac7051afb4e0fa26eabe0fbcfd09893243d865f1c864f2201e8206"
+    },
+    {
+      "path": "src/loader.ts",
+      "sha256": "e157c745d8559974fb9027ff65e28ea30120b9bcc6c63dba5929c0653ad55d44"
+    },
+    {
+      "path": "src/rank.ts",
+      "sha256": "cd4342c90a1409620a7ef24fd4d18393cf66565caacd3ea5a7bfc86bdaa77e85"
+    },
+    {
+      "path": "src/registry.ts",
+      "sha256": "49dd6acc5439a64bbb852af3c80e9a740f9977910906fda77e6ae7bda2aa6a56"
+    },
+    {
+      "path": "src/shipping.ts",
+      "sha256": "abd00dd410d487d7ef4c0750328c8fc9fe9d20e5e54e4efe0c9d5bc854bef2a4"
+    },
+    {
+      "path": "test/basket.test.ts",
+      "sha256": "1c0eaa236c8ed986c7c282265464159da0eaedeb9e9ee32465f7127459a26ac3"
+    },
+    {
+      "path": "test/clamp.test.ts",
+      "sha256": "ec3a70b98ea296630dffc74f8b37048adcca30894f330cef1469672f42c7288d"
+    },
+    {
+      "path": "test/loader.test.ts",
+      "sha256": "09a029eb24704807a831f281062be21917d5b6ad6eeb822ec4ab457333ccc59d"
+    },
+    {
+      "path": "test/rank.test.ts",
+      "sha256": "06c442735df7b427a57aa152c342f47fcbdfdb0730c462a6dc1cc183d0774eda"
+    },
+    {
+      "path": "test/registry.test.ts",
+      "sha256": "4c71f236d7f3e04a9fa87bec664f3dbbca6a0f206b11546b9987dc7563b38e2e"
+    },
+    {
+      "path": "test/shipping.test.ts",
+      "sha256": "d3db2bd0f82603d42940cba79ba082602515895fafd2224e95a216ff5bfafc63"
+    }
+  ]
+}

@@ -3,8 +3,10 @@
 //! body moved verbatim; test names and module path (`crate::tests`) are
 //! unchanged.
 
+mod build_feature_reuse;
 mod discarded_matcher_honesty;
 mod fixture_cache;
+mod operand_callee_honesty;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
 #[cfg(windows)]
@@ -84,8 +86,10 @@ use super::{
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
     REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV,
     REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS, REPO_EXPOSURE_SUMMARY_REPORT_TIMEOUT_ENV,
-    ReceiptRecord, RepoBadgeArtifactOptions, RepoExposureCpuCost, RepoExposureLatencyReport,
-    RepoExposureLatencyRun, RepoExposureLatencyTrace, RepoExposureMeasurement, ReportIndexEntry,
+    ReceiptRecord, RepoBadgeArtifactOptions, RepoExposureCacheFamilyStore, RepoExposureCpuCost,
+    RepoExposureFileFactCache, RepoExposureLatencyReport, RepoExposureLatencyRun,
+    RepoExposureLatencyTrace, RepoExposureMeasurement, RepoExposureOutputParity,
+    RepoExposureParityCheck, RepoExposureParityPhase, RepoExposureParityRun, ReportIndexEntry,
     ReportIndexRepoOpsArtifact, RiprSwarmReadinessNextActionSources, RoutedRustEventRoute,
     SUPPORT_TIERS_PATH, SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold,
     StaticLanguageAllowEntry, StaticLanguageMatcher, TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
@@ -154,13 +158,14 @@ use super::{
     lane1_evidence_audit_repo_exposure_args,
     lane1_evidence_audit_report_from_complete_repo_exposure, lane1_evidence_audit_timeout_error,
     lane1_readiness_packet_specs, limited_badge_artifacts_json, limited_badge_artifacts_markdown,
-    line_has_static_language_inline_allow, local_context_line_findings, local_markdown_target,
-    lsp_cockpit_report, lsp_cockpit_report_json, lsp_cockpit_report_markdown,
-    markdown_links_in_text, missing_anchor_violation, mutation_calibration_report_json,
+    line_has_static_language_inline_allow, load_traceability_behaviors,
+    local_context_line_findings, local_markdown_target, lsp_cockpit_report,
+    lsp_cockpit_report_json, lsp_cockpit_report_markdown, markdown_links_in_text,
+    missing_anchor_violation, mutation_calibration_report_json,
     mutation_calibration_report_markdown, next_checkpoints_from_capabilities,
     next_spec_id_from_ids, non_rust_programming_retention_reason, normalize_fixture_human_output,
     normalize_fixture_json_output, normalize_golden_text, normalize_path,
-    parse_actionable_gap_outcomes_args, parse_doc_artifact_ledger_text,
+    parse_actionable_gap_outcomes_args, parse_doc_artifact_ledger, parse_doc_artifact_ledger_text,
     parse_file_policy_allowlist, parse_gh_pr_status_args, parse_gh_pr_status_pull_request,
     parse_inline_array, parse_mutation_calibration_args, parse_mutation_outcomes_json,
     parse_pr_triage_pull_requests, parse_reason, parse_repo_badge_artifact_options,
@@ -168,22 +173,25 @@ use super::{
     parse_required_status_contexts, parse_ripr_swarm_args, parse_ripr_swarm_plan_args,
     parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
     parse_targeted_test_outcome_args, pin_report_packet_index_generated_at,
-    pr_actionable_delta_front_panel_from_inputs, pr_body_validation_warning, pr_checks_summary,
-    pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
-    pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
-    pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
+    pr_actionable_delta_front_panel_from_inputs, pr_body_from_input_text,
+    pr_body_template_missing_error, pr_body_template_missing_lines, pr_body_validation_warning,
+    pr_checks_summary, pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
+    pr_sensitive_file_reason, pr_shape_report_body, pr_shape_warnings, pr_summary_body,
+    pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
     pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
     public_contract_rows, read_badge_artifact_diff_governed, read_json_value,
     read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
     receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
     repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
     repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
+    repo_exposure_authenticated_cache_load, repo_exposure_cache_family_store_from_stderr,
     repo_exposure_file_fact_cache_from_stderr, repo_exposure_latency_json,
     repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
-    repo_exposure_latency_trace, repo_exposure_resource_cost_from_stderr,
-    repo_exposure_summary_report_timeout_ms_from_env, repo_root,
-    repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
+    repo_exposure_latency_status_reasons, repo_exposure_latency_trace,
+    repo_exposure_normalized_output, repo_exposure_parity_leg_receipts, repo_exposure_parity_run,
+    repo_exposure_resource_cost_from_stderr, repo_exposure_summary_report_timeout_ms_from_env,
+    repo_root, repo_seam_inventory_command_args_for_root, report_index_lane1_overall_status,
     report_index_lane1_readiness_packets, report_index_missing_artifact_count,
     report_index_missing_expected, report_index_next_commands, report_index_repo_ops_packets,
     report_index_repo_ops_status, report_packet_index_case_id_violation,
@@ -1319,6 +1327,102 @@ Evidence
         report.contains("oracle projection `exact_value/strong`"),
         "{report}"
     );
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_accepts_unclassified_ungraded_wording() {
+    let line = "- related test tests/a.rs:3 t uses an unclassified oracle, not graded against this probe: assert_eq!(f(), 1)";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "strong"
+    ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_accepts_deduplicated_smoke_only_wording() {
+    let line = "- related test tests/a.ts:3 t uses smoke only oracle: t.truthy(x)";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "smoke_only",
+        "smoke"
+    ));
+    // The stutter is no longer the rendered form, and other pairs keep the
+    // full "<strength> <kind>" spelling.
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.ts:3 t uses smoke smoke only oracle: t.truthy(x)",
+        "smoke_only",
+        "smoke"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "smoke_only",
+        "weak"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "smoke"
+    ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_accepts_kind_ungraded_wording() {
+    let line = "- related test tests/a.rs:3 t uses exact value oracle, not graded against this probe: assert_eq!(f(), 1)";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "strong"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "smoke_only",
+        "unknown"
+    ));
+    let stale = "- related test tests/a.rs:3 t uses unknown exact value oracle: assert_eq!(f(), 1)";
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        stale,
+        "exact_value",
+        "unknown"
+    ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_accepts_absent_oracle_wording() {
+    let line = "- related test tests/a.rs:3 t uses no oracle; misses: has no assertion";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.rs:3 t uses none unknown oracle; misses: has no assertion",
+        "unknown",
+        "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.rs:3 t uses no oracles here",
+        "unknown",
+        "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "weak"
+    ));
+    // An absent oracle carries no kind, so a concrete expected kind cannot match it.
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "none"
+    ));
 }
 
 #[test]
@@ -3321,6 +3425,75 @@ fn evidence_promotion_pinned_external_semantics_reject_false_clean_and_packet() 
     assert!(report.contains("promoted to exposed"), "{report}");
 }
 
+// The three cases that moved from `corpus.json` to `cases/*.json` are no
+// longer listed in the manifest, so deleting the directory or one file would
+// leave a valid, smaller corpus that the gate passes. This pins them from
+// outside the case files, the way the Perl charter test pins its case.
+#[test]
+fn moved_python_charter_cases_stay_in_the_live_corpus() -> Result<(), String> {
+    let corpus_path = super::repo_rooted_fixture_path(super::EVIDENCE_PROMOTION_HONESTY_CORPUS);
+    let corpus = super::read_evidence_promotion_corpus(&corpus_path)?;
+    let cases = corpus
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or("live honesty corpus has no `cases` array")?;
+    for id in [
+        "python_module_formatted_generator_test",
+        "python_multiline_literal_sibling_read",
+        "python_literal_value_inside_longer_number",
+    ] {
+        let case = cases
+            .iter()
+            .find(|case| case.get("id").and_then(Value::as_str) == Some(id))
+            .ok_or_else(|| {
+                format!("live honesty corpus dropped charter case `{id}`; restore its cases/ file")
+            })?;
+        assert_eq!(
+            case.get("tier").and_then(Value::as_str),
+            Some("pure"),
+            "{id} must stay tier `pure`"
+        );
+        let promotes = case
+            .get("assertions")
+            .and_then(Value::as_array)
+            .is_some_and(|assertions| {
+                assertions.iter().any(|assertion| {
+                    assertion.get("type").and_then(Value::as_str) == Some("must_not_promote")
+                })
+            });
+        assert!(promotes, "{id} must keep its `must_not_promote` assertion");
+    }
+    Ok(())
+}
+
+#[test]
+fn evidence_promotion_corpus_folds_in_case_files_and_rejects_a_repeated_id() -> Result<(), String> {
+    let dir = temp_dir("promotion-case-files");
+    let corpus = dir.join("corpus.json");
+    write(
+        &corpus,
+        r#"{"schema_version":"1","cases":[{"id":"base_case"}]}"#,
+    );
+    write(&dir.join("cases/b_case.json"), r#"{"id":"b_case"}"#);
+    write(&dir.join("cases/a_case.json"), r#"{"id":"a_case"}"#);
+
+    let folded = super::read_evidence_promotion_corpus(&corpus)?;
+    let ids: Vec<&str> = folded["cases"]
+        .as_array()
+        .ok_or("no cases array")?
+        .iter()
+        .filter_map(|case| case["id"].as_str())
+        .collect();
+    assert_eq!(ids, ["base_case", "a_case", "b_case"]);
+
+    write(&dir.join("cases/dup.json"), r#"{"id":"base_case"}"#);
+    let error = super::read_evidence_promotion_corpus(&corpus)
+        .err()
+        .ok_or("a repeated case id was accepted")?;
+    assert!(error.contains("repeats case id `base_case`"), "{error}");
+    Ok(())
+}
+
 #[test]
 fn evidence_promotion_corpus_summary_report_writes_pure_and_not_run_external_cases()
 -> Result<(), String> {
@@ -4413,7 +4586,11 @@ fn editor_first_run_usability_fixture_corpus_validator_reports_unsafe_states() -
         write_editor_first_run_status(root, "server_missing", "active", None);
         write_editor_first_run_actions(root, "setup_ok", &[]);
         write_editor_first_run_actions(root, "receipt_found", &[]);
-        write_editor_first_run_actions(root, "artifact_missing", &["Copy first repair packet"]);
+        write_editor_first_run_actions(
+            root,
+            "artifact_missing",
+            &["Copy repair instructions for an AI agent"],
+        );
         write(
             &root.join(
                 "fixtures/editor_first_run_usability/artifact_stale/expected/receipt-status.json",
@@ -4434,12 +4611,12 @@ fn editor_first_run_usability_fixture_corpus_validator_reports_unsafe_states() -
         }));
         assert!(violations.iter().any(|violation| {
             violation.contains(
-                "editor first-run usability case setup_ok must include Copy first repair packet",
+                "editor first-run usability case setup_ok must include Copy repair instructions for an AI agent",
             )
         }));
         assert!(violations.iter().any(|violation| {
                 violation.contains(
-                    "editor first-run usability case receipt_found must include Copy first repair packet",
+                    "editor first-run usability case receipt_found must include Copy repair instructions for an AI agent",
                 )
             }));
         assert!(violations.iter().any(|violation| {
@@ -4826,7 +5003,7 @@ fn editor_first_run_actions(case: &str) -> Vec<&'static str> {
     match case {
         "setup_ok" | "receipt_found" | "receipt_improved" | "receipt_unchanged" => {
             vec![
-                "Copy first repair packet",
+                "Copy repair instructions for an AI agent",
                 "Refresh Analysis - Saved Workspace Check",
             ]
         }
@@ -4873,12 +5050,12 @@ fn write_editor_first_run_actions(root: &Path, case: &str, titles: &[&str]) {
             .map(|title| {
                 serde_json::json!({
                     "title": title,
-                    "command": if *title == "Copy first repair packet" {
+                    "command": if *title == "Copy repair instructions for an AI agent" {
                         "ripr.copyContext"
                     } else {
                         "ripr.refresh"
                     },
-                    "arguments": if *title == "Copy first repair packet" {
+                    "arguments": if *title == "Copy repair instructions for an AI agent" {
                         serde_json::json!([{
                             "packet": "RIPR first repair packet\nGap identity: gap:test\nSuggested action:\n- Add one focused assertion.\nVerify command:\nripr agent verify --root <root> --json\nReceipt command:\nripr agent receipt --root <root> --json\nLimits and non-claims:\n- Static editor evidence only."
                         }])
@@ -8280,6 +8457,63 @@ fn release_server_manifest_embeds_the_editor_distribution_descriptor() -> Result
 }
 
 #[test]
+fn bound_descriptor_requires_the_receipted_manifest_digest() -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let manifest = br#"{"version":"1.2.3","assets":{"x86_64-unknown-linux-gnu":{"url":"https://github.com/o/r/releases/download/v1.2.3/a.tar.gz","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
+    let digest = format!("{:x}", Sha256::digest(manifest));
+    let source = super::bound_descriptor_source("1.2.3", manifest, &digest)?;
+    assert!(source.contains(&format!(
+        "{{ generation: \"1.2.3\", manifestSha256: \"{digest}\" }}"
+    )));
+
+    let wrong = "0".repeat(64);
+    let Err(err) = super::bound_descriptor_source("1.2.3", manifest, &wrong) else {
+        return Err("a tampered manifest must be refused".to_string());
+    };
+    assert!(err.contains("does not match the receipted digest"), "{err}");
+    let Err(err) = super::bound_descriptor_source("1.2.4", manifest, &digest) else {
+        return Err("a generation mismatch must be refused".to_string());
+    };
+    assert!(err.contains("does not match generation"), "{err}");
+    for bad in [
+        "ABC".to_string(),
+        digest.to_uppercase(),
+        format!("{digest}\n"),
+    ] {
+        let Err(err) = super::bound_descriptor_source("1.2.3", manifest, &bad) else {
+            return Err(format!("digest `{bad:?}` must be refused"));
+        };
+        assert!(err.contains("64 lowercase hex"), "{err}");
+    }
+    for generation in ["1.2.3-rc.1", "1.2", "a.b.c"] {
+        if super::bound_descriptor_source(generation, manifest, &digest).is_ok() {
+            return Err(format!("generation `{generation}` must be refused"));
+        }
+    }
+    for body in [
+        &b"not json"[..],
+        br#"{"version":"1.2.3","assets":{}}"#,
+        br#"{"version":"1.2.3","assets":{"t":{"url":"https://x/a","sha256":"zz"}}}"#,
+    ] {
+        let body_digest = format!("{:x}", Sha256::digest(body));
+        if super::bound_descriptor_source("1.2.3", body, &body_digest).is_ok() {
+            return Err("a malformed manifest must be refused".to_string());
+        }
+    }
+    let Err(err) = super::bound_descriptor_source("1.2.3", manifest, "ABC") else {
+        return Err("a malformed digest must be refused".to_string());
+    };
+    assert!(err.contains("64 lowercase hex"), "{err}");
+    let http = br#"{"version":"1.2.3","assets":{"t":{"url":"http://x/a","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
+    let http_digest = format!("{:x}", Sha256::digest(http));
+    let Err(err) = super::bound_descriptor_source("1.2.3", http, &http_digest) else {
+        return Err("a non-https asset url must be refused".to_string());
+    };
+    assert!(err.contains("non-https"), "{err}");
+    Ok(())
+}
+
+#[test]
 fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Result<(), String> {
     // The editor descriptor admits a distribution generation
     // (MAJOR.MINOR.PATCH) and the downloader only ever looks the generation
@@ -8332,6 +8566,47 @@ fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Res
         })?;
     }
     Ok(())
+}
+
+/// The `ripr` binary this test run was built against, as an absolute path.
+/// Resolve-only: a nested `cargo build` would contend on the build lock the
+/// outer test run holds. Order: the `RIPR_TEST_BINARY` override (a runner that
+/// keeps its binaries outside `target/`, such as an archived run, sets it),
+/// then the active `CARGO_TARGET_DIR`, then the repository `target/`, in the
+/// profile this test build itself uses (`--release` places it under `release`).
+pub(crate) fn ripr_worktree_binary() -> Result<String, String> {
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let file_name = format!("ripr{}", std::env::consts::EXE_SUFFIX);
+    let mut candidates = Vec::new();
+    if let Ok(override_path) = std::env::var("RIPR_TEST_BINARY") {
+        candidates.push(PathBuf::from(override_path));
+    }
+    if let Ok(target_root) = std::env::var("CARGO_TARGET_DIR") {
+        candidates.push(Path::new(&target_root).join(profile).join(&file_name));
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("xtask manifest has no repository parent")?;
+    candidates.push(root.join("target").join(profile).join(&file_name));
+    for candidate in &candidates {
+        if candidate.is_file() {
+            return std::path::absolute(candidate)
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|error| format!("resolve worktree ripr binary: {error}"));
+        }
+    }
+    let attempted = candidates
+        .iter()
+        .map(|candidate| candidate.display().to_string())
+        .collect::<Vec<_>>()
+        .join("`, `");
+    Err(format!(
+        "no built ripr binary found (looked at `{attempted}`); run `cargo build -p ripr` first (tests resolve the binary and never spawn a nested build)"
+    ))
 }
 
 pub(crate) fn with_temp_cwd<T>(name: &str, f: impl FnOnce(&Path) -> T) -> T {
@@ -8888,6 +9163,9 @@ fn non_rust_programming_policy_requires_retention_rule() {
             .is_some()
     );
     assert!(non_rust_programming_retention_reason("scripts/check.py").is_none());
+    assert!(non_rust_programming_retention_reason(".ci/contabo-product.sh").is_some());
+    assert!(non_rust_programming_retention_reason(".ci/contabo-result.sh").is_some());
+    assert!(non_rust_programming_retention_reason(".ci/arbitrary.sh").is_none());
     assert!(
         non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
             .is_some()
@@ -9419,6 +9697,317 @@ fn allow_attribute_detection_flags_guarded_lint_suppressions() {
     );
 }
 
+/// #9501 negative experiment: a guarded suppression wrapped in `cfg_attr`
+/// used to bypass the count ledger because only `allow`/`expect` directly
+/// after `#[` were recognized.
+#[test]
+fn allow_attribute_detection_counts_cfg_attr_wrapped_suppressions() {
+    let text = format!(
+        "{}\nfn a() {{}}\n{}\n{}\n{}\n{}\n",
+        concat!("#", "[cfg_attr(test, allow(clippy::unwrap_used))]"),
+        concat!(
+            "#",
+            "![cfg_attr(not(test), expect(dead_code, reason = \"a, (b)\"), inline(never))]"
+        ),
+        concat!(
+            "#",
+            "[cfg_attr(all(unix, test), cfg_attr(test, allow(warnings)))]"
+        ),
+        concat!("#", "[ cfg_attr ( test , allow ( unused_imports ) ) ]"),
+        concat!(
+            "#",
+            "[cfg_attr(test, allow(clippy::module_name_repetitions))]"
+        ),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (1, "allow(clippy::unwrap_used)".to_string()),
+            (3, "expect(dead_code)".to_string()),
+            (4, "allow(warnings)".to_string()),
+            (5, "allow(unused_imports)".to_string()),
+        ]
+    );
+}
+
+/// A quoted `)` in a reason string must not end the attribute early and hide a
+/// later suppression in the same wrapper.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_a_quoted_paren() {
+    let text = format!(
+        "{}\n",
+        concat!(
+            "#",
+            "[cfg_attr(test, allow(dead_code, reason = \")\"), allow(warnings))]"
+        ),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (1, "allow(dead_code)".to_string()),
+            (1, "allow(warnings)".to_string()),
+        ]
+    );
+}
+
+/// Raw string delimiters, rather than interior quotes or backslashes, bound a
+/// reason. Neither wrapper nesting nor ordinary attributes may lose a lint.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_raw_string_reasons() {
+    let guarded = guarded_allow_attribute_lints();
+    for (hashes, body) in [
+        ("", "\\"),
+        ("#", "\" )"),
+        ("##", "\"# ) , [ ( \\"),
+        ("###", "🦀 \"## ], ( \\,"),
+    ] {
+        let reason = format!("r{hashes}\"{body}\"{hashes}");
+        for text in [
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, allow(dead_code, reason = {}), expect(warnings))]"
+                ),
+                reason
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, cfg_attr(test, allow(dead_code, reason = {})), expect(warnings))]"
+                ),
+                reason
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[allow(dead_code, reason = {})]\n",
+                    "#",
+                    "[expect(warnings)]"
+                ),
+                reason
+            ),
+        ] {
+            let warning_line = if text.contains('\n') { 2 } else { 1 };
+            assert_eq!(
+                guarded_allow_attributes_in_text(&text, &guarded),
+                vec![
+                    (1, "allow(dead_code)".to_string()),
+                    (warning_line, "expect(warnings)".to_string()),
+                ],
+                "raw reason must retain both suppressions: {text}",
+            );
+        }
+    }
+}
+
+/// Char literals (`')'`, `'"'`, `'['`, escapes, multibyte) in an attribute
+/// must not desync the paren span or comma split, and lifetimes must not
+/// swallow following text.
+#[test]
+fn allow_attribute_detection_sees_suppressions_after_char_literals() {
+    let guarded = guarded_allow_attribute_lints();
+    for literal in [
+        "')'",
+        "'\"'",
+        "'('",
+        "'['",
+        "']'",
+        "','",
+        "'\\''",
+        "'\\\\'",
+        "'\\u{29}'",
+        "'🦀'",
+        "'é'",
+        "'€'",
+        "'\\n'",
+        "'\\x41'",
+        "b'('",
+        "'\\u{1F980}'",
+    ] {
+        for text in [
+            format!(
+                concat!(
+                    "#",
+                    "[cfg_attr(test, allow(dead_code, reason = {}), expect(warnings))]"
+                ),
+                literal
+            ),
+            format!(
+                concat!(
+                    "#",
+                    "[allow(dead_code, reason = {})]\n",
+                    "#",
+                    "[expect(warnings)]"
+                ),
+                literal
+            ),
+        ] {
+            let warning_line = if text.contains('\n') { 2 } else { 1 };
+            assert_eq!(
+                guarded_allow_attributes_in_text(&text, &guarded),
+                vec![
+                    (1, "allow(dead_code)".to_string()),
+                    (warning_line, "expect(warnings)".to_string()),
+                ],
+                "char literal must retain both suppressions: {text}",
+            );
+        }
+    }
+    // A lifetime tick is not a char literal: it must not swallow a following
+    // suppression (tick first), nor a real char literal after it, and a char
+    // literal comma must not split the attribute (split-only discriminator).
+    for (body, expected) in [
+        (
+            "x = &'a T, allow(dead_code), y = ')', expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "x = &'a T, allow(dead_code), expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        ("x = ',', allow(dead_code)", vec!["allow(dead_code)"]),
+        (
+            "x = ',', allow(dead_code), y = ',', expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "allow(dead_code), x = 'a, expect(warnings)",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+        (
+            "allow(dead_code), expect(warnings), x = 'a",
+            vec!["allow(dead_code)", "expect(warnings)"],
+        ),
+    ] {
+        let text = format!(concat!("#", "[cfg_attr(test, {})]"), body);
+        assert_eq!(
+            guarded_allow_attributes_in_text(&text, &guarded)
+                .into_iter()
+                .map(|(_, f)| f)
+                .collect::<Vec<_>>(),
+            expected,
+            "lifetime/char mix must retain suppressions: {text}",
+        );
+    }
+}
+
+#[test]
+fn allow_attribute_detection_keeps_fake_attributes_inside_raw_reasons() {
+    let reason = "r#\"\"), allow(warnings), (\"#";
+    let text = format!(
+        concat!(
+            "#",
+            "[cfg_attr(test, cfg_attr(test, allow(dead_code, reason = {})))]"
+        ),
+        reason
+    );
+    assert_eq!(
+        guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints()),
+        vec![(1, "allow(dead_code)".to_string())],
+    );
+}
+
+#[test]
+fn allow_attributes_gate_enforces_raw_reason_suppressions_and_exact_budgets() -> Result<(), String>
+{
+    with_temp_cwd("allow-attributes-raw-reason", |root| {
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        write(&root.join(".ripr/allow-attributes.txt"), "");
+        write(
+            &root.join("src/lib.rs"),
+            concat!(
+                "#",
+                "[cfg_attr(test, allow(dead_code, reason = r#\"\" )\"#), expect(warnings))]\nfn f() {}\n"
+            ),
+        );
+        badge_fixture_git(&["add", ".ripr/allow-attributes.txt", "src/lib.rs"])?;
+        let listed = super::tracked_files()?;
+        assert!(listed.iter().any(|path| path == "src/lib.rs"), "{listed:?}");
+
+        super::check_allow_attributes_impl()
+            .err()
+            .ok_or("unbudgeted raw-reason suppressions must fail the gate")?;
+        let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
+            .map_err(|error| format!("read unbudgeted suppression report: {error}"))?;
+        for attribute in ["allow(dead_code)", "expect(warnings)"] {
+            assert!(
+                report.contains(&format!(
+                    "src/lib.rs:1 contains `{attribute}` 1 time(s), allowed 0"
+                )),
+                "the gate must report the actual tracked suppression: {report}",
+            );
+        }
+
+        write(
+            &root.join(".ripr/allow-attributes.txt"),
+            "src/lib.rs|allow(dead_code)|1|deliberate gate fixture\nsrc/lib.rs|expect(warnings)|1|deliberate gate fixture\n",
+        );
+        super::check_allow_attributes_impl()?;
+
+        write(&root.join("src/lib.rs"), "fn f() {}\n");
+        super::check_allow_attributes_impl()
+            .err()
+            .ok_or("removing raw-reason suppressions must leave stale budgets")?;
+        let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
+            .map_err(|error| format!("read stale suppression report: {error}"))?;
+        for attribute in ["allow(dead_code)", "expect(warnings)"] {
+            assert!(
+                report.contains(&format!(
+                    "`{attribute}` allowlist count is stale: found 0, allowed 1"
+                )),
+                "the gate must retain exact budget enforcement: {report}",
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn allow_attribute_detection_ignores_cfg_attr_without_guarded_suppression() {
+    for text in [
+        concat!("#", "[cfg_attr(test, derive(Debug))]"),
+        concat!("#", "[cfg_attr(test, allow)]"),
+        // The predicate position is not an attribute, even if it names a lint.
+        concat!("#", "[cfg_attr(allow(dead_code), derive(Debug))]"),
+        concat!("#", "[cfg_attr(test)]"),
+        concat!("#", "[cfg_attr(test, allow(dead_code)"),
+    ] {
+        assert!(
+            guarded_allow_attributes_in_text(text, &guarded_allow_attribute_lints()).is_empty(),
+            "unexpected finding in {text:?}",
+        );
+    }
+}
+
+#[test]
+fn cfg_attr_suppression_spends_the_same_budget_as_the_plain_attribute() {
+    let guarded = guarded_allow_attribute_lints();
+    let text = concat!("#", "[cfg_attr(test, allow(dead_code))]");
+    let mut counts = BTreeMap::<(String, String), Vec<usize>>::new();
+    for (line, attribute) in guarded_allow_attributes_in_text(text, &guarded) {
+        counts
+            .entry(("src/lib.rs".to_string(), attribute))
+            .or_default()
+            .push(line);
+    }
+
+    let unbudgeted = allow_attribute_budget_violations(&BTreeMap::new(), &counts, &guarded);
+    assert_eq!(unbudgeted.len(), 1, "{unbudgeted:?}");
+    assert!(unbudgeted[0].contains("allow(dead_code)"), "{unbudgeted:?}");
+
+    let budget = BTreeMap::from([(
+        ("src/lib.rs".to_string(), "allow(dead_code)".to_string()),
+        1,
+    )]);
+    assert!(allow_attribute_budget_violations(&budget, &counts, &guarded).is_empty());
+}
+
 #[test]
 fn allow_attribute_detection_ignores_untracked_lints() {
     let text = format!(
@@ -9816,12 +10405,24 @@ fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
             return Err(format!("{input} must gate its job on an explicit 'true'"));
         }
     }
+    // #3798: the RC manifest sits under the RC tag but is named for the
+    // X.Y.Z generation, as the editor's rcManifestUrl expects; waiting on a
+    // manifest named after the full RC version never succeeds.
+    if !extension.contains("generation=\"${version%%[-+]*}\"")
+        || !extension.contains("/v${version}/ripr-server-manifest-v${generation}.json")
+        || extension.contains("ripr-server-manifest-v${version}.json")
+    {
+        return Err(
+            "publish-extension.yml must wait for the generation-keyed manifest under the release tag"
+                .to_string(),
+        );
+    }
     // One dispatch authorizes exactly one channel: zero or two must fail
     // before anything packages, publishes or touches the Release.
     if !extension.contains("true/false | false/true) ;;") {
         return Err("publish-extension.yml must admit exactly one marketplace channel".to_string());
     }
-    for job in ["package", "server-assets-ready", "attach-release-asset"] {
+    for job in ["package", "verify-server-assets", "attach-release-asset"] {
         let needs = extension
             .split_once(&format!("\n  {job}:\n"))
             .map(|(_, rest)| {
@@ -9836,8 +10437,14 @@ fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
                     .to_string()
             })
             .ok_or_else(|| format!("publish-extension.yml has no {job} job"))?;
-        if !needs.contains("admit-dispatch") {
-            return Err(format!("{job} must need admit-dispatch, found `{needs}`"));
+        // `package` is admitted transitively through `verify-server-assets`.
+        let admitted_by = if job == "package" {
+            "verify-server-assets"
+        } else {
+            "admit-dispatch"
+        };
+        if !needs.contains(admitted_by) {
+            return Err(format!("{job} must need {admitted_by}, found `{needs}`"));
         }
     }
     if extension
@@ -9896,6 +10503,8 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
             || !candidate.contains("uses: ./.github/workflows/server-archive-qualification.yml")
             || !candidate.contains("candidate_sha: ${{ github.sha }}")
             || !candidate.contains("version: ${{ inputs.version }}")
+            || !candidate.contains("candidate_ref: ${{ inputs.candidate_ref }}")
+            || candidate.contains("candidate_tag")
             || candidate.contains("contents: write")
             || candidate.contains("release-upload-assets")
             || candidate.contains("gh release")
@@ -9917,6 +10526,10 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
         workflow.replace(
             "candidate_sha: ${{ github.sha }}",
             "candidate_sha: ${{ github.ref }}",
+        ),
+        workflow.replace(
+            "candidate_ref: ${{ inputs.candidate_ref }}",
+            "candidate_ref: \"\"",
         ),
     ] {
         if validate(&broken).is_ok() {
@@ -9963,8 +10576,10 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         if !candidate.contains("candidate_sha=\"${CANDIDATE_SHA,,}\"")
             || !candidate.contains("git -c credential.helper= -c http.extraheader= ls-remote")
             || !candidate.contains(QUALIFICATION_COMMIT_TYPE_COMMAND)
-            || !candidate.contains("test \"${CANDIDATE_TAG}\" = \"${tag}\"")
-            || !candidate.contains("^ripr-release-[0-9]+\\.[0-9]+\\.[0-9]+$")
+            || !candidate.contains(
+                "test \"${CANDIDATE_REF}\" = \"refs/tags/ripr-release-${QUALIFICATION_VERSION}-${candidate_sha}\"",
+            )
+            || !candidate.contains("^[0-9]+\\.[0-9]+\\.[0-9]+$")
         {
             return Err("candidate tag must be strict, remote-bound, and commit-typed".to_owned());
         }
@@ -10139,8 +10754,8 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         (
             "tag syntax",
             workflow.replacen(
-                "^ripr-release-[0-9]+\\.[0-9]+\\.[0-9]+$",
-                "^ripr-release-.*$",
+                "refs/tags/ripr-release-${QUALIFICATION_VERSION}-${candidate_sha}",
+                "refs/tags/ripr-release-${candidate_sha}",
                 1,
             ),
         ),
@@ -10659,6 +11274,11 @@ jobs:
 #[test]
 fn routed_rust_workflow_contract_accepts_swarm_shape() {
     let workflow = r#"
+on:
+  merge_group:
+    types: [checks_requested]
+env:
+  GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
 jobs:
   route:
     name: Route Ripr Rust Small
@@ -10795,6 +11415,11 @@ jobs = ["Ripr Rust Small Result"]
 #[test]
 fn routed_rust_workflow_contract_accepts_reusable_implementation_authority() {
     let workflow = r#"
+on:
+  merge_group:
+    types: [checks_requested]
+env:
+  GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
 jobs:
   route:
     name: Route Ripr Rust Small
@@ -11248,193 +11873,409 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
 }
 
 #[test]
-fn routed_rust_merge_ready_event_matrix_withholds_unrequested_context() -> Result<(), String> {
+fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     let workflow = include_str!("../../.github/workflows/routed-rust.yml");
-    assert!(
-        routed_rust_ready_event_contract_violations(workflow).is_empty(),
-        "the unchanged caller must satisfy the admission contract"
-    );
-    let replace_once = |source: &str, before: &str, after: &str| {
-        assert_eq!(
-            source.matches(before).count(),
-            1,
-            "unique mutation anchor: {before}"
-        );
-        let changed = source.replacen(before, after, 1);
-        assert_ne!(changed, source, "mutation must engage: {before}");
-        changed
-    };
-    let rejected = |changed: &str, diagnostic: &str| {
-        let violations = routed_rust_ready_event_contract_violations(changed);
-        assert!(
-            violations
-                .iter()
-                .any(|violation| violation.contains(diagnostic)),
-            "expected {diagnostic:?}, got {violations:?}"
-        );
-    };
-
-    for action in [
-        "ready_for_review",
-        "opened",
-        "reopened",
-        "synchronize",
-        "unlabeled",
-        "edited",
-    ] {
-        assert_eq!(
-            routed_rust_event_route(workflow, "pull_request", Some(action), Some("merge-ready")),
-            RoutedRustEventRoute::WorkflowNotTriggered,
-            "only a fresh labeled event requests PR qualification: {action}"
-        );
-    }
-    for label in [Some("merge-ready"), Some("MeRgE-ReAdY")] {
-        assert_eq!(
-            routed_rust_event_route(workflow, "pull_request", Some("labeled"), label),
+    let cases = [
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("merge-ready"),
             RoutedRustEventRoute::LaunchFullGate,
-            "explicit request label={label:?}"
-        );
-    }
-    for label in [
-        None,
-        Some("full-ci"),
-        Some("windows-ci"),
-        Some("merge-ready-extra"),
-    ] {
-        assert_eq!(
-            routed_rust_event_route(workflow, "pull_request", Some("labeled"), label),
-            RoutedRustEventRoute::BookkeepingOnly,
-            "unrelated labels must not earn required context: {label:?}"
-        );
-    }
-    // This helper models PR admission only. Main/manual execution deliberately
-    // bypasses that job; hosted_cache_continuity/native_admission separately
-    // enforce its full prerequisite, Rust, cache-writer and result contract.
-    for event in ["push", "workflow_dispatch"] {
-        assert_eq!(
-            routed_rust_event_route(workflow, event, None, None),
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("Merge-Ready"),
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
+            Some("ready_for_review"),
+            None,
             RoutedRustEventRoute::WorkflowNotTriggered,
-            "{event} must not fabricate PR admission"
+        ),
+        (
+            "pull_request",
+            Some("opened"),
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
+            Some("reopened"),
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
+            Some("synchronize"),
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("full-ci"),
+            RoutedRustEventRoute::NonrequestLabel,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("windows-ci"),
+            RoutedRustEventRoute::NonrequestLabel,
+        ),
+        (
+            "pull_request",
+            Some("unlabeled"),
+            Some("full-ci"),
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "merge_group",
+            Some("checks_requested"),
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "merge_group",
+            Some("destroyed"),
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
+        (
+            "workflow_dispatch",
+            None,
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+    ];
+    for (event_name, action, label, expected) in cases {
+        let actual = routed_rust_event_route(workflow, event_name, action, label);
+        assert_eq!(
+            actual, expected,
+            "event={event_name} action={action:?} label={label:?}"
         );
     }
-    assert!(workflow.contains("  push:\n    branches: [main, master]\n  workflow_dispatch:"));
-    assert!(workflow.contains("  admission:\n    if: github.event_name == 'pull_request'\n"));
 
-    for activity in [
-        "ready_for_review",
-        "synchronize",
-        "edited",
-        "opened",
-        "reopened",
-        "unlabeled",
-    ] {
-        let changed = replace_once(
-            workflow,
-            "    types: [labeled]",
-            &format!("    types: [labeled, {activity}]"),
-        );
-        rejected(&changed, "must be exactly");
-        rejected(&changed, activity);
-    }
-    let dropped_request = replace_once(
-        workflow,
+    let draft_resurrected =
+        workflow.replace("    types: [labeled]", "    types: [labeled, synchronize]");
+    assert!(
+        routed_rust_ready_event_contract_violations(&draft_resurrected)
+            .iter()
+            .any(|violation| {
+                violation.contains("must be exactly") && violation.contains("synchronize")
+            }),
+        "re-admitting synchronize must fail the merge-ready request contract: {:?}",
+        routed_rust_ready_event_contract_violations(&draft_resurrected)
+    );
+
+    let ready_resurrected = workflow.replace(
+        "    types: [labeled]",
+        "    types: [labeled, ready_for_review]",
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&ready_resurrected)
+            .iter()
+            .any(|violation| {
+                violation.contains("must be exactly") && violation.contains("ready_for_review")
+            }),
+        "re-admitting the Ready transition must fail the merge-ready contract: {:?}",
+        routed_rust_ready_event_contract_violations(&ready_resurrected)
+    );
+
+    let edited_resurrected =
+        workflow.replace("    types: [labeled]", "    types: [labeled, edited]");
+    assert!(
+        routed_rust_ready_event_contract_violations(&edited_resurrected)
+            .iter()
+            .any(|violation| {
+                violation.contains("must be exactly") && violation.contains("edited")
+            }),
+        "re-admitting the edited activity type must fail the merge-ready request contract: {:?}",
+        routed_rust_ready_event_contract_violations(&edited_resurrected)
+    );
+
+    let ready_dropped = workflow.replace(
         "    types: [labeled]",
         "    types: [opened, synchronize, reopened]",
     );
-    rejected(&dropped_request, "must be exactly");
-    let missing_types = replace_once(workflow, "    types: [labeled]\n", "");
-    rejected(&missing_types, "inline pull_request types array");
-
-    let cancellation_enabled = replace_once(
-        workflow,
-        "  cancel-in-progress: false",
-        "  cancel-in-progress: true",
-    );
-    rejected(&cancellation_enabled, "cancel-in-progress: false");
-    let group = workflow
-        .lines()
-        .find(|line| line.starts_with("  group:"))
-        .ok_or("missing concurrency group")?;
-    let shared_group = replace_once(
-        workflow,
-        group,
-        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
-    );
-    rejected(
-        &shared_group,
-        "must isolate qualification and per-run metadata concurrency",
-    );
-    let unqualified_main_manual = replace_once(
-        workflow,
-        "format('{0}-{1}-{2}', github.workflow, github.ref, github.event_name)",
-        "format('{0}-{1}', github.workflow, github.ref)",
-    );
-    rejected(
-        &unqualified_main_manual,
-        "must isolate qualification and per-run metadata concurrency",
+    assert!(
+        routed_rust_ready_event_contract_violations(&ready_dropped)
+            .iter()
+            .any(|violation| violation.contains("must be exactly")),
+        "dropping the Ready transition must fail closed: {:?}",
+        routed_rust_ready_event_contract_violations(&ready_dropped)
     );
 
-    let hosted = workflow
-        .split_once("\n  rust-github:\n")
-        .ok_or("missing hosted job")?
-        .1
-        .split_once("\n  docs-gate:\n")
-        .ok_or("missing next job")?
-        .0;
-    for condition in ["      always() &&", "      Always () &&"] {
-        let changed_hosted = replace_once(hosted, "      !cancelled() &&", condition);
-        let changed = replace_once(workflow, hosted, &changed_hosted);
-        rejected(
-            &changed,
-            "implementation job `rust-github` must not use `always()`",
-        );
-    }
-    let cleanup_comment_hosted = replace_once(
-        hosted,
-        "    uses: ./.github/workflows/rust-gates.yml\n",
-        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n",
+    let missing_types = workflow.replace("    types: [labeled]\n", "");
+    assert!(
+        routed_rust_ready_event_contract_violations(&missing_types)
+            .iter()
+            .any(|violation| violation.contains("inline pull_request types array")),
+        "removing types must fail closed: {:?}",
+        routed_rust_ready_event_contract_violations(&missing_types)
     );
-    let cleanup_comment = replace_once(workflow, hosted, &cleanup_comment_hosted);
-    assert_eq!(
-        replace_once(&cleanup_comment, "    # cleanup may use always()\n", ""),
-        workflow,
-        "the permitted-comment control must preserve every other workflow byte"
+
+    let no_triggers = workflow
+        .replace("  pull_request:\n    types: [labeled]\n", "")
+        .replace("  merge_group:\n", "  merge_group_removed:\n");
+    assert_ne!(no_triggers, workflow, "fixture must remove both triggers");
+    assert!(
+        routed_rust_ready_event_contract_violations(&no_triggers)
+            .iter()
+            .any(|violation| violation.contains("inline merge_group types array")),
+        "a workflow with neither trigger must still fail the queue contract: {:?}",
+        routed_rust_ready_event_contract_violations(&no_triggers)
+    );
+    let queue_dropped = workflow.replace("    types: [checks_requested]\n", "");
+    assert_ne!(
+        queue_dropped, workflow,
+        "fixture must remove the queue types"
     );
     assert!(
-        routed_rust_ready_event_contract_violations(&cleanup_comment).is_empty(),
-        "always() outside a job condition is permitted"
+        routed_rust_ready_event_contract_violations(&queue_dropped)
+            .iter()
+            .any(|violation| violation.contains("inline merge_group types array")),
+        "removing the merge-queue types must fail closed: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_dropped)
     );
-    let draft_guard = replace_once(
-        workflow,
-        "  admission:\n    if: github.event_name == 'pull_request'",
-        "  admission:\n    if: github.event_name == 'pull_request' && github.event.pull_request.draft != true",
+    let queue_widened = workflow.replace(
+        "    types: [checks_requested]",
+        "    types: [checks_requested, destroyed]",
     );
-    rejected(
-        &draft_guard,
-        "must not gate jobs on `github.event.pull_request.draft`",
+    assert_ne!(
+        queue_widened, workflow,
+        "fixture must widen the queue types"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_widened)
+            .iter()
+            .any(|violation| violation.contains("merge_group types must be exactly")),
+        "extra merge_group activity types must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_widened)
+    );
+    let queue_unbound = workflow.replace(
+        "GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}",
+        "GROUP_HEAD_REF: ''",
+    );
+    assert_ne!(queue_unbound, workflow, "fixture must unbind the queued PR");
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_unbound)
+            .iter()
+            .any(|violation| violation.contains("resolve the queued PR")),
+        "admission must stay bound to the queued PR: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_unbound)
     );
 
-    let result_name = workflow
-        .split_once("\n  result:\n")
-        .ok_or("missing result job")?
-        .1
-        .lines()
-        .find(|line| line.starts_with("    name:"))
-        .ok_or("missing result name")?;
-    for name in ["Ripr Rust Small Result", "Ripr Rust Small Draft Result"] {
-        let changed = replace_once(workflow, result_name, &format!("    name: {name}"));
-        rejected(&changed, "must post event-bound");
+    for (needle, snippet) in [
+        (
+            "forward the queued PR's labels",
+            "pr-labels: ${{ needs.admission.outputs.labels }}",
+        ),
+        (
+            "fork guard to queued PRs",
+            "|| [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\"",
+        ),
+        (
+            "more than one queued PR",
+            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+        ),
+        (
+            "bind the queue ref sha",
+            "[ \"$ref_sha\" = \"$head\" ] || [ \"$ref_sha\" = \"$GROUP_BASE_SHA\" ]",
+        ),
+        (
+            "check the live head is not newer",
+            "[ \"$ref_sha\" != \"$head\" ]",
+        ),
+        (
+            "not older than the queued commit",
+            "[[ \"$pushed_at\" < \"$queued_at\" ]] || { echo \"::error::PR #${pr} head",
+        ),
+    ] {
+        let mutated = workflow.replace(snippet, "removed");
+        assert_ne!(mutated, workflow, "fixture must remove {needle}");
+        assert!(
+            routed_rust_ready_event_contract_violations(&mutated)
+                .iter()
+                .any(|violation| violation.contains(needle)),
+            "dropping the {needle} pin must fail: {:?}",
+            routed_rust_ready_event_contract_violations(&mutated)
+        );
     }
-    let pseudo_result = replace_once(
-        workflow,
-        result_name,
-        "    name: Ripr Rust Small Ignored Label Event",
+    let cancellation_disabled = workflow.replace(
+        "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+        "  cancel-in-progress: false",
     );
-    rejected(
-        &pseudo_result,
-        "retired `Ripr Rust Small Ignored Label Event`",
+    assert!(
+        routed_rust_ready_event_contract_violations(&cancellation_disabled)
+            .iter()
+            .any(|violation| violation.contains("cancel-in-progress")),
+        "disabling merge-ready cancellation must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&cancellation_disabled)
     );
-    Ok(())
+
+    let uncancellable_fallback = workflow.replace("      !cancelled() &&", "      always() &&");
+    assert_ne!(
+        uncancellable_fallback, workflow,
+        "fixture must actually swap the hosted fallback condition"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&uncancellable_fallback)
+            .iter()
+            .any(|violation| violation.contains("`rust-github`") && violation.contains("always()")),
+        "a job-level always() on an implementation job must fail: it survives Ready-run cancellation: {:?}",
+        routed_rust_ready_event_contract_violations(&uncancellable_fallback)
+    );
+
+    let spaced_uppercase = workflow.replace("      !cancelled() &&", "      Always () &&");
+    assert!(
+        routed_rust_ready_event_contract_violations(&spaced_uppercase)
+            .iter()
+            .any(|violation| violation.contains("`rust-github`")),
+        "expression names are case-insensitive and may carry spaces: {:?}",
+        routed_rust_ready_event_contract_violations(&spaced_uppercase)
+    );
+
+    let step_level_cleanup = workflow.replace(
+        "    uses: ./.github/workflows/rust-gates.yml\n    with:\n      runner-config: '\"ubuntu-latest\"'",
+        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n    with:\n      runner-config: '\"ubuntu-latest\"'",
+    );
+    assert_ne!(step_level_cleanup, workflow, "fixture must add the comment");
+    assert!(
+        !routed_rust_ready_event_contract_violations(&step_level_cleanup)
+            .iter()
+            .any(|violation| violation.contains("must not use `always()`")),
+        "always() outside the job condition must not be rejected: {:?}",
+        routed_rust_ready_event_contract_violations(&step_level_cleanup)
+    );
+
+    let shared_group = workflow.replace(
+        "format('{0}-{1}-{2}', github.workflow, github.event.pull_request.number || github.ref, github.event_name)",
+        "format('{0}-{1}', github.workflow, github.event.pull_request.number || github.ref)",
+    );
+    assert_ne!(shared_group, workflow, "fixture must rewrite the group");
+    assert!(
+        routed_rust_ready_event_contract_violations(&shared_group)
+            .iter()
+            .any(|violation| violation.contains("event-qualified concurrency group")),
+        "sharing the push/manual concurrency group must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&shared_group)
+    );
+
+    let draft_guard = workflow.replace(
+        "    name: Route Ripr Rust Small",
+        "    if: github.event.pull_request.draft != true\n    name: Route Ripr Rust Small",
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&draft_guard)
+            .iter()
+            .any(|violation| violation.contains("github.event.pull_request.draft")),
+        "a draft job guard must fail; a skipped required job reports success: {:?}",
+        routed_rust_ready_event_contract_violations(&draft_guard)
+    );
+
+    let pseudo_result = workflow.replace(
+        "'Merge-ready Nonrequest' }}",
+        "'Ripr Rust Small Ignored Label Event' }}",
+    );
+    assert_ne!(
+        pseudo_result, workflow,
+        "fixture must rewrite the nonrequest name"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&pseudo_result)
+            .iter()
+            .any(|violation| violation.contains("Ignored Label Event")),
+        "resurrecting the ignored-label pseudo-result must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&pseudo_result)
+    );
+
+    let renamed_result = workflow.replace(
+        "&& 'Ripr Rust Small Result' ||",
+        "&& 'Ripr Rust Small Draft Result' ||",
+    );
+    assert_ne!(
+        renamed_result, workflow,
+        "fixture must rename the required context"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&renamed_result)
+            .iter()
+            .any(|violation| violation.contains("result job must be named by exactly")),
+        "renaming the required result context must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&renamed_result)
+    );
+
+    // Negative experiments for the skipped-required-job hazard: each mutation
+    // would let a nonrequest event produce, or a request skip, the required
+    // context, and must be rejected by name.
+    let static_required_name = workflow.replace(
+        "    name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}",
+        "    name: Ripr Rust Small Result",
+    );
+    assert_ne!(
+        static_required_name, workflow,
+        "fixture must rewrite the result name"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&static_required_name)
+            .iter()
+            .any(|violation| violation.contains("result job must be named by exactly")),
+        "a static result name posts the required context for ordinary labels: {:?}",
+        routed_rust_ready_event_contract_violations(&static_required_name)
+    );
+    let any_label_request = workflow.replace(
+        "github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result'",
+        "github.event.label.name != '') && 'Ripr Rust Small Result'",
+    );
+    assert_ne!(
+        any_label_request, workflow,
+        "fixture must widen the request label"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&any_label_request)
+            .iter()
+            .any(|violation| violation.contains("result job must be named by exactly")),
+        "any label must not earn the required context: {:?}",
+        routed_rust_ready_event_contract_violations(&any_label_request)
+    );
+    let skippable_result = workflow.replace(
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
+    );
+    assert_ne!(
+        skippable_result, workflow,
+        "fixture must make the result skippable"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&skippable_result)
+            .iter()
+            .any(|violation| violation.contains("job-level `if: always()`")),
+        "a skippable result reports success when skipped: {:?}",
+        routed_rust_ready_event_contract_violations(&skippable_result)
+    );
+    for job in ["route", "detect-docs-only", "admission"] {
+        let unguarded = workflow.replace(
+            "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'\n",
+            "true\n",
+        )
+        .replace(
+            "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready')\n",
+            "true)\n",
+        );
+        assert_ne!(
+            unguarded, workflow,
+            "fixture must remove the request guards"
+        );
+        let violations = routed_rust_ready_event_contract_violations(&unguarded);
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains(&format!("job `{job}` must carry the request guard"))),
+            "job {job} must be guarded against nonrequest labels: {violations:?}"
+        );
+    }
 }
 
 #[test]
@@ -11520,6 +12361,78 @@ fn sorted_allowlist_content_preserves_header_and_sorts_entries() {
         sorted,
         "# Header\n# More\n\na|kind|owner|reason\nz|kind|owner|reason\n"
     );
+}
+
+#[test]
+fn count_policy_fragments_merge_rows_and_reject_a_row_declared_in_both_files() -> Result<(), String>
+{
+    with_temp_cwd("count-policy-fragments", |root| {
+        let list = "policy/process_allowlist.txt";
+        write(
+            &root.join(list),
+            "# header\na.rs|ExampleMarker|1|owner|main row\n",
+        );
+        // Without a fragment directory the main list is the whole allowlist.
+        let rows = super::read_count_policy_allowlist(list)?;
+        assert_eq!(rows.len(), 1);
+
+        write(
+            &root.join("policy/process_allowlist.d/b.txt"),
+            "b.rs|ExampleMarker|2|owner|fragment row\n",
+        );
+        let rows = super::read_count_policy_allowlist(list)?;
+        assert_eq!(
+            rows.get(&("b.rs".to_string(), "ExampleMarker".to_string())),
+            Some(&2)
+        );
+        assert_eq!(rows.len(), 2);
+
+        write(
+            &root.join("policy/process_allowlist.d/dup.txt"),
+            "a.rs|ExampleMarker|9|owner|silently wider bound\n",
+        );
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains("policy/process_allowlist.d/dup.txt")
+                && error.contains("already declared in policy/process_allowlist.txt"),
+            "{error}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn count_policy_fragments_fail_closed_on_a_non_txt_entry_and_a_malformed_row() -> Result<(), String>
+{
+    with_temp_cwd("count-policy-fragments-closed", |root| {
+        let list = "policy/network_allowlist.txt";
+        write(&root.join(list), "# header\n");
+        let dir = root.join("policy/network_allowlist.d");
+
+        write(&dir.join("notes.md"), "not a fragment\n");
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains("is not a .txt allowlist fragment"),
+            "{error}"
+        );
+        fs::remove_file(dir.join("notes.md")).map_err(|e| e.to_string())?;
+
+        write(&dir.join("bad.txt"), "only|three|fields\n");
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains(
+                "policy/network_allowlist.d/bad.txt:1 expected path|pattern|max_count|owner|reason"
+            ),
+            "{error}"
+        );
+        Ok(())
+    })
 }
 
 #[test]
@@ -11766,6 +12679,92 @@ fn sorted_traceability_behavior_blocks_content_sorts_blocks_by_id() {
     let sorted = sorted_traceability_behavior_blocks_content(&input);
 
     assert_eq!(sorted, format!("{prefix}{block_a}{block_b}"));
+}
+
+#[test]
+fn traceability_fragments_extend_a_behavior_and_register_a_new_one() -> Result<(), String> {
+    let dir = temp_dir("traceability-fragments");
+    let manifest = dir.join(".ripr/traceability.toml");
+    write(
+        &manifest,
+        "[[behavior]]\nid = \"RIPR-SPEC-0001\"\nname = \"A\"\nspec = \"docs/specs/a.md\"\ntests = [\n  \"t/base.rs\",\n]\nmetrics = [\"m\"]\n",
+    );
+    write(
+        &dir.join(".ripr/traceability.d/pr-1.toml"),
+        "[[extend]]\nid = \"RIPR-SPEC-0001\"\ntests = [\n  \"t/frag.rs\",\n]\nfixtures = [\"f/one\"]\n",
+    );
+    write(
+        &dir.join(".ripr/traceability.d/pr-2.toml"),
+        "[[behavior]]\nid = \"RIPR-SPEC-0002\"\nname = \"B\"\nspec = \"docs/specs/b.md\"\nmetrics = [\"m\"]\n",
+    );
+
+    let (behaviors, violations) = load_traceability_behaviors(&manifest)?;
+
+    assert!(violations.is_empty(), "{violations:?}");
+    assert_eq!(behaviors.len(), 2);
+    let first = &behaviors[0];
+    assert_eq!(first.tests, vec!["t/base.rs", "t/frag.rs"]);
+    assert_eq!(first.fixtures, vec!["f/one"]);
+    assert_eq!(behaviors[1].id.as_deref(), Some("RIPR-SPEC-0002"));
+    Ok(())
+}
+
+#[test]
+fn traceability_fragment_extend_without_a_behavior_or_with_a_name_is_a_violation()
+-> Result<(), String> {
+    let dir = temp_dir("traceability-fragment-violations");
+    let manifest = dir.join(".ripr/traceability.toml");
+    write(
+        &manifest,
+        "[[behavior]]\nid = \"RIPR-SPEC-0001\"\nname = \"A\"\nspec = \"docs/specs/a.md\"\nmetrics = [\"m\"]\n",
+    );
+    write(
+        &dir.join(".ripr/traceability.d/orphan.toml"),
+        "[[extend]]\nid = \"RIPR-SPEC-0099\"\ntests = [\"t/x.rs\"]\n",
+    );
+    write(
+        &dir.join(".ripr/traceability.d/renamed.toml"),
+        "[[extend]]\nid = \"RIPR-SPEC-0001\"\nname = \"other\"\n",
+    );
+
+    let (_, violations) = load_traceability_behaviors(&manifest)?;
+
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("RIPR-SPEC-0099") && v.contains("no [[behavior]] carries")),
+        "{violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("sets `name` or `spec`")),
+        "{violations:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn scorecard_traceability_hash_changes_when_only_a_fragment_changes() -> Result<(), String> {
+    with_temp_cwd("scorecard-traceability-fragment-hash", |root| {
+        write(&root.join(".ripr/traceability.toml"), "# base\n");
+        let base = crate::evidence_quality::scorecard_traceability_input()?;
+
+        write(
+            &root.join(".ripr/traceability.d/one.toml"),
+            "[[extend]]\nid = \"RIPR-SPEC-0001\"\n",
+        );
+        let with_fragment = crate::evidence_quality::scorecard_traceability_input()?;
+        write(
+            &root.join(".ripr/traceability.d/one.toml"),
+            "[[extend]]\nid = \"RIPR-SPEC-0002\"\n",
+        );
+        let edited = crate::evidence_quality::scorecard_traceability_input()?;
+
+        assert_ne!(base.sha256, with_fragment.sha256);
+        assert_ne!(with_fragment.sha256, edited.sha256);
+        Ok(())
+    })
 }
 
 #[test]
@@ -12488,6 +13487,195 @@ fn pr_shape_warnings_flag_analysis_without_evidence() {
         },
     ];
     assert!(pr_shape_warnings(&with_evidence).is_empty());
+}
+
+const COMPLETE_PR_BODY: &str = "\
+Proposal: none, issue-driven
+Spec: none, no spec governs this surface
+ADR: none
+Plan item: none
+Governing issue or accepted claim: #8601
+Acceptance delta (one sentence): A PR body missing the template lines fails a cheap local check naming the missing line.
+Candidate branch (GitHub PR head is authoritative after publication): fix/8601-local-body-check
+Stack parent or prerequisite PR (if any): none
+Proposed replacement of PR (if any; not yet accepted): none
+Acceptance retained from a replaced candidate (if any): none
+Accepted winner and losing candidate disposition (when decided): not decided
+";
+
+#[test]
+fn pr_body_template_complete_body_passes() -> Result<(), String> {
+    assert!(pr_body_template_missing_lines(COMPLETE_PR_BODY).is_empty());
+    // The `gh pr view --json body` shape unwraps to the same body.
+    let json = serde_json::json!({ "body": COMPLETE_PR_BODY }).to_string();
+    let body = pr_body_from_input_text(&json)?;
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+    Ok(())
+}
+
+#[test]
+fn pr_body_template_missing_governing_issue_line_fails_naming_it() {
+    let body = COMPLETE_PR_BODY.replace("Governing issue or accepted claim: #8601\n", "");
+    let missing = pr_body_template_missing_lines(&body);
+    assert_eq!(missing, vec!["Governing issue or accepted claim:"]);
+    assert!(
+        pr_body_template_missing_error(&missing).contains("Governing issue or accepted claim:")
+    );
+}
+
+#[test]
+fn pr_body_template_missing_acceptance_delta_fails_naming_it() {
+    let body = COMPLETE_PR_BODY.replace(
+        "Acceptance delta (one sentence): A PR body missing the template lines fails a cheap local check naming the missing line.\n",
+        "",
+    );
+    let missing = pr_body_template_missing_lines(&body);
+    assert_eq!(missing, vec!["Acceptance delta (one sentence):"]);
+    assert!(pr_body_template_missing_error(&missing).contains("Acceptance delta (one sentence):"));
+}
+
+#[test]
+fn pr_body_template_placeholder_values_fail() {
+    for placeholder in ["", "TBD", "n/a", "<issue or claim>"] {
+        let body = COMPLETE_PR_BODY.replace(
+            "Governing issue or accepted claim: #8601",
+            &format!("Governing issue or accepted claim: {placeholder}"),
+        );
+        let missing = pr_body_template_missing_lines(&body);
+        assert!(
+            missing.contains(&"Governing issue or accepted claim:"),
+            "placeholder {placeholder:?} must fail, got {missing:?}"
+        );
+        assert!(pr_body_template_missing_error(&missing).starts_with("claim_identity_missing:"));
+    }
+}
+
+#[test]
+fn pr_body_template_non_gated_placeholder_values_fail_naming_line() {
+    // Findings 1/6: every template line rejects unfilled placeholders,
+    // not only the two admission-gated lines.
+    for (filled, placeholder_line, expected) in [
+        (
+            "Spec: none, no spec governs this surface",
+            "Spec: TBD",
+            "Spec:",
+        ),
+        ("Plan item: none", "Plan item: TBD", "Plan item:"),
+        (
+            "Spec: none, no spec governs this surface",
+            "Spec: <link>",
+            "Spec:",
+        ),
+        (
+            "Candidate branch (GitHub PR head is authoritative after publication): fix/8601-local-body-check",
+            "Candidate branch (GitHub PR head is authoritative after publication): <branch>",
+            "Candidate branch (GitHub PR head is authoritative after publication):",
+        ),
+        (
+            "Proposed replacement of PR (if any; not yet accepted): none",
+            "Proposed replacement of PR (if any; not yet accepted): pending",
+            "Proposed replacement of PR (if any; not yet accepted):",
+        ),
+        (
+            "Accepted winner and losing candidate disposition (when decided): not decided",
+            "Accepted winner and losing candidate disposition (when decided): <winner>",
+            "Accepted winner and losing candidate disposition (when decided):",
+        ),
+    ] {
+        let body = COMPLETE_PR_BODY.replace(filled, placeholder_line);
+        let missing = pr_body_template_missing_lines(&body);
+        assert!(
+            missing.contains(&expected),
+            "placeholder {placeholder_line:?} must fail, got {missing:?}"
+        );
+        assert!(pr_body_template_missing_error(&missing).contains(expected));
+    }
+    // Explicit non-applicable values remain legitimate on non-gated lines.
+    let body = COMPLETE_PR_BODY.replace("Spec: none, no spec governs this surface", "Spec: none");
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+}
+
+#[test]
+fn pr_body_template_bulleted_gated_lines_fail_like_admission() {
+    // Finding 2: admission (`extract_fields`) only matches `label:` at
+    // the start of a whitespace-stripped line, so bulleted or spaced
+    // gated lines are refused there and must fail locally too.
+    let bulleted = COMPLETE_PR_BODY
+        .replace(
+            "Governing issue or accepted claim: #8601",
+            "- Governing issue or accepted claim: #8601",
+        )
+        .replace(
+            "Acceptance delta (one sentence): A PR body missing",
+            "- Acceptance delta (one sentence): A PR body missing",
+        );
+    let missing = pr_body_template_missing_lines(&bulleted);
+    assert!(missing.contains(&"Governing issue or accepted claim:"));
+    assert!(missing.contains(&"Acceptance delta (one sentence):"));
+
+    let spaced = COMPLETE_PR_BODY.replace(
+        "Governing issue or accepted claim: #8601",
+        "Governing issue or accepted claim : #8601",
+    );
+    assert!(
+        pr_body_template_missing_lines(&spaced).contains(&"Governing issue or accepted claim:")
+    );
+
+    // The non-bulleted, admission-accepted forms pass, including the
+    // alternate labels admission accepts (`LABELS` in admission).
+    assert!(pr_body_template_missing_lines(COMPLETE_PR_BODY).is_empty());
+    let alternate = COMPLETE_PR_BODY
+        .replace(
+            "Governing issue or accepted claim: #8601",
+            "Owner / governing claim: #8601",
+        )
+        .replace(
+            "Acceptance delta (one sentence): A PR body missing the template lines fails a cheap local check naming the missing line.",
+            "Acceptance delta: A PR body missing the template lines fails a cheap local check naming the missing line.",
+        );
+    assert!(pr_body_template_missing_lines(&alternate).is_empty());
+}
+
+#[test]
+fn pr_body_template_traceability_spec_does_not_hide_missing_source_spec() {
+    // Finding 3: the bulleted traceability `- Spec:` line must not
+    // satisfy the unbulleted Source-of-truth `Spec:` line.
+    let body = COMPLETE_PR_BODY.replace("Spec: none, no spec governs this surface\n", "")
+        + "\n## Spec-Test-Code Traceability\n\n- Spec: RIPR-SPEC-0001\n";
+    let missing = pr_body_template_missing_lines(&body);
+    assert_eq!(missing, vec!["Spec:"]);
+    assert!(pr_body_template_missing_error(&missing).contains("Spec:"));
+}
+
+#[test]
+fn pr_body_template_blank_label_before_filled_value_passes_like_admission() {
+    // Finding 4: admission skips blank occurrences (`if found[key]:
+    // continue` only after a non-empty value), so a blank label before
+    // a completed claim/delta does not mask the later value.
+    let body = "Governing issue or accepted claim:\nAcceptance delta (one sentence):\n".to_string()
+        + COMPLETE_PR_BODY;
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+    // A filled first occurrence likewise wins over a later blank one.
+    let body = COMPLETE_PR_BODY.to_string()
+        + "\nGoverning issue or accepted claim:\nAcceptance delta (one sentence):\n";
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+}
+
+#[test]
+fn pr_shape_report_body_status_agrees_with_body_check_failure() {
+    // Finding 5: a missing body line fails the check, so the report
+    // must record `fail`, not an advisory `warn`/`pass`.
+    let failed = pr_shape_report_body(&[String::from(
+        "PR body is missing or has a placeholder value for `Spec:`; add the line from .github/pull_request_template.md with a real value.",
+    )]);
+    assert!(failed.contains("Status: fail"));
+    assert!(!failed.contains("Status: pass"));
+    assert!(!failed.contains("Status: warn"));
+    assert!(pr_shape_report_body(&[]).contains("Status: pass"));
+    assert!(
+        pr_shape_report_body(&[String::from("Production code changed without evidence.")])
+            .contains("Status: warn")
+    );
 }
 
 #[test]
@@ -13234,6 +14422,7 @@ fn capability_helpers_validate_ids_and_escape_json() {
         spec: Some("RIPR-SPEC-0003".to_string()),
         evidence: vec!["agent context spec".to_string()],
         fixtures: Vec::new(),
+        cells: None,
         next: Some("agent-context-v2".to_string()),
         metric: Some("context packets with suggested assertions".to_string()),
         line: 1,
@@ -24464,6 +25653,115 @@ owner = "repo-infra"
     })
 }
 
+const DOC_ARTIFACT_FRAGMENT_DIR: &str = "policy/doc-artifacts.d";
+
+fn doc_artifact_main_ledger() -> &'static str {
+    r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#
+}
+
+fn doc_artifact_fragment(id: &str) -> String {
+    format!(
+        "[[artifact]]\nid = \"{id}\"\nkind = \"proposal\"\npath = \"docs/proposals/{id}-beta.md\"\nstatus = \"proposed\"\nowner = \"repo-infra\"\n"
+    )
+}
+
+#[test]
+fn doc_artifact_fragments_register_entries_and_report_their_own_file_and_line() -> Result<(), String>
+{
+    with_temp_cwd("doc-artifacts-fragments", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0002-beta.md",
+            "RIPR-PROP-0002",
+        );
+        write_doc_artifact_ledger_fixture(root, doc_artifact_main_ledger());
+        write(
+            &root.join(DOC_ARTIFACT_FRAGMENT_DIR).join("0002.toml"),
+            &doc_artifact_fragment("RIPR-PROP-0002"),
+        );
+        let ledger = parse_doc_artifact_ledger(&root.join(DOC_ARTIFACT_LEDGER))?;
+        assert_eq!(ledger.artifacts.len(), 2);
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(violations.is_empty(), "{violations:#?}");
+
+        // A fragment entry that points at a missing file names the fragment, not the main ledger.
+        write(
+            &root.join(DOC_ARTIFACT_FRAGMENT_DIR).join("0003.toml"),
+            &doc_artifact_fragment("RIPR-PROP-0003"),
+        );
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains("policy/doc-artifacts.d/0003.toml:1 artifact `RIPR-PROP-0003` points at missing file")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifact_fragments_fail_closed_and_catch_cross_file_duplicates() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-fragments-closed", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(root, doc_artifact_main_ledger());
+        let ledger = root.join(DOC_ARTIFACT_LEDGER);
+        let dir = root.join(DOC_ARTIFACT_FRAGMENT_DIR);
+
+        write(&dir.join("notes.md"), "not a fragment\n");
+        let error = parse_doc_artifact_ledger(&ledger).err().unwrap_or_default();
+        assert!(
+            error.contains("is not a .toml artifact fragment"),
+            "{error}"
+        );
+        fs::remove_file(dir.join("notes.md")).map_err(|e| e.to_string())?;
+
+        write(&dir.join("empty.toml"), "# nothing\n");
+        let error = parse_doc_artifact_ledger(&ledger).err().unwrap_or_default();
+        assert!(error.contains("has no [[artifact]] entries"), "{error}");
+
+        write(
+            &dir.join("empty.toml"),
+            &format!(
+                "schema_version = \"1.0\"\n{}",
+                doc_artifact_fragment("RIPR-PROP-0002")
+            ),
+        );
+        let error = parse_doc_artifact_ledger(&ledger).err().unwrap_or_default();
+        assert!(error.contains("must not set schema_version"), "{error}");
+        fs::remove_file(dir.join("empty.toml")).map_err(|e| e.to_string())?;
+
+        write(
+            &dir.join("dup.toml"),
+            &doc_artifact_fragment("RIPR-PROP-0001"),
+        );
+        let violations = doc_artifact_violations(root, &ledger)?;
+        assert!(
+            violations.iter().any(|violation| violation.contains(
+                "policy/doc-artifacts.d/dup.toml:1 duplicate artifact id `RIPR-PROP-0001`; first defined at policy/doc-artifacts.toml:"
+            )),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
 #[test]
 fn doc_artifacts_rejects_duplicate_artifact_field() {
     let error = parse_doc_artifact_ledger_text(
@@ -30405,6 +31703,151 @@ fn spec_numbering_detects_missing_index_and_reference_drift() -> Result<(), Stri
 }
 
 #[test]
+fn spec_numbering_accepts_index_rows_from_fragments() -> Result<(), String> {
+    let root = temp_dir("spec-numbering-fragments");
+    write(
+        &root.join("docs/specs/RIPR-SPEC-0001-one.md"),
+        "# RIPR-SPEC-0001: One\n",
+    );
+    write(
+        &root.join("docs/specs/RIPR-SPEC-0002-two.md"),
+        "# RIPR-SPEC-0002: Two\n",
+    );
+    write(
+        &root.join("docs/specs/README.md"),
+        "| Spec | Status | Title |\n| --- | --- | --- |\n| [RIPR-SPEC-0001](RIPR-SPEC-0001-one.md) | proposed | One |\n",
+    );
+
+    let without = spec_numbering_violations(&root)?;
+    assert!(
+        without
+            .iter()
+            .any(|violation| violation.contains("missing index link `[RIPR-SPEC-0002]")),
+        "{without:?}"
+    );
+
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0002.md"),
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n",
+    );
+    let with = spec_numbering_violations(&root)?;
+    assert!(
+        !with
+            .iter()
+            .any(|violation| violation.contains("RIPR-SPEC-0002")),
+        "{with:?}"
+    );
+
+    // A fragment is not a license to reference a spec that does not exist.
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-9999.md"),
+        "| [RIPR-SPEC-9999](../specs/missing.md) | proposed | Missing |\n",
+    );
+    let phantom = spec_numbering_violations(&root)?;
+    assert!(
+        phantom
+            .iter()
+            .any(|violation| violation.contains("references missing spec `RIPR-SPEC-9999`")),
+        "{phantom:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn spec_index_fragments_must_be_named_for_the_one_spec_they_register() -> Result<(), String> {
+    let root = temp_dir("spec-index-fragment-names");
+    for (id, file) in [("0001", "one"), ("0002", "two")] {
+        write(
+            &root.join(format!("docs/specs/RIPR-SPEC-{id}-{file}.md")),
+            &format!("# RIPR-SPEC-{id}: T\n"),
+        );
+    }
+    write(
+        &root.join("docs/specs/README.md"),
+        "| [RIPR-SPEC-0001](RIPR-SPEC-0001-one.md) | proposed | One |\n",
+    );
+    // 0002's row filed under 0001's name must not satisfy 0002.
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0001.md"),
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("names `RIPR-SPEC-0002` but only `RIPR-SPEC-0001`")),
+        "{violations:?}"
+    );
+
+    write(
+        &root.join("docs/spec-index.d/stray.md"),
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("stray.md must be named RIPR-SPEC-NNNN.md")),
+        "{violations:?}"
+    );
+
+    // One row per fragment, and not a second copy of a README row.
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0002.md"),
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Again |\n",
+    );
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0001.md"),
+        "| [RIPR-SPEC-0001](../specs/RIPR-SPEC-0001-one.md) | proposed | One |\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations.iter().any(
+            |violation| violation.contains("RIPR-SPEC-0002.md must hold exactly one table row")
+        ),
+        "{violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("RIPR-SPEC-0001.md duplicates the README row")),
+        "{violations:?}"
+    );
+
+    // Equivalent link spellings are still two rows, and a fenced example
+    // renders no index link, so neither earns credit.
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0002.md"),
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n| [RIPR-SPEC-0002](./../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations.iter().any(
+            |violation| violation.contains("RIPR-SPEC-0002.md must hold exactly one table row")
+        ),
+        "{violations:?}"
+    );
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0002.md"),
+        "```\n| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n```\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("missing index link `[RIPR-SPEC-0002]")),
+        "a fenced row must not register the spec: {violations:?}"
+    );
+    assert!(
+        violations.iter().any(
+            |violation| violation.contains("RIPR-SPEC-0002.md must hold exactly one table row")
+        ),
+        "{violations:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn spec_numbering_detects_duplicate_spec_ids() -> Result<(), String> {
     let root = temp_dir("spec-numbering-duplicate");
     write(
@@ -31162,12 +32605,29 @@ covered_by_windows = ["cargo test windows_second"] # keep this selector
 covered_by_unix = ["cargo test unix_second"]
 covered_by = ["cargo test common_second"]
 "#;
+        let unicode_source =
+            source.replace("is still not an entry", "café 🦀 is still not an entry");
         for (case, source, multiline_command) in [
             ("lf", source.to_string(), "cargo test first\n[[allow]]\n"),
             (
                 "crlf",
                 source.replace('\n', "\r\n"),
                 "cargo test first\r\n[[allow]]\r\n",
+            ),
+            (
+                "unicode",
+                unicode_source.clone(),
+                "cargo test first\n[[allow]]\n",
+            ),
+            (
+                "unicode-crlf",
+                unicode_source.replace('\n', "\r\n"),
+                "cargo test first\r\n[[allow]]\r\n",
+            ),
+            (
+                "no-final-newline",
+                source.trim_end_matches('\n').to_string(),
+                "cargo test first\n[[allow]]\n",
             ),
         ] {
             // Preserve the selected TOML authority's newline bytes, rather
@@ -31214,6 +32674,30 @@ covered_by = ["cargo test common_second"]
                     ),
                 ],
                 "{case}: command order and attribution must come from parsed entries"
+            );
+            // Exercise rendered field diagnostics as well as entry attribution.
+            // Multibyte text, multiline strings and CRLF must keep physical lines.
+            let invalid = format!(
+                "{}\nmystery = \"unknown field\"\n",
+                source.trim_end_matches(['\r', '\n'])
+            );
+            write(&path, &invalid);
+            assert_eq!(
+                parse_file_policy_allowlist(&path.to_string_lossy()).err(),
+                Some(format!(
+                    "{}:29 unsupported non-Rust allowlist field `mystery`",
+                    path.display()
+                )),
+                "{case}"
+            );
+            write(&path, &source.replace("glob = \"docs/*.md\"", "glob = 42"));
+            assert_eq!(
+                parse_file_policy_allowlist(&path.to_string_lossy()).err(),
+                Some(format!(
+                    "{}:20 string value must be quoted (got: 42)",
+                    path.display()
+                )),
+                "{case}"
             );
         }
         Ok(())
@@ -31896,17 +33380,228 @@ fn pr_ready_packet_keeps_nonblocking_items_actionable() {
 }
 
 #[test]
-fn pr_ready_report_status_maps_warnings_to_attention() {
-    assert_eq!(
-        pr_ready_status_from_report_status("warn"),
-        Some("needs_attention")
-    );
-    assert_eq!(
-        pr_ready_status_from_report_status("actionable"),
-        Some("needs_attention")
-    );
-    assert_eq!(pr_ready_status_from_report_status("fail"), Some("fail"));
-    assert_eq!(pr_ready_status_from_report_status("pass"), None);
+fn pr_ready_current_outcome_ignores_quoted_superseded_or_stale_reports() -> Result<(), String> {
+    with_temp_cwd("pr-ready-typed-outcome", |_root| -> Result<(), String> {
+        // These are the prior adapter's counterexample shapes. A current typed
+        // producer result, not prose interpretation, supplies their outcome.
+        let reports = [
+            "Status: pass\n",
+            "Status: fail\n",
+            "Status: warn\n",
+            "Status: not ready\n",
+            "Status: instrument_failure\n",
+            "> Status: pass\nThis was an earlier claim.\n",
+            "```text\nStatus: pass\n```\nStatus: blocked\n",
+            "Status: pass\nSuperseded by the current result.\nStatus: blocked\n",
+            "Status: pass\nSubject: old-head\nObserved: 2026-01-01\n",
+            "",
+            "Status: pass\nThe command later failed.\n",
+            "> Status: pass\nStatus: blocked\n",
+        ];
+        let changes = [changed_path(
+            "crates/ripr/src/analysis/classifier.rs",
+            &["M"],
+        )];
+        let findings = critic_findings(&changes, &[], &[]);
+        assert!(
+            !findings.is_empty(),
+            "fixture must reach actual critic findings"
+        );
+        for body in reports {
+            for (current_findings, expected) in
+                [(findings.as_slice(), "needs_attention"), (&[][..], "pass")]
+            {
+                let step = super::run_readiness_step(
+                    "critic",
+                    "cargo xtask critic",
+                    "target/ripr/reports/critic.md",
+                    false,
+                    || {
+                        let outcome = super::finish_critic_report(current_findings, &[], &[])?;
+                        // Replacing shared report bytes cannot change the invocation's result.
+                        fs::write("target/ripr/reports/critic.md", body)
+                            .map_err(|err| err.to_string())?;
+                        Ok(outcome)
+                    },
+                );
+                assert_eq!(step.status, expected, "{body:?}");
+                let json: Value =
+                    serde_json::from_str(&pr_ready_json(&[step])).map_err(|err| err.to_string())?;
+                assert_eq!(json["schema_version"], "0.1");
+                assert_eq!(json["mode"], "advisory");
+                assert_eq!(json["steps"][0]["status"], expected);
+            }
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn pr_ready_completion_only_summary_and_missing_report_are_explicit() -> Result<(), String> {
+    with_temp_cwd("pr-ready-completion-only", |_root| -> Result<(), String> {
+        let summary = pr_summary_body(&[]);
+        let header = summary
+            .split("\n## ")
+            .next()
+            .ok_or("summary header missing")?;
+        assert!(!header.lines().any(|line| line.starts_with("Status:")));
+        assert!(summary.contains("Status: advisory static projection"));
+        let step = super::run_readiness_step(
+            "pr_summary",
+            "cargo xtask pr-summary",
+            "summary.md",
+            false,
+            || {
+                fs::write("summary.md", &summary).map_err(|err| err.to_string())?;
+                Ok(super::ReadinessOutcome::Completed)
+            },
+        );
+        assert_eq!(step.status, "pass");
+        assert_eq!(step.summary, "completed");
+
+        for required in [false, true] {
+            let step = super::run_readiness_step(
+                "missing_outcome",
+                "fixture",
+                "not-created.md",
+                required,
+                || Err("\ncurrent producer outcome unavailable\nmore detail".to_string()),
+            );
+            assert_eq!(
+                step.status,
+                if required { "fail" } else { "needs_attention" }
+            );
+            assert_eq!(step.summary, "current producer outcome unavailable");
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn cockpit_pr_triage_keeps_current_typed_warning_and_clean_outcomes() -> Result<(), String> {
+    with_temp_cwd("cockpit-typed-triage", |_root| -> Result<(), String> {
+        let prs = [
+            triage_pr(41, "devex: duplicate report", &["xtask/src/main.rs"]),
+            triage_pr(42, "devex: duplicate report", &["xtask/src/main.rs"]),
+        ];
+        let today = days_from_civil(2026, 5, 14);
+        let findings = pr_triage_findings(&prs, today);
+        assert!(
+            !findings.is_empty(),
+            "fixture must reach actual triage findings"
+        );
+        for (current_findings, expected, aggregate) in [
+            (findings.as_slice(), "needs_attention", "actionable"),
+            (&[][..], "pass", "pass"),
+        ] {
+            let step = super::run_readiness_step(
+                "pr_triage",
+                "cargo xtask pr-triage-report",
+                "target/ripr/reports/pr-triage.md",
+                false,
+                || {
+                    let outcome =
+                        super::finish_pr_triage_report(&prs, current_findings, today, "fixture")?;
+                    fs::write(
+                        "target/ripr/reports/pr-triage.md",
+                        "Status: pass\nStatus: blocked\n",
+                    )
+                    .map_err(|err| err.to_string())?;
+                    Ok(outcome)
+                },
+            );
+            assert_eq!(step.status, expected);
+            let json: Value =
+                serde_json::from_str(&cockpit_json(&[step])).map_err(|err| err.to_string())?;
+            assert_eq!(json["schema_version"], "0.1");
+            assert_eq!(json["mode"], "advisory");
+            assert_eq!(json["status"], aggregate);
+            assert_eq!(json["steps"][0]["status"], expected);
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn pr_ready_worktree_doctor_preserves_current_warnings_and_errors() -> Result<(), String> {
+    with_temp_cwd("pr-ready-typed-doctor", |root| -> Result<(), String> {
+        run("git", &["init", "-b", "feature"])?;
+        fs::write(".gitignore", "target/\n").map_err(|err| err.to_string())?;
+        run("git", &["add", ".gitignore"])?;
+        run(
+            "git",
+            &[
+                "-c",
+                "user.name=readiness fixture",
+                "-c",
+                "user.email=readiness-fixture@example.invalid",
+                "commit",
+                "-m",
+                "readiness fixture",
+            ],
+        )?;
+        assert_eq!(
+            super::run_output("git", &["rev-parse", "--abbrev-ref", "HEAD"])?.trim(),
+            "feature",
+            "fixture must have a committed named branch"
+        );
+        let report = "target/ripr/reports/worktree-doctor.md";
+        let clean = super::run_readiness_step(
+            "worktree_doctor",
+            "cargo xtask worktree doctor",
+            report,
+            true,
+            super::worktree_doctor_readiness,
+        );
+        assert_eq!(clean.status, "pass");
+        let clean_report = fs::read_to_string(root.join(report)).map_err(|err| err.to_string())?;
+        assert!(clean_report.contains("Status: pass"));
+
+        // The first invocation creates report residue. The next invocation
+        // must preserve that real warning despite successful command execution.
+        assert!(root.join("target/ripr").exists());
+        let warning = super::run_readiness_step(
+            "worktree_doctor",
+            "cargo xtask worktree doctor",
+            report,
+            true,
+            super::worktree_doctor_readiness,
+        );
+        assert_eq!(warning.status, "needs_attention");
+        assert_eq!(
+            pr_ready_status(std::slice::from_ref(&warning)),
+            "actionable"
+        );
+        let warning_report =
+            fs::read_to_string(root.join(report)).map_err(|err| err.to_string())?;
+        assert!(warning_report.contains("Status: warn"));
+        assert!(warning_report.contains("Warnings:"));
+
+        run("git", &["branch", "-m", "main"])?;
+        assert_eq!(
+            super::run_output("git", &["rev-parse", "--abbrev-ref", "HEAD"])?.trim(),
+            "main"
+        );
+        fs::write("dirty.txt", "uncommitted fixture change\n").map_err(|err| err.to_string())?;
+        assert!(
+            super::collect_worktree_status_changes()?
+                .iter()
+                .any(|change| change.path == "dirty.txt"),
+            "fixture must contain an observed dirty-main change"
+        );
+        let error = super::run_readiness_step(
+            "worktree_doctor",
+            "cargo xtask worktree doctor",
+            report,
+            true,
+            super::worktree_doctor_readiness,
+        );
+        assert_eq!(error.status, "fail");
+        let error_report = fs::read_to_string(root.join(report)).map_err(|err| err.to_string())?;
+        assert!(error_report.contains("Status: fail"));
+        assert!(error_report.contains("Errors:"));
+        Ok(())
+    })
 }
 
 #[test]
@@ -49787,18 +51482,194 @@ fn vscode_verify_vsix_reuses_sealed_archive_license_check() -> Result<(), String
     let mit = String::from_utf8(notices.mit.clone()).map_err(|err| err.to_string())?;
     let apache = String::from_utf8(notices.apache.clone()).map_err(|err| err.to_string())?;
     with_temp_cwd("vscode-verify-vsix-reuse", |root| {
-        let good = root.join("good.vsix");
+        let good = root.join("ripr-0.11.0.vsix");
         let license_txt = packaged_license_txt(&mit, &apache);
-        write_packaging_test_vsix(&good, &[("extension/LICENSE.txt", &license_txt)])?;
+        let versioned = |version: &str| {
+            (
+                format!("{{\"name\":\"ripr\",\"version\":\"{version}\"}}"),
+                format!(
+                    "<PackageManifest><Metadata><Identity Language=\"en-US\" Id=\"ripr\" Version=\"{version}\" Publisher=\"EffortlessMetrics\" /></Metadata></PackageManifest>"
+                ),
+            )
+        };
+        let (package_json, vsixmanifest) = versioned("0.11.0");
+        write_packaging_test_vsix(
+            &good,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", &package_json),
+                ("extension.vsixmanifest", &vsixmanifest),
+            ],
+        )?;
         super::vscode_verify_vsix(&[good.to_string_lossy().into_owned()])?;
 
-        let pointer = root.join("pointer.vsix");
+        // #10731: a stale 0.8.0 extension under a 0.10.0 name must fail.
+        let stale = root.join("ripr-0.10.0.vsix");
+        let (package_json, vsixmanifest) = versioned("0.8.0");
+        write_packaging_test_vsix(
+            &stale,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", &package_json),
+                ("extension.vsixmanifest", &vsixmanifest),
+            ],
+        )?;
+        let Err(error) = super::vscode_verify_vsix(&[stale.to_string_lossy().into_owned()]) else {
+            return Err("vscode-verify-vsix must reject a stale extension version".to_string());
+        };
+        assert!(
+            error.contains("named for version 0.10.0") && error.contains("0.8.0"),
+            "{error}"
+        );
+
+        // A matching Identity inside a comment or CDATA must not mask the real, stale one.
+        let masked = root.join("ripr-0.11.2.vsix");
+        let masked_manifest = "<PackageManifest><!-- <Identity Version=\"0.11.2\" /> --><Metadata><![CDATA[<Identity Version=\"0.11.2\" />]]><Identity Language=\"en-US\" Id=\"ripr\" Version=\"0.8.0\" Publisher=\"EffortlessMetrics\" /></Metadata></PackageManifest>";
+        write_packaging_test_vsix(
+            &masked,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", "{\"version\":\"0.11.2\"}"),
+                ("extension.vsixmanifest", masked_manifest),
+            ],
+        )?;
+        let Err(error) = super::vscode_verify_vsix(&[masked.to_string_lossy().into_owned()]) else {
+            return Err("an Identity-like comment must not mask a stale Identity".to_string());
+        };
+        assert!(error.contains("Identity Version \"0.8.0\""), "{error}");
+        assert_eq!(
+            super::vsixmanifest_identity_version(
+                "<PackageManifest><Metadata><Identity Id='ripr' Version='0.11.2'/></Metadata></PackageManifest>"
+            ),
+            "0.11.2"
+        );
+
+        let pointer = root.join("ripr-0.11.1.vsix");
         write_packaging_test_vsix(&pointer, &[("extension/LICENSE.txt", POINTER_LICENSE)])?;
         let Err(error) = super::vscode_verify_vsix(&[pointer.to_string_lossy().into_owned()])
         else {
             return Err("vscode-verify-vsix must reject a pointer-only LICENSE.txt".to_string());
         };
         assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn verify_packaged_vsix_version_binds_each_member_to_the_file_name() -> Result<(), String> {
+    let manifest = |version: &str| {
+        format!(
+            "<PackageManifest><Metadata><Identity Language=\"en-US\" Id=\"ripr\" Version=\"{version}\" Publisher=\"EffortlessMetrics\" /></Metadata></PackageManifest>"
+        )
+    };
+    let package = |version: &str| format!("{{\"name\":\"ripr\",\"version\":\"{version}\"}}");
+    with_temp_cwd("verify-vsix-version-members", |root| {
+        let write = |name: &str, members: &[(&str, &str)]| -> Result<PathBuf, String> {
+            let path = root.join(name);
+            write_packaging_test_vsix(&path, members)?;
+            Ok(path)
+        };
+        let reject = |path: &Path| -> Result<String, String> {
+            match super::verify_packaged_vsix_version(path) {
+                Ok(()) => Err(format!("{} must be rejected", path.display())),
+                Err(error) => Ok(error),
+            }
+        };
+
+        let aligned = write(
+            "ripr-0.10.0.vsix",
+            &[
+                ("extension/package.json", &package("0.10.0")),
+                ("extension.vsixmanifest", &manifest("0.10.0")),
+            ],
+        )?;
+        super::verify_packaged_vsix_version(&aligned)?;
+
+        // Only extension/package.json is stale.
+        let only_package = write(
+            "ripr-0.10.1.vsix",
+            &[
+                ("extension/package.json", &package("0.8.0")),
+                ("extension.vsixmanifest", &manifest("0.10.1")),
+            ],
+        )?;
+        let error = reject(&only_package)?;
+        assert!(error.contains("package.json version \"0.8.0\""), "{error}");
+        assert!(error.contains("Identity Version \"0.10.1\""), "{error}");
+
+        // Only extension.vsixmanifest is stale.
+        let only_manifest = write(
+            "ripr-0.10.2.vsix",
+            &[
+                ("extension/package.json", &package("0.10.2")),
+                ("extension.vsixmanifest", &manifest("0.8.0")),
+            ],
+        )?;
+        let error = reject(&only_manifest)?;
+        assert!(error.contains("package.json version \"0.10.2\""), "{error}");
+        assert!(error.contains("Identity Version \"0.8.0\""), "{error}");
+
+        // Both stale and different: both observed values are reported.
+        let both = write(
+            "ripr-0.10.3.vsix",
+            &[
+                ("extension/package.json", &package("0.8.0")),
+                ("extension.vsixmanifest", &manifest("0.9.0")),
+            ],
+        )?;
+        let error = reject(&both)?;
+        assert!(error.contains("named for version 0.10.3"), "{error}");
+        assert!(error.contains("package.json version \"0.8.0\""), "{error}");
+        assert!(error.contains("Identity Version \"0.9.0\""), "{error}");
+
+        // Absent or malformed version fields never match the file name.
+        let no_version = write(
+            "ripr-0.10.4.vsix",
+            &[
+                ("extension/package.json", r#"{"name":"ripr"}"#),
+                (
+                    "extension.vsixmanifest",
+                    "<PackageManifest><Identity Id=\"ripr\" /></PackageManifest>",
+                ),
+            ],
+        )?;
+        let error = reject(&no_version)?;
+        assert!(error.contains("package.json version \"\""), "{error}");
+        assert!(error.contains("Identity Version \"\""), "{error}");
+        let non_string = write(
+            "ripr-0.10.5.vsix",
+            &[
+                ("extension/package.json", r#"{"version":10}"#),
+                ("extension.vsixmanifest", &manifest("0.10.5")),
+            ],
+        )?;
+        reject(&non_string)?;
+        let bad_json = write(
+            "ripr-0.10.6.vsix",
+            &[
+                ("extension/package.json", "not json"),
+                ("extension.vsixmanifest", &manifest("0.10.6")),
+            ],
+        )?;
+        let error = reject(&bad_json)?;
+        assert!(error.contains("is not JSON"), "{error}");
+
+        // Missing members and a non-conforming file name fail closed.
+        let no_manifest = write(
+            "ripr-0.10.7.vsix",
+            &[("extension/package.json", &package("0.10.7"))],
+        )?;
+        let error = reject(&no_manifest)?;
+        assert!(error.contains("extension.vsixmanifest"), "{error}");
+        let misnamed = write(
+            "good.vsix",
+            &[
+                ("extension/package.json", &package("0.10.0")),
+                ("extension.vsixmanifest", &manifest("0.10.0")),
+            ],
+        )?;
+        let error = reject(&misnamed)?;
+        assert!(error.contains("ripr-<version>.vsix"), "{error}");
         Ok(())
     })
 }
@@ -50136,7 +52007,7 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
         .map_err(|err| format!("failed to read editor hover fixture: {err}"))?;
     for needle in [
         "## Evidence Path",
-        "## Missing discriminator",
+        "## Missing value or check",
         "## Suggested test shape",
         "## Handoff, verify, and receipt commands",
         "## Status projection",
@@ -50431,7 +52302,7 @@ fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> R
         TimedOutput {
             status: Some(success_exit_status()),
             stdout: "{}".to_string(),
-            stderr: format!("ripr_file_fact_cache_receipt {receipt}\n"),
+            stderr: format!("ripr_file_fact_cache_receipt token=unittesttoken {receipt}\n"),
             duration: Duration::from_millis(3),
             timed_out: false,
         },
@@ -50445,6 +52316,7 @@ fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> R
     assert_eq!(cache.store_failures_dropped, 3);
     let report = RepoExposureLatencyReport {
         status: "pass".to_string(),
+        output_parity: RepoExposureOutputParity::default(),
         timeout_ms: 10,
         binary: "target/debug/ripr".to_string(),
         runs: vec![run],
@@ -50470,21 +52342,21 @@ fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> R
         .to_string()
         .replace("src/file_0.rs", "/outside/file_0.rs");
     let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
-        "ripr_file_fact_cache_receipt {invalid}"
+        "ripr_file_fact_cache_receipt token=unittesttoken {invalid}"
     ));
     assert!(cache.is_none());
     assert_eq!(limitation.as_deref(), Some("invalid_cache_receipt"));
     let mut control_path = receipt.clone();
     control_path["store_failures"][0]["path"] = Value::String("src/a\nheading.rs".to_string());
     let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
-        "ripr_file_fact_cache_receipt {control_path}"
+        "ripr_file_fact_cache_receipt token=unittesttoken {control_path}"
     ));
     assert!(cache.is_none());
     assert_eq!(limitation.as_deref(), Some("invalid_cache_receipt"));
     let mut dotted_path = receipt.clone();
     dotted_path["store_failures"][0]["path"] = Value::String("src/foo..rs".to_string());
     let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
-        "ripr_file_fact_cache_receipt {dotted_path}"
+        "ripr_file_fact_cache_receipt token=unittesttoken {dotted_path}"
     ));
     assert!(cache.is_some());
     assert!(limitation.is_none());
@@ -50492,7 +52364,7 @@ fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> R
     let mut unrepresentable = receipt.clone();
     unrepresentable["store_failures"][0]["path"] = Value::Null;
     let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
-        "ripr_file_fact_cache_receipt {unrepresentable}"
+        "ripr_file_fact_cache_receipt token=unittesttoken {unrepresentable}"
     ));
     assert!(limitation.is_none());
     let unrepresentable_report = RepoExposureLatencyReport {
@@ -50517,7 +52389,7 @@ fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> R
     let mut uncounted = receipt.clone();
     uncounted["store_errors"] = Value::from(36);
     let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
-        "ripr_file_fact_cache_receipt {uncounted}"
+        "ripr_file_fact_cache_receipt token=unittesttoken {uncounted}"
     ));
     assert!(cache.is_none());
     assert_eq!(limitation.as_deref(), Some("invalid_cache_receipt"));
@@ -50525,12 +52397,13 @@ fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> R
     early_drop["store_failures"] = serde_json::json!([]);
     early_drop["store_errors"] = Value::from(3);
     let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
-        "ripr_file_fact_cache_receipt {early_drop}"
+        "ripr_file_fact_cache_receipt token=unittesttoken {early_drop}"
     ));
     assert!(cache.is_none());
     assert_eq!(limitation.as_deref(), Some("invalid_cache_receipt"));
-    let (cache, limitation) =
-        repo_exposure_file_fact_cache_from_stderr("ripr_file_fact_cache_receipt {broken}\n");
+    let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(
+        "ripr_file_fact_cache_receipt token=unittesttoken {broken}\n",
+    );
     assert!(cache.is_none());
     assert_eq!(limitation.as_deref(), Some("malformed_cache_receipt"));
     let timeout = repo_exposure_latency_run_from_output(
@@ -50538,7 +52411,7 @@ fn repo_exposure_latency_retains_bounded_cache_failures_and_missing_state() -> R
         TimedOutput {
             status: None,
             stdout: "partial".to_string(),
-            stderr: format!("ripr_file_fact_cache_receipt {receipt}\n"),
+            stderr: format!("ripr_file_fact_cache_receipt token=unittesttoken {receipt}\n"),
             duration: Duration::from_millis(10),
             timed_out: true,
         },
@@ -50581,6 +52454,8 @@ fn repo_exposure_latency_report_json_and_markdown_are_structured() -> Result<(),
             ],
             file_fact_cache: None,
             file_fact_cache_limitation: Some("cache_phase_not_observed".to_string()),
+            cache_family_store: None,
+            cache_family_store_limitation: Some("cache_family_store_not_observed".to_string()),
             resource_cost: None,
             resource_cost_limitation: Some("resource_cost_receipt_not_observed".to_string()),
         },
@@ -50594,12 +52469,15 @@ fn repo_exposure_latency_report_json_and_markdown_are_structured() -> Result<(),
             trace: Vec::new(),
             file_fact_cache: None,
             file_fact_cache_limitation: Some("format_skipped".to_string()),
+            cache_family_store: None,
+            cache_family_store_limitation: Some("cache_family_store_not_observed".to_string()),
             resource_cost: None,
             resource_cost_limitation: Some("format_skipped".to_string()),
         },
     ];
     let report = RepoExposureLatencyReport {
-        status: repo_exposure_latency_status(&runs),
+        status: repo_exposure_latency_status(&runs, &RepoExposureOutputParity::default()),
+        output_parity: RepoExposureOutputParity::default(),
         timeout_ms: 30_000,
         binary: "target/debug/ripr".to_string(),
         runs,
@@ -50608,7 +52486,7 @@ fn repo_exposure_latency_report_json_and_markdown_are_structured() -> Result<(),
     let json = repo_exposure_latency_json(&report);
     let value: Value =
         serde_json::from_str(&json).map_err(|err| format!("latency JSON should parse: {err}"))?;
-    assert_eq!(value["schema_version"], "0.3");
+    assert_eq!(value["schema_version"], "0.5");
     assert_eq!(value["report"], "repo-exposure-latency");
     assert_eq!(value["status"], "warn");
     assert_eq!(value["runs"][0]["trace"][0]["phase"], "cache_load");
@@ -50644,6 +52522,7 @@ fn repo_exposure_latency_debug_binary_uses_debug_ripr_name() -> Result<(), Strin
 fn repo_exposure_latency_report_json_records_exit_codes() -> Result<(), String> {
     let report = RepoExposureLatencyReport {
         status: "fail".to_string(),
+        output_parity: RepoExposureOutputParity::default(),
         timeout_ms: 10,
         binary: "target/debug/ripr".to_string(),
         runs: vec![RepoExposureLatencyRun {
@@ -50656,6 +52535,8 @@ fn repo_exposure_latency_report_json_records_exit_codes() -> Result<(), String> 
             trace: Vec::new(),
             file_fact_cache: None,
             file_fact_cache_limitation: Some("cache_phase_not_observed".to_string()),
+            cache_family_store: None,
+            cache_family_store_limitation: Some("cache_family_store_not_observed".to_string()),
             resource_cost: None,
             resource_cost_limitation: Some("resource_cost_receipt_not_observed".to_string()),
         }],
@@ -50687,7 +52568,7 @@ fn repo_exposure_latency_report_carries_observed_resource_cost() -> Result<(), S
             stdout: "{}".to_string(),
             stderr: format!(
                 "ripr_repo_exposure_latency phase=total status=ok duration_ms=5\n\
-                 ripr_resource_cost_receipt {}\n",
+                 ripr_resource_cost_receipt token=unittesttoken {}\n",
                 observed_resource_cost_receipt()
             ),
             duration: Duration::from_millis(6),
@@ -50737,7 +52618,7 @@ fn repo_exposure_latency_report_carries_observed_resource_cost() -> Result<(), S
             status: Some(success_exit_status()),
             stdout: "{}".to_string(),
             stderr: format!(
-                "ripr_resource_cost_receipt {}\n",
+                "ripr_resource_cost_receipt token=unittesttoken {}\n",
                 windows_observed_resource_cost_receipt()
             ),
             duration: Duration::from_millis(80),
@@ -50776,13 +52657,14 @@ fn repo_exposure_latency_report_carries_observed_resource_cost() -> Result<(), S
 
     let report = RepoExposureLatencyReport {
         status: "pass".to_string(),
+        output_parity: RepoExposureOutputParity::default(),
         timeout_ms: 30_000,
         binary: "target/debug/ripr".to_string(),
         runs: vec![run, windows],
     };
     let value: Value = serde_json::from_str(&repo_exposure_latency_json(&report))
         .map_err(|err| format!("latency JSON should parse: {err}"))?;
-    assert_eq!(value["schema_version"], "0.3");
+    assert_eq!(value["schema_version"], "0.5");
     assert_eq!(
         value["runs"][0]["resource_cost"]["observer"],
         "ripr_process_self"
@@ -50846,7 +52728,7 @@ fn repo_exposure_latency_report_preserves_unavailable_resource_cost() -> Result<
             status: Some(success_exit_status()),
             stdout: "{}".to_string(),
             stderr: format!(
-                "ripr_resource_cost_receipt {}\n",
+                "ripr_resource_cost_receipt token=unittesttoken {}\n",
                 unavailable_resource_cost_receipt()
             ),
             duration: Duration::from_millis(4),
@@ -50888,6 +52770,7 @@ fn repo_exposure_latency_report_preserves_unavailable_resource_cost() -> Result<
 
     let report = RepoExposureLatencyReport {
         status: "pass".to_string(),
+        output_parity: RepoExposureOutputParity::default(),
         timeout_ms: 30_000,
         binary: "target/debug/ripr".to_string(),
         runs: vec![unavailable, missing],
@@ -50954,8 +52837,9 @@ fn repo_exposure_latency_report_rejects_a_zero_standing_in_for_unavailable() -> 
         unavailable_resource_cost_receipt(),
         "the control must actually differ from the honest receipt"
     );
-    let (cost, limitation) =
-        repo_exposure_resource_cost_from_stderr(&format!("ripr_resource_cost_receipt {zeroed}\n"));
+    let (cost, limitation) = repo_exposure_resource_cost_from_stderr(&format!(
+        "ripr_resource_cost_receipt token=unittesttoken {zeroed}\n"
+    ));
     assert!(
         cost.is_none(),
         "an unavailable field must not carry a value at all: {zeroed}"
@@ -50972,7 +52856,7 @@ fn repo_exposure_latency_report_rejects_a_zero_standing_in_for_unavailable() -> 
     measured["peak_resident_bytes"]["value"] = Value::from(0);
     let measured_zero = measured.to_string();
     let (cost, limitation) = repo_exposure_resource_cost_from_stderr(&format!(
-        "ripr_resource_cost_receipt {measured_zero}\n"
+        "ripr_resource_cost_receipt token=unittesttoken {measured_zero}\n"
     ));
     assert!(limitation.is_none(), "{limitation:?}");
     assert_eq!(
@@ -50999,8 +52883,9 @@ fn repo_exposure_latency_report_rejects_a_zero_in_the_unavailable_cpu_arm() -> R
         unavailable_resource_cost_receipt(),
         "the control must actually differ from the honest receipt"
     );
-    let (cost, limitation) =
-        repo_exposure_resource_cost_from_stderr(&format!("ripr_resource_cost_receipt {zeroed}\n"));
+    let (cost, limitation) = repo_exposure_resource_cost_from_stderr(&format!(
+        "ripr_resource_cost_receipt token=unittesttoken {zeroed}\n"
+    ));
     assert!(
         cost.is_none(),
         "the unavailable CPU arm must not carry a number at all: {zeroed}"
@@ -51014,7 +52899,7 @@ fn repo_exposure_latency_report_rejects_a_zero_in_the_unavailable_cpu_arm() -> R
     // An honest unavailable CPU arm still parses, so the rejection above is
     // caused by the smuggled field and nothing else.
     let (cost, limitation) = repo_exposure_resource_cost_from_stderr(&format!(
-        "ripr_resource_cost_receipt {}\n",
+        "ripr_resource_cost_receipt token=unittesttoken {}\n",
         unavailable_resource_cost_receipt()
     ));
     assert!(limitation.is_none(), "{limitation:?}");
@@ -51031,12 +52916,12 @@ fn repo_exposure_latency_report_rejects_a_zero_in_the_unavailable_cpu_arm() -> R
 fn repo_exposure_latency_report_names_bad_resource_cost_receipts() {
     for (body, expected) in [
         (
-            "ripr_resource_cost_receipt {broken}\n".to_string(),
+            "ripr_resource_cost_receipt token=unittesttoken {broken}\n".to_string(),
             "malformed_resource_cost_receipt",
         ),
         (
             format!(
-                "ripr_resource_cost_receipt {}\nripr_resource_cost_receipt {}\n",
+                "ripr_resource_cost_receipt token=unittesttoken {}\nripr_resource_cost_receipt token=unittesttoken {}\n",
                 observed_resource_cost_receipt(),
                 observed_resource_cost_receipt()
             ),
@@ -51044,7 +52929,7 @@ fn repo_exposure_latency_report_names_bad_resource_cost_receipts() {
         ),
         (
             format!(
-                "ripr_resource_cost_receipt {}\n",
+                "ripr_resource_cost_receipt token=unittesttoken {}\n",
                 observed_resource_cost_receipt()
                     .replace("ripr_process_self", "xtask_harness")
                     .replace("\"observer_pid\": 4242", "\"observer_pid\": 0")
@@ -51053,7 +52938,7 @@ fn repo_exposure_latency_report_names_bad_resource_cost_receipts() {
         ),
         (
             format!(
-                "ripr_resource_cost_receipt {}\n",
+                "ripr_resource_cost_receipt token=unittesttoken {}\n",
                 observed_resource_cost_receipt().replace("\"0.1\"", "\"9.9\"")
             ),
             "invalid_resource_cost_receipt",
@@ -51075,6 +52960,7 @@ fn repo_exposure_latency_report_builder_skips_markdown_after_json_timeout() -> R
             formats.push(format.to_string());
             Ok(latency_run_with_status(format, "timeout"))
         },
+        no_parity_runner,
     )?;
 
     assert_eq!(formats, vec!["repo-exposure-json".to_string()]);
@@ -51099,6 +52985,7 @@ fn repo_exposure_latency_report_builder_runs_markdown_after_json_pass() -> Resul
             run.duration_ms = timeout.as_millis();
             Ok(run)
         },
+        no_parity_runner,
     )?;
 
     assert_eq!(
@@ -51108,7 +52995,9 @@ fn repo_exposure_latency_report_builder_runs_markdown_after_json_pass() -> Resul
             "repo-exposure-md".to_string()
         ]
     );
-    assert_eq!(report.status, "pass");
+    // Both formats exited 0, but output parity could not be run: not `pass`.
+    assert_eq!(report.status, "warn");
+    assert_eq!(report.output_parity.label(), "not_checked");
     assert_eq!(report.runs.len(), 2);
     assert_eq!(report.runs[0].duration_ms, 30_000);
     assert_eq!(report.runs[1].duration_ms, 30_000);
@@ -51118,9 +53007,12 @@ fn repo_exposure_latency_report_builder_runs_markdown_after_json_pass() -> Resul
 #[test]
 fn repo_exposure_latency_write_report_writes_markdown_and_json() -> Result<(), String> {
     with_temp_cwd("repo-exposure-latency-write", |_| {
-        write_repo_exposure_latency_report(Path::new("target/debug/ripr"), 12, |_, format, _| {
-            Ok(latency_run_with_status(format, "pass"))
-        })?;
+        write_repo_exposure_latency_report(
+            Path::new("target/debug/ripr"),
+            12,
+            |_, format, _| Ok(latency_run_with_status(format, "pass")),
+            no_parity_runner,
+        )?;
 
         let json = fs::read_to_string("target/ripr/reports/repo-exposure-latency.json")
             .map_err(|err| format!("failed to read latency JSON: {err}"))?;
@@ -51201,28 +53093,173 @@ fn repo_exposure_latency_status_and_empty_trace_markdown_are_stable() {
     let timeout = latency_run_with_status("repo-exposure-json", "timeout");
     let skipped = latency_run_with_status("repo-exposure-md", "skipped_after_json_timeout");
 
+    // `pass` needs exit codes AND a clean observed cache AND checked parity
+    // (#9503); an exit-code-only run is `warn`.
     assert_eq!(
-        repo_exposure_latency_status(std::slice::from_ref(&pass)),
-        "pass"
+        repo_exposure_latency_status(std::slice::from_ref(&pass), &parity_pass()),
+        "warn"
     );
-    assert_eq!(repo_exposure_latency_status(&[timeout]), "warn");
-    assert_eq!(repo_exposure_latency_status(&[skipped]), "warn");
     assert_eq!(
-        repo_exposure_latency_status(&[
-            latency_run_with_status("repo-exposure-json", "pass"),
-            fail
-        ]),
+        repo_exposure_latency_status(&[timeout], &parity_pass()),
+        "warn"
+    );
+    assert_eq!(
+        repo_exposure_latency_status(&[skipped], &parity_pass()),
+        "warn"
+    );
+    assert_eq!(
+        repo_exposure_latency_status(
+            &[latency_run_with_status("repo-exposure-json", "pass"), fail],
+            &parity_pass()
+        ),
         "fail"
     );
 
     let report = RepoExposureLatencyReport {
         status: "pass".to_string(),
+        output_parity: RepoExposureOutputParity::default(),
         timeout_ms: 30_000,
         binary: "target/debug/ripr".to_string(),
         runs: vec![pass],
     };
     let markdown = repo_exposure_latency_markdown(&report);
     assert!(markdown.contains("No analyzer trace lines were captured"));
+}
+
+fn no_parity_runner(
+    _: &Path,
+    _: &str,
+    _: RepoExposureParityPhase,
+    _: Duration,
+) -> Result<RepoExposureParityRun, String> {
+    Err("no parity runner in this test".to_string())
+}
+
+fn parity_pass() -> RepoExposureOutputParity {
+    RepoExposureOutputParity {
+        checks: ["repo-exposure-json", "repo-exposure-md"]
+            .into_iter()
+            .map(|format| RepoExposureParityCheck {
+                diagnostics: Vec::new(),
+                format: format.to_string(),
+                status: "pass",
+                reason: None,
+            })
+            .collect(),
+    }
+}
+
+fn clean_family_store() -> RepoExposureCacheFamilyStore {
+    RepoExposureCacheFamilyStore {
+        schema_version: "0.1".to_string(),
+        store_errors: 0,
+        store_failures: Vec::new(),
+        store_failures_dropped: 0,
+        subject: None,
+    }
+}
+
+fn clean_cache(store_errors: usize, corrupt_ignored: usize) -> RepoExposureFileFactCache {
+    RepoExposureFileFactCache {
+        schema_version: "0.1".to_string(),
+        hits: 1,
+        misses: 0,
+        invalidated: 0,
+        corrupt_ignored,
+        stores: 0,
+        store_errors,
+        store_failures: Vec::new(),
+        store_failures_dropped: store_errors,
+    }
+}
+
+fn observed_run(cache: Option<RepoExposureFileFactCache>) -> RepoExposureLatencyRun {
+    RepoExposureLatencyRun {
+        file_fact_cache_limitation: cache
+            .is_none()
+            .then(|| "cache_phase_not_observed".to_string()),
+        file_fact_cache: cache,
+        cache_family_store: Some(clean_family_store()),
+        cache_family_store_limitation: None,
+        ..latency_run_with_status("repo-exposure-json", "pass")
+    }
+}
+
+/// #9503 negative experiments: the same exit-code-clean runs flip from `pass`
+/// to `warn` for each degraded dimension, and only the fully observed, clean,
+/// parity-checked set stays `pass`.
+#[test]
+fn repo_exposure_latency_status_is_not_pass_with_cache_errors_or_unchecked_parity() {
+    let clean = observed_run(Some(clean_cache(0, 0)));
+    let parity_pass = parity_pass();
+    // Positive control: this is the only shape allowed to say `pass`.
+    assert_eq!(
+        repo_exposure_latency_status(std::slice::from_ref(&clean), &parity_pass),
+        "pass"
+    );
+    // Unchecked output parity alone blocks `pass`.
+    assert_eq!(
+        repo_exposure_latency_status(
+            std::slice::from_ref(&clean),
+            &RepoExposureOutputParity::default()
+        ),
+        "warn"
+    );
+    // Cache store errors block `pass` even with parity checked.
+    let store_errors = observed_run(Some(clean_cache(2, 0)));
+    assert_eq!(
+        repo_exposure_latency_status(std::slice::from_ref(&store_errors), &parity_pass),
+        "warn"
+    );
+    // Ignored corrupt entries block `pass`.
+    let corrupt = observed_run(Some(clean_cache(0, 1)));
+    assert_eq!(
+        repo_exposure_latency_status(std::slice::from_ref(&corrupt), &parity_pass),
+        "warn"
+    );
+    // An unobserved cache phase blocks `pass`.
+    let unobserved = observed_run(None);
+    assert_eq!(
+        repo_exposure_latency_status(std::slice::from_ref(&unobserved), &parity_pass),
+        "warn"
+    );
+    let reasons = repo_exposure_latency_status_reasons(
+        &[store_errors, unobserved],
+        &RepoExposureOutputParity::default(),
+    );
+    assert!(reasons.contains(&"repo-exposure-json: file_fact_cache_store_errors=2".to_string()));
+    assert!(
+        reasons
+            .contains(&"repo-exposure-json: file_fact_cache_cache_phase_not_observed".to_string())
+    );
+    assert!(reasons.contains(&"output_parity_not_checked".to_string()));
+}
+
+/// #9503: a legitimate Unix file name containing `:` is a valid receipt row
+/// path; a Windows drive-qualified path is still refused.
+#[test]
+fn cache_receipt_accepts_colon_in_unix_row_paths_but_not_drive_paths() {
+    let receipt = |path: &str| {
+        let value = serde_json::json!({
+            "schema_version": "0.1", "hits": 0, "misses": 1, "invalidated": 0,
+            "corrupt_ignored": 0, "stores": 0, "store_errors": 1,
+            "store_failures": [{"path": path, "stage": "write", "error": "boom"}],
+            "store_failures_dropped": 0
+        });
+        repo_exposure_file_fact_cache_from_stderr(&format!(
+            "ripr_file_fact_cache_receipt token=unittesttoken {value}\n"
+        ))
+    };
+    let (cache, limitation) = receipt("src/a:b.rs");
+    assert!(cache.is_some(), "colon path rejected: {limitation:?}");
+    let (cache, limitation) = receipt("a:b.rs");
+    assert!(
+        cache.is_some(),
+        "top-level colon path rejected: {limitation:?}"
+    );
+    let (cache, limitation) = receipt(&format!("{}:/work/src/lib.rs", "C"));
+    assert!(cache.is_none());
+    assert_eq!(limitation.as_deref(), Some("invalid_cache_receipt"));
 }
 
 /// One observed resource-cost receipt body, in the exact wire shape the
@@ -51297,6 +53334,8 @@ fn latency_run_with_status(format: &str, status: &str) -> RepoExposureLatencyRun
         trace: Vec::new(),
         file_fact_cache: None,
         file_fact_cache_limitation: Some("cache_phase_not_observed".to_string()),
+        cache_family_store: None,
+        cache_family_store_limitation: Some("cache_family_store_not_observed".to_string()),
         resource_cost: None,
         resource_cost_limitation: Some("resource_cost_receipt_not_observed".to_string()),
     }
@@ -54582,54 +56621,100 @@ fn check_pr_bounded_error_lines_are_crlf_normalized_and_capped() {
     assert!(!crlf.contains('\r'), "CRLF input is normalized: {crlf:?}");
 }
 
+/// Remove a test-owned scratch directory, retrying a Windows sharing or lock
+/// violation (os error 32/33) for up to five seconds. A process another test
+/// spawned while this test held the cwd there, or a scanner opening the new
+/// report, can keep a handle briefly; hosted Windows failed this cleanup after
+/// the oracle had passed (#10344). Any other error, or a holder that outlasts
+/// the bound, still fails.
+fn remove_owned_scratch_dir(root: &Path) -> std::io::Result<()> {
+    const SHARING_VIOLATION: i32 = 32;
+    const LOCK_VIOLATION: i32 = 33;
+    let mut attempts = 0;
+    loop {
+        match fs::remove_dir_all(root) {
+            Err(err)
+                if attempts < 50
+                    && matches!(err.raw_os_error(), Some(SHARING_VIOLATION | LOCK_VIOLATION)) =>
+            {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            other => return other,
+        }
+    }
+}
+
 #[test]
 fn check_pr_failure_report_replaces_stale_success_report() -> Result<(), String> {
-    with_repo_cwd(|| {
-        // Preserve any pre-existing report so the test leaves no false
-        // failure artifact behind for a real check-pr reader.
-        let report_path = Path::new("target")
-            .join("ripr")
-            .join("reports")
-            .join("check-pr.md");
-        let original = fs::read(&report_path).ok();
-        let outcome = (|| -> Result<(), String> {
-            super::write_report("check-pr.md", &super::check_pr_report(None))?;
-            let run_a = || Err("stale-replacement probe".to_string());
-            let gates = [super::CheckPrGate {
-                name: "gate-a",
-                reproduce: "run a",
-                run: &run_a,
-            }];
-            let result = super::run_check_pr_gates(&gates, &|failure| {
-                super::write_report("check-pr.md", &super::check_pr_report(Some(failure)))
-            });
-            assert!(result.is_err());
+    let guard = acquire_test_cwd_write_guard();
+    let old = std::env::current_dir().map_err(|err| format!("capture report-test cwd: {err}"))?;
+    let temp = std::env::temp_dir();
+    fs::create_dir_all(&temp).map_err(|err| format!("create runtime temp parent: {err}"))?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("report-test timestamp: {err}"))?
+        .as_nanos();
+    let root = temp.join(format!(
+        "ripr-check-pr-report-{}-{stamp}",
+        std::process::id()
+    ));
+    // Ownership starts only after this exclusive create succeeds. An occupied
+    // leaf must refuse, never borrow or recursively remove another test's state.
+    fs::create_dir(&root).map_err(|err| {
+        format!(
+            "create exclusive report-test scratch {}: {err}",
+            root.display()
+        )
+    })?;
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        std::env::set_current_dir(&root)
+            .map_err(|err| format!("enter report-test scratch: {err}"))?;
+        super::write_report("check-pr.md", &super::check_pr_report(None))?;
+        let run_a = || Err("stale-replacement probe".to_string());
+        let gates = [super::CheckPrGate {
+            // This synthetic ci-fast failure has no stable inherited comparison;
+            // the existing owner refuses it before creating comparison worktrees.
+            name: "ci-fast",
+            reproduce: "run a",
+            run: &run_a,
+        }];
+        let result = super::run_check_pr_gates(&gates, &|failure| {
+            super::write_report("check-pr.md", &super::check_pr_report(Some(failure)))
+        });
+        assert!(result.is_err());
 
-            let text = fs::read_to_string("target/ripr/reports/check-pr.md")
-                .map_err(|err| format!("read check-pr.md: {err}"))?;
-            assert!(
-                text.contains("Status: fail"),
-                "the failed current run must replace the stale success report"
-            );
-            assert!(!text.contains("Status: pass"));
-            Ok(())
-        })();
-        let restore = match &original {
-            Some(bytes) => fs::write(&report_path, bytes).map_err(|err| {
-                format!("failed to restore {}: {err}", normalize_path(&report_path))
-            }),
-            None => match fs::remove_file(&report_path) {
-                Ok(()) => Ok(()),
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(err) => Err(format!(
-                    "failed to clear {}: {err}",
-                    normalize_path(&report_path)
-                )),
-            },
-        };
-        restore?;
-        outcome
-    })
+        let text = fs::read_to_string("target/ripr/reports/check-pr.md")
+            .map_err(|err| format!("read check-pr.md: {err}"))?;
+        assert!(
+            text.contains("Status: fail"),
+            "the failed current run must replace the stale success report"
+        );
+        assert!(!text.contains("Status: pass"));
+        Ok(())
+    }));
+    // As with the existing cwd scopes, restore even after an assertion panic.
+    // A failed restoration retains the owned root instead of deleting a live cwd.
+    let restore = std::env::set_current_dir(&old).map_err(|err| {
+        format!(
+            "restore report-test cwd; retained {}: {err}",
+            root.display()
+        )
+    });
+    restore?;
+    let cleanup = remove_owned_scratch_dir(&root)
+        .map_err(|err| format!("remove report-test scratch {}: {err}", root.display()));
+    drop(guard);
+    match outcome {
+        Ok(result) => {
+            cleanup?;
+            result
+        }
+        Err(panic_payload) => {
+            let _ = cleanup;
+            std::panic::resume_unwind(panic_payload);
+        }
+    }
 }
 
 #[test]
@@ -55245,6 +57330,843 @@ fn gh_pr_status_real_cli_schema() -> Result<(), String> {
             available.contains(field),
             "real gh rejects production field {field}: {text}"
         );
+    }
+    Ok(())
+}
+
+/// A fake parity runner: cold and served stdout plus the served cache trace.
+fn parity_runner<'a>(
+    cold_stdout: &'a str,
+    served_stdout: &'a str,
+    served_cache_load: Option<&'a str>,
+) -> impl FnMut(&Path, &str, RepoExposureParityPhase, Duration) -> Result<RepoExposureParityRun, String>
++ 'a {
+    move |_, format, phase, _| {
+        // The JSON fixtures differ only in the envelope stamps that JSON
+        // normalization ignores; Markdown has none, so it stays byte-equal.
+        let served_stdout = if format == "repo-exposure-md" && cold_stdout.starts_with('{') {
+            cold_stdout
+        } else {
+            served_stdout
+        };
+        Ok(match phase {
+            RepoExposureParityPhase::Cold => RepoExposureParityRun {
+                status: "pass".to_string(),
+                stdout: cold_stdout.to_string(),
+                cache_load: Some("miss".to_string()),
+                subject: Some(serde_json::json!({"cache_key": "k"})),
+                ..Default::default()
+            },
+            RepoExposureParityPhase::Served => RepoExposureParityRun {
+                status: "pass".to_string(),
+                stdout: served_stdout.to_string(),
+                cache_load: served_cache_load.map(str::to_string),
+                subject: Some(serde_json::json!({"cache_key": "k"})),
+                ..Default::default()
+            },
+        })
+    }
+}
+
+fn clean_primary_run(format: &str) -> RepoExposureLatencyRun {
+    RepoExposureLatencyRun {
+        format: format.to_string(),
+        ..observed_run(Some(clean_cache(0, 0)))
+    }
+}
+
+fn build_with_parity<P>(run_parity: P) -> Result<RepoExposureLatencyReport, String>
+where
+    P: FnMut(
+        &Path,
+        &str,
+        RepoExposureParityPhase,
+        Duration,
+    ) -> Result<RepoExposureParityRun, String>,
+{
+    build_repo_exposure_latency_report(
+        Path::new("target/debug/ripr"),
+        1_000,
+        |_, format, _| Ok(clean_primary_run(format)),
+        run_parity,
+    )
+}
+
+const PARITY_JSON_A: &str = r#"{"artifact":{"generated_at":"unix_ms:1","content_sha256":"sha256:a","tool":"ripr"},"seams":[{"id":"s1","grip":"weakly_gripped"}]}"#;
+const PARITY_JSON_B_TIME_ONLY: &str = r#"{"artifact":{"generated_at":"unix_ms:2","content_sha256":"sha256:b","tool":"ripr"},"seams":[{"id":"s1","grip":"weakly_gripped"}]}"#;
+const PARITY_JSON_C_FINDING: &str = r#"{"artifact":{"generated_at":"unix_ms:2","content_sha256":"sha256:b","tool":"ripr"},"seams":[{"id":"s1","grip":"strongly_gripped"}]}"#;
+
+/// #9633: `pass` is reachable. Cache-served output equal to the cold output
+/// (ignoring only the artifact envelope's `generated_at` and its digest) with
+/// a confirmed cache hit makes the whole report `pass`.
+#[test]
+fn repo_exposure_output_parity_pass_makes_the_report_pass() -> Result<(), String> {
+    let report = build_with_parity(parity_runner(
+        PARITY_JSON_A,
+        PARITY_JSON_B_TIME_ONLY,
+        Some("hit"),
+    ))?;
+    assert_eq!(report.output_parity.label(), "pass");
+    assert_eq!(report.status, "pass", "{:?}", report.output_parity);
+    assert!(repo_exposure_latency_status_reasons(&report.runs, &report.output_parity).is_empty());
+    let json: Value = serde_json::from_str(&repo_exposure_latency_json(&report))
+        .map_err(|err| format!("invalid latency JSON: {err}"))?;
+    assert_eq!(json["output_parity"], "pass");
+    assert_eq!(json["status"], "pass");
+    assert_eq!(json["output_parity_checks"][0]["status"], "pass");
+    assert_eq!(json["status_reasons"], serde_json::json!([]));
+    Ok(())
+}
+
+/// #9633 negative experiment: a served output that differs from the cold one
+/// in any non-volatile field is a reported mismatch and a non-pass status.
+#[test]
+fn repo_exposure_output_parity_mismatch_is_reported_as_non_pass() -> Result<(), String> {
+    let report = build_with_parity(parity_runner(
+        PARITY_JSON_A,
+        PARITY_JSON_C_FINDING,
+        Some("hit"),
+    ))?;
+    assert_eq!(report.output_parity.label(), "mismatch");
+    assert_eq!(report.status, "fail");
+    let reasons = repo_exposure_latency_status_reasons(&report.runs, &report.output_parity);
+    assert!(reasons.contains(&"repo-exposure-json: output_parity_mismatch".to_string()));
+    let json: Value = serde_json::from_str(&repo_exposure_latency_json(&report))
+        .map_err(|err| format!("invalid latency JSON: {err}"))?;
+    assert_eq!(json["output_parity"], "mismatch");
+    assert_eq!(json["output_parity_checks"][0]["status"], "mismatch");
+    assert_eq!(
+        json["output_parity_checks"][0]["reason"],
+        "served_output_differs_from_cold"
+    );
+    // Markdown output differs byte-for-byte: no volatile field is tolerated.
+    let md = build_with_parity(parity_runner("# a\n", "# b\n", Some("hit")))?;
+    assert_eq!(md.output_parity.label(), "mismatch");
+    Ok(())
+}
+
+/// #9633: an unverified comparison never reads as `pass`. A served run that
+/// the trace does not confirm as a cache hit, a failing or timed-out half, or
+/// a primary run that did not complete each leave parity `not_checked` with a
+/// named reason, even when the two outputs happen to be equal.
+#[test]
+fn repo_exposure_output_parity_unverified_comparisons_stay_not_checked() -> Result<(), String> {
+    let not_hit = build_with_parity(parity_runner(PARITY_JSON_A, PARITY_JSON_A, Some("miss")))?;
+    assert_eq!(not_hit.output_parity.label(), "not_checked");
+    assert_eq!(not_hit.status, "warn");
+    assert_eq!(
+        not_hit.output_parity.checks[0].reason.as_deref(),
+        Some("served_run_not_cache_hit")
+    );
+    let unobserved = build_with_parity(parity_runner(PARITY_JSON_A, PARITY_JSON_A, None))?;
+    assert_eq!(unobserved.output_parity.label(), "not_checked");
+
+    let timed_out = build_with_parity(|_, _, phase, _| {
+        Ok(RepoExposureParityRun {
+            status: if phase == RepoExposureParityPhase::Cold {
+                "pass"
+            } else {
+                "timeout"
+            }
+            .to_string(),
+            stdout: String::new(),
+            cache_load: Some("miss".to_string()),
+            subject: Some(serde_json::json!({"cache_key": "k"})),
+            ..Default::default()
+        })
+    })?;
+    assert_eq!(timed_out.output_parity.label(), "not_checked");
+    assert_eq!(
+        timed_out.output_parity.checks[0].reason.as_deref(),
+        Some("served_run_timeout")
+    );
+
+    let cold_hit = build_with_parity(|_, _, _, _| {
+        Ok(RepoExposureParityRun {
+            status: "pass".to_string(),
+            stdout: PARITY_JSON_A.to_string(),
+            cache_load: Some("hit".to_string()),
+            subject: Some(serde_json::json!({"cache_key": "k"})),
+            ..Default::default()
+        })
+    })?;
+    assert_eq!(
+        cold_hit.output_parity.checks[0].reason.as_deref(),
+        Some("cold_run_served_from_cache")
+    );
+
+    let runner_error = build_with_parity(no_parity_runner)?;
+    assert_eq!(
+        runner_error.output_parity.checks[0].reason.as_deref(),
+        Some("cold_run_error: no parity runner in this test")
+    );
+    let reasons =
+        repo_exposure_latency_status_reasons(&runner_error.runs, &runner_error.output_parity);
+    assert!(
+        reasons
+            .contains(&"repo-exposure-json: output_parity_not_checked_cold_run_error: no parity runner in this test".to_string())
+    );
+
+    // A primary run that timed out never reaches the parity runner.
+    let mut parity_calls = 0;
+    let report = build_repo_exposure_latency_report(
+        Path::new("target/debug/ripr"),
+        1_000,
+        |_, format, _| Ok(latency_run_with_status(format, "timeout")),
+        |_, _, _, _| {
+            parity_calls += 1;
+            Err("must not run".to_string())
+        },
+    )?;
+    assert_eq!(parity_calls, 0);
+    assert_eq!(
+        report.output_parity.checks[0].reason.as_deref(),
+        Some("primary_run_timeout")
+    );
+    Ok(())
+}
+
+/// #9633: only the two artifact-envelope keys that are stamped per run are
+/// ignored; a changed finding, a changed envelope identity field or a
+/// non-JSON body is a difference.
+#[test]
+fn repo_exposure_normalized_output_ignores_only_the_per_run_envelope_stamps() {
+    let normalize = |text: &str| repo_exposure_normalized_output("repo-exposure-json", text);
+    assert_eq!(normalize(PARITY_JSON_A), normalize(PARITY_JSON_B_TIME_ONLY));
+    assert_ne!(normalize(PARITY_JSON_A), normalize(PARITY_JSON_C_FINDING));
+    let other_tool = PARITY_JSON_A.replace("\"tool\":\"ripr\"", "\"tool\":\"other\"");
+    assert_ne!(normalize(PARITY_JSON_A), normalize(&other_tool));
+    // Not the expected document: no comparable form (never a raw-string
+    // fallback that would false-mismatch on `generated_at`).
+    assert_eq!(normalize("not json a"), None);
+    assert_eq!(normalize(""), None);
+    assert_eq!(normalize("{\"seams\":[]}"), None);
+    assert_eq!(normalize("   \n"), None);
+    assert_eq!(
+        repo_exposure_normalized_output("repo-exposure-md", "# a\n").as_deref(),
+        Some("# a\n")
+    );
+    assert_eq!(
+        repo_exposure_normalized_output("repo-exposure-md", ""),
+        None
+    );
+}
+
+/// #9633: an aggregate parity `pass` needs both expected formats exactly once.
+/// A missing or duplicated format is `not_checked` with a named reason, even
+/// when every present check passes.
+#[test]
+fn repo_exposure_output_parity_requires_both_formats_exactly_once() {
+    let check = |format: &str| RepoExposureParityCheck {
+        diagnostics: Vec::new(),
+        format: format.to_string(),
+        status: "pass",
+        reason: None,
+    };
+    let parity = |formats: &[&str]| RepoExposureOutputParity {
+        checks: formats.iter().map(|format| check(format)).collect(),
+    };
+    assert_eq!(
+        parity(&["repo-exposure-json", "repo-exposure-md"]).label(),
+        "pass"
+    );
+    let missing = parity(&["repo-exposure-json"]);
+    assert_eq!(missing.label(), "not_checked");
+    assert_eq!(
+        missing.coverage_gap().as_deref(),
+        Some("missing_format:repo-exposure-md")
+    );
+    let duplicate = parity(&["repo-exposure-json", "repo-exposure-md", "repo-exposure-md"]);
+    assert_eq!(duplicate.label(), "not_checked");
+    assert_eq!(
+        duplicate.coverage_gap().as_deref(),
+        Some("duplicate_format:repo-exposure-md")
+    );
+    assert_eq!(
+        parity(&["repo-exposure-json", "repo-exposure-md", "other"]).label(),
+        "not_checked"
+    );
+    let run = observed_run(Some(clean_cache(0, 0)));
+    assert_eq!(
+        repo_exposure_latency_status(std::slice::from_ref(&run), &missing),
+        "warn"
+    );
+    let reasons = repo_exposure_latency_status_reasons(std::slice::from_ref(&run), &missing);
+    assert!(
+        reasons.contains(&"output_parity_not_checked_missing_format:repo-exposure-md".to_string())
+    );
+}
+
+/// JSON legs carry the document; markdown legs a fixed body.
+fn fmt_body(format: &str, json: &str) -> String {
+    if format == "repo-exposure-json" {
+        json.to_string()
+    } else {
+        "# repo exposure\n".to_string()
+    }
+}
+
+fn leg(
+    stdout: &str,
+    cache_load: &str,
+    subject: Option<&str>,
+    diagnostics: &[&str],
+) -> RepoExposureParityRun {
+    RepoExposureParityRun {
+        status: "pass".to_string(),
+        stdout: stdout.to_string(),
+        cache_load: Some(cache_load.to_string()),
+        subject: subject.map(|key| serde_json::json!({"cache_key": key})),
+        diagnostics: diagnostics.iter().map(|d| d.to_string()).collect(),
+    }
+}
+
+/// #9633 (maintainer review P1): the comparison legs must describe one
+/// repository state. Movement of source, config or generated disclosure
+/// between the cold and served child is `not_checked`, decided before the
+/// outputs are compared, so it can never become a mismatch or a required
+/// readiness failure; the same subject with differing output stays a mismatch.
+#[test]
+fn repo_exposure_output_parity_refuses_a_moved_or_unobserved_subject() -> Result<(), String> {
+    let run = |cold: RepoExposureParityRun, served: RepoExposureParityRun| {
+        build_with_parity(move |_, _, phase, _| {
+            Ok(match phase {
+                RepoExposureParityPhase::Cold => cold.clone(),
+                RepoExposureParityPhase::Served => served.clone(),
+            })
+        })
+    };
+    // Subject moved, outputs differ: not a mismatch, not a fail.
+    let moved = run(
+        leg(PARITY_JSON_A, "miss", Some("a"), &[]),
+        leg(PARITY_JSON_C_FINDING, "hit", Some("b"), &[]),
+    )?;
+    assert_eq!(moved.output_parity.label(), "not_checked");
+    assert_eq!(moved.status, "warn");
+    assert_eq!(
+        moved.output_parity.checks[0].reason.as_deref(),
+        Some("comparison_subject_moved")
+    );
+    // Subject moved, outputs equal: still not a pass (A/B/A shapes).
+    let moved_equal = run(
+        leg(PARITY_JSON_A, "miss", Some("a"), &[]),
+        leg(PARITY_JSON_B_TIME_ONLY, "hit", Some("b"), &[]),
+    )?;
+    assert_eq!(moved_equal.output_parity.label(), "not_checked");
+    // No producer-reported subject on a leg: unverifiable, not a pass.
+    let unobserved = run(
+        leg(PARITY_JSON_A, "miss", None, &[]),
+        leg(PARITY_JSON_B_TIME_ONLY, "hit", Some("a"), &[]),
+    )?;
+    assert_eq!(unobserved.output_parity.label(), "not_checked");
+    assert_eq!(
+        unobserved.output_parity.checks[0].reason.as_deref(),
+        Some("comparison_subject_unobserved")
+    );
+    // The JSON artifact's own identity moving is also a moved subject.
+    let identity = |value: &str| {
+        PARITY_JSON_A.replace(
+            "\"tool\":\"ripr\"",
+            &format!("\"tool\":\"ripr\",\"snapshot_identity\":\"{value}\""),
+        )
+    };
+    let artifact_moved = run(
+        leg(&identity("x"), "miss", Some("a"), &[]),
+        leg(&identity("y"), "hit", Some("a"), &[]),
+    )?;
+    assert_ne!(
+        artifact_moved.output_parity.label(),
+        "pass",
+        "{:?}",
+        artifact_moved.output_parity
+    );
+    // Same subject, real divergence: the mismatch route is preserved.
+    let same = run(
+        leg(PARITY_JSON_A, "miss", Some("a"), &[]),
+        leg(PARITY_JSON_C_FINDING, "hit", Some("a"), &[]),
+    )?;
+    assert_eq!(same.output_parity.label(), "mismatch");
+    assert_eq!(same.status, "fail");
+    Ok(())
+}
+
+/// #9633 (maintainer review P1): a store failure seen only on a comparison
+/// leg is carried into the report with a named reason: equal output keeps
+/// parity `pass`, but the report is `warn`, never `pass`.
+#[test]
+fn repo_exposure_parity_leg_store_failures_block_report_pass() -> Result<(), String> {
+    let report = build_with_parity(|_, format, phase, _| {
+        Ok(match phase {
+            RepoExposureParityPhase::Cold => {
+                leg(&fmt_body(format, PARITY_JSON_A), "miss", Some("a"), &[])
+            }
+            RepoExposureParityPhase::Served => leg(
+                &fmt_body(format, PARITY_JSON_B_TIME_ONLY),
+                "hit",
+                Some("a"),
+                &["cache_family_store_errors=1"],
+            ),
+        })
+    })?;
+    assert_eq!(report.output_parity.label(), "pass");
+    assert_eq!(report.status, "warn");
+    let reasons = repo_exposure_latency_status_reasons(&report.runs, &report.output_parity);
+    assert!(
+        reasons
+            .contains(&"repo-exposure-json: parity_served_cache_family_store_errors=1".to_string()),
+        "{reasons:?}"
+    );
+    let json: Value = serde_json::from_str(&repo_exposure_latency_json(&report))
+        .map_err(|err| format!("invalid latency JSON: {err}"))?;
+    assert_eq!(
+        json["output_parity_checks"][0]["diagnostics"][0],
+        "served_cache_family_store_errors=1"
+    );
+    // Control: the same legs without a diagnostic are a clean pass.
+    let clean = build_with_parity(|_, format, phase, _| {
+        Ok(match phase {
+            RepoExposureParityPhase::Cold => {
+                leg(&fmt_body(format, PARITY_JSON_A), "miss", Some("a"), &[])
+            }
+            RepoExposureParityPhase::Served => leg(
+                &fmt_body(format, PARITY_JSON_B_TIME_ONLY),
+                "hit",
+                Some("a"),
+                &[],
+            ),
+        })
+    })?;
+    assert_eq!(clean.status, "pass");
+    Ok(())
+}
+
+/// #9633: a comparison leg's own authenticated stderr receipts become named
+/// diagnostics and a subject; a served (cache-hit) leg may lack the file-fact
+/// receipt, a cold leg may not, and forged lines count for nothing.
+#[test]
+fn parity_leg_receipts_yield_subject_and_named_diagnostics() {
+    let family = |store_errors: usize, rows: &str| {
+        format!(
+            "ripr_cache_family_store_receipt token=unittesttoken {{\"schema_version\":\"0.1\",\"store_errors\":{store_errors},\"store_failures\":[{rows}],\"store_failures_dropped\":0,\"subject\":{{\"cache_key\":\"abc\"}}}}\n"
+        )
+    };
+    let file_fact = "ripr_file_fact_cache_receipt token=unittesttoken {\"corrupt_ignored\":0,\"hits\":0,\"invalidated\":0,\"misses\":2,\"schema_version\":\"0.1\",\"store_errors\":0,\"store_failures\":[],\"store_failures_dropped\":0,\"stores\":2}\n";
+    let row = "{\"error\":\"x\",\"path\":\"repo-corpus-fingerprint\",\"stage\":\"corpus_fingerprint_store\"}";
+    let healthy_cold = format!("{}{file_fact}", family(0, ""));
+    let (subject, diagnostics) =
+        repo_exposure_parity_leg_receipts(&healthy_cold, RepoExposureParityPhase::Cold);
+    assert_eq!(subject, Some(serde_json::json!({"cache_key": "abc"})));
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    // Served: no file-fact receipt is fine.
+    let (_, diagnostics) =
+        repo_exposure_parity_leg_receipts(&family(0, ""), RepoExposureParityPhase::Served);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    // Cold: the file-fact receipt is required.
+    let (_, diagnostics) =
+        repo_exposure_parity_leg_receipts(&family(0, ""), RepoExposureParityPhase::Cold);
+    assert_eq!(
+        diagnostics,
+        vec!["file_fact_cache_cache_phase_not_observed"]
+    );
+    // A real store failure row on the leg is named.
+    let (_, diagnostics) =
+        repo_exposure_parity_leg_receipts(&family(1, row), RepoExposureParityPhase::Served);
+    assert_eq!(diagnostics, vec!["cache_family_store_errors=1"]);
+    // No (or forged) family receipt: no subject, named limitation.
+    let forged = family(0, "").replace("token=unittesttoken ", "");
+    let (subject, diagnostics) =
+        repo_exposure_parity_leg_receipts(&forged, RepoExposureParityPhase::Served);
+    assert_eq!(subject, None);
+    assert_eq!(
+        diagnostics,
+        vec!["untrusted_cache_family_store_receipt_line"]
+    );
+}
+
+/// #9633: parity never passes vacuously. Equal-but-empty or equal-but-not-JSON
+/// output is `not_checked` with `output_unparseable`.
+#[test]
+fn repo_exposure_output_parity_does_not_pass_on_empty_or_unparseable_output() -> Result<(), String>
+{
+    for body in ["", "not json", "{\"seams\":[]}"] {
+        let report = build_with_parity(parity_runner(body, body, Some("hit")))?;
+        assert_eq!(report.output_parity.label(), "not_checked", "{body:?}");
+        assert_ne!(report.status, "pass", "{body:?}");
+        assert_eq!(
+            report.output_parity.checks[0].reason.as_deref(),
+            Some("output_unparseable")
+        );
+    }
+    Ok(())
+}
+
+/// #9633: a served run that errors or exits nonzero after a passing cold run
+/// is a failure of the cache path, not a quiet warning; a timeout is not.
+#[test]
+fn repo_exposure_output_parity_served_failure_is_a_fail() -> Result<(), String> {
+    let served_status = |status: &'static str| {
+        build_with_parity(move |_, _, phase, _| {
+            Ok(RepoExposureParityRun {
+                status: if phase == RepoExposureParityPhase::Cold {
+                    "pass"
+                } else {
+                    status
+                }
+                .to_string(),
+                stdout: PARITY_JSON_A.to_string(),
+                cache_load: Some("miss".to_string()),
+                subject: Some(serde_json::json!({"cache_key": "k"})),
+                ..Default::default()
+            })
+        })
+    };
+    let failed = served_status("fail")?;
+    assert_eq!(failed.output_parity.label(), "fail");
+    assert_eq!(failed.status, "fail");
+    let reasons = repo_exposure_latency_status_reasons(&failed.runs, &failed.output_parity);
+    assert!(
+        reasons.contains(&"repo-exposure-json: output_parity_fail_served_run_fail".to_string())
+    );
+    let json: Value = serde_json::from_str(&repo_exposure_latency_json(&failed))
+        .map_err(|err| format!("invalid latency JSON: {err}"))?;
+    assert_eq!(json["output_parity"], "fail");
+
+    let errored = build_with_parity(|_, _, phase, _| match phase {
+        RepoExposureParityPhase::Cold => Ok(RepoExposureParityRun {
+            status: "pass".to_string(),
+            stdout: PARITY_JSON_A.to_string(),
+            cache_load: Some("miss".to_string()),
+            subject: Some(serde_json::json!({"cache_key": "k"})),
+            ..Default::default()
+        }),
+        RepoExposureParityPhase::Served => Err("spawn boom".to_string()),
+    })?;
+    // A spawn/reader error is infrastructure, not a cache failure.
+    assert_eq!(errored.output_parity.label(), "not_checked");
+    assert_eq!(
+        errored.output_parity.checks[0].reason.as_deref(),
+        Some("served_run_error: spawn boom")
+    );
+    // So is a signal kill (no exit code).
+    assert_eq!(
+        served_status("killed")?.output_parity.label(),
+        "not_checked"
+    );
+    assert_eq!(
+        served_status("timeout")?.output_parity.label(),
+        "not_checked"
+    );
+    Ok(())
+}
+
+/// #9633: only phase lines carrying this process's token count, and the last
+/// `cache_load` status wins (a `miss` followed by a `hit` is a hit).
+#[test]
+fn authenticated_cache_load_takes_the_last_tokened_status() {
+    let line = |token: &str, status: &str| {
+        format!(
+            "ripr_repo_exposure_latency token={token} phase=cache_load status={status} duration_ms=1\n"
+        )
+    };
+    let both = format!(
+        "{}{}",
+        line("unittesttoken", "miss"),
+        line("unittesttoken", "hit")
+    );
+    assert_eq!(
+        repo_exposure_authenticated_cache_load(&both).as_deref(),
+        Some("hit")
+    );
+    // A start marker is not a result; a bare or wrong-token line is ignored.
+    let noisy = format!(
+        "{}ripr_repo_exposure_latency phase=cache_load status=hit duration_ms=0\n{}{}",
+        line("unittesttoken", "miss"),
+        line("guessed", "hit"),
+        line("unittesttoken", "start_files_2"),
+    );
+    assert_eq!(
+        repo_exposure_authenticated_cache_load(&noisy).as_deref(),
+        Some("miss")
+    );
+    assert_eq!(repo_exposure_authenticated_cache_load(""), None);
+    assert_eq!(
+        repo_exposure_authenticated_cache_load(
+            "ripr_repo_exposure_latency phase=cache_load status=hit duration_ms=0\n"
+        ),
+        None
+    );
+}
+
+/// #9633: the exact producer-shaped lines (as the analyzer writes them with
+/// the token env set) parse on the consumer side.
+#[test]
+fn producer_shaped_receipt_lines_parse() {
+    let cache = "ripr_file_fact_cache_receipt token=unittesttoken {\"corrupt_ignored\":0,\"hits\":0,\"invalidated\":0,\"misses\":2,\"schema_version\":\"0.1\",\"store_errors\":0,\"store_failures\":[],\"store_failures_dropped\":0,\"stores\":2}\n";
+    let (parsed, limitation) = repo_exposure_file_fact_cache_from_stderr(cache);
+    assert!(limitation.is_none(), "{limitation:?}");
+    assert_eq!(parsed.map(|cache| cache.misses), Some(2));
+    let family = "ripr_cache_family_store_receipt token=unittesttoken {\"schema_version\":\"0.1\",\"store_errors\":1,\"store_failures\":[{\"error\":\"create cache dir failed: Not a directory (os error 20)\",\"path\":\"repo-seam-facts\",\"stage\":\"classified_seam_store\"}],\"store_failures_dropped\":0}\n";
+    let (parsed, limitation) = repo_exposure_cache_family_store_from_stderr(family);
+    assert!(limitation.is_none(), "{limitation:?}");
+    assert_eq!(parsed.map(|store| store.store_failures.len()), Some(1));
+}
+
+/// #9633: a real, non-injected report run. `pass` is reachable end to end:
+/// the real runners drive a built `ripr` over a small fixture root, with the
+/// private caches making every primary receipt observable. Skipped (visibly)
+/// when no built debug `ripr` exists locally; under `CI` a missing binary
+/// fails instead. It assumes the binary at `target/debug/ripr` is current for
+/// this checkout: the test does not rebuild it.
+#[test]
+fn real_latency_report_run_on_a_small_fixture_can_pass() -> Result<(), String> {
+    let binary = repo_root()?.join(ripr_debug_binary());
+    if !binary.exists() {
+        if std::env::var_os("CI").is_some() {
+            return Err(format!("no built ripr at {} under CI", binary.display()));
+        }
+        eprintln!(
+            "skipping: no built ripr at {} (a present binary is assumed current for this checkout)",
+            binary.display()
+        );
+        return Ok(());
+    }
+    with_temp_cwd("repo-exposure-latency-real", |root| {
+        fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+        fs::create_dir_all(root.join("tests")).map_err(|err| err.to_string())?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .map_err(|err| err.to_string())?;
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )
+        .map_err(|err| err.to_string())?;
+        fs::write(
+            root.join("tests/t.rs"),
+            "#[test]\nfn t() { assert!(fx::discount(5, 5)); }\n",
+        )
+        .map_err(|err| err.to_string())?;
+        write_repo_exposure_latency_report(
+            &binary,
+            120_000,
+            repo_exposure_latency_run,
+            repo_exposure_parity_run,
+        )?;
+        let json: Value = serde_json::from_str(
+            &fs::read_to_string("target/ripr/reports/repo-exposure-latency.json")
+                .map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        assert_eq!(json["status_reasons"], serde_json::json!([]), "{json}");
+        assert_eq!(json["output_parity"], "pass", "{json}");
+        assert_eq!(json["status"], "pass", "{json}");
+        Ok(())
+    })
+}
+
+/// #9633 (audit F-C4-3): a stderr line that merely starts with a receipt
+/// prefix is not machine data. Without this process's token it is ignored,
+/// and a forged line cannot stand in for a missing or a duplicate receipt.
+#[test]
+fn forged_receipt_lines_are_rejected() {
+    let forged_cache = serde_json::json!({
+        "schema_version": "0.1", "hits": 99, "misses": 0, "invalidated": 0,
+        "corrupt_ignored": 0, "stores": 0, "store_errors": 0,
+        "store_failures": [], "store_failures_dropped": 0
+    });
+    // Bare prefix (what a hostile file name echoed by a diagnostic could add).
+    let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
+        "ripr_file_fact_cache_receipt {forged_cache}\n"
+    ));
+    assert!(cache.is_none());
+    assert_eq!(limitation.as_deref(), Some("untrusted_cache_receipt_line"));
+    // Wrong token.
+    let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
+        "ripr_file_fact_cache_receipt token=guessedtoken {forged_cache}\n"
+    ));
+    assert!(cache.is_none());
+    assert_eq!(limitation.as_deref(), Some("untrusted_cache_receipt_line"));
+    // The authenticated line is accepted; a forged sibling is ignored rather
+    // than turning the genuine receipt into a duplicate or replacing it.
+    let genuine = serde_json::json!({
+        "schema_version": "0.1", "hits": 1, "misses": 0, "invalidated": 0,
+        "corrupt_ignored": 0, "stores": 0, "store_errors": 0,
+        "store_failures": [], "store_failures_dropped": 0
+    });
+    let (cache, limitation) = repo_exposure_file_fact_cache_from_stderr(&format!(
+        "ripr_file_fact_cache_receipt {forged_cache}\n\
+         ripr_file_fact_cache_receipt token=unittesttoken {genuine}\n"
+    ));
+    assert!(limitation.is_none(), "{limitation:?}");
+    assert_eq!(cache.map(|cache| cache.hits), Some(1));
+
+    let (cost, limitation) = repo_exposure_resource_cost_from_stderr(&format!(
+        "ripr_resource_cost_receipt {}\n",
+        observed_resource_cost_receipt()
+    ));
+    assert!(cost.is_none());
+    assert_eq!(
+        limitation.as_deref(),
+        Some("untrusted_resource_cost_receipt_line")
+    );
+    let (store, limitation) = repo_exposure_cache_family_store_from_stderr(
+        "ripr_cache_family_store_receipt {\"schema_version\":\"0.1\",\"store_errors\":0,\"store_failures\":[],\"store_failures_dropped\":0}\n",
+    );
+    assert!(store.is_none());
+    assert_eq!(
+        limitation.as_deref(),
+        Some("untrusted_cache_family_store_receipt_line")
+    );
+}
+
+fn family_receipt_line(value: &Value) -> String {
+    format!("ripr_cache_family_store_receipt token=unittesttoken {value}\n")
+}
+
+/// #9633: a store-failure row for each new stage reaches the report, within
+/// the existing 32-row cap and dropped accounting; the healthy receipt is an
+/// observed empty list, distinct from a missing one.
+#[test]
+fn cache_family_store_failure_rows_reach_the_report_for_each_new_stage() -> Result<(), String> {
+    let row = |path: &str, stage: &str| serde_json::json!({"path": path, "stage": stage, "error": "create dir failed"});
+    let receipt = serde_json::json!({
+        "schema_version": "0.1", "store_errors": 2,
+        "store_failures": [
+            row("repo-seam-facts", "classified_seam_store"),
+            row("repo-corpus-fingerprint", "corpus_fingerprint_store"),
+        ],
+        "store_failures_dropped": 0
+    });
+    let (store, limitation) =
+        repo_exposure_cache_family_store_from_stderr(&family_receipt_line(&receipt));
+    assert!(limitation.is_none(), "{limitation:?}");
+    let store = store.ok_or("missing family receipt")?;
+    assert_eq!(store.store_failures.len(), 2);
+    let run = RepoExposureLatencyRun {
+        cache_family_store: Some(store),
+        cache_family_store_limitation: None,
+        ..observed_run(Some(clean_cache(0, 0)))
+    };
+    // Rows alone block `pass`, with a named reason, even with parity checked.
+    assert_eq!(
+        repo_exposure_latency_status(std::slice::from_ref(&run), &parity_pass()),
+        "warn"
+    );
+    let report = RepoExposureLatencyReport {
+        status: "warn".to_string(),
+        output_parity: parity_pass(),
+        timeout_ms: 10,
+        binary: "target/debug/ripr".to_string(),
+        runs: vec![run],
+    };
+    let reasons = repo_exposure_latency_status_reasons(&report.runs, &report.output_parity);
+    assert_eq!(
+        reasons,
+        vec!["repo-exposure-json: cache_family_store_errors=2"]
+    );
+    let json: Value = serde_json::from_str(&repo_exposure_latency_json(&report))
+        .map_err(|err| format!("invalid latency JSON: {err}"))?;
+    let rows = &json["runs"][0]["cache_family_store"]["store_failures"];
+    assert_eq!(rows[0]["stage"], "classified_seam_store");
+    assert_eq!(rows[0]["path"], "repo-seam-facts");
+    assert_eq!(rows[1]["stage"], "corpus_fingerprint_store");
+    assert_eq!(rows[1]["path"], "repo-corpus-fingerprint");
+    let markdown = repo_exposure_latency_markdown(&report);
+    assert!(markdown.contains("| repo-seam-facts | classified_seam_store | create dir failed |"));
+    assert!(
+        markdown
+            .contains("| repo-corpus-fingerprint | corpus_fingerprint_store | create dir failed |")
+    );
+
+    // Healthy: observed, empty, no reason.
+    let healthy = serde_json::json!({
+        "schema_version": "0.1", "store_errors": 0,
+        "store_failures": [], "store_failures_dropped": 0
+    });
+    let (store, limitation) =
+        repo_exposure_cache_family_store_from_stderr(&family_receipt_line(&healthy));
+    assert!(store.is_some() && limitation.is_none());
+    // Missing: not observed.
+    let (store, limitation) = repo_exposure_cache_family_store_from_stderr("");
+    assert!(store.is_none());
+    assert_eq!(
+        limitation.as_deref(),
+        Some("cache_family_store_not_observed")
+    );
+
+    // Cap and dropped accounting: 32 rows + 3 dropped == 35 errors is valid;
+    // an unaccounted count, a row past the cap or an unknown stage is not.
+    let rows_32: Vec<Value> = (0..32)
+        .map(|_| row("repo-seam-facts", "classified_seam_store"))
+        .collect();
+    let capped = serde_json::json!({
+        "schema_version": "0.1", "store_errors": 35,
+        "store_failures": rows_32, "store_failures_dropped": 3
+    });
+    let (store, limitation) =
+        repo_exposure_cache_family_store_from_stderr(&family_receipt_line(&capped));
+    assert!(store.is_some(), "{limitation:?}");
+    let mut uncounted = capped.clone();
+    uncounted["store_errors"] = serde_json::json!(34);
+    let (store, limitation) =
+        repo_exposure_cache_family_store_from_stderr(&family_receipt_line(&uncounted));
+    assert!(store.is_none());
+    assert_eq!(
+        limitation.as_deref(),
+        Some("invalid_cache_family_store_receipt")
+    );
+    let file_fact_stage = serde_json::json!({
+        "schema_version": "0.1", "store_errors": 1,
+        "store_failures": [row("repo-seam-facts", "write")], "store_failures_dropped": 0
+    });
+    let (store, _) =
+        repo_exposure_cache_family_store_from_stderr(&family_receipt_line(&file_fact_stage));
+    assert!(store.is_none());
+    let null_path = serde_json::json!({
+        "schema_version": "0.1", "store_errors": 1,
+        "store_failures": [{"path": null, "stage": "classified_seam_store", "error": "x"}],
+        "store_failures_dropped": 0
+    });
+    let (store, _) = repo_exposure_cache_family_store_from_stderr(&family_receipt_line(&null_path));
+    assert!(store.is_none());
+    Ok(())
+}
+
+/// #5531: the capability registry checks are hosted. The docs-gate step must
+/// invoke both commands, key off the SUPPORT_TIERS.md, LANGUAGE_ADAPTER_PREVIEW.md and docs/specs paths, and
+/// must not use a failure-swallowing form.
+#[test]
+fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String> {
+    let workflow = routed_rust_workflow_text()?;
+    let docs_gate = workflow
+        .split("\n  docs-gate:")
+        .nth(1)
+        .and_then(|rest| rest.split("\n  result:").next())
+        .ok_or("routed-rust.yml must declare a docs-gate job before result")?;
+    for needle in [
+        "cargo xtask capability-docs --check",
+        "cargo xtask check-capability-producers",
+        "docs/status/SUPPORT_TIERS.md",
+        "docs/LANGUAGE_ADAPTER_PREVIEW.md",
+        "core.quotePath=false",
+        "docs/specs/",
+        "--name-only -z",
+        "read -r -d '' path",
+    ] {
+        if !docs_gate.contains(needle) {
+            return Err(format!("docs-gate must contain `{needle}`"));
+        }
+    }
+    for line in docs_gate.lines().map(str::trim) {
+        if (line.contains("capability-docs") || line.contains("check-capability-producers"))
+            && line.contains("|| true")
+        {
+            return Err(format!(
+                "docs-gate must not swallow capability failures: {line}"
+            ));
+        }
     }
     Ok(())
 }

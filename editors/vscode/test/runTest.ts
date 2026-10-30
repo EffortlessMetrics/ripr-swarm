@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { execFileSync, spawn } from 'child_process';
 import { downloadAndUnzipVSCode, runTests } from '@vscode/test-electron';
 import { stageGenuineActionableQueue } from './actionableQueueFixture';
+import { REQUIRED_TITLE_SEPARATOR, requiredJourneyTitles } from './requiredJourneys';
 import { finalizeHostRun, resetHostLogDir, resolveUserDataDir } from './hostDiagnostics';
 
 function runGit(workspacePath: string, args: string[]): string {
@@ -201,6 +202,7 @@ async function main() {
       path.resolve(__dirname, '../../../../target/ripr')
   );
   const userDataPath = resolveUserDataDir(artifactRoot);
+  let matrixDiagnostics: { userDataDir: string; receiptPath: string } | undefined;
   let error: unknown;
   let multiRoot: { userDataDir: string; receiptPath: string } | undefined;
   try {
@@ -264,6 +266,15 @@ async function main() {
     }
 
     const vscodeExecutablePath = await downloadVSCodeWithRetry(cachePath, extensionDevelopmentPath);
+    if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
+      process.env.RIPR_TEST_REQUIRE_RAN = requiredJourneyTitles(
+        workspaceTrustMode,
+        testServerPath,
+        process.env.RIPR_TEST_PACKAGED_SERVER_PATH
+      ).join(
+        REQUIRED_TITLE_SEPARATOR
+      );
+    }
     if (workspaceTrustMode === 'untrusted') {
       await runUntrustedTests(vscodeExecutablePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
     } else if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
@@ -275,6 +286,9 @@ async function main() {
       });
     }
 
+    // The multi-root host greps a different suite, so the main host's required
+    // journeys are not registered there.
+    delete process.env.RIPR_TEST_REQUIRE_RAN;
     if (workspaceTrustMode === 'trusted') {
       // Same test-host lane, separate empty profile: other suites open files,
       // mutate configuration and restart servers, which would mask ambiguity.
@@ -287,7 +301,8 @@ async function main() {
         matrixRoot
       );
       const matrixUserData = path.join(userDataPath, 'multiroot');
-      multiRoot = { userDataDir: matrixUserData, receiptPath: path.join(matrixRoot, 'acceptance.json') };
+      // This disposable test profile is reused. Its historical logs must not
+      // consume the bounded retention budget before the current host's logs.
       resetHostLogDir(matrixUserData);
       fs.mkdirSync(path.join(matrixUserData, 'User'), { recursive: true });
       fs.writeFileSync(path.join(matrixUserData, 'User', 'settings.json'),
@@ -305,8 +320,11 @@ async function main() {
       process.env.RIPR_TEST_MULTIROOT = '1';
       process.env.RIPR_TEST_GREP = '^Real multi-root server acceptance';
       process.env.RIPR_TEST_MULTIROOT_PATH = matrixRoot;
-      process.env.RIPR_TEST_MULTIROOT_RECEIPT = multiRoot.receiptPath;
+      const matrixReceiptPath = path.join(matrixRoot, 'acceptance.json');
+      process.env.RIPR_TEST_MULTIROOT_RECEIPT = matrixReceiptPath;
       process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH = path.join(matrixUserData, 'clipboard.txt');
+      matrixDiagnostics = { userDataDir: matrixUserData,
+        receiptPath: matrixReceiptPath };
       await runTests({
         vscodeExecutablePath,
         extensionDevelopmentPath,
@@ -324,7 +342,7 @@ async function main() {
   const { exitCode } = finalizeHostRun({
     artifactRoot,
     userDataDir: userDataPath,
-    multiRoot,
+    matrix: matrixDiagnostics,
     error,
   });
   if (exitCode !== 0) {

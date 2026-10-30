@@ -340,7 +340,21 @@ mod tests {
             ModeScenario {
                 given_mode: "slow",
                 then_result: Err(
-                    "unknown mode \"slow\"; expected `instant`, `draft`, `fast`, `deep`, or `ready`"
+                    "unknown mode \"slow\". Accepted: instant, draft, fast, deep, ready."
+                        .to_string(),
+                ),
+            },
+            ModeScenario {
+                given_mode: "redy",
+                then_result: Err(
+                    "unknown mode \"redy\". Did you mean `ready`? Accepted: instant, draft, fast, deep, ready."
+                        .to_string(),
+                ),
+            },
+            ModeScenario {
+                given_mode: "fats",
+                then_result: Err(
+                    "unknown mode \"fats\". Did you mean `fast`? Accepted: instant, draft, fast, deep, ready."
                         .to_string(),
                 ),
             },
@@ -372,7 +386,7 @@ mod tests {
         assert_eq!(
             parse_format("xml"),
             Err(
-                "unknown format \"xml\". Accepted: human, text, human-full, text-full, json, github, sarif, badge-json, badge-shields, badge-plus-json, badge-plus-shields, repo-badge-json, repo-badge-shields, repo-badge-plus-json, repo-badge-plus-shields, repo-seams-json, repo-seams-md, repo-exposure-json, repo-exposure-summary-json, repo-exposure-md, repo-sarif, agent-seam-packets-json."
+                "unknown format \"xml\". Common analysis formats: human, human-full, json, github, sarif. Run `ripr check --help --all` for every accepted format."
                     .to_string()
             )
         );
@@ -381,7 +395,7 @@ mod tests {
         assert_eq!(
             parse_format("jsn"),
             Err(
-                "unknown format \"jsn\". Did you mean `json`? Accepted: human, text, human-full, text-full, json, github, sarif, badge-json, badge-shields, badge-plus-json, badge-plus-shields, repo-badge-json, repo-badge-shields, repo-badge-plus-json, repo-badge-plus-shields, repo-seams-json, repo-seams-md, repo-exposure-json, repo-exposure-summary-json, repo-exposure-md, repo-sarif, agent-seam-packets-json."
+                "unknown format \"jsn\". Did you mean `json`? Run `ripr check --help --all` for every accepted format."
                     .to_string()
             )
         );

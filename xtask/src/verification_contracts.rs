@@ -1369,16 +1369,36 @@ fn value_matches_type(value: &Value, expected_type: &str) -> bool {
         "array" => value.is_array(),
         "string" => value.is_string(),
         "number" => value.is_number(),
-        "integer" => {
-            value.as_i64().is_some()
-                || value
-                    .as_u64()
-                    .is_some_and(|number| i64::try_from(number).is_ok())
-        }
+        "integer" => json_number_is_integer(value),
         "boolean" => value.is_boolean(),
         "null" => value.is_null(),
         _ => false,
     }
+}
+
+/// Largest magnitude at which every integer is exactly an `f64` (2^53).
+const MAX_EXACT_FLOAT_INTEGER: f64 = 9_007_199_254_740_992.0;
+
+/// JSON Schema Draft 2020-12 `integer`: any number with a zero fractional
+/// part, so `1`, `1.0` and `1e0` all match and `1.5` does not.
+///
+/// Integers that `serde_json` stores as `i64` or `u64` match across their
+/// whole range. A number it stores as `f64` matches only when it is finite,
+/// whole, and within +/-2^53, where an `f64` holds the integer exactly; a
+/// larger float fails closed because rounding may have hidden a fraction.
+/// Residual limit: `serde_json` keeps no source text, so a decimal with more
+/// digits than an `f64` holds (`1.00000000000000001`) is already the float
+/// `1.0` when this runs and matches.
+fn json_number_is_integer(value: &Value) -> bool {
+    let Value::Number(number) = value else {
+        return false;
+    };
+    if number.is_i64() || number.is_u64() {
+        return true;
+    }
+    number.as_f64().is_some_and(|float| {
+        float.is_finite() && float.fract() == 0.0 && float.abs() <= MAX_EXACT_FLOAT_INTEGER
+    })
 }
 
 fn value_type(value: &Value) -> &'static str {
@@ -1434,6 +1454,52 @@ fn compact_json(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn integer_type_follows_json_schema_numeric_semantics() -> Result<(), String> {
+        let accepts = |text: &str| -> Result<bool, String> {
+            let value: Value =
+                serde_json::from_str(text).map_err(|err| format!("parse {text}: {err}"))?;
+            Ok(value_matches_type(&value, "integer"))
+        };
+        for accepted in [
+            "0",
+            "1",
+            "-1",
+            "1.0",
+            "-1.0",
+            "1e0",
+            "1E2",
+            "100e-2",
+            "9223372036854775807",
+            "-9223372036854775808",
+            "9223372036854775808",
+            "18446744073709551615",
+            "9007199254740992.0",
+        ] {
+            assert!(accepts(accepted)?, "{accepted} is a JSON Schema integer");
+        }
+        for rejected in [
+            "1.5",
+            "-0.5",
+            "1e-1",
+            "0.1",
+            "9007199254740994.0",
+            "1e300",
+            "18446744073709551616",
+            "\"1\"",
+            "true",
+            "null",
+            "[1]",
+        ] {
+            assert!(!accepts(rejected)?, "{rejected} is not a supported integer");
+        }
+        // `number` keeps accepting every numeric form.
+        let fractional: Value =
+            serde_json::from_str("1.5").map_err(|err| format!("parse 1.5: {err}"))?;
+        assert!(value_matches_type(&fractional, "number"));
+        Ok(())
+    }
 
     #[test]
     fn schema_version_reconciliation_rejects_each_drift_and_missing_rows() {
@@ -1728,6 +1794,37 @@ mod tests {
         );
 
         assert!(violations.is_empty(), "{violations:#?}");
+        Ok(())
+    }
+
+    #[test]
+    fn capped_review_comments_fixture_matches_schema() -> Result<(), String> {
+        // A document with brief-cap and policy omissions carries
+        // `analysis_scope.cap_omitted_seams` / `omitted_by_policy` (#9301); it
+        // must validate, and a negative or non-integer count must not.
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/review-comments.schema.json"))?;
+        let fixture = read_json(
+            root.join("tests/fixtures/verification/ripr/review-comments.capped.valid.json"),
+        )?;
+        assert_eq!(fixture["analysis_scope"]["cap_omitted_seams"], 2);
+        let check = |value: &Value| {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                value,
+                &schema,
+                &schema,
+                "capped review comments".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        assert!(check(&fixture).is_empty(), "{:#?}", check(&fixture));
+        for bad in [serde_json::json!(-1), serde_json::json!("2")] {
+            let mut broken = fixture.clone();
+            broken["analysis_scope"]["cap_omitted_seams"] = bad;
+            assert!(!check(&broken).is_empty());
+        }
         Ok(())
     }
 
@@ -2105,6 +2202,85 @@ mod tests {
         );
 
         assert!(violations.is_empty(), "{violations:#?}");
+        Ok(())
+    }
+
+    /// #5531: the optional finding-level `analysis_scope` accepts only `repo`;
+    /// absence (diff) stays valid and `additionalProperties: false` is kept.
+    #[test]
+    fn finding_analysis_scope_is_closed_to_repo() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let fixture =
+            read_json(root.join("tests/fixtures/verification/ripr/check-complete.valid.json"))?;
+        assert!(
+            fixture["findings"]
+                .as_array()
+                .is_some_and(|f| !f.is_empty())
+        );
+        let violations_for = |edit: &dyn Fn(&mut Value)| {
+            let mut doc = fixture.clone();
+            edit(&mut doc["findings"][0]);
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                &doc,
+                &schema,
+                &schema,
+                "doc".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        assert!(violations_for(&|_| {}).is_empty(), "missing field accepted");
+        assert!(
+            violations_for(&|f| f["analysis_scope"] = Value::from("repo")).is_empty(),
+            "repo accepted"
+        );
+        for bad in [
+            Value::from("diff"),
+            Value::from("unknown"),
+            Value::Bool(true),
+            Value::Null,
+        ] {
+            assert!(
+                !violations_for(&|f| f["analysis_scope"] = bad.clone()).is_empty(),
+                "{bad} must be rejected"
+            );
+        }
+        assert!(
+            !violations_for(&|f| f["unrelated_finding_property"] = Value::from("x")).is_empty(),
+            "additionalProperties:false must stay"
+        );
+        // The checks must discriminate: against broadened variants of the
+        // real schema, the same invalid inputs are accepted, so the negatives
+        // above cannot pass by broadening the published schema.
+        let accepted_by = |schema: &Value, edit: &dyn Fn(&mut Value)| {
+            let mut doc = fixture.clone();
+            edit(&mut doc["findings"][0]);
+            let mut violations = Vec::new();
+            validate_value_against_schema(&doc, schema, schema, "doc".to_string(), &mut violations);
+            violations.is_empty()
+        };
+        let mut loose_scope = schema.clone();
+        loose_scope["$defs"]["finding"]["properties"]["analysis_scope"] =
+            serde_json::json!({ "type": "string" });
+        assert!(accepted_by(&loose_scope, &|f| f["analysis_scope"] = Value::from("diff")));
+        assert!(accepted_by(&loose_scope, &|f| f["analysis_scope"] =
+            Value::from("unknown")));
+        let mut loose_props = schema.clone();
+        loose_props["$defs"]["finding"]["additionalProperties"] = Value::Bool(true);
+        assert!(accepted_by(
+            &loose_props,
+            &|f| f["unrelated_finding_property"] = Value::from("x")
+        ));
+        assert_eq!(
+            schema["$defs"]["finding"]["properties"]["analysis_scope"],
+            serde_json::json!({ "const": "repo" })
+        );
+        assert_eq!(
+            schema["$defs"]["finding"]["additionalProperties"],
+            Value::Bool(false)
+        );
         Ok(())
     }
 

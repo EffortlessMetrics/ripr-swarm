@@ -1,0 +1,47 @@
+{
+  "case_id": "py-spec0260-ex01-guard-excludes-observed-input",
+  "subject_id": "authored-py-pytest-guard-arms",
+  "diff": "cases/py-spec0260-ex01-guard-excludes-observed-input.diff",
+  "anchor": {
+    "file": "guards/quote_low.py",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "pytest_literal_call_fails_guard",
+  "hard_case": "the only strong test calls the owner with 100.0, which fails the guarding `total > 1000`, so the edited line never runs",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return round(total * 1.03, 2)",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the edited line returns a different value whenever it runs; no test reaches it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`1.02` becomes `1.03` on the line inside `if total > 1000`. The test calls `quote_low(100.0)`, which takes the fall-through branch, so the edit passes. RIPR-SPEC-0260 example 1 reads this `weakly_exposed`, naming `total > 1000` and the observed `total = 100.0`.",
+  "labeling_observation": {
+    "ripr_commit": "006eaf8",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0260#1"
+  ]
+}

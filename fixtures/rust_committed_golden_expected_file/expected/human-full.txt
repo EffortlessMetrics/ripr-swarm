@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_committed_golden_expected_file/input
 
-Summary: 2 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed (1 base-side evidence, not candidate edit targets)
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 INFO ./src/lib.rs:2
   id: probe:src_lib.rs:return_value:8711762f
@@ -14,11 +19,12 @@ Changed
   before: x * 2
   after:  x * 3
 
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::render
-  canonical gap: gap:rust:src/lib.rs:render:return_value:return_value:x*3
+  gap id (for scripts): gap:rust:src/lib.rs:render:return_value:return_value:x*3
 
 Static exposure
   exposed (info, confidence 1.00)
@@ -45,23 +51,24 @@ Changed
   expr:   x * 2
   source:  base_deleted — base-side evidence, not a candidate edit target
 
-Probe
+Change type
+  a change ripr could not classify
   family: static_unknown
-  delta:  unknown
+  delta:  unknown (kind of change not determined)
   owner:  src/lib.rs::render
-  canonical gap: gap:rust:src/lib.rs:render:static_unknown:static_unknown:x*2
+  gap id (for scripts): gap:rust:src/lib.rs:render:static_unknown:static_unknown:x*2
 
 Static exposure
   static_unknown (note, confidence 0.50)
 
 Evidence
   - reach yes: Related tests appear to reach render: renders
-  - infection unknown: Changed syntax is not mapped to a high-confidence probe family
+  - infection unknown: Changed syntax is not mapped to a high-confidence change type
   - propagation unknown: No propagation model is available for this changed syntax
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator unknown: Assertions exist, but oracle strength is unknown
-  - local flow reaches unknown sink (line 2)
-  - related test tests/render.rs:2 renders uses unknown exact value oracle: assert_eq!(written_expected::render(4), std::fs::read_to_string("tests/w.txt").unwrap().trim().parse::<i32>().unwrap());
+  - local flow reaches unknown sink (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test tests/render.rs:2 renders uses exact value oracle, not graded against this probe: assert_eq!(written_expected::render(4), std::fs::read_to_string("tests/w.txt").unwrap().trim().parse::<i32>().unwrap());
   - source assertion argument value "tests/w.txt" at line 3
   - source function argument value x = 4 at line 3
 
@@ -70,7 +77,8 @@ Weakness
   - Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests
 
 Stop reasons:
-  - static_probe_unknown — ripr could not model this change well enough to classify it
+  - ripr could not model this change well enough to classify it (static_probe_unknown)
+    Next: Add a test that calls the changed code and asserts an exact result.
 
 Next step
   Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown

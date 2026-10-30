@@ -20,11 +20,24 @@
 # Case ids containing `spec0234` were named before the TypeScript rules were
 # renumbered; they cite today's RIPR-SPEC-0243.
 #
-# `floor` is the covered-example count `verdict-corpus check` protects. Raise
-# it when coverage grows; lowering it is a reviewed edit with a reason.
+# `spec-examples.lock` lists the covered examples `verdict-corpus check`
+# protects, one per line in sorted order. A locked example that loses its case
+# fails; covering a new one passes with a note naming the line to add. The
+# xtask test asserts no RIPR-SPEC-0243 example is uncovered. Dropping a lock
+# line is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 112
+
+# Operator grid and false-credit traps (verdict_corpus_grid.rs). `cell_floor`
+# is the count of covered operator-by-truth cells (7 operators x credited,
+# gap, partial); `trap_floor` the count of trap cases the tests cannot
+# discriminate; `false_credit_ceiling` how many of those ripr may credit.
+# Raise the floors and lower the ceiling as coverage grows and credits are
+# fixed; the opposite edit is a reviewed change with a reason.
+[grid]
+cell_floor = 21
+trap_floor = 13
+false_credit_ceiling = 0
 
 # LSP Repair Packet Command
 [[spec]]
@@ -85,6 +98,18 @@ reason = "output wording or disclosure; the classification is unchanged, so a ve
 id = "RIPR-SPEC-0091"
 scope = "out"
 reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Error-Seam unwrap_err / expect_err Variant Binding
+[[spec]]
+id = "RIPR-SPEC-0106"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# ErrorPath Requires a Variant-Observing Oracle
+[[spec]]
+id = "RIPR-SPEC-0107"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
 
 # Disclose Unanalyzed Working Tree When Using `--base`
 [[spec]]
@@ -188,6 +213,12 @@ id = "RIPR-SPEC-0170"
 scope = "out"
 reason = "CLI, command or receipt contract, not an analyzer verdict"
 
+# guarded Result match observations
+[[spec]]
+id = "RIPR-SPEC-0175"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
 # Rust repair-trust route-yield ladder
 [[spec]]
 id = "RIPR-SPEC-0178"
@@ -217,6 +248,12 @@ reason = "CLI, command or receipt contract, not an analyzer verdict"
 id = "RIPR-SPEC-0185"
 scope = "out"
 reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Same-test pairing for boundary-class probes
+[[spec]]
+id = "RIPR-SPEC-0186"
+scope = "out"
+reason = "Rust same-test boundary pairing; a Rust case labels it"
 
 # Rich command metadata projected into human help and inventories
 [[spec]]
@@ -272,6 +309,12 @@ id = "RIPR-SPEC-0196"
 scope = "out"
 reason = "evaluation or report tooling over ripr's output; no edit with runtime mutant truth to label"
 
+# Owner-return pins through calls that name the owner
+[[spec]]
+id = "RIPR-SPEC-0197"
+scope = "out"
+reason = "Rust owner-return pins; a Rust case labels them"
+
 # RepairCard projection through standard LSP
 [[spec]]
 id = "RIPR-SPEC-0198"
@@ -289,6 +332,12 @@ reason = "evaluation or report tooling over ripr's output; no edit with runtime 
 id = "RIPR-SPEC-0200"
 scope = "out"
 reason = "evaluation or report tooling over ripr's output; no edit with runtime mutant truth to label"
+
+# Python same-class transitive-reach limitation
+[[spec]]
+id = "RIPR-SPEC-0201"
+scope = "out"
+reason = "Python same-class transitive reach; a TypeScript case cannot label it"
 
 # Shared behavior-evidence witness adapters and parity corpus
 [[spec]]
@@ -404,6 +453,26 @@ id = "RIPR-SPEC-0229"
 scope = "out"
 reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
 
+[[spec]]
+id = "RIPR-SPEC-0048"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+[[spec]]
+id = "RIPR-SPEC-0093"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+[[spec]]
+id = "RIPR-SPEC-0094"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+[[spec]]
+id = "RIPR-SPEC-0096"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
 # Rust oracle kind and strength admission
 [[spec]]
 id = "RIPR-SPEC-0231"
@@ -437,6 +506,12 @@ reason = "pilot presentation ordering, not an analyzer verdict"
 # Python oracle and reach rules
 [[spec]]
 id = "RIPR-SPEC-0238"
+scope = "out"
+reason = "Python analyzer rules; a TypeScript case cannot label them"
+
+# Python Preview Static Facts
+[[spec]]
+id = "RIPR-SPEC-0028"
 scope = "out"
 reason = "Python analyzer rules; a TypeScript case cannot label them"
 
@@ -507,9 +582,27 @@ scope = "in"
 id = "RIPR-SPEC-0258"
 scope = "in"
 
+# Python guarded-arm activation gate
+[[spec]]
+id = "RIPR-SPEC-0260"
+scope = "out"
+reason = "Python guarded-arm activation; a TypeScript case cannot label it"
+
 # Rust closures in iterator adaptors
 [[spec]]
 id = "RIPR-SPEC-0265"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Rust doc examples as tests
+[[spec]]
+id = "RIPR-SPEC-0279"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust doc examples and diffs, so a TypeScript case cannot label them"
+
+# Rust mock call-count side flip
+[[spec]]
+id = "RIPR-SPEC-0305"
 scope = "out"
 reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
 
@@ -525,24 +618,24 @@ scope = "out"
 reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
 
 # TypeScript Preview Static Facts
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0027"
-reason = "acceptance examples are prose, not numbered; TypeScript corpus cases cite the spec in their reasoning"
+scope = "in"
 
 # TypeScript Bounded Re-Export Test Discovery
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0095"
-reason = "acceptance examples are prose, not numbered; ts-vitest-line-total-reexport cites the spec in its reasoning"
+scope = "in"
 
 # TypeScript toThrow Exact-Payload Oracle Upgrade
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0097"
-reason = "acceptance examples are prose, not numbered; ts-vitest-add-line-message cites the spec in its reasoning"
+scope = "in"
 
 # TypeScript Exposed Observation Guard
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0098"
-reason = "acceptance examples are prose, not numbered; ts-nodetest-audit-log cites the spec in its reasoning"
+scope = "in"
 
 # Owner call shape projection for drill-in surfaces
 [[spec]]
@@ -555,3 +648,196 @@ reason = "explain/context packet drill-in projection of an observed Rust signatu
 id = "RIPR-SPEC-0268"
 scope = "out"
 reason = "render-only collapse of a duplicated evidence row; a TypeScript case cannot label it"
+
+# Covered-by instrument-failure contract
+[[spec]]
+id = "RIPR-SPEC-0280"
+scope = "out"
+reason = "repository precommit and xtask instrument contract; not an analyzer verdict, so no corpus case can label it"
+
+# Pilot ranking refuted-count growth allowance
+[[spec]]
+id = "RIPR-SPEC-0281"
+scope = "out"
+reason = "advisory ranking-scoreboard gate rule in xtask; not an analyzer verdict, so no corpus case can label it"
+
+# Repair attempt after-refusal retry budget
+[[spec]]
+id = "RIPR-SPEC-0282"
+scope = "out"
+reason = "agent repair-loop retry bound and status routing; not an analyzer verdict, so no corpus case can label it"
+[[unmeasured]]
+id = "RIPR-SPEC-0283"
+reason = "acceptance examples are bullet prose, not numbered; no corpus case cites an example number"
+[[spec]]
+id = "RIPR-SPEC-0285"
+scope = "out"
+reason = "doctor/repo-input framework-scan admission, ordering, and string-awareness hygiene; not an exposure-verdict example a corpus case labels"
+[[unmeasured]]
+id = "RIPR-SPEC-0291"
+reason = "acceptance examples are prose, not numbered; agent-brief start-command root rendering is not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0289"
+scope = "out"
+reason = "edit-cage refusal narration wording; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0290"
+scope = "out"
+reason = "pilot start-command root rendering; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0292"
+scope = "out"
+reason = "xtask spot-check admission by report schema version; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0297"
+scope = "out"
+reason = "static related-test admission for Display/Debug fmt dispatch; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0296"
+scope = "out"
+reason = "xtask dx-scoreboard first-run budget counting grain; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0300"
+scope = "out"
+reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0309"
+scope = "out"
+reason = "check --path/--exclude diff-scope filter for oversized diffs; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0310"
+scope = "out"
+reason = "check-findings-json verify artifact contract; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0311"
+scope = "out"
+reason = "gap-bound TypeScript repair start from a complete packet; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0318"
+scope = "out"
+reason = "pilot next-step text for an uncommitted inline-module target; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0347"
+scope = "out"
+reason = "stderr disclosure of changed trybuild fixtures; not an exposure-verdict example a corpus case labels"
+
+# Release ledger direct-main contract
+[[spec]]
+id = "RIPR-SPEC-0301"
+scope = "out"
+reason = "release-process tooling (xtask release-ledger); its examples validate a commit ledger, not an exposure verdict a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0351"
+scope = "out"
+reason = "Rust-only out-parameter oracle credit; not a typescript verdict example"
+
+[[spec]]
+id = "RIPR-SPEC-0353"
+scope = "out"
+reason = "Rust-only bool truth-table infection; not a typescript verdict example"
+
+[[spec]]
+id = "RIPR-SPEC-0356"
+scope = "out"
+reason = "Rust uncompiled-file test withholding is proved by crates/ripr/tests/outside_target_haystack.rs; no corpus case labels it yet"
+
+[[spec]]
+id = "RIPR-SPEC-0357"
+scope = "out"
+reason = "Rust-only changed-binding return flow; not a typescript verdict example"
+
+[[spec]]
+id = "RIPR-SPEC-0360"
+scope = "out"
+reason = "Rust-only loop-accumulator credit; not a typescript verdict example"
+
+[[spec]]
+id = "RIPR-SPEC-0348"
+scope = "out"
+reason = "probe-seeding hygiene for pure Rust reformats; not an exposure-verdict example a corpus case labels"
+
+# Every false verdict the corpus still scores, with its owning issue.
+# `verdict-corpus check` fails when a false row is not listed here and when a
+# listed row is no longer false, so a bless cannot absorb a new false verdict
+# and a fixed row leaves this list and cannot silently return. Adding an entry
+# is a reviewed edit that names the owner; the fix belongs in the case, the
+# spec or the analyzer, never in an exclusion.
+
+# Rust bounded value transfer
+[[spec]]
+id = "RIPR-SPEC-0158"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust bounded helper-call transfer
+[[spec]]
+id = "RIPR-SPEC-0159"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust spec 0150
+[[spec]]
+id = "RIPR-SPEC-0150"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust spec 0154
+[[spec]]
+id = "RIPR-SPEC-0154"
+scope = "out"
+reason = "Rust analyzer assertion-form rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust spec 0157
+[[spec]]
+id = "RIPR-SPEC-0157"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust bounded scanner-state transitions
+[[spec]]
+id = "RIPR-SPEC-0163"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust spec 0164
+[[spec]]
+id = "RIPR-SPEC-0164"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust spec 0165
+[[spec]]
+id = "RIPR-SPEC-0165"
+scope = "out"
+reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
+
+# Rust unsafe boundary probes
+[[spec]]
+id = "RIPR-SPEC-0168"
+scope = "out"
+reason = "Rust/Cargo analyzer behavior; a TypeScript case cannot label it"
+
+[[spec]]
+id = "RIPR-SPEC-0361"
+scope = "out"
+reason = "Pipeline diff-scope line-budget guard behavior; not a typescript verdict example"
+
+[[spec]]
+id = "RIPR-SPEC-0362"
+scope = "out"
+reason = "Gate/ledger refusal-admission behavior; not an exposure-verdict example a TypeScript case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0363"
+scope = "out"
+reason = "TypeScript per-file fact persistence; a cache-admission behavior, not an exposure-verdict example a typescript case labels"

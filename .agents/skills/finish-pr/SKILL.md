@@ -46,6 +46,25 @@ change settings to obtain a merge.
    - limitations and non-claims;
    - rollback boundary;
    - exact candidate SHA.
+   Agent-authored bodies must also include, verbatim and with real values
+   (not empty, `TBD`, or `<...>` placeholders), every
+   `.github/pull_request_template.md` Source-of-truth Links line
+   (`Proposal:`, `Spec:`, `ADR:`, `Plan item:`,
+   `Governing issue or accepted claim:`,
+   `Acceptance delta (one sentence):`) and Candidate Relationships line
+   (`Candidate branch (GitHub PR head is authoritative after publication):`,
+   `Stack parent or prerequisite PR (if any):`,
+   `Proposed replacement of PR (if any; not yet accepted):`,
+   `Acceptance retained from a replaced candidate (if any):`,
+   `Accepted winner and losing candidate disposition (when decided):`)
+   before first Ready. Where a line does not apply, state that explicitly
+   (for example `none`) instead of deleting or leaving it blank; the two
+   admission-gated lines (`Governing issue or accepted claim:` and
+   `Acceptance delta (one sentence):`) always need a real value. Before
+   first Ready, validate the body offline and fix every line it names:
+   `gh pr view <number> --json body > pr-body.json` then
+   `cargo xtask check-pr-shape --body-file pr-body.json` (or
+   `--body-env <var>` holding the raw body or that JSON).
 3. Publish as Draft and inspect current reviews, inline threads, required and advisory checks, mergeability, and head identity. Keep the candidate Draft through the review, repair and composition steps below.
 4. Locate the current-head `review-pr` record. If it is missing, stale, covers only automated comments/CI, or is anchored to another head, run `review-pr` before treating the candidate as merge-ready.
 5. Classify every automated or human finding as:
@@ -65,7 +84,7 @@ change settings to obtain a merge.
    - the ordinary squash result is the combined-tree subject.
 10. Do not update a behind-only branch. Unrelated movement on `main` is normal and does not require restacking, force-pushing, or rerunning unaffected proof. Reconcile only an actual conflict, explicit stack change, material prerequisite change, failed combined-tree proof, or exact-base policy that applies to this candidate.
 11. Before spending time on conflict repair, re-run the claim-identity search. When upstream or another PR already delivered the same claim, stop, compare for unique residuals, record the winning implementation, and close or disposition the duplicate rather than resolving a dead candidate.
-12. Select the candidate intended to land for this objective; alternative Drafts may continue cheap development and review without each requesting expensive qualification. Apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Publish the exact-subject warm proof and current `SOURCE_REVIEW_READY` disposition with their evidence before requesting qualification. Ready is a UI state, not the request. Use the actual accepted interface: add `merge-ready` to the reviewed non-Draft head for one selected late CI wave. A proposed label rename is not an installed interface. Read back existing exact-subject runs before submission and preserve a queued or running request; a push or material finding returns through a joined repair wave, not a duplicate request. Selection is per objective, not a global one-PR queue.
+12. Apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then request required hosted qualification for the exact head by applying `merge-ready` (remove and re-add it for a new head; a Ready toggle requests nothing). A push or material finding returns through that same Draft repair wave, not an immediate re-toggle.
 13. Do not infer review from an empty thread list, reviewer quota/unavailability, or green required checks. Do not infer a human approval requirement from `mergeStateStatus: BLOCKED`; identify the exact rule and evidence source first. Query both authorities, since classic branch protection and repository rulesets can disagree.
 14. Keep the accountable owner warm through a normal bounded CI wait, inspection of actual results and the final decision. Do not tightly poll unchanged state or create a resident polling worker. A real interruption, exhausted window or unavailable capability returns an exact `PR_IN_FLIGHT` continuation with request/run/attempt, tested subject, remaining evidence and the useful wake event. Do not abandon an ordinary in-window finish merely because hosted proof was pending; independent work may continue where capacity permits.
 15. After complete qualification, inspect actual native results and refresh affected review, unresolved threads, required checks, protections and current integration inputs. Make the separate current-repository and product-vision judgment now; qualification success alone is not that decision. When the exact published head has `REVIEW_READY`, all genuine conditions are satisfied and delegated merge authority applies, the same accountable owner performs the normal protected expected-head squash without inventing another human approval. A failed judgment keeps the PR unmerged while preserving factual test results. No auto-merge or native merge queue. Exact history-preserving source-integration transactions are a separate controlled path and follow their governing issue instead of this rule.
@@ -117,9 +136,8 @@ passive waiting; genuine remote waits name their owner and decision-changing eve
 without an idle polling worker. Batch related findings into one repair wave, preserve
 unaffected review, and do not force branch churn or a global intake freeze. These
 instructions govern agent decisions; they do not install branch protection.
-Draft/Ready are UI states, not qualification admission. The explicit merge-ready
-label request observes current source readiness; final REVIEW_READY and the
-vision/current-state decision follow green proof before any merge authority.
+The `merge-ready` label (#4986) is the hosted qualification request; being Ready for
+review is not REVIEW_READY or permission to arm auto-merge.
 
 # Release-scope law
 

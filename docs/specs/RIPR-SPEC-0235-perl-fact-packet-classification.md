@@ -29,9 +29,13 @@ Linked PRs:
 
 Support-tier impact:
 
-- No tier change. Perl stays preview and advisory (RIPR-SPEC-0064). No
-  finding moves to a stronger class, and no displayed oracle strength or
-  relation confidence rises. Rules 5, 7, 12 and 13 weaken today's output:
+- No tier change. Perl stays preview and advisory (RIPR-SPEC-0064). Apart
+  from rule 9's whitespace clause below, no finding moves to a stronger
+  class, and no displayed oracle strength or relation confidence rises.
+  Rule 9 (whitespace clause): a sink that differs from the changed
+  observable only in whitespace outside a quoted literal moves from
+  `weakly_exposed` to `exposed`. Rules 5, 7, 12 and 13 weaken today's
+  output:
   - rule 5: a cross-test `exposed` moves to `reachable_unrevealed`;
   - rule 7: a mixed-relation `weakly_exposed` moves to
     `reachable_unrevealed`;
@@ -44,6 +48,13 @@ Support-tier impact:
     location. A real-producer packet (`owner:` ids, `partial` status) keeps
     its suggested location when such a relation exists. It still gets no
     canonical gap, as today.
+  - rule 18: a `weakly_exposed` finding whose change carries
+    `changed_observable: null` (the producer wrote the field and found no
+    observable) becomes `static_unknown` and loses its gap and suggested
+    location.
+  - rule 16: a `reachable_unrevealed` finding whose only bound oracle is
+    `weak_broad` on a strong-eligible kind, on an owner-call relation, becomes `static_unknown` and loses
+    its gap and suggested location.
 - Every other rule, including rules 1, 10 and 14, changes no output.
   Claim boundaries remain governed by
   [support tiers](../status/SUPPORT_TIERS.md).
@@ -150,7 +161,8 @@ language run.
 For each change, the first match wins:
 
 1. a class-capping static limit (rule 1) gives `static_unknown`;
-2. no bound relation (rule 3) gives `no_static_path`;
+2. no bound relation (rule 3) gives `no_static_path`, or `static_unknown` on a
+   `partial` packet whose only relations are `file_proximity` (rule 10, #8352);
 3. established sink alignment (rule 9) gives `exposed`;
 4. otherwise the aggregate of the per-relation classes (rule 8).
 
@@ -171,7 +183,7 @@ For each change, the first match wins:
    `perl_packet_contract_migration_corpus_pins_real_producer_dispositions`
    pins.
 2. **No relations.** A change with no bound relation is `no_static_path`,
-   reach `no`.
+   reach `no`, except on a `partial` packet (rule 10).
 3. **Relation binding.** A relation binds to a change only when
    `relation.change_id` is the change id and `relation.owner_id` is the
    change owner, compared as exact strings. A relation whose change id is
@@ -197,14 +209,19 @@ For each change, the first match wins:
    never strong, whatever their label. `weak_smoke`, `weak_broad`,
    `mention_only` and `unknown` strengths are never strong. A relation
    with a bound strong oracle reads `weakly_exposed`; with any other bound
-   oracle, `reachable_unrevealed`.
+   oracle, `reachable_unrevealed` (except rules 16, 17 and 18).
 7. **Relation-kind cap, per relation.** Only `direct_owner_call` supports
-   positive reachability. A relation of any other kind
-   (`method_receiver`, `helper_call`, `package_reference`,
-   `test_name_match`, `file_proximity`, `fixture_setup`, `unknown`) is
-   capped at `reachable_unrevealed` before aggregation. Today the cap
-   checks whether any bound relation is `direct_owner_call`, so a strong
-   advisory relation beside a weak direct one reads `weakly_exposed`.
+   positive reachability (sink-aligned `exposed`, suggested location, row
+   miss). A reachable `method_receiver` or `helper_call` relation whose own
+   bound oracle passes rules 5 and 6 keeps its per-relation
+   `weakly_exposed` (#6583, examples 13 and 14): it is an owner call shape,
+   and the binding already requires the oracle's test and target owner to
+   match the relation exactly, so a wrong-receiver, weak-oracle, or
+   unreachable relation earns nothing. A relation of any other kind
+   (`package_reference`, `test_name_match`, `file_proximity`,
+   `fixture_setup`, `unknown`) is capped at `reachable_unrevealed` before
+   aggregation. The cap is per relation, so a strong advisory relation
+   beside a weak direct one no longer reads `weakly_exposed`.
 8. **Aggregation.** The change takes the strongest per-relation class:
    any `weakly_exposed`, then any `reachable_unrevealed`, otherwise
    `static_unknown`.
@@ -214,12 +231,23 @@ For each change, the first match wins:
    equals the trimmed `changed_observable`, or equals the observable after
    one leading `return ` is removed and the rest is trimmed again (so
    `return   $x` aligns with `$x`). The strip is one way. Apart from
-   that edge trimming, equality is exact: no substring match and no
-   whitespace normalization inside the text. An `exposed` change emits
+   that edge trimming, equality is exact: no substring match. Whitespace
+   outside a quoted literal does not distinguish two sinks, except between
+   two identifier characters (`$a lt $b` is not `$altb`; a sigil ends an
+   identifier, so `scalar @a` equals `scalar@a`), between two characters
+   that can fuse into one operator (`- -1` is not `--1`), and next to a `.`
+   (`1 . 5` is not `1.5`). Inside a quoted literal it is compared exactly.
+   Text containing `/`, `~`, `#`, a backtick, `$"`, `$'` or a `q`, `qq`, `qw`,
+   `qr`, `m`, `s`, `tr` or `y` word, where spacing can carry meaning that
+   ripr does not model, compares exactly. An `exposed` change emits
    `perl_already_discriminated:` and
    no gap, suggested location, suggested assertion or missing
    discriminator.
-10. **Partial packets.** `packet_status: partial` does not cap the class.
+10. **Partial packets.** `packet_status: partial` does not cap the class,
+    except that a partial packet with no relation other than
+    `file_proximity` (including none) is `static_unknown` with no gap and
+    no location, because the run may not have emitted the link (#8352;
+    example 16).
     A sink-aligned change in a partial packet is `exposed`. A partial
     packet records a partial language run and gets no canonical gap. It
     keeps `perl_suggested_test_location` under rule 13.
@@ -293,6 +321,92 @@ For each change, the first match wins:
 15. **Constant stages.** Reach is `yes` when any relation binds, whatever
     its kind or hint. Infect and propagate are `unknown`. Confidence is
     `0.5`. ripr never reports a runtime mutation outcome from a packet.
+16. **Broad oracle is unknown.** A relation whose bound oracle (rule 5) has
+    strength `weak_broad` and a kind rule 6 lists as strong-eligible, on a
+    `direct_owner_call`, `method_receiver` or `helper_call` relation (the
+    kinds that earn weak oracle credit under rule 7), reads
+    `static_unknown`, not `reachable_unrevealed`. The producer grades
+    `throws_ok`, `dies_ok` and `like(dies {...}, ...)` alike as `weak_broad`
+    whatever the matcher pins (#6582), so a gap on it is wrong about as often
+    as right (corpus: 4 wrong, 3 right). Aggregation is unchanged, so a
+    `weakly_exposed` or `reachable_unrevealed` relation beside it still wins,
+    and rule 13 withholds the gap and location as for any `static_unknown`.
+    `smoke_ok`, `dies_only`, `mention_only`, `unknown_helper` and
+    `dynamic_framework_indirection` kinds stay `reachable_unrevealed`. The
+    recommended next step says the producer grades the assertion broad and that
+    no change is needed if it asserts the message, class or value.
+
+    **Matcher grading.** A packet whose `producer.capabilities` lists
+    `oracle_matcher_grading` promises that the producer separates these
+    assertions: `throws_ok` with a class or regex and `like(dies {...}, ...)`
+    are `strong_exact`, a bare `dies_ok` or a value `like` stays `weak_broad`,
+    and an exception block nested in such an assertion is not a second oracle.
+    For such a packet a `weak_broad` oracle is an ordinary weak oracle
+    (`reachable_unrevealed`, the gap), and a bound `strong_exact`
+    `exception_observer` reads `static_unknown`: a class or message matcher
+    pins that an error is raised, not which boundary raises it. The recommended
+    next step says so. A packet without the capability keeps the reading above,
+    including example 5. No producer advertises the capability yet.
+17. **`isnt` pins nothing.** An oracle whose recorded expression begins with
+    the call `isnt` (bare, or qualified `Test::More::`, `Test2::V0::` or
+    `Test2::V1::`) is read as `weak_smoke` when the producer graded it
+    `strong_exact` or `weak_broad`, because `isnt($got, $v)` passes for
+    every wrong result but `$v` and cannot notice the changed behavior. It
+    earns no rule 6 credit and is not a rule 16 broad oracle, so its
+    relation reads `reachable_unrevealed` unless another bound oracle
+    credits it (aggregation is unchanged). Only the leading call token is
+    read (a name such as `isnt_zero` is not `isnt`); ripr does not parse the
+    argument list. The producer fix is to grade `isnt` weak at the source;
+    this keeps older packets from earning `weakly_exposed` meanwhile
+    (corpus: `perl-test2-fee-isnt-zero`, `perl-testmore-clamp-isnt` were
+    credited, truth not discriminated; since the producer pin moved to
+    07320a4 their packets arrive `weak_smoke`, and the edited `perl-0235-*`
+    packets that keep an old-style `strong_exact` `isnt` exercise this rule).
+
+18. **No observable to align.** A relation whose bound oracle passes rules 5
+    and 6 reads `static_unknown`, not `weakly_exposed`, when its change
+    carries `changed_observable: null` or a blank string. A strong oracle on the owner has no
+    sink to align to, so ripr cannot tell whether it pins the change, and
+    rule 13 withholds the gap and location as for any `static_unknown`. A
+    packet that omits the field (an older packet) and a change with an
+    observable but no matching `observed_sink` are unchanged: both stay
+    `weakly_exposed`, because there the packet states something to compare.
+19. **A changed pattern is not observed by equal sink text (#9418).** Rule 9
+    never aligns a change whose `changed_observable` applies a pattern: a
+    `=~` or `!~` binding, or a `qr`, `m`, `s`, `tr`, `y` or `split` word
+    that opens a delimited pattern (one of `/ { [ ( < | ! # ' " ,`, after
+    optional whitespace for `split` only; a word after `$ @ % &` or `>`, or
+    before `=>`, is a name, not an operator). An exact oracle on one input
+    observes what the pattern does with that input, not which inputs it
+    accepts, so the change reads as rule 8 gives it (`weakly_exposed` for a
+    bound strong oracle) with the usual repair-shaped output. The test errs
+    toward true: a false positive keeps a sink at `weakly_exposed` rather
+    than `exposed`. Example 17's sinks set to `$s =~ /^v?[0-9]+$/ ? 1 : 0`
+    read `weakly_exposed` with a gap; a sink that only names `s`, `m` or `y`
+    as a variable, method or hash key stays `exposed`.
+20. **A code reference beside an unlinked call is unknown (#9416).** A
+    `direct_owner_call` / `reachable` relation with `oracle_id: null` reads
+    `static_unknown`, not `reachable_unrevealed`, when an oracle of the same
+    test has an `expression` that calls through a code reference
+    (`->(`, `&$` or `&{`) and the change is otherwise a gap. The test may
+    run the owner and assert on a closure it returned (`is($c->(), 5)`
+    after `my $c = make_counter(5)`), and the packet links no oracle to the
+    owner, so ripr cannot tell. The finding carries static limit
+    `dynamic_dispatch`, rule 13 withholds the gap and location, and the next
+    step says why. A relation with a linked oracle, and a test with no code
+    reference, are unchanged.
+21. **Unowned top-level change beside file boundaries is a stated limit
+    (#9420).** An added line of a `source` file that no packet change covers
+    and no non-`package` owner covers (each range read one- or zero-based),
+    that is not blank or a `#` comment, reads `static_unknown` with the
+    strongest static limit that any of the file's owner-less
+    `dynamic_boundaries` maps to (generated subs, symbol-table writes and
+    string eval among them), and no gap or repair target; the next step
+    only says to check whether a test calls what the line defines. The producer emits no
+    change for top-level code, such as a table a glob assignment turns into
+    subs, so the line was silent and silence reads as "nothing to check". A
+    file with no owner-less boundary that names a limit, and a line a
+    change or owner covers, are unchanged.
 
 ### Decisions
 
@@ -368,6 +482,37 @@ rejected alternative. Any can be reversed later without touching the rest.
     remove the location from every real packet. Rejected: gate both
     suggestions on `packet_status: complete`. Reopen this if a corpus
     case shows a partial packet's omitted facts moving the right test.
+11. **Broad oracle.** Adopted: unknown (rule 16) until the producer grades
+    exception and regex oracles apart (#6582). Rejected: keep the gap, because
+    it was wrong for 4 of 7 corpus rows; recognize `throws_ok` or `dies_ok` in
+    the expression, because ripr does not parse Perl. Costs three correct
+    gaps (`close-out-dies-ok`, `format-entry-like`, `round-cents-like`), which
+    read `limited`; revisit when the producer separates them.
+
+12. **Whitespace in sink text.** Adopted: sink equality ignores whitespace
+    outside quoted literals, except where removing it would join two
+    identifier characters or fuse two operator characters, and exact
+    comparison for text with a regex, `q`-form, `~`, `/` or `$"`, where
+    spacing can carry meaning ripr does not model (review found `$a =~ $b`
+    vs `$a = ~$b`, `1 . 5` vs `1.5` and regex bodies equal under a looser
+    form). The producer copies both texts
+    from source, so formatting is the one difference between two spellings
+    of the same expression, and the corpus labels the whitespace-only case
+    `discriminated`: `weakly_exposed` was a false repair signal on a pinned
+    test (`perl-0235-ex19-sink-whitespace`). Rejected: normalize inside
+    quoted literals (changes the value), and token-level parsing (ripr does
+    not parse Perl). Anything the canonical form does not equate stays
+    `weakly_exposed`, so the change cannot credit a different expression.
+
+13. **Null observable.** Adopted: unknown (rule 18). The corpus row
+    `perl-testmore-quote-is-deeply-total` (`is_deeply` on a whole hash, the
+    producer wrote `changed_observable: null`) is `discriminated`, and a
+    gap told the maintainer to add an assertion that exists (#8730).
+    Rejected: the same cap for every unconfirmed sink (the field-omitted and
+    observable-without-sink shapes are pinned as `weakly_exposed` with an
+    `observation_unconfirmed` miss by #5498, and the producer emits no sink for
+    most oracles); and fixing it only in the producer, which cannot express a
+    hash-field flow as sink text today.
 
 ## Required Evidence
 
@@ -427,8 +572,8 @@ cases.
    `stdout_is(sub { Pricing::show(100) }, "90\n")` as `output_observer` /
    `strong_exact`: `weakly_exposed`, `unknown` / strong (unchanged).
 7. `like(Pricing::discount(100), qr/9/)` as `exact_return_assertion` /
-   `weak_broad`: `reachable_unrevealed`, `exact_value` / weak
-   (unchanged).
+   `weak_broad`: `static_unknown` (rule 16), `exact_value` / weak. Was
+   `reachable_unrevealed`.
 8. A test that only names `Pricing::discount`, as `mention_only` /
    `mention_only`: `reachable_unrevealed`, `unknown` / unknown
    (unchanged).
@@ -440,26 +585,33 @@ cases.
 12. Hint `static_unknown`: `static_unknown`, no gap, no location (today
     both emitted).
 13. `my $p = Pricing->new; is($p->discount(100), 90)` as
-    `method_receiver` / `reachable`: `reachable_unrevealed`, relation
-    null / null, no location (today `direct_owner_call` / high, location
-    emitted).
-14. `helper_call`: `reachable_unrevealed`, `helper_owner_call` / high, no
-    location (today location emitted).
+    `method_receiver` / `reachable` with the oracle bound to the change
+    owner: `weakly_exposed`, no location (#6583; was
+    `reachable_unrevealed`).
+14. `helper_call` with the oracle bound to the change owner:
+    `weakly_exposed`, `helper_owner_call` / high, no location (#6583; was
+    `reachable_unrevealed`).
 15. `package_reference`: `reachable_unrevealed`, `import_path_affinity` /
     medium; `test_name_match`: `reachable_unrevealed`, `owner_named_test`
     / medium. Neither has a location (class unchanged; today location
     emitted).
 16. `relations: []`: `no_static_path`, reach `no`, gap, no location
-    (unchanged).
+    (unchanged). On a `partial` packet, the real producer's status, the
+    same facts, or relations that are only `file_proximity`, read
+    `static_unknown`, no gap, no location (#8352): a
+    partial run may simply not have emitted the link, so neither "no
+    static path" nor "reachable" is an assessed result.
 17. `changed_observable: "return $amount * 0.9"`, `observed_sink:
     "$amount * 0.9"`: `exposed`, `perl_already_discriminated:`, no gap, no
     location (unchanged).
 18. Reversed: `changed_observable: "$amount * 0.9"`, `observed_sink:
     "return $amount * 0.9"`: `weakly_exposed` (unchanged).
 19. `changed_observable: "$amount*0.9"`, `observed_sink: "$amount * 0.9"`:
-    `weakly_exposed` (unchanged).
-20. Example 17's sinks with `method_receiver`: `reachable_unrevealed`
-    (unchanged).
+    `exposed`, no gap (decision 12; was `weakly_exposed`).
+    `changed_observable: "'a  b'"`, `observed_sink: "'a b'"`:
+    `weakly_exposed` (quoted whitespace is compared exactly).
+20. Example 17's sinks with `method_receiver`: `weakly_exposed` (#6583
+    weak credit; sink-aligned `exposed` stays `direct_owner_call`-only).
 21. Example 17's sinks with hint `weakly_reachable`:
     `reachable_unrevealed` (unchanged).
 22. Example 17's sinks with `packet_status: partial`: `exposed`, no gap
@@ -492,10 +644,18 @@ cases.
     probed).
 31. Owner `kind: unknown`: `weakly_exposed`, no gap, location (unchanged;
     from code, not probed).
+32. `changed_observable: null` (or blank) on the change: `static_unknown`, no gap, no
+    location (rule 18; was `weakly_exposed`).
+33. Example 5's oracle with `producer.capabilities` also listing
+    `oracle_matcher_grading`: `static_unknown`, no gap, no location (rule 16
+    matcher grading). The same packet with the oracle `weak_broad`:
+    `reachable_unrevealed`, gap (without the capability: `static_unknown`).
 
 ## Test Mapping
 
 - Existing: `crates/ripr/src/analysis/language/perl/tests.rs`:
+  `perl_matcher_grading_separates_pinned_errors_from_broad_assertions`
+  (rule 16 matcher grading, example 33),
   `perl_related_test_linking_classifies_reachability_and_revealability`
   (rules 3, 4, 6), `perl_to_domain_oracle_mapping_preserves_signal_kinds`
   (rule 12 kind), `h2_sink_aligned_oracle_classifies_exposed_and_suppresses_repair_gap`
@@ -503,7 +663,15 @@ cases.
   `h2_non_aligned_sink_stays_weakly_exposed`,
   `h2_advisory_relation_with_matching_sink_does_not_promote` and
   `h2_token_substring_coincidence_does_not_align` (rule 9, assert only
-  `!= Exposed` today), `h2_aligned_sink_on_another_tests_oracle_does_not_promote`
+  `!= Exposed` today), `h2_sink_whitespace_aligns_outside_literals_only`
+  (rule 9 whitespace clause, example 19),
+  `h2_changed_pattern_is_not_observed_by_equal_sink_text` (rule 19, which
+  adds no numbered example: the corpus counts those),
+  `closure_oracle_beside_an_unlinked_owner_call_is_unknown_not_a_gap` (rule 20)
+  and `uncovered_top_level_line_beside_file_boundaries_is_a_stated_limit`
+  (rule 21), which add no numbered examples either,
+  `h2_producer_declared_absent_observable_is_unknown_not_a_gap` (rule 18,
+  example 32), `h2_aligned_sink_on_another_tests_oracle_does_not_promote`
   (rules 5 and 9, example 28), `h1_ownerless_file_boundary_still_blocks`,
   `h1_boundary_on_explicit_other_owner_does_not_block` and
   `h1_dynamic_dispatch_limitation_*` (rule 1),
@@ -512,6 +680,8 @@ cases.
   `ingestion_*` (ingestion),
   `perl_packet_contract_migration_corpus_pins_real_producer_dispositions`
   (rule 1 unrecognized kinds, real-producer owner ids),
+  `perl_isnt_is_a_smoke_oracle_not_an_exact_one` (rule 17: `isnt` spellings,
+  the `weak_broad` grading, and `is` / `isnt_zero` controls),
   `relation_gate_rejects_file_proximity_only` (edits `relation_kind`
   without re-blessing; rule 14).
 - Existing: RIPR-SPEC-0108 byte-pinned reports under
@@ -534,8 +704,11 @@ cases.
   - `PerlFactPacket::related_test_evidence_for_change`: rule 3;
   - `PerlFactPacket::classify_related_relation`: rules 4 to 7;
   - `PerlFactPacket::classify_change_from_related_tests`: rule 8;
-  - `sink_aligned_observation`: rules 5 and 9;
-  - `OracleFact::is_strong_exact`: rule 6;
+  - `sink_aligned_observation`: rules 5, 9 and 19 (`matches_a_pattern`);
+  - `packet_to_findings_with_currentness` (`coderef_unresolved`) and
+    `PerlFactPacket::test_asserts_through_code_reference`: rule 20;
+  - `unowned_change_findings` and `static_limit::file_scope_kind`: rule 21;
+  - `OracleFact::is_strong_exact`: rule 6; `is_broad_unresolved`: rule 16; `effective_strength`: rule 17;
   - `RelationKind::supports_positive_reachability`: rule 7;
   - `perl_oracle_kind_to_domain`, `perl_oracle_strength_to_domain`,
     `perl_relation_to_domain`: rule 12;

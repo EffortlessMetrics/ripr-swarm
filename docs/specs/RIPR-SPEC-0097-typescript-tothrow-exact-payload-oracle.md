@@ -117,55 +117,55 @@ specify the exact error variant.
 
 ## Acceptance Examples
 
-### Exact string payload (must produce exposed)
+1. Exact string payload (must produce exposed):
 
-```
-owner:          parseUser in src/parser.ts, changes error-path condition
-test:           expect(() => parseUser("")).toThrow("empty user")
+   ```
+   owner:          parseUser in src/parser.ts, changes error-path condition
+   test:           expect(() => parseUser("")).toThrow("empty user")
 
-Before spec:    weakly_exposed, BroadError / weak oracle
-After spec:     exposed, ExactErrorVariant / strong oracle,
-                oracle_payload: "empty user"
-```
+   Before spec:    weakly_exposed, BroadError / weak oracle
+   After spec:     exposed, ExactErrorVariant / strong oracle,
+                   oracle_payload: "empty user"
+   ```
 
-### Exact object payload (must produce exposed)
+2. Exact object payload (must produce exposed):
 
-```
-owner:          parseUser in src/parser.ts
-test:           expect(() => parseUser("")).toThrow({ code: "EMPTY_INPUT" })
+   ```
+   owner:          parseUser in src/parser.ts
+   test:           expect(() => parseUser("")).toThrow({ code: "EMPTY_INPUT" })
 
-After spec:     exposed, ExactErrorVariant / strong oracle,
-                oracle_payload: { code: "EMPTY_INPUT" }
-```
+   After spec:     exposed, ExactErrorVariant / strong oracle,
+                   oracle_payload: { code: "EMPTY_INPUT" }
+   ```
 
-### PascalCase class reference (must produce exposed)
+3. PascalCase class reference (must produce exposed):
 
-```
-owner:          parseUser in src/parser.ts
-test:           expect(() => parseUser("")).toThrow(ParseError)
+   ```
+   owner:          parseUser in src/parser.ts
+   test:           expect(() => parseUser("")).toThrow(ParseError)
 
-After spec:     exposed, ExactErrorVariant / strong oracle,
-                oracle_payload: ParseError
-```
+   After spec:     exposed, ExactErrorVariant / strong oracle,
+                   oracle_payload: ParseError
+   ```
 
-### Bare toThrow control (must stay weakly_exposed)
+4. Bare toThrow control (must stay weakly_exposed):
 
-```
-owner:          parseUser in src/parser.ts
-test:           expect(() => parseUser("")).toThrow()
+   ```
+   owner:          parseUser in src/parser.ts
+   test:           expect(() => parseUser("")).toThrow()
 
-After spec:     weakly_exposed, BroadError / weak oracle (unchanged)
-```
+   After spec:     weakly_exposed, BroadError / weak oracle (unchanged)
+   ```
 
-### camelCase identifier control (must stay weakly_exposed)
+5. camelCase identifier control (must stay weakly_exposed):
 
-```
-owner:          parseUser in src/parser.ts
-test:           expect(() => parseUser("")).toThrow(message)
+   ```
+   owner:          parseUser in src/parser.ts
+   test:           expect(() => parseUser("")).toThrow(message)
 
-After spec:     weakly_exposed, BroadError / weak oracle (unchanged)
-                (cannot confirm `message` is a class, not a variable)
-```
+   After spec:     weakly_exposed, BroadError / weak oracle (unchanged)
+                   (cannot confirm `message` is a class, not a variable)
+   ```
 
 ## Test Mapping
 

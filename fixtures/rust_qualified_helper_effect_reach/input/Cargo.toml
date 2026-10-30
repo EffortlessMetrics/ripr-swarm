@@ -1,0 +1,5 @@
+[package]
+name = "rust_qualified_helper_effect_reach_fixture"
+version = "0.1.0"
+edition = "2024"
+publish = false

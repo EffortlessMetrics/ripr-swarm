@@ -247,12 +247,13 @@ fn custom_matcher_another_registration_may_replace_stays_unknown() {
 
 #[test]
 fn custom_matcher_assertion_shape_must_compare_one_value() {
-    // Each shape still records its `toBeCents` assertion (a negated one is
-    // not recorded under the matcher name), and none reads strong.
+    // Each shape still records its `toBeCents` assertion — a negated one is
+    // now recorded under the matcher name as `unknown` / unknown
+    // (RIPR-SPEC-0243 rule 2, #8712) — and none reads strong.
     for (test, expected) in [
         (
             "test(\"cents\", () => {\n  expect(toCents(1.5)).not.toBeCents(150);\n});\n",
-            Vec::new(),
+            unknown(),
         ),
         (
             "test(\"cents\", () => {\n  expect(toCents(1.5)).toBeCents(150, 2);\n});\n",

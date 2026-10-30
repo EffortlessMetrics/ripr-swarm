@@ -101,9 +101,16 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
             }
         }
     } else {
-        evidence_value(finding, "why_not_actionable: ")
-            .unwrap_or("TypeScript preview lacks a complete repair packet contract")
-            .to_string()
+        let specific = evidence_value(finding, "why_not_actionable: ");
+        // #5531: a repo-scoped finding projects no packet because the
+        // capability registry has no repo-mode repair_routing cell; lead with
+        // that and keep the specific per-finding reason.
+        match scope_qualified_why(finding, specific) {
+            Some(why) => why,
+            None => specific
+                .unwrap_or("TypeScript preview lacks a complete repair packet contract")
+                .to_string(),
+        }
     };
 
     // §1.3 / RIPR-SPEC-0088 §PR8: flip gap_state + actionability_category when
@@ -151,6 +158,27 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
         unlock_condition,
         evidence_needed_to_promote: resolved_evidence_needed,
         raw_evidence_refs,
+    })
+}
+
+/// Typed-scope reason for a repo-scoped finding with no repair route (#5531).
+/// Reads `Finding::analysis_mode()`, never the evidence line.
+pub(crate) fn repo_scope_no_repair_reason(finding: &Finding) -> Option<String> {
+    use crate::domain::language_capability::{AnalysisMode, repo_mode_no_repair_routing_reason};
+    if finding.analysis_mode() != Some(AnalysisMode::Repo) {
+        return None;
+    }
+    repo_mode_no_repair_routing_reason(finding.language?)
+}
+
+/// `"{scope reason}; {specific}"` (or the scope reason alone) for a repo-scoped
+/// finding, `None` otherwise (#5531). Shared by every surface that prints the
+/// raw `why_not_actionable:` evidence line so they cannot disagree.
+pub(crate) fn scope_qualified_why(finding: &Finding, specific: Option<&str>) -> Option<String> {
+    let scope = repo_scope_no_repair_reason(finding)?;
+    Some(match specific.filter(|s| !s.trim().is_empty()) {
+        Some(specific) => format!("{scope}; {specific}"),
+        None => scope,
     })
 }
 
@@ -503,7 +531,7 @@ mod tests {
     }
 
     #[test]
-    fn projected_evidence_replaces_blocked_lines_for_packet_ready_finding() {
+    fn projected_evidence_replaces_blocked_lines_for_packet_ready_finding() -> Result<(), String> {
         let mut finding = sample_typescript_finding();
         finding
             .evidence
@@ -533,11 +561,65 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
         finding.missing.push(
             "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: blocked"
                 .to_string(),
         );
+
+        finding
+            .missing
+            .push("boundary discriminator is missing".to_string());
+        finding.recommended_next_step = Some(
+            "add assertion; no actionable repair packet is emitted until fields resolve"
+                .to_string(),
+        );
+        let render = |finding: &Finding| -> Result<serde_json::Value, String> {
+            let rendered = crate::output::json::render_context_packet(
+                finding,
+                5,
+                &crate::config::RiprConfig::default(),
+                std::path::Path::new("."),
+            );
+            serde_json::from_str(&rendered).map_err(|err| err.to_string())
+        };
+        let context = render(&finding)?;
+        assert_eq!(
+            context["missing"],
+            serde_json::json!(["boundary discriminator is missing"])
+        );
+        assert_eq!(
+            context["missing_discriminators"][0]["value"],
+            "amount == threshold"
+        );
+        assert_eq!(context["classification"], "weakly_exposed");
+        assert_eq!(context["ripr"]["infect"], "unknown");
+        assert!(
+            context["recommended_next_step"]
+                .as_str()
+                .is_some_and(|s| s.contains("repair packet is complete"))
+        );
+        let mut unsupported = finding.clone();
+        unsupported.language = Some(LanguageId::Rust);
+        assert_eq!(
+            render(&unsupported)?["missing"],
+            serde_json::json!(unsupported.missing)
+        );
+        let mut incomplete = finding.clone();
+        incomplete
+            .evidence
+            .retain(|s| !s.starts_with("typescript_verify_command: "));
+        assert!(!preview_actionability_for(&incomplete).is_some_and(|a| a.repair_packet_ready));
+        assert_eq!(
+            render(&incomplete)?["missing"],
+            serde_json::json!(incomplete.missing)
+        );
+        let mut stale = finding.clone();
+        stale.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        assert!(!preview_actionability_for(&stale).is_some_and(|a| a.repair_packet_ready));
+        assert_eq!(render(&stale)?["missing"], serde_json::json!(stale.missing));
 
         let projected = projected_preview_actionability_evidence(&finding);
         let missing = projected_preview_actionability_missing(&finding);
@@ -580,6 +662,7 @@ mod tests {
                 .any(|line| line.starts_with("TypeScript preview actionability `")),
             "{missing:?}"
         );
+        Ok(())
     }
 
     /// #4105 wrongfam end-to-end: the observed `login('alice')` input provably
@@ -622,6 +705,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let Some(actionability) = preview_actionability_for(&finding) else {
@@ -654,6 +739,8 @@ mod tests {
 
     fn sample_typescript_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib.ts:2:typescript_preview".to_string(),
             canonical_gap: None,
             probe: Probe {

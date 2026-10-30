@@ -386,9 +386,12 @@ fn rendered_default_help_routes_share_one_canonical_first_run() -> Result<(), St
         ["help"].as_slice(),
     ] {
         let stdout = rendered_help(args)?;
-        if stdout.replace("\r\n", "\n").lines().count() > 40 {
+        // Keep this constant in sync with `help_overview_fits_one_screen` in
+        // crates/ripr/src/cli/help.rs: #9865's exit-code/global-flag block
+        // owns six of the budget's lines, so the envelope is 48, not 40.
+        if stdout.replace("\r\n", "\n").lines().count() > 48 {
             return Err(format!(
-                "default help {args:?} exceeded the 40-line screen budget"
+                "default help {args:?} exceeded the 48-line screen budget"
             ));
         }
         canonical_first_run_command(&stdout)?;
@@ -692,6 +695,8 @@ fn public_docs_only_pass_flags_the_command_help_lists() -> Result<(), String> {
 }
 
 const PORTABLE_TESTS: &[&str] = &[
+    "init_ci_provider_errors_recover_near_misses",
+    "init_ci_provider_valid_preview_keeps_workflow_contract",
     "workflow_help_lists_the_five_governed_identities",
     "workflow_help_renders_one_workflow_with_bounded_sections",
     "unknown_workflow_fails_with_a_family_distinct_from_unknown_command",
@@ -706,8 +711,15 @@ const PORTABLE_TESTS: &[&str] = &[
     "calibrate_help_discloses_mutants_json_only_denominator",
     "outcome_help_matches_the_enforced_canonical_gap_contract",
     "agent_help_makes_repair_primary_without_removing_control_surfaces",
+    "agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve",
     "agent_repair_help_names_the_primary_transaction_and_its_limits",
+    "agent_repair_default_and_later_phase_selectors_match_help",
+    "agent_repair_later_phases_require_existing_attempts_without_writes",
+    "agent_repair_phase_refusals_render_scoped_recovery_without_writes",
     "agent_status_help_names_the_selected_store_and_exact_attempt_selection",
+    "agent_subcommand_typos_render_scoped_recovery",
+    "agent_subcommand_far_and_sibling_misses_render_no_suggestion",
+    "agent_recovery_preserves_group_and_child_help",
     "help_index_routes_agent_repair_to_repair_help",
     "mode_help_names_index_scope_and_points_at_the_mode_table",
     "check_and_diff_help_state_the_real_base_default",
@@ -716,6 +728,10 @@ const PORTABLE_TESTS: &[&str] = &[
     "check_help_is_one_screen_and_all_is_the_full_reference",
     "check_help_all_is_a_parsed_flag_not_a_raw_scan",
     "check_help_wins_over_later_option_values",
+    "default_help_discloses_exit_codes_and_global_verbose",
+    "per_command_help_renders_the_catalog_example",
+    "help_all_rejects_trailing_arguments",
+    "help_all_flag_pair_is_rejected_outside_check",
 ];
 
 #[test]
@@ -742,7 +758,7 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    if actual != expected || actual.len() != 24 {
+    if actual != expected || actual.len() != PORTABLE_TESTS.len() {
         return Err(format!(
             "portable test inventory drifted: expected {expected:?}, got {actual:?}"
         ));
@@ -751,10 +767,13 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
     execute.arg("--test-threads=1").current_dir(&scratch.0);
     let result = require_success(run(execute)?, "extracted help execution")?;
     let text = String::from_utf8(result.stdout).map_err(|error| error.to_string())?;
-    if !text.contains("test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
-    {
+    if !text.contains(&format!(
+        "test result: ok. {} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
+        PORTABLE_TESTS.len()
+    )) {
         return Err(format!(
-            "extracted target did not run all 24 portable cases:\n{text}"
+            "extracted target did not run all {} portable cases:\n{text}",
+            PORTABLE_TESTS.len()
         ));
     }
     // The successful compile, exact inventory and execution above establish

@@ -1,12 +1,14 @@
 use super::*;
 use crate::analysis::classify::{
-    CallTarget, call_text_may_call_free_function, impl_self_type_name,
-    method_call_resolves_to_impl, module_stem, owner_dispatch_trait, test_calls_free_function,
+    CallTarget, call_text_may_call_free_function, free_helper_call_resolves, impl_self_type_name,
+    inherent_owner_call_resolves, method_call_resolves_to_impl, module_stem, owner_dispatch_trait,
+    requires_inherent_receiver_identity, test_calls_free_function,
 };
 use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
 
 pub(super) mod context;
+mod visibility;
 
 pub(crate) use context::CompactGripContext;
 pub(super) use context::{CompactTest, call_text_contains_named_call};
@@ -29,6 +31,25 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
 
     let mut candidates: BTreeMap<usize, RelationReason> = BTreeMap::new();
     match_direct_owner_call(&mut candidates, context, prefix, &owner);
+    let inaccessible_direct: BTreeSet<usize> = context
+        .owner_function(seam.file(), seam.display_line())
+        .map(|function| {
+            candidates
+                .keys()
+                .copied()
+                .filter(|test_index| {
+                    context.tests.get(*test_index).is_some_and(|indexed| {
+                        context.private_visibility.proven_inaccessible(
+                            context,
+                            function,
+                            indexed.test,
+                        )
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    candidates.retain(|test_index, _| !inaccessible_direct.contains(test_index));
     match_helper_owner_call(&mut candidates, context, prefix, &owner);
     match_target_affinity_owner_call(
         &mut candidates,
@@ -45,6 +66,13 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
     match_import_path_affinity(&mut candidates, context, prefix, &owner);
     match_fixture_owner_affinity(&mut candidates, context, prefix, &owner);
 
+    // An inaccessible direct call cannot regain oracle credit through a
+    // proximity or import fallback. An independently matched helper can
+    // still reach a private owner from inside its own module.
+    candidates.retain(|test_index, reason| {
+        !inaccessible_direct.contains(test_index) || *reason == RelationReason::HelperOwnerCall
+    });
+
     // #6292: a test whose every call of the owner's name settles on a
     // same-named module-level rival relates through no signal of its own:
     // the same rule diff-mode related tests apply.
@@ -57,13 +85,36 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
         });
     }
 
+    // Newly registered property facts carry assertion interpretation, not
+    // authority to call any owner with the same spelling. Bind them before
+    // every evidence stage, including value-insensitive direct-call credit.
+    // A policy-modified fact must not become ordinary when its exact receipt
+    // no longer matches; registration provenance and authority are distinct.
+    // Ordinary relation rows retain their existing rules.
+    let owner_fn = context.owner_function(seam.file(), seam.display_line());
+    candidates.retain(|test_index, _| {
+        context.tests.get(*test_index).is_some_and(|indexed| {
+            !context.index.is_registered_proptest(indexed.test)
+                || (context.index.proptest_source(indexed.test).is_some()
+                    && owner_fn.is_some_and(|owner| {
+                        crate::analysis::classify::bound_free_owner_calls(
+                            context.index,
+                            owner,
+                            indexed.test,
+                            &indexed.test.body,
+                            context.pin_syntax(),
+                        )
+                    }))
+        })
+    });
+
     dedupe_related_candidates(candidates, context)
 }
 
 /// Cached facts about a seam's owning function that every relationship
 /// strategy reads from. Resolved once per seam to avoid re-walking the
 /// index and re-deriving file stems / module paths per strategy.
-pub(super) struct OwnerContext {
+pub(super) struct OwnerContext<'index> {
     name: String,
     name_lower: String,
     file_stem: String,
@@ -77,13 +128,15 @@ pub(super) struct OwnerContext {
     /// The owner is a module-level `fn` (parser-established), so a
     /// receiver or type-path call of its name reaches something else.
     free_function: bool,
+    inherent_receiver: bool,
+    inherent_owner: Option<&'index FunctionSummary>,
     impl_trait: Option<String>,
     same_name_count: usize,
     identity: Option<std::sync::Arc<crate::analysis::classify::OwnerCallIdentity>>,
 }
 
-impl OwnerContext {
-    fn resolve(seam: &RepoSeam, context: &CompactGripContext<'_>) -> Self {
+impl<'index> OwnerContext<'index> {
+    fn resolve(seam: &RepoSeam, context: &CompactGripContext<'index>) -> Self {
         let owner_fn = context.owner_function(seam.file(), seam.display_line());
         let name = owner_fn.map(|f| f.name.as_str()).unwrap_or("").to_string();
         let name_lower = name.to_ascii_lowercase();
@@ -104,6 +157,7 @@ impl OwnerContext {
         let impl_type = owner_fn.and_then(|owner| impl_self_type_name(&owner.id.0));
         let free_function =
             owner_fn.is_some_and(|owner| owner.impl_context == FunctionImplContext::Free);
+        let inherent_receiver = owner_fn.is_some_and(requires_inherent_receiver_identity);
         let impl_trait = owner_fn.and_then(owner_dispatch_trait);
         let same_name_count = context.function_name_count(&name);
         // Shared per analysis run with the finding-level relation (#7716):
@@ -122,6 +176,8 @@ impl OwnerContext {
             fixture_names,
             impl_type,
             free_function,
+            inherent_receiver,
+            inherent_owner: owner_fn.filter(|owner| requires_inherent_receiver_identity(owner)),
             impl_trait,
             same_name_count,
             identity,
@@ -242,7 +298,7 @@ pub(super) fn match_direct_owner_call(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
 ) {
     if owner.name.is_empty() {
         return;
@@ -250,23 +306,28 @@ pub(super) fn match_direct_owner_call(
     let Some(indices) = context.tests_by_call_name.get(&owner.name) else {
         return;
     };
-    let require_impl_identity = owner.same_name_count > 1 && owner.impl_type.is_some();
     for test_index in indices {
-        if require_impl_identity {
-            let Some(indexed) = context.tests.get(*test_index) else {
+        let Some(indexed) = context.tests.get(*test_index) else {
+            continue;
+        };
+        if owner.inherent_receiver {
+            // Every inherent entry borrows the complete shared owner refusal,
+            // independently of the legacy impl-name ambiguity shortcut.
+            if !owner.inherent_owner.is_some_and(|function| {
+                inherent_owner_call_resolves(indexed.test, function, context.index)
+            }) {
                 continue;
-            };
-            let Some(impl_type) = owner.impl_type.as_deref() else {
-                continue;
-            };
-            if !method_call_resolves_to_impl(
+            }
+        } else if owner.same_name_count > 1
+            && let Some(impl_type) = owner.impl_type.as_deref()
+            && !method_call_resolves_to_impl(
                 indexed.test,
                 &owner.name,
                 impl_type,
                 owner.impl_trait.as_deref(),
-            ) {
-                continue;
-            }
+            )
+        {
+            continue;
         }
         // `ByteSize::kb(1)` or `size.kb()` never calls a free `kb` (#6713).
         if owner.free_function
@@ -291,7 +352,7 @@ pub(super) fn match_helper_owner_call(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
 ) {
     if owner.name.is_empty() {
         return;
@@ -310,6 +371,13 @@ pub(super) fn match_helper_owner_call(
         return;
     };
     for test_index in indices {
+        if owner.inherent_receiver
+            && !owner.inherent_owner.is_some_and(|function| {
+                context.inherent_helper_reaches_owner(*test_index, function)
+            })
+        {
+            continue;
+        }
         insert_related_candidate(
             candidates,
             context,
@@ -325,7 +393,7 @@ pub(super) fn match_target_affinity_owner_call(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
     target_tokens: &BTreeSet<String>,
 ) {
     if requires_concrete_activation_values(seam)
@@ -349,7 +417,12 @@ pub(super) fn match_target_affinity_owner_call(
         let Some(test) = context.tests.get(*test_index) else {
             continue;
         };
-        if !test_assertion_mentions_any_target_token(test, target_tokens) {
+        if !test_assertion_mentions_any_target_token(test, target_tokens)
+            || (owner.inherent_receiver
+                && !owner.inherent_owner.is_some_and(|function| {
+                    context.inherent_helper_reaches_owner(*test_index, function)
+                }))
+        {
             continue;
         }
         insert_related_candidate(
@@ -438,7 +511,7 @@ pub(super) fn match_same_test_file(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
 ) {
     if owner.file_stem.is_empty() {
         let indices = owner
@@ -480,7 +553,7 @@ pub(super) fn match_same_module(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
 ) {
     let Some(module_path) = owner.module_path.as_deref() else {
         return;
@@ -500,7 +573,7 @@ pub(super) fn match_owner_named_test(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
 ) {
     for test_index in context.owner_named_indices(&owner.name_lower) {
         insert_related_candidate(
@@ -517,7 +590,7 @@ pub(super) fn match_import_path_affinity(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
 ) {
     if owner.name.is_empty() {
         return;
@@ -547,7 +620,7 @@ pub(super) fn match_fixture_owner_affinity(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
 ) {
     for fixture_name in owner.fixture_names.iter() {
         if let Some(indices) = context.tests_by_call_name.get(fixture_name) {
@@ -630,7 +703,7 @@ pub(super) fn find_related_tests_ranked<'a>(
 ) -> Vec<(&'a CompactTest<'a>, RelationReason)> {
     let mut related = find_related_tests_with_context(seam, context);
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
-    sort_related_tests_for_seam(seam, context, owner_fn, &mut related);
+    let _best_oracles = sort_related_tests_for_seam(seam, context, owner_fn, &mut related);
     related
 }
 
@@ -645,17 +718,48 @@ pub(super) struct RelatedTestRankKey {
     line: usize,
 }
 
-pub(super) fn sort_related_tests_for_seam(
+/// The strongest-oracle answer for one related test of one seam.
+pub(super) type BestOracle = (OracleKind, OracleStrength, Option<String>);
+
+/// Sort `related` into rank order and return each test's best oracle, in
+/// the sorted order. The rank key already needs the best oracle of every
+/// related test, so the caller reuses it instead of asking again (#5361).
+pub(super) fn sort_related_tests_for_seam<'a>(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
-    related: &mut [(&CompactTest<'_>, RelationReason)],
-) {
+    related: &mut [(&'a CompactTest<'a>, RelationReason)],
+) -> Vec<BestOracle> {
     let owner = seam_owner_activation(seam, context);
-    related.sort_by_cached_key(|entry| {
-        let (indexed, reason) = *entry;
-        related_test_rank_key(seam, context, indexed, reason, owner.as_ref(), owner_fn)
-    });
+    let boolean_pin = BooleanBoundaryPin::establish(seam, owner_fn, context.index);
+    let mut ranked: Vec<_> = related
+        .iter()
+        .map(|&entry| {
+            let (indexed, reason) = entry;
+            let oracle = best_oracle(
+                indexed.test,
+                seam,
+                owner_fn,
+                context.index,
+                // #8282: the run's shared instance, like every other walk
+                // stage; a per-key fresh instance re-paid the whole-index
+                // lazily computed facts once per (seam, related test) rank.
+                context.pin_syntax(),
+                boolean_pin.as_ref(),
+            );
+            let key =
+                related_test_rank_key(seam, context, indexed, reason, owner.as_ref(), &oracle);
+            (key, entry, oracle)
+        })
+        .collect();
+    // Stable, like the `sort_by_cached_key` this replaces.
+    ranked.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut oracles = Vec::with_capacity(ranked.len());
+    for (slot, (_key, entry, oracle)) in related.iter_mut().zip(ranked) {
+        *slot = entry;
+        oracles.push(oracle);
+    }
+    oracles
 }
 
 pub(super) fn related_test_rank_key(
@@ -664,18 +768,9 @@ pub(super) fn related_test_rank_key(
     indexed: &CompactTest<'_>,
     reason: RelationReason,
     owner: Option<&SeamOwnerActivation<'_>>,
-    owner_fn: Option<&FunctionSummary>,
+    best_oracle: &BestOracle,
 ) -> RelatedTestRankKey {
-    let (_oracle_kind, oracle_strength, _contradiction) = best_oracle(
-        indexed.test,
-        seam,
-        owner_fn,
-        context.index,
-        // #8282: the run's shared instance, like every other walk stage; a
-        // per-key fresh instance re-paid the whole-index lazily computed
-        // facts once per (seam, related test) rank.
-        context.pin_syntax_mutex(),
-    );
+    let oracle_strength = &best_oracle.1;
     RelatedTestRankKey {
         relation_confidence: reason.confidence().rank(),
         relation_reason: reason.priority(),

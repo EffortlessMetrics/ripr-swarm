@@ -1,0 +1,12 @@
+diff --git a/src/traits.rs b/src/traits.rs
+--- a/src/traits.rs
++++ b/src/traits.rs
+@@ -33,7 +33,7 @@
+ }
+ 
+ pub fn total_empty<const N: usize>(values: [u32; N]) -> u32 {
+-    values.iter().sum()
++    values.iter().sum::<u32>()
+ }
+ 
+ pub fn evens(limit: u32) -> impl Iterator<Item = u32> {

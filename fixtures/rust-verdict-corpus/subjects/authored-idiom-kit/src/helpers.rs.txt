@@ -1,0 +1,33 @@
+pub fn discount(price: u32, percent: u32) -> u32 {
+    price - price * percent / 100
+}
+
+pub fn surcharge(base: u32) -> u32 {
+    base + base / 10
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[track_caller]
+    fn check(price: u32, percent: u32, expected: u32) {
+        assert_eq!(discount(price, percent), expected);
+    }
+
+    macro_rules! check_eq {
+        ($actual:expr, $expected:expr) => {
+            assert_eq!($actual, $expected)
+        };
+    }
+
+    #[test]
+    fn helper_pins_ten_percent() {
+        check(200, 10, 180);
+    }
+
+    #[test]
+    fn macro_pins_surcharge() {
+        check_eq!(surcharge(100), 110);
+    }
+}

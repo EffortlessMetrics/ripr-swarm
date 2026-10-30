@@ -1,0 +1,7 @@
+use facade::*;
+
+#[test]
+fn go_pushes() {
+    let mut v = Vec::new();
+    assert_eq!(v.go(3), 1);
+}

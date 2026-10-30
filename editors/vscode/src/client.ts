@@ -10,9 +10,16 @@ import {
   Trace
 } from 'vscode-languageclient/node';
 import { explicitSetting, getConfig, RiprConfig } from './config';
-import { missingServerRemedy, requestedServerVersion, resolveServer, ResolveFailure, ResolvedServer } from './serverResolver';
-import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
-import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
+import {
+  requestedServerVersion,
+  resolveServer,
+  ResolveFailure,
+  ResolveFailureKind,
+  ResolvedServer,
+  resolutionFailureRecovery
+} from './serverResolver';
+import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, isWindowsHost, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
+import { riprDocumentSelectorsForWorkspace, integerSetting, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
 import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction, shouldShowMainStatusBar } from './statusRender';
 import type { RiprStatusKind, RiprStatusState, FirstUsefulActionStatus, StatusBarColors } from './statusRender';
@@ -121,6 +128,27 @@ export const RIPR_DOCUMENT_SELECTORS: Array<{ language: string; scheme: 'file' }
 
 const SHOW_OUTPUT_ACTION = 'Show Output';
 const SELECT_WORKSPACE_ROOT_ACTION = 'Select Workspace Root';
+const OPEN_SETTINGS_ACTION = 'Open Settings';
+const COPY_DIAGNOSTIC_ACTION = 'Copy Diagnostic';
+const COPY_INSTALL_COMMAND_ACTION = 'Copy Install Command';
+const RETRY_ACTION = 'Retry';
+
+/**
+ * Popup actions for a missing-server error. Copy Install Command is only
+ * honest when no binary was found; download, HTTP, checksum and manifest
+ * failures get diagnostic, Show Output, and retry actions instead (#8588).
+ * Show Output matches the server-failed recovery from #8587.
+ */
+export function missingServerMessageActions(kind: ResolveFailureKind): string[] {
+  if (kind === 'missing_binary') {
+    return [OPEN_SETTINGS_ACTION, COPY_DIAGNOSTIC_ACTION, COPY_INSTALL_COMMAND_ACTION, RETRY_ACTION];
+  }
+  return [OPEN_SETTINGS_ACTION, COPY_DIAGNOSTIC_ACTION, SHOW_OUTPUT_ACTION, RETRY_ACTION];
+}
+
+export function resolutionFailureGuidance(failure: ResolveFailure, autoDownload: boolean): string {
+  return resolutionFailureRecovery(failure.kind, autoDownload, failure.remedy);
+}
 
 // Palette invocations of diagnostic-scoped commands arrive without the
 // payload a code action carries. Say how to invoke them with a target
@@ -169,8 +197,8 @@ function lspConfigurationForResource(scopeUri: string | undefined): Record<strin
     includeUnchangedTests: config.get<boolean>('includeUnchangedTests'),
     seamDiagnostics: explicitSetting<boolean>(config, 'seamDiagnostics'),
     diagnosticProfile: explicitSetting<string>(config, 'diagnosticProfile'),
-    gitTimeoutMs: config.get<number>('gitTimeoutMs'),
-    refreshDeadlineMs: config.get<number>('refreshDeadlineMs')
+    gitTimeoutMs: integerSetting(config.get<number>('gitTimeoutMs')),
+    refreshDeadlineMs: integerSetting(config.get<number>('refreshDeadlineMs'))
   };
 }
 
@@ -208,6 +236,7 @@ const RIPR_CLIENT_COMMANDS: readonly string[] = [
   'ripr.openRelatedTest',
   'ripr.openReport',
   'ripr.openSettings',
+  'ripr.refreshDiagnostics',
   'ripr.restartServer',
   'ripr.selectWorkspaceRoot',
   'ripr.showOutput',
@@ -477,6 +506,13 @@ export class RiprClientController {
    * start. Reset whenever the session stops.
    */
   private lastCompletedStatus: RiprStatusState | undefined;
+  /**
+   * True while the main status shows a rejected configuration pull (#9917).
+   * An accepted pull in a state that paints no status of its own (`stopped`)
+   * must clear that paint, so the flag marks it as ours to clear.
+   */
+  private configurationFailurePainted = false;
+  private configurationFailureStatus: RiprStatusState | undefined;
   private workspaceRoot: string | undefined;
   /**
    * Session-scoped workspace folder picked through `ripr: Select Workspace
@@ -523,6 +559,13 @@ export class RiprClientController {
     private readonly attemptStatusBar?: vscode.StatusBarItem
   ) {
     this.updateStatus(this.status);
+  }
+
+  private pendingServerMessage: Promise<void> = Promise.resolve();
+
+  /** Resolves once the last missing-server popup has been answered and handled. */
+  settleServerMessage(): Promise<void> {
+    return this.pendingServerMessage;
   }
 
   async start(): Promise<void> {
@@ -622,9 +665,16 @@ export class RiprClientController {
         kind: 'serverUnavailable',
         summary: 'ripr server is not available.',
         detail: server.detail,
-        nextStep: `${server.remedy ?? missingServerRemedy(config.autoDownload)} Then run ripr: Restart Server.`
+        nextStep: `${resolutionFailureGuidance(server, config.autoDownload)} Then run ripr: Restart Server.`
       });
-      await this.showMissingServerMessage(server.message, server.detail, server.remedy);
+      // The popup waits on a user who may never answer (headless hosts never
+      // do), so start() must not wait on it: an unanswered popup would keep
+      // startingPromise pending, hang activation and swallow every later
+      // start() or Retry into the same stuck promise (#9526).
+      this.pendingServerMessage = this.showMissingServerMessage(server).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.output.appendLine(`ripr missing-server message failed: ${message}`);
+      });
       return;
     }
     this.server = server;
@@ -736,7 +786,7 @@ export class RiprClientController {
         // server that already died at the handshake.
         const reason = error instanceof Error ? error.message : String(error);
         this.updateStatus({
-          kind: 'serverUnavailable',
+          kind: 'serverFailed',
           summary: 'ripr server failed to start.',
           detail: `Server: ${server.source} (${server.detail})\n${reason}`,
           nextStep: 'Run ripr: Show Output to see the server error, fix it, then run ripr: Restart Server.'
@@ -778,12 +828,21 @@ export class RiprClientController {
     if (this.pendingWorkspaceRoot && this.workspaceRoot && sameWorkspaceRoot(this.pendingWorkspaceRoot, this.workspaceRoot)) {
       this.pendingWorkspaceRoot = undefined;
     }
-    this.updateStatus({
-      kind: 'analysisQueued',
-      summary: 'ripr saved-workspace analysis is queued.',
-      detail: `Server: ${server.source} (${server.detail})\nWorkspace: ${this.workspaceRoot}\nOpen or save a Rust or enabled preview-language file to refresh diagnostics.`,
-      nextStep: 'Open or save a Rust or enabled preview-language file, then wait for diagnostics.'
-    });
+    // The server is live during the setup reads above, so its first
+    // configuration pull may already have been rejected. The queued paint is
+    // only the startup placeholder and must not hide that rejection; a later
+    // pending/applied pull still clears or re-asserts it through
+    // handleAnalysisStatus.
+    if (this.configurationFailureStatus) {
+      this.updateStatus(this.configurationFailureStatus);
+    } else {
+      this.updateStatus({
+        kind: 'analysisQueued',
+        summary: 'ripr saved-workspace analysis is queued.',
+        detail: `Server: ${server.source} (${server.detail})\nWorkspace: ${this.workspaceRoot}\nOpen or save a Rust or enabled preview-language file to refresh diagnostics.`,
+        nextStep: 'Open or save a Rust or enabled preview-language file, then wait for diagnostics.'
+      });
+    }
     await this.refreshFirstUsefulActionStatus();
   }
 
@@ -863,7 +922,7 @@ export class RiprClientController {
     if (folders.length === 1) {
       if (this.workspaceRootSelectionSuppressed) {
         this.allowWorkspaceRootRecovery();
-        await this.restartSelectedWorkspaceRoot();
+        await this.restartThroughLifecycle();
         return;
       }
       await this.runtime.showInformationMessage(
@@ -881,10 +940,10 @@ export class RiprClientController {
     this.selectedWorkspaceRoot = selected.root;
     this.allowWorkspaceRootRecovery();
     this.output.appendLine(`ripr workspace root selected for this session: ${selected.root}`);
-    await this.restartSelectedWorkspaceRoot();
+    await this.restartThroughLifecycle();
   }
 
-  private async restartSelectedWorkspaceRoot(): Promise<void> {
+  private async restartThroughLifecycle(): Promise<void> {
     if (this.runtime.restartWorkspaceRoot) {
       await this.runtime.restartWorkspaceRoot();
       return;
@@ -1054,6 +1113,8 @@ export class RiprClientController {
     this.firstUsefulAction = undefined;
     this.dirtyRiprDocuments.clear();
     this.lastCompletedStatus = undefined;
+    this.configurationFailurePainted = false;
+    this.configurationFailureStatus = undefined;
     this.clearAttemptStatusBar();
     this.updateStatus(config.enabled
       ? {
@@ -1071,6 +1132,14 @@ export class RiprClientController {
       return;
     }
     this.dirtyRiprDocuments.add(document.uri.toString());
+    // An unresolved configuration rejection outranks the unsaved-buffer
+    // presentation: typing in a file must not hide why the user's settings
+    // were ignored. Dirty tracking above still runs, and a decided pull
+    // clears the rejection through handleAnalysisStatus.
+    if (this.configurationFailureStatus) {
+      this.updateStatus(this.configurationFailureStatus);
+      return;
+    }
     this.updateStatus({
       kind: 'stale',
       summary: 'ripr analysis is stale until the file is saved.',
@@ -1629,6 +1698,17 @@ export class RiprClientController {
       this.runtime.showInformationMessage('ripr diagnostics refresh requires a running server.');
       return;
     }
+    // #8733: the server answers `ripr.refresh` only after the accepted
+    // refresh finishes, which can sit pending for the rest of a long
+    // analysis; tie immediate feedback to the gesture so the recovery
+    // command never appears dead while work is already in flight. Gate
+    // on the typed analysis-status signal (written only by real ripr
+    // notifications and reset on start) so the startup placeholder
+    // 'analysisQueued' status from startOnce cannot toast while idle.
+    if (this.receivedTypedAnalysisStatus
+      && (this.typedAnalysisStatusState === 'running' || this.typedAnalysisStatusState === 'queued')) {
+      this.runtime.showInformationMessage('ripr refresh queued: analysis is in progress.');
+    }
     try {
       await client.sendRequest('workspace/executeCommand', {
         command: 'ripr.refresh',
@@ -1782,20 +1862,23 @@ export class RiprClientController {
       // state — so store the clean completion form even while documents are
       // dirty; the dirty-buffer overlay applies to the visible status only
       // and must not survive into the restored close-path status.
-      this.lastCompletedStatus = statusFromRefreshCompletedMessage(message);
+      // Once the typed `ripr/analysisStatus` is flowing it owns the stored
+      // clean status (#8585): the log-derived form carries no typed rows.
+      if (!this.receivedTypedAnalysisStatus) {
+        this.lastCompletedStatus = statusFromRefreshCompletedMessage(message);
+      }
       this.updateStatus(completed);
       void this.refreshFirstUsefulActionStatus();
       return;
     }
     if (message.startsWith('ripr analysis refresh failed')) {
-      const baseRefFailure = isUnresolvableBaseRefFailure(message);
+      // The log line is free text; the typed `ripr/analysisStatus` failure
+      // kind that follows it owns the ripr.baseRef next step (#6740).
       this.updateStatus({
         kind: 'analysisFailed',
         summary: 'ripr analysis refresh failed.',
         detail: message,
-        nextStep: baseRefFailure
-          ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Diagnostics.'
-          : 'Open ripr: Show Output, fix the reported issue, then run ripr: Refresh Diagnostics.'
+        nextStep: 'Open ripr: Show Output, fix the reported issue, then run ripr: Refresh Diagnostics.'
       });
     }
   }
@@ -1828,6 +1911,31 @@ export class RiprClientController {
       });
       return;
     }
+    const pullFailure = configurationPullFailureStatus(status);
+    if (pullFailure) {
+      this.configurationFailurePainted = true;
+      this.configurationFailureStatus = pullFailure;
+      this.updateStatus(pullFailure);
+      return;
+    }
+    // `pending` is published before the corrective response arrives, so the
+    // rejection stays painted (and owed a clear) until the pull is decided.
+    const pullPending = status.input_authority?.configuration_pull?.state === 'pending';
+    const clearConfigurationFailure = this.configurationFailurePainted && !pullPending;
+    if (!pullPending) {
+      this.configurationFailurePainted = false;
+      this.configurationFailureStatus = undefined;
+    }
+    this.renderAnalysisState(status, clearConfigurationFailure);
+    // A rejection stays painted until its corrective pull is decided: normal
+    // rendering above still records the analysis state (completed snapshot,
+    // typed state) but must not replace the visible rejection (#9917).
+    if (pullPending && this.configurationFailureStatus) {
+      this.updateStatus(this.configurationFailureStatus);
+    }
+  }
+
+  private renderAnalysisState(status: RiprAnalysisStatusPayload, clearConfigurationFailure: boolean): void {
     const failure = status.failure && typeof status.failure === 'object'
       ? status.failure as Record<string, unknown>
       : undefined;
@@ -1863,7 +1971,7 @@ export class RiprClientController {
           kind: 'analysisFailed',
           summary: 'ripr analysis failed; last-known-good evidence is retained.',
           detail: `${analysisStatusDetail(status)}\n${failureMessage}${retained}`,
-          nextStep: isUnresolvableBaseRefFailure(failureMessage)
+          nextStep: isBaseUnresolvableFailure(failure?.kind, failureMessage)
             ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Diagnostics.'
             : `Run ${retry} to retry the saved-workspace analysis.`
         });
@@ -1877,8 +1985,10 @@ export class RiprClientController {
           nextStep: `Run ${retry} to obtain a current saved-workspace snapshot.`
         });
         return;
-      case 'succeeded':
-        this.updateStatus(statusForRunStatus(status.run_status, {
+      case 'succeeded': {
+        // The clean saved-workspace form (no dirty overlay) is what closing
+        // an unsaved buffer restores (#7340, #8585).
+        const cleanInput = {
           detail: analysisStatusDetail(status),
           retryCommand: typeof status.retry_command === 'string' ? status.retry_command : undefined,
           // #5999: the server's budget-bound recovery replaces the canned
@@ -1888,12 +1998,28 @@ export class RiprClientController {
             && status.retry_recovery.detail.trim()
             ? status.retry_recovery.detail
             : undefined,
-          dirtyRoutedDocuments: Array.from(this.dirtyRiprDocuments),
-          components: status.components
+          components: status.components,
+          unavailableLanguages: status.unavailable_languages
+        };
+        this.lastCompletedStatus = statusForRunStatus(status.run_status, cleanInput);
+        this.updateStatus(statusForRunStatus(status.run_status, {
+          ...cleanInput,
+          dirtyRoutedDocuments: Array.from(this.dirtyRiprDocuments)
         }));
         void this.refreshFirstUsefulActionStatus();
         return;
+      }
       default:
+        // An accepted pull while analysis is `stopped` publishes no analysis
+        // transition, so restore the status the rejection replaced (#9917).
+        if (clearConfigurationFailure) {
+          this.updateStatus(this.lastCompletedStatus ?? {
+            kind: 'ready',
+            summary: 'ripr accepted the workspace configuration.',
+            detail: analysisStatusDetail(status),
+            nextStep: 'Open or save a Rust or enabled preview-language file to refresh diagnostics.'
+          });
+        }
         return;
     }
   }
@@ -2626,11 +2752,13 @@ export class RiprClientController {
       this.server = server;
       return server;
     }
-    await this.showMissingServerMessage(server.message, server.detail, server.remedy);
+    await this.showMissingServerMessage(server);
     return undefined;
   }
 
-  private async showMissingServerMessage(summary: string, detail: string, remedy?: string): Promise<void> {
+  private async showMissingServerMessage(failure: ResolveFailure): Promise<void> {
+    const summary = failure.message;
+    const detail = failure.detail;
     this.output.appendLine(summary);
     this.output.appendLine(detail);
     // Name the actual failure (HTTP/checksum/manifest) in the popup body —
@@ -2643,17 +2771,14 @@ export class RiprClientController {
       ? detail.split('\n')[0] || summary
       : summary;
     const separator = cause.endsWith('.') ? '' : '.';
-    const guidance = remedy ?? missingServerRemedy(this.runtime.getConfig().autoDownload);
+    const guidance = resolutionFailureGuidance(failure, this.runtime.getConfig().autoDownload);
     const selection = await this.runtime.showErrorMessage(
       `ripr server is not available: ${cause}${separator} ${guidance}`,
-      'Open Settings',
-      'Copy Diagnostic',
-      'Copy Install Command',
-      'Retry'
+      ...missingServerMessageActions(failure.kind)
     );
-    if (selection === 'Open Settings') {
+    if (selection === OPEN_SETTINGS_ACTION) {
       await vscode.commands.executeCommand('workbench.action.openSettings', 'ripr.server');
-    } else if (selection === 'Copy Diagnostic') {
+    } else if (selection === COPY_DIAGNOSTIC_ACTION) {
       try {
         await this.runtime.writeClipboard(`ripr server is not available\n${summary}\n${detail}`);
         this.runtime.showInformationMessage('Copied the ripr server diagnostic to the clipboard.');
@@ -2662,10 +2787,14 @@ export class RiprClientController {
         this.output.appendLine(`ripr copy server diagnostic failed: ${message}`);
         this.warnWithOutput('ripr could not copy the server diagnostic.');
       }
-    } else if (selection === 'Copy Install Command') {
+    } else if (selection === COPY_INSTALL_COMMAND_ACTION) {
       await this.runtime.writeClipboard('cargo install ripr');
-    } else if (selection === 'Retry') {
-      await this.restart();
+    } else if (selection === SHOW_OUTPUT_ACTION) {
+      this.showOutput();
+    } else if (selection === RETRY_ACTION) {
+      // A detached popup can outlive deactivation. The extension coordinator
+      // owns terminal shutdown and must decide whether Retry may restart.
+      await this.restartThroughLifecycle();
     }
   }
 
@@ -3163,6 +3292,7 @@ function serverStartedSummary(kind: RiprStatusKind): string {
     case 'analysisRunning':
     case 'analysisReady':
     case 'analysisLimited':
+    case 'languageNotEnabled':
     case 'gapActionable':
     case 'gapNoAction':
     case 'gapArtifactWarning':
@@ -3178,6 +3308,8 @@ function serverStartedSummary(kind: RiprStatusKind): string {
       return 'not yet; resolving server binary';
     case 'serverUnavailable':
       return 'no; server unavailable';
+    case 'serverFailed':
+      return 'no; server failed to start';
     case 'disabled':
       return 'no; extension disabled';
     case 'noWorkspace':
@@ -3209,7 +3341,10 @@ function evidenceFreshnessSummary(kind: RiprStatusKind): string {
       return 'current saved-workspace status reported by server refresh';
     case 'noEnabledLanguages':
       return 'not projected; languages are disabled';
+    case 'languageNotEnabled':
+      return 'partial; changed files of a language without an enabled adapter were not analyzed';
     case 'serverUnavailable':
+    case 'serverFailed':
     case 'noWorkspace':
     case 'workspaceAmbiguous':
     case 'disabled':
@@ -3897,11 +4032,26 @@ function serverLogMessage(params: unknown): string | undefined {
   return typeof message === 'string' ? message : undefined;
 }
 
-// Both the explicit-ref failure and the default-branch failure (an empty
-// ripr.baseRef in a repository without origin/HEAD, main or master) are fixed
-// by setting ripr.baseRef; the server's own wording names CLI flags instead.
-function isUnresolvableBaseRefFailure(message: string): boolean {
-  return /the base `[^`]+` does not resolve to a commit|could not resolve a default base/.test(message);
+// The server names an unresolvable base (explicit ref, empty or option-like
+// ref, or no default branch) with this stable `failure.kind` on the
+// `ripr/analysisStatus` payload (#6740). The extension branches on it rather
+// than on message wording; all of those cases are fixed by ripr.baseRef.
+const BASE_UNRESOLVABLE_FAILURE_KIND = 'base_unresolvable';
+
+// LEGACY: servers that predate the typed kind (still admitted by the server
+// resolver, which only probes LSP compatibility) report these failures as
+// `analysis_error`. For that kind alone, keep recognising the two old
+// wordings so those users still get the ripr.baseRef step. A server that
+// sends any other kind, including `base_unresolvable`, is never reclassified
+// by message text. Remove once the minimum supported server sends the kind.
+function isBaseUnresolvableFailure(kind: unknown, message: string): boolean {
+  if (kind === BASE_UNRESOLVABLE_FAILURE_KIND) {
+    return true;
+  }
+  return (
+    kind === 'analysis_error' &&
+    /the base `[^`]+` does not resolve to a commit|could not resolve a default base/.test(message)
+  );
 }
 
 /**
@@ -3932,6 +4082,15 @@ interface RiprAnalysisStatusPayload {
   retry_command?: string | null;
   retry_recovery?: { kind?: string | null; detail?: string | null } | null;
   failure?: unknown;
+  /** #9917: the session-configuration transport disclosure; only the last
+   * `workspace/configuration` pull outcome is read here. */
+  input_authority?: {
+    configuration_pull?: {
+      state?: string;
+      failure?: { kind?: string; message?: string } | null;
+      recovery_route?: string | null;
+    } | null;
+  } | null;
   pending?: boolean;
   root_state?: string;
   effective_root?: string | null;
@@ -3940,6 +4099,16 @@ interface RiprAnalysisStatusPayload {
   root_detail?: string | null;
   root_recovery_route?: string;
   components?: AnalysisStatusComponent[];
+  /** #8585: changed-file languages skipped because their adapter is not
+   * enabled; the server's typed row, not the limitation's detail text. */
+  unavailable_languages?: AnalysisStatusUnavailableLanguage[];
+}
+
+/** One typed `unavailable_languages` row from `ripr/analysisStatus` (#8585). */
+export interface AnalysisStatusUnavailableLanguage {
+  language: string;
+  file_count?: number;
+  recovery?: string | null;
 }
 
 function analysisStatusPayload(params: unknown): RiprAnalysisStatusPayload | undefined {
@@ -3957,6 +4126,45 @@ function analysisStatusPayload(params: unknown): RiprAnalysisStatusPayload | und
     return undefined;
   }
   return candidate as RiprAnalysisStatusPayload;
+}
+
+/**
+ * A rejected `workspace/configuration` pull is fail-closed on the server: none
+ * of the rejected response's settings apply, and the server keeps the last
+ * accepted configuration (or its initialization/repository fallback when none
+ * was accepted yet) rather than resetting to defaults (#2031). Without this
+ * the editor keeps showing a healthy-looking status while the user's new
+ * settings are ignored (#9917). The server's message names the offending key;
+ * the recovery route is a corrected configuration.
+ */
+export function configurationPullFailureStatus(
+  status: Pick<RiprAnalysisStatusPayload, 'input_authority'>
+): RiprStatusState | undefined {
+  const pull = status.input_authority?.configuration_pull;
+  if (!pull || pull.state !== 'failed') {
+    return undefined;
+  }
+  const message = typeof pull.failure?.message === 'string' && pull.failure.message.trim()
+    ? pull.failure.message
+    : 'The language server could not apply the workspace configuration.';
+  const retained = 'ripr keeps using the last accepted configuration, or its fallback settings if none was accepted yet.';
+  // Only `config_pull_invalid` establishes that a pulled value was rejected.
+  // A transport failure (`config_pull_failed`) names no bad setting, so it
+  // must not tell the user to correct one.
+  if (pull.failure?.kind === 'config_pull_invalid') {
+    return {
+      kind: 'analysisFailed',
+      summary: 'ripr rejected your latest settings: the workspace configuration was invalid.',
+      detail: `${message}\n${retained}`,
+      nextStep: 'Correct the setting named above in your VS Code settings (saving them re-sends the configuration), or run ripr: Restart Server.'
+    };
+  }
+  return {
+    kind: 'analysisFailed',
+    summary: 'ripr could not obtain the latest workspace configuration.',
+    detail: `${message}\n${retained}`,
+    nextStep: 'Retry by saving your ripr settings again (which re-sends the configuration), or run ripr: Restart Server.'
+  };
 }
 
 function analysisStatusDetail(status: RiprAnalysisStatusPayload): string {
@@ -4091,6 +4299,7 @@ export function statusForRunStatus(
     retryRecovery?: string;
     dirtyRoutedDocuments?: readonly string[];
     components?: readonly AnalysisStatusComponent[];
+    unavailableLanguages?: readonly AnalysisStatusUnavailableLanguage[];
   } = {}
 ): RiprStatusState {
   const dirty = input.dirtyRoutedDocuments ?? [];
@@ -4124,6 +4333,22 @@ export function statusForRunStatus(
       ].filter((line): line is string => Boolean(line)).join('\n'),
       nextStep: `Run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE} to compute the full seam inventory.`
     };
+  }
+  // #8585: changed files of a language whose adapter is not enabled were not
+  // analyzed. The typed rows name the language; this outranks the generic
+  // incomplete-input and healthy presentations they would otherwise fall
+  // into, but not the stale, deferred, cache, limited or partition states,
+  // which carry their own recovery.
+  const unavailable = validUnavailableLanguages(input.unavailableLanguages);
+  if (
+    unavailable.length > 0
+    && (runStatus === 'limited_incomplete_input'
+      || !((runStatus ?? '') in LIMITED_RUN_STATUS_PRESENTATIONS))
+  ) {
+    // Compose with the presentation the run would otherwise get, so degraded
+    // component recoveries and the untrustworthy-findings warning survive.
+    const base = statusForRunStatus(runStatus, { ...input, unavailableLanguages: undefined });
+    return statusForUnavailableLanguages(unavailable, base);
   }
   const limited = LIMITED_RUN_STATUS_PRESENTATIONS[runStatus ?? ''];
   if (limited) {
@@ -4170,6 +4395,51 @@ export function statusForRunStatus(
     summary: 'ripr saved-workspace analysis completed.',
     detail: input.detail,
     nextStep: 'Inspect diagnostics, then use bounded ripr hover and code actions for one focused test.'
+  };
+}
+
+/** Drop malformed rows: the payload crosses a process boundary. */
+function validUnavailableLanguages(
+  rows: readonly AnalysisStatusUnavailableLanguage[] | undefined
+): AnalysisStatusUnavailableLanguage[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.filter(
+    (row) => typeof row?.language === 'string' && row.language.trim().length > 0
+  );
+}
+
+function statusForUnavailableLanguages(
+  rows: readonly AnalysisStatusUnavailableLanguage[],
+  base: RiprStatusState
+): RiprStatusState {
+  const described = rows.map((row) =>
+    typeof row.file_count === 'number' && row.file_count > 0
+      ? `${row.language} (${row.file_count} ${plural(row.file_count, 'file')})`
+      : row.language
+  );
+  const recoveries = uniqueStrings(
+    rows
+      .map((row) => row.recovery)
+      .filter((recovery): recovery is string => typeof recovery === 'string' && recovery.trim().length > 0)
+  );
+  const languageStep = recoveries.length > 0
+    ? recoveries.map(capitalizeFirst).join('; ')
+    : 'Add the language to ripr.toml [languages] enabled, then run ripr: Restart Server.';
+  // A degraded base (incomplete input with component recoveries) keeps its
+  // own detail and next step after the language disclosure.
+  const degradedBase = base.kind === 'analysisLimited';
+  return {
+    kind: 'languageNotEnabled',
+    summary: `ripr did not analyze changed ${described.join(', ')}: the language adapter is not enabled.`,
+    detail: [
+      base.detail,
+      'Changed files of these languages produce no diagnostics, so a quiet editor is not an all-clear for them.'
+    ].filter((line): line is string => Boolean(line)).join('\n'),
+    nextStep: degradedBase && base.nextStep
+      ? `${languageStep}. Also: ${base.nextStep}`
+      : languageStep
   };
 }
 
@@ -4968,14 +5238,17 @@ function firstRawFindingString(packet: Record<string, unknown>, field: string): 
 }
 
 function actionableGapQueueCommandIsSafe(command: string, redirectRoots: readonly string[]): boolean {
-  if (hasUnsafeShellMetacharacter(command)) {
+  const windowsQuoting = isWindowsHost();
+  if (hasUnsafeShellMetacharacter(command, windowsQuoting)) {
     return false;
   }
   const normalized = command.trim().replace(/\s+/g, ' ');
-  // Decode the single-quoted words permitted by the existing passive safety
-  // grammar, including quoted fragments of flags. This is display admission,
-  // not a shell evaluator or command-execution authority.
-  const words = (command.match(/(?:'[^']*'|[^\s'])+/g) ?? []).map(word => word.replace(/'/g, ''));
+  // Decode the quoted words permitted by the existing passive safety grammar
+  // (single quotes, and the server's console double quotes on Windows),
+  // including quoted fragments of flags. This is display admission, not a
+  // shell evaluator or command-execution authority.
+  const words = (command.match(/(?:'[^']*'|"(?:[^"]|"")*"|[^\s'"])+/g) ?? [])
+    .map(word => word.replace(/'/g, '').replace(/""/g, '\0').replace(/"/g, '').replace(/\0/g, '"'));
   const decoded = words.join(' ').replace(/\\/g, '/');
   const broadSnapshot = decoded.includes('ripr agent verify')
     && decoded.includes('--before') && decoded.includes('--after')
@@ -4983,7 +5256,7 @@ function actionableGapQueueCommandIsSafe(command: string, redirectRoots: readonl
   return normalized !== ''
     && !broadSnapshot
     && !testRunnerCommandLeavesScope(normalized)
-    && redirectStaysInWorkspace(normalized, redirectRoots)
+    && redirectStaysInWorkspace(normalized, redirectRoots, windowsQuoting)
     && ACTIONABLE_QUEUE_SAFE_COMMAND_PREFIXES.some((prefix) =>
       normalized === prefix || normalized.startsWith(`${prefix} `)
     );
@@ -4997,7 +5270,7 @@ function actionableGapQueueRelatedVerifyIsBounded(packet: Record<string, unknown
   const file = related ? stringField(related, 'file') : undefined;
   const name = related ? stringField(related, 'name') : undefined;
   const command = packet.verify_command;
-  if (!file || !name || typeof command !== 'string' || hasUnsafeShellMetacharacter(command)) {
+  if (!file || !name || typeof command !== 'string' || hasUnsafeShellMetacharacter(command, isWindowsHost())) {
     return false;
   }
   // RIPR-SPEC-0057's existing typed-target fallback: the projector derives
@@ -5332,7 +5605,7 @@ export function validatedAgentLoopCommand(
       }
       if (
         body === contract.expectedBody(target, commandRoot) &&
-        !hasUnsafeShellMetacharacter(body.replace(`--root ${commandRoot}`, '--root .'))
+        !hasUnsafeShellMetacharacter(body.replace(`--root ${commandRoot}`, '--root .'), isWindowsHost())
       ) {
         return command;
       }
@@ -5348,7 +5621,8 @@ export function validatedAgentLoopCommand(
       !redirectTargetMatches(
         command.slice(redirectAt + ' > '.length),
         contract.targetArtifact,
-        redirectRoots
+        redirectRoots,
+        isWindowsHost()
       )
     ) {
       return undefined;
@@ -5368,7 +5642,7 @@ export function validatedAgentLoopCommand(
     return undefined;
   }
   const portableBody = body.replace(`--root ${rootArg}`, '--root .');
-  if (hasUnsafeShellMetacharacter(portableBody)) {
+  if (hasUnsafeShellMetacharacter(portableBody, isWindowsHost())) {
     return undefined;
   }
   // One redirect only: a `>` here would truncate some other file.

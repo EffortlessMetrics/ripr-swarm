@@ -73,15 +73,18 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Assertion admission for one extracted TypeScript test.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum TypeScriptAssertionAdmission {
     /// The extractor recognized at least one assertion whose oracle kind it
     /// can grade (anything other than `OracleKind::Unknown`).
+    #[serde(rename = "recognized_assertion_present")]
     Recognized,
     /// The whole test and everything the runner runs around it were walked
     /// and nothing assertion-like exists.
+    #[serde(rename = "extraction_complete_no_assertion")]
     NoAssertionLike,
     /// Something assertion-like is present that RIPR cannot admit or resolve.
+    #[serde(rename = "assertion_like_present_but_unresolved")]
     Unresolved,
 }
 
@@ -119,21 +122,38 @@ pub(crate) struct TypeScriptAdmissionContext {
     /// Something the runner runs for every test in the file is
     /// assertion-like (see the module docs).
     setup_assertion_like: bool,
+    /// Modules and strict scripts keep block functions inside their block.
+    pub(super) block_functions_are_lexical: bool,
 }
 
 impl TypeScriptAdmissionContext {
     pub(crate) fn of_program(
-        statements: &[Statement<'_>],
+        program: &oxc_ast::ast::Program<'_>,
         imports: &[TypeScriptImport],
         file: &Path,
     ) -> Self {
+        let statements = program.body.as_slice();
+        let block_functions_are_lexical =
+            program.source_type.is_module() || program.has_use_strict_directive();
         let esm_imports: Vec<_> = statements
             .iter()
             .filter(|statement| matches!(statement, Statement::ImportDeclaration(_)))
             .flat_map(|statement| extract_imports_from_statements(std::slice::from_ref(statement)))
             .collect();
-        let known_require = program_require_is_known(statements, &esm_imports);
+        let known_require =
+            program_require_is_known(statements, &esm_imports, block_functions_are_lexical);
+        // Only a non-`const` declaration holding a `require()` needs the scan.
+        let scan = statements
+            .iter()
+            .any(|statement| {
+                matches!(statement, Statement::VariableDeclaration(declaration)
+                    if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+                        && declaration.declarations.iter().any(require_declarator))
+            })
+            .then(|| BindingScan::of_source(program.source_text, program.source_type))
+            .flatten();
         let mut context = Self {
+            block_functions_are_lexical,
             imports: imports.to_vec(),
             registration_imports: statements
                 .iter()
@@ -141,10 +161,63 @@ impl TypeScriptAdmissionContext {
                     matches!(statement, Statement::ImportDeclaration(_))
                         || matches!(statement, Statement::VariableDeclaration(declaration)
                             if known_require && !declaration.declare
-                                && declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const)
+                                && (declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
+                                    || !unwritten_declarator_locals(declaration, scan.as_ref()).is_empty()))
                 })
                 .flat_map(|statement| {
-                    extract_imports_from_statements(std::slice::from_ref(statement))
+                    let mut imports =
+                        extract_imports_from_statements(std::slice::from_ref(statement));
+                    if let Statement::VariableDeclaration(declaration) = statement {
+                        for declarator in &declaration.declarations {
+                            let Some(Expression::StaticMemberExpression(member)) = declarator
+                                .init
+                                .as_ref()
+                                .map(Expression::get_inner_expression)
+                            else {
+                                continue;
+                            };
+                            if let Some(source) = require_string_literal_source(&member.object)
+                                && let Some(local) =
+                                    super::owners::binding_identifier_name(&declarator.id)
+                            {
+                                imports.push(TypeScriptImport {
+                                    source,
+                                    imported: Some(member.property.name.to_string()),
+                                    local: local.to_string(),
+                                    namespace: false,
+                                });
+                            }
+                        }
+                        // A member picked off a namespace declared in this same
+                        // statement is read by the extractor with that one
+                        // statement in view, so a later `runner.test = stub`
+                        // is invisible to it. The whole-program pass below
+                        // decides every namespace pick (#10477).
+                        let namespace_picked: Vec<String> = declaration
+                            .declarations
+                            .iter()
+                            .filter(|declarator| {
+                                declarator.init.as_ref().is_some_and(|init| {
+                                    match init.get_inner_expression() {
+                                        Expression::Identifier(_) => true,
+                                        Expression::StaticMemberExpression(member) => matches!(
+                                            member.object.get_inner_expression(),
+                                            Expression::Identifier(_)
+                                        ),
+                                        _ => false,
+                                    }
+                                })
+                            })
+                            .flat_map(|declarator| declarator.id.get_binding_identifiers())
+                            .map(|id| id.name.to_string())
+                            .collect();
+                        imports.retain(|import| !namespace_picked.contains(&import.local));
+                        if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
+                            let kept = unwritten_declarator_locals(declaration, scan.as_ref());
+                            imports.retain(|import| kept.contains(&import.local));
+                        }
+                    }
+                    imports
                 })
                 .collect(),
             reexport_names: reexport_spellings(statements),
@@ -163,6 +236,11 @@ impl TypeScriptAdmissionContext {
                 .unwrap_or_default(),
             ..Self::default()
         };
+        context
+            .registration_imports
+            .extend(verified_extended_registrations(program, &esm_imports));
+        let namespace_picks = verified_namespace_member_registrations(program, &context);
+        context.registration_imports.extend(namespace_picks);
         let mut helpers = BTreeSet::new();
         let mut enclosing = BTreeSet::new();
         collect_setup_names(statements, &mut helpers, &mut enclosing);
@@ -202,7 +280,7 @@ impl TypeScriptAdmissionContext {
         }
     }
 
-    /// Root admission for newly supported awaited registrations. Reuse the
+    /// Root admission for bare and awaited registrations. Reuse the
     /// scanner's runner binding decision before a recognized assertion can
     /// take the shortcut in `admission_of`. The extractor supplies visible
     /// bindings and marks file-level declarations. File-wide setup uncertainty
@@ -214,6 +292,34 @@ impl TypeScriptAdmissionContext {
         expected_describe: bool,
         bindings: impl Iterator<Item = (String, bool)>,
     ) -> bool {
+        let context = self.registration_context();
+        let names = RegistrationNames::new(bindings);
+        context.registration_is_known_in(call, expected_describe, &names)
+    }
+
+    /// Whether `local` is bound by this context's imports to a member `family`
+    /// accepts: the renamed spelling of a registration root (`const { test: t
+    /// } = runner`, `import { test as t }`, #10987). A namespace object's own
+    /// name (`runner`) and imports of members outside `family` read as
+    /// nothing. The caller still decides the registration itself through
+    /// `registration_is_known_in`, which keeps the runner-source and
+    /// shadowing gates.
+    pub(crate) fn binds_renamed_registration_root(
+        &self,
+        local: &str,
+        family: impl Fn(&str) -> bool,
+    ) -> bool {
+        self.imports.iter().any(|import| {
+            !import.namespace
+                && import.local == local
+                && import.imported.as_deref().is_some_and(&family)
+        })
+    }
+
+    /// The context a registration is resolved in: the runner imports only,
+    /// with every other import and re-export carried as an enclosing name.
+    /// Built once per statement list, not once per registration.
+    pub(crate) fn registration_context(&self) -> Self {
         let imports: Vec<_> = self
             .registration_imports
             .iter()
@@ -222,7 +328,7 @@ impl TypeScriptAdmissionContext {
             .filter(|import| import.imported.is_some())
             .cloned()
             .collect();
-        let context = Self {
+        Self {
             // A graph-only re-export or namespace object must not fall back
             // to an ambient global registration with the same spelling. Test
             // files no longer record re-exports as imports (#7507), so their
@@ -237,16 +343,27 @@ impl TypeScriptAdmissionContext {
             imports,
             test_dir: self.test_dir.clone(),
             ..Self::default()
-        };
-        let mut scan = Scan::new(&context, false);
-        scan.scopes.push(
-            bindings
-                .filter(|(name, file_declaration)| {
-                    !file_declaration || !context.imports.iter().any(|import| import.local == *name)
-                })
-                .map(|(name, _)| (name, Bound::Local))
-                .collect(),
-        );
+        }
+    }
+
+    /// `registration_is_known` against a context from `registration_context`
+    /// and an indexed set of visible bindings. Only the callee's root name is
+    /// ever resolved, so only that name's bindings are put in scope.
+    pub(crate) fn registration_is_known_in(
+        &self,
+        call: &oxc_ast::ast::CallExpression<'_>,
+        expected_describe: bool,
+        names: &RegistrationNames,
+    ) -> bool {
+        let mut scan = Scan::new(self, false);
+        if let Some((Expression::Identifier(root), _, _)) = registration_shape(call)
+            && names.binds(root.name.as_str(), &self.imports)
+        {
+            scan.scopes
+                .push(BTreeMap::from([(root.name.to_string(), Bound::Local)]));
+        } else {
+            scan.scopes.push(BTreeMap::new());
+        }
         let expected = if expected_describe {
             RegistrationKind::Describe
         } else {
@@ -259,6 +376,513 @@ impl TypeScriptAdmissionContext {
     fn import_class(&self, import: &TypeScriptImport) -> ImportClass {
         classify_source(&import.source, &self.test_dir)
     }
+}
+
+/// The names the enclosing scopes of a registration bind, indexed by name.
+/// A name is kept per kind of binding: one a file-level declaration makes
+/// (exempt from shadowing only when an import supplies the same name) and one
+/// any other level makes (always shadows).
+#[derive(Default)]
+pub(crate) struct RegistrationNames {
+    by_name: std::collections::HashMap<String, (bool, bool)>,
+}
+
+impl RegistrationNames {
+    pub(crate) fn new(bindings: impl Iterator<Item = (String, bool)>) -> Self {
+        let mut by_name: std::collections::HashMap<String, (bool, bool)> =
+            std::collections::HashMap::new();
+        for (name, file_declaration) in bindings {
+            let kinds = by_name.entry(name).or_default();
+            if file_declaration {
+                kinds.1 = true;
+            } else {
+                kinds.0 = true;
+            }
+        }
+        Self { by_name }
+    }
+
+    /// Whether `name` is a local binding that shadows a runner import of the
+    /// same name: any non-file binding, or a file-level declaration no
+    /// runner import supplies.
+    fn binds(&self, name: &str, runner_imports: &[TypeScriptImport]) -> bool {
+        self.by_name.get(name).is_some_and(|&(local, file)| {
+            local || (file && !runner_imports.iter().any(|import| import.local == name))
+        })
+    }
+}
+
+/// The writes and function-declaration names of one file, computed once.
+/// `None` when the masked source is unreadable (parse-width mismatch,
+/// `eval`, `with`, `\u` escapes), so nothing qualifies.
+struct BindingScan {
+    writes: Vec<(String, usize)>,
+    functions: Vec<(String, usize)>,
+}
+
+impl BindingScan {
+    fn of_source(source: &str, source_type: SourceType) -> Option<Self> {
+        let code =
+            super::tests_extract::byte_preserving_code_mask_for_source_type(source, source_type)
+                .filter(|code| !super::tests_extract::file_is_opaque(code))?;
+        Some(Self {
+            writes: super::tests_extract::strict_identifier_writes(&code),
+            functions: super::tests_extract::function_declaration_names(&code),
+        })
+    }
+
+    /// `name` is written, or re-bound by a function declaration, outside the
+    /// declarator spanning `span`.
+    fn writes_outside(&self, name: &str, span: oxc_span::Span) -> bool {
+        let outside =
+            |offset: &usize| (*offset as u32) < span.start || (*offset as u32) >= span.end;
+        self.writes
+            .iter()
+            .any(|(written, offset)| written == name && outside(offset))
+            || self
+                .functions
+                .iter()
+                .any(|(declared, offset)| declared == name && outside(offset))
+    }
+}
+
+/// A declarator initialized by `require("...")` or a member of it.
+fn require_declarator(declarator: &oxc_ast::ast::VariableDeclarator<'_>) -> bool {
+    let Some(init) = declarator
+        .init
+        .as_ref()
+        .map(Expression::get_inner_expression)
+    else {
+        return false;
+    };
+    let call = match init {
+        Expression::StaticMemberExpression(member) => &member.object,
+        other => other,
+    };
+    require_string_literal_source(call.get_inner_expression()).is_some()
+}
+
+/// The binding names of the declarators of a `var`/`let` declaration whose own
+/// bindings the file never writes (RIPR-SPEC-0243 rule 1; pre-ES2015 CommonJS
+/// binds `var test = require('tape')`), so each is as immutable as a `const`.
+/// Only `require()`-initialized declarators can yield a runner import, so only
+/// they are judged; an unrelated written declarator
+/// (`var counter = 0, test = require('tape'); counter++`) does not withdraw
+/// the runner declarator. A reassignment, update, loop target, wrapped target
+/// or block-level function declaration of the name refuses.
+fn unwritten_declarator_locals(
+    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+    scan: Option<&BindingScan>,
+) -> Vec<String> {
+    use oxc_ast::ast::VariableDeclarationKind::{Let, Var};
+    let Some(scan) = scan else {
+        return Vec::new();
+    };
+    if !matches!(declaration.kind, Var | Let) {
+        return Vec::new();
+    }
+    let mut locals = Vec::new();
+    for declarator in declaration
+        .declarations
+        .iter()
+        .filter(|d| require_declarator(d))
+    {
+        let names = declarator.id.get_binding_identifiers();
+        if names
+            .iter()
+            .all(|id| !scan.writes_outside(id.name.as_str(), declarator.span))
+        {
+            locals.extend(names.iter().map(|id| id.name.to_string()));
+        }
+    }
+    locals
+}
+
+/// A bounded fixture-extension registration: one immutable top-level result
+/// of a named Vitest/Playwright test import's `.extend(...)`. Other uses of
+/// that imported receiver remain unresolved: they could replace or expose
+/// its mutable `extend` member. Arbitrary factory results are never trusted.
+fn verified_extended_registrations(
+    program: &oxc_ast::ast::Program<'_>,
+    imports: &[TypeScriptImport],
+) -> Vec<TypeScriptImport> {
+    let Some(code) = super::tests_extract::byte_preserving_code_mask_for_source_type(
+        program.source_text,
+        program.source_type,
+    ) else {
+        return Vec::new();
+    };
+    if super::tests_extract::file_is_opaque(&code) {
+        return Vec::new();
+    }
+    let mut result = Vec::new();
+    for import in imports.iter().filter(|import| {
+        matches!(import.source.as_str(), "vitest" | "@playwright/test")
+            && (import.imported.as_deref() == Some("test")
+                || (import.source == "vitest" && import.imported.as_deref() == Some("it")))
+            && !import.namespace
+    }) {
+        let mut allowed = Vec::new();
+        let mut candidates = Vec::new();
+        for statement in &program.body {
+            if let Statement::ImportDeclaration(declaration) = statement {
+                allowed.push(declaration.span.start as usize..declaration.span.end as usize);
+            }
+            let Statement::VariableDeclaration(declaration) = statement else {
+                continue;
+            };
+            if declaration.declare
+                || declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+            {
+                continue;
+            }
+            for declarator in &declaration.declarations {
+                let BindingPattern::BindingIdentifier(local) = &declarator.id else {
+                    continue;
+                };
+                let Some(Expression::CallExpression(call)) = declarator
+                    .init
+                    .as_ref()
+                    .map(Expression::get_inner_expression)
+                else {
+                    continue;
+                };
+                let Expression::StaticMemberExpression(member) = call.callee.get_inner_expression()
+                else {
+                    continue;
+                };
+                let Expression::Identifier(receiver) = member.object.get_inner_expression() else {
+                    continue;
+                };
+                if receiver.name.as_str() != import.local
+                    || member.property.name != "extend"
+                    || call.optional
+                    || member.optional
+                {
+                    continue;
+                }
+                allowed.push(receiver.span.start as usize..receiver.span.end as usize);
+                // Exclude only this declaration's initializing write. A later
+                // assignment must not acquire the synthetic import exemption.
+                let outside = format!(
+                    "{}{}",
+                    &code[..declarator.span.start as usize],
+                    &code[declarator.span.end as usize..]
+                );
+                if super::tests_extract::identifier_written_in(&outside, local.name.as_str()) {
+                    continue;
+                }
+                candidates.push(TypeScriptImport {
+                    source: import.source.clone(),
+                    imported: Some("test".to_string()),
+                    local: local.name.to_string(),
+                    namespace: false,
+                });
+            }
+        }
+        if super::tests_extract::identifier_occurrences(&code, &import.local).all(|at| {
+            allowed.iter().any(|range| range.contains(&at))
+                // Calling the genuine imported test does not expose its mutable
+                // extension method. Other value escapes/member uses stay refused.
+                || code[at + import.local.len()..].trim_start().starts_with('(')
+        }) {
+            result.extend(candidates);
+        }
+    }
+    result
+}
+
+/// Registrations picked off a whole-module `require()` namespace
+/// (`const runner = require('node:test'); const test = runner.test;`, also
+/// `const { test } = runner`) (#10477). Each declaration is extracted alone, so
+/// the namespace binding it reads is not in view there; this pass carries it
+/// across declarations. Anything ambiguous records nothing:
+///
+/// * the namespace has exactly one top-level declaration, every other use of it
+///   is a `const` pick declared after it (a forward pick, a write, a direct
+///   call, an alias, an escape, a tagged or interpolated use refuse all picks);
+/// * `.default`, computed, nested, defaulted and rest picks are not read, nor
+///   is a member that is not an active registration root (`xit`, `xdescribe`);
+/// * the picked local is declared before any use, is never written (wrapped
+///   targets, member assignment, update, compound and loop targets included),
+///   and is only ever called, optionally through a member chain;
+/// * a file that can reach a name without spelling it (`eval`, `with`, an
+///   identifier escape such as `\u0072unner`) hides uses from the text scan,
+///   so it reads nothing.
+///
+/// The usual runner-source and shadowing gates still decide whether the
+/// resulting import is a known registration.
+fn verified_namespace_member_registrations(
+    program: &oxc_ast::ast::Program<'_>,
+    context: &TypeScriptAdmissionContext,
+) -> Vec<TypeScriptImport> {
+    use oxc_ast::ast::{BindingPattern, PropertyKey};
+    let namespaces: Vec<&TypeScriptImport> = context
+        .registration_imports
+        .iter()
+        .filter(|import| import.imported.as_deref() == Some("default") && import.namespace)
+        .collect();
+    if namespaces.is_empty() {
+        return Vec::new();
+    }
+    let Some(code) = super::tests_extract::byte_preserving_code_mask_for_source_type(
+        program.source_text,
+        program.source_type,
+    ) else {
+        return Vec::new();
+    };
+    if super::tests_extract::file_is_opaque(&code) {
+        return Vec::new();
+    }
+    // Scanned on the first pick only, so a file with no pick scans no writes.
+    let writes = std::cell::OnceCell::new();
+    let mut result = Vec::new();
+    for namespace in namespaces {
+        // The one declaration of the namespace.
+        let mut declarations = Vec::new();
+        for statement in &program.body {
+            let Statement::VariableDeclaration(declaration) = statement else {
+                continue;
+            };
+            for declarator in &declaration.declarations {
+                if let BindingPattern::BindingIdentifier(id) = &declarator.id
+                    && id.name.as_str() == namespace.local
+                {
+                    declarations.push((declarator.span.start, id.span));
+                }
+            }
+        }
+        let [(declared_at, declared_id)] = declarations.as_slice() else {
+            continue;
+        };
+        let mut allowed: Vec<std::ops::Range<usize>> = Vec::new();
+        allowed.push(declared_id.start as usize..declared_id.end as usize);
+        // (member, local, declarator span) per qualifying pick.
+        let mut picks: Vec<(String, String, oxc_span::Span)> = Vec::new();
+        for statement in &program.body {
+            let Statement::VariableDeclaration(declaration) = statement else {
+                continue;
+            };
+            if declaration.declare
+                || declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+            {
+                continue;
+            }
+            for declarator in &declaration.declarations {
+                // A pick before the namespace exists reads it in its dead zone.
+                if declarator.span.start <= *declared_at {
+                    continue;
+                }
+                let Some(init) = declarator
+                    .init
+                    .as_ref()
+                    .map(Expression::get_inner_expression)
+                else {
+                    continue;
+                };
+                match (&declarator.id, init) {
+                    (
+                        BindingPattern::BindingIdentifier(local),
+                        Expression::StaticMemberExpression(member),
+                    ) if !member.optional => {
+                        let Expression::Identifier(receiver) = member.object.get_inner_expression()
+                        else {
+                            continue;
+                        };
+                        if receiver.name.as_str() == namespace.local {
+                            // A member read is a use of the namespace whatever the
+                            // member; only an active registration root is picked.
+                            allowed.push(receiver.span.start as usize..receiver.span.end as usize);
+                            if active_runner_member(member.property.name.as_str()) {
+                                picks.push((
+                                    member.property.name.to_string(),
+                                    local.name.to_string(),
+                                    declarator.span,
+                                ));
+                            }
+                        }
+                    }
+                    (BindingPattern::ObjectPattern(pattern), Expression::Identifier(receiver))
+                        if receiver.name.as_str() == namespace.local && pattern.rest.is_none() =>
+                    {
+                        let mut group = Vec::new();
+                        let mut key_spans: Vec<std::ops::Range<usize>> = Vec::new();
+                        for property in &pattern.properties {
+                            let (
+                                PropertyKey::StaticIdentifier(key),
+                                BindingPattern::BindingIdentifier(local),
+                            ) = (&property.key, &property.value)
+                            else {
+                                group.clear();
+                                key_spans.clear();
+                                break;
+                            };
+                            if property.computed {
+                                group.clear();
+                                key_spans.clear();
+                                break;
+                            }
+                            if active_runner_member(key.name.as_str()) {
+                                group.push((
+                                    key.name.to_string(),
+                                    local.name.to_string(),
+                                    declarator.span,
+                                ));
+                            }
+                            // The key names an export; it is not a use of the
+                            // namespace even when the namespace is spelled alike.
+                            key_spans.push(key.span.start as usize..key.span.end as usize);
+                        }
+                        if !key_spans.is_empty() {
+                            allowed.push(receiver.span.start as usize..receiver.span.end as usize);
+                            allowed.append(&mut key_spans);
+                            picks.extend(group);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if !super::tests_extract::identifier_occurrences(&code, &namespace.local)
+            .all(|at| allowed.iter().any(|range| range.contains(&at)))
+        {
+            continue;
+        }
+        for (member, local, span) in picks {
+            if local == namespace.local {
+                continue;
+            }
+            let writes = writes.get_or_init(|| FileWrites::scan(&code));
+            let only_called = picked_local_is_only_called(&code, writes, &local, span);
+            // Equivalence control (#10646): the one-scan verdict must equal the
+            // per-pick cut-and-rescan it replaced, for every pick any test makes.
+            #[cfg(test)]
+            assert_eq!(
+                only_called,
+                picked_local_is_only_called_by_recut(&code, &local, span),
+                "namespace pick `{local}` diverged from the cut-and-rescan reference"
+            );
+            if !only_called {
+                continue;
+            }
+            result.push(TypeScriptImport {
+                source: namespace.source.clone(),
+                imported: Some(member),
+                local,
+                namespace: false,
+            });
+        }
+    }
+    result
+}
+
+/// A runner member a pick may rename. The extraction guards judge the local
+/// spelling, so a renamed inactive member (`runner.xit`, `{ xdescribe: describe }`)
+/// would read as an active registration; those, `default` and every name that
+/// is not a registration root are not picked.
+fn active_runner_member(name: &str) -> bool {
+    (TEST_ROOTS.contains(&name) || DESCRIBE_ROOTS.contains(&name)) && !name.starts_with('x')
+}
+
+/// Every write the loose and strict scans find in a whole masked file, indexed
+/// by name. One scan serves every pick: a pick's own declarator is the only
+/// text its verdict excludes, and cutting a balanced declarator out of a
+/// statement list never creates or hides a write, so a write counts when its
+/// offset lies outside the declarator. (#10646; the per-pick cut-and-rescan
+/// reference is kept under test as the equivalence control.)
+struct FileWrites {
+    offsets: std::collections::HashMap<String, Vec<usize>>,
+}
+
+impl FileWrites {
+    fn scan(code: &str) -> Self {
+        let mut offsets: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (name, at) in super::tests_extract::identifier_writes(code)
+            .into_iter()
+            .chain(super::tests_extract::strict_identifier_writes(code))
+        {
+            offsets.entry(name).or_default().push(at);
+        }
+        Self { offsets }
+    }
+
+    fn written_outside(&self, name: &str, declarator: std::ops::Range<usize>) -> bool {
+        self.offsets
+            .get(name)
+            .is_some_and(|at| at.iter().any(|at| !declarator.contains(at)))
+    }
+}
+
+/// A picked local is trustworthy as a runner only when its declarator comes
+/// first, nothing writes it (strictly: wrapped, update, compound, loop and
+/// destructuring targets, or an assignment to one of its members), and every
+/// other use calls it, optionally through a member chain (`test.only(...)`).
+/// A bare value use could hand it to code that replaces it, so it refuses.
+fn picked_local_is_only_called(
+    code: &str,
+    writes: &FileWrites,
+    local: &str,
+    declarator: oxc_span::Span,
+) -> bool {
+    let (start, end) = (declarator.start as usize, declarator.end as usize);
+    if writes.written_outside(local, start..end) {
+        return false;
+    }
+    local_uses_are_calls(code, local, declarator)
+}
+
+/// Every use of `local` outside its declarator comes after it and calls it.
+fn local_uses_are_calls(code: &str, local: &str, declarator: oxc_span::Span) -> bool {
+    let (start, end) = (declarator.start as usize, declarator.end as usize);
+    super::tests_extract::identifier_occurrences(code, local)
+        .filter(|at| !(start..end).contains(at))
+        .all(|at| {
+            // Declared before any use.
+            if at < end {
+                return false;
+            }
+            let before = code[..at].trim_end();
+            if before.ends_with("delete") || before.ends_with("typeof") {
+                return false;
+            }
+            let mut rest = &code[at + local.len()..];
+            // A member chain: `.only`, `.skip`, `?.x`, `["x"]` (bracket bodies are masked).
+            loop {
+                let trimmed = rest.trim_start();
+                let Some(after_dot) = trimmed
+                    .strip_prefix("?.")
+                    .or_else(|| trimmed.strip_prefix('.'))
+                else {
+                    rest = trimmed;
+                    break;
+                };
+                let name_len = after_dot
+                    .find(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '$'))
+                    .unwrap_or(after_dot.len());
+                if name_len == 0 {
+                    return false;
+                }
+                rest = &after_dot[name_len..];
+            }
+            // Called, and the call is not itself an assignment target.
+            rest.starts_with('(')
+        })
+}
+
+/// The pre-#10646 write check: cut the declarator out of the file and rescan
+/// the remainder for this one local. Kept only as the equivalence reference.
+#[cfg(test)]
+fn picked_local_is_only_called_by_recut(
+    code: &str,
+    local: &str,
+    declarator: oxc_span::Span,
+) -> bool {
+    let (start, end) = (declarator.start as usize, declarator.end as usize);
+    let outside = format!("{}{}", &code[..start], &code[end..]);
+    let written = super::tests_extract::identifier_written_in(&outside, local)
+        || super::tests_extract::identifier_written_strictly(&outside, local);
+    !written && local_uses_are_calls(code, local, declarator)
 }
 
 /// Visible spellings of top-level re-exports (`export { x } from './y'`),
@@ -289,9 +913,17 @@ fn reexport_spellings(statements: &[Statement<'_>]) -> BTreeSet<String> {
 /// Loader identity for the bounded awaited-root import exemption. Mutable
 /// loaders and same-spelled helpers cannot establish a callable runner. The
 /// ambient `require` syntax contract does not prove runtime module resolution.
-fn program_require_is_known(statements: &[Statement<'_>], imports: &[TypeScriptImport]) -> bool {
+pub(super) fn program_require_is_known(
+    statements: &[Statement<'_>],
+    imports: &[TypeScriptImport],
+    block_functions_are_lexical: bool,
+) -> bool {
     let mut names = Vec::new();
-    super::tests_extract::collect_registration_scope_names(statements, &mut names);
+    super::tests_extract::collect_registration_scope_names(
+        statements,
+        &mut names,
+        block_functions_are_lexical,
+    );
     if !names.iter().any(|name| name == "require") {
         return true;
     }
@@ -344,6 +976,7 @@ enum ImportClass {
 
 const RUNNER_MODULES: &[&str] = &[
     "vitest",
+    "@playwright/test",
     "@jest/globals",
     "bun:test",
     "node:test",
@@ -405,6 +1038,22 @@ pub(super) fn classify_for_test(source: &str, test_dir: &[String]) -> &'static s
         ImportClass::TestSupport => "test_support",
         ImportClass::Package => "package",
     }
+}
+
+/// The locals a file's require() namespaces pick into known registrations,
+/// in source order (#10646 regression subject).
+#[cfg(test)]
+pub(super) fn namespace_pick_locals_for_test(source: &str, file: &Path) -> Vec<String> {
+    let allocator = oxc_allocator::Allocator::default();
+    let ret = oxc_parser::Parser::new(&allocator, source, super::source_type_for(file)).parse();
+    let imports = super::extract_imports_for_test_file(&ret.program.body);
+    let context = TypeScriptAdmissionContext::of_program(&ret.program, &imports, file);
+    context
+        .registration_imports
+        .into_iter()
+        .filter(|import| !import.namespace && import.source == "node:test")
+        .map(|import| import.local)
+        .collect()
 }
 
 /// The segments of `specifier` resolved against the test file's directory.
@@ -665,6 +1314,58 @@ enum RegistrationKind {
     Describe,
 }
 
+/// A registration callee's root, its factory call (`.each(table)`) and whether
+/// it is a Playwright suite.
+type RegistrationShape<'a, 'b> = (
+    &'b Expression<'a>,
+    Option<(&'b str, &'b [Argument<'a>])>,
+    bool,
+);
+
+/// The root, factory call and Playwright-suite flag of a registration callee,
+/// or `None` when the callee is not a registration chain.
+fn registration_shape<'a, 'b>(
+    call: &'b oxc_ast::ast::CallExpression<'a>,
+) -> Option<RegistrationShape<'a, 'b>> {
+    // Playwright's `test.describe(...)`: a suite spelled as a member of the
+    // `test` root rather than as a `describe` root of its own.
+    let mut playwright_describe = false;
+    let (root, factory) = match call.callee.get_inner_expression() {
+        // `test.each(table)(...)`, `test.skipIf(cond)(...)`.
+        Expression::CallExpression(factory) => {
+            let (root, segments) = static_chain(factory.callee.get_inner_expression())?;
+            let (last, modifiers) = segments.split_last()?;
+            if !REGISTRATION_FACTORIES.contains(last)
+                || !modifiers
+                    .iter()
+                    .all(|segment| REGISTRATION_MODIFIERS.contains(segment))
+            {
+                return None;
+            }
+            (root, Some((*last, factory.arguments.as_slice())))
+        }
+        Expression::Identifier(_) => (call.callee.get_inner_expression(), None),
+        other => {
+            let (root, segments) = static_chain(other)?;
+            let modifiers = match segments.split_first() {
+                Some((&"describe", rest)) => {
+                    playwright_describe = true;
+                    rest
+                }
+                _ => &segments[..],
+            };
+            if !modifiers.iter().all(|segment| {
+                REGISTRATION_MODIFIERS.contains(segment)
+                    || (playwright_describe && *segment == "parallel")
+            }) {
+                return None;
+            }
+            (root, None)
+        }
+    };
+    Some((root, factory, playwright_describe))
+}
+
 /// A recognized `test`/`describe` registration call.
 struct Registration<'a, 'b> {
     kind: RegistrationKind,
@@ -765,32 +1466,7 @@ impl<'c> Scan<'c> {
         &self,
         call: &'b oxc_ast::ast::CallExpression<'a>,
     ) -> Option<Registration<'a, 'b>> {
-        let (root, factory) = match call.callee.get_inner_expression() {
-            // `test.each(table)(...)`, `test.skipIf(cond)(...)`.
-            Expression::CallExpression(factory) => {
-                let (root, segments) = static_chain(factory.callee.get_inner_expression())?;
-                let (last, modifiers) = segments.split_last()?;
-                if !REGISTRATION_FACTORIES.contains(last)
-                    || !modifiers
-                        .iter()
-                        .all(|segment| REGISTRATION_MODIFIERS.contains(segment))
-                {
-                    return None;
-                }
-                (root, Some((*last, factory.arguments.as_slice())))
-            }
-            Expression::Identifier(_) => (call.callee.get_inner_expression(), None),
-            other => {
-                let (root, segments) = static_chain(other)?;
-                if !segments
-                    .iter()
-                    .all(|segment| REGISTRATION_MODIFIERS.contains(segment))
-                {
-                    return None;
-                }
-                (root, None)
-            }
-        };
+        let (root, factory, playwright_describe) = registration_shape(call)?;
         let Expression::Identifier(root) = root else {
             return None;
         };
@@ -804,6 +1480,11 @@ impl<'c> Scan<'c> {
                 }
             }
             _ => return None,
+        };
+        let kind = if playwright_describe {
+            (kind == RegistrationKind::Test).then_some(RegistrationKind::Describe)?
+        } else {
+            kind
         };
         let (factory_args, table) = match factory {
             Some((name, arguments)) => (arguments, matches!(name, "each" | "for")),

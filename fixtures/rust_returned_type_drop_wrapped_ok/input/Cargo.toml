@@ -1,0 +1,4 @@
+[package]
+name = "returned_type_drop_wrapped_ok"
+version = "0.1.0"
+edition = "2021"

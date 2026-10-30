@@ -65,6 +65,13 @@ campaign/surface filters and a bounded `--limit` (default 10), and `explain`
 renders exactly one candidate by stable id. Human Markdown is derived from
 the same DTO and can never strengthen readiness or ranking.
 
+The human Markdown (stdout and the `.md` reports) opens with a capture
+notice under the title: the captured directory, the manifest `captured_at`
+and `default_branch_sha`, and, when the directory resolves under the
+workspace `fixtures/` tree, a banner stating the input is a committed
+fixture corpus and not live state. The notice is rendering-only; it is not
+part of any DTO, JSON body or portable identity digest (#7429).
+
 ### Captured inputs and observation identity
 
 The captured directory holds immutable normalized JSON inputs:

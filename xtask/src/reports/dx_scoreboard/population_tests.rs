@@ -321,43 +321,116 @@ fn fixture_json(path: &Path, value: &Value) -> Result<(), String> {
     .map_err(|err| format!("write {}: {err}", path.display()))
 }
 
+/// Row counts for the committed Perl corpus, read from `expected/rows` with
+/// plain field matches rather than through `summarize`, so the expectations
+/// stay independent of the code under test as the corpus grows.
+struct PerlRowCounts {
+    total: u64,
+    producer: u64,
+    discriminated: u64,
+    not_fully: u64,
+    false_actionable: u64,
+    false_exposed: u64,
+    false_silent: u64,
+    producer_abstained: u64,
+    abstained_all: u64,
+}
+
+impl PerlRowCounts {
+    fn load(dir: &Path) -> Result<Self, String> {
+        let mut rows = Vec::new();
+        for entry in fs::read_dir(dir.join("expected/rows")).map_err(|err| err.to_string())? {
+            rows.push(read_json(&entry.map_err(|err| err.to_string())?.path())?);
+        }
+        let field = |row: &Value, key: &str| row[key].as_str().unwrap_or_default().to_string();
+        let count = |keep: &dyn Fn(&Value) -> bool| {
+            u64::try_from(rows.iter().filter(|row| keep(row)).count()).unwrap_or(u64::MAX)
+        };
+        let is_producer = |row: &Value| field(row, "packet_provenance") == "producer";
+        let producer_outcome =
+            |name: &str| count(&|row| is_producer(row) && field(row, "outcome") == name);
+        let producer = count(&is_producer);
+        let discriminated =
+            count(&|row| is_producer(row) && field(row, "truth") == "discriminated");
+        Ok(Self {
+            total: count(&|_| true),
+            producer,
+            discriminated,
+            not_fully: producer - discriminated,
+            false_actionable: producer_outcome("false_actionable"),
+            false_exposed: producer_outcome("false_exposed"),
+            false_silent: producer_outcome("false_silent"),
+            producer_abstained: producer_outcome("abstained"),
+            abstained_all: count(&|row| field(row, "outcome") == "abstained"),
+        })
+    }
+}
+
 #[test]
 fn perl_projection_keeps_producer_and_edited_contributions_separate() -> Result<(), String> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/perl-verdict-corpus");
     let records = population::Records::load(&dir)?;
-    // Independently counted committed rows: producer 27 (15 discriminated,
-    // 12 not fully), edited 9. Do not derive these expectations via summarize.
-    for (rate, expected) in [
-        ("false_verdict_rate", (8, 27)),
-        ("false_actionable_rate", (5, 15)),
-        ("false_exposed_rate", (3, 12)),
-        ("false_silent_rate", (0, 12)),
-        ("abstention_rate", (8, 27)),
+    let counts = PerlRowCounts::load(&dir)?;
+    for (rate, expected, cohort) in [
+        (
+            "false_verdict_rate",
+            (
+                counts.false_actionable + counts.false_exposed + counts.false_silent,
+                counts.producer,
+            ),
+            counts.producer,
+        ),
+        (
+            "false_actionable_rate",
+            (counts.false_actionable, counts.discriminated),
+            counts.discriminated,
+        ),
+        (
+            "false_exposed_rate",
+            (counts.false_exposed, counts.not_fully),
+            counts.not_fully,
+        ),
+        (
+            "false_silent_rate",
+            (counts.false_silent, counts.not_fully),
+            counts.not_fully,
+        ),
+        (
+            "abstention_rate",
+            (counts.producer_abstained, counts.producer),
+            counts.producer,
+        ),
     ] {
         let selected = records.population(&format!("by_packet_provenance.producer.{rate}"))?;
-        assert_eq!(selected.totals()?, expected);
-        assert_eq!(selected.cases.len(), 36);
+        assert_eq!(selected.totals()?, expected, "{rate}");
         assert_eq!(
-            selected
-                .cases
-                .iter()
-                .filter(|case| case.denominator == 0)
-                .count(),
-            if rate == "false_actionable_rate" {
-                21
-            } else if rate == "false_exposed_rate" || rate == "false_silent_rate" {
-                24
-            } else {
-                9
-            }
+            u64::try_from(selected.cases.len()).unwrap_or(u64::MAX),
+            counts.total
+        );
+        // Cases outside the rate's eligible cohort carry a zero denominator.
+        let excluded = selected
+            .cases
+            .iter()
+            .filter(|case| case.denominator == 0)
+            .count();
+        assert_eq!(
+            u64::try_from(excluded).unwrap_or(u64::MAX),
+            counts.total - cohort,
+            "{rate}"
         );
     }
-    assert_eq!(records.population("abstention_rate")?.totals()?, (11, 36));
+    assert_eq!(
+        records.population("abstention_rate")?.totals()?,
+        (counts.abstained_all, counts.total)
+    );
     assert_eq!(
         records
             .population("by_packet_provenance.edited_producer.abstention_rate")?
             .totals()?,
-        (3, 9)
+        (
+            counts.abstained_all - counts.producer_abstained,
+            counts.total - counts.producer
+        )
     );
     for invalid in [
         "by_packet_provenance.producer",
@@ -537,12 +610,21 @@ fn perl_scoreboard_measures_without_blessing_an_absent_baseline() -> Result<(), 
     );
     assert_eq!(current["gate"]["status"], "no_baseline");
     assert_eq!(current["gate"]["failed_instruments"], json!([]));
-    for (metric, n, d, status) in [
-        ("false_verdict", 8_u32, 27_u32, "below_target"),
-        ("false_actionable", 5, 15, "below_target"),
-        ("false_exposed", 3, 12, "below_target"),
-        ("false_silent", 0, 12, "meets_target"),
-        ("abstention", 8, 27, "below_target"),
+    let counts = PerlRowCounts::load(&root.join("fixtures/perl-verdict-corpus"))?;
+    for (metric, n, d) in [
+        (
+            "false_verdict",
+            counts.false_actionable + counts.false_exposed + counts.false_silent,
+            counts.producer,
+        ),
+        (
+            "false_actionable",
+            counts.false_actionable,
+            counts.discriminated,
+        ),
+        ("false_exposed", counts.false_exposed, counts.not_fully),
+        ("false_silent", counts.false_silent, counts.not_fully),
+        ("abstention", counts.producer_abstained, counts.producer),
     ] {
         let id = format!("trust.perl_verdict_corpus_{metric}");
         let row = current["metrics"]
@@ -551,12 +633,25 @@ fn perl_scoreboard_measures_without_blessing_an_absent_baseline() -> Result<(), 
             .iter()
             .find(|row| row["id"] == id)
             .ok_or("Perl metric missing")?;
-        assert_eq!(row["value"], json!(round(f64::from(n) / f64::from(d))));
-        assert_eq!(row["status"], status);
+        assert_eq!(row["value"], json!(round(n as f64 / d as f64)));
+        // All five metrics are lower-is-better: meeting the target means the
+        // measured rate is at or under it.
+        let target = config
+            .metric
+            .iter()
+            .find(|def| def.id == id)
+            .ok_or("Perl metric definition missing")?
+            .target;
+        let expected_status = if n as f64 / d as f64 <= target {
+            "meets_target"
+        } else {
+            "below_target"
+        };
+        assert_eq!(row["status"], expected_status, "{id}");
         let population: Population =
             serde_json::from_value(row["samples"][0]["population"].clone())
                 .map_err(|err| err.to_string())?;
-        assert_eq!(population.totals()?, (u64::from(n), u64::from(d)));
+        assert_eq!(population.totals()?, (n, d));
     }
     let baseline: Value = serde_json::from_str(include_str!(
         "../../../../benchmarks/dx_scoreboard/testdata/7552-original-baseline-with-population.json"
@@ -1196,6 +1291,8 @@ fn changed_eligibility_without_a_changed_definition_is_incomparable() -> Result<
 /// Rust corpus entries are a refreshed observation. Every other byte of the
 /// operational baseline still matches the #7552 witness, and each refreshed
 /// sample names the revision and committed rows its population came from.
+/// #8035 additionally records the thirteen TypeScript, Python, Perl and
+/// oracle entries below with the same provenance shape, approved in #8035.
 #[test]
 fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> Result<(), String> {
     let mut live: Value = serde_json::from_str(include_str!(
@@ -1290,6 +1387,173 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "runner_dependent",
         ] {
             assert_eq!(metric[key], original[key], "{id} {key}");
+        }
+    }
+    // #8035: (id, rate, numerator, denominator, status, corpus_blob, rows_tree)
+    let recorded_8035 = [
+        (
+            "trust.verdict_corpus_typescript_false_actionable",
+            "false_actionable_rate",
+            5,
+            101,
+            "meets_target",
+            "9beb188ce1b9dec73def368ba742beb342206151",
+            "d882f07fc2a9993924d6588d6bec488d63209e15",
+        ),
+        (
+            "trust.verdict_corpus_typescript_false_exposed",
+            "false_exposed_rate",
+            0,
+            68,
+            "meets_target",
+            "9beb188ce1b9dec73def368ba742beb342206151",
+            "d882f07fc2a9993924d6588d6bec488d63209e15",
+        ),
+        (
+            "trust.verdict_corpus_typescript_false_silent",
+            "false_silent_rate",
+            0,
+            68,
+            "meets_target",
+            "9beb188ce1b9dec73def368ba742beb342206151",
+            "d882f07fc2a9993924d6588d6bec488d63209e15",
+        ),
+        (
+            "trust.verdict_corpus_python_false_actionable",
+            "false_actionable_rate",
+            0,
+            35,
+            "meets_target",
+            "dae9b3d0d971a673c0978ed3e0a5ed672c313fb0",
+            "934a6181f778537ec2b4a2cfcf7d6e8ca9fba8ae",
+        ),
+        (
+            "trust.verdict_corpus_python_false_exposed",
+            "false_exposed_rate",
+            0,
+            34,
+            "meets_target",
+            "dae9b3d0d971a673c0978ed3e0a5ed672c313fb0",
+            "934a6181f778537ec2b4a2cfcf7d6e8ca9fba8ae",
+        ),
+        (
+            "trust.verdict_corpus_python_false_silent",
+            "false_silent_rate",
+            0,
+            34,
+            "meets_target",
+            "dae9b3d0d971a673c0978ed3e0a5ed672c313fb0",
+            "934a6181f778537ec2b4a2cfcf7d6e8ca9fba8ae",
+        ),
+        (
+            "trust.perl_verdict_corpus_false_verdict",
+            "by_packet_provenance.producer.false_verdict_rate",
+            8,
+            27,
+            "below_target",
+            "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
+            "46a0dc499fe0a9e43ac672ad34d1305b68bad33b",
+        ),
+        (
+            "trust.perl_verdict_corpus_false_actionable",
+            "by_packet_provenance.producer.false_actionable_rate",
+            5,
+            15,
+            "below_target",
+            "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
+            "46a0dc499fe0a9e43ac672ad34d1305b68bad33b",
+        ),
+        (
+            "trust.perl_verdict_corpus_false_exposed",
+            "by_packet_provenance.producer.false_exposed_rate",
+            3,
+            12,
+            "below_target",
+            "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
+            "46a0dc499fe0a9e43ac672ad34d1305b68bad33b",
+        ),
+        (
+            "trust.perl_verdict_corpus_false_silent",
+            "by_packet_provenance.producer.false_silent_rate",
+            0,
+            12,
+            "meets_target",
+            "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
+            "46a0dc499fe0a9e43ac672ad34d1305b68bad33b",
+        ),
+        (
+            "trust.perl_verdict_corpus_abstention",
+            "by_packet_provenance.producer.abstention_rate",
+            8,
+            27,
+            "below_target",
+            "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
+            "46a0dc499fe0a9e43ac672ad34d1305b68bad33b",
+        ),
+        (
+            "trust.verdict_corpus_oracle_accuracy",
+            "oracle_accuracy.oracle_accuracy",
+            44,
+            44,
+            "meets_target",
+            "8ef7a4bec9b0e6594e676ec9089db205ade40af3",
+            "a1e8a38d6b1cbc7f240fa15ec02690cab6a45d4d",
+        ),
+        (
+            "trust.verdict_corpus_oracle_overclaim_rate",
+            "oracle_accuracy.oracle_overclaim_rate",
+            0,
+            44,
+            "meets_target",
+            "8ef7a4bec9b0e6594e676ec9089db205ade40af3",
+            "a1e8a38d6b1cbc7f240fa15ec02690cab6a45d4d",
+        ),
+    ];
+    for (id, rate, n, d, status, corpus_blob, rows_tree) in recorded_8035 {
+        let metrics = live["metrics"].as_array_mut().ok_or("metrics missing")?;
+        let at = metrics
+            .iter()
+            .position(|metric| metric["id"] == id)
+            .ok_or("recorded metric missing")?;
+        let metric = metrics.remove(at);
+        assert_eq!(metric["samples"].as_array().map(Vec::len), Some(1), "{id}");
+        let sample = &metric["samples"][0];
+        let population: Population =
+            serde_json::from_value(sample["population"].clone()).map_err(|err| err.to_string())?;
+        assert_eq!(population.rate, rate, "{id} rate");
+        assert_eq!(population.totals()?, (n, d), "{id} totals");
+        assert_eq!(
+            metric["value"].as_f64(),
+            Some(round(n as f64 / d as f64)),
+            "{id} value"
+        );
+        assert_eq!(metric["status"], status, "{id} status");
+        let provenance = &sample["population_provenance"];
+        assert_eq!(provenance["kind"], "committed_expected_rows", "{id}");
+        assert_eq!(
+            provenance["revision"], "76651d1cdf9242b301c9ddf28c442838ccf73c59",
+            "{id}"
+        );
+        assert_eq!(provenance["corpus_blob"], corpus_blob, "{id}");
+        assert_eq!(provenance["rows_tree"], rows_tree, "{id}");
+        assert_eq!(
+            provenance["approved"], "EffortlessMetrics/ripr-swarm#8035",
+            "{id}"
+        );
+        let witness_metrics = witness["metrics"].as_array_mut().ok_or("metrics missing")?;
+        if let Some(wat) = witness_metrics.iter().position(|metric| metric["id"] == id) {
+            let original = witness_metrics.remove(wat);
+            for key in [
+                "board",
+                "direction",
+                "id",
+                "target",
+                "title",
+                "unit",
+                "runner_dependent",
+            ] {
+                assert_eq!(metric[key], original[key], "{id} {key}");
+            }
         }
     }
     assert_eq!(live, witness);

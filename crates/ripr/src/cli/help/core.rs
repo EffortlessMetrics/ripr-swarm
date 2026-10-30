@@ -22,7 +22,10 @@ Options:
                    Resolves the same preconditions as the real run, so it
                    fails the same way (existing file without --force, root
                    that is not a directory) instead of reporting success.
-  --force          Overwrite an existing ripr.toml, generated workflow, or ripr MCP entry.
+  --force          Replace what init would otherwise refuse or keep. Plain `ripr init --force`
+                   resets an existing ripr.toml. With --ci or --mcp, ripr.toml is
+                   always kept; --force then only replaces the generated workflow
+                   or the `ripr` entry in .mcp.json.
 
 Generated config:
   - uses draft analysis mode and includes unchanged tests
@@ -32,9 +35,9 @@ Generated config:
   - remains advisory and does not configure CI blocking or mutation execution
 
 Generated GitHub workflow:
-  - installs ripr and writes a pilot packet plus repo report artifacts
+  - installs ripr and runs `ripr reports ci-packet` for the PR evidence packet
   - uploads report artifacts and writes a reviewer-oriented advisory summary
-  - surfaces future PR test guidance reports as non-blocking check annotations
+  - optionally renders inline review comments (RIPR_COMMENT_MODE=inline)
   - renders and uploads diff/repo SARIF only while RIPR_UPLOAD_SARIF is true
   - uses continue-on-error for advisory RIPR work and upload steps
   - does not enable baseline failure policy by default
@@ -53,17 +56,21 @@ defaults into a file.
 "#;
 pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and write a packet you can act on.
 
-Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--format json] [--quiet]
+Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--format FORMAT] [--quiet]
 
 Options:
-  --root PATH       Workspace root to analyze. Defaults to current directory.
-  --out PATH        Output directory for the pilot packet. Defaults to target/ripr/pilot under --root.
+  --root PATH       Workspace root. Defaults to the current directory, then
+                    walks up to the enclosing workspace or package, or the git
+                    top level; `--root .` pins this directory.
+  --out PATH        Output directory for the pilot packet. Defaults to
+                    target/ripr/pilot under the resolved root (`--root .` pins
+                    this directory).
   --mode MODE       instant, draft, fast, deep, or ready. Defaults to draft unless ripr.toml sets one.
   --max-seams N     Maximum ranked seams in the pilot summary. Defaults to 5.
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
                     30000; when the default passes, the same run continues for up to
                     240000 more. An explicit value is a hard limit.
-  --format FORMAT   human or json. Defaults to human. json writes the same
+  --format FORMAT   human (default) or json. `--format json` writes the same
                     pilot-summary.json document to stdout and suppresses the
                     human terminal; packet files are still written.
   --quiet           Suppress analysis progress and heartbeats on stderr. Does not
@@ -79,11 +86,24 @@ Progress:
   `--quiet` turns this stream off.
 
 Environment variables:
-  RIPR_PILOT_SEAM_BUDGET   Maximum seams written to pilot artifacts (repo-exposure.json,
-                            agent-seam-packets.json). Default: 2000. Set to 0 to disable
-                            the budget and write all seams (may produce very large files).
-                            When the budget is applied, both artifacts include a
-                            limitations[] disclosure naming the env var and a repair route.
+  RIPR_PILOT_SEAM_BUDGET        Maximum seams written to pilot artifacts (repo-exposure.json,
+                                 agent-seam-packets.json). Default: 2000. Set to 0 to disable
+                                 the budget and write all seams (may produce very large files).
+                                 When the budget is applied, both artifacts include a
+                                 limitations[] disclosure naming the env var and a repair route.
+  RIPR_REPO_EXPOSURE_SEAM_LIMIT Maximum seams analyzed and ranked in one pilot run.
+                                 Default: 10000. Set to 0 to analyze every seam. When the
+                                 limit cuts the ranking, the terminal and summary state
+                                 "ranked N of M seams" and actionable seam totals become
+                                 lower bounds until you raise or remove the limit.
+  RIPR_GIT_TIMEOUT              Cooperative deadline in seconds for each git invocation
+                                 in the current-change discovery path, exactly as `ripr
+                                 check` uses it. When the deadline trips, the pilot
+                                 scope line reads `current change: git timed out`
+                                 (pilot keeps fixed phrases for determinism; the
+                                 machine-readable git_invocation_timeout name is what
+                                 `ripr check` reports). 0 disables the deadline.
+                                 Invalid values fail closed. Default: 300 (5 minutes).
 
 Outputs:
   - repo-exposure.json and repo-exposure.md
@@ -95,6 +115,12 @@ and points to one next focused test action; it does not run mutation testing,
 edit source files, or configure CI policy. If analysis exceeds the timeout,
 pilot-summary.json and pilot-summary.md are written with status=partial and an
 explicit retry command.
+
+Timeout exit-code contract: a timeout partial run still exits 0 — the packet,
+not the exit code, is the verdict, and a stderr line discloses this at the
+time it happens. CI must gate on pilot-summary.json's top-level `status`
+field (`complete` vs `partial`), never on the exit code alone, or a timed-out
+run reads as success (#9368).
 "#;
 pub(super) const OUTCOME_HELP: &str = r#"Compare before/after static evidence after adding a focused test.
 
@@ -138,9 +164,8 @@ pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze the current diff and name t
 Usage: ripr check [OPTIONS]
 
 Common options:
-  --base REV        Compare against this revision. When omitted, ripr uses the
-                    local origin/HEAD ref, then origin/main, origin/master,
-                    main, and master in order.
+  --base REV        Compare against this revision; when omitted, ripr uses
+                    the origin/HEAD ref, then origin/main, origin/master, main, master.
   --diff PATH       Read a diff file instead of running git diff (`-` = stdin).
   --worktree        Include staged and unstaged tracked edits (already the
                     default when the tree has them).
@@ -148,25 +173,26 @@ Common options:
   --format FORMAT   human (default); human-full lists every finding with
                     drill-in commands; json (or --json) for scripts and CI;
                     github for Actions annotations; sarif for code scanning.
-  --mode MODE       instant, draft (default), or deep: how much of the
-                    workspace is indexed (never changes what a class means).
+  --mode MODE       instant, draft (default), fast, deep, or ready: how much
+                    of the workspace is indexed (never changes a class).
   --root PATH       Workspace root. Defaults to the current directory, then
                     walks up to the enclosing workspace or package, or the git
                     top level (never past the repository); `--root .` pins
                     this directory.
   --quiet           Suppress stderr progress. Unknown totals show no
                     percentage or ETA, and progress makes no speed claim.
+  --timeout SECS    Wall-clock analysis budget (600s default; 0 disables;
+                    excludes repo seam-inventory formats). On analysis_timeout,
+                    raise/disable it or narrow the diff; re-run.
 
 Exit status: 0 for a completed run, including `exposed` and `weakly_exposed`
 findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
-
 Examples:
   ripr check
   ripr check --base origin/main --json
-
 More:
-  ripr check --help --all   Every option, format, and environment variable.
+  ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
@@ -200,6 +226,19 @@ Options:
   --candidate-base BASE    Base treeish for --candidate-tree (a commit, tag,
                            or tree OID). Defaults to the repository's empty
                            tree.
+  --path GLOB              Analyze only changed files matching GLOB
+                           (repeatable). A repository-relative file, directory
+                           or glob: `src/lib.rs`, `crates/api`, `src/**/*.rs`.
+                           Applied before the diff-size limits, so they measure
+                           only the chosen files. Changed files outside the
+                           scope are named in a language_scope_unsupported
+                           limitation and have no finding: the outcome is
+                           partial_with_limitations, never clean. A scope that
+                           leaves no changed file is an error. Not supported
+                           for repo-scoped formats.
+  --exclude GLOB           Skip changed files matching GLOB (repeatable;
+                           wins over --path). Same pattern shapes, same
+                           disclosure as --path.
   --worktree               Diff the base revision against the live working tree
                            instead of HEAD, including staged and unstaged
                            tracked edits. This is already the default when the
@@ -233,7 +272,9 @@ Options:
                            inventory -> repo-exposure-json; agent repair
                            evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
-                               human, human-full, json, github, sarif
+                               human, human-full, json, github, sarif,
+                               check-findings-json (identified snapshot
+                               for `agent verify`)
                              Badge (diff-scoped, for README status):
                                badge-json, badge-shields,
                                badge-plus-json, badge-plus-shields
@@ -251,7 +292,7 @@ Options:
                            badge and warns on stderr. No public ripr command
                            writes that file yet; hand-author the documented
                            minimum shape from real test measurements or wait
-                           for the portable producer tracked in issue #7221.
+                           for the portable producer (not shipped yet).
                            See docs/BADGE_ADOPTION.md.
                            repo-* and agent-seam-packets-json formats render
                            against the full repo baseline; the non-repo badge-*
@@ -306,6 +347,15 @@ Options:
                            error names git_invocation_timeout. 0 disables
                            the deadline. Default: 300 (5 minutes). Also
                            settable via RIPR_GIT_TIMEOUT env var.
+  --timeout SECS           Wall-clock budget in seconds for the whole
+                           diff or worktree analysis (not the repo-wide
+                           repo-exposure and seam formats). When it runs
+                           out, check stops and refuses with
+                           analysis_timeout: no findings
+                           are produced and the result is never a clean
+                           pass. 0 disables the budget. Default: 600 (10
+                           minutes). Also settable via RIPR_CHECK_TIMEOUT
+                           env var.
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.
@@ -337,60 +387,79 @@ Progress:
   that the command will succeed. `--quiet` turns this stream off.
 
 Environment variables:
-  RIPR_MAX_DIFF_CHANGED_RUST_LINES  Maximum added plus removed Rust diff lines
-                                    before check fails closed as
-                                    diff_scope_oversized. With --json, stdout
-                                    carries a non-consumable limited artifact.
-                                    Default: 2000.
-  RIPR_MAX_DIFF_INDEX_FILES         Maximum Rust files loaded into the diff
-                                    index before check fails closed as
-                                    diff_scope_oversized (a memory guard).
-                                    With --json, stdout carries a
-                                    non-consumable limited artifact.
-                                    Default: 10000.
-  RIPR_DIFF_NARROW_INDEX_FILES      Index size above which Draft/Fast
-                                    narrows dependent packages and stops
-                                    widening reach searches. Bounds time,
-                                    never refuses; clamped to
-                                    RIPR_MAX_DIFF_INDEX_FILES. Default: 1200.
-  RIPR_DIFF_DEPENDENT_SCOPE         How Draft/Fast indexes packages that
-                                    depend on the changed ones: auto (whole
-                                    while under RIPR_DIFF_NARROW_INDEX_FILES,
-                                    else named), named (only files that can
-                                    change a result), or full. Default: auto.
-  RIPR_PARTIAL_DIFF_FILE_BUDGET     Changed-line files analyzed before check
-                                    returns a bounded limited_partial_scope
-                                    partition with exact selected paths,
-                                    lower-bound uninspected counts, and a named
-                                    stop reason; gate/baseline/badge/Zero
-                                    ineligible. Overrides above the effective
-                                    limit are clamped with disclosure. Invalid
-                                    values fail closed as partial_budget_invalid.
-                                    Default: 200.
-  RIPR_PARTIAL_DIFF_LINE_BUDGET     Changed lines analyzed before check returns
-                                    limited_partial_scope. The first selected
-                                    file is always analyzed, even when it alone
-                                    exceeds the budget. Overrides above the
-                                    effective limit are clamped with disclosure.
-                                    Invalid values fail closed as
-                                    partial_budget_invalid. Default: 1000.
-  RIPR_GIT_TIMEOUT                  Cooperative deadline in seconds for each git
-                                    invocation in the diff-load path. A git command
-                                    that exceeds the deadline is terminated and the
-                                    error names git_invocation_timeout. 0 disables
-                                    the deadline. Invalid values fail closed.
-                                    Default: 300 (5 minutes).
-  RIPR_REPO_EXPOSURE_LATENCY_TRACE  When present, emits diagnostic phase/cache
-                                    trace lines for repo-exposure analysis.
-                                    Presence enables tracing even if the value
-                                    is empty or 0; it does not change the
-                                    analysis verdict.
-  RIPR_ALLOW_REPO_PERL_EXECUTABLE   Set to 1 to let [perl].executable from
-                                    ripr.toml run as the Perl facts exporter.
-                                    Unset, ripr ignores it and runs the
-                                    exporter from PATH, so a cloned
-                                    repository cannot choose a program for
-                                    ripr to run.
+  RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
+                                          before check fails closed as
+                                          diff_scope_oversized. With --json, stdout
+                                          carries a non-consumable limited artifact.
+                                          Default: 2000.
+  RIPR_MAX_DIFF_CHANGED_PYTHON_LINES      Maximum added plus removed Python diff
+                                          lines before check fails closed as
+                                          diff_scope_oversized (the Rust guard's
+                                          memory bound for the Python adapter).
+                                          Default: 2000.
+  RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES  Maximum added plus removed TypeScript
+                                          diff lines (the routed .ts/.tsx/.mts/
+                                          .cts/.js/.jsx/.mjs/.cjs family) before
+                                          check fails closed as diff_scope_oversized.
+                                          Default: 2000.
+  RIPR_MAX_DIFF_INDEX_FILES               Maximum Rust files loaded into the diff
+                                          index before check fails closed as
+                                          diff_scope_oversized (a memory guard).
+                                          With --json, stdout carries a
+                                          non-consumable limited artifact.
+                                          Default: 10000.
+  RIPR_DIFF_NARROW_INDEX_FILES            Index size above which Draft/Fast
+                                          narrows dependent packages and stops
+                                          widening reach searches. Bounds time,
+                                          never refuses; clamped to
+                                          RIPR_MAX_DIFF_INDEX_FILES. Default: 1200.
+  RIPR_DIFF_DEPENDENT_SCOPE               How Draft/Fast indexes packages that
+                                          depend on the changed ones: auto (whole
+                                          while under RIPR_DIFF_NARROW_INDEX_FILES,
+                                          else named), named (only files that can
+                                          change a result), or full. Default: auto.
+  RIPR_PARTIAL_DIFF_FILE_BUDGET           Changed-line files analyzed before check
+                                          returns a bounded limited_partial_scope
+                                          partition with exact selected paths,
+                                          lower-bound uninspected counts, and a
+                                          named stop reason; gate/baseline/badge/Zero
+                                          ineligible. Overrides above the effective
+                                          limit are clamped with disclosure. Invalid
+                                          values fail closed as partial_budget_invalid.
+                                          Default: 200.
+  RIPR_PARTIAL_DIFF_LINE_BUDGET           Changed lines analyzed before check
+                                          returns limited_partial_scope. The first
+                                          selected file is always analyzed, even
+                                          when it alone exceeds the budget.
+                                          Overrides above the effective limit are
+                                          clamped with disclosure. Invalid values
+                                          fail closed as partial_budget_invalid.
+                                          Default: 1000.
+  RIPR_CHECK_FINDINGS_BYTES               Byte budget for the findings array in
+                                          `check --format json`; a render above the
+                                          budget fails the run closed instead of
+                                          emitting an unusable document. Set to 0
+                                          to remove the cap (unbounded); an
+                                          unparseable value fails the run.
+                                          Default: 1000000 (1 MB).
+  RIPR_GIT_TIMEOUT                        Cooperative deadline in seconds for each
+                                          git invocation in the diff-load path. A
+                                          git command that exceeds the deadline is
+                                          terminated and the error names
+                                          git_invocation_timeout. 0 disables the
+                                          deadline. Invalid values fail closed.
+                                          Default: 300 (5 minutes).
+  RIPR_REPO_EXPOSURE_LATENCY_TRACE        When present, emits diagnostic phase/cache
+                                          trace lines for repo-exposure analysis.
+                                          Presence enables tracing even if the value
+                                          is empty or 0; it does not change the
+                                          analysis verdict.
+  RIPR_ALLOW_REPO_PERL_EXECUTABLE         Set to 1 to let [perl].executable from
+                                          ripr.toml run as the Perl facts exporter.
+                                          Unset, ripr ignores it and runs the
+                                          exporter from PATH, so a cloned
+                                          repository cannot choose a program for
+                                          ripr to run.
 
 Examples:
   ripr check
@@ -407,7 +476,9 @@ pub(super) const DIFF_HELP: &str = r#"Analyze the changed surface first and repo
 Usage: ripr diff [--root PATH] [--base REV] [--head REV] [--mode MODE] [--format FORMAT] [--json]
 
 Options:
-  --root PATH              Workspace root. Defaults to current directory.
+  --root PATH              Workspace root. Defaults to the current directory, then
+                           walks up to the enclosing workspace or package, or the git
+                           top level; `--root .` pins this directory.
   --base REV               Base revision for git diff. When omitted, resolved
                            like check: the local origin/HEAD ref, then
                            origin/main, origin/master, main, and master.
@@ -431,9 +502,25 @@ Exit status:
 "#;
 pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific change.
 
-Usage: ripr explain [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] <finding-id|file:line>
+Usage: ripr explain [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--quiet] <finding-id|file:line>
 
 Options:
+  --root PATH  Workspace root. Defaults to the current directory, then
+               walks up to the enclosing workspace or package, or the git
+               top level; `--root .` pins this directory. A member-relative
+               `file:line` selector binds to the directory you ran from and
+               is refused when a workspace-root file with the same path
+               suffix exists, even without a root finding there (use
+               `--root .` or a finding ID; with
+               --from or --diff, a selector naming no file is anchored to that
+               directory).
+  --quiet      Suppress analysis progress and heartbeats on stderr, like
+               `ripr check --quiet`. Does not change stdout, exit codes, or
+               error reporting.
+  --committed  Analyze committed history only (base...HEAD), even when the
+               working tree is dirty. Not combinable with --worktree, --diff
+               or --from. Without a supplied scope, dirty repositories use
+               the same worktree default as `ripr check`.
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree`, so a finding listed from uncommitted
                edits can be selected. Not combinable with --diff or --from.
@@ -460,6 +547,10 @@ Options:
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
 
+Filesystem effects:
+  Fresh analysis may create or refresh disposable cache files under
+  target/ripr/cache/ (or RIPR_CACHE_DIR when set).
+
 Performance:
   Use --from to skip re-analysis when you already ran
   `ripr check --write-artifact PATH`. This avoids re-parsing the diff and
@@ -472,11 +563,24 @@ The packet is always JSON, for an agent or tool to consume; `--json` is
 accepted and changes nothing. To read the same finding as prose, run
 `ripr explain` with the same selector.
 
-Usage: ripr context [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json]
+Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 
 Options:
+  --root PATH  Workspace root. Defaults to the current directory, then
+               walks up to the enclosing workspace or package, or the git
+               top level; `--root .` pins this directory. A member-relative
+               `file:line` selector binds to the directory you ran from like
+               `ripr explain`; --diff and --from paths are read as typed from
+               the current directory.
   --finding ID
                Select the finding by id or `file:line`, like `--at`.
+  --quiet      Suppress analysis progress and heartbeats on stderr, like
+               `ripr check --quiet`. Does not change stdout, exit codes, or
+               error reporting.
+  --committed  Analyze committed history only (base...HEAD), even when the
+               working tree is dirty. Not combinable with --worktree, --diff
+               or --from. Without a supplied scope, dirty repositories use
+               the same worktree default as `ripr check`.
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree` (see `ripr explain --help`).
   --from PATH  Load findings from a check artifact written by
@@ -500,28 +604,76 @@ Options:
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
 
+Filesystem effects:
+  Fresh analysis may create or refresh disposable cache files under
+  target/ripr/cache/ (or RIPR_CACHE_DIR when set).
+
 Performance:
   Use --from to skip re-analysis when you already ran
   `ripr check --write-artifact PATH` (see `ripr explain --help`).
 "#;
-pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace, config, toolchains, paths).
+pub(super) const CAPABILITIES_HELP: &str = r#"Show what ripr can establish per language, framework and mode.
 
-Usage: ripr doctor [--root PATH] [--json] [--profile analysis|source-build]
+Usage: ripr capabilities [--language NAME] [--json | --markdown]
 
 Options:
-  --root PATH  Diagnose the selected workspace (defaults to `.`).
-  --json       Emit the core checks as stable JSON and use the same exit status.
-  --profile    Check installed-binary analysis (default) or prerequisites for
-               building RIPR from source.
+  --language NAME  Narrow to one language: rust, typescript, javascript,
+                   python or perl.
+  --json           Emit the versioned machine-readable registry.
+  --markdown       Emit the generated registry block for
+                   docs/status/SUPPORT_TIERS.md (whole table; not with
+                   --json or --language).
+
+Each cell names a language, framework, mode (diff or repo) and family
+(static_facts or repair_routing) with one closed support state, a tier
+ceiling, the limit or fallback to honor, and the specs that define the claim.
+A combination with no cell is not_proven.
+
+This is a static registry for this build. Adapter availability (compiled or
+not) is reported separately and never changes a cell. It does not say whether
+a language is enabled for a repository; use `ripr doctor` for that. It reads
+no repository, runs nothing and promotes no support tier.
+"#;
+pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace, config, toolchains, paths).
+
+Usage: ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]
+
+Options:
+  --root PATH   Diagnose the selected workspace (defaults to `.`).
+  --json        Emit the core checks as stable JSON and use the same exit status.
+  --timings     With --json, include the volatile timing fields (elapsed_ms,
+                segments). Default --json output is byte-stable across runs
+                that changed nothing: timing fields are omitted. The human
+                screen always prints its run-time summary; --timings only
+                affects --json.
+  --profile NAME  Select the doctor profile: analysis (default; checks the
+                  installed binary) or source-build (prerequisites for
+                  building RIPR from source).
+
+Environment variables:
+  RIPR_CACHE_DIR  Relocate the cache base directory (all cache reads and
+                  writes use this path instead of the default
+                  {workspace_root}/target/ripr/cache). Useful for read-only
+                  or immutable source checkouts and for redirecting the
+                  cache to a faster or larger volume. Unset or empty keeps
+                  the default. Example:
+                  RIPR_CACHE_DIR=/var/cache/ripr ripr check
 
 Default human output fits one 80x24 screen: failures first, each with a Fix
 line, then compact passing groups. `-v`/`--verbose` prints binary identity,
 config defaults, test surfaces, Perl preview, known limitations, and start-here
-detail. `--json` is unchanged and remains the complete typed report.
+detail. `--json` remains the complete typed report minus the volatile timing
+fields; pass `--timings` with `--json` to include them.
 
-The JSON report is machine-readable advisory setup evidence. A `fail` status or
-non-zero exit means at least one core check failed; it is not a release or gate
-decision.
+The JSON report is machine-readable advisory setup evidence. A `fail` status
+means at least one core check failed; it is not a release or gate decision.
+A completed run with failed checks exits 3; exit 2 means the run could not
+complete (for example a usage error, where no check ran).
+
+Marks: `!` is a blocking failure that fails the run (exit 3); `~` is an
+advisory (for example artifacts under target/ripr not covered by git ignore
+rules, tracked artifacts, an unwritable cache, unanalyzed languages) and never
+changes the exit status.
 
 Checks:
   - root directory exists

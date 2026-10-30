@@ -154,7 +154,7 @@ pub(super) fn human(output: Output) -> Result<(), String> {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Summary: 4 probes ("));
+    assert!(stdout.contains("Summary: 4 changed behaviors checked: "));
     assert!(stdout.contains("Start here:"));
     assert!(stdout.contains("Static exposure: weak (severity: "));
     // #8165: the default render must not leak schema tokens.
@@ -167,7 +167,7 @@ pub(super) fn human(output: Output) -> Result<(), String> {
     assert!(stdout.contains("Evidence:"));
     // #4320: the digest missing-discriminator line discloses its one-of-N
     // window, so the pin carries the parenthesized window opening.
-    assert!(stdout.contains("Missing discriminator ("));
+    assert!(stdout.contains("Missing check ("));
     assert!(stdout.contains("Next step:"));
     assert!(stdout.contains("lower-priority finding(s) omitted"));
     assert!(stdout.contains("--format human-full"));
@@ -462,15 +462,15 @@ fn retained_oracles_reject_wrong_contract_shape_count_and_refusal() -> TestResul
     rejects(|| {
         human(changed_output(
             &human_output,
-            "Summary: 4 probe(s)",
-            "Summary: 0 probe(s)",
+            "Summary: 4 changed behaviors checked: ",
+            "Summary: 0 changed behaviors checked: ",
         ))
     });
     rejects(|| {
         human(changed_output(
             &human_output,
-            "Missing discriminator (",
-            "Wrong discriminator (",
+            "Missing check (",
+            "Wrong check (",
         ))
     });
     Ok(())

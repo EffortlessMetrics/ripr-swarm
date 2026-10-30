@@ -36,6 +36,19 @@ The default contract is:
   conservative defaults and is reported as such by `ripr doctor`.
 - `ripr init` materializes repo policy. It does not unlock the useful
   experience.
+- `ripr init --ci` accepts only `github`. Unknown providers use the shared
+  CLI value-suggestion rules: nearby values such as `githb`, `githbu`, and
+  `gitlab` name `github`; distant values such as `gitlab-ci` and
+  `zzzzzzzzzzzz` list the accepted provider without a suggestion. A hint
+  never accepts or executes the rejected spelling: unknown providers exit 2,
+  write the error and accepted list to stderr, leave stdout empty, and create
+  no files. A missing provider retains the missing-value refusal. Valid
+  `github` parsing, preview, and generated file contents remain unchanged.
+- With a lossless root, successful `ripr init --ci github` names the generated
+  workflow and tells the adopter to review and commit it, then open or update
+  a pull request and read the advisory job summary. Blocking gates remain opt-in through the
+  `RIPR_GATE_MODE` repository variable. Config-only and dry-run output must
+  not imply that a workflow was adopted.
 - Successful `ripr init` follow-up commands for `doctor` and `check` bind
   the selected root, including a relative or implicit root, so copying them
   from another directory still inspects the repository that was configured.
@@ -49,6 +62,16 @@ The default contract is:
   initialize or overwrite that directory. Real and dry runs retain the same
   refusal. If no lossless root spelling exists, omit executable retries and
   name the UTF-8-parent/alias remedy while leaving existing files intact.
+- Workflow refresh advisories from `init` and `doctor` also bind executable
+  refresh commands to the selected root, including after an upgrade and during
+  an init dry run. Preserve config customizations and provide PowerShell quoting
+  when needed. Commands remain byte-preserving after terminal sanitization,
+  including roots with literal line breaks or tabs. If no lossless command root exists, retain the advisory but omit
+  the refresh command with the same UTF-8-parent/alias remedy.
+- Every root `init` prints in a command or advisory (success follow-ups,
+  existing-file retries and the workflow refresh note) names the directory
+  without the trailing `/.` that joining the default `.` root onto the working
+  directory leaves behind. A bare filesystem or drive root keeps its spelling.
 - A missing `ripr.toml` and a freshly generated `ripr.toml` should produce
   equivalent default policy behavior, except for filesystem artifacts
   intentionally created by `init` or other commands.
@@ -73,6 +96,26 @@ The default contract is:
   attention.
 - Actionable weak, missing, reachable, and unknown seam classes remain visible
   with conservative severities.
+
+### CLI value diagnostics and option help
+
+`ripr diff --format` accepts `human`, `text`, `md`, `markdown`, and `json`.
+The first four retain human output; `json` retains JSON output. Unknown values
+use the shared enum-value diagnostic: `xml` produces
+`unknown diff format "xml". Accepted: human, text, md, markdown, json.`;
+the near miss `jsonn` produces
+``unknown diff format "jsonn". Did you mean `json`? Accepted: human, text, md, markdown, json.``.
+These are argv refusals: exit 2, empty stdout, and the diagnostic prefixed
+with `ripr: ` on stderr. A suggestion does not accept the mistyped value.
+Omitting the value retains `missing value for --format` with the same exit
+and streams. This does not replace `check`'s common-format/help-pointer contract.
+
+The rendered `pilot` usage line names `[--format FORMAT]`; its option line
+names `human` as the default and `json` as the alternative. Both spellings
+remain accepted by the parser. The rendered `doctor` option line names
+`--profile NAME`, `analysis` as the default, and `source-build` as the
+alternative. Both profiles remain accepted. Help exits 0 with empty stderr;
+invalid or missing option values remain usage errors with exit 2.
 
 ## Surface Defaults
 
@@ -310,6 +353,14 @@ missing file cannot be read as this run's evidence, and the summary schema stays
 unchanged (`outputs` remains the packet path map; `outputs_written` names what
 this run produced) (#7425).
 
+The timeout JSON summary's `next.retry_command` must explicitly request
+`--format json`, so an agent following it continues receiving structured stdout
+on recovery (#8472). The shared root, output directory, mode, seam count and
+retry-budget policy remain bound to the original request. Human Markdown and
+terminal retry commands retain their default human format. This does not
+promote the partial analysis: totals remain `null`, ranked seams and completed
+phases remain empty, and only the two summaries are declared written.
+
 ## Outcome Receipt
 
 The public before/after receipt command should expose the existing targeted-test
@@ -399,10 +450,38 @@ blocking by default.
 
 Defaults-first adoption evidence should cover:
 
+- `cli_smoke/cli_value_contracts.rs` exercises actual process output and exit
+  status for diff's distant/near-miss/missing values, accepted aliases reaching
+  revision validation, and the rendered pilot/doctor option contracts paired
+  with parser acceptance and refusal controls;
 - documentation for every default surface listed above;
 - implicit-root saved-diff analysis beneath invalid Git markers matching the
   explicit-root and genuine-repository positives with nonzero changed files,
   probes, findings and related tests;
+- implicit-root parity for the task-first commands (`repair`, `pilot`, `status`,
+  `continue`, `agent stub`) from a workspace member directory, including
+  member-relative `file:line` selectors that must not reach a sibling member;
+- the same implicit-root parity for `agent start/repair/card/status/verify`,
+  `rerun`, `diff` and `explain` from a workspace member directory, with
+  member-relative `--before/--after`, `--changed-test` and `file:line` inputs
+  bound to the invocation directory when they name an existing file (an
+  unresolved `rerun --changed-test` stays RIPR-SPEC-0123's named limitation),
+  `--root .` as the opt-out, and root-resolution failures of `diff --json` and
+  `rerun --json` keeping the refusal envelope, and a member-relative
+  `file:line` for `repair`, `agent repair` and `explain` refused (fail closed)
+  when a workspace-root file with the same path suffix exists, even without a
+  root finding there, with `--root .` or a seam, gap or finding ID as the
+  escape hatches;
+- the same implicit-root parity for the artifact-consuming `agent brief`,
+  `agent packet`, `agent receipt`, `agent review-summary`,
+  `agent verify-execute` and `context` from a workspace member directory, so a
+  loop started by `agent start` reads and writes the workspace `target/ripr`;
+  existing member-relative `--files`, `--diff`, `--verify-json` and `--packet`
+  files bind to the invocation directory, a relative `agent receipt --out` and
+  `agent verify-execute --result-json` resolve against the resolved root (not
+  the current directory), `--gap-ledger`, `context --diff` and `context --from`
+  stay read as typed from the current directory, `--root .` is the opt-out,
+  and a root-resolution failure under `--json` keeps the refusal envelope;
 - shared cache-root parity, real nested and linked-worktree boundaries,
   inherited-selector isolation, and the gitless saved-diff route;
 - built-in missing-config behavior matching the generated init profile's
@@ -495,6 +574,17 @@ A valid UTF-8 absolute alias to the physical root still yields usable follow-ups
 Given a workspace with an existing ripr.toml,
 when a user runs ripr init without --force,
 then ripr exits with an actionable message and leaves the file unchanged.
+```
+
+### Init provider recovery does not initialize a rejected value
+
+```text
+Given an empty selected repository,
+when a user runs ripr init --ci githb,
+then ripr exits 2 with a github suggestion and Accepted: github on stderr,
+leaves stdout empty, and creates neither config nor workflow files.
+With gitlab-ci instead, the same refusal has no suggestion.
+With github, the existing preview and generated files retain their contract.
 ```
 
 ### Pilot points at one next action
@@ -629,6 +719,31 @@ repository as pilot's scope, and pilot-summary.json records current_change
 state no_change or unavailable.
 ```
 
+### Pilot labels an assertion with placeholders as a shape
+
+A suggested assertion that carries `/* ... */` placeholders for values only the
+developer knows (for example `assert_eq!(total(/* boundary input where a >= b
+*/), /* expected */)`) is printed in the pilot human output as
+`assertion shape: ...`, followed by a note to replace each `/* ... */` comment
+with a real value from the developer's test before using it. Any other
+assertion text keeps its `assertion:` label and gets no note. The structured
+pilot packets keep their existing fields; the only value that changes is the
+boundary placeholder text below (#9244, #11023).
+
+The boundary placeholder describes the equality value the missing discriminator
+asks for (#11023): when the changed predicate is a simple strict comparison
+(`x > 5`, `count < limit`), the placeholder reads `boundary input where x == 5`,
+because an input where `x > 5` holds excludes the boundary beside it. A
+non-strict or compound predicate (`>=`, `<=`, `==`, `!=`, `a > b && c`) is
+spelled as written. The placeholder is one string carried wherever the
+suggested assertion is shown, so for strict-comparison seams the same text
+changes in the machine JSON string values that carry it (`assertion_shape`,
+`assertion`, `suggested_assertion`, `suggested_test`, `example`,
+`recommended_repair`, `target_test_shape`, `brief` and `focused_proof_intent` in
+agent packets, PR guidance comments, gate decisions, evidence records and the
+LSP code-action and hover assertions) and in the human and Markdown surfaces
+that print it. Keys, structure and every other value are unchanged.
+
 ### Outcome is public CLI
 
 ```text
@@ -658,6 +773,26 @@ same before/after comparison. The packet answers:
 This packet is a projection of the compared static artifacts. It must not
 create new analyzer facts, run analysis, run mutation testing, edit source,
 generate tests, call providers, change policy, or become a CI gate.
+
+### Unknown check format names the common formats, not the full catalog
+
+```text
+Given a first-run user who mistypes `ripr check --format`,
+when the value is not an accepted format and no single format is close,
+then the error names the common analysis formats (human, human-full, json,
+github, sarif) and points at `ripr check --help --all` for the exhaustive
+list, instead of printing all 23 accepted names.
+
+When exactly one accepted format is close enough (near miss), the error
+still names that one correction first and then points at the exhaustive
+reference.
+```
+
+Rationale: the accepted-format catalog mixes everyday analysis formats with
+badge, repo-report, and agent-packet names a first run never needs. A typo
+should meet the five formats that answer "how do I read the output" plus a
+pointer, not a wall of report plumbing (#9359); the near-miss suggestion from
+#4318 stays because naming the one fix is faster than any pointer.
 
 ### Public install exposes the loop
 
@@ -692,6 +827,13 @@ baseline failure policy.
 
 Current tests and reports that support the contract:
 
+- `crates/ripr/src/output/pilot/render/complete.rs::assertion_shape_tests::placeholder_shape_is_labelled_a_shape_with_a_fill_in_note`
+- `crates/ripr/src/output/pilot/render/complete.rs::assertion_shape_tests::concrete_assertion_keeps_its_label_and_gets_no_note`
+- `crates/ripr/src/cli/parse.rs::tests::given_format_strings_when_parse_format_then_returns_expected_result` (unknown format error names common formats and the exhaustive pointer; near miss still suggests one correction)
+- `crates/ripr/src/cli/mod.rs::tests::run_dispatches_check_parse_errors`
+- `crates/ripr/src/cli/mod.rs::tests::run_treats_a_repeated_global_verbose_as_one_enable`
+- `crates/ripr/src/cli/execute.rs::tests::execute_dispatches_subcommand_args_without_reparsing_argv`
+
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_and_recovers_same_head`
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation`
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_capped_absence_matches_uncapped_generated_policy_and_recovers`
@@ -706,13 +848,21 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/cli/commands.rs::tests::init_parses_root_dry_run_and_force`
 - `crates/ripr/src/cli/commands.rs::tests::init_requires_root_value`
 - `crates/ripr/src/cli/commands.rs::tests::init_rejects_unknown_arguments`
+- `crates/ripr/tests/cli_help_hierarchy.rs::init_ci_provider_errors_recover_near_misses`
+- `crates/ripr/tests/cli_help_hierarchy.rs::init_ci_provider_valid_preview_keeps_workflow_contract`
 - `crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_is_advisory`
 - `crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_uploads_reports_and_makes_sarif_optional`
 - `crates/ripr/src/cli/commands.rs::tests::init_ci_github_writes_workflow_and_preserves_existing_config`
 - `crates/ripr/src/cli/commands.rs::tests::init_ci_github_refuses_existing_workflow_without_force`
 - `crates/ripr/tests/cli_smoke.rs::init_writes_conservative_config_and_doctor_loads_it`
+- `crates/ripr/tests/cli_smoke/init_ci_guidance.rs::init_ci_followup_explains_adoption_for_created_and_refreshed_workflows`
+- `crates/ripr/tests/cli_smoke/init_ci_guidance.rs::init_ci_followup_does_not_claim_adoption_for_config_only_or_preview`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_the_selected_root_from_foreign_cwd`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_refusal_retries_replay_the_selected_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::init_upgrade_warning_refresh_replays_selected_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::doctor_workflow_warning_refresh_replays_selected_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::workflow_warning_omits_refresh_for_unrepresentable_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::workflow_refresh_control_roots_replay_without_touching_escaped_siblings`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_refusal_omits_retries_for_an_unrepresentable_root`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_omits_followups_for_an_unrepresentable_implicit_root`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_a_utf8_alias_to_a_non_utf8_root`
@@ -772,6 +922,8 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/cli/commands/pilot.rs::tests::remove_unwritten_timeout_packet_siblings_unlinks_a_symlink_and_keeps_its_target`
 - `crates/ripr/src/cli/commands/pilot.rs::tests::remove_unwritten_timeout_packet_siblings_refuses_a_directory`
 - `crates/ripr/src/output/pilot/tests.rs::timeout_summary_json_is_partial_and_points_to_retry`
+- `crates/ripr/src/output/pilot/tests/timeout_retry.rs::timeout_json_retry_preserves_format_and_unknown_analysis`
+- `crates/ripr/tests/cli_smoke/pilot_timeout_retry.rs::timeout_json_retry_replays_as_json_from_a_foreign_directory`
 - `crates/ripr/src/output/pilot/tests.rs::timeout_summary_md_explains_partial_status_and_retry_command`
 - `crates/ripr/tests/cli_smoke.rs::pilot_accepts_python_project_without_ripr_config`
 - `crates/ripr/tests/cli_smoke.rs::pilot_projects_python_repair_card_for_git_diff`

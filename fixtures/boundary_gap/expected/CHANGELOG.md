@@ -1,5 +1,141 @@
 # Golden Output Changes
 
+## Pending — integration composition to cache generation 1.119 (#8610, #10792)
+
+Integration update:
+The `#8610` entry below was generated at the candidate's own `1.114`
+generation. Merging `main` composed that semantic transition onto main's
+classified line (`1.114` #9478, `1.115` #10797, `1.116` #10819, `1.117`
+#10839, `1.118` #10814), so the admitted generation for this candidate is
+`1.119` (sharded/compact `0.126`). The two `unchanged-after-attempt`
+snapshots adopt `"cache_schema_version": "1.119"` with their content commitments
+recomputed through the same raw-JSON placeholder procedure, and
+`agent-verify.json` / `agent-receipt.json` adopt the derived commitments
+and artifact byte hashes. No boundary-gap evidence, movement class or
+envelope field changed; only the corpus generation and the commitments
+that cover it moved. The snapshots still carry producer facts frozen at
+the original run; a head-qualified regeneration remains hosted-proof
+work for the qualification lane.
+
+## Pending — direct boolean boundary grip (#8610)
+
+Reason:
+RIPR-SPEC-0197 advances the classified corpus cache from 1.113 to 1.114 for
+direct boolean boundary owner grip. Refresh the live portable
+`first-useful-action/unchanged-after-attempt/{before,after}.repo-exposure.json`
+goldens and their dependent `agent-verify.json` and `agent-receipt.json`
+commitments. The boundary-gap fixture still has one weakly gripped seam;
+its evidence, corpus content hash and unchanged movement are preserved.
+
+Generation:
+The frozen native producer at `874bc60ae9fb78c101de7bc54a07dbfa6b07fd6c`
+(binary SHA-256 `3bf8329d41f624b0a017a9867a21bd2cc87b56f0f3ad2127a7131867ffb9cdae`)
+ran `ripr check --root fixtures/boundary_gap/input --format repo-exposure-json`.
+Applied the existing `normalize_unchanged_repo_exposure_producer_fixture`
+normalization and raw-JSON placeholder commitment, then ran native
+`ripr agent verify` and `ripr agent receipt` on the normalized artifact chain.
+The snapshots differ only in corpus generation and content commitment; verify
+differs only in the two snapshot commitments. The portable receipt retains
+its established envelope and adopts only the three native-produced artifact
+byte hashes. Its eight literal envelope differences from this native receipt
+remain explicit fixture data; full envelope equivalence is not claimed.
+
+Validation:
+Native check, verify, receipt and first-action commands exited 0. Verify remains
+`historical_noncurrent`, weak-to-weak and unchanged with an empty evidence delta;
+the receipt remains incomplete with a missing analysis outcome. First-action
+JSON and Markdown match their existing goldens after the existing cwd/time
+normalization and retain `missing_required_artifact`. Removing the evidence
+record, changing its gap state or replacing its commitment each exited 2 at
+the mutated after artifact's content-commitment check. These are results from
+the named frozen producer; the current-head CLI-smoke test was not executed
+during this bounded regeneration.
+## Pending — suffixed integer activation cache generation (#10839)
+
+The portable unchanged-attempt snapshots follow corpus cache generation 1.116
+to 1.117 for whole suffixed decimal arguments in repository activation. The
+native CLI-smoke failure on merge `f36d916b3579e8bfcddd7bee5305787fb8b749ac`
+records the normalized production snapshot: it differs from the prior fixture
+only at the corpus generation and artifact content commitment. Refresh those
+two fields and their dependent verify commitments and receipt byte hashes.
+Weak grip, unchanged movement, historical currentness, incomplete receipt
+status and fail-closed first-action routing remain unchanged. No other fixture
+output is regenerated.
+
+## Pending — typed function-pointer composition (#9478, #9705)
+
+The bounded typed function-pointer owner proof composes with accepted shared-target
+assertion contexts and effect-assertion admission. The classified corpus cache
+advances from 1.97 to 1.98; full, sharded/compact and file-fact generations retain
+their distinct invalidation roles. The accepted compiled-language identity suffix
+is preserved.
+
+The clean native producer at `28f9a5fcf6fb8901afb2513067ce78bd70b7ba7a` generated
+`ripr check --format repo-exposure-json` for `fixtures/boundary_gap/input`; the
+existing CLI-smoke normalization was applied. Native `agent verify` and
+`agent receipt` then verified the dependent commitments. Only the corpus version
+and dependent content/file hashes changed. The portable receipt envelope is
+retained with three native-verified input hashes; its five literal differences
+from the native envelope are not claimed equivalent. Historical noncurrentness,
+incomplete status, weak grip and fail-closed first-action routing are unchanged.
+
+Updated: `first-useful-action/unchanged-after-attempt/{before,after}.repo-exposure.json`,
+`agent-verify.json` and `agent-receipt.json`.
+
+## Prior candidate — boundary_gap (9478)
+
+Reason:
+RIPR-SPEC-0197 (#9478) advances the classified Rust corpus cache to 1.95
+for bounded typed function-pointer owner pins, preserving accepted fixture-receiver,
+recording-double and Display
+pin transition at 1.93. Regenerated the portable
+unchanged-attempt snapshots from the native producer using the existing CLI
+test's normalization, then regenerated verify and refreshed the existing portable
+receipt's file commitments against native receipt output. Its portable envelope
+is retained. Only the cache identifier and dependent content/file commitments change. Historical
+currentness, incomplete receipt status, unchanged weak grip and fail-closed
+first-action routing are preserved.
+
+Updated:
+- `first-useful-action/unchanged-after-attempt/{before,after}.repo-exposure.json`
+- `first-useful-action/unchanged-after-attempt/agent-verify.json`
+- `first-useful-action/unchanged-after-attempt/agent-receipt.json`
+
+### test_case arrow row classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.112 to 1.113 for a clean
+`#[test_case(.. => literal)]` row read as the harness-compared return
+(RIPR-SPEC-0231 rule 9, #9619), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### call-in-term accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.113 to 1.114 for an
+accumulator update that adds a same-file function's value, read as a
+`return_value` change (RIPR-SPEC-0360, #9478), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### test_case arrow row input substitution cache generation parity
+
+The same snapshots follow corpus cache generation 1.114 to 1.115 for the arrow row
+read with its inputs substituted into the returned expression (RIPR-SPEC-0231
+rule 9, #10797), with the same scope: generation, content commitment, dependent
+verify commitments and receipt byte hashes only.
+
+### rebound let literal classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.115 to 1.116 for a `let`
+literal that a tuple, struct or `for` pattern rebinds no longer pairing with the
+owner call (RIPR-SPEC-0158, #10819), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### Drop scope-end carrier cache generation parity
+
+The same snapshots follow corpus cache generation 1.117 to 1.118 for a standard
+`Drop::drop` credited through a scope-end carrier (RIPR-SPEC-0240, #10814), with
+the same scope: generation, content commitment, dependent verify commitments and
+receipt byte hashes only.
+
 ## Pending — boundary_gap (9)
 
 Reason:
@@ -959,3 +1095,336 @@ The unchanged-after-attempt before/after corpus generation moves from 1.81 to
 commitments and dependent verify/receipt byte hashes follow that exact change.
 Routing, unchanged movement, incomplete receipt and all tamper controls remain.
 The live producer normalization test validates this bounded fixture update.
+
+### #5500 / #5502 — direct-record selector cache generation
+
+The unchanged-after-attempt portable snapshots follow the internal semantic
+cache generation from 1.82 to 1.83. Their content commitments, native verify
+commitments and receipt byte hashes bind that exact metadata change. Semantic
+evidence, historical/noncurrent status, weak/unchanged movement and incomplete
+receipt routing remain unchanged; the producer-equality and tamper tests remain
+strict. The receipt is an existing portable negative-control input, not a new
+receipt-presentation golden.
+
+### #8592 — classified-cache generation parity
+
+The unchanged-after-attempt before/after corpus generation moves from 1.83 to
+1.84 for check-helper argument pins (RIPR-SPEC-0197). Content commitments and
+dependent verify/receipt byte hashes follow that exact change. Routing,
+unchanged movement, incomplete receipt and all tamper controls remain.
+
+### #8600 — classified-cache generation parity
+
+The unchanged-after-attempt before/after corpus generation moves from 1.84 to
+1.85 for the call-fact budget withholding on repo seams. Content commitments
+and dependent verify/receipt byte hashes follow that exact change. Routing,
+unchanged movement, incomplete receipt and all tamper controls remain.
+
+### #8948 — classified-cache generation parity
+
+The unchanged-after-attempt before/after corpus generation moves from 1.85 to
+1.86 for the cached observed-value test file. Content commitments and
+dependent verify/receipt byte hashes follow that exact change. Routing,
+unchanged movement, incomplete receipt and all tamper controls remain.
+
+### #4680 / #9146 - module-motion classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.86 to 1.87. The actual normalized producer value was retained by the Rust-only
+CI run39597733101 on8d00251e when the strict producer-equality test exposed this
+stale pin. Recovery reproduced the prior fixture byte-for-byte, then verified
+that only the generation and its content commitment changed. The dependent
+verify commitments and receipt byte hashes bind those exact updated bytes.
+Semantic evidence, historical/noncurrent status, advisory output, unchanged
+movement, incomplete receipt routing and all tamper controls remain unchanged.
+This is a portable negative-control input update, not a new execution receipt.
+
+### #8051 - debug-assertion profile limit classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.87 to 1.88 for the `debug_assert_eq!` profile limit. Only the generation and
+its content commitment changed; the dependent verify commitments and receipt
+byte hashes bind those exact updated bytes. Semantic evidence, unchanged
+movement, incomplete receipt routing and all tamper controls remain unchanged.
+This is a portable negative-control input update, not a new execution receipt.
+
+### #8606 - mock call-count side-flip classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.88 to 1.89 for mock call-count side flips (RIPR-SPEC-0305). Only the
+generation and its content commitment changed; the dependent verify
+commitments and receipt byte hashes bind those exact updated bytes. Semantic
+evidence, unchanged movement, incomplete receipt routing and all tamper
+controls remain unchanged. This is a portable negative-control input update,
+not a new execution receipt.
+
+### tokio spawned-task assertion pins classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.89 to 1.90 for joined `tokio::spawn` assertion pins (RIPR-SPEC-0197). Only
+the generation and its content commitment changed; the dependent verify
+commitments and receipt byte hashes bind those exact updated bytes. Semantic
+evidence, unchanged movement, incomplete receipt routing and all tamper
+controls remain unchanged. This is a portable negative-control input update,
+not a new execution receipt.
+
+### skip-guarded table rows classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.90 to 1.91 for table loops that open with a literal skip-list guard
+(RIPR-SPEC-0229). Only the generation and its content commitment changed; the
+dependent verify commitments and receipt byte hashes bind those exact updated
+bytes. Semantic evidence, unchanged movement, incomplete receipt routing and
+all tamper controls remain unchanged. This is a portable negative-control
+input update, not a new execution receipt.
+
+### caller-loop selector limit classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.91 to 1.92 for the caller-loop selector limit (RIPR-SPEC-0240, #5503). Only
+the generation and its content commitment changed; the dependent verify
+commitments and receipt byte hashes bind those exact updated bytes. Semantic
+evidence, unchanged movement, incomplete receipt routing and all tamper
+controls remain unchanged. This is a portable negative-control input update,
+not a new execution receipt.
+
+### fixture-receiver and recording-double limits classified-cache generation parity
+
+The unchanged-after-attempt portable snapshots follow corpus cache generation
+1.93 to 1.94 for the fixture-receiver and recording-double limits
+(RIPR-SPEC-0240, #9609, #9610). Only the generation and its content commitment
+changed; the dependent verify commitments and receipt byte hashes bind those
+exact updated bytes. Semantic evidence, unchanged movement, incomplete receipt
+routing and all tamper controls remain unchanged. This is a portable
+negative-control input update, not a new execution receipt.
+
+### same-file assertion-wrapper limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.94 to 1.95 for the
+same-file assertion-wrapper limit (RIPR-SPEC-0120, #7089), with the same
+scope: generation, content commitment, dependent verify commitments and
+receipt byte hashes only.
+
+### pinned-shape limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.95 to 1.96 for the
+pinned-shape limit (RIPR-SPEC-0240, #9440), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### Prior-candidate typed function-pointer pins (1.96)
+
+The unchanged-after-attempt snapshots follow cache generation 1.95 to 1.96
+for typed pointer owner pins (RIPR-SPEC-0197, #9478). A clean native producer
+at 39d5d7ad728055b090965cc1d60bb9006813c78a supplied the snapshot, verify and
+receipt outputs. The existing CLI-test normalization changes only generation,
+content commitments and dependent byte hashes. Historical currentness and the
+incomplete portable receipt remain explicit. Five literal envelope differences
+from the native receipt are retained, including an absent portable
+`seam.guidance_note` versus native `null`; four differences remain if absent and
+null are treated as equal. Full envelope equivalence is not claimed.
+
+### Prior-candidate typed function-pointer pins classified-cache generation parity (1.97)
+
+The snapshots follow cache generation 1.96 to 1.97 for typed pointer owner
+pins (RIPR-SPEC-0197, #9478), preserving the accepted pinned-shape generation
+1.96. A clean native producer at
+b084e86a1ccbfdbaebf23fb250043eb675ecde3b supplied the snapshot, verify and
+receipt outputs. Existing CLI-test normalization changes only the generation,
+content commitments and dependent byte hashes. Historical currentness and the
+incomplete portable receipt remain explicit. Five literal envelope differences
+from the native receipt are retained, including an absent portable
+`seam.guidance_note` versus native `null`. Full envelope equivalence is not
+claimed.
+
+### effect-assertion execution admission classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.96 to 1.97 for effect-family
+assertion execution admission (RIPR-SPEC-0197, #8927), with the same scope:
+generation, content commitment, dependent verify commitments and receipt byte
+hashes only.
+
+### macro_rules! test tables classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.100 to 1.101 for same-file
+`macro_rules!` test tables that index one generated test per row
+(RIPR-SPEC-0117, #6925), with the same scope: generation, content commitment,
+dependent verify commitments and receipt byte hashes only.
+
+### Cross-file macro_rules! test tables classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.102 to 1.103 for
+`macro_rules!` test tables whose generator is defined in another file
+(RIPR-SPEC-0117 example 9, #6925), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### Exported macro_rules! test tables classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.104 to 1.105 for
+`#[macro_export]` test generators named by `use crate::name;`
+(RIPR-SPEC-0117, #10298), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### Exported macro_rules! crate-path calls classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.106 to 1.107 for
+top-level `crate::name!` calls to `#[macro_export]` test generators
+(RIPR-SPEC-0117, #10298), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### `#[test_case]` literal rows classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.107 to 1.108 for
+literal-row `#[test_case]` bodies (RIPR-SPEC-0120, #10190), with the same
+scope: generation, content commitment, dependent verify commitments and
+receipt byte hashes only.
+
+## Pending — boundary_gap (25)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (26)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (27)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 observation-gloss repair; report independent related test/assertion evidence without implying that the changed arm executes.
+
+Operation:
+Manual edit: replaced only the observation clause in the existing five-line bounded Evidence legend with `observation = related test/assertion evidence`.
+
+Execution:
+Source-only reviewed edit; no native fixture or goldens-bless command executed because local storage admission is unavailable.
+
+Updated:
+- `expected/human.txt`
+
+## Pending — boundary_gap (28)
+
+Reason:
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+### one-line else-if ladder classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.98 to 1.99 for the
+one-line `else if` ladder tail (#9630), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### equal-valued arm sink limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.99 to 1.100 for the
+equal-valued arm sink limit (#9843), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### multi-line equal-valued arm sink limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.101 to 1.102 for the
+rustfmt-layout equal-valued arm sink limit (#10134), with the same scope:
+generation, content commitment, dependent verify commitments and receipt byte
+hashes only.
+
+### loop accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.103 to 1.104 for the
+returned loop-accumulator update (#6485), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### table-driven loop-accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.105 to 1.106 for the
+table-driven loop-accumulator pin (#6485), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### indirect owner call limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.108 to 1.109 for owners
+reached without a placeable call and the `cfg_attr` test reading
+(RIPR-SPEC-0240, #9442, #9443), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### Exported macro_rules! grouped-import classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.109 to 1.110 for
+grouped `use crate::{a, b};` imports of `#[macro_export]` test generators
+(RIPR-SPEC-0117, #10298), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### polling helper owner pin classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.110 to 1.111 for an
+`async` owner called through a test-local polling helper (RIPR-SPEC-0197,
+#9478), with the same scope: generation, content commitment, dependent verify
+commitments and receipt byte hashes only.
+
+### Arrow-separated macro_rules! table rows classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.111 to 1.112 for
+`name => (..)` rows of a local `macro_rules!` test table (RIPR-SPEC-0117,
+#10298), with the same scope: generation, content commitment, dependent
+verify commitments and receipt byte hashes only.
+
+## Pending — boundary_gap (29)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (30)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (31)
+
+Reason:
+RIPR-SPEC-0122: #10920 review - the weak-infection hint claimed no test input tells the versions apart; the admitted relational sibling case (#10916) has asserted inputs that evaluate differently, so the hint now states the assertion-level fact
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

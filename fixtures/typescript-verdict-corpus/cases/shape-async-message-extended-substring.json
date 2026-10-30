@@ -1,0 +1,44 @@
+{
+  "case_id": "shape-async-message-extended-substring",
+  "subject_id": "authored-ts-vitest-shapes",
+  "diff": "cases/shape-async-message-extended-substring.diff",
+  "anchor": {
+    "file": "src/parsePort.ts",
+    "line": 4
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_message",
+  "test_shape": "vitest_rejects_tothrow_substring",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "throw new RangeError(\"bad port number\");",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: toThrow with a string matches a substring, so appending text to the message passes."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "toThrow with a string matches a substring, so appending text to the message passes. The edited package's test command still passes, so no test notices the change and a gap is the honest verdict.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

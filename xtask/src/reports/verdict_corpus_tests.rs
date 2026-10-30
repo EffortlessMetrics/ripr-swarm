@@ -1609,21 +1609,22 @@ fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> 
         "fixtures/typescript-verdict-corpus/spec-coverage.toml"
     );
     assert!(
-        coverage.floor >= 109 && coverage.floor <= coverage.covered_examples,
+        coverage.locked_examples >= 109 && coverage.locked_examples <= coverage.covered_examples,
         "typescript ledger floor {} against {} covered",
-        coverage.floor,
+        coverage.locked_examples,
         coverage.covered_examples
     );
-    // Every RIPR-SPEC-0243 example has a case: 33 (#7099) through
-    // `jest-spec0243-ex33-two-files-one-mocked`, 30 through a non-literal
-    // `db`, and 34 and 35 through edits that change the pinned message.
+    // Every RIPR-SPEC-0243 example has a case. The example count is not
+    // pinned: a PR that adds an example would otherwise renumber against
+    // every concurrent one (#9859). A new example nobody cites shows up in
+    // `uncovered`, and a lost citation does the same.
     let spec = coverage
         .by_spec
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0243")
         .ok_or("RIPR-SPEC-0243 is not in scope in the typescript ledger")?;
-    assert_eq!(spec.in_scope_examples, 35);
-    assert_eq!(spec.uncovered, Vec::<usize>::new());
+    assert!(spec.in_scope_examples >= 42);
+    assert_eq!(spec.uncovered, Vec::<coverage::ExampleKey>::new());
     assert_eq!(spec.waived, 0);
     let corpus = load_corpus(&dir)?;
     assert!(
@@ -1697,19 +1698,20 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
     // Every RIPR-SPEC-0238 acceptance example keeps a case citing it;
     // example 10 is in the numpy subject (#7819). Examples 1 to 34 have `py-spec0233-exNN-` cases (the prefix of the
     // spec's draft number, RIPR-SPEC-0233); 35 to 40 were written from the
-    // library cases that cite them.
+    // library cases that cite them, 41 from `py-fixtures-deposit` and 42 from
+    // `py-fixtures-fee-boundary`.
     let spec = coverage
         .by_spec
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0238")
         .ok_or("RIPR-SPEC-0238 is not in scope in the python ledger")?;
-    assert_eq!(spec.in_scope_examples, 40);
+    assert_eq!(spec.in_scope_examples, 42);
     assert!(spec.uncovered.is_empty(), "uncovered: {:?}", spec.uncovered);
     assert_eq!(spec.waived, 0);
     assert!(
-        coverage.floor >= 40 && coverage.floor <= coverage.covered_examples,
+        coverage.locked_examples >= 40 && coverage.locked_examples <= coverage.covered_examples,
         "python ledger floor {} against {} covered",
-        coverage.floor,
+        coverage.locked_examples,
         coverage.covered_examples
     );
     for example in (1..=34).filter(|&n| n != 10) {
@@ -2159,8 +2161,9 @@ fn validate_spellings_parse_language_without_out_or_cases() -> Result<(), String
 
 #[test]
 fn declared_validation_keeps_every_ledger_but_perl_mandatory() -> Result<(), String> {
-    // The declared funnel is the single coverage-mode decision: the Perl
-    // corpus validates structurally with no coverage attached, while every
+    // The declared funnel is the single coverage-mode decision: a Perl
+    // corpus without a ledger validates structurally with no coverage
+    // attached (#8775), while every
     // other corpus keeps its spec-example ledger mandatory (#6686 review for
     // Rust, #7650 for TypeScript and Python) — deleting that ledger fails
     // instead of dropping the coverage floor from `check-all`. (The gated
@@ -2183,7 +2186,17 @@ fn declared_validation_keeps_every_ledger_but_perl_mandatory() -> Result<(), Str
         assert!(err.contains(coverage::LEDGER_FILE), "{name}: {err}");
     }
 
-    let (corpus, coverage) = validated_corpus_declared(&perl_corpus_dir())?;
+    // Perl carries a ledger now, so it is gated (the gated validation needs
+    // the repo-relative specs tree, so the `check-all` run proves it); the
+    // ledgerless fallback stays only until #8775 makes the ledger mandatory
+    // there too.
+    let perl = perl_corpus_dir();
+    assert_eq!(corpus_coverage_mode(&perl), CorpusCoverage::Gated);
+    let leaf = perl.file_name().ok_or("corpus dir has no name")?;
+    let copy = crate::tests::temp_dir("verdict-declared-perl-ledgerless").join(leaf);
+    crate::tests::copy_dir_recursive(&perl, &copy)?;
+    fs::remove_file(copy.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
+    let (corpus, coverage) = validated_corpus_declared(&copy)?;
     assert!(coverage.is_none());
     assert!(!corpus.cases.is_empty());
     Ok(())

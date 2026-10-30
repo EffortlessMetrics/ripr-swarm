@@ -109,14 +109,18 @@ Leave the finding exactly as the direct-call classifier produced it.
 
 ## Acceptance Examples
 
-| Case | Result |
-|---|---|
-| `table = Table()` and `render` → `_get_padding_width` via `self.` | `no_static_path` + `python_transitive_reach_unresolved` |
-| `from other.models import Table; Table()` | silent `no_static_path` |
-| `from src.table import Table` with no construct/call | silent `no_static_path` |
-| `table._get_padding_width(` in the test | related test; this limitation does not attach |
-| `requests.post(...)` without constructing `PreparedRequest` | silent `no_static_path` (#4568) |
-| six-hop `self.` chain | silent `no_static_path` |
+The limitation applies only where no credit already relates a test. A chain of
+one-`return` callables that a test pins exactly is evaluated instead
+(RIPR-SPEC-0028, #9226), so examples 1, 5 and 6 credit `exposed` when every hop
+is in that model and the pinned assertion flips with the edit. Otherwise they
+read as written below.
+
+1. `table = Table()` and `render` → `_get_padding_width` via `self.`: `no_static_path` + `python_transitive_reach_unresolved`.
+2. `from other.models import Table; Table()`: silent `no_static_path`.
+3. `from src.table import Table` with no construct/call: silent `no_static_path`.
+4. `table._get_padding_width(` in the test: related test; this limitation does not attach.
+5. `requests.post(...)` without constructing `PreparedRequest`: silent `no_static_path` (#4568).
+6. six-hop `self.` chain: silent `no_static_path`.
 
 ## Test Mapping
 

@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -22,7 +22,7 @@
+ 
+ 
+ def module_skipped(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def module_loaded(a, b):

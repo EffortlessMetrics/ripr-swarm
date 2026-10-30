@@ -393,13 +393,87 @@ fn run_evidence_promotion_pinned_external_cases(
     Ok(runs)
 }
 
+/// Directory beside `corpus.json` whose files are one case object each. A PR
+/// adds its cases here instead of appending to the shared `cases` array, which
+/// every corpus PR otherwise edits at the same tail and so conflicts.
+const EVIDENCE_PROMOTION_CASE_DIR: &str = "cases";
+
+/// The `.json` case files among the directory entries, sorted. An entry that
+/// failed to enumerate is an error rather than a file that quietly goes
+/// missing from the corpus.
+pub(crate) fn evidence_promotion_case_files(
+    entries: impl IntoIterator<Item = std::io::Result<PathBuf>>,
+    case_dir: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    for entry in entries {
+        let path =
+            entry.map_err(|err| format!("failed to list {}: {err}", normalize_path(case_dir)))?;
+        if path.extension().is_some_and(|ext| ext == "json") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// `corpus.json` with every `cases/*.json` file appended to its `cases` array
+/// in file-name order. Each file is a single case object; a non-object, a
+/// duplicate key, or an id already present (in `corpus.json` or another file)
+/// fails closed rather than shadowing a pinned case.
+pub(crate) fn read_evidence_promotion_corpus(corpus_path: &Path) -> Result<Value, String> {
+    let corpus_text = read_text_lossy(corpus_path)?;
+    let mut corpus_value: Value = parse_json_rejecting_duplicate_keys(&corpus_text)
+        .map_err(|err| format!("failed to parse {}: {err}", normalize_path(corpus_path)))?;
+    let Some(parent) = corpus_path.parent() else {
+        return Ok(corpus_value);
+    };
+    let case_dir = parent.join(EVIDENCE_PROMOTION_CASE_DIR);
+    // Only an absent directory is optional. Any other failure to open or
+    // enumerate it is an error, so a reduced corpus never loads as complete.
+    let files = match fs::read_dir(&case_dir) {
+        Ok(entries) => evidence_promotion_case_files(
+            entries.map(|entry| entry.map(|entry| entry.path())),
+            &case_dir,
+        )?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(corpus_value),
+        Err(err) => {
+            return Err(format!(
+                "failed to read {}: {err}",
+                normalize_path(&case_dir)
+            ));
+        }
+    };
+    let Some(cases) = corpus_value.get_mut("cases").and_then(Value::as_array_mut) else {
+        return Ok(corpus_value);
+    };
+    let mut ids: BTreeSet<String> = cases
+        .iter()
+        .filter_map(|case| case.get("id").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    for file in files {
+        let text = read_text_lossy(&file)?;
+        let case = parse_json_rejecting_duplicate_keys(&text)
+            .map_err(|err| format!("failed to parse {}: {err}", normalize_path(&file)))?;
+        let Some(id) = case.get("id").and_then(Value::as_str) else {
+            return Err(format!(
+                "{} must hold one case object with an `id`",
+                normalize_path(&file)
+            ));
+        };
+        if !ids.insert(id.to_string()) {
+            return Err(format!("{} repeats case id `{id}`", normalize_path(&file)));
+        }
+        cases.push(case);
+    }
+    Ok(corpus_value)
+}
+
 fn load_evidence_promotion_pinned_external_cases(
     corpus_path: &Path,
     options: &EvidencePromotionHonestyOptions,
 ) -> Result<Vec<EvidencePromotionExternalCase>, String> {
-    let corpus_text = read_text_lossy(corpus_path)?;
-    let corpus_value: Value = parse_json_rejecting_duplicate_keys(&corpus_text)
-        .map_err(|err| format!("failed to parse {}: {err}", normalize_path(corpus_path)))?;
+    let corpus_value = read_evidence_promotion_corpus(corpus_path)?;
     let Some(cases) = corpus_value.get("cases").and_then(Value::as_array) else {
         return Err(format!(
             "{} has no `cases` array",
@@ -3018,10 +3092,17 @@ pub(crate) fn evidence_promotion_human_oracle_line_matches(
     let normalized = line.trim().to_ascii_lowercase();
 
     if let Some(related_test) = normalized.strip_prefix("- related test ") {
-        let projection = format!(
-            "{expected_strength} {} oracle:",
-            expected_kind.replace('_', " ")
-        );
+        // A multi-word kind that already leads with the strength word is not
+        // doubled: `smoke_only`/`smoke` reads "smoke only oracle" (#8711).
+        let kind_label = expected_kind.replace('_', " ");
+        let projection = if kind_label
+            .split_once(' ')
+            .is_some_and(|(lead, _)| lead == expected_strength)
+        {
+            format!("{kind_label} oracle:")
+        } else {
+            format!("{expected_strength} {kind_label} oracle:")
+        };
         for (separator, _) in related_test.match_indices(" uses ") {
             let Some((location, test_name)) = related_test[..separator].rsplit_once(' ') else {
                 continue;
@@ -3037,7 +3118,29 @@ pub(crate) fn evidence_promotion_human_oracle_line_matches(
             {
                 continue;
             }
-            return related_test[separator + " uses ".len()..].starts_with(projection.as_str());
+            let phrase = &related_test[separator + " uses ".len()..];
+            // A row ungraded against the probe reads "<kind> oracle, not
+            // graded against this probe" (an unclassified kind reads "an
+            // unclassified oracle") (#8388).
+            let ungraded = if expected_kind == "unknown" {
+                "an unclassified oracle, not graded against this probe:".to_string()
+            } else {
+                format!(
+                    "{} oracle, not graded against this probe:",
+                    expected_kind.replace('_', " ")
+                )
+            };
+            // A row with no oracle reads "no oracle" (#8747).
+            let absent = phrase
+                .strip_prefix("no oracle")
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with([';', ':', ',']));
+            return if expected_strength == "none" {
+                expected_kind == "unknown" && absent
+            } else if expected_strength == "unknown" {
+                phrase.starts_with(ungraded.as_str())
+            } else {
+                phrase.starts_with(projection.as_str())
+            };
         }
         return false;
     }
@@ -3609,9 +3712,7 @@ pub(crate) fn write_evidence_promotion_external_report(
 fn load_evidence_promotion_corpus_case_metadata(
     corpus_path: &Path,
 ) -> Result<Vec<EvidencePromotionCorpusCaseMeta>, String> {
-    let corpus_text = read_text_lossy(corpus_path)?;
-    let corpus_value: Value = parse_json_rejecting_duplicate_keys(&corpus_text)
-        .map_err(|err| format!("failed to parse {}: {err}", normalize_path(corpus_path)))?;
+    let corpus_value = read_evidence_promotion_corpus(corpus_path)?;
     let Some(cases) = corpus_value.get("cases").and_then(Value::as_array) else {
         return Err(format!(
             "{} has no `cases` array",
@@ -3977,8 +4078,8 @@ pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), St
              3. If a scope-guard case lost report-level scope fields, restore the \
                golden's schema_version/tool/mode/root/base header or remove the scope \
                guard only after updating the governing spec.\n\
-             4. To register a new fake-clean, add a `must_not_promote` assertion to \
-               fixtures/evidence-promotion-honesty-corpus/corpus.json.\n",
+             4. To register a new fake-clean, add a case file with a `must_not_promote` assertion as \
+               fixtures/evidence-promotion-honesty-corpus/cases/<id>.json.\n",
         );
     }
     body.push_str(&format!("\n## Detail\n\n{report}\n\n"));
@@ -4309,9 +4410,7 @@ pub(crate) fn validate_evidence_promotion_honesty_corpus_at(
         return Ok(());
     }
 
-    let corpus_text = read_text_lossy(corpus_path)?;
-    let corpus_value: Value = parse_json_rejecting_duplicate_keys(&corpus_text)
-        .map_err(|err| format!("failed to parse {}: {err}", normalize_path(corpus_path)))?;
+    let corpus_value = read_evidence_promotion_corpus(corpus_path)?;
 
     let Some(cases) = corpus_value.get("cases").and_then(Value::as_array) else {
         violations.push(format!(
@@ -5102,9 +5201,165 @@ mod harness_limitation_assertion_tests {
         assert!(evidence_promotion_case_is_diff_sourced(Some(
             "fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff"
         )));
-        assert!(!evidence_promotion_case_is_diff_sourced(None));
-        assert!(!evidence_promotion_case_is_diff_sourced(Some(
-            "fixtures/split_test_boundary_oracle"
+        // The extension branch never touches the filesystem, so a path that
+        // does not exist is still diff-sourced when it names a `.patch` file
+        // and is not when it names a plain, missing directory.
+        assert!(evidence_promotion_case_is_diff_sourced(Some(
+            "does-not-need-to-exist.patch"
         )));
+        // An absolute path keeps the negative control independent of the cwd:
+        // a relative name could resolve to a `diff.patch` under the ambient cwd.
+        let missing_dir = std::env::temp_dir().join("ripr-8657-no-such-plain-dir");
+        assert!(!missing_dir.exists());
+        assert!(!evidence_promotion_case_is_diff_sourced(
+            missing_dir.to_str()
+        ));
+        assert!(!evidence_promotion_case_is_diff_sourced(None));
+        // Absolute paths: the check reads the filesystem, and other xtask
+        // tests move the process cwd to the repo root. A relative
+        // `fixtures/split_test_boundary_oracle` flipped to diff-sourced
+        // (it carries a `diff.patch`) whenever one of them ran concurrently.
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let diff_fixture = manifest_dir
+            .parent()
+            .unwrap_or(manifest_dir)
+            .join("fixtures/split_test_boundary_oracle");
+        assert!(diff_fixture.join("diff.patch").exists());
+        assert!(evidence_promotion_case_is_diff_sourced(
+            diff_fixture.to_str()
+        ));
+        assert!(!manifest_dir.join("diff.patch").exists());
+        assert!(!evidence_promotion_case_is_diff_sourced(
+            manifest_dir.to_str()
+        ));
+    }
+}
+
+#[cfg(test)]
+mod case_file_tests {
+    use super::*;
+    use crate::tests::{temp_dir, write};
+
+    const SPLIT_EXTERNAL_CASE: &str = r#"{
+  "id": "split_external",
+  "language": "rust",
+  "tier": "pinned_external",
+  "external_repo": "https://example.invalid/repo.git",
+  "external_commit": "0123456789012345678901234567890123456789",
+  "external_patch": "patches/x.diff",
+  "external_command": "ripr check --diff patches/x.diff",
+  "runtime_budget_seconds": 60,
+  "artifact_budget_bytes": 1000,
+  "assertions": [{"type": "must_not_promote"}]
+}"#;
+
+    fn corpus_with_split_case() -> PathBuf {
+        let dir = temp_dir("promotion-split-consumers");
+        let corpus = dir.join("corpus.json");
+        write(
+            &corpus,
+            r#"{"schema_version":"0.1","kind":"evidence_promotion_honesty_corpus","spec":"RIPR-SPEC-0108","description":"d","cases":[]}"#,
+        );
+        write(&dir.join("cases/split_external.json"), SPLIT_EXTERNAL_CASE);
+        corpus
+    }
+
+    #[test]
+    fn a_split_case_reaches_the_summary_metadata_and_pinned_external_selection()
+    -> Result<(), String> {
+        let corpus = corpus_with_split_case();
+
+        let meta = load_evidence_promotion_corpus_case_metadata(&corpus)?;
+        assert_eq!(meta.len(), 1);
+        assert_eq!(meta[0].id, "split_external");
+        assert_eq!(meta[0].tier, "pinned_external");
+
+        let external = load_evidence_promotion_pinned_external_cases(
+            &corpus,
+            &EvidencePromotionHonestyOptions::default(),
+        )?;
+        assert_eq!(external.len(), 1);
+        assert_eq!(external[0].id, "split_external");
+        Ok(())
+    }
+
+    #[test]
+    fn the_validator_checks_a_split_case_like_an_inline_one() -> Result<(), String> {
+        let corpus = corpus_with_split_case();
+        write(
+            &corpus.with_file_name("cases/split_bad_tier.json"),
+            r#"{"id":"split_bad_tier","language":"rust","tier":"not_a_tier","assertions":[{"type":"must_not_promote"}]}"#,
+        );
+
+        let mut violations = Vec::new();
+        validate_evidence_promotion_honesty_corpus_at(&corpus, &mut violations)?;
+
+        assert!(
+            violations.iter().any(|v| v.contains("split_bad_tier")),
+            "a split case with an invalid tier went unflagged: {violations:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_unreadable_case_file_fails_every_consumer() -> Result<(), String> {
+        let corpus = corpus_with_split_case();
+        write(&corpus.with_file_name("cases/broken.json"), "{ not json");
+
+        let mut violations = Vec::new();
+        assert!(validate_evidence_promotion_honesty_corpus_at(&corpus, &mut violations).is_err());
+        assert!(load_evidence_promotion_corpus_case_metadata(&corpus).is_err());
+        assert!(
+            load_evidence_promotion_pinned_external_cases(
+                &corpus,
+                &EvidencePromotionHonestyOptions::default()
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_case_directory_that_is_not_a_directory_is_an_error_not_an_absent_one() -> Result<(), String>
+    {
+        let dir = temp_dir("promotion-case-dir-is-a-file");
+        let corpus = dir.join("corpus.json");
+        write(&corpus, r#"{"cases":[]}"#);
+        write(&dir.join("cases"), "a file where the directory belongs");
+
+        let error = read_evidence_promotion_corpus(&corpus)
+            .err()
+            .ok_or("a cases path that is a file loaded as an absent directory")?;
+
+        assert!(error.contains("failed to read"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn an_enumeration_error_is_not_a_missing_file() -> Result<(), String> {
+        let dir = Path::new("cases");
+        let entries = vec![
+            Ok(PathBuf::from("cases/b.json")),
+            Err(std::io::Error::from_raw_os_error(5)),
+            Ok(PathBuf::from("cases/a.json")),
+        ];
+        let error = evidence_promotion_case_files(entries, dir)
+            .err()
+            .ok_or("an entry that failed to enumerate was dropped")?;
+        assert!(error.contains("failed to list cases"), "{error}");
+
+        let sorted = evidence_promotion_case_files(
+            vec![
+                Ok(PathBuf::from("cases/b.json")),
+                Ok(PathBuf::from("cases/readme.md")),
+                Ok(PathBuf::from("cases/a.json")),
+            ],
+            dir,
+        )?;
+        assert_eq!(
+            sorted,
+            vec![PathBuf::from("cases/a.json"), PathBuf::from("cases/b.json")]
+        );
+        Ok(())
     }
 }

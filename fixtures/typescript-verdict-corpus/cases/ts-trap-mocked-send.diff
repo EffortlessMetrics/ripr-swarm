@@ -1,0 +1,12 @@
+diff --git a/src/core.ts b/src/core.ts
+--- a/src/core.ts
++++ b/src/core.ts
+@@ -83,7 +83,7 @@
+ }
+ 
+ export function mockedSend(orderId: number, sender: { send: (value: number) => void }): void {
+-  sender.send(orderId * 2);
++  sender.send(2 * orderId);
+ }
+ 
+ export function mockedSendArgs(orderId: number, sender: { send: (value: number) => void }): void {

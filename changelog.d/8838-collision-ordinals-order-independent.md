@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Rust diff findings whose expressions share an eight-hex ID fingerprint at one owner now take their `.2`, `.3` suffixes by a full payload digest instead of diff order, so each expression keeps the same ID whichever the diff lists first; IDs for non-colliding findings and for repeated identical lines are unchanged. A lone changed expression that collides with an earlier expression outside the run is not covered (#8838).

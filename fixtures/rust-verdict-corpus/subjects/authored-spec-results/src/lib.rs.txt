@@ -1,0 +1,155 @@
+//! Result-returning owners, each with one isolated test, for the RIPR-SPEC-0106
+//! unwrap_err variant binding and the RIPR-SPEC-0175 guarded Result matches.
+
+use std::error::Error;
+use std::fmt;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum CalcError {
+    Negative,
+    Overflow,
+}
+
+/// Floor of the square root; negative input is its own error.
+pub fn root_floor(x: i64) -> Result<i64, CalcError> {
+    if x < 0 {
+        return Err(CalcError::Negative);
+    }
+    let mut r = 0i64;
+    while (r + 1) * (r + 1) <= x {
+        r += 1;
+    }
+    Ok(r)
+}
+
+#[derive(Debug)]
+pub enum ParseError {
+    InvalidData,
+    Truncated,
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl Error for ParseError {}
+
+pub struct Response {
+    pub id: u8,
+    pub len: usize,
+}
+
+/// Reads a response frame: the first byte must be the expected id.
+pub fn expect_response(frame: &[u8], id: u8) -> Result<Response, Box<dyn Error>> {
+    if frame.is_empty() {
+        return Err(Box::new(ParseError::Truncated));
+    }
+    if frame[0] != id {
+        return Err(ParseError::InvalidData.into());
+    }
+    Ok(Response { id, len: frame.len() - 1 })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum StatusError {
+    Empty,
+    Reserved,
+}
+
+/// Reads the status byte of a frame; an empty frame has none.
+pub fn read_status(frame: &[u8]) -> Result<u8, StatusError> {
+    if frame.is_empty() {
+        return Err(StatusError::Empty);
+    }
+    if frame[0] == 0xff {
+        return Err(StatusError::Reserved);
+    }
+    Ok(frame[0])
+}
+
+/// Sums two vote counts, refusing a total over one hundred.
+pub fn tally_pinned(a: u8, b: u8) -> Result<u8, ParseError> {
+    let total = a + b;
+    if total > 100 {
+        return Err(ParseError::InvalidData);
+    }
+    Ok(total)
+}
+
+/// Same sum as `tally_pinned`, observed by a different test.
+pub fn tally_ignored(a: u8, b: u8) -> Result<u8, ParseError> {
+    let sum = a + b;
+    if sum > 100 {
+        return Err(ParseError::InvalidData);
+    }
+    Ok(sum)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    macro_rules! bail {
+        ($($arg:tt)*) => {
+            panic!($($arg)*)
+        };
+    }
+
+    #[test]
+    fn negative_root_is_the_negative_error() {
+        let err = root_floor(-4).unwrap_err();
+        assert_eq!(err, CalcError::Negative);
+    }
+
+    #[test]
+    fn mismatched_id_is_invalid_data() {
+        match expect_response(&[9, 1, 2], 7) {
+            Ok(response) => {
+                assert_eq!(response.id, 7);
+                assert_eq!(response.len, 2);
+            }
+            Err(error) => {
+                if !matches!(
+                    error.downcast_ref::<ParseError>(),
+                    Some(ParseError::InvalidData)
+                ) {
+                    panic!("unexpected error variant: {error}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn empty_frame_routes_to_empty() {
+        match read_status(&[]) {
+            Err(error) if error == StatusError::Empty => {}
+            result => bail!("unexpected result: {result:?}"),
+        }
+    }
+
+    #[test]
+    fn tally_adds_the_counts() {
+        match tally_pinned(1, 2) {
+            Ok(v) => assert_eq!(v, 3),
+            Err(error) => {
+                if !matches!(error, ParseError::InvalidData) {
+                    panic!("unexpected error variant: {error}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tally_runs_without_error() {
+        match tally_ignored(1, 2) {
+            Ok(_) => {}
+            Err(error) => {
+                if !matches!(error, ParseError::InvalidData) {
+                    panic!("unexpected error variant: {error}");
+                }
+            }
+        }
+    }
+}

@@ -20,6 +20,7 @@ import {
   stringValues,
   rootMatchesWorkspace,
   hasUnsafeShellMetacharacter,
+  isWindowsHost,
   redirectStaysInWorkspace,
   TEST_RUNNER_VERIFY_COMMAND_PREFIXES,
   testRunnerCommandLeavesScope
@@ -408,11 +409,20 @@ const FIRST_PR_PACKET_SELECTED_STATES = new Set([
 ]);
 
 export function firstPrCommandIsSafe(command: string, redirectRoots: readonly string[]): boolean {
-  const normalized = command.trim().replace(/\s+/g, ' ');
+  const windowsQuoting = isWindowsHost();
+  if (hasUnsafeShellMetacharacter(command, windowsQuoting)) {
+    return false;
+  }
+  // The admitted grammar has only single-quoted spans (and, on Windows, the
+  // server's console double-quoted spans). Preserve their bytes for redirect
+  // containment; normalize whitespace only between tokens.
+  const spans = windowsQuoting ? /'[^']*'|"(?:[^"]|"")*"|\s+/g : /'[^']*'|\s+/g;
+  const normalized = command.trim().replace(spans, (span) =>
+    span.startsWith("'") || span.startsWith('"') ? span : ' '
+  );
   return normalized !== ''
-    && !hasUnsafeShellMetacharacter(normalized)
     && !testRunnerCommandLeavesScope(normalized)
-    && redirectStaysInWorkspace(normalized, redirectRoots)
+    && redirectStaysInWorkspace(normalized, redirectRoots, windowsQuoting)
     && FIRST_PR_SAFE_COMMAND_PREFIXES.some((prefix) =>
       normalized === prefix || normalized.startsWith(`${prefix} `)
     );

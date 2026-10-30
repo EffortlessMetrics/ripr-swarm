@@ -1,0 +1,61 @@
+{
+  "id": "typescript_exported_expect_lookalike",
+  "language": "typescript",
+  "tier": "pure",
+  "source_fixture": "fixtures/typescript_exported_expect_lookalike",
+  "vector": "exported_local_expect_declarations_cannot_impersonate_the_runner_global",
+  "probe_family": "return_value",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "expected_oracle",
+      "kind": "unknown",
+      "strength": "unknown"
+    },
+    {
+      "type": "expected_related_test",
+      "name": "price",
+      "file": "tests/const.test.js",
+      "line": 3,
+      "kind": "unknown",
+      "strength": "unknown"
+    },
+    {
+      "type": "expected_related_test",
+      "name": "price",
+      "file": "tests/function.test.ts",
+      "line": 3,
+      "kind": "unknown",
+      "strength": "unknown"
+    },
+    {
+      "type": "expected_related_test",
+      "name": "price",
+      "file": "tests/default.test.ts",
+      "line": 3,
+      "kind": "unknown",
+      "strength": "unknown"
+    },
+    {
+      "type": "expected_related_test",
+      "name": "price",
+      "file": "tests/destructured.test.ts",
+      "line": 3,
+      "kind": "unknown",
+      "strength": "unknown"
+    }
+  ]
+}

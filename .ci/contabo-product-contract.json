@@ -1,0 +1,34 @@
+{
+  "schema": "ripr-swarm-product-members/v1",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "command_owner": ".github/workflows/rust-gates.yml",
+  "command_receipt": "target/ripr/contabo/commands.json",
+  "retention_days": 14,
+  "bounds": {"max_members_including_context": 512, "max_expanded_bytes_including_context": 8589934592, "max_member_bytes": 134217728},
+  "required_on_complete_success": [
+    {"producer": "Agent skill contracts", "producer_source": "tools/repo-policy/src/identity.rs", "members": [{"path": "target/ripr/reports/policy-preflight.json", "allow_empty": false}]},
+    {"producer": "Repository policy preflight", "producer_source": "xtask/src/precommit_v2.rs", "members": [{"path": "target/ripr/reports/ci-policy.json", "allow_empty": false}, {"path": "target/ripr/reports/ci-policy.md", "allow_empty": false}]},
+    {"producer": "Required Rust tests", "producer_source": ".github/workflows/rust-gates.yml", "members": [{"path": "target/nextest/ci/junit.xml", "allow_empty": false}, {"path": "target/nextest/ci/run-context.txt", "allow_empty": false}]},
+    {"producer": "PR evidence: ripr-pr", "producer_source": "xtask/src/reports/pr_evidence.rs", "members": [{"path": "target/ripr/pr/check.json", "allow_empty": false}, {"path": "target/ripr/pr/repo-exposure.json", "allow_empty": false}, {"path": "target/ripr/pr/repo-exposure.md", "allow_empty": false}, {"path": "target/ripr/pr/pr.diff", "allow_empty": true}]},
+    {"producer": "PR evidence: canonical delta", "producer_source": "xtask/src/reports/pr_causal_delta.rs", "members": [{"path": "target/ripr/pr/canonical-delta.json", "allow_empty": false}]},
+    {"producer": "PR evidence: review comments", "producer_source": "xtask/src/reports/review_comments.rs", "members": [{"path": "target/ripr/review/comments.json", "allow_empty": false}, {"path": "target/ripr/review/comments.md", "allow_empty": false}, {"path": "target/ripr/review/run-receipt.json", "allow_empty": false}]},
+    {"producer": "PR evidence: impacted evidence", "producer_source": "crates/ripr/src/app/impacted_evidence.rs", "members": [{"path": "target/xtask/impacted-evidence/latest.json", "allow_empty": false}, {"path": "target/xtask/impacted-evidence/latest.md", "allow_empty": false}]},
+    {"producer": "PR evidence: summary", "producer_source": "xtask/src/reports/pr_evidence_summary.rs", "members": [{"path": "target/ripr/pr/summary.md", "allow_empty": false}, {"path": "target/ripr/reports/pr-evidence-summary.json", "allow_empty": false}, {"path": "target/ripr/reports/pr-evidence-summary.md", "allow_empty": false}]},
+    {"producer": "PR evidence: annotations", "producer_source": "xtask/src/reports/annotations.rs", "members": [{"path": "target/ripr/review/annotations.txt", "allow_empty": true}]}
+  ],
+  "retain_if_produced": [
+    "target/ripr/reports/evidence-promotion-honesty.md",
+    "target/ripr/reports/goldens.md",
+    "target/ripr/reports/golden-drift.json",
+    "target/ripr/reports/golden-drift.md",
+    "target/ripr/reports/fixtures.md"
+  ],
+  "selected_corpus_reports": {"root": "target/ripr/reports/verdict-corpus", "filenames": ["report.json", "report.md"], "selection": "derive from actual verdict-corpus check-all source inventory; not a frozen language list"},
+  "producer_owned_supplemental_sets": [
+    {"owner": ".github/workflows/rust-gates.yml", "step": "Upload required Rust test results", "selection": "derive the bounded path list from this exact owner blob; core JUnit/context members are already mandatory", "proposition": "retain fresh applicable test diagnostics only after sanitization; not proof success"},
+    {"owner": ".github/workflows/rust-gates.yml", "step": "Retain wildcard calibration producer outputs", "selection": "derive bounded calibration paths from this exact owner blob when Golden output contracts entered", "proposition": "retain actual comparison outputs without normalization or re-blessing; partial failure never proves all calibration subjects completed"}
+  ],
+  "partial_attempt": "retain only fresh declared files actually produced; original product/native failure remains authoritative; later commands are not_executed; cancellation or timeout may have no terminal command receipt",
+  "excluded": ["Cargo binaries and build cache", "target/ripr/cache", "credentials or complete host environments", "Perl canonical RIPR+ and quality-gate packet", "unsafe-review nonfatal failure-diagnostics packet"],
+  "central_obligation": "central owner supplies fresh bounded no-follow packaging, native artifact/run/attempt/source authentication, mandatory import and result custody; this declaration is not an enabled transport or qualification result"
+}

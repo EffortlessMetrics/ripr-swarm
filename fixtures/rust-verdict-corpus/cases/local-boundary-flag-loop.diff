@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 7642ecc..c7016b5 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -27,7 +27,7 @@ pub fn tier_shadowed(bytes: u64, si: bool) -> &'static str {
+ pub fn tier_loop(bytes: u64, si: bool) -> &'static str {
+     for si in [false] {
+         let unit = if si { KIB } else { KB };
+-        if bytes >= unit {
++        if unit <= bytes {
+             return "unit";
+         }
+     }

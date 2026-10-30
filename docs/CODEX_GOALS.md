@@ -14,7 +14,7 @@ campaign that may create many scoped PRs, blocked reports, receipts, and
 planning updates until the campaign end state is met.
 
 For the agent-neutral repository tracking model (proposals, specs, ADRs,
-campaigns, work items, the active goal manifest, and handoffs) that any
+campaigns, work items, the retired active goal manifest, and handoffs) that any
 runner — Codex, Kiro, Claude Code, Cursor, or a generic agent — consumes,
 see [Repo tracking model](REPO_TRACKING_MODEL.md).
 

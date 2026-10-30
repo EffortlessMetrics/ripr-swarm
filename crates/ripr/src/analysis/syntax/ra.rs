@@ -5,10 +5,15 @@ use ra_ap_syntax::{
     AstNode, SourceFile, TextSize,
     ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
+mod closure_callbacks;
 #[cfg(test)]
 mod module_scope_walk_tests;
 mod probe_shapes;
 mod property_macros;
+pub(crate) use closure_callbacks::{
+    InvokedCallbackParam, closure_argument_positions, invoked_callback_params, macro_call_columns,
+    passes_call_making_closure,
+};
 use probe_shapes::extract_parser_probe_shapes;
 #[cfg(test)]
 mod probe_shape_walk_tests;
@@ -18,7 +23,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::super::extract::ShadowAuthority;
+use super::super::extract::arrow_row_oracles_for_fn;
 use super::super::extract::extract_pattern_words;
+use super::super::extract::retain_reached_oracles;
 use super::super::facts::FileFacts;
 use super::super::facts::FunctionContainer;
 use super::super::facts::FunctionImplContext;
@@ -34,11 +41,11 @@ use super::{
     rust_nesting_refusal,
 };
 use crate::analysis::rust_index::{
-    FunctionFact, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
-    classify_assertion, err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
-    extract_line_scanned_oracles, extract_literal_facts, extract_return_facts,
-    guarded_result_match_scan_with_shadow_authority, is_unwrap_err_bound_error_assertion,
-    unwrap_err_bound_variables,
+    FunctionFact, LazyDecls, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
+    classify_assertion_with, err_return_guard_oracles, extract_call_facts,
+    extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
+    extract_return_facts, guarded_result_match_scan_with_shadow_authority,
+    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -147,8 +154,13 @@ fn parser_oracles_for_function_uncached(
         .find_map(ast::Fn::cast)?;
     let line_index = LineIndex::new(function_text);
     // The re-parse holds only this function, so no file scope is visible.
-    let mut oracles =
-        extract_parser_oracles(&function, function_text, &line_index, DropInScope::Unknown);
+    let mut oracles = extract_parser_oracles(
+        &function,
+        function_text,
+        &line_index,
+        DropInScope::Unknown,
+        &LazyDecls::new(function_text),
+    );
     let line_offset = function_start_line.saturating_sub(1);
     for oracle in &mut oracles {
         oracle.line += line_offset;
@@ -158,8 +170,8 @@ fn parser_oracles_for_function_uncached(
 
 /// Module scope of a file's functions, keyed by (fn-token line, name) as
 /// function and test facts record them.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(into = "ModuleItemScopesWire", from = "ModuleItemScopesWire")]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(from = "ModuleItemScopesWire")]
 pub(crate) struct ModuleItemScopes {
     /// Every fn that is a direct item of the file or of an inline
     /// `mod name { .. }`, mapped to the line span of its innermost inline
@@ -215,6 +227,10 @@ enum FnItemScope {
     },
 }
 
+/// Reference encoder for the differential test: serde's `into` clones the
+/// whole table, so the cache bytes come from the borrowing [`Serialize`] impl
+/// below.
+#[cfg(test)]
 impl From<ModuleItemScopes> for ModuleItemScopesWire {
     fn from(scopes: ModuleItemScopes) -> Self {
         let mut keys: BTreeSet<(usize, String)> = BTreeSet::new();
@@ -245,6 +261,55 @@ impl From<ModuleItemScopes> for ModuleItemScopesWire {
             })
             .collect();
         Self { fns }
+    }
+}
+
+/// Borrowing twin of [`FnScopeWire`]; the field order is the wire format.
+#[derive(serde::Serialize)]
+struct FnScopeWireRef<'a> {
+    line: usize,
+    name: &'a str,
+    item: FnItemScope,
+    local_use: bool,
+    deferred_code: bool,
+    cfg: bool,
+    direct_calls: Option<&'a BTreeSet<String>>,
+    bound_names: Option<&'a BTreeSet<String>>,
+}
+
+impl serde::Serialize for ModuleItemScopes {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut keys: BTreeSet<&(usize, String)> = BTreeSet::new();
+        keys.extend(self.item_fns.keys());
+        keys.extend(self.fns_with_local_use.iter());
+        keys.extend(self.fns_with_deferred_code.iter());
+        keys.extend(self.direct_calls.keys());
+        keys.extend(self.fns_with_cfg.iter());
+        keys.extend(self.bound_names.keys());
+        let fns: Vec<FnScopeWireRef<'_>> = keys
+            .into_iter()
+            .map(|key| FnScopeWireRef {
+                line: key.0,
+                name: &key.1,
+                item: match self.item_fns.get(key) {
+                    None => FnItemScope::NotItem,
+                    Some(None) => FnItemScope::TopLevel,
+                    Some(Some((start, end))) => FnItemScope::Module {
+                        start: *start,
+                        end: *end,
+                    },
+                },
+                local_use: self.fns_with_local_use.contains(key),
+                deferred_code: self.fns_with_deferred_code.contains(key),
+                cfg: self.fns_with_cfg.contains(key),
+                direct_calls: self.direct_calls.get(key),
+                bound_names: self.bound_names.get(key),
+            })
+            .collect();
+        let mut state = serializer.serialize_struct("ModuleItemScopesWire", 1)?;
+        state.serialize_field("fns", &fns)?;
+        state.end()
     }
 }
 
@@ -537,6 +602,9 @@ fn summarize_file_with_collectors(
 
     let source = parse.tree();
     let line_index = LineIndex::new(text);
+    // Built on the first assertion that needs it, then shared by the file:
+    // rebuilding per function masks the whole file again.
+    let file_decls = LazyDecls::new(text);
     // #5415 step 2: one allocation for the file; bodies and shape snippets
     // below share spans of it instead of copying substrings.
     let shared_source: Arc<str> = Arc::from(text);
@@ -642,12 +710,17 @@ fn summarize_file_with_collectors(
                     &body,
                 ),
                 calls,
-                assertions: extract_parser_oracles(
-                    &function,
-                    text,
-                    &line_index,
-                    DropInScope::WholeFile,
-                ),
+                assertions: {
+                    let mut assertions = extract_parser_oracles(
+                        &function,
+                        text,
+                        &line_index,
+                        DropInScope::WholeFile,
+                        &file_decls,
+                    );
+                    assertions.extend(arrow_row_oracles_for_fn(&attrs, &function, start_line));
+                    assertions
+                },
                 literals,
                 attrs,
                 nested_fn_names,
@@ -755,11 +828,70 @@ fn module_declaration_facts(
             requires_test: cfg_predicates::attributes_require_test(
                 attributes.iter().map(String::as_str),
             ),
+            cfg_guard: simple_cfg_guard(&attributes),
         });
     }
     declarations.sort_by(|left, right| left.line.cmp(&right.line).then(left.name.cmp(&right.name)));
     declarations.dedup();
     declarations
+}
+
+/// Returns `(X, negated)` when the attributes contain exactly one cfg-like
+/// attribute and it is `#[cfg(X)]` or `#[cfg(not(X))]` with `X` a bare
+/// identifier or `ident = "literal"`. Anything else (`cfg_attr`, compound
+/// predicates, several cfg attributes) returns `None` so exclusivity is never
+/// inferred from a shape this function does not fully understand.
+fn simple_cfg_guard(attributes: &[String]) -> Option<(String, bool)> {
+    let compact = |attribute: &String| -> String {
+        let mut out = String::new();
+        let mut in_string = false;
+        for ch in attribute.chars() {
+            if ch == '"' {
+                in_string = !in_string;
+            }
+            if in_string || !ch.is_whitespace() {
+                out.push(ch);
+            }
+        }
+        out
+    };
+    let mut cfgs = attributes.iter().map(compact).filter(|text| {
+        text.starts_with("#[cfg") || text.starts_with("#![cfg") || text.contains("cfg_attr")
+    });
+    let only = cfgs.next()?;
+    // An escape could hide a quote from the whitespace normalizer above;
+    // fail closed on any backslash in a cfg-like attribute.
+    if only.contains('\\') {
+        return None;
+    }
+    if cfgs.next().is_some() {
+        return None;
+    }
+    let body = only.strip_prefix("#[cfg(")?.strip_suffix(")]")?;
+    let (predicate, negated) = match body.strip_prefix("not(") {
+        Some(inner) => (inner.strip_suffix(')')?, true),
+        None => (body, false),
+    };
+    // Punctuation inside a quoted `name = "value"` literal is data, not a
+    // Boolean operator; a bare predicate must be a plain identifier. Any
+    // escape or inner quote in the literal fails closed.
+    let simple = match predicate.split_once('=') {
+        Some((name, value)) => {
+            !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && value.len() >= 2
+                && value.starts_with('"')
+                && value.ends_with('"')
+                && !value[1..value.len() - 1].contains(['"', '\\'])
+        }
+        None => {
+            !predicate.is_empty()
+                && predicate
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+    };
+    simple.then(|| (predicate.to_string(), negated))
 }
 
 /// Collects the parser-backed test-body shadow facts for one function
@@ -1087,8 +1219,14 @@ fn disambiguate_duplicate_symbol_ids(functions: &mut [FunctionFact]) {
     }
 }
 
-fn has_test_attribute(function: &ast::Fn) -> bool {
+/// Whether a function carries a test-framework attribute (`#[test]`,
+/// `#[tokio::test]`, `#[async_std::test]`, `#[rstest]`). Parser-backed, so
+/// commented-out or string-embedded lookalikes never count.
+pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
+        if cfg_predicates::attribute_introduces_only_test(&attr.syntax().text().to_string()) {
+            return true;
+        }
         let compact = attr
             .syntax()
             .text()
@@ -1573,6 +1711,34 @@ fn match_arm_probe_text(text: &str, start: TextSize, arrow_start: TextSize) -> S
     let pattern = raw.trim();
     let head = format!("{pattern} =>");
     normalize_probe_shape_text(&head)
+}
+
+/// Complete source ranges of actual match arms, keyed by their existing
+/// `=>` token identity. Geometry is independent of probe anchors and text.
+/// The range starts at the pattern and includes a trailing arm comma.
+/// Invalid/over-budget source and macro token-tree arrows supply no range.
+pub(crate) fn match_arm_source_ranges(text: &str) -> BTreeMap<usize, (usize, usize)> {
+    let Some(parse) = parse_clean_source_file(text) else {
+        return BTreeMap::new();
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MatchArm::cast)
+        .filter_map(|arm| {
+            let arrow = arm.fat_arrow_token()?;
+            let pattern = arm.pat()?;
+            arm.expr()?;
+            Some((
+                usize::from(arrow.text_range().start()),
+                (
+                    usize::from(pattern.syntax().text_range().start()),
+                    usize::from(arm.syntax().text_range().end()),
+                ),
+            ))
+        })
+        .collect()
 }
 
 fn normalize_probe_shape_text(text: &str) -> String {
@@ -2191,6 +2357,7 @@ fn extract_parser_oracles(
     text: &str,
     line_index: &LineIndex,
     drop_in_scope: DropInScope,
+    decls: &LazyDecls,
 ) -> Vec<OracleFact> {
     // RIPR-SPEC-0106 (Part A): pre-scan the function body for `unwrap_err`/
     // `expect_err` variable bindings so assertions on those variables can be
@@ -2218,7 +2385,7 @@ fn extract_parser_oracles(
         }
         let range = macro_call.syntax().text_range();
         let assertion_text = slice_macro_call_text(text, range.start(), range.end());
-        let mut classification = classify_assertion(&assertion_text);
+        let mut classification = classify_assertion_with(&assertion_text, decls.get());
         // Upgrade exact assertions on unwrap_err-bound variables to
         // ExactErrorVariant when the assertion pins a specific error result
         // (RIPR-SPEC-0106, Part A). Constructor-payload equality reaches this
@@ -2311,8 +2478,10 @@ fn extract_parser_oracles(
     // sees. Its whole expression is the oracle, graded `snapshot` / medium
     // (RIPR-SPEC-0231 step 6); the line scan below must
     // not also read the `.assert_debug_eq(..)` continuation of a multi-line
-    // expectation as an assertion of its own.
-    let mut expect_test_lines = Vec::new();
+    // expectation as an assertion of its own. #7911: drop only that
+    // continuation (or a duplicate of the comparison), not a sibling
+    // oracle that shares a line.
+    let mut expect_test_comparisons = Vec::new();
     for method_call in function
         .syntax()
         .descendants()
@@ -2347,7 +2516,7 @@ fn extract_parser_oracles(
         // call split across lines). That grade is a ceiling: a weaker
         // reading of the compared value (a tautology, a broad `is_err()`)
         // is kept, as the line scan keeps it.
-        let classification = classify_assertion(&assertion_text);
+        let classification = classify_assertion_with(&assertion_text, decls.get());
         let (kind, strength) = if matches!(
             classification.strength,
             OracleStrength::Weak | OracleStrength::Smoke | OracleStrength::None
@@ -2357,7 +2526,10 @@ fn extract_parser_oracles(
             (OracleKind::Snapshot, OracleStrength::Medium)
         };
         let line = line_index.line(range.start());
-        expect_test_lines.push(line..=line_index.line_for_range_end(range.end()));
+        expect_test_comparisons.push((
+            line..=line_index.line_for_range_end(range.end()),
+            assertion_text.clone(),
+        ));
         assertions.push(OracleFact {
             line,
             kind,
@@ -2407,9 +2579,10 @@ fn extract_parser_oracles(
         .into_iter()
         .filter(|oracle| !guarded_matches.match_start_lines.contains(&oracle.line))
         .filter(|oracle| {
-            !expect_test_lines
-                .iter()
-                .any(|lines| lines.contains(&oracle.line))
+            !expect_test_comparisons.iter().any(|(lines, comparison)| {
+                lines.contains(&oracle.line)
+                    && is_expect_test_continuation(&oracle.text, comparison)
+            })
         })
     {
         assertions.push(oracle);
@@ -2417,10 +2590,34 @@ fn extract_parser_oracles(
     for oracle in guarded_matches.oracles {
         assertions.push(oracle);
     }
+    // RIPR-SPEC-0231 rule 8 (#7638): the line scanner's reach reading, so
+    // both adapters drop the same never-executed statements.
+    retain_reached_oracles(&mut assertions, &function_text, function_start);
 
     assertions.sort_by(|a, b| a.line.cmp(&b.line).then(a.text.cmp(&b.text)));
     assertions.dedup_by(|a, b| a.line == b.line && a.text == b.text);
     assertions
+}
+
+/// True when a line-scanned oracle is the parsed expect-test comparison
+/// itself or only its `.assert_*` continuation, not a sibling assertion
+/// sharing a line (#7911). A custom helper such as `assert_eq(&render(4))`
+/// can be a text suffix of the comparison without being that continuation.
+fn is_expect_test_continuation(oracle_text: &str, comparison_text: &str) -> bool {
+    let oracle = oracle_text.trim().trim_end_matches(';').trim();
+    let comparison = comparison_text.trim().trim_end_matches(';').trim();
+    if oracle.is_empty() {
+        return false;
+    }
+    if comparison == oracle {
+        return true;
+    }
+    comparison.ends_with(oracle)
+        && oracle.strip_prefix('.').is_some_and(|rest| {
+            EXPECT_TEST_COMPARISONS
+                .iter()
+                .any(|name| rest.starts_with(name))
+        })
 }
 
 /// Whether this `unwrap_err()` / `expect_err(..)` call is the whole value of
@@ -2812,6 +3009,40 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// #10363: the declaration table is built once per file, not once per
+    /// function or assertion, so a large test file stays linear.
+    #[test]
+    fn declaration_table_is_built_once_per_file_by_the_parser_adapter() -> Result<(), String> {
+        let mut source = String::from("enum Only { Value }\n");
+        for index in 0..40 {
+            let test = "#[test]\nfn tN() {\n    assert_eq!(N, N);\n    assert!(matches!(make(), Only::Value));\n}\n";
+            source.push_str(&test.replace('N', &index.to_string()));
+        }
+        let before = crate::analysis::extract::table_builds();
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+        let builds = crate::analysis::extract::table_builds() - before;
+        if builds != 1 {
+            return Err(format!("40 tests built {builds} declaration tables"));
+        }
+        // The table must be the file's own: `Only` is a single-variant enum there,
+        // so the matches! assertion reads as a weak relational check.
+        let weak = facts.tests.iter().all(|test| {
+            test.assertions
+                .iter()
+                .any(|fact| fact.kind == crate::domain::OracleKind::RelationalCheck)
+        });
+        if !weak {
+            return Err("an assertion was not read against the file's own enum".to_string());
+        }
+        // A file with no assertion never needs a table.
+        let before = crate::analysis::extract::table_builds();
+        RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), "pub fn f() -> i32 { 1 }\n")?;
+        if crate::analysis::extract::table_builds() != before {
+            return Err("a file without assertions built a declaration table".to_string());
+        }
+        Ok(())
+    }
 
     /// #4558: where each `fn` sits, as a type-path call `T::name(` sees it.
     #[test]
@@ -3641,6 +3872,145 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
         );
 
         assert!(nodes.is_empty());
+    }
+
+    /// #7911: a parsed expect-test comparison must not drop a sibling
+    /// `assert_eq!` that shares its line. The line-scan filter exists to
+    /// hide the comparison's own `.assert_*` continuation, not every
+    /// oracle on that line.
+    #[test]
+    fn a_same_line_assert_eq_beside_an_expect_test_comparison_is_kept() {
+        let function = "fn scores() {\n    expect![[\"w12\"]].assert_eq(&render(4)); assert_eq!(other(), 2);\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("expect![[") && oracle.text.contains("assert_eq(&render(4))")
+            }),
+            "parsed expect-test comparison must remain: {oracles:?}"
+        );
+        assert!(
+            oracles
+                .iter()
+                .any(|oracle| oracle.text.contains("assert_eq!(other(), 2)")),
+            "sibling assert_eq on the same line must remain: {oracles:?}"
+        );
+    }
+
+    /// #7911: `ensure!` is line-scanned, not a parser assertion macro, so
+    /// the expect-test line filter is the only thing that can drop it.
+    #[test]
+    fn a_same_line_line_scanned_oracle_beside_an_expect_test_comparison_is_kept() {
+        let function = "fn scores() {\n    expect![[\"w12\"]].assert_eq(&render(4)); ensure!(other() == 2, \"must be two\");\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("expect![[") && oracle.text.contains("assert_eq(&render(4))")
+            }),
+            "parsed expect-test comparison must remain: {oracles:?}"
+        );
+        assert!(
+            oracles
+                .iter()
+                .any(|oracle| oracle.text.contains("ensure!(other() == 2")),
+            "sibling line-scanned ensure! on the same line must remain: {oracles:?}"
+        );
+    }
+
+    /// Control: the filter must still hide a multi-line comparison's
+    /// `.assert_debug_eq(..)` continuation, which the line scanner would
+    /// otherwise read as its own custom `assert_*` helper.
+    #[test]
+    fn a_multiline_expect_test_continuation_is_not_a_second_oracle() {
+        let function = "fn renders() {\n    expect![[r#\"\n        Row { w: 12 }\n    \"#]]\n    .assert_debug_eq(&row(4));\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        let expect_oracles: Vec<_> = oracles
+            .iter()
+            .filter(|oracle| {
+                oracle.text.contains("expect![[") || oracle.text.contains(".assert_debug_eq")
+            })
+            .collect();
+        assert_eq!(
+            expect_oracles.len(),
+            1,
+            "multi-line expect-test comparison must stay one oracle: {oracles:?}"
+        );
+        assert!(
+            expect_oracles[0].text.contains("expect![[")
+                && expect_oracles[0].text.contains(".assert_debug_eq"),
+            "the one oracle must be the whole comparison: {oracles:?}"
+        );
+        assert_eq!(expect_oracles[0].kind, OracleKind::Snapshot, "{oracles:?}");
+        assert_eq!(
+            expect_oracles[0].strength,
+            OracleStrength::Medium,
+            "{oracles:?}"
+        );
+    }
+
+    /// #7911: a line-scanned sibling on the comparison's continuation
+    /// line is not itself that continuation, so it must stay.
+    #[test]
+    fn a_line_scanned_oracle_on_an_expect_test_continuation_line_is_kept() {
+        let function = "fn renders() {\n    expect![[r#\"\n        Row { w: 12 }\n    \"#]]\n    .assert_debug_eq(&row(4)); ensure!(other() == 2, \"must be two\");\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("expect![[") && oracle.text.contains(".assert_debug_eq")
+            }),
+            "parsed expect-test comparison must remain: {oracles:?}"
+        );
+        assert!(
+            oracles
+                .iter()
+                .any(|oracle| oracle.text.contains("ensure!(other() == 2")),
+            "sibling ensure! on the continuation line must remain: {oracles:?}"
+        );
+    }
+
+    /// A later custom `assert_eq(` helper can be a text suffix of a parsed
+    /// comparison without being that comparison's continuation.
+    #[test]
+    fn a_later_custom_assert_helper_is_not_treated_as_expect_test_continuation() {
+        let function = "fn scores() {\n    expect![[\"w12\"]].assert_eq(&render(4));\n    assert_eq(&render(4));\n}\n";
+        let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("expect![[") && oracle.text.contains("assert_eq(&render(4))")
+            }),
+            "parsed expect-test comparison must remain: {oracles:?}"
+        );
+        assert!(
+            oracles.iter().any(|oracle| {
+                oracle.text.contains("assert_eq(&render(4))") && !oracle.text.contains("expect![[")
+            }),
+            "later custom assert_eq helper must remain: {oracles:?}"
+        );
+    }
+
+    /// #7911 review: any non-empty suffix of the comparison is not the
+    /// continuation. Only the comparison itself or a leading `.assert_eq` /
+    /// `.assert_debug_eq` method call is.
+    #[test]
+    fn expect_test_continuation_is_the_comparison_or_its_assert_method() {
+        let comparison = "expect![[\"w12\"]].assert_eq(&render(4));";
+        assert!(is_expect_test_continuation(comparison, comparison));
+        assert!(is_expect_test_continuation(
+            ".assert_eq(&render(4));",
+            comparison
+        ));
+        assert!(is_expect_test_continuation(
+            "    .assert_debug_eq(&row(4));",
+            "expect![[r#\"x\"#]]\n    .assert_debug_eq(&row(4));"
+        ));
+        assert!(!is_expect_test_continuation(
+            "assert_eq(&render(4));",
+            comparison
+        ));
+        assert!(!is_expect_test_continuation(
+            "ensure!(other() == 2, \"must be two\");",
+            comparison
+        ));
+        assert!(!is_expect_test_continuation("", comparison));
     }
 }
 

@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testmore-tax-table-loop.json",
-    "sha256": "81dafc5c1dff615d1621d3fcaad85933c7e4d0dba78bcb8db031772d9b6db6b4",
+    "sha256": "f400fc2983c4569e4ad39d034879355d2fe0500783e36e4ffa799f655fee66c6",
     "provenance": "producer"
   }
 }

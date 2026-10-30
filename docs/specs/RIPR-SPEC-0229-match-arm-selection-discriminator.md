@@ -216,6 +216,14 @@ shape holds the whole edit, such as `if 256 <= len { return Err(..) }` from
 when no other shape on the line holds the edit, so a changed line never
 loses its only finding.
 
+The same applies to a return value whose integer literals only changed
+spelling to the same value (`"ftp" => Some(0x15)` from `"ftp" => Some(21)`,
+a `_` separator, a radix): the arm finding stays and decides whether a test
+notices the arm, so a listed row is credited and an allowlisted one stays a
+gap, but no `return_value` finding asks for a discriminator of a value that
+did not change (#6578). Text holding a string, character or macro, a
+changed suffix, or a float is never a respelling.
+
 ### A guard-only edit is the guard's predicate
 
 When an edit lies wholly inside one comparison of an arm's guard
@@ -331,6 +339,21 @@ rejected alternative. Any can be reversed later without touching the rest.
    the direct path's owner-identity gates: every owner mention a readable
    call, no owner result bound with `let`, and no local shadow of the
    owner. Rejected: keep loop bindings unresolved.
+   One opening skip guard is read (cluster 12b, #6578): the loop body's first
+   statement `if SKIPPED.contains(&key) { continue; }`, with no `else` and no
+   label, where `key` is a name the loop pattern binds and `SKIPPED` is a
+   `const` slice of plain string literals declared exactly once in the test
+   file, with no attribute, named by no `use`, and with no glob import in the
+   file (except `super::*` inside an inline `mod`) that could bring in another
+   `SKIPPED`. The guard is read in its rustfmt spelling (`contains(&key)`);
+   any other spacing leaves the table unread. The assertion then runs only
+   for the rows the guard lets through, so a row whose key cell is listed
+   never selects an arm, and an unlisted row keeps the same standing as in a
+   loop without the guard. A key cell that is not a plain string literal
+   (no escape, no raw form), any other early exit, and any other shape of
+   guard leave the table unread, as before. Rejected: read every `continue`
+   as skipping nothing, which credits the listed row the harness never runs
+   (`mined-allowlisted-row-gopher`).
 
 ### Implementation Status
 
@@ -518,7 +541,8 @@ implies but does not spell out:
 ## Non-Goals
 
 - No guard evaluation.
-- No scrutinee that is not a direct owner parameter (fields, method results,
+- Except the bounded direct-record field input described below, no scrutinee
+  that is not a direct owner parameter (fields, method results,
   computed tuples), except decision 6's single integer `/` or `%` by a
   literal.
 - No exhaustiveness checking beyond source-order first match.
@@ -624,6 +648,10 @@ the diff changes `None => 1` to `None => 0`.
   drops the unchanged return value; a body edit, or a line with no other
   shape holding the edit, keeps it. Verdict corpus case
   `config-log-level-warn`.
+- `crates/ripr/src/analysis/probes/diff.rs` unit tests: a respelled arm
+  value drops the return value; a changed, suffixed, float or string value
+  keeps it. Verdict corpus cases `mined-allowlist-listed-row-ftp` and
+  `mined-allowlisted-row-gopher`.
 - `crates/ripr/src/analysis/classify/arm_selection.rs` unit tests for
   ranges and moved-input credit (examples 7 to 9):
   `integer_range_arms_select_by_value`,
@@ -673,6 +701,23 @@ the diff changes `None => 1` to `None => 0`.
 - Verdict-corpus false-actionable and false-silent counts on `match_arm`
   cases do not rise.
 
+### Plain boolean assertion execution admission (#7788)
+
+A MatchArm oracle spelled as an outer bare `assert!` must pass the existing
+parser-backed assertion execution admission independently of token overlap.
+A local macro with that spelling that merely evaluates its operand cannot lend
+observation or a strong oracle. Assertions inside a skipped branch or an uncalled
+closure are also refused. Direct standard assertions and supported eagerly called
+local check helpers retain their credit. Admission filters assertion facts while
+preserving the original test summary and assertion cardinality.
+
+The public API controls in `crates/ripr/tests/match_arm_assert_admission.rs` bind a
+changed unknown-option parser arm to out-of-line tests. The adversarial fixture
+`fixtures/match_arm_shadowed_assert` additionally pins this false-promotion in
+the evidence-promotion honesty corpus. Qualified assertion macros, fallible
+`ensure!`, dependency identity and helper-result propagation remain outside this
+bounded change.
+
 ## Named field-selector boundary (#8479)
 
 A plain parameter field in a statement-free tail match is outside the credited
@@ -694,3 +739,71 @@ therefore refuse these rows as analyzer uncertainty. This is not exposure,
 resolved test debt, or evidence that a consumer's strict qualification passed.
 The supported direct-parameter genuine-gap case retains its canonical identity
 and missing discriminator.
+
+## Direct record field inputs (#5500 / #5502)
+
+The canonical match-arm selector also reads a bounded direct record input:
+
+```rust
+struct Lease { elapsed: Option<u128>, timeout: u64 }
+fn charge(lease: &Lease) -> u64 {
+    match lease.elapsed {
+        Some(ms) => ms.div_ceil(1000) as u64,
+        None => lease.timeout,
+    }
+}
+// A direct argument supplies the selected field on this exact call.
+assert_eq!(charge(&Lease { elapsed: Some(1001), timeout: 600 }), 2);
+```
+
+This is an extension of the existing parameter-to-arm and same-assertion
+owners, not a second alias resolver. The match must remain a statement-free,
+unguarded tail match on one named field of a plain immutable parameter. The
+record must be a unique nongeneric root struct in the same indexed source file
+as every related test; its selected field must have unambiguous prelude
+`Option<u64>` or `Option<u128>` type. Namespace ambiguity, unknown item macros,
+conditional fields, imported/aliased records and unread source refuse proof.
+Critical raw identifier bindings retain their normalized identity for shadow
+checks; raw references with unresolved provenance cannot borrow prelude names.
+The current root owner's exact body must match the indexed source. Current and
+original arm patterns must use unqualified prelude `Some`, `None` or `_` with
+irrefutable payload bindings. A qualified constant named `None` cannot borrow
+the standard variant's identity; unsupported patterns retain unresolved
+selection rather than borrowing constructor spelling.
+The direct shared-borrowed record literal must explicitly initialize its unique
+selected field with `None` or `Some` of a literal. Other fields must also be
+closed literals or constructors; spreads, shorthand, computations, mutable
+borrows and a different record type refuse proof.
+
+The existing selector consumes that initializer with its constructor intact.
+Every relevant readable call selecting a sibling can name the missing arm;
+an unresolved relevant call still prevents that claim. Existing assertion
+admission and exact same-call/result pairing retain authority over exposure.
+A selected call elsewhere in the test, or a selector-shaped value in another
+field, the expected operand or diagnostics, cannot replace that pairing.
+
+A local variable, helper-returned record and later field writes remain outside
+this slice, including the current ub-review #1503 lease fixture. They require
+constructor-preserving value/binding provenance from the existing authority;
+this extension makes no claim that their observations or the consumer's strict
+qualification have passed. The #8479 typed limitation continues to describe
+those unsupported cases. Public wire schemas and gap policy do not change;
+classified-cache generations must invalidate older semantic results.
+
+The direct-record field slice also refuses unread statement macro expansions:
+they can introduce caller-visible `Some`/`None` bindings without spelling those
+names at the invocation. Existing macro-position and value-binding authority
+admit only unshadowed trusted standard statement macros in this bounded path.
+`fixtures/field_match_macro_option_shadow` pins a compiled counterexample whose
+unchanged test passes even after the unobserved `None` arm is made wrong.
+
+When supported direct record inputs all select sibling arms, the existing
+missing-arm fact remains actionable. The legacy field-selector limitation must
+not overwrite that established input boundary or withhold its repair identity.
+Unsupported helper/mutable inputs still retain their limitation unchanged.
+
+Direct-record same-invocation credit additionally requires the existing full
+assertion execution admission. A parsed equality under `if false`, or another
+unestablished execution path, is not an admitted oracle. This bounded producer
+consumes the shared authority rather than adding a second path evaluator.
+`fixtures/field_match_unexecuted_assertion` and the native API regression pin it.

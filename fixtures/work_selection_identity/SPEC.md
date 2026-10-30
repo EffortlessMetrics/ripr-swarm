@@ -26,6 +26,20 @@ recomputes the provenance digests fail-closed.
   linked to issue `9105` with its own branch and worktree (scenario 8).
 - `provenance.json` — per-file SHA-256 bindings in the RIPR-SPEC-0223
   provenance convention.
+- `fresh_root_reconstruction.json` — the #1706 PR D fresh-root reconstruction
+  receipt: one receipt binds this shared selection corpus plus the nine PR B
+  consumer corpora (`fixtures/work_{result,claim,wave,context,synthesis,
+  burndown,intake,plan,adapter}_identity`) so a fresh process rebuilds the
+  whole selected-work contract state from committed artifacts alone — no chat
+  history, no singleton goal file, no live GitHub state. It records each
+  domain's corpus/provenance SHA-256 digests, scenario/case counts and pass
+  state; `cargo xtask check-fixture-contracts` validates its structure and
+  digest bindings, and
+  `cargo test -p xtask --bin xtask work_selection_identity_fresh_root_receipt`
+  re-runs all ten domain checks in a fresh process and compares them against
+  the receipt. The receipt is deliberately NOT listed in `provenance.json`:
+  it records this provenance's digest, so listing it here would make the two
+  digests circular.
 
 ## The twelve #1706 required scenarios
 

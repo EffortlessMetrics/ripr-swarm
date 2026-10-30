@@ -1,0 +1,12 @@
+diff --git a/src/guards.rs b/src/guards.rs
+--- a/src/guards.rs
++++ b/src/guards.rs
+@@ -4,7 +4,7 @@
+ }
+ 
+ pub fn checked_ratio(num: u32, den: u32) -> u32 {
+-    if den == 0 {
++    if 0 == den {
+         panic!("zero denominator");
+     }
+     num / den

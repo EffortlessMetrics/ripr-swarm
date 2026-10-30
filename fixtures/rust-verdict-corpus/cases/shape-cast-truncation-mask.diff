@@ -1,0 +1,12 @@
+diff --git a/src/flow.rs b/src/flow.rs
+--- a/src/flow.rs
++++ b/src/flow.rs
+@@ -36,7 +36,7 @@
+ }
+ 
+ pub fn low_byte(n: u32) -> u8 {
+-    n as u8
++    (n & 0xff) as u8
+ }
+ 
+ pub fn bump(x: u8) -> u8 {

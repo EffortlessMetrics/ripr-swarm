@@ -15,6 +15,470 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static NEXT_TEMP_REPO: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn real_terminal_crate_namespace_preserves_exact_result_flow() -> Result<(), String> {
+    let start = TERMINAL_SOURCE
+        .find("pub fn terminalize_proof(")
+        .ok_or("retained owner declaration")?;
+    let root = format!(
+        "{}\nmod work_queue;\npub use work_queue::terminalize_proof;\n",
+        &TERMINAL_SOURCE[..start]
+    );
+    let owner = format!("use crate::*;\n{}", &TERMINAL_SOURCE[start..]);
+    for counterfeit in ["none", "format", "Some"] {
+        let repo = TempRepo::create(TERMINAL_SOURCE, &terminal_test(true, false))?;
+        let root = if counterfeit == "format" {
+            format!(
+                r#"macro_rules! format {{
+                ($($tokens:tt)*) => {{ "receipt-1=head_passed join=request_identity_v2".to_string() }};
+            }}
+            {root}"#
+            )
+        } else if counterfeit == "Some" {
+            format!(
+                r#"fn Some<T>((receipt, _relation): (T, &'static str)) -> Option<(T, &'static str)> {{
+                std::option::Option::Some((receipt, "request_identity_v2"))
+            }}
+            {root}"#
+            )
+        } else {
+            root.clone()
+        };
+        std::fs::write(repo.workspace.join("src/lib.rs"), root)
+            .map_err(|error| error.to_string())?;
+        std::fs::write(repo.workspace.join("src/work_queue.rs"), &owner)
+            .map_err(|error| error.to_string())?;
+        let diff = candidate_diff(&owner)?.replace("src/lib.rs", "src/work_queue.rs");
+        std::fs::write(repo.workspace.join("diff.patch"), diff)
+            .map_err(|error| error.to_string())?;
+        let output = repo.check()?;
+        let finding = changed_request_only_arm(&output)?;
+        if counterfeit != "none" {
+            assert_unverified(finding, counterfeit);
+        } else {
+            assert_eq!(
+                finding.class,
+                ExposureClass::Exposed,
+                "actual crate wildcard must retain the exact tuple projection: {finding:#?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn generated_inherited_constructor_cannot_certify_terminal_arm() -> Result<(), String> {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/match_arm_tuple_terminal_inherited_constructor/input");
+    let root =
+        std::fs::read_to_string(fixture.join("src/lib.rs")).map_err(|error| error.to_string())?;
+    let (_, declarations) = root.split_once('\n').ok_or("constructor declaration")?;
+    let root = format!(
+        r#"macro_rules! generate_constructor {{
+            () => {{
+                fn Some<T>((receipt, _relation): (T, &'static str)) -> Option<(T, &'static str)> {{
+                    std::option::Option::Some((receipt, "request_identity_v2"))
+                }}
+            }};
+        }}
+        generate_constructor!();
+        {declarations}"#
+    );
+    let owner = std::fs::read_to_string(fixture.join("src/work_queue.rs"))
+        .map_err(|error| error.to_string())?;
+    let test = std::fs::read_to_string(fixture.join("tests/projection.rs"))
+        .map_err(|error| error.to_string())?;
+    let repo = TempRepo::create(TERMINAL_SOURCE, &test)?;
+    std::fs::write(repo.workspace.join("src/lib.rs"), &root).map_err(|error| error.to_string())?;
+    std::fs::write(repo.workspace.join("src/work_queue.rs"), &owner)
+        .map_err(|error| error.to_string())?;
+    std::fs::write(
+        repo.workspace.join("diff.patch"),
+        candidate_diff(&owner)?.replace("src/lib.rs", "src/work_queue.rs"),
+    )
+    .map_err(|error| error.to_string())?;
+    let output = repo.check()?;
+    assert_unverified(
+        changed_request_only_arm(&output)?,
+        "macro-generated inherited Some",
+    );
+    Ok(())
+}
+
+#[test]
+fn real_terminal_imported_formatter_remains_unverified() -> Result<(), String> {
+    for import in [
+        "#[macro_use] extern crate counterfeit_format;",
+        "use counterfeit_format::*;",
+    ] {
+        let source = format!("{import}\n{TERMINAL_SOURCE}");
+        let repo = TempRepo::create(&source, &terminal_test(true, false))?;
+        let dependency = repo.workspace.join("formatter");
+        std::fs::create_dir_all(dependency.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dependency.join("Cargo.toml"),
+            "[package]\nname = \"counterfeit-format\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dependency.join("src/lib.rs"),
+            r#"#[macro_export] macro_rules! format {
+            ($($tokens:tt)*) => { "receipt-1=head_passed join=request_identity_v2".to_string() };
+        }"#,
+        )
+        .map_err(|error| error.to_string())?;
+        let manifest = repo.workspace.join("Cargo.toml");
+        let mut cargo = std::fs::read_to_string(&manifest).map_err(|error| error.to_string())?;
+        cargo.push_str("\n[dependencies]\ncounterfeit-format = { path = \"formatter\" }\n");
+        std::fs::write(manifest, cargo).map_err(|error| error.to_string())?;
+        let output = repo.check()?;
+        assert_unverified(changed_request_only_arm(&output)?, "imported formatter");
+    }
+    Ok(())
+}
+
+#[test]
+fn real_terminal_replaced_formatter_remains_unverified() -> Result<(), String> {
+    // This formatter ignores the relation. The complete native request-only
+    // oracle still passes, so body spelling alone cannot certify its arm.
+    let source = format!(
+        r#"macro_rules! format {{
+            ($($tokens:tt)*) => {{ "receipt-1=head_passed join=request_identity_v2".to_string() }};
+        }}
+        {TERMINAL_SOURCE}"#
+    );
+    let repo = TempRepo::create(&source, &terminal_test(true, false))?;
+    let output = repo.check()?;
+    assert_unverified(changed_request_only_arm(&output)?, "replaced formatter");
+    Ok(())
+}
+
+#[test]
+fn real_terminal_projection_is_current_and_deterministic_in_ready_and_deep() -> Result<(), String> {
+    let repo = TempRepo::create(TERMINAL_SOURCE, &terminal_test(true, false))?;
+    let ready = repo.check()?;
+    let repeated = repo.check()?;
+    let deep = check_workspace(CheckInput {
+        root: repo.workspace.clone(),
+        base: None,
+        diff_file: Some(repo.workspace.join("diff.patch")),
+        mode: Mode::Deep,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let ready = changed_request_only_arm(&ready)?;
+    for (label, output) in [("repeated ready", repeated), ("deep", deep)] {
+        let current = changed_request_only_arm(&output)?;
+        assert_eq!(
+            current.class,
+            ExposureClass::Exposed,
+            "{label}: {current:#?}"
+        );
+        assert_eq!(
+            current.probe.id, ready.probe.id,
+            "{label}: stable finding identity"
+        );
+        assert_eq!(
+            serde_json::to_value(current).map_err(|error| error.to_string())?,
+            serde_json::to_value(ready).map_err(|error| error.to_string())?,
+            "{label}: complete finding stays deterministic"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn real_terminal_owner_flow_controls_remain_unverified() -> Result<(), String> {
+    for (label, from, to) in [
+        (
+            "swapped owner parameters",
+            "task_id: &str,\n    plan_status: &str",
+            "plan_status: &str,\n    task_id: &str",
+        ),
+        (
+            "wrong proof key",
+            "proof_request_ids.get(task_id)",
+            "proof_request_ids.get(plan_status)",
+        ),
+        (
+            "shadowed request set",
+            "let mut matching = receipts",
+            "let request_set = BTreeSet::<&str>::new();\n    let mut matching = receipts",
+        ),
+        (
+            "swapped tuple",
+            "match (request_identity_matches, task_identity_matches)",
+            "match (task_identity_matches, request_identity_matches)",
+        ),
+        (
+            "mutated matching",
+            "matching.sort_by",
+            "matching.clear();\n    matching.sort_by",
+        ),
+        (
+            "wrong receipt identity in reason",
+            "receipt.id, receipt.result",
+            "task_id, receipt.result",
+        ),
+        (
+            "diagnostic literal",
+            "join={relation}",
+            "diagnostic={relation}",
+        ),
+        ("string whitespace", " join={relation}", "join={relation}"),
+        (
+            "swapped return fields",
+            "Ok((status, reason, request_ids, receipt_ids))",
+            "Ok((status, reason, receipt_ids, request_ids))",
+        ),
+        (
+            "wrong task binding",
+            "receipt.id == task_id",
+            "receipt.id == plan_status",
+        ),
+    ] {
+        assert!(
+            TERMINAL_SOURCE.contains(from),
+            "{label}: setup must change the specimen"
+        );
+        let source = TERMINAL_SOURCE.replace(from, to);
+        let repo = TempRepo::create(&source, &terminal_test(true, false))?;
+        let output = repo.check()?;
+        assert_unverified(changed_request_only_arm(&output)?, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn real_terminal_oracle_controls_remain_unverified() -> Result<(), String> {
+    let honest = terminal_test(true, false);
+    for (label, from, to) in [
+        (
+            "conditional observation",
+            "    assert_eq!(terminal.0",
+            "    #[cfg(any())]\n    assert_eq!(terminal.0",
+        ),
+        (
+            "uninvoked oracle",
+            "    assert_eq!(terminal.0",
+            "    let _never_called = || {\n    assert_eq!(terminal.0",
+        ),
+        (
+            "direct return",
+            "    assert_eq!(terminal.0",
+            "    return;\n    assert_eq!(terminal.0",
+        ),
+        (
+            "no-op reason",
+            "assert_eq!(terminal.1, \"receipt-1=head_passed join=request_identity_v2\", \"request_identity_v2\")",
+            "assert_eq!(terminal.1, terminal.1, \"request_identity_v2\")",
+        ),
+        ("mutable input", "let receipts =", "let mut receipts ="),
+        ("mutated result", "let terminal =", "let mut terminal ="),
+        (
+            "wrong fed binding",
+            "&proof_request_ids, &receipt_request_ids",
+            "&receipt_request_ids, &proof_request_ids",
+        ),
+        (
+            "diagnostic only",
+            "terminal.1, \"receipt-1=head_passed join=request_identity_v2\"",
+            "terminal.1, \"request_identity_v2\"",
+        ),
+        (
+            "duplicate proof key",
+            "vec![\"request-1\".to_string(), \"request-1\".to_string()])]",
+            "vec![\"request-1\".to_string(), \"request-1\".to_string()]), (\"different-task\".to_string(), vec![\"unrelated-request\".to_string()])]",
+        ),
+        (
+            "shadowed result",
+            "    assert_eq!(terminal.0",
+            "    let terminal = (String::new(), String::new(), Vec::<String>::new(), Vec::<String>::new());\n    assert_eq!(terminal.0",
+        ),
+    ] {
+        assert!(
+            honest.contains(from),
+            "{label}: setup must change the oracle"
+        );
+        let mut test = honest.replace(from, to);
+        if label == "uninvoked oracle" {
+            let close = test.rfind('}').ok_or("test has closing brace")?;
+            test.insert_str(close, "};\n");
+        }
+        let repo = TempRepo::create(TERMINAL_SOURCE, &test)?;
+        let output = repo.check()?;
+        assert_unverified(changed_request_only_arm(&output)?, label);
+    }
+    Ok(())
+}
+
+const TERMINAL_SOURCE: &str = r#"use std::collections::{BTreeMap, BTreeSet};
+type Result<T> = std::result::Result<T, String>;
+#[derive(Debug, PartialEq, Eq)]
+pub struct ProofReceipt { pub id: String, pub result: String }
+pub fn terminalize_proof(
+    task_id: &str,
+    plan_status: &str,
+    receipts: &[ProofReceipt],
+    proof_request_ids: &BTreeMap<String, Vec<String>>,
+    receipt_request_ids: &BTreeMap<String, Vec<String>>,
+) -> Result<(String, String, Vec<String>, Vec<String>)> {
+    let mut request_ids = proof_request_ids.get(task_id).cloned().unwrap_or_default();
+    request_ids.sort();
+    request_ids.dedup();
+    let request_set = request_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let mut matching = receipts
+        .iter()
+        .filter_map(|receipt| {
+            let request_identity_matches =
+                receipt_request_ids
+                    .get(&receipt.id)
+                    .is_some_and(|receipt_requests| {
+                        receipt_requests
+                            .iter()
+                            .any(|request_id| request_set.contains(request_id.as_str()))
+                    });
+            let task_identity_matches = receipt.id == task_id;
+            let relation = match (request_identity_matches, task_identity_matches) {
+                (true, true) => "request_and_task_identity",
+                (true, false) => "request_identity_v2",
+                (false, true) => "task_identity",
+                (false, false) => return None,
+            };
+            Some((receipt, relation))
+        })
+        .collect::<Vec<_>>();
+    matching.sort_by(|(left, _), (right, _)| left.id.cmp(&right.id));
+    let receipt_ids = matching
+        .iter()
+        .map(|(receipt, _)| receipt.id.clone())
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        let (status, reason) = if plan_status == "planned" {
+            (
+                "not_executed".to_owned(),
+                "planned proof task has no terminal receipt joined by request or task identity"
+                    .to_owned(),
+            )
+        } else {
+            (
+                plan_status.to_owned(),
+                "proof task retained its terminal planner disposition".to_owned(),
+            )
+        };
+        return Ok((status, reason, request_ids, receipt_ids));
+    }
+    let mut results = matching
+        .iter()
+        .map(|(receipt, _)| terminal_proof_receipt_status(receipt))
+        .collect::<Result<Vec<_>>>()?;
+    results.sort();
+    results.dedup();
+    let status = if results.len() == 1 {
+        results[0].clone()
+    } else {
+        "multiple_terminal_receipts".to_owned()
+    };
+    let reason = matching
+        .iter()
+        .map(|(receipt, relation)| format!("{}={} join={relation}", receipt.id, receipt.result))
+        .collect::<Vec<_>>()
+        .join("; ");
+    Ok((status, reason, request_ids, receipt_ids))
+}
+
+fn terminal_proof_receipt_status(receipt: &ProofReceipt) -> Result<String> {
+    if receipt.result.trim().is_empty() || !matches!(receipt.result.as_str(),
+        "head_passed" | "head_failed" | "discriminating" | "non_discriminating"
+        | "base_patch_failed" | "timed_out" | "skipped_budget" | "skipped_profile") {
+        return Err("unsupported terminal result".to_string());
+    }
+    Ok(receipt.result.clone())
+}
+"#;
+
+/// Faithful #1306 owner body from terminal.rs blob
+/// 1ae5baef607bdf2d9c53fa6749956f6db38fd9c0. Only visibility and the changed
+/// request-only literal differ; the Result alias/receipt validator keep this
+/// native standalone specimen independent of UB's package dependencies.
+fn terminal_test(request_match: bool, task_match: bool) -> String {
+    let task = if task_match {
+        "receipt-1"
+    } else {
+        "different-task"
+    };
+    let request = if request_match {
+        "request-1"
+    } else {
+        "unrelated-request"
+    };
+    let (status, reason, receipt_ids) = match (request_match, task_match) {
+        (true, false) => (
+            "head_passed",
+            "receipt-1=head_passed join=request_identity_v2",
+            r#"vec!["receipt-1".to_string()]"#,
+        ),
+        (false, true) => (
+            "head_passed",
+            "receipt-1=head_passed join=task_identity",
+            r#"vec!["receipt-1".to_string()]"#,
+        ),
+        (true, true) => (
+            "head_passed",
+            "receipt-1=head_passed join=request_and_task_identity",
+            r#"vec!["receipt-1".to_string()]"#,
+        ),
+        (false, false) => (
+            "not_executed",
+            "planned proof task has no terminal receipt joined by request or task identity",
+            "Vec::<String>::new()",
+        ),
+    };
+    format!(
+        r#"use match_arm_tuple_derived_local::{{ProofReceipt, terminalize_proof}};
+use std::collections::BTreeMap;
+#[test]
+fn terminal_projection() {{
+    let receipts = vec![ProofReceipt {{ id: "receipt-1".to_string(), result: "head_passed".to_string() }}];
+    let proof_request_ids = BTreeMap::from([("{task}".to_string(), vec!["request-1".to_string(), "request-1".to_string()])]);
+    let receipt_request_ids = BTreeMap::from([("receipt-1".to_string(), vec!["{request}".to_string()])]);
+    let terminal = terminalize_proof("{task}", "planned", &receipts, &proof_request_ids, &receipt_request_ids).unwrap();
+    assert_eq!(terminal.0, "{status}");
+    assert_eq!(terminal.1, "{reason}", "request_identity_v2");
+    assert_eq!(terminal.2, vec!["request-1".to_string()]);
+    assert_eq!(terminal.3, {receipt_ids});
+}}
+"#
+    )
+}
+
+#[test]
+fn real_terminal_request_derivation_and_reason_projection() -> Result<(), String> {
+    let repo = TempRepo::create(TERMINAL_SOURCE, &terminal_test(true, false))?;
+    let output = repo.check()?;
+    let finding = changed_request_only_arm(&output)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "real consumer must observe the current request-only arm: {finding:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn real_terminal_sibling_projections_remain_unverified() -> Result<(), String> {
+    for (request, task) in [(false, true), (true, true), (false, false)] {
+        let repo = TempRepo::create(TERMINAL_SOURCE, &terminal_test(request, task))?;
+        let output = repo.check()?;
+        assert_unverified(changed_request_only_arm(&output)?, "real terminal sibling");
+    }
+    Ok(())
+}
+
 const CANDIDATE_SOURCE: &str = r#"use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, PartialEq, Eq)]

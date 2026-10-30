@@ -538,7 +538,7 @@ fn canonical_test_harnesses_identity(registrations: &[TestHarnessRegistration]) 
 /// run. Only the exact value `1` opts in.
 pub(crate) const PERL_EXECUTABLE_OPT_IN_ENV: &str = "RIPR_ALLOW_REPO_PERL_EXECUTABLE";
 
-fn perl_executable_opt_in() -> bool {
+pub(crate) fn perl_executable_opt_in() -> bool {
     std::env::var_os(PERL_EXECUTABLE_OPT_IN_ENV).is_some_and(|value| value == "1")
 }
 

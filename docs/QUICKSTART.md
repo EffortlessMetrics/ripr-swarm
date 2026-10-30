@@ -23,7 +23,8 @@ Linux and macOS (Bash or zsh):
 ```bash
 v=0.10.0; case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) t=x86_64-unknown-linux-gnu;; Linux-aarch64) t=aarch64-unknown-linux-gnu;;
-  Darwin-x86_64) t=x86_64-apple-darwin;; Darwin-arm64) t=aarch64-apple-darwin;; esac
+  Darwin-x86_64) t=x86_64-apple-darwin;; Darwin-arm64) t=aarch64-apple-darwin;;
+  *) echo "no prebuilt archive for this platform; install with cargo install ripr or build from source" >&2; exit 1;; esac
 f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
 curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
@@ -41,6 +42,12 @@ Invoke-WebRequest "$b/$f" -OutFile $f; Invoke-WebRequest "$b/$f.sha256" -OutFile
 if ((Get-FileHash $f -Algorithm SHA256).Hash -ne ((Get-Content "$f.sha256") -split '\s+')[0].ToUpper()) { throw 'checksum mismatch' }
 Expand-Archive $f -DestinationPath ripr-bin; $env:PATH="$PWD\ripr-bin;$env:PATH"   # ripr.exe is now first on PATH for this session
 ```
+
+The PATH change in either snippet lasts only for the current shell (PowerShell:
+the current session). To keep `ripr` available across sessions, add the
+extracted directory to your permanent PATH — for example move `ripr` to
+`~/.local/bin/` (adding it to PATH in your shell profile if needed) on Linux or
+macOS, or add the directory under Settings → Environment Variables on Windows.
 
 The macOS archives are not signed or notarized. A `curl` and `tar` download like
 the one above normally carries no quarantine attribute, so `./ripr` runs
@@ -122,7 +129,8 @@ file, first use `git add -N PATH` so it enters the tracked diff. See
 [Choose the change](#choose-the-change) for explicit diff selection.
 
 Use `ripr doctor` to diagnose setup if analysis cannot complete; it is not a
-required first step. To explore a clean repository without making a change,
+required first step. (doctor exits 3 when any check fails, so run it
+standalone — it does not chain with `&&`.) To explore a clean repository without making a change,
 use the separate [repository exploration](#explore-the-repository) path,
 `ripr pilot --root .`.
 
@@ -150,9 +158,11 @@ ripr check --format human-full
 ripr check --format json
 ```
 
-A finding is not automatically a runnable repair. The
-[repair workflow](#agent-or-reviewer-first-hour) prepares a supported route
-before any test edit.
+A finding can guide an ordinary test improvement through the
+[daily loop](#check-test-and-refresh-the-same-change) below. For a governed
+repair attempt with before/after artifacts, the
+[repair workflow](#agent-or-reviewer-first-hour) prepares its supported route
+before the test edit.
 
 ### Choose the change
 
@@ -184,6 +194,78 @@ use `ripr check --diff PATH`, replacing `PATH` with your patch file. The common
 options are in `ripr help check`; `ripr help check --all` lists every option,
 output format, and environment variable.
 
+### Check, test, and refresh the same change
+
+Use this loop while developing a change or reviewing a test improvement. It
+uses the installed development CLI described above and the project's own test
+runner; it does not require a repair attempt.
+
+**Keep the production comparison fixed.** From the repository root, choose a
+base before the production change you want to examine. For a branch targeting
+`origin/main`, this POSIX-shell example resolves that base once:
+
+```bash
+ripr --version
+RIPR_BASE=$(git merge-base HEAD origin/main) &&
+  ripr check --root . --base "$RIPR_BASE" --worktree
+```
+
+Replace `origin/main` with your review base when needed. Confirm that the
+output names the intended production file and changed behavior. Keep the same
+root, resolved base, source mode, and analysis mode throughout the loop.
+`--worktree` includes the production change since that base plus the current
+tracked test edits, even when the production change is already committed.
+For a new file, first use `git add -N PATH` as described above.
+
+**Inspect the current finding.** Follow its printed `ripr explain` or
+`ripr context` command. Read the missing discriminator and related test, then
+check the expected behavior against the project's requirements. A context
+packet is advisory: an unavailable assertion template or missing native test
+command is not permission to invent one. Make a justified test edit using the
+project's existing test style, preserving the intended assertion and input
+domain. Leave the production behavior unchanged during this test-only loop.
+
+**Run the native test.** Use the project's documented runner, package, target,
+and filter for the edited test. For example, in a Rust crate with
+`tests/pricing.rs` containing `equality_boundary_discounts`:
+
+```bash
+cargo test --test pricing equality_boundary_discounts -- --exact
+```
+
+Use your actual test name and target. Check the native exit status and test
+summary: the intended test must execute and pass. A zero exit with zero tests
+selected, an ignored test, a compile failure, or a timeout does not verify the
+edit. `ripr check` does not run that command for you.
+
+**Refresh the original comparison.** After the test edit and native run:
+
+```bash
+ripr check --root . --base "$RIPR_BASE" --worktree
+```
+
+Match the original production file, owner, changed behavior, and canonical gap
+ID when present; `--format json` exposes these details. Test edits change the
+analysis input, so a new input identity is expected. Do not switch to
+`--base HEAD` after committing the production change: that can leave only the
+test edit in the comparison. A quiet `no_behavioral_candidates` result then
+says nothing about the original production gap.
+
+Keep the two results separate:
+
+| Native test result | Refreshed result for the original behavior | What to do |
+| --- | --- | --- |
+| Intended test executed and passed | `exposed` | Record the focused native pass and improved static evidence. This is not a runtime mutation result or proof of overall correctness. |
+| Intended test executed and passed | Gap remains weak or unrevealed | Inspect the remaining discriminator in the current output; passing the test alone did not establish stronger static evidence. |
+| Failed, unavailable, timed out, did not compile, or did not execute the intended test | Any classification, including `exposed` | Keep the native failure or missing verification visible and resolve it before calling the test improvement verified. |
+| Any | Partial/unsupported analysis, or the original production subject is absent | Record the limitation, check the comparison and configuration, and follow the current recovery guidance. Do not count an absent subject as an improvement. |
+
+`check` exits 0 for completed analysis, including weak and exposed findings.
+Read its analysis outcome and findings; that exit code is not a test result or
+a CI gate. Refresh again after further edits rather than relying on an older
+context packet. If you need an attempt receipt and its edit constraints, use
+the separate [repair workflow](#agent-or-reviewer-first-hour).
+
 ### Explore the repository
 
 For broader repository analysis and a suggested Rust repair, run:
@@ -197,6 +279,52 @@ This is broader than checking one change. It writes reports under
 no repair is ready. Follow its retry guidance when analysis is partial.
 Non-Rust workspaces are routed to the appropriate diff-analysis or
 unavailable-adapter guidance, not the Rust repair sequence.
+
+### Python first hour (preview)
+
+Python analysis is `preview`: its evidence is advisory, not Rust-grade. A
+Python project needs no `ripr.toml` — when the repository root has a Python
+project marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
+`requirements.txt`, `pytest.ini`, `tox.ini`, or `noxfile.py`), the CLI
+auto-enables the preview. From a Python repository on a branch with a change
+to inspect:
+
+```bash
+ripr check
+```
+
+On a project with markers, `check` analyzes the changed Python files and
+reports the boundary gap with a pytest (or unittest) verify command; its
+top finding is labeled `State: preview language, advisory only`. For the
+repository-wide ranking and a repair recommendation, run:
+
+```bash
+ripr pilot --root .
+```
+
+When the Rust ranking is empty, pilot's top recommendation is the Python
+repair card (`language: python (preview)`) and its `Next, in order:` route;
+run the steps it prints. Both commands write under `target/ripr/`; in a
+project without a Cargo `target/` convention, add `/target/ripr/` to
+`.gitignore` (doctor and pilot say so on the first run when no ignore rule
+covers it).
+
+A repository with no marker leaves the preview disabled; `check` then skips
+Python files and prints:
+
+```text
+Note: this diff contains 1 Python file. The Python adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.
+
+To enable, add to ripr.toml:
+
+[languages]
+enabled = ["python"]
+```
+
+Enable it exactly as printed when the repository has no marker. Python
+repair routes and their evidence limits are described in
+[Known Limits](#known-limits) and
+[Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
 
 ## VS Code First Hour
 
@@ -233,10 +361,12 @@ ripr init --ci github
 ```
 
 Review the generated files before committing them. The workflow installs the
-ripr version that generated it, so generate it with a released `ripr`: an
-unreleased development build names a version crates.io does not publish yet,
-and the install step fails. On a PR, read the job summary
-first, then open the linked artifacts for the evidence and suggested test.
+ripr version that generated it. An unreleased development build instead pins
+the latest release and says so in a warning; after
+upgrading ripr, refresh with `ripr init --ci github --force`. Preview the
+files first with `--dry-run`. On a PR, read the summary comment it posts on the
+conversation (one comment, updated on every push; same-repository PRs only), then the job summary
+and the linked artifacts for the evidence and suggested test.
 The generated workflow is non-blocking by default; a policy gate is a separate,
 explicit adoption decision.
 The workflow runs on `ubuntu-latest` and pins `shell: bash`, so its steps
@@ -258,7 +388,8 @@ ripr pilot --root .
 ```
 
 Before starting a repair, make sure `target/` is in a committed `.gitignore`
-(see below). When pilot recommends a repair, run the exact
+(see below) and that the production change itself is committed: the before
+phase refuses a seam whose edit-target file has uncommitted changes. When pilot recommends a repair, run the exact
 `ripr agent repair ... --phase before` command it prints. That printed command
 is the advanced spelling of the ordinary start `ripr repair <seam-id>`; both
 begin the same before/edit/after attempt, and the ordinary start additionally
@@ -348,7 +479,8 @@ unestablished. Python analysis is `preview`, with selected pytest/unittest
 repair routes at `usable alpha`. Only complete weak-evidence routes get repair
 cards; zero cards is normal for unsupported or non-repairable findings.
 
-TypeScript and JavaScript are opt-in previews. Diff analysis recognizes:
+TypeScript is enabled automatically for TypeScript-shaped repositories without a
+`ripr.toml`; JavaScript is an opt-in preview. Diff analysis recognizes:
 
 ```text
 .ts  .tsx  .mts  .cts  .js  .jsx  .mjs  .cjs

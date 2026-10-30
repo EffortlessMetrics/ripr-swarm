@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-grid-equality",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "grid_equality/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "grid_equality/core.py",
+      "sha256": "3793c4997aad55bcd0297e148e4c0642c2a529bd40a43b1543dd709307b34b81"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "8d219a7ef2ee18ba72e6683e86eef9aed5051cd2133b528823f013432bb669f1"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_core.py",
+      "sha256": "992cc931877364ceee3cdb36211fec1dfd92dea6795659cddd0195e18fbdf7c3"
+    }
+  ]
+}

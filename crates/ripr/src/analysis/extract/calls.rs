@@ -1,5 +1,43 @@
+mod function_alias;
+
+use function_alias::add_local_alias_calls;
+pub(crate) use function_alias::local_fn_pointer_call;
+
 use super::mask_comments_and_strings;
-use crate::analysis::facts::CallFact;
+use crate::analysis::facts::{CallFact, CallText};
+
+/// Most distinct call names kept per source line. Every call fact carries
+/// the full line text, so one line with N distinct callees holds N views of
+/// the same line. The shared allocation keeps the in-memory cost linear, but
+/// serialized facts inline the line per call, so the count is bounded.
+/// Calls past the budget are dropped, which removes reach evidence (fewer
+/// related-test links, never a stronger finding) rather than inventing any.
+pub(crate) const MAX_CALL_FACTS_PER_LINE: usize = 256;
+
+/// Whether `line` holds [`MAX_CALL_FACTS_PER_LINE`] facts, so the budget may
+/// have dropped a call there. A proof that every call on the line is one
+/// specific call must read such a line as unknown.
+pub(crate) fn line_at_call_budget<'a>(
+    calls: impl Iterator<Item = &'a CallFact>,
+    line: usize,
+) -> bool {
+    calls.filter(|call| call.line == line).count() >= MAX_CALL_FACTS_PER_LINE
+}
+
+/// Whether any line of `calls` reached [`MAX_CALL_FACTS_PER_LINE`] facts, so
+/// the budget may have dropped a call there. An absence proof ("no other call
+/// to X") must read such a line as unknown.
+pub(crate) fn has_saturated_line<'a>(calls: impl Iterator<Item = &'a CallFact>) -> bool {
+    let mut per_line = std::collections::BTreeMap::<usize, usize>::new();
+    for call in calls {
+        let count = per_line.entry(call.line).or_insert(0);
+        *count += 1;
+        if *count >= MAX_CALL_FACTS_PER_LINE {
+            return true;
+        }
+    }
+    false
+}
 
 pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact> {
     // Comments (line and block, nested) and string contents are erased
@@ -43,6 +81,10 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
         }
         let line_properties = &property_macros[line_property_start..line_property_end];
         let scan_line = masked_line;
+        // One shared allocation per line, built on the first call, instead
+        // of one copy of the line per call (quadratic on a long line).
+        let mut line_text: Option<CallText> = None;
+        let mut line_names: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
         let bytes = scan_line.as_bytes();
         let mut i = 0usize;
         while i < bytes.len() {
@@ -68,11 +110,20 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
                 && let Some((start, end)) = call_name_bounds_before_paren(scan_line, i)
             {
                 let name = &scan_line[start..end];
-                if is_call_name(name) {
+                // Facts on one line differ only by name (the text is the
+                // line), so a repeated name is the duplicate the final
+                // dedup would drop; skip it before allocating anything.
+                if is_call_name(name)
+                    && line_names.len() < MAX_CALL_FACTS_PER_LINE
+                    && line_names.insert(name)
+                {
+                    let text = line_text.get_or_insert_with(|| {
+                        property_safe_call_text(original_line, line_offset, line_properties).into()
+                    });
                     calls.push(CallFact {
                         line: start_line + offset,
                         name: name.to_string(),
-                        text: property_safe_call_text(original_line, line_offset, line_properties),
+                        text: text.clone(),
                     });
                 }
             }
@@ -80,8 +131,9 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
         }
         line_offset += masked_line.len();
     }
+    add_local_alias_calls(&masked, body, start_line, &mut calls);
     calls.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
-    calls.dedup_by(|a, b| a.line == b.line && a.name == b.name && a.text == b.text);
+    calls.dedup_by(|a, b| a.line == b.line && a.name == b.name);
     calls
 }
 
@@ -257,6 +309,218 @@ fn call_names(calls: &[CallFact]) -> Vec<&str> {
 mod tests {
     use super::*;
 
+    fn alias_call_names(body: &str) -> Vec<(usize, String)> {
+        extract_call_facts(body, 1)
+            .into_iter()
+            .map(|call| (call.line, call.name))
+            .collect()
+    }
+
+    #[test]
+    fn local_function_alias_call_also_reads_as_call_to_the_aliased_function() {
+        // chrono 6adaa52: the test calls the changed `from_isoywd_opt`
+        // only through a `let` alias.
+        let body = "fn t() {\n    let from_isoywd = NaiveDate::from_isoywd_opt;\n    assert_eq!(from_isoywd(i32::MIN, 1, Weekday::Mon), None);\n}\n";
+        let names = alias_call_names(body);
+        assert!(names.contains(&(3, "from_isoywd".to_string())), "{names:?}");
+        assert!(
+            names.contains(&(3, "from_isoywd_opt".to_string())),
+            "{names:?}"
+        );
+        // The binding line itself is not a call.
+        assert!(!names.iter().any(|(line, _)| *line == 2), "{names:?}");
+    }
+
+    fn alias_fact_text(body: &str, name: &str) -> Vec<String> {
+        extract_call_facts(body, 1)
+            .into_iter()
+            .filter(|call| call.name == name)
+            .map(|call| call.text.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn alias_fact_text_is_the_aliased_path_call_not_the_whole_line() {
+        // The fact reads as if the test spelled `Gate::target(0)`: a
+        // target-looking substring in a string on the same line lends neither
+        // arguments (activation `call_arguments`) nor a bare free-call spelling.
+        let body = "fn t() {\n let f = Gate::target;\n assert_eq!(f(0), \"target(100)\");\n}\n";
+        assert_eq!(alias_fact_text(body, "target"), vec!["Gate::target(0)"]);
+        // A module-qualified free function keeps its qualifier.
+        let body =
+            "fn t() {\n let f = crate::util::parse_value;\n assert_eq!(f (1, g(2)), 3);\n}\n";
+        assert_eq!(
+            alias_fact_text(body, "parse_value"),
+            vec!["crate::util::parse_value(1, g(2))"]
+        );
+    }
+
+    #[test]
+    fn single_segment_alias_is_not_resolved() {
+        // `target` may be a local closure or fn-pointer parameter, not a
+        // function item, so a bare right-hand side proves nothing.
+        for body in [
+            "fn t() {\n let target = |x: u8| x + 1;\n let f = target;\n f(1);\n}\n",
+            "fn t(target: fn(u8) -> u8) {\n let f = target;\n f(1);\n}\n",
+            "fn t() {\n let f = parse_value;\n f(1);\n}\n",
+        ] {
+            let names = alias_call_names(body);
+            assert!(
+                !names
+                    .iter()
+                    .any(|(_, name)| name == "target" || name == "parse_value"),
+                "{body}: {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_typed_function_pointer_calls_keep_their_target_and_arguments() {
+        for target in ["target", "crate::real::target"] {
+            let body = format!(
+                "fn t() {{\n let f: fn(u32) -> u32 = {target};\n assert_eq!(f (2), 6);\n}}"
+            );
+            assert_eq!(alias_fact_text(&body, "target"), [format!("{target}(2)")]);
+            assert_eq!(
+                local_fn_pointer_call(&body, "f (2)", "assert_eq!(f (2), 6)", 2),
+                Some(format!("{target}(2)"))
+            );
+        }
+    }
+
+    #[test]
+    fn typed_pointer_resolution_refuses_local_targets_and_ambiguous_uses() {
+        for body in [
+            "fn t(target: fn(u32) -> u32) { let f: fn(u32) -> u32 = target; f(2); }",
+            "fn t() { let target = |x| x; let f: fn(u32) -> u32 = target; f(2); }",
+            "fn t() { fn target(x: u32) -> u32 { x } let f: fn(u32) -> u32 = target; f(2); }",
+            "fn t() { let mut f: fn(u32) -> u32 = target; f(2); }",
+            "fn t() { let f: fn(u32) -> u32 = target; let f = other; f(2); }",
+            "fn t() { let f: fn(u32) -> u32 = target; pass(f); f(2); }",
+            "fn t() { let f: unsafe fn(u32) -> u32 = target; f(2); }",
+            "fn t() { let f: extern \"C\" fn(u32) -> u32 = target; f(2); }",
+            "fn t() { let f: Callable = target; f(2); }",
+            "fn t() { ignored! { let f: fn(u32) -> u32 = target; f(2); } }",
+            "fn t() { let _: fn(u32) -> u32 = target; _(2); }",
+        ] {
+            let body = body.replace("f(2);", "assert_eq!(f(2), 6);");
+            // The general lexical scanner may also record the declaration
+            // `fn target(..)`. This refusal is about added alias projections.
+            let mut projected = Vec::new();
+            function_alias::add_local_alias_calls(
+                &mask_comments_and_strings(&body),
+                &body,
+                1,
+                &mut projected,
+            );
+            assert!(projected.is_empty(), "{body}: {projected:?}");
+            assert!(
+                local_fn_pointer_call(&body, "f(2)", "assert_eq!(f(2), 6)", 0).is_none(),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_pointer_refuses_scope_escape_attributes_and_shadowing() {
+        for body in [
+            "fn t() { if false { let f: fn(u32) -> u32 = target; f(0); } assert_eq!(f(2), 6); }",
+            "fn t() { let f: fn(u32) -> u32 = crate::target; { fn r#f(_: u32) -> u32 { 6 } assert_eq!(f(2), 6); } }",
+            "fn t() { let f: fn(u32) -> u32 = crate::target; { use decoy::*; assert_eq!(f(2), 6); } }",
+            "fn t() { #[cfg(any())] let f: fn(u32) -> u32 = crate::target; assert_eq!(f(2), 6); }",
+            "fn t() { let f: fn(u32) -> u32 = crate::target; { struct f(u32); let _ = f(2); } }",
+        ] {
+            assert!(alias_fact_text(body, "target").is_empty(), "{body}");
+            assert!(
+                local_fn_pointer_call(body, "f(2)", "assert_eq!(f(2), 6)", 0).is_none(),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_pointer_pin_requires_the_adjacent_original_assertion() {
+        let body = "fn t() {\n let f: fn(u32) -> u32 = target;\n assert_eq!(f(2), 6);\n { assert_eq!(f(2), 6); }\n}";
+        assert!(local_fn_pointer_call(body, "f(2)", "assert_eq!(f(2), 6)", 2).is_some());
+        assert!(local_fn_pointer_call(body, "f(2)", "assert_eq!(f(2), 6)", 3).is_none());
+        let body = "fn t() { let f: fn(u32) -> u32 = target; let _ = f(0); assert_eq!(f(2), 6); }";
+        assert!(local_fn_pointer_call(body, "f(2)", "assert_eq!(f(2), 6)", 0).is_none());
+    }
+
+    #[test]
+    fn refused_annotations_consume_the_typed_alias_budget() {
+        for (refused, accepted) in [(63, true), (64, false)] {
+            let mut body = String::from("fn t() {\n");
+            for at in 0..refused {
+                body.push_str(&format!("let _discard{at}: Callable = other;\n"));
+            }
+            body.push_str("let f: fn(u32) -> u32 = target;\nassert_eq!(f(2), 6);\n}");
+            assert_eq!(!alias_fact_text(&body, "target").is_empty(), accepted);
+        }
+    }
+
+    #[test]
+    fn alias_bound_inside_a_macro_token_tree_is_not_resolved() {
+        for body in [
+            "fn t() {\n let s = stringify!(let f = Type::target; f(1));\n}\n",
+            "fn t() {\n m! { let f = Type::target; f(1); }\n}\n",
+        ] {
+            let names = alias_call_names(body);
+            assert!(!names.iter().any(|(_, name)| name == "target"), "{names:?}");
+        }
+        // The same binding outside a macro still resolves.
+        let names = alias_call_names("fn t() {\n let f = Type::target;\n f(1);\n}\n");
+        assert!(names.contains(&(3, "target".to_string())), "{names:?}");
+    }
+
+    #[test]
+    fn ambiguous_or_non_function_aliases_are_not_resolved() {
+        let cases = [
+            // reassigned / shadowed by a second binding
+            "fn t() {\n let f = real::target;\n f(1);\n let f = other;\n f(2);\n}\n",
+            // mutable binding can be reassigned
+            "fn t() {\n let mut f = real::target;\n f(1);\n}\n",
+            // A type alias does not establish a function-pointer annotation.
+            "fn t() {\n let f: Callable = real::target;\n f(1);\n}\n",
+            // alias passed along or captured: not only direct calls
+            "fn t() {\n let f = real::target;\n run(f);\n f(1);\n}\n",
+            // closure parameter reuses the name
+            "fn t() {\n let f = real::target;\n let g = |f: u8| f(1);\n f(2);\n}\n",
+            // nested fn shadows the alias
+            "fn t() {\n let f = real::target;\n fn f() {}\n f();\n}\n",
+            // used before the binding
+            "fn t() {\n f(1);\n let f = real::target;\n}\n",
+            // right side is a call result, not a function path
+            "fn t() {\n let f = real::target(1);\n f(2);\n}\n",
+            // method path, not a plain function path
+            "fn t() {\n let f = value.target;\n f(2);\n}\n",
+            // type-like final segment (unit struct or variant), not a function
+            "fn t() {\n let f = real::Target;\n f(2);\n}\n",
+            // fn parameter reuses the name
+            "fn t() {\n let f = real::target;\n fn inner(f: fn()) { f(); }\n f(2);\n}\n",
+            // pattern binding reuses the name
+            "fn t() {\n let f = real::target;\n if let Some(f) = x { f(1); }\n f(2);\n}\n",
+            // loop binding reuses the name
+            "fn t() {\n let f = real::target;\n for f in xs { f(1); }\n f(2);\n}\n",
+            // macro mention of the name
+            "fn t() {\n let f = real::target;\n f!(1);\n f(2);\n}\n",
+            // struct field mention of the name
+            "fn t() {\n let f = real::target;\n let s = S { f: 1 };\n f(2);\n}\n",
+            // alias inside a string or comment
+            "fn t() {\n // let f = real::target;\n f(2);\n}\n",
+        ];
+        for body in cases {
+            // An alias credit is a fact spelled as the aliased path call
+            // (`real::target(..)`); `target(1)` on the binding line is a
+            // real call and reads as `let f = ..`.
+            let credited = extract_call_facts(body, 1).into_iter().any(|call| {
+                matches!(call.name.as_str(), "target" | "Target" | "other")
+                    && (call.text.starts_with("real::") || call.text.starts_with("other("))
+            });
+            assert!(!credited, "{body}");
+        }
+    }
+
     #[test]
     fn lifetimes_and_labels_do_not_mask_call_and_literal_facts() {
         // #3633 review (devin LYzZ + coderabbit LtlJ): nearby lifetime and
@@ -383,5 +647,76 @@ let spaced = render_pipeline ("beta");
         );
         assert_eq!(calls[3].line, 34);
         assert_eq!(calls[3].text, "let spaced = render_pipeline (\"beta\");");
+    }
+
+    #[test]
+    fn repeated_calls_on_one_long_line_collapse_and_share_the_line() {
+        // A chain of N `.f()` calls on one line used to push N facts that
+        // each copied the whole line (quadratic memory). Distinct names on
+        // that line must read one allocation, not a private copy each.
+        let n = 5_000;
+        let body = format!("fn a(){{ x{};}}\n", ".f()".repeat(n));
+        let calls = extract_call_facts(&body, 1);
+        assert_eq!(call_names(&calls), vec!["a", "f"]);
+        assert_eq!(calls[1].text.len(), body.trim().len());
+        assert!(calls[0].text.shares_allocation(&calls[1].text));
+    }
+
+    #[test]
+    fn the_per_line_budget_keeps_the_first_names_in_scan_order() {
+        let total = MAX_CALL_FACTS_PER_LINE + 50;
+        let names: Vec<String> = (0..total).map(|index| format!("g{index}")).collect();
+        // `g0` repeats after the budget filled; `g300` is first seen past it
+        // and repeats too.
+        let body = format!(
+            "fn a(){{ {}.g0().g300().g300();}}\n",
+            names.join("().") + "()"
+        );
+        let calls = extract_call_facts(&body, 1);
+        assert_eq!(calls.len(), MAX_CALL_FACTS_PER_LINE);
+        let kept: std::collections::BTreeSet<&str> =
+            calls.iter().map(|call| call.name.as_str()).collect();
+        // `a` is scanned first, then g0..g254.
+        assert!(kept.contains("a"));
+        assert!(kept.contains("g0") && kept.contains("g254"));
+        assert!(!kept.contains("g255") && !kept.contains("g300"));
+        assert!(has_saturated_line(calls.iter()));
+    }
+
+    #[test]
+    fn line_at_call_budget_reads_only_its_own_line() {
+        let names: Vec<String> = (0..MAX_CALL_FACTS_PER_LINE + 5)
+            .map(|index| format!("g{index}"))
+            .collect();
+        let body = format!(
+            "fn a(){{ {};}}\nfn b(){{ x.f(); }}\n",
+            names.join("().") + "()"
+        );
+        let calls = extract_call_facts(&body, 1);
+        assert!(line_at_call_budget(calls.iter(), 1));
+        assert!(!line_at_call_budget(calls.iter(), 2));
+    }
+
+    #[test]
+    fn a_line_under_the_budget_is_not_saturated() {
+        let calls = extract_call_facts("fn a(){ x.f().g(); }\n", 1);
+        assert!(!has_saturated_line(calls.iter()));
+    }
+
+    #[test]
+    fn calls_with_distinct_names_on_one_line_share_one_line_allocation() {
+        let names: Vec<String> = (0..MAX_CALL_FACTS_PER_LINE + 50)
+            .map(|index| format!("g{index}"))
+            .collect();
+        let body = format!("fn a(){{ {};}}\n", names.join("().") + "()");
+        let calls = extract_call_facts(&body, 1);
+        // The budget bounds the facts for the line, and every kept fact
+        // reads the same allocation instead of a private copy.
+        assert_eq!(calls.len(), MAX_CALL_FACTS_PER_LINE);
+        assert!(
+            calls
+                .iter()
+                .all(|call| call.text.shares_allocation(&calls[0].text))
+        );
     }
 }

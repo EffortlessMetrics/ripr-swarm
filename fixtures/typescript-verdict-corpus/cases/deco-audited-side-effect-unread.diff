@@ -1,0 +1,13 @@
+diff --git a/src/audited.ts b/src/audited.ts
+index 0000000..1111111 100644
+--- a/src/audited.ts
++++ b/src/audited.ts
+@@ -3,7 +3,7 @@
+ export function audited(_target: object, key: string, descriptor: PropertyDescriptor): void {
+   const original = descriptor.value as (...args: number[]) => number;
+   descriptor.value = function (this: unknown, ...args: number[]): number {
+-    calls.push(key);
++    calls.push(`${key}!`);
+     return original.apply(this, args);
+   };
+ }

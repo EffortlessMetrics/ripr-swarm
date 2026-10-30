@@ -3,12 +3,12 @@ mode: fast
 root: fixtures/ts_runner_detect_ava_devdep/input
 config: <cwd>/fixtures/ts_runner_detect_ava_devdep/input/ripr.toml
 
-Summary: 1 probe (1 exposed, 0 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 1 changed behavior checked: 1 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 1
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 Start here:
   State: preview language, advisory only
@@ -17,18 +17,31 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: exposed (severity: info, confidence 0.60)
-  Changed behavior: return a + b + 0;
-  Discriminator (observed, advisory): Related test reaches `add` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
+  Changed behavior: return a + b + 1;
+  Discriminator (observed, advisory): Related test reaches `add` with an `exact_value` oracle.
+    Static evidence suggests the changed behavior is observed under an exact-value or
+    exact-error-variant discriminator
   Related test: tests/math.test.ts:4 add returns sum
   Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related test(s) found for owner `add`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/ts_runner_detect_ava_devdep/input --diff <cwd>/fixtures/ts_runner_detect_ava_devdep/diff.patch --mode fast probe:src_math.ts:typescript_preview:025f98d6
-  ripr context --root <cwd>/fixtures/ts_runner_detect_ava_devdep/input --diff <cwd>/fixtures/ts_runner_detect_ava_devdep/diff.patch --mode fast --at probe:src_math.ts:typescript_preview:025f98d6
+  ripr explain --root <cwd>/fixtures/ts_runner_detect_ava_devdep/input --diff <cwd>/fixtures/ts_runner_detect_ava_devdep/diff.patch --mode fast probe:src_math.ts:typescript_preview:1f83e897
+  ripr context --root <cwd>/fixtures/ts_runner_detect_ava_devdep/input --diff <cwd>/fixtures/ts_runner_detect_ava_devdep/diff.patch --mode fast --at probe:src_math.ts:typescript_preview:1f83e897
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 More:
   Full evidence: rerun with --format human-full

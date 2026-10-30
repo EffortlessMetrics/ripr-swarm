@@ -49,8 +49,15 @@ At the release cut, in the same step that resolves `CHANGELOG.md`, take every
 `*.md` here except this `README.md` in file-name order and append its entry
 (everything after the `<!-- section: ... -->` line) at the end of the first
 `### <Section>` heading of that name in `Unreleased`, adding the heading if it
-is missing. Delete the folded fragment files in that commit. The fold happens
-once, at the cut, never inside an ordinary PR. After the fold,
+is missing. Delete the folded fragment files in that commit. Never fold inside an
+ordinary feature PR. The fold may also run ahead of the cut as a snapshot,
+so the cut itself folds only what is left: one PR adds the roll-up for every
+fragment present to `CHANGELOG.md` and changes nothing else, then
+deletion-only batch PRs (150 files or fewer, under the candidate-admission
+size limit) remove exactly the files that snapshot covered, and only after the
+roll-up has merged. A fragment added after a snapshot stays until the next
+snapshot or the cut. The kit and the snapshot list are in
+`/mnt/project-files/release/fold/`. After the final fold,
 `cargo xtask check-changelog-fragments --release-cut` must pass: it fails on
 any fragment still here.
 

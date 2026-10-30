@@ -16,12 +16,14 @@ export type RiprStatusKind =
   | 'workspaceAmbiguous'
   | 'resolvingServer'
   | 'serverUnavailable'
+  | 'serverFailed'
   | 'starting'
   | 'analysisQueued'
   | 'ready'
   | 'analysisRunning'
   | 'analysisReady'
   | 'analysisLimited'
+  | 'languageNotEnabled'
   | 'gapActionable'
   | 'gapNoAction'
   | 'gapArtifactWarning'
@@ -63,8 +65,8 @@ export interface FirstUsefulActionStatus {
  * `statusBarItem.warningBackground` — note: `statusBar.*Background` does not
  * exist; the correct key is `statusBarItem.*`):
  *
- * - error (red): the analysis run failed or the server is unavailable.
- *   These need user attention.
+ * - error (red): the analysis run failed, the server binary is missing, or
+ *   a resolved server failed to start. These need user attention.
  * - warning (yellow): the run is stale or limited (`analysisLimited` — the
  *   server completed the run but withheld evidence, #4326), the workspace is
  *   untrusted or ambiguous, or the gap-artifact validation flagged something.
@@ -152,6 +154,8 @@ export function statusText(kind: RiprStatusKind, firstAction?: FirstUsefulAction
       return '$(sync~spin) ripr: resolving';
     case 'serverUnavailable':
       return '$(warning) ripr: server missing';
+    case 'serverFailed':
+      return '$(warning) ripr: server failed';
     case 'starting':
       return '$(sync~spin) ripr: starting';
     case 'ready':
@@ -164,6 +168,8 @@ export function statusText(kind: RiprStatusKind, firstAction?: FirstUsefulAction
       return '$(check) ripr: diagnostics';
     case 'analysisLimited':
       return '$(warning) ripr: limited';
+    case 'languageNotEnabled':
+      return '$(warning) ripr: language off';
     case 'gapActionable':
       return '$(lightbulb) ripr: gap ready';
     case 'gapNoAction':
@@ -195,12 +201,14 @@ export function statusBarColors(kind: RiprStatusKind): StatusBarColors | undefin
   switch (kind) {
     case 'analysisFailed':
     case 'serverUnavailable':
+    case 'serverFailed':
       return {
         background: new vscode.ThemeColor('statusBarItem.errorBackground'),
         foreground: new vscode.ThemeColor('statusBarItem.errorForeground'),
       };
     case 'stale':
     case 'analysisLimited':
+    case 'languageNotEnabled':
     case 'workspaceAmbiguous':
     case 'workspaceUntrusted':
     case 'gapArtifactWarning':

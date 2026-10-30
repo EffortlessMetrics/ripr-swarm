@@ -316,7 +316,7 @@ impl<'index> TargetedCallSyntax<'index> {
             {
                 occurrences.push(TargetedCallOccurrence {
                     name: call.name.clone(),
-                    text: call.text.clone(),
+                    text: call.text.to_string(),
                     line: call.line,
                     range: None,
                     shape: TargetedCallShape::Unsupported,
@@ -555,7 +555,7 @@ fn opaque(
         {
             out.push(TargetedCallOccurrence {
                 name: call.name,
-                text: call.text,
+                text: call.text.to_string(),
                 line: call.line,
                 range: None,
                 shape: TargetedCallShape::Unsupported,

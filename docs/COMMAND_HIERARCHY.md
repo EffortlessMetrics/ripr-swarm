@@ -28,6 +28,13 @@ writing reports. Choose a subcommand to perform an operation; its required
 inputs still apply. `ripr gate --pr-guidance PATH` also accepts the flag-first
 evaluation shorthand. `ripr pr-comments` retains its default `plan` action.
 
+Mistyped `agent` subcommands list the accepted children and suggest a nearby
+spelling when one exists: `ripr agent brief2` suggests `brief`. Suggestions
+stay within the `agent` group. A distant miss such as `swarm`'s `ingest`
+receives the accepted list without a suggestion. These errors exit 2, write
+the recovery message to stderr, and leave stdout empty. Use `ripr agent --help`
+or `ripr agent <subcommand> --help` to inspect the accepted command.
+
 ## Repair transaction
 
 Start with `ripr pilot --root .`. When it supplies a supported repair, run

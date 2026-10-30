@@ -128,10 +128,11 @@ fn copy_classified(
         }
         copy_bytes(&path, &bytes, source, report)?;
     }
-    let copied = RepoSeamFactCache {
-        dir: relocated(&cache.dir, source, &report.cache_dir)?,
-        sharded_dir: relocated(&cache.sharded_dir, source, &report.cache_dir)?,
-    };
+    let copied = RepoSeamFactCache::rooted_at(
+        relocated(&cache.dir, source, &report.cache_dir)?,
+        relocated(&cache.sharded_dir, source, &report.cache_dir)?,
+        report.cache_dir.clone(),
+    );
     match copied.load_classified_seams_with_fallback(key) {
         CacheLoad::Hit(_) => {
             report.classified_entries += 1;
@@ -152,6 +153,12 @@ fn export_selected(
     key: &RepoSeamCacheKey,
     files: &[RepoFileFactCacheKey],
 ) -> Result<CacheExportReport, String> {
+    // The copies are validated against the output directory, so a source the
+    // load path would refuse (Git-tracked entries, #7780) must be refused
+    // here or the export launders it into a cache the loader then trusts.
+    if let Some(reason) = super::cache_base_untrusted_reason(source) {
+        return Err(format!("refusing to export an untrusted cache: {reason}"));
+    }
     let mut report = CacheExportReport {
         schema_version: "0.1",
         cache_dir: output.to_path_buf(),
@@ -199,8 +206,17 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
     // canonical paths below serve only filesystem confinement and relocation.
     let source = cache_base_dir(root);
     refuse_links(&source)?;
-    let source =
-        fs::canonicalize(&source).map_err(|error| format!("resolve source cache: {error}"))?;
+    // A missing cache is the expected state before any repo exposure or repo
+    // badge analysis has run; name the recovery route in plain words instead
+    // of leaking the raw OS errno (#9851), in the vocabulary the empty-cache
+    // refusal below already uses.
+    let source = fs::canonicalize(&source).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "source cache not found; run repo exposure or repo badge analysis first".to_owned()
+        } else {
+            format!("resolve source cache: {error}")
+        }
+    })?;
     let output = if output.is_absolute() {
         output.to_path_buf()
     } else {
@@ -231,10 +247,11 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
         ]
         .into_iter()
         .map(|cache| {
-            Ok(RepoSeamFactCache {
-                dir: relocated(&cache.dir, &raw_base, &source)?,
-                sharded_dir: relocated(&cache.sharded_dir, &raw_base, &source)?,
-            })
+            Ok(RepoSeamFactCache::rooted_at(
+                relocated(&cache.dir, &raw_base, &source)?,
+                relocated(&cache.sharded_dir, &raw_base, &source)?,
+                source.clone(),
+            ))
         })
         .collect::<Result<Vec<_>, String>>()?;
         let facts = RepoFileFactCache::at(root);
@@ -262,6 +279,7 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
 #[cfg(test)]
 mod tests {
     use super::super::FileFacts;
+    use super::super::ignore_remove_dir_all;
     use super::super::tests::{empty_state, isolated_dir, sample_classified};
     use super::*;
     use std::collections::BTreeMap;
@@ -356,6 +374,66 @@ mod tests {
         }
     }
 
+    fn git_init_and_track(root: &Path, track: bool) -> Result<(), String> {
+        crate::git::run_git(root, &["init", "-q"]).map_err(|err| format!("git init: {err}"))?;
+        if track {
+            crate::git::run_git(root, &["add", "-f", "--", "source"])
+                .map_err(|err| format!("git add: {err}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn export_current_missing_cache_names_recovery_route_without_os_errno() -> Result<(), String> {
+        // #9851: a root that never ran repo exposure or repo badge analysis
+        // has no cache directory yet; the failure must read `not found` in
+        // plain words and name the producing analysis, never a raw OS errno.
+        let root = isolated_dir("export-current-missing-cache");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let err = export_current(&root, &root.join("export"))
+            .err()
+            .ok_or("missing source cache must fail")?;
+        ignore_remove_dir_all(&root);
+        assert!(err.contains("not found"), "{err}");
+        assert!(
+            err.contains("run repo exposure or repo badge analysis first"),
+            "error should name the recovery route, got: {err}"
+        );
+        assert!(!err.contains("os error"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn export_refuses_a_git_tracked_source_cache_and_leaves_no_copies() -> Result<(), String> {
+        // #7780: both classified and file-fact entries are in the source, so
+        // a refusal proves neither family is copied around the load gate.
+        let fixture = Fixture::new("export-tracked-source")?;
+        git_init_and_track(&fixture.root, true)?;
+        let outcome = fixture.export();
+        let copied = inventory(&fixture.output)?;
+        ignore_remove_dir_all(&fixture.root);
+        match outcome {
+            Err(reason) if reason.contains("tracked by Git") => {}
+            other => return Err(format!("tracked source must be refused, got {other:?}")),
+        }
+        if !copied.is_empty() {
+            return Err(format!("refused export copied {} files", copied.len()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn export_keeps_an_untracked_source_cache_inside_a_work_tree() -> Result<(), String> {
+        let fixture = Fixture::new("export-untracked-source")?;
+        git_init_and_track(&fixture.root, false)?;
+        let outcome = fixture.export();
+        ignore_remove_dir_all(&fixture.root);
+        match outcome {
+            Ok(report) if report.classified_entries == 2 && report.file_fact_entries == 1 => Ok(()),
+            other => Err(format!("untracked source must export, got {other:?}")),
+        }
+    }
+
     #[test]
     fn snapshot_keeps_current_manifest_references_and_file_facts_without_history()
     -> Result<(), String> {
@@ -404,10 +482,11 @@ mod tests {
                 .all(|path| path.file_name() != Some(std::ffi::OsStr::new("unreferenced.json")))
         );
         for cache in &fixture.caches {
-            let copied = RepoSeamFactCache {
-                dir: relocated(&cache.dir, &fixture.source, &fixture.output)?,
-                sharded_dir: relocated(&cache.sharded_dir, &fixture.source, &fixture.output)?,
-            };
+            let copied = RepoSeamFactCache::rooted_at(
+                relocated(&cache.dir, &fixture.source, &fixture.output)?,
+                relocated(&cache.sharded_dir, &fixture.source, &fixture.output)?,
+                fixture.output.clone(),
+            );
             assert!(
                 matches!(copied.load_classified_seams_with_fallback(&fixture.key), CacheLoad::Hit((seams, _, _)) if seams.len() == 2)
             );

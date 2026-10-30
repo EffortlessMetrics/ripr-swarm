@@ -14,8 +14,16 @@
       "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
     },
     {
+      "path": "src/handling.ts",
+      "sha256": "f5f877a8a058027d1f883072c8f3f97b81f12896b104c68702d507cc3aad28f7"
+    },
+    {
       "path": "src/pricing.ts",
       "sha256": "02ee38335fbee71d6670a807fc365e98b43a5ec36b8c66e8503ea1681ec2302a"
+    },
+    {
+      "path": "test/handling.test.ts",
+      "sha256": "731f5465636b9e7c96a1659c46251ea8f2fc0f13062f390b86baa8d3728d626e"
     },
     {
       "path": "test/pricing.test.ts",

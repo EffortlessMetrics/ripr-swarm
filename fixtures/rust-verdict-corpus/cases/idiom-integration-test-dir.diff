@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -20,7 +20,7 @@
+ }
+ 
+ pub fn slugify(title: &str) -> String {
+-    title.trim().to_lowercase().replace(' ', "-")
++    title.trim().to_lowercase().replace(" ", "-")
+ }
+ 
+ pub const NAME: &str = "idiomkit";

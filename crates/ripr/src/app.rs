@@ -13,6 +13,7 @@ pub(crate) mod check_artifact;
 mod context;
 pub(crate) mod diff_source;
 mod explain;
+pub(crate) mod gap_bound_repair;
 pub(crate) mod impacted_evidence;
 mod navigation;
 pub mod pr_evidence;
@@ -37,6 +38,7 @@ pub(crate) mod repair_card_handoff;
 /// real-opportunity accounting that back the versioned decision receipt.
 pub mod repair_card_usability;
 pub(crate) mod ripr_plus;
+mod running_binary;
 /// Task-first repair selection services behind `ripr repair` and
 /// `ripr continue` (#6305). The CLI adapter parses and renders; the
 /// decisions here reuse the inventory, eligibility, selector, and attempt
@@ -83,6 +85,8 @@ pub(crate) use crate::analysis::repair_route::repair_route_readiness;
 pub(crate) use check::check_with_progress_core;
 #[cfg(test)]
 pub(crate) use check::check_workspace_repo_with_origins;
+pub(crate) use check::check_workspace_with_config_typed;
+pub(crate) use check::check_workspace_worktree_with_config_typed;
 #[cfg(test)]
 pub(crate) use check::check_workspace_worktree_with_origins;
 pub(crate) use check::check_workspace_worktree_with_sources_open_rust_paths_and_progress;
@@ -104,8 +108,8 @@ pub(crate) use explain::{
     explain_finding_with_config_navigation_mode_and_progress,
 };
 pub(crate) use navigation::{
-    CheckDiffProvenance, FindingDrillIn, FindingNavigation, RepairRoute, finding_navigation,
-    finding_navigation_with_worktree,
+    CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, GapRepairRoute,
+    RepairRoute, finding_navigation, finding_navigation_with_worktree,
 };
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
@@ -165,6 +169,12 @@ pub struct CheckInput {
     /// subject in diff mode; worktree and repo modes fail closed with a
     /// named error rather than falling back to worktree analysis.
     pub git_candidate: Option<crate::domain::GitCandidateSubject>,
+    /// Caller-chosen narrowing of the changed files to analyze (#9277). The
+    /// default admits every file. A restricted scope is applied before the
+    /// diff-size guards; files outside it are reported as a
+    /// `language_scope_unsupported` limitation, never as clean, and a scope
+    /// that leaves no changed file is an error. Diff-scoped runs only.
+    pub scope: crate::analysis::DiffScopeFilter,
 }
 
 impl Default for CheckInput {
@@ -183,6 +193,7 @@ impl Default for CheckInput {
             suppression_policy: None,
             git_timeout: None,
             git_candidate: None,
+            scope: crate::analysis::DiffScopeFilter::default(),
         }
     }
 }
@@ -245,6 +256,7 @@ impl Mode {
 /// Result payload produced by [`check_workspace`].
 #[derive(Clone, Debug)]
 pub struct CheckOutput {
+    pub(crate) value_origins: crate::value_origins::ValueOrigins,
     /// Output schema version for machine consumers.
     pub schema_version: String,
     /// Test-harness registry projections (#3532): what each exact
@@ -300,6 +312,16 @@ pub struct CheckOutput {
     /// `--worktree` for files it cannot see. Cleared together with
     /// `unanalyzed_working_tree` for every non-committed-history mode.
     pub(crate) untracked_working_tree_source_paths: Vec<String>,
+    /// The gitignored subset of the excluded working-tree state (#7467):
+    /// routed source/test files ignored by `.gitignore`, plus routed files
+    /// under ignored directories. Neither the committed-history diff nor the
+    /// working-tree diff analyzes them, so the human/GitHub/JSON notes name
+    /// them with the force intent-to-add repair (`git add -N` refuses
+    /// ignored paths) instead of letting a result read as covering them.
+    /// The exclusion itself is unchanged. Cleared together with
+    /// `unanalyzed_working_tree` for every mode that is neither
+    /// committed-history nor a working-tree read.
+    pub(crate) ignored_working_tree_source_paths: Vec<String>,
     /// Python test files in the repository, set only when a changed Rust file
     /// has a `no_static_path` finding (#6340). Human-output context only: ripr
     /// does not link Python tests to Rust changes. Never serialized; no
@@ -366,3 +388,12 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
 
 #[cfg(test)]
 mod tests;
+
+impl CheckOutput {
+    /// Producer-recorded test files for the ordered source values of `finding`.
+    /// Returns `None` for findings with no matching producer receipt, changed probes/value payloads, or
+    /// ambiguous provenance. Unknown individual origins stay `None`.
+    pub fn source_value_files(&self, finding: &Finding) -> Option<&[Option<PathBuf>]> {
+        self.value_origins.files(finding)
+    }
+}

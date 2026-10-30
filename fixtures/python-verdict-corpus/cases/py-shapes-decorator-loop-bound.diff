@@ -1,0 +1,12 @@
+diff --git a/shapes/decorators.py b/shapes/decorators.py
+--- a/shapes/decorators.py
++++ b/shapes/decorators.py
+@@ -11,7 +11,7 @@
+         @functools.wraps(fn)
+         def inner(*args, **kwargs):
+             last = None
+-            for _ in range(times):
++            for _ in range(times - 1):
+                 try:
+                     return fn(*args, **kwargs)
+                 except ValueError as exc:

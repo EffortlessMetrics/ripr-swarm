@@ -1,0 +1,10 @@
+diff --git a/src/boundary.ts b/src/boundary.ts
+--- a/src/boundary.ts
++++ b/src/boundary.ts
+@@ -15,5 +15,5 @@
+ }
+ 
+ export function overweight(grams: number): boolean {
+-  return grams >= 2000;
++  return 2000 <= grams;
+ }

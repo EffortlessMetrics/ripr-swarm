@@ -104,6 +104,15 @@ and every condition below holds. Anything else keeps the pre-0265 reading.
     tail only while the owner's file binds no other item to `Vec` (a `use`
     renaming or naming it, a glob outside `std`/`core`/`alloc`, or a
     `type`, `struct`, `enum`, `union` or `trait` named `Vec`);
+  - `map` + `collect()` into a `Result<Vec<..>, ..>` (same spelling rules,
+    #9490): the first `Err` is the owner's result, and otherwise every
+    closure value is kept in order. Rules 1 and 2 read such a tail only
+    while the owner's file binds no other item to `Vec` or `Result`. Only
+    an `Ok(..)` pin (or a `.unwrap()` of the call) reaches every element: an
+    `Err(..)` pin stops at the first `Err`, so a test whose only pins are
+    `Err(..)` is withheld under `rust_pinned_shape_unresolved` and the file
+    binding `Ok` or `Err` as a value refuses the pin. A
+    `filter` + `collect` into a `Result` is not read;
   - `map` + `sum()` (a `sum::<u64>()` turbofish is allowed) over an
     arithmetic `E`: no comparison, `!`, `true`, `false` or `as` cast;
   - `any` or `all` with no `T`.
@@ -132,10 +141,12 @@ The binding read as an element of `P` is the binding with at most as many
 
 A **literal sequence** is an argument `&[a, b]`, `[a, b]`, `vec![a, b]` or
 `&vec![a, b]` whose every element is one unsuffixed integer or float
-literal (optionally negated), `true`, `false`, or a char literal. `&[]`
-is the empty literal sequence. A local (`&v`), a repeat (`vec![v; n]`), a
-range, a call, a suffixed element (`3u32`), a string or a slice of a
-literal (`&[1, 2][..]`) is not one.
+literal (optionally negated), `true`, `false`, a char literal, or (#9490)
+a plain string literal with no escape and no inner quote; a string is a
+run element only: it never serves as a comparison boundary. `&[]` is the
+empty literal sequence. A local (`&v`), a repeat (`vec![v; n]`), a range,
+a call, a suffixed element (`3u32`), an escaped or raw string or a slice of
+a literal (`&[1, 2][..]`) is not one.
 
 A **run** of an owner call is the sequence the call passes `P`: the
 argument itself when it is a literal sequence, or, when the argument is a
@@ -195,6 +206,13 @@ for a borrowed helper assertion, at the helper's eager calls in the test),
 every run is readable, and at least one run is non-empty. An empty literal,
 or any argument ripr cannot read, refuses the pin.
 
+Rule 2 extends to a changed `return_value` tail outside the admitted
+adaptor shape that walks a slice-like parameter (`P.iter()`,
+`P.into_iter()`, `P.iter_mut()`). A pinned assertion whose call passes only
+an empty literal sequence for `P` is refused: the walk visits nothing, so
+the changed tail cannot show on that input (#9444,
+`shape-const-generic-empty-only`).
+
 ### Rule 3: propagation through the adaptor
 
 The admitted tail is the owner's whole body, so its value is what the
@@ -208,6 +226,64 @@ owner returns:
 
 Whether a test's input runs the closure is rules 1 and 2's question, not
 this edge's.
+
+### Rule 4: a spawned thread's closure
+
+A changed `return_value` probe whose expression is the owner's whole tail
+`std::thread::spawn(move || e).join().unwrap()` (a zero-parameter closure,
+the fully qualified `std::thread::spawn` path, and exactly `.join().unwrap()`
+after it) establishes the ordinary owner-return pin. The closure runs once on
+every call and the join returns its value, so the tail evaluates like a
+plain tail whose value is `e`; the closure's own `||` is not a short circuit.
+The change is read inside `e`, so a branch, short circuit, block or macro in
+`e` keeps the earlier reading, as do `thread::spawn` (a path `use` could
+rebind), `unwrap_or`, and any operator applied to the join (#9490).
+
+### Rule 5: a returned closure applied in the pinned expression
+
+A changed `return_value` probe whose expression is the owner's whole tail
+`[move] |a, b| e` (one closure, no statement before it, parameters that are
+plain identifiers, and a body `e` that reads only the closure's parameters,
+the owner's parameters and constants, with no branch, short circuit, `?`,
+`return`, macro, block or nested closure) establishes the owner-return pin
+when the test compares the closure applied inline: `owner(args)(args)`. The
+application runs the closure exactly once, on the literals written there.
+The pin is read only when every argument of the owner call and application
+is a plain numeric literal, nonzero and pairwise different by value. A name
+such as `_2` is an identifier. Argument spelling alone does not establish
+discrimination: the complete closure body is evaluated with those inputs.
+
+The bounded body grammar is literals, parameters, same-scope uppercase literal `const`
+reads, parentheses, unary minus and binary `+`, `-`, `*`, `/`, `%`, with one to
+eight binary operations and depth sixteen. All parameters, the `Fn`,
+`FnMut` or `FnOnce` signature and the result must name the same unshadowed
+fixed-width primitive integer type or `f32`/`f64`. Calls (including uppercase
+callees), methods, casts, fields, qualified/imported constants, computed
+constants, pointer-width types and other unmodeled forms keep the earlier
+reading. Constants come from the owner's lexical item scope; a closure
+parameter shadows a same-named owner parameter. Unknown primitive authority
+or generic binding also keeps the earlier reading.
+
+For each binary node, replace only its operator with each other member of
+`+ - * / %`, retaining operand order and AST grouping, and evaluate the whole
+result again. Credit requires a different final value for every replacement.
+Integer widths and signed division/remainder follow the declared primitive;
+`f32` rounds at each operation. Overflow, division by zero, a non-finite
+result or another unestablished evaluation withholds credit, including for a
+replacement: no runtime overflow/panic profile is assumed. This is bounded
+static arithmetic evidence, not a claim about every possible mutation.
+
+Thus `(2)(3)` credits `n + x` and `n + x * TWO` with literal `TWO = 2`, while
+`n * x` at `(5)(1)` and `(5)(-1)`, `n - x` at `(4)(2)`, and
+`n + (x - OFFSET)` at `(2)(3)` with `OFFSET = 3` keep the earlier reading.
+A closure bound to a variable and called later, a non-literal call argument,
+a partial application and other operand shapes also keep it (#9490).
+
+The exact assertion must observe the applied owner result. An overwritten or
+shadowed result, a replaced closure, a same-name rival assertion, or an
+assertion inside an uninvoked closure keeps the earlier reading, and a shared
+owner or closure parameter name in an assertion cannot replace the admitted
+pin, including when the numeric model is unestablished.
 
 ### Decisions
 
@@ -277,6 +353,21 @@ this edge's.
    `let ages = vec![40; n]` in a `for n in 1..10` loop: the rule does not
    apply; the predicate stays `infection_unknown`.
 
+7. `xs.iter().map(|s| s.parse::<u32>()).collect::<Result<Vec<_>, _>>()`
+   with `assert_eq!(parse_all(&["1", "2"]), Ok(vec![1, 2]))`: the return
+   value reads `exposed`. With `&[]`, or when the owner's file declares
+   its own `Result`, it keeps the pre-0265 reading (#9490).
+
+8. `std::thread::spawn(move || 2 * x).join().unwrap()` with
+   `assert_eq!(doubled(5), 10)`: the return value reads `exposed`. With
+   `if x > 0 { 2 * x } else { 0 }` in the closure, or the unqualified
+   `thread::spawn`, it keeps the earlier reading (#9490).
+
+9. `fn make_adder(n: i32) -> impl Fn(i32) -> i32 { move |x| n + x }` with
+   `assert_eq!(make_adder(2)(3), 5)`: the return value reads `exposed`. With
+   `make_adder(0)(7)`, `make_adder(2)(2)`, a variable argument, or the closure
+   bound to a name and called later, it keeps the earlier reading (#9490).
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs`: the
@@ -288,11 +379,21 @@ this edge's.
   observed, missing, short-circuit and unreadable readings.
 - `crates/ripr/src/analysis/classify/boundary_pairing.rs` tests: rule 1's
   same-test pairing, including the constant-boundary refusal.
+- `crates/ripr/tests/pinned_shape_limit.rs`: rule 4's credited pin and its
+  keeping controls (branch or short circuit in the closure, unqualified
+  path, `unwrap_or`, an operator on the join).
+- `crates/ripr/tests/returned_closure_pin.rs`: rule 5's credited pin and its
+  keeping controls (zero, repeated and non-literal inputs, an unapplied
+  closure, a branch in the closure), effective arithmetic/capture collisions,
+  typed primitive authority, qualified owner identity and result attribution
+  (overwritten, shadowed, replaced, rival and uninvoked-closure assertions).
 - `crates/ripr/tests/iterator_adaptor_propagation.rs`: rule 3 through
   `check_workspace`, and the `map` + `count` refusal.
 - `fixtures/rust-verdict-corpus`: examples 1 to 3 (`grid-iter-exact`,
   `grid-iter-helper`, `grid-iter-table`), 4 (`trap-iter-boundary-missing`),
-  5 (`trap-iter-empty-slice`) and 6 (`grid-iter-property`).
+  5 (`trap-iter-empty-slice`), 6 (`grid-iter-property`) and 7
+  (`shape-collect-result-short-circuit`), 8 (`shape-thread-join-result`) and
+  9 (`shape-closure-returned-adder`).
 
 ## Implementation Mapping
 
@@ -300,7 +401,10 @@ this edge's.
   `adaptor_tail_of`, `admitted_consumer`, `literal_sequence`, `argument_sequences`,
   `pinned_call_runs_closure`, `AdaptorTail::run_reaches_boundary`.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`:
-  `ReturnPathGate::Adaptor` in `OwnerReturnPin::establish` and `admits`.
+  `ReturnPathGate::Adaptor` in `OwnerReturnPin::establish` and `admits`;
+  `spawn_join_body` in `return_path_gate_from` (rule 4).
+  `ReturnPathGate::ReturnedClosure`, `owner_pin/returned_closure.rs` and
+  `owner_pin/returned_closure/arithmetic.rs` (rule 5).
 - `crates/ripr/src/analysis/classify/activation.rs`:
   `adaptor_element_view`, `element_boundary_discriminator`,
   `element_boundary_observations`.
@@ -314,3 +418,8 @@ this edge's.
 
 - `rust_iterator_adaptor_mismatch`: acceptance examples whose observed
   reading differs from this spec. Target: zero.
+
+Returned-closure changes require the admitted applied owner pin before token
+matching can confirm observation. A shared owner or closure parameter name in
+an assertion cannot replace that pin, including when the numeric model is
+unestablished.

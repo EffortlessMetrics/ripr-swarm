@@ -1,0 +1,9 @@
+diff --git a/idioms/texts.py b/idioms/texts.py
+--- a/idioms/texts.py
++++ b/idioms/texts.py
+@@ -17,4 +17,4 @@
+ 
+ 
+ def shout(text):
+-    return text.upper() + "!"
++    return text.upper() + "?"

@@ -57,6 +57,7 @@ use std::io::Read;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, sync_channel};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -972,6 +973,31 @@ fn stdin_eof_before_initialize_still_exits() -> Result<(), String> {
 }
 
 #[test]
+fn zero_length_frame_does_not_delay_the_next_reply() -> Result<(), String> {
+    let mut session = LspSession::spawn()?;
+    // The tower-lsp codec treats an empty body as "no message" and leaves the
+    // bytes after it buffered; without the transport's read split, a request
+    // written in the same burst is answered only once more input or EOF
+    // arrives. Send the empty frame and a valid request in ONE write.
+    let id = session.next_id;
+    session.next_id += 1;
+    let init = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "initialize",
+        "params": initialize_params(),
+    })
+    .to_string();
+    let mut burst = b"Content-Length: 0\r\n\r\n".to_vec();
+    burst.extend_from_slice(format!("Content-Length: {}\r\n\r\n{init}", init.len()).as_bytes());
+    session.send_raw(&burst)?;
+    let response = session.await_response(id, RESPONSE_TIMEOUT)?;
+    expect_result(&response, "initialize")?;
+    session.notify("initialized", Some(serde_json::json!({})))?;
+    shutdown_exit_and_wait(&mut session)
+}
+
+#[test]
 fn malformed_frame_yields_parse_error_then_the_server_exits() -> Result<(), String> {
     let mut session = LspSession::spawn()?;
     // `Content-Length` is mandatory and must be an integer; this frame is
@@ -1480,12 +1506,23 @@ impl Drop for CompatFixtureRoot {
     }
 }
 
+/// Per-process sequence for fixture roots. Parallel tests reuse one name
+/// (every `ripr_binary_probe` call asks for `binary-probe`), and pid plus a
+/// clock stamp alone can repeat: Windows reports time in 100 ns ticks. Two
+/// probes sharing a directory write one `stdout` file from two processes, which
+/// splices their JSON into invalid output (#10458).
+static NEXT_COMPAT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
 fn unique_compat_fixture_root(name: &str) -> Result<CompatFixtureRoot, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
-    let path = std::env::temp_dir().join(format!("ripr-lsp-{name}-{}-{stamp}", std::process::id()));
+    let sequence = NEXT_COMPAT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "ripr-lsp-{name}-{}-{sequence}-{stamp}",
+        std::process::id()
+    ));
     fs::create_dir_all(&path).map_err(|err| format!("create compat fixture root failed: {err}"))?;
     Ok(CompatFixtureRoot { path })
 }

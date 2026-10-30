@@ -177,7 +177,7 @@
       "evidence_refs": [],
       "kind": "partial_inference",
       "limitation_id": "change-behavior-hint-partial",
-      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped, but a die/return/comparison token inside a string literal can still be misclassified (a robust fix needs tokenization)."
+      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped and single-line \"...\" / '...' literal contents cannot drive classification, but tokens inside heredocs, multi-line strings, q{}/qq{} and other quote-like operators, regex literals, or trailing comments are still scanned as code and can be misclassified."
     }
   ],
   "oracles": [
@@ -505,7 +505,7 @@
       "confidence": "medium",
       "expected_expression": null,
       "expression": "isnt(Shop::Pricing::clamp_qty(150), 150, 'huge orders are clamped')",
-      "kind": "exact_return_assertion",
+      "kind": "smoke_ok",
       "observed_sink": null,
       "oracle_id": "oracle:t/qualified.t:isnt:589-656",
       "provenance_refs": [
@@ -517,7 +517,7 @@
         "start_column": 0,
         "start_line": 20
       },
-      "strength": "strong_exact",
+      "strength": "weak_smoke",
       "target_owner_id": null,
       "test_id": "test:t/qualified.t"
     }

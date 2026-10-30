@@ -14,7 +14,7 @@ The owner returns `[Row { total: 0 }, Row { total: a + b }]`. The diff changes t
 
 ## Then
 
-The field-construction finding must not read `exposed`. It reads `weakly_exposed`.
+The field-construction finding must not read `exposed`. It reads `weakly_exposed`. The return_value finding on the returned array reads `weakly_exposed` on the same evidence: the returned array is alive in the asserting test, so unwinding drops the same elements.
 
 ## Must Not
 

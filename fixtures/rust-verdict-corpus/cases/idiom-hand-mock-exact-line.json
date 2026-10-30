@@ -1,0 +1,55 @@
+{
+  "case_id": "idiom-hand-mock-exact-line",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-hand-mock-exact-line.diff",
+  "anchor": {
+    "file": "src/mocks.rs",
+    "line": 17
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "hand_rolled_recorder_exact_lines",
+  "hard_case": "A hand-written `Recorder` collects the sent lines and the test compares the whole vector.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "sink.send(format!(\"sum={}\", total));",
+        "mutated_line": "sink.send(format!(\"sum={}\", total));",
+        "outcome": "tests_failed",
+        "failing_test": "mocks::tests::total_is_reported",
+        "equivalence_review": "not equivalent: `sink.send(format!(\"total={total}\"));` becomes `sink.send(format!(\"sum={}\", total));`"
+      },
+      {
+        "replacement": "sink.send(format!(\"total={}\", total + 1));",
+        "mutated_line": "sink.send(format!(\"total={}\", total + 1));",
+        "outcome": "tests_failed",
+        "failing_test": "mocks::tests::total_is_reported",
+        "equivalence_review": "not equivalent: `sink.send(format!(\"total={total}\"));` becomes `sink.send(format!(\"total={}\", total + 1));`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "total_is_reported compares [\"total=30\"]; renaming the key or adding one changes the line. over_budget_is_flagged only counts lines. Shape: hand-rolled mock with an exact recorded value.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

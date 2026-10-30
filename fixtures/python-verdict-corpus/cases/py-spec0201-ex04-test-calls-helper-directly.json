@@ -1,0 +1,48 @@
+{
+  "case_id": "py-spec0201-ex04-test-calls-helper-directly",
+  "subject_id": "authored-py-pytest-self-reach",
+  "diff": "cases/py-spec0201-ex04-test-calls-helper-directly.diff",
+  "anchor": {
+    "file": "reach/panel_direct.py",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "pytest_test_calls_private_helper",
+  "hard_case": "the test calls the edited helper itself, so the limitation does not attach",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return 3",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_panel_direct.py::test_panel_padding",
+        "equivalence_review": "not equivalent: the edit changes the value the test asserts"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`return 2` becomes `return 3` in `Panel._panel_pad`. The test calls `panel._panel_pad()` directly and asserts `== 2`, which the edit fails. RIPR-SPEC-0201 example 4: a direct call makes it a related test and the limitation does not attach.",
+  "labeling_observation": {
+    "ripr_commit": "006eaf8",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0201#4"
+  ]
+}

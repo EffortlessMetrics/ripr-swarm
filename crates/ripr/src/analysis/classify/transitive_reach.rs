@@ -313,13 +313,59 @@ struct MacroInvocations<'a> {
 
 #[cfg(test)]
 thread_local! {
-    static GRAPH_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static GRAPH_BUILD_COUNT: std::cell::RefCell<std::sync::Arc<std::sync::atomic::AtomicUsize>> =
+        std::cell::RefCell::new(std::sync::Arc::default());
+}
+
+/// Lets the pool workers that classify a run's probes (#8756) add to the
+/// calling thread's graph-build count, so a test still counts one run's
+/// builds on its own thread. Compiles to nothing outside tests.
+pub(in crate::analysis) struct InheritedGraphCounter {
+    #[cfg(test)]
+    counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl InheritedGraphCounter {
+    pub(in crate::analysis) fn capture() -> Self {
+        Self {
+            #[cfg(test)]
+            counter: GRAPH_BUILD_COUNT.with(|count| count.borrow().clone()),
+        }
+    }
+
+    pub(in crate::analysis) fn run<T>(&self, work: impl FnOnce() -> T) -> T {
+        #[cfg(test)]
+        {
+            /// Restores the worker's own counter even if `work` unwinds, so a
+            /// panicking probe cannot leave a pool thread counting into a
+            /// finished run's cell.
+            struct Restore(Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>);
+            impl Drop for Restore {
+                fn drop(&mut self) {
+                    if let Some(previous) = self.0.take() {
+                        GRAPH_BUILD_COUNT.with(|count| count.replace(previous));
+                    }
+                }
+            }
+            let _restore =
+                Restore(Some(GRAPH_BUILD_COUNT.with(|count| {
+                    count.replace(std::sync::Arc::clone(&self.counter))
+                })));
+            work()
+        }
+        #[cfg(not(test))]
+        work()
+    }
 }
 
 impl<'a> ReachGraph<'a> {
     fn build(index: &'a RustIndex) -> Self {
         #[cfg(test)]
-        GRAPH_BUILD_COUNT.with(|count| count.set(count.get() + 1));
+        GRAPH_BUILD_COUNT.with(|count| {
+            count
+                .borrow()
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        });
         let all_tests = collect_all_tests(index);
         let mut by_name: HashMap<&'a str, Vec<&'a FunctionSummary>> = HashMap::new();
         let mut callers: HashMap<&'a str, Vec<&'a str>> = HashMap::new();
@@ -890,9 +936,96 @@ pub(in crate::analysis) struct OwnerReach<'g, 'a> {
     /// The owner is, or is reached from, a trait method the language calls
     /// without naming it, so any test may run it.
     implicit_dispatch: bool,
+    /// The name walk is blind to the path: some `macro_rules!` body names
+    /// the owner (a production function may reach it through a macro hop),
+    /// or a chain past `MAX_TRANSITIVE_DEPTH` reaches it. Any test may run it
+    /// (#9167 review).
+    path_untraced: bool,
 }
 
 impl OwnerReach<'_, '_> {
+    /// An inherent method of the same name on the same type takes precedence
+    /// over the trait method in `value.method()` syntax, so that call syntax
+    /// cannot witness the trait impl as an observer. Only the observer
+    /// authority is withheld: refusing the dispatch witness itself would turn
+    /// the callback's `Some(false)` into `None`, which reads as no implicit
+    /// information and restores kind-only confirmation.
+    fn inherent_method_shadows(&self, function: &FunctionSummary) -> bool {
+        let FunctionContainer::TraitImpl { self_ty, .. } = &function.item.container else {
+            return false;
+        };
+        self.graph
+            .by_name
+            .get(function.name.as_str())
+            .is_some_and(|same_name| {
+                same_name.iter().any(|candidate| {
+                    matches!(
+                        &candidate.item.container,
+                        FunctionContainer::Inherent { self_ty: other } if other == self_ty
+                    )
+                })
+            })
+    }
+
+    /// Indexed implicit dispatch witnessed by this test, rather than a trait
+    /// declaration elsewhere on the reverse owner path. Unknown calls retain
+    /// reach uncertainty but cannot supply effect-observation authority.
+    pub(in crate::analysis) fn test_has_known_implicit_dispatch(
+        &self,
+        owner: &FunctionSummary,
+        test: &TestFact,
+    ) -> bool {
+        let dispatches = |function: &FunctionSummary| {
+            IMPLICIT_DISPATCH_METHODS.contains(&function.name.as_str())
+                && super::related_tests::test_dispatches_trait_impl(test, function)
+        };
+        dispatches(owner)
+            || self
+                .reaching
+                .iter()
+                .copied()
+                .filter(|name| *name != self.owner_name && IMPLICIT_DISPATCH_METHODS.contains(name))
+                .any(|name| {
+                    self.graph
+                        .by_name
+                        .get(name)
+                        .is_some_and(|functions| functions.len() == 1 && dispatches(functions[0]))
+                })
+    }
+
+    /// Assertion-local shared-sink authority; declaration/reach alone is
+    /// insufficient. The separate reach predicate keeps its uncertainty.
+    pub(in crate::analysis) fn assertion_has_known_implicit_observer(
+        &self,
+        owner: &FunctionSummary,
+        test: &TestFact,
+        assertion: &crate::analysis::facts::OracleFact,
+        expression: &str,
+        source: &str,
+        expansion: &super::ImplicitExpansionContext<'_>,
+    ) -> bool {
+        let observes = |function: &FunctionSummary| {
+            IMPLICIT_DISPATCH_METHODS.contains(&function.name.as_str())
+                && !self.inherent_method_shadows(function)
+                && super::related_tests::test_dispatches_trait_impl(test, function)
+                && super::implicit_effect::assertion_observes_dispatch(
+                    function, owner, expression, test, assertion, source, expansion,
+                )
+        };
+        observes(owner)
+            || self
+                .reaching
+                .iter()
+                .copied()
+                .filter(|name| *name != self.owner_name && IMPLICIT_DISPATCH_METHODS.contains(name))
+                .any(|name| {
+                    self.graph
+                        .by_name
+                        .get(name)
+                        .is_some_and(|functions| functions.len() == 1 && observes(functions[0]))
+                })
+    }
+
     /// Whether `test` may run the owner, by name only (#6297). It may when
     /// it calls the owner, calls a production function that reaches the
     /// owner within `MAX_TRANSITIVE_DEPTH` hops, or calls a lower-case name
@@ -901,7 +1034,7 @@ impl OwnerReach<'_, '_> {
     /// indexed functions with no name path to the owner rule it out. Macro
     /// bodies are the caller's concern.
     pub(in crate::analysis) fn test_may_reach(&self, test: &TestFact) -> bool {
-        if self.implicit_dispatch {
+        if self.implicit_dispatch || self.path_untraced {
             return true;
         }
         test.calls.iter().any(|call| {
@@ -923,7 +1056,7 @@ impl OwnerReach<'_, '_> {
 impl<'a> TransitiveReachIndex<'a> {
     #[cfg(test)]
     pub(in crate::analysis) fn graph_build_count() -> usize {
-        GRAPH_BUILD_COUNT.with(std::cell::Cell::get)
+        GRAPH_BUILD_COUNT.with(|count| count.borrow().load(std::sync::atomic::Ordering::Relaxed))
     }
 
     pub(in crate::analysis) fn new(index: &'a RustIndex) -> Self {
@@ -1226,12 +1359,61 @@ impl<'a> TransitiveReachIndex<'a> {
                     })
                 })
             });
+        let path_untraced = graph.macro_may_mention(owner_name)
+            || reaching.iter().any(|name| graph.macro_may_mention(name))
+            || graph.walk_past_bound(owner_name, |_| Some(())).is_some();
         OwnerReach {
             graph,
             owner_name: owner_name.to_string(),
             reaching,
             implicit_dispatch,
+            // A macro body naming the owner, or any function on a path to it
+            // (`outer -> mac!(helper) -> helper -> owner`), hides a hop from
+            // the name walk.
+            path_untraced,
         }
+    }
+
+    /// Declaration context for display only. The lexical candidate walk is
+    /// unchanged; this does not establish runtime reach across this boundary.
+    pub(in crate::analysis) fn private_helper_boundary(
+        &self,
+        owner_id: &crate::domain::SymbolId,
+        owner_name: &str,
+        entry_name: &str,
+    ) -> Option<String> {
+        let owners = self
+            .graph()
+            .by_name
+            .get(owner_name)?
+            .iter()
+            .copied()
+            .filter(|function| &function.id == owner_id)
+            .collect::<Vec<_>>();
+        let [owner] = owners.as_slice() else {
+            return None;
+        };
+        let [entry] = self.graph().by_name.get(entry_name)?.as_slice() else {
+            return None;
+        };
+        if owner.item.container != FunctionContainer::Free
+            || entry.item.container != FunctionContainer::Free
+        {
+            return None;
+        }
+        let owner_visibility = declaration_visibility(self.index, owner)?;
+        if owner_visibility == "pub" || declaration_visibility(self.index, entry)? != "pub" {
+            return None;
+        }
+        let privacy = if owner_visibility.is_empty() {
+            "private"
+        } else {
+            "restricted-visibility"
+        };
+        Some(format!(
+            "{privacy} helper `{}` behind public entry point `{entry_name}`; candidate path only",
+            owner.name
+        ))
     }
 
     /// Every production function, for checks that scan impl owners.
@@ -1240,6 +1422,42 @@ impl<'a> TransitiveReachIndex<'a> {
     ) -> impl Iterator<Item = &'a FunctionSummary> + '_ {
         self.graph().by_name.values().flatten().copied()
     }
+}
+
+/// Read the exact indexed declaration, retaining unknown on malformed source,
+/// duplicate declarations, or a stale line/name. Never infer privacy from the
+/// function body's text: that slice starts at `fn` and omits `pub`.
+fn declaration_visibility(index: &RustIndex, function: &FunctionSummary) -> Option<String> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName, ast::HasVisibility};
+    let file = index.files().get(&function.file)?;
+    let tree = index.source_syntax.get(index, &function.file)?.tree()?;
+    let declarations = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|node| node.name().is_some_and(|name| name.text() == function.name))
+        .filter(|node| {
+            node.fn_token().is_some_and(|token| {
+                let offset = u32::from(token.text_range().start()) as usize;
+                file.source
+                    .bytes()
+                    .take(offset)
+                    .filter(|byte| *byte == b'\n')
+                    .count()
+                    + 1
+                    == function.start_line
+            })
+        })
+        .collect::<Vec<_>>();
+    let [declaration] = declarations.as_slice() else {
+        return None;
+    };
+    Some(
+        declaration
+            .visibility()
+            .map(|visibility| visibility.syntax().text().to_string())
+            .unwrap_or_default(),
+    )
 }
 
 /// Finds a deterministic macro-blocked witness for a `no_static_path` Rust
@@ -2783,7 +3001,7 @@ mod declaration_tests {
         CallFact {
             line,
             name: name.to_string(),
-            text: text.to_string(),
+            text: text.to_string().into(),
         }
     }
 
@@ -2844,7 +3062,7 @@ mod tests {
                 .map(|c| CallFact {
                     line: 2,
                     name: c.to_string(),
-                    text: format!("{c}()"),
+                    text: format!("{c}()").into(),
                 })
                 .collect(),
             returns: Vec::new(),
@@ -2875,7 +3093,7 @@ mod tests {
                 .map(|c| CallFact {
                     line: 2,
                     name: c.to_string(),
-                    text: format!("{c}()"),
+                    text: format!("{c}()").into(),
                 })
                 .collect(),
             assertions: Vec::new(),
@@ -2922,6 +3140,108 @@ mod tests {
             workspace_authority: None,
             ..Default::default()
         })
+    }
+
+    #[test]
+    fn limited_journey_private_helper_detail_requires_exact_declarations() -> Result<(), String> {
+        for (visibility, expected) in [
+            ("", Some("private helper")),
+            ("pub(crate)", Some("restricted-visibility helper")),
+            ("pub", None),
+        ] {
+            let source = format!("pub fn outer() {{ inner(); }}\n{visibility} fn inner() {{}}\n");
+            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+                Path::new("src/lib.rs"),
+                &source,
+            )?;
+            let index = index_with_source(facts.functions, Vec::new(), source);
+            let reach = TransitiveReachIndex::new(&index);
+            let owner = SymbolId("src/lib.rs::inner".to_string());
+            let detail = reach.private_helper_boundary(&owner, "inner", "outer");
+            assert_eq!(detail.is_some(), expected.is_some(), "{detail:?}");
+            if let Some(expected) = expected {
+                assert!(
+                    detail.as_deref().is_some_and(|text| text.contains(expected)
+                        && text.contains("public entry point `outer`")
+                        && text.contains("candidate path only")),
+                    "{detail:?}"
+                );
+            }
+            assert_eq!(
+                reach.private_helper_boundary(
+                    &SymbolId("src/lib.rs::absent".to_string()),
+                    "inner",
+                    "outer"
+                ),
+                None
+            );
+            assert_eq!(
+                reach.private_helper_boundary(&owner, "inner", "absent"),
+                None
+            );
+            assert_eq!(
+                reach.private_helper_boundary(&owner, "absent", "outer"),
+                None
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn limited_journey_private_helper_detail_refuses_same_name_indexed_entries()
+    -> Result<(), String> {
+        for duplicate_entry in [false, true] {
+            let mut files = BTreeMap::new();
+            for (path, source) in [
+                ("src/lib.rs", "pub fn outer() { inner(); }\nfn inner() {}\n"),
+                ("src/sibling.rs", "pub fn outer() {}\n"),
+            ] {
+                if path == "src/sibling.rs" && !duplicate_entry {
+                    continue;
+                }
+                let path = PathBuf::from(path);
+                let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+                files.insert(path, facts);
+            }
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                files,
+                ..Default::default()
+            });
+            let reach = TransitiveReachIndex::new(&index);
+            let mut entries = reach
+                .production_functions()
+                .filter(|function| function.name == "outer")
+                .map(|function| {
+                    assert_eq!(
+                        declaration_visibility(&index, function).as_deref(),
+                        Some("pub")
+                    );
+                    function.id.0.as_str()
+                })
+                .collect::<Vec<_>>();
+            entries.sort_unstable();
+            let expected_entries = if duplicate_entry {
+                vec!["src/lib.rs::outer", "src/sibling.rs::outer"]
+            } else {
+                vec!["src/lib.rs::outer"]
+            };
+            assert_eq!(entries, expected_entries);
+            let owner = SymbolId("src/lib.rs::inner".to_string());
+            assert_eq!(
+                reach
+                    .private_helper_boundary(&owner, "inner", "outer")
+                    .as_deref(),
+                if duplicate_entry {
+                    None
+                } else {
+                    Some(
+                        "private helper `inner` behind public entry point `outer`; candidate path only",
+                    )
+                },
+                "duplicate indexed entry: {duplicate_entry}"
+            );
+        }
+        Ok(())
     }
 
     // (a) Candidate path found -> witness captured naming the test + entry symbol.
@@ -3035,7 +3355,7 @@ mod tests {
             CallFact {
                 line: 1,
                 name: function.name.clone(),
-                text: format!("fn {}(&mut self) {{", function.name),
+                text: format!("fn {}(&mut self) {{", function.name).into(),
             },
         );
         function
@@ -3044,7 +3364,7 @@ mod tests {
     fn with_call_text(mut function: FunctionSummary, name: &str, text: &str) -> FunctionSummary {
         for call in &mut function.calls {
             if call.name == name {
-                call.text = text.to_string();
+                call.text = text.to_string().into();
             }
         }
         function
@@ -3432,7 +3752,7 @@ mod tests {
         cyclic[2].calls.push(CallFact {
             line: 2,
             name: "g9".to_string(),
-            text: "g9()".to_string(),
+            text: "g9()".to_string().into(),
         });
         let looped = index_with(cyclic, vec![make_test("test_none", vec!["unrelated"])]);
         assert!(find_transitive_witness("inner", &looped).is_none());
@@ -3443,7 +3763,7 @@ mod tests {
         // A test named `g6` records its own `fn g6()` line as a call fact.
         // That level is not entered, so the walk goes on to `real`.
         let mut declared = make_test_at("g6", "tests/it.rs", 1, vec!["g6"]);
-        declared.calls[0].text = "fn g6() {".to_string();
+        declared.calls[0].text = "fn g6() {".to_string().into();
         let real = make_test_at("real", "tests/it.rs", 10, vec!["g7"]);
         let index = index_with(hop_chain(7), vec![declared, real]);
         assert_eq!(
@@ -3535,7 +3855,7 @@ mod tests {
                 test.calls = vec![CallFact {
                     line: index * 10 + 2,
                     name: "render".to_string(),
-                    text,
+                    text: text.into(),
                 }];
                 test
             })
@@ -3700,7 +4020,7 @@ mod tests {
             let calls = vec![CallFact {
                 line: 1,
                 name: start.to_string(),
-                text: format!("{start}()"),
+                text: format!("{start}()").into(),
             }];
             for depth in 0..=7 {
                 assert_eq!(
@@ -3714,7 +4034,7 @@ mod tests {
         let call = |name: &str| CallFact {
             line: 1,
             name: name.to_string(),
-            text: format!("{name}()"),
+            text: format!("{name}()").into(),
         };
         let repeated = vec![call("a1"), call("a1"), call("decode")];
         assert_eq!(
@@ -3726,7 +4046,7 @@ mod tests {
         let a1 = vec![CallFact {
             line: 1,
             name: "a1".to_string(),
-            text: "a1()".to_string(),
+            text: "a1()".to_string().into(),
         }];
         assert_eq!(
             ids(reach.functions_reached_from(&a1, 5)),
@@ -4211,6 +4531,10 @@ mod tests {
         );
         let plain_reach = TransitiveReachIndex::new(&plain);
         let reach = plain_reach.owner_reach("seconds");
+        assert!(!reach.test_has_known_implicit_dispatch(
+            &make_fn("seconds", vec![]),
+            &make_test("t", Vec::new())
+        ));
         assert!(!reach.test_may_reach(&make_test("t", vec!["from_str", "Ok"])));
         assert!(!reach.test_may_reach(&make_test("t", Vec::new())));
         assert!(reach.test_may_reach(&make_test("t", vec!["seconds_bridge"])));
@@ -4221,7 +4545,7 @@ mod tests {
         own.calls.push(CallFact {
             line: 1,
             name: "from_str_fortnight".to_string(),
-            text: "fn from_str_fortnight() {".to_string(),
+            text: "fn from_str_fortnight() {".to_string().into(),
         });
         assert!(!reach.test_may_reach(&own));
 
@@ -4234,6 +4558,14 @@ mod tests {
             Vec::new(),
         );
         let display_reach = TransitiveReachIndex::new(&display);
+        assert!(
+            !display_reach
+                .owner_reach("seconds")
+                .test_has_known_implicit_dispatch(
+                    &make_fn("seconds", vec![]),
+                    &make_test("t", Vec::new())
+                )
+        );
         assert!(
             display_reach
                 .owner_reach("seconds")
@@ -4266,6 +4598,14 @@ mod tests {
         assert!(
             !named_reach
                 .owner_reach("seconds")
+                .test_has_known_implicit_dispatch(
+                    &make_fn("seconds", vec![]),
+                    &make_test("t", Vec::new())
+                )
+        );
+        assert!(
+            !named_reach
+                .owner_reach("seconds")
                 .test_may_reach(&make_test("t", Vec::new()))
         );
         let mut trait_fmt = make_fn("fmt", vec!["seconds"]);
@@ -4275,9 +4615,78 @@ mod tests {
         };
         let trait_only = index_with(vec![make_fn("seconds", vec![]), trait_fmt], Vec::new());
         assert!(
+            !TransitiveReachIndex::new(&trait_only)
+                .owner_reach("seconds")
+                .test_has_known_implicit_dispatch(
+                    &make_fn("seconds", vec![]),
+                    &make_test("t", Vec::new())
+                )
+        );
+        assert!(
             TransitiveReachIndex::new(&trait_only)
                 .owner_reach("seconds")
                 .test_may_reach(&make_test("t", Vec::new()))
+        );
+    }
+
+    #[test]
+    fn known_implicit_dispatch_requires_this_tests_receiver() {
+        let mut next = make_fn("next", vec!["record"]);
+        next.item.container = FunctionContainer::TraitImpl {
+            trait_path: "Iterator".to_string(),
+            self_ty: "Counter".to_string(),
+        };
+        let owner = make_fn("record", vec![]);
+        let index = index_with(vec![owner.clone(), next.clone()], Vec::new());
+        let graph = TransitiveReachIndex::new(&index);
+        let reach = graph.owner_reach("record");
+        for (body, expected) in [
+            ("let c = Counter { sink: 0 }; for _ in c {}", true),
+            ("let c = Counter { sink: 0 }; for\n _ in c {}", true),
+            ("let c = Counter { sink: 0 }; c.for_each(|_| {});", true),
+            (
+                "let c = Counter { sink: 0 }; while c.next().is_some() {}",
+                true,
+            ),
+            ("let c = Counter { sink: 0 };", false),
+            (
+                "let c = Other { sink: Counter { sink: 0 } }; for _ in c {}",
+                false,
+            ),
+            (
+                "let c = Counter { sink: 0 }; let c = Other {}; for _ in c {}",
+                false,
+            ),
+            ("for _ in c {} let c = Counter { sink: 0 };", false),
+            (
+                "let c = Other {}; let note = \"for _ in Counter {}\";",
+                false,
+            ),
+        ] {
+            let mut test = make_test("observer", Vec::new());
+            test.body = body.into();
+            assert_eq!(
+                reach.test_has_known_implicit_dispatch(&owner, &test),
+                expected,
+                "{body}"
+            );
+            let direct = graph.owner_reach("next");
+            assert_eq!(
+                direct.test_has_known_implicit_dispatch(&next, &test),
+                expected,
+                "{body}"
+            );
+        }
+        let mut test = make_test("observer", Vec::new());
+        test.body = "let c = Counter {}; for _ in c {}".into();
+        let ambiguous = index_with(
+            vec![owner.clone(), next, make_fn("next", vec![])],
+            Vec::new(),
+        );
+        assert!(
+            !TransitiveReachIndex::new(&ambiguous)
+                .owner_reach("record")
+                .test_has_known_implicit_dispatch(&owner, &test)
         );
     }
 
@@ -4391,7 +4800,9 @@ mod tests {
             CallFact {
                 line: 2,
                 name: "derive_error".to_string(),
-                text: "pub fn derive_error(input: TokenStream) -> TokenStream {".to_string(),
+                text: "pub fn derive_error(input: TokenStream) -> TokenStream {"
+                    .to_string()
+                    .into(),
             },
         );
         let mut expand = make_fn("expand", vec!["fmt_impl"]);

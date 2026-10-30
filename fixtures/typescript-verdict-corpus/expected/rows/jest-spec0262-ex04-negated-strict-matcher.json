@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0262-ex04-negated-strict-matcher",
+  "subject_id": "authored-ts-jest-mined",
+  "origin": "authored",
+  "anchor": "src/feeNegated.ts:2",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "jest_negated_strict_matcher",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

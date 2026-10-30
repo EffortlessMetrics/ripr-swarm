@@ -37,6 +37,14 @@ export interface RetainHostDiagnosticsInput {
   multiRoot?: { userDataDir: string; receiptPath: string };
   error?: unknown;
   env?: NodeJS.ProcessEnv;
+  /** Only the matrix's named receipt; never a workspace or profile directory. */
+  matrixReceiptPath?: string;
+}
+
+interface MatrixReceiptRetention {
+  status: 'retained' | 'absent' | 'refused' | 'unreadable' | 'empty_or_binary';
+  bytes: number;
+  truncated?: boolean;
 }
 
 export interface RetainHostDiagnosticsResult {
@@ -101,7 +109,9 @@ export function retainHostDiagnostics(
 
   const logDir = resolveLogDir(input.userDataDir);
   const copiedFiles: string[] = [];
-  let bytesWritten = 0;
+  // Reserve the bounded receipt before filling the remaining log budget.
+  const matrixReceipt = retainMatrixReceipt(input, diagnosticsDir);
+  let bytesWritten = matrixReceipt?.bytes ?? 0;
   const logBudget = MAX_HOST_DIAGNOSTICS_BYTES - MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES;
   const logsRoot = path.join(diagnosticsDir, HOST_LOG_DIR_NAME);
   const matrix = input.multiRoot;
@@ -136,10 +146,11 @@ export function retainHostDiagnostics(
         break;
       }
       const source = path.join(logDir, relative);
-      const copied = copyLogTail(
+      const copied = copyTextSlice(
         source,
         path.join(logsRoot, relative),
-        Math.min(MAX_HOST_DIAGNOSTICS_FILE_BYTES, remaining)
+        Math.min(MAX_HOST_DIAGNOSTICS_FILE_BYTES, remaining),
+        'tail'
       );
       if (copied > 0) {
         copiedFiles.push(relative.split(path.sep).join('/'));
@@ -154,14 +165,7 @@ export function retainHostDiagnostics(
     copiedFiles,
     error: input.error,
     env: input.env ?? process.env,
-    multiRoot: matrix === undefined ? undefined : {
-      user_data_dir: clipField(matrix.userDataDir, MAX_IDENTITY_PATH_CHARS),
-      log_dir: clipField(resolveLogDir(matrix.userDataDir), MAX_IDENTITY_PATH_CHARS),
-      copied_files: matrixFiles.slice(0, MAX_COPIED_FILE_ENTRIES)
-        .map(name => clipField(name, MAX_IDENTITY_PATH_CHARS)),
-      copied_files_omitted: Math.max(0, matrixFiles.length - MAX_COPIED_FILE_ENTRIES),
-      receipt: matrixReceipt,
-    }
+    matrixReceipt
   });
   const identityPath = path.join(diagnosticsDir, HOST_DIAGNOSTICS_IDENTITY_FILE);
   fs.writeFileSync(identityPath, identity, 'utf8');
@@ -180,13 +184,15 @@ export function finalizeHostRun(input: {
   artifactRoot: string;
   userDataDir: string;
   error?: unknown;
-  multiRoot?: { userDataDir: string; receiptPath: string };
+  /** Set immediately before launching the isolated real-matrix host. */
+  matrix?: { userDataDir: string; receiptPath: string };
 }): { exitCode: number; retention: RetainHostDiagnosticsResult } {
   let retention: RetainHostDiagnosticsResult;
   try {
     retention = retainHostDiagnostics({
       artifactRoot: input.artifactRoot,
-      userDataDir: input.userDataDir,
+      userDataDir: input.matrix?.userDataDir ?? input.userDataDir,
+      matrixReceiptPath: input.matrix?.receiptPath,
       failed: input.error !== undefined,
       multiRoot: input.multiRoot,
       error: input.error
@@ -217,7 +223,7 @@ function serializeIdentity(input: {
   copiedFiles: string[];
   error: unknown;
   env: NodeJS.ProcessEnv;
-  multiRoot?: Record<string, unknown>;
+  matrixReceipt?: MatrixReceiptRetention;
 }): string {
   const copied = input.copiedFiles
     .slice(0, MAX_COPIED_FILE_ENTRIES)
@@ -239,6 +245,7 @@ function serializeIdentity(input: {
     github_sha: clipEnv(input.env.GITHUB_SHA),
     github_job: clipEnv(input.env.GITHUB_JOB),
     runner_os: clipEnv(input.env.RUNNER_OS),
+    ...(input.matrixReceipt ? { matrix_receipt: input.matrixReceipt } : {}),
     claim:
       'failure-only host log retention; does not change the original test exit status'
   };
@@ -265,36 +272,44 @@ function serializeIdentity(input: {
   })}\n`;
 }
 
-// These inputs are lane-owned paths, never a request to follow a profile or
-// receipt symlink into another workspace. Ignore unowned sources explicitly.
-function ownedSource(root: string, source: string): boolean {
-  const relative = path.relative(path.resolve(root), path.resolve(source));
-  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    return false;
+function retainMatrixReceipt(
+  input: RetainHostDiagnosticsInput,
+  diagnosticsDir: string
+): MatrixReceiptRetention | undefined {
+  if (input.matrixReceiptPath === undefined) {
+    return undefined;
   }
-  let current = path.resolve(root);
-  for (const segment of relative.split(path.sep)) {
-    current = path.join(current, segment);
-    if (!fs.existsSync(current) || fs.lstatSync(current).isSymbolicLink()) { return false; }
+  const source = path.resolve(input.matrixReceiptPath);
+  const root = path.resolve(input.artifactRoot);
+  const relative = path.relative(root, source);
+  if (path.basename(source) !== 'acceptance.json' || !relative
+    || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
+    || source.startsWith(diagnosticsDir + path.sep)) {
+    return { status: 'refused', bytes: 0 };
   }
-  return true;
-}
-
-// Keep the small structured teardown receipt whole; a truncated JSON tail would
-// disguise missing evidence. Missing/oversized/non-JSON receipts stay explicit.
-function retainMatrixReceipt(artifactRoot: string, source: string, destination: string): { state: string; bytes: number } {
-  if (!fs.existsSync(source)) { return { state: 'missing', bytes: 0 }; }
-  if (!ownedSource(artifactRoot, source)) { return { state: 'outside_root_or_symlink', bytes: 0 }; }
-  const stat = fs.lstatSync(source);
-  if (!stat.isFile()) { return { state: 'not_regular_file', bytes: 0 }; }
-  if (stat.size > MAX_HOST_DIAGNOSTICS_FILE_BYTES) { return { state: 'oversized', bytes: 0 }; }
-  const text = fs.readFileSync(source, 'utf8');
-  try { JSON.parse(text); } catch { return { state: 'invalid_json', bytes: 0 }; }
-  const encoded = Buffer.from(redactHostDiagnosticsText(text), 'utf8');
-  if (encoded.length > MAX_HOST_DIAGNOSTICS_FILE_BYTES) { return { state: 'oversized', bytes: 0 }; }
-  fs.mkdirSync(path.dirname(destination), { recursive: true });
-  fs.writeFileSync(destination, encoded);
-  return { state: 'retained', bytes: encoded.length };
+  try {
+    // Reject symlink/junction traversal, including a link to an otherwise
+    // allowed filename. Read just this named file, not its directory siblings.
+    let current = root;
+    for (const part of relative.split(path.sep)) {
+      current = path.join(current, part);
+      if (fs.lstatSync(current).isSymbolicLink()) {
+        return { status: 'refused', bytes: 0 };
+      }
+    }
+    const stat = fs.lstatSync(source);
+    if (!stat.isFile()) {
+      return { status: 'refused', bytes: 0 };
+    }
+    // Keep a bounded prefix, so truncation cannot drop a PEM's opening marker
+    // before the existing sanitizer sees it. Partial JSON remains useful evidence.
+    const bytes = copyTextSlice(source, path.join(diagnosticsDir, 'acceptance.json'),
+      MAX_HOST_DIAGNOSTICS_FILE_BYTES, 'prefix');
+    return { status: bytes > 0 ? 'retained' : 'empty_or_binary', bytes,
+      truncated: stat.size > MAX_HOST_DIAGNOSTICS_FILE_BYTES };
+  } catch (error) {
+    return { status: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'unreadable', bytes: 0 };
+  }
 }
 
 function serializeError(error: unknown): { message: string; stack?: string } | null {
@@ -312,6 +327,58 @@ function serializeError(error: unknown): { message: string; stack?: string } | n
 
 function clipRedactedField(text: string): string {
   return clipField(redactHostDiagnosticsText(text), MAX_ERROR_FIELD_CHARS);
+}
+
+/** Only observations already available to the matrix; absent fields stay absent. */
+export interface HostRequestObservation {
+  method: string;
+  document_uri?: string;
+  workspace_root?: string;
+  controller_status?: string;
+  sampled_effective_root?: string;
+  sampled_root_state?: string;
+  sampled_attempt_id?: string;
+  sampled_run_status?: string;
+  client_id?: number;
+  current_client_id?: number;
+  client_pid?: number;
+  current_client_pid?: number;
+  document_version?: number;
+  range_start_line?: number;
+  range_start_character?: number;
+  range_end_line?: number;
+  range_end_character?: number;
+  same_client?: boolean;
+}
+
+export function boundedRequestEvidence(observation: HostRequestObservation, error?: unknown): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const key of ['method', 'document_uri', 'workspace_root', 'controller_status', 'sampled_effective_root', 'sampled_root_state',
+    'sampled_attempt_id', 'sampled_run_status'] as const) {
+    const value = observation[key];
+    if (typeof value === 'string') {
+      result[key] = clipField(redactHostDiagnosticsText(value), MAX_IDENTITY_PATH_CHARS);
+    }
+  }
+  for (const key of ['client_id', 'current_client_id', 'client_pid', 'current_client_pid',
+    'document_version', 'range_start_line', 'range_start_character', 'range_end_line',
+    'range_end_character'] as const) {
+    const value = observation[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      result[key] = value;
+    }
+  }
+  if (typeof observation.same_client === 'boolean') {
+    result.same_client = observation.same_client;
+  }
+  if (error !== undefined) {
+    const code = (error as { code?: unknown } | null)?.code;
+    result.error = { ...serializeError(error),
+      ...(error instanceof Error ? { name: clipRedactedField(error.name) } : {}),
+      ...(typeof code === 'string' ? { code: clipRedactedField(code) }
+        : typeof code === 'number' && Number.isFinite(code) ? { code } : {}) };
+  }
+  return result;
 }
 
 function clipEnv(value: string | undefined): string | null {
@@ -343,7 +410,7 @@ function listRelativeFiles(root: string, relative = ''): string[] {
   return files;
 }
 
-function copyLogTail(source: string, destination: string, cap: number): number {
+function copyTextSlice(source: string, destination: string, cap: number, keep: 'prefix' | 'tail'): number {
   if (cap <= 0) {
     return 0;
   }
@@ -352,7 +419,7 @@ function copyLogTail(source: string, destination: string, cap: number): number {
     return 0;
   }
   const readBytes = Math.min(cap, stat.size);
-  const start = stat.size > readBytes ? stat.size - readBytes : 0;
+  const start = keep === 'tail' && stat.size > readBytes ? stat.size - readBytes : 0;
   const buffer = Buffer.alloc(readBytes);
   const fd = fs.openSync(source, 'r');
   try {
@@ -363,11 +430,24 @@ function copyLogTail(source: string, destination: string, cap: number): number {
   if (buffer.includes(0)) {
     return 0;
   }
-  const redacted = Buffer.from(redactHostDiagnosticsText(buffer.toString('utf8')), 'utf8');
-  const encoded = redacted.length > cap ? utf8Suffix(redacted, cap) : redacted;
+  const complete = keep === 'prefix' ? utf8Prefix(buffer, buffer.length) : buffer;
+  const redacted = Buffer.from(redactHostDiagnosticsText(complete.toString('utf8')), 'utf8');
+  const encoded = redacted.length > cap
+    ? keep === 'prefix' ? utf8Prefix(redacted, cap) : utf8Suffix(redacted, cap)
+    : redacted;
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   fs.writeFileSync(destination, encoded);
   return encoded.length;
+}
+
+function utf8Prefix(buffer: Buffer, cap: number): Buffer {
+  let end = Math.min(buffer.length, cap);
+  let leading = end - 1;
+  while (leading >= 0 && (buffer[leading] & 0xc0) === 0x80) { leading--; }
+  const byte = buffer[leading];
+  const width = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+  if (leading >= 0 && leading + width > end) { end = leading; }
+  return buffer.subarray(0, end);
 }
 
 function utf8Suffix(buffer: Buffer, cap: number): Buffer {

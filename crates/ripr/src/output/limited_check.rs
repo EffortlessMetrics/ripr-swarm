@@ -8,6 +8,23 @@ const DIFF_SCOPE_REPAIR_ROUTE: &str = "analysis/diff-scope-budget";
 const REPO_SCOPE_OVERSIZED_PREFIX: &str = "repo_scope_oversized:";
 const REPO_SCOPE_REPAIR_ROUTE: &str = "analysis/repo-scope-budget";
 
+/// The refusal basis for a diff-scope guard error: which language's budget
+/// actually fired (#10730). The preview guards name their env override in
+/// the refusal text, so the basis derives from that name; every other
+/// diff-scope refusal (Rust line/file guards) keeps `rust_diff_scope_budget`
+/// exactly as before. The `--json` consumer must see the budget it can act
+/// on — a Python refusal reporting a Rust basis would claim more than the
+/// envelope enforces (evidence honesty).
+fn diff_scope_basis(error: &str) -> &'static str {
+    if error.contains(crate::analysis::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV) {
+        "python_diff_scope_budget"
+    } else if error.contains(crate::analysis::DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV) {
+        "typescript_diff_scope_budget"
+    } else {
+        "rust_diff_scope_budget"
+    }
+}
+
 pub(crate) fn render_diff_scope_limited_check_json(
     input: &CheckInput,
     error: &str,
@@ -29,7 +46,7 @@ pub(crate) fn render_diff_scope_limited_check_json(
         (
             "diff",
             "diff_scope_oversized",
-            "rust_diff_scope_budget",
+            diff_scope_basis(error),
             DIFF_SCOPE_REPAIR_ROUTE,
         )
     };
@@ -38,7 +55,7 @@ pub(crate) fn render_diff_scope_limited_check_json(
         "schema_version": CHECK_OUTPUT_SCHEMA_VERSION,
         "tool": "ripr",
         "mode": input.mode.as_str(),
-        "root": input.root.display().to_string(),
+        "root": crate::output::path::display_path(&input.root),
         "summary": {
             "changed_rust_files": 0,
             "probes": 0,
@@ -125,7 +142,7 @@ pub(crate) fn render_refusal_envelope(
     let mut value = json!({
         "schema_version": context.schema_version,
         "tool": "ripr",
-        "root": context.root.display().to_string(),
+        "root": crate::output::path::display_path(context.root),
         "summary": {
             "changed_rust_files": 0,
             "probes": 0,
@@ -217,6 +234,7 @@ mod tests {
             suppression_policy: None,
             git_timeout: None,
             git_candidate: None,
+            scope: Default::default(),
         }
     }
 
@@ -327,6 +345,86 @@ mod tests {
             assert_eq!(actual, &expected, "unexpected {label}");
         }
         assert_eq!(value["findings"].as_array().map(Vec::len), Some(0));
+        Ok(())
+    }
+
+    #[test]
+    fn python_budget_refusal_names_python_diff_scope_budget() -> Result<(), String> {
+        // #10730: the basis must name the budget that actually fired, so a
+        // Python refusal never reports a Rust basis to machine consumers.
+        let refusal = "diff_scope_oversized: 2100 changed Python lines across 3 Python files \
+                       exceed the RIPR_MAX_DIFF_CHANGED_PYTHON_LINES limit (2000); analysis \
+                       was not run to protect runner memory before probe expansion. Repair \
+                       route: reduce the diff scope, split the extraction PR, run a narrower \
+                       diff, or raise the limit via RIPR_MAX_DIFF_CHANGED_PYTHON_LINES=<number>. \
+                       To analyze a subset, pass `--path <glob>` and/or `--exclude <glob>` to \
+                       `ripr check` (repeatable, repository-relative; files left out are \
+                       reported as not analyzed).";
+        let rendered = render_diff_scope_limited_check_json(&input(), refusal)?
+            .ok_or("expected a limited artifact for the Python guard")?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
+        for pointer in ["/analysis_scope/basis", "/run_limitations/0/basis"] {
+            let actual = value.pointer(pointer).and_then(Value::as_str);
+            if actual != Some("python_diff_scope_budget") {
+                return Err(format!(
+                    "{pointer}: expected python_diff_scope_budget, got {actual:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn typescript_budget_refusal_names_typescript_diff_scope_budget() -> Result<(), String> {
+        // #10730: same typed basis for the TypeScript/JavaScript family guard.
+        let refusal = "diff_scope_oversized: 2100 changed TypeScript lines across 5 \
+                       TypeScript files exceed the RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES \
+                       limit (2000); analysis was not run to protect runner memory before \
+                       probe expansion. Repair route: reduce the diff scope, split the \
+                       extraction PR, run a narrower diff, or raise the limit via \
+                       RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES=<number>. To analyze a subset, \
+                       pass `--path <glob>` and/or `--exclude <glob>` to `ripr check` \
+                       (repeatable, repository-relative; files left out are reported as not \
+                       analyzed).";
+        let rendered = render_diff_scope_limited_check_json(&input(), refusal)?
+            .ok_or("expected a limited artifact for the TypeScript guard")?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
+        for pointer in ["/analysis_scope/basis", "/run_limitations/0/basis"] {
+            let actual = value.pointer(pointer).and_then(Value::as_str);
+            if actual != Some("typescript_diff_scope_budget") {
+                return Err(format!(
+                    "{pointer}: expected typescript_diff_scope_budget, got {actual:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rust_budget_refusals_keep_the_rust_basis() -> Result<(), String> {
+        // Both Rust diff-scope guards keep the basis they reported before
+        // the preview guards existed.
+        for refusal in [
+            "diff_scope_oversized: 2101 changed Rust lines across 2 Rust files exceed the \
+             RIPR_MAX_DIFF_CHANGED_RUST_LINES limit (2000); analysis was not run.",
+            "diff_scope_oversized: 900 indexed Rust files exceed the \
+             RIPR_MAX_DIFF_INDEX_FILES limit (800); analysis was not run.",
+        ] {
+            let rendered = render_diff_scope_limited_check_json(&input(), refusal)?
+                .ok_or("expected a limited artifact for the Rust guard")?;
+            let value: Value =
+                serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
+            for pointer in ["/analysis_scope/basis", "/run_limitations/0/basis"] {
+                let actual = value.pointer(pointer).and_then(Value::as_str);
+                if actual != Some("rust_diff_scope_budget") {
+                    return Err(format!(
+                        "{pointer}: expected rust_diff_scope_budget, got {actual:?}"
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -531,6 +629,25 @@ mod tests {
                 "seam_id_unknown",
                 "analysis/seam-inventory",
             ),
+            (
+                CoreError::seam_policy_omitted(
+                    "agent packet seam_id s is configured off for weakly_gripped seams",
+                ),
+                "seam_policy_omitted",
+                "analysis/seam-policy",
+            ),
+            (
+                CoreError::seam_not_actionable("agent start seam_id s is opaque"),
+                "seam_not_actionable",
+                "analysis/seam-limitation",
+            ),
+            (
+                CoreError::analysis_timeout(
+                    "analysis_timeout: ripr check exceeded its 600s wall-clock budget",
+                ),
+                "analysis_timeout",
+                "analysis/timeout",
+            ),
         ];
         for (error, identity, route) in cases {
             let rendered = render_check_failure_json(&input(), &error)?;
@@ -601,6 +718,41 @@ mod tests {
         }
         if value.pointer("/analysis_scope/downstream_consumable") != Some(&Value::Bool(false)) {
             return Err(format!("downstream_consumable must be false: {value}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn limited_and_refused_roots_render_through_display_path() -> Result<(), String> {
+        // #9806: both envelopes print `root` with the check-JSON renderer. A
+        // `%` in the root is escaped by that renderer on every host, so this
+        // fails if either site goes back to the raw `display()` spelling.
+        let mut percent_input = input();
+        percent_input.root = PathBuf::from("repo%41");
+        let limited = render_diff_scope_limited_check_json(
+            &percent_input,
+            "diff_scope_oversized: 3 changed Rust lines exceed the limit",
+        )?
+        .ok_or("expected limited artifact")?;
+        let refused = render_refusal_envelope(
+            &RefusalEnvelopeContext {
+                schema_version: CHECK_OUTPUT_SCHEMA_VERSION,
+                scope: "diff",
+                mode: None,
+                root: std::path::Path::new("repo%41"),
+                base: None,
+            },
+            &CoreError::gap_ledger_unusable("read gap ledger nope.json failed: missing"),
+        )?;
+        for (label, rendered) in [("limited", limited), ("refused", refused)] {
+            let value: Value = serde_json::from_str(&rendered)
+                .map_err(|err| format!("parse {label} JSON: {err}"))?;
+            let root = value.pointer("/root").and_then(Value::as_str);
+            if root != Some("repo%2541") {
+                return Err(format!(
+                    "{label} root must use display_path spelling, got {root:?}"
+                ));
+            }
         }
         Ok(())
     }

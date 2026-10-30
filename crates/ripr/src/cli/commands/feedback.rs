@@ -4,8 +4,9 @@ use crate::app::feedback::{
     ExportFeedbackOptions, RecordFeedbackOptions, RecordStatus, export_feedback_join,
     record_feedback, record_result_json,
 };
+use crate::cli::help;
 use crate::cli::parse::expect_value;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::domain::{
     ActorKind, FeedbackJudgment, FeedbackPayload, FeedbackReason, ResultIdentity, ReviewStatus,
 };
@@ -15,20 +16,25 @@ use std::path::PathBuf;
 pub(in crate::cli) fn run_feedback(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         None | Some("--help" | "-h") => {
-            print!("{FEEDBACK_HELP}");
+            print!(
+                "{}",
+                help::render_command_help(FEEDBACK_HELP, &["feedback record", "feedback export"])
+            );
             Ok(())
         }
         Some("record") => run_record(&args[1..]),
         Some("export") => run_export(&args[1..]),
-        Some(other) => Err(format!(
-            "unknown feedback subcommand {other:?}; expected `record` or `export`"
+        Some(other) => Err(unknown_value(
+            "feedback subcommand",
+            other,
+            &["record", "export"],
         )),
     }
 }
 
 fn run_record(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print!("{FEEDBACK_RECORD_HELP}");
+        print!("{}", help::render_command_help(FEEDBACK_RECORD_HELP, &[]));
         return Ok(());
     }
     let (options, json) = parse_record_options(args)?;
@@ -52,7 +58,7 @@ fn run_record(args: &[String]) -> Result<(), String> {
 
 fn run_export(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print!("{FEEDBACK_EXPORT_HELP}");
+        print!("{}", help::render_command_help(FEEDBACK_EXPORT_HELP, &[]));
         return Ok(());
     }
     let (options, json, out) = parse_export_options(args)?;
@@ -358,6 +364,17 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn unknown_feedback_subcommand_suggests_record_for_recrod() {
+        assert_eq!(
+            run_feedback(&args(&["recrod"])),
+            Err(
+                "unknown feedback subcommand \"recrod\". Did you mean `record`? Accepted: record, export."
+                    .to_string()
+            )
+        );
     }
 
     // #7781: feedback export refuses a checked-in `target` link that escapes

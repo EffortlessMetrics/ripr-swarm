@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::analysis_outcome::{
     AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
@@ -7,9 +7,9 @@ use crate::analysis_outcome::{
 
 use super::model::{ChangedFile, ChangedLine};
 use super::path::{
-    is_dev_null_new_path_marker, is_new_path_marker, parse_git_old_path, parse_new_path_marker,
-    parse_old_path_for_confinement, parse_old_path_marker, parse_rename_from_path,
-    parse_rename_to_path,
+    MAX_DIFF_PATH_COMPONENTS, is_dev_null_new_path_marker, is_new_path_marker, parse_git_old_path,
+    parse_new_path_marker, parse_old_path_for_confinement, parse_old_path_marker,
+    parse_rename_from_path, parse_rename_to_path, path_marker_exceeds_depth_bound,
 };
 
 mod stream;
@@ -30,6 +30,15 @@ pub(crate) fn parse_unified_diff_bounded_with_metadata(input: &str) -> Result<Pa
     parse_unified_diff_with_metadata_and_limit(input, limit)
 }
 
+/// #9331: the bounded parse with the operator's scope applied at path
+/// registration, so a diff whose bulk is out of scope fits the file bound.
+pub(crate) fn parse_unified_diff_bounded_scoped(
+    input: &str,
+    keep: impl Fn(&Path) -> bool,
+) -> Result<ParsedDiff, String> {
+    stream::parse_bounded_lines_scoped(input.lines(), diff_file_limit_from_env(), keep)
+}
+
 /// Parse with an explicit file-count limit. Exposed for testing (#2398).
 #[cfg(test)]
 pub(crate) fn parse_unified_diff_with_limit(
@@ -46,7 +55,7 @@ fn parse_unified_diff_with_metadata_and_limit(
     stream::parse_bounded_lines(input.lines(), limit)
 }
 
-fn diff_file_limit_from_env() -> usize {
+pub(crate) fn diff_file_limit_from_env() -> usize {
     std::env::var(DIFF_FILE_LIMIT_ENV)
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())
@@ -83,9 +92,15 @@ pub(crate) struct ParsedDiff {
     /// misclaiming a line-endings-only change.
     pub(crate) raw_line1_bom_paths: Vec<PathBuf>,
     /// Typed record of diff regions this parser deliberately refused to read as
-    /// ordinary source (#2828). An empty vector means the parser read the whole
-    /// input; it never means "no such region existed but we said nothing".
+    /// ordinary source (#2828). Truncated textual sections are recorded
+    /// separately in `truncated_file_sections`, so this vector alone cannot
+    /// establish that the input was read completely.
     pub(crate) limitations: Vec<AnalysisLimitation>,
+    /// #9331: sections an operator scope removed while parsing, so they never
+    /// counted toward the file bound. The count disclosures need; the sample
+    /// is the first few paths, enough for the bounded listing.
+    pub(crate) out_of_scope_file_count: usize,
+    pub(crate) out_of_scope_sample: Vec<PathBuf>,
 }
 
 struct HunkHeader {
@@ -158,7 +173,7 @@ mod parser_state {
         parse_rename_to_path, source_line_text,
     };
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     /// The single-character diff side a conflict region was opened on. A region
     /// opened on `+` is only closed by a `+` terminator, so an unrelated `-`
@@ -213,6 +228,11 @@ mod parser_state {
         /// so the section's path is not registered and its hunk lines are
         /// consumed without being recorded (#4577).
         symlink_section: bool,
+        /// Set once a header names a regular-file mode (`100644`/`100755`), so
+        /// quoted `Subproject commit` text in a document is never a gitlink.
+        regular_file_section: bool,
+        /// The last hunk line was a `-Subproject commit <sha>` removal.
+        gitlink_removal_pending: bool,
         rename_section: bool,
         pure_rename_section: bool,
         rename_from_path: Option<PathBuf>,
@@ -263,6 +283,30 @@ mod parser_state {
             !self
                 .remaining_hunk_lines
                 .is_some_and(|(old, new)| old > 0 && new > 0)
+        }
+
+        /// A section the operator's scope dropped (#9331) is never read, so it
+        /// owes no hunk body and must not later count as a truncated stream.
+        pub(super) fn disown_section(&mut self) {
+            self.current_section_awaits_body = false;
+        }
+
+        /// Forget hunk-level limitations recorded against a path the scope
+        /// dropped (#9331). A malformed or conflicted hunk in a file the
+        /// operator excluded says nothing about the files still analyzed.
+        pub(super) fn forget_limitations_outside(&mut self, keep: impl Fn(&Path) -> bool) {
+            let kept = |path: &Option<PathBuf>, _: &mut u64| match path {
+                Some(path) => keep(path),
+                None => true,
+            };
+            self.combined_hunks.retain(kept);
+            self.conflict_regions.retain(kept);
+            self.malformed_hunks.retain(kept);
+        }
+
+        /// The path the most recent registration selected, if any.
+        pub(super) fn current_path(&self) -> Option<&PathBuf> {
+            self.current_path.as_ref()
         }
 
         pub(super) fn combined_quarantine(&self) -> bool {
@@ -482,6 +526,48 @@ mod parser_state {
             if is_symlink {
                 self.symlink_section = true;
             }
+            let mut fields = raw.split_whitespace();
+            let is_regular = raw
+                .strip_prefix("new file mode ")
+                .or_else(|| raw.strip_prefix("deleted file mode "))
+                .is_some_and(|mode| matches!(mode, "100644" | "100755"))
+                || (fields.next() == Some("index")
+                    && fields.next().is_some_and(|range| range.contains(".."))
+                    && matches!(fields.next(), Some("100644" | "100755")));
+            if is_regular {
+                self.regular_file_section = true;
+            }
+        }
+
+        /// A submodule whose working tree is dirty diffs as `Subproject commit
+        /// <sha>-dirty` with no `160000` mode or index header, so the header
+        /// handlers never see a gitlink. The hunk body is the only evidence:
+        /// count it once so the section is disclosed as a skipped submodule
+        /// instead of being reported as a non-source file.
+        fn note_unheadered_gitlink(&mut self, raw: &str) {
+            let gitlink_body = |prefix: char| {
+                raw.strip_prefix(prefix)
+                    .map(str::trim_end)
+                    .and_then(|body| body.strip_prefix("Subproject commit "))
+                    .is_some_and(|sha| {
+                        let sha = sha.strip_suffix("-dirty").unwrap_or(sha);
+                        sha.len() >= 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    })
+            };
+            // Only an immediate `-`/`+` pair of gitlink lines in a section no
+            // header called a regular file: a document that quotes one commit
+            // line, or one that appears in a regular-file diff, is prose.
+            let removal = gitlink_body('-');
+            let replaced = self.gitlink_removal_pending && gitlink_body('+');
+            self.gitlink_removal_pending = removal;
+            if replaced && !self.submodule_section && !self.regular_file_section {
+                self.submodule_section = true;
+                self.current_section_awaits_body = false;
+                if !self.submodule_counted {
+                    self.submodule_file_count = self.submodule_file_count.saturating_add(1);
+                    self.submodule_counted = true;
+                }
+            }
         }
 
         pub(super) fn handle_submodule_index(&mut self, raw: &str) -> bool {
@@ -690,6 +776,8 @@ mod parser_state {
             self.deletion_section = false;
             self.deletion_counted = false;
             self.submodule_section = false;
+            self.regular_file_section = false;
+            self.gitlink_removal_pending = false;
             self.submodule_counted = false;
             self.submodule_new_file = false;
             self.symlink_section = false;
@@ -821,6 +909,8 @@ mod parser_state {
             let Some(file) = files.get_mut(&path) else {
                 return;
             };
+            // After the lookup so a section the scope dropped is not counted.
+            self.note_unheadered_gitlink(raw);
 
             // Unresolved conflict markers describe two rival source states, not
             // one changed program. Emitting their lines as ordinary changes
@@ -1291,6 +1381,52 @@ deleted file mode 100644
         assert_eq!(parsed.truncated_file_sections, 0);
         let parsed = parse_unified_diff_with_metadata("");
         assert_eq!(parsed.truncated_file_sections, 0);
+    }
+
+    #[test]
+    fn dirty_submodule_without_mode_header_counts_as_a_submodule() -> Result<(), String> {
+        // A dirty submodule diffs with no `160000` header, only the
+        // `Subproject commit <sha>-dirty` hunk body.
+        let sha = "d218730df2a5e1b323f294571b25575a6afbfe86";
+        let dirty = format!(
+            "diff --git a/vendor/dep b/vendor/dep\n--- a/vendor/dep\n+++ b/vendor/dep\n@@ -1 +1 @@\n-Subproject commit {sha}\n+Subproject commit {sha}-dirty\n"
+        );
+        let parsed = parse_unified_diff_with_metadata(&dirty);
+        assert_eq!(parsed.submodule_file_count, 1);
+
+        // A dirty submodule the operator's scope excluded is not disclosed.
+        let scoped = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-a\n+b\n{dirty}"
+        );
+        let parsed =
+            parse_unified_diff_bounded_scoped(&scoped, |path| !path.starts_with("vendor"))?;
+        assert_eq!(parsed.submodule_file_count, 0);
+        assert_eq!(parsed.changed_files.len(), 1);
+        let parsed = parse_unified_diff_bounded_scoped(&scoped, |_| true)?;
+        assert_eq!(parsed.submodule_file_count, 1);
+
+        // A regular file that quotes a full commit line is not a gitlink,
+        // with or without a mode header.
+        let quoted = format!(
+            "diff --git a/docs/e.md b/docs/e.md\nindex 1111111..2222222 100644\n--- a/docs/e.md\n+++ b/docs/e.md\n@@ -1 +1 @@\n-Subproject commit {sha}\n+Subproject commit {sha}-dirty\n"
+        );
+        assert_eq!(
+            parse_unified_diff_with_metadata(&quoted).submodule_file_count,
+            0
+        );
+        let lone = format!(
+            "diff --git a/docs/e.md b/docs/e.md\n--- a/docs/e.md\n+++ b/docs/e.md\n@@ -1 +1 @@\n-old\n+Subproject commit {sha}\n"
+        );
+        assert_eq!(
+            parse_unified_diff_with_metadata(&lone).submodule_file_count,
+            0
+        );
+
+        // Prose that merely starts the same way is not a gitlink.
+        let prose = "diff --git a/notes.md b/notes.md\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-Subproject commit soon\n+Subproject commit later\n";
+        let parsed = parse_unified_diff_with_metadata(prose);
+        assert_eq!(parsed.submodule_file_count, 0);
+        Ok(())
     }
 
     #[test]

@@ -10,7 +10,7 @@ fn dispatch(args: Vec<String>) -> Result<(), CommandError> {
     if let Some(mcp_args) = routed_mcp_args(&args) {
         return ripr::mcp::run(&mcp_args).map_err(CommandError::from);
     }
-    ripr::cli::run(args)
+    ripr::cli::run_with_interrupt_handling(args)
 }
 
 fn routed_mcp_args(args: &[String]) -> Option<Vec<String>> {

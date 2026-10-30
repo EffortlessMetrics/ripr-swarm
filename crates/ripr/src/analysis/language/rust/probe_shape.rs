@@ -47,8 +47,13 @@ pub(crate) fn canonical_rust_gap_for(
     let behavior_kind = rust_behavior_kind(probe_family).to_string();
     let probe_kind = probe_family.as_str().to_string();
     let normalized_discriminator = normalize_rust_gap_discriminator(probe_family, expression);
-    let id =
-        format!("gap:rust:{file}:{owner}:{behavior_kind}:{probe_kind}:{normalized_discriminator}");
+    let id = mint_rust_gap_id(
+        &file,
+        &owner,
+        &behavior_kind,
+        &probe_kind,
+        &normalized_discriminator,
+    );
     Some(FindingCanonicalGap {
         id,
         language: "rust".to_string(),
@@ -70,23 +75,24 @@ fn qualified_owner(owner: Option<&SymbolId>, file: &Path) -> Option<String> {
     Some(id.strip_prefix(&prefix).unwrap_or(id).to_string())
 }
 
-/// Whether a Rust producer gap id (`gap:rust:{file}:{owner}:{behavior_kind}:
-/// {probe_kind}:{discriminator}`, as `ripr check` prints it) names the seam
-/// with this file, owner, kind and source expression.
-///
-/// The id is read from the seam side because owners carry `::` and
-/// discriminators carry arbitrary operator text, so splitting the id alone is
-/// ambiguous. The discriminator is re-minted from the seam's own expression
-/// with the producer's normalization, so a changed line the seam does not
-/// carry never matches. Several seams can still share one id; the caller owns
-/// that uniqueness decision.
-pub(crate) fn producer_gap_names_seam_shape(
-    gap_id: &str,
-    seam_file: &str,
-    seam_owner: &str,
-    seam_kind: SeamKind,
-    seam_expression: &str,
-) -> bool {
+/// The one place the readable Rust gap id spelling
+/// (`gap:rust:{file}:{owner}:{behavior_kind}:{probe_kind}:{discriminator}`) is
+/// minted. The finding-side producer ([`canonical_rust_gap_for`]) and the
+/// seam-side re-mint ([`rust_gap_id_for_seam_shape`]) both call it, so
+/// `ripr check`, `ripr_list_gaps`/`ripr_get_gap` and the repair card cannot
+/// drift onto different spellings (#8638).
+fn mint_rust_gap_id(
+    file: &str,
+    owner: &str,
+    behavior_kind: &str,
+    probe_kind: &str,
+    normalized_discriminator: &str,
+) -> String {
+    format!("gap:rust:{file}:{owner}:{behavior_kind}:{probe_kind}:{normalized_discriminator}")
+}
+
+/// The probe family a seam kind is produced from, when it has one.
+fn probe_family_for_seam_kind(seam_kind: SeamKind) -> Option<ProbeFamily> {
     const FAMILIES: [ProbeFamily; 7] = [
         ProbeFamily::Predicate,
         ProbeFamily::ReturnValue,
@@ -96,34 +102,55 @@ pub(crate) fn producer_gap_names_seam_shape(
         ProbeFamily::SideEffect,
         ProbeFamily::MatchArm,
     ];
-    let Some(rest) = gap_id
-        .strip_prefix("gap:rust:")
-        .and_then(|rest| rest.strip_prefix(seam_file))
-        .and_then(|rest| rest.strip_prefix(':'))
-    else {
-        return false;
-    };
+    FAMILIES.into_iter().find(|family| {
+        crate::analysis::seam_kind_for_probe_family(family.as_str()) == Some(seam_kind)
+    })
+}
+
+/// Re-mint the readable producer gap id (as `ripr check` prints it and
+/// `ripr_list_gaps` lists it) from a seam's own file, owner, kind and source
+/// expression, using the producer's minting and normalization. `None` when the
+/// seam kind names no probe family. A seam and the finding that names it
+/// therefore carry the same id (#8638).
+pub(crate) fn rust_gap_id_for_seam_shape(
+    seam_file: &str,
+    seam_owner: &str,
+    seam_kind: SeamKind,
+    seam_expression: &str,
+) -> Option<String> {
+    let family = probe_family_for_seam_kind(seam_kind)?;
     let qualified = seam_owner
         .strip_prefix(seam_file)
         .and_then(|tail| tail.strip_prefix("::"))
         .unwrap_or(seam_owner);
-    let Some(rest) = rest
-        .strip_prefix(qualified)
-        .and_then(|rest| rest.strip_prefix(':'))
-    else {
-        return false;
-    };
-    FAMILIES.iter().any(|family| {
-        if crate::analysis::seam_kind_for_probe_family(family.as_str()) != Some(seam_kind) {
-            return false;
-        }
-        let tail = rest
-            .strip_prefix(rust_behavior_kind(family))
-            .and_then(|rest| rest.strip_prefix(':'))
-            .and_then(|rest| rest.strip_prefix(family.as_str()))
-            .and_then(|rest| rest.strip_prefix(':'));
-        tail == Some(normalize_rust_gap_discriminator(family, seam_expression).as_str())
-    })
+    Some(mint_rust_gap_id(
+        seam_file,
+        qualified,
+        rust_behavior_kind(&family),
+        family.as_str(),
+        &normalize_rust_gap_discriminator(&family, seam_expression),
+    ))
+}
+
+/// Whether a Rust producer gap id (`gap:rust:{file}:{owner}:{behavior_kind}:
+/// {probe_kind}:{discriminator}`, as `ripr check` prints it) names the seam
+/// with this file, owner, kind and source expression.
+///
+/// The id is read from the seam side because owners carry `::` and
+/// discriminators carry arbitrary operator text, so splitting the id alone is
+/// ambiguous. The whole id is re-minted from the seam's own expression with
+/// the producer's minting and normalization ([`rust_gap_id_for_seam_shape`]),
+/// so a changed line the seam does not carry never matches. Several seams can
+/// still share one id; the caller owns that uniqueness decision.
+pub(crate) fn producer_gap_names_seam_shape(
+    gap_id: &str,
+    seam_file: &str,
+    seam_owner: &str,
+    seam_kind: SeamKind,
+    seam_expression: &str,
+) -> bool {
+    rust_gap_id_for_seam_shape(seam_file, seam_owner, seam_kind, seam_expression).as_deref()
+        == Some(gap_id)
 }
 
 fn rust_behavior_kind(probe_family: &ProbeFamily) -> &'static str {
@@ -536,6 +563,75 @@ mod tests {
                 "let unrelated = 1;"
             ));
         }
+        Ok(())
+    }
+
+    /// #8638: the seam-side re-mint and the finding-side producer share one
+    /// minter, so the id a repair card reports for a seam is byte-equal to the
+    /// id `ripr check` / `ripr_list_gaps` print for the finding that names it.
+    #[test]
+    fn seam_side_remint_equals_the_finding_side_id() -> Result<(), String> {
+        let cases = [
+            (
+                ProbeFamily::Predicate,
+                SeamKind::PredicateBoundary,
+                "if age >= 18 {",
+            ),
+            (
+                ProbeFamily::ReturnValue,
+                SeamKind::ReturnValue,
+                "return age - 1;",
+            ),
+            (
+                ProbeFamily::MatchArm,
+                SeamKind::MatchArm,
+                "Tier::Gold => 20,",
+            ),
+        ];
+        for (family, kind, expression) in cases {
+            let gap = gap_for(
+                Path::new("src/lib.rs"),
+                Some(owner("src/lib.rs", "m::is_adult")),
+                &family,
+                expression,
+            )?;
+            assert_eq!(
+                rust_gap_id_for_seam_shape(
+                    "src/lib.rs",
+                    "src/lib.rs::m::is_adult",
+                    kind,
+                    expression
+                )
+                .as_deref(),
+                Some(gap.id.as_str())
+            );
+        }
+        Ok(())
+    }
+
+    /// #8638: the finding side mints from the producer's path and the seam
+    /// side from the seam's path after `stable_path_text`; both normalize
+    /// Windows-style separators, so the ids match byte-for-byte.
+    #[test]
+    fn finding_and_seam_paths_agree_after_stable_path_text() -> Result<(), String> {
+        let windows = PathBuf::from("src\\pricing.rs");
+        let gap = gap_for(
+            &windows,
+            Some(owner("src/pricing.rs", "score")),
+            &ProbeFamily::Predicate,
+            "if a >= b {",
+        )?;
+        let seam_file = crate::analysis::stable_path_text(&windows);
+        assert_eq!(
+            rust_gap_id_for_seam_shape(
+                &seam_file,
+                "src/pricing.rs::score",
+                SeamKind::PredicateBoundary,
+                "if a >= b {"
+            )
+            .as_deref(),
+            Some(gap.id.as_str())
+        );
         Ok(())
     }
 

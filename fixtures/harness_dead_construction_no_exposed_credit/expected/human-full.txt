@@ -3,10 +3,15 @@ mode: fast
 root: fixtures/harness_dead_construction_no_exposed_credit/input
 config: <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input/ripr.toml
 
-Summary: 3 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 3 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed
+Summary: 3 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 3 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 3 probe(s), 3 finding(s)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
 
 Shared evidence and guidance
   E1 [findings 2, 3]: reach no: No static test path found for the changed owner
@@ -19,11 +24,12 @@ Finding 1: WARNING ./src/lib.rs:3
 Changed
   before: raw.parse().unwrap_or(0)
   after:  raw.parse().unwrap_or(1)
-Probe
+Change type
+  a call was removed
   family: call_deletion
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/lib.rs::parse_limit
-  canonical gap: gap:rust:src/lib.rs:parse_limit:call_deletion:call_deletion:raw.parse_.unwrap_or_1
+  gap id (for scripts): gap:rust:src/lib.rs:parse_limit:call_deletion:call_deletion:raw.parse_.unwrap_or_1
 Static exposure
   no_static_path (warning, confidence 0.48)
 Evidence
@@ -33,10 +39,6 @@ Evidence
   - observation no: No reachable test oracle found
   - discriminator no: No assertion can discriminate the changed behavior without a reachable test
   - local flow reaches call effect: raw.parse().unwrap_or(1) (line 3)
-Weakness
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
-  - No strong discriminator was detected
 Next step
   - ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
 Drill in:
@@ -48,11 +50,12 @@ Finding 2: WARNING ./src/lib.rs:8
 Changed
   before: parse_limit(raw) > 0
   after:  parse_limit(raw) > 1
-Probe
+Change type
+  a call was removed
   family: call_deletion
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/lib.rs::limit_exceeds_default
-  canonical gap: gap:rust:src/lib.rs:limit_exceeds_default:call_deletion:call_deletion:parse_limit_raw>1
+  gap id (for scripts): gap:rust:src/lib.rs:limit_exceeds_default:call_deletion:call_deletion:parse_limit_raw>1
 Static exposure
   no_static_path (warning, confidence 0.48)
 Evidence
@@ -61,10 +64,6 @@ Evidence
   - propagation yes: Changed behavior appears to influence call effect: parse_limit(raw) > 1
   shared evidence: E2, E3
   - local flow reaches call effect: parse_limit(raw) > 1 (line 8)
-Weakness
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
-  - No strong discriminator was detected
 Next step
   shared guidance: N1
 Drill in:
@@ -76,11 +75,12 @@ Finding 3: WARNING ./src/lib.rs:8
 Changed
   before: parse_limit(raw) > 0
   after:  parse_limit(raw) > 1
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/lib.rs::limit_exceeds_default
-  canonical gap: gap:rust:src/lib.rs:limit_exceeds_default:predicate_boundary:predicate:parse_limit_raw==1
+  gap id (for scripts): gap:rust:src/lib.rs:limit_exceeds_default:predicate_boundary:predicate:parse_limit_raw==1
 Static exposure
   no_static_path (warning, confidence 0.35)
 Evidence
@@ -95,9 +95,6 @@ Evidence
   - Propagation is not statically obvious from syntax-first analysis
 Weakness
   - No detected boundary input for the changed predicate
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
-  - No strong discriminator was detected
 Next step
   shared guidance: N1
 Drill in:

@@ -575,6 +575,56 @@ fn a_helper_that_names_the_owner_twice_lends_nothing() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn boolean_helper_pins_require_the_existing_execution_and_identity_gates() -> Result<(), String> {
+    for (prefix, call, admitted) in [
+        ("", "verify(4);", true),
+        ("", "if false { verify(4); }", false),
+        ("", "let unused = || { verify(4); };", false),
+        (
+            "macro_rules! assert { ($condition:expr) => { let _ = $condition; }; }",
+            "verify(4);",
+            false,
+        ),
+    ] {
+        let source = format!(
+            "pub fn allowed(input: u8) -> bool {{\n    input > 3\n}}\n#[cfg(test)]\nmod tests {{\nuse super::allowed;\n{prefix}\nfn verify(input: u8) {{ assert!(allowed(input)); }}\n#[test]\nfn checks() {{ {call} }}\n}}\n"
+        );
+        let index = index(&[(LIB, &source)]);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "checks")
+            .ok_or("test must be indexed")?;
+        let helper = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "verify")
+            .ok_or("helper must be indexed")?;
+        let assertion = parser_oracles_for_function(&helper.body, helper.start_line)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|oracle| oracle.text.starts_with("assert!(allowed("))
+            .ok_or("helper oracle must parse")?;
+        let owner = owner(&index, "allowed");
+        let probe = return_probe(owner, "input > 3");
+        let pin = OwnerReturnPin::establish(&probe, owner, &index)
+            .ok_or("bool return pin must establish")?;
+        assert_eq!(
+            pin.admits(
+                test,
+                &assertion,
+                &index,
+                &|_, _| false,
+                &OwnerPinSyntax::default()
+            ),
+            admitted,
+            "{prefix}: {call}"
+        );
+    }
+    Ok(())
+}
+
 /// #7969: a short-circuit tail reads a helper's calls as runs, mapping
 /// each owner argument through the helper's own parameter order.
 fn short_circuit_helper_admitted(helper: &str, body: &str) -> Result<bool, String> {

@@ -44,7 +44,32 @@ with the braces of a newly added function or branch. A structural line that
 closes a block opened outside its run (a lone inserted or removed
 `} else {`, or one inserted with other lines between existing statements)
 moves existing code between branches, so it keeps its probe and the change
-never reads as "no behavioral candidates" (#4216 row 5).
+never reads as "no behavioral candidates" (#4216 row 5). The one exception is
+a braces-only added line outside every indexed function span (#10090, below).
+
+A line that Git reports as both removed and added inside one replacement block
+seeds no probe on either side when its text is byte-identical (leading
+whitespace included, since it is content inside a multiline string), occurs
+exactly once on each side of the block, contains an alphanumeric character,
+does not begin as a continuation (`.call()`, `&&`, `?`), and sits under the
+same nearest opener on both sides (#8389). The whole block keeps its probes
+when paired lines change relative order, when an unpaired line opens or closes
+a block, when a paired line crosses an edited line (unpaired removed lines
+before it and unpaired added lines after it, or the reverse), or when any line
+of the block carries a comment delimiter (`/*`, `*/`) or an odd number of `"`.
+Only `name: value,` field lines may cross an edited line, since they may move
+within their literal. Text is compared exactly apart from a trailing `\r`.
+
+A changed `struct`, `enum`, `union` or `trait` header that opens its body on the
+same line (`enum Operator<P, Q: Ord + Copy> {`, with any visibility or `unsafe`
+prefix) declares bounds and runs nothing, so it is one `static_unknown` probe
+like an `impl` header, never a `field_construction` probe: the generic bound
+only looks like a field `name: Type` (#9170). This holds only when the header
+has no expression or macro descendants: a const-generic default
+(`<const N: usize = { capacity() }>`), an array length call or a macro keeps
+its call probe. A one-line declaration whose body follows the `{` stays
+probed, and `union` is a header only before an identifier (`union = Bits {` is
+an expression).
 
 An equal-sized replacement with no retained long identifier token does not
 seed a second historical finding when an emitted candidate probe of the same
@@ -66,6 +91,17 @@ probes. An inline bound may use its enclosing struct, impl or type-alias item
 as declaration authority only when the whole changed line is contained by that
 item and the item has no expression or macro descendants. Const expressions
 and macro types retain existing fallback evidence.
+A named field declared inside an enum variant, or a whole one-line variant with
+named fields, is likewise a type declaration (#8999): it stays one
+`static_unknown` probe, while a variant constructed in a body keeps
+`field_construction`. A discriminant, macro syntax or expression inside the
+variant, or a shared line, withholds that authority. A deleted-only struct or
+enum-variant field declaration gets the same authority on the reconstructed old
+source (#9183): the removed line must equal the old source line and sit wholly
+inside one field or variant declaration, and it then yields one `static_unknown`
+probe instead of a removed-side `field_construction`. A removed constructor in
+a body, discriminant, macro-typed field, shared line, or failed old-source
+parse keeps the lexical probe, and an edited field keeps its before/after pair.
 Real expressions on a shared line
 keep their existing parser-owned runtime probes. Comments, strings and macro
 token trees cannot establish declaration authority. Removed bounds require
@@ -77,6 +113,50 @@ harness registrations; external parent edges, configuration and Cargo manifests
 are not reconstructed.
 Unavailable or malformed source retains existing uncertainty rather than
 borrowing a candidate line.
+A field line of a `struct` declared inside an item macro (`pin_project! { pub
+struct X { buffered: Option<u8>, } }`) is also a declaration (#10268), on the
+added side and the reconstructed old side alike. The macro body is an opaque
+token tree, so the line counts only when it is plausibly `name: Type,` and its
+owner is unambiguous: every token sits directly in a `{ .. }` tree that is the
+direct input of one macro call (not a macro nested in a macro), is preceded in
+that tree by a `struct` header (searched to the tree boundary, failing closed at
+a top-level `,`, `;`, `=`, or a `fn`/`impl`/`enum`/`trait`/brace owner), and is
+followed only by the tree end or another item. The line's tokens must come from
+an allowlist of type syntax: identifiers and paths, lifetimes, balanced `<..>`,
+a reference `&` or raw-pointer `*const`/`*mut` prefix, `dyn`/`impl`/`fn`/`for`/
+`mut`/`const`/`unsafe`/`extern`, `->`, `pub` with `(crate|super|self|in path)`,
+`+` joining bound names, a paren group only as a `fn`/`Fn*` argument list or
+tuple type, and a bracket holding exactly one non-empty element type (no comma
+outside `<..>`; `[]`, `[;3]` and `[T;]` are not types) whose length, if any, is a
+literal or a path, and `<..>` only after a path or `for`. Everything else
+keeps `field_construction`: a construction (`Task { buffered: None }`), a
+literal, closure, `|`, `.`, `as`, `?`, `..`, unary or binary operator, call
+(`compute()`), macro `!`, nested brace, array element list (`[A, B]`, `[1, 2]`) or non-path length
+(`[u8; N + 1]`, `[compute(); 3]`), a second field on the line, and an
+initializer or discriminant `=`. Declared limit: a bare path such as `None` or
+`Foo` is indistinguishable from a type, so `value: None,` inside an item macro
+reads as a declaration; so does `A + B` between two bound names and a
+parenthesised single path `(a)`.
+
+Finding IDs remain content-addressed by path, probe family, owner and normalized
+expression. Line movement, checkout root, diff/discovery order and unrelated
+files do not change those inputs. Formatting whitespace outside Rust literals
+collapses; whitespace inside ordinary/raw string, byte, C-string and character
+literals remains data. The terminator of an actual line comment remains one LF:
+moving that boundary can change which tokens are active. CRLF, trailing comment
+whitespace and following indentation normalize to that same boundary. Comment
+text otherwise retains its existing contribution to source identity; this is
+not comment elision or general semantic equivalence. A material change to an
+identity input invalidates the
+ID so an earlier suppression cannot silently select a different value. Genuine
+repeated expressions retain distinct ordinal-suffixed IDs. The public-path
+metamorphic and stale-suppression controls are in
+`crates/ripr/tests/finding_identity_contract.rs` (#8832). Distinct expressions
+that share an fp8 at one owner take their collision ordinals from a full
+payload digest, so their IDs do not depend on diff order (#8838). The
+sole-expression half of #8838, a lone changed expression whose fp8 equals a
+different earlier expression's, remains unmet acceptance; duplicate-expression
+ordinal tests do not establish collision stability or waive this requirement.
 
 Each finding should carry:
 
@@ -168,6 +248,16 @@ dataflow across bindings.
 Lexical projection is bounded to 16 nested matcher/block steps and omits
 oracle credit on exhaustion; parser-rejected deep source cannot recreate an
 unbounded recursive fallback.
+
+A setup statement that only unwraps a value (`let d = f().unwrap();`) is not
+the test's oracle. When the same test also has an asserting row, the bare
+`unwrap`/`expect` row is not listed beside it, whether the statement is written
+on one line or as a multi-line method chain whose continuation lines each begin
+with `.` (a builder chain, #9122). Fail-closed: the row is dropped only
+beside another matched oracle, so a test whose sole oracle is the unwrap stays
+listed as smoke, and a chain that ends in another call, contains an assertion,
+or is several statements stays listed. The remaining row keeps its own
+assertion-kind grade; nothing is promoted.
 Unrecognized compound computations with a surviving matcher and no supported
 asserting wrapper receive no oracle credit. Existing terminal Err-return and
 guarded Result failure authorities retain consumed matcher evidence.
@@ -358,6 +448,17 @@ literal in the comparison does not credit such a boundary; only an exact
 observed equality does. Exact inputs that all sit off the boundary keep
 the missing equality discriminator.
 
+A second bounded source for the same family is direct literal slice arguments:
+every related test calls the owner only inside its standard assertion macros,
+straight-line, with a literal `&[..]` at the measured parameter (array-repeat
+forms excluded). The call result must reach the assertion unchanged, as the
+whole compared operand or one side of a top-level comparison; arithmetic,
+branches, short-circuit operands, message arguments, bound or computed inputs,
+early returns and any extra owner reference leave the input set unresolved. The
+literal's length is its element count, the call's source and line are the
+witness, and the table gates above (unique free owner, eager path, admitted
+assertion context) still apply.
+
 One bounded cardinality family reads a direct immutable slice parameter's
 `.len()` compared with a plain decimal integer. Every reach-bearing related
 test must make one binding-resolved ordinary owner call through an eager,
@@ -405,6 +506,17 @@ not change classification precedence or unresolved macro/dispatch authority.
 The human report's "Why unknown" line for `infection_unknown` says the change
 "reaches a sink" only when the propagation stage is `yes`; otherwise it says
 no sink the change reaches was established.
+
+Radix-prefixed literal rule: a test argument or boundary operand written as a
+radix-prefixed integer (`0xFF`, `0XFF`, `0b1010`, `0o17`, optionally with a
+leading `-`, `_` separators, and a trailing type suffix that ends the literal)
+is read as one value spelled as written, never as its leading `0`. A literal
+input equals a boundary only when both spell the same literal, so `0x10`
+against a `0xFF` boundary is off the boundary (`weakly_exposed`), `0xFF`
+against `0xFF` stays at it, and a hex input is not credited against the
+decimal spelling `255`, the safe direction already taken for `1_000` versus
+`1000`. A radix marker with no valid digit after it (`0x`, `0xg`, `0b2`, `0o8`)
+keeps the earlier reading.
 
 Named-constant boundary example:
 
@@ -485,7 +597,7 @@ Fixture coverage:
 - `given_computed_argument_for_compared_parameter_then_boundary_is_unresolved_not_missing`
 - `given_literal_inputs_off_the_boundary_then_missing_boundary_is_still_reported`
 - `given_local_accumulator_boundary_then_boundary_is_unresolved_not_missing`
-- `given_length_of_string_input_boundary_then_boundary_is_unresolved_not_missing`
+- `given_length_of_string_input_boundary_then_boundary_is_observed_only_when_a_row_lands_on_it`
 - `unresolved_boundary_input_is_unknown_not_weak`
 - `computed_comparison_operand_is_not_its_contained_literal`
 - `given_constant_minus_offset_boundary_then_boundary_is_the_offset_value_not_the_offset`
@@ -541,6 +653,11 @@ Fixture coverage:
 - `given_inputs_off_the_same_file_constant_value_then_equality_boundary_names_its_value`
 - `given_argument_naming_a_declared_constant_then_equality_boundary_is_observed`
 - `given_constant_not_declared_in_owner_file_then_boundary_is_a_named_limitation`
+- `fixtures/radix_literal_boundary_off`
+- `fixtures/radix_literal_boundary_match`
+- `scalar_values_read_a_radix_prefixed_integer_as_one_literal`
+- `scalar_values_leave_non_radix_zero_prefixed_text_alone`
+- `scalar_values_radix_literal_spellings_never_collapse_to_zero`
 - unit coverage for local flow sink families: predicate-to-return,
   predicate-to-error, match-arm result, output field, event/outbound call,
   state write, persistence write, log message, configuration change, and
@@ -559,8 +676,47 @@ Fixture coverage:
 - `structural_delimiter_lines_are_recognized`
 - `probes_for_file_skips_brace_and_else_lines_of_new_function`
 - `probes_for_file_keeps_lone_structural_line_hunks`
+- `an_item_level_closing_brace_seeds_no_probe_but_one_inside_a_function_does`
 - `probes_for_file_keeps_structural_line_closing_outside_block_in_mixed_run`
 - `lone_else_split_hunk_is_not_no_behavioral_candidates`
+- `multi_line_attribute_entries_seed_no_probe_but_the_same_text_as_code_does`
+- `attribute_continuation_lines_cover_the_span_and_fail_closed`
+- `an_identical_line_inside_a_replacement_block_seeds_no_probe`
+- `identical_line_suppression_is_fail_closed`
+- `identical_line_pairing_never_hides_reorders_or_block_moves`
+- `multiline_builder_chain_setup_row_is_dropped_beside_the_assertion`
+- `multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion`
+- `keyword_probe_tokens_do_not_relate_tests_by_name`
+
+The entries of a multi-line `#![..]`/`#[..]` attribute (a lint list, a `cfg_attr`
+argument list) are attribute text, like the single-line form, and seed no probe
+on either diff side (#10089). The closing line counts only when nothing follows
+the bracket, and an unclosed attribute marks nothing.
+
+Related-test name tokens come from the changed expression's identifiers. A Rust
+keyword (`return`, `while`, `loop`, ...) is syntax and never a name token, and
+the substring fallback applies the same generic/common-word gate as the
+word-boundary path (#9172), so a test named `ready_return` or `wait_while` does
+not make an uncalled owner read `weakly_exposed`. Words inside string literals
+remain name tokens; that residual is tracked in #9172.
+
+An added line of only closing braces (`}`, `};`, `},`) that lies outside every
+indexed function span, in a file that has indexed functions, seeds no probe
+(#10090). It is an exception to the structural-line rule above (a line closing
+a block opened outside its run keeps its probe): at item level such a closer
+delimits a `trait`, `impl`, `mod` or `struct` body, and diff alignment often
+reports an existing item's closer as added when items are appended after it. A
+closer on or inside a function span (including its `end_line`) keeps its probe
+(#4216), and so does any file with no indexed function or no file facts. The
+helper checks the line's position, not the kind of item it closes. The removed
+side is unchanged.
+
+A changed line that opens with the `impl` keyword (optionally `unsafe`) and holds
+no body brace, `;` or `fn ` is the first line of a rustfmt-wrapped `impl` header
+(`impl<Item, const N: usize> Drop` before `for Holder<Item, N>` and `{` on later
+lines). It declares only, so it seeds a single `static_unknown` probe like a
+one-line `impl ... {` header (#8389) and never `field_construction` for a
+const-generic bound or `call_deletion` for a generic attribute (#10244).
 
 ## Implementation Mapping
 

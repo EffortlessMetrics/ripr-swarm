@@ -1,0 +1,10 @@
+diff --git a/idioms/mailer.py b/idioms/mailer.py
+--- a/idioms/mailer.py
++++ b/idioms/mailer.py
+@@ -1,5 +1,5 @@
+ def send(client, user, message):
+     if not user.get("email"):
+         return False
+-    client.deliver(user["email"], message.upper())
++    client.deliver(user["email"], message.lower())
+     return True

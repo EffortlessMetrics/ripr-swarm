@@ -524,7 +524,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -560,7 +564,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -591,6 +599,86 @@ def test_expired_coupon_response_smoke(client):
 }
 
 #[test]
+fn classify_change_relates_path_parameter_route_to_concrete_client_call() -> Result<(), String> {
+    let source = r#"
+api = object()
+
+@api.get("/items/{id}")
+def item(id):
+    return {"id": id, "ok": True}
+"#;
+    let owners = extract_owners(Path::new("app/items.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_items.py"),
+        r#"
+from starlette.testclient import TestClient
+from app.items import api
+
+def test_item_response():
+    client = TestClient(api)
+    response = client.get("/items/1")
+    assert response.json()["ok"] == True
+"#,
+    );
+
+    let Some(finding) = classify_change(
+        Path::new("app/items.py"),
+        6,
+        "    return {\"id\": id, \"ok\": True}",
+        &owners,
+        &tests,
+    ) else {
+        return Err("changed route return inside owner should classify".to_string());
+    };
+
+    assert_ne!(finding.class, ExposureClass::NoStaticPath);
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|entry| entry
+                == "related_test_relation: api_client_route_call (test_item_response)")
+    );
+    Ok(())
+}
+
+#[test]
+fn classify_change_does_not_relate_typed_route_to_a_value_the_router_rejects() -> Result<(), String>
+{
+    let source = r#"
+api = object()
+
+@api.get("/items/{id:int}")
+def item(id):
+    return {"id": id, "ok": True}
+"#;
+    let owners = extract_owners(Path::new("app/items.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_items.py"),
+        r#"
+def test_item_rejects_text_id(client):
+    response = client.get("/items/nope")
+    assert response.status_code == 404
+"#,
+    );
+
+    let finding = classify_change(
+        Path::new("app/items.py"),
+        6,
+        "    return {\"id\": id, \"ok\": True}",
+        &owners,
+        &tests,
+    );
+
+    assert!(finding.is_none_or(|finding| {
+        !finding.evidence.iter().any(|entry| {
+            entry == "related_test_relation: api_client_route_call (test_item_rejects_text_id)"
+        })
+    }));
+    Ok(())
+}
+
+#[test]
 fn classify_change_uses_status_discriminator_for_route_response_constructor_assignment()
 -> Result<(), String> {
     let source = r#"
@@ -612,7 +700,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -661,7 +753,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -821,7 +917,7 @@ class CheckoutTests(unittest.TestCase):
 
     assert_eq!(pytest_test.qualified_name, "TestCheckout.test_pytest_route");
     assert_eq!(
-        verify_command_for_test(pytest_test).as_deref(),
+        verify_command_for_test_on(pytest_test, false).as_deref(),
         Some("python -m pytest tests/test_checkout.py::TestCheckout::test_pytest_route")
     );
     assert_eq!(
@@ -829,7 +925,7 @@ class CheckoutTests(unittest.TestCase):
         "CheckoutTests.test_unittest_route"
     );
     assert_eq!(
-        verify_command_for_test(unittest_test).as_deref(),
+        verify_command_for_test_on(unittest_test, false).as_deref(),
         Some("python -m unittest tests.test_checkout.CheckoutTests.test_unittest_route")
     );
     Ok(())
@@ -845,15 +941,16 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing hostile pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(hostile_test).as_deref(),
+        verify_command_for_test_on(hostile_test, false).as_deref(),
         Some("python -m pytest 'tests/foo$(id).py'::test_ok")
     );
-    let placement = python_repair_placement(
+    let placement = python_repair_placement_on(
         &ExposureClass::WeaklyExposed,
         &[PythonRelatedCandidate {
             test: hostile_test,
             relation: PythonRelationKind::SyntacticCall,
         }],
+        false,
     )
     .ok_or_else(|| "weak pytest relation should still place a repair".to_string())?;
     assert_eq!(
@@ -876,7 +973,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing spaced pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(spaced_test).as_deref(),
+        verify_command_for_test_on(spaced_test, false).as_deref(),
         Some("python -m pytest 'tests/my file.py'::test_ok")
     );
 
@@ -886,7 +983,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing quoted pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(quoted_test).as_deref(),
+        verify_command_for_test_on(quoted_test, false).as_deref(),
         Some("python -m pytest 'tests/o'\\''brien.py'::test_ok")
     );
 
@@ -896,7 +993,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing plain pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(plain_test).as_deref(),
+        verify_command_for_test_on(plain_test, false).as_deref(),
         Some("python -m pytest tests/test_checkout.py::test_ok"),
         "a plain relative path must stay unquoted"
     );
@@ -907,15 +1004,16 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing hostile unittest".to_string())?;
     assert_eq!(
-        verify_command_for_test(hostile_unit_test).as_deref(),
+        verify_command_for_test_on(hostile_unit_test, false).as_deref(),
         Some("python -m unittest 'tests.foo$(id)'.T.test_ok")
     );
-    let unit_placement = python_repair_placement(
+    let unit_placement = python_repair_placement_on(
         &ExposureClass::WeaklyExposed,
         &[PythonRelatedCandidate {
             test: hostile_unit_test,
             relation: PythonRelationKind::SyntacticCall,
         }],
+        false,
     )
     .ok_or_else(|| "weak unittest relation should still place a repair".to_string())?;
     assert_eq!(unit_placement.suggested_test_node_id, None);
@@ -1132,14 +1230,24 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1221,10 +1329,10 @@ fn is_unittest_class_accepts_bare_and_dotted_test_case_bases() -> Result<(), Str
         Path::new("tests/test_neither.py"),
         "class C(object):\n    def test_c(self):\n        pass\n",
     );
-    if bare.first().map(|t| t.framework) != Some("unittest") {
+    if bare.first().map(|t| t.framework) != Some(PythonFramework::Unittest) {
         return Err("bare `TestCase` base should mark unittest framework".to_string());
     }
-    if dotted.first().map(|t| t.framework) != Some("unittest") {
+    if dotted.first().map(|t| t.framework) != Some(PythonFramework::Unittest) {
         return Err("`unittest.TestCase` base should mark unittest framework".to_string());
     }
     if !neither.is_empty() {
@@ -1571,6 +1679,50 @@ fn static_limit_picks_first_non_transparent_decorator() -> Result<(), String> {
 }
 
 #[test]
+fn decorator_argument_line_belongs_to_the_decorated_function() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("src/svc.py"),
+        "import functools\n\n@retry(3)\n@functools.cache\ndef flaky():\n    return 1\n\nVALUE = 2\n",
+    );
+    for line in [3, 4, 5] {
+        let owner =
+            super::workspace::owner_for_changed_line(Path::new("src/svc.py"), line, &owners)
+                .ok_or_else(|| format!("no owner for line {line}"))?;
+        if owner.name != "flaky" {
+            return Err(format!(
+                "line {line} owned by `{}`, expected flaky",
+                owner.name
+            ));
+        }
+    }
+    let after = super::workspace::owner_for_changed_line(Path::new("src/svc.py"), 8, &owners)
+        .ok_or_else(|| "no owner for module line".to_string())?;
+    if after.name == "flaky" {
+        return Err("a line after the function must not belong to it".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn decorator_argument_edit_raises_decorator_indirection() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("src/svc.py"),
+        "@retry(3)\ndef flaky():\n    return 1\n",
+    );
+    let owner = super::workspace::owner_for_changed_line(Path::new("src/svc.py"), 1, &owners)
+        .ok_or_else(|| "no owner for decorator line".to_string())?;
+    let limit = static_limit_for_change("@retry(3)", owner, &[])
+        .ok_or_else(|| "expected DecoratorIndirection limit".to_string())?;
+    if limit.kind != StaticLimitKind::DecoratorIndirection {
+        return Err(format!(
+            "expected DecoratorIndirection, got {:?}",
+            limit.kind
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
     let owner = PythonOwner {
         name: "apply_discount".to_string(),
@@ -1583,14 +1735,24 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1639,14 +1801,24 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let sources = [
         PathBuf::from("a/src/shared/calc.py"),
@@ -1717,14 +1889,24 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let sources = [
         PathBuf::from("src/shared/calc.py"),
@@ -1762,16 +1944,31 @@ fn same_stem_related_handles_missing_stems() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let test = PythonTest {
+        setup_receivers: Vec::new(),
+        fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
+        parametrize_argnames: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_x".to_string(),
         qualified_name: "test_x".to_string(),
@@ -1784,10 +1981,12 @@ fn same_stem_related_handles_missing_stems() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        simple_literal_parametrize: false,
         generated_inputs: Vec::new(),
-        framework: "pytest",
+        framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
+        bare_sibling_modules: Vec::new(),
     };
     // An owner with no file stem cannot match by stem.
     assert!(!same_stem_related(&test, &owner));
@@ -1919,6 +2118,224 @@ fn analyze_diff_emits_finding_for_changed_python_file_on_disk() -> Result<(), St
     if finding.language_status != Some(LanguageStatus::Preview) {
         return Err("language status should be Preview".to_string());
     }
+    Ok(())
+}
+
+/// #10125: the workspace foreign-write index is built once per run. A rebuild
+/// per changed file would parse every workspace source again for each one.
+#[test]
+fn analyze_diff_parses_the_workspace_once_however_many_files_changed() -> Result<(), String> {
+    fn parses_for(changed_modules: usize) -> Result<(usize, usize), String> {
+        let root = unique_tempdir("analyze-diff-parse-once")?;
+        let mut changed_files = Vec::new();
+        for index in 0..3 {
+            let module = PathBuf::from(format!("settings{index}.py"));
+            write_file(&root.join(&module), &format!("LIMIT{index} = 12\n"))?;
+            write_file(
+                &root.join(format!("test_settings{index}.py")),
+                &format!(
+                    "from settings{index} import LIMIT{index}\n\n\ndef test_limit():\n    assert LIMIT{index} == 10\n"
+                ),
+            )?;
+            if index < changed_modules {
+                changed_files.push(ChangedFile {
+                    path: module,
+                    added_lines: vec![crate::analysis::diff::ChangedLine {
+                        line: 1,
+                        new_side_line: 1,
+                        text: format!("LIMIT{index} = 12"),
+                    }],
+                    removed_lines: vec![crate::analysis::diff::ChangedLine {
+                        line: 1,
+                        new_side_line: 1,
+                        text: format!("LIMIT{index} = 10"),
+                    }],
+                });
+            }
+        }
+        let options = AnalysisOptions {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            mode: crate::analysis::AnalysisMode::Draft,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+        };
+        super::module_value::FOREIGN_PARSES.with(|parses| parses.set(0));
+        let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+        let parses = super::module_value::FOREIGN_PARSES.with(std::cell::Cell::get);
+        let cleanup = std::fs::remove_dir_all(&root);
+        let result = result?;
+        cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+        Ok((parses, result.findings.len()))
+    }
+
+    let (one_parses, one_findings) = parses_for(1)?;
+    let (three_parses, three_findings) = parses_for(3)?;
+    assert_eq!(one_findings, 1, "one changed constant is one finding");
+    assert_eq!(
+        three_findings, 3,
+        "three changed constants are three findings"
+    );
+    assert_eq!(
+        one_parses, 6,
+        "each of the six workspace sources is parsed once"
+    );
+    assert_eq!(
+        three_parses, one_parses,
+        "changing more files must not parse the workspace again"
+    );
+    Ok(())
+}
+
+/// #10750: an owner's related tests are found once per run. A scan per
+/// changed line re-read every workspace test for each line of the same owner
+/// (pandas: ~23k tests times every changed line).
+#[test]
+fn analyze_diff_shares_one_alignment_index_across_owners() -> Result<(), String> {
+    let root = unique_tempdir("analyze-diff-alignment-index")?;
+    let module = PathBuf::from("pricing.py");
+    write_file(
+        &root.join(&module),
+        "def price(x):\n    return x + 2\n\n\ndef tax(x):\n    return x * 3\n",
+    )?;
+    write_file(
+        &root.join("test_pricing.py"),
+        "from pricing import price, tax\n\n\ndef test_price():\n    assert price(1) == 3\n\n\ndef test_tax():\n    assert tax(1) == 3\n",
+    )?;
+    let changed = |line: usize, text: &str| crate::analysis::diff::ChangedLine {
+        line,
+        new_side_line: line,
+        text: text.to_string(),
+    };
+    let changed_files = vec![ChangedFile {
+        path: module,
+        added_lines: vec![
+            changed(2, "    return x + 2"),
+            changed(6, "    return x * 3"),
+        ],
+        removed_lines: vec![
+            changed(2, "    return x + 1"),
+            changed(6, "    return x * 2"),
+        ],
+    }];
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    super::sink_alignment::ALIGNMENT_PREPS.with(|preps| preps.set(0));
+    super::sink_alignment::ALIGNMENT_LOOKUPS.with(|lookups| lookups.set(0));
+    let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+    let preps = super::sink_alignment::ALIGNMENT_PREPS.with(std::cell::Cell::get);
+    let lookups = super::sink_alignment::ALIGNMENT_LOOKUPS.with(std::cell::Cell::get);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    assert_eq!(result.findings.len(), 2, "one finding per changed owner");
+    assert_eq!(preps, 2, "each owner gets its own alias tokens");
+    assert_eq!(lookups, 1, "every owner reads the run's one test index");
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_scans_related_tests_once_per_owner() -> Result<(), String> {
+    fn scans_for(changed_lines: usize) -> Result<(usize, usize, usize), String> {
+        let root = unique_tempdir("analyze-diff-related-once")?;
+        let module = PathBuf::from("pricing.py");
+        write_file(
+            &root.join(&module),
+            "def price(x):\n    a = x + 2\n    b = a * 3\n    return b - 4\n",
+        )?;
+        write_file(
+            &root.join("test_pricing.py"),
+            "from pricing import price\n\n\ndef test_price():\n    assert price(1) == 5\n",
+        )?;
+        let pairs = [
+            ("    a = x + 2", "    a = x + 1"),
+            ("    b = a * 3", "    b = a * 2"),
+            ("    return b - 4", "    return b - 3"),
+        ];
+        let mut added_lines = Vec::new();
+        let mut removed_lines = Vec::new();
+        for (index, (new, old)) in pairs.iter().take(changed_lines).enumerate() {
+            added_lines.push(crate::analysis::diff::ChangedLine {
+                line: index + 2,
+                new_side_line: index + 2,
+                text: (*new).to_string(),
+            });
+            removed_lines.push(crate::analysis::diff::ChangedLine {
+                line: index + 2,
+                new_side_line: index + 2,
+                text: (*old).to_string(),
+            });
+        }
+        let changed_files = vec![ChangedFile {
+            path: module,
+            added_lines,
+            removed_lines,
+        }];
+        let options = AnalysisOptions {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            mode: crate::analysis::AnalysisMode::Draft,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+        };
+        super::related_tests::RELATED_SCANS.with(|scans| scans.set(0));
+        super::sink_alignment::ALIGNMENT_PREPS.with(|preps| preps.set(0));
+        let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+        let scans = super::related_tests::RELATED_SCANS.with(std::cell::Cell::get);
+        let preps = super::sink_alignment::ALIGNMENT_PREPS.with(std::cell::Cell::get);
+        let cleanup = std::fs::remove_dir_all(&root);
+        let result = result?;
+        cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+        Ok((scans, preps, result.findings.len()))
+    }
+
+    let (one_scans, one_preps, one_findings) = scans_for(1)?;
+    let (three_scans, three_preps, three_findings) = scans_for(3)?;
+    assert_eq!(one_findings, 1, "one changed line is one finding");
+    assert_eq!(three_findings, 3, "three changed lines are three findings");
+    assert_eq!(one_scans, 1, "one owner is scanned once");
+    assert_eq!(
+        three_scans, one_scans,
+        "more changed lines of the same owner must not rescan the tests"
+    );
+    // #10914: the owner's sink-alignment index is built once per run too.
+    assert_eq!(one_preps, 1, "one owner builds one alignment index");
+    assert_eq!(
+        three_preps, one_preps,
+        "more changed lines of the same owner must not rebuild the alignment index"
+    );
     Ok(())
 }
 
@@ -2960,8 +3377,8 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
-            "same-module helper with an arbitrary name",
-            "def run_case(value):\n    assert apply_discount(value) == 10\n\ndef test_x():\n    run_case(20)\n",
+            "same-module helper with an arbitrary name and a computed argument (a literal one is credited by helper_inline)",
+            "def run_case(value):\n    assert apply_discount(value) == 10\n\ndef test_x():\n    run_case(10 + 10)\n",
             unresolved,
         ),
         (
@@ -3240,6 +3657,26 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "request attribute read",
+            "def test_x(request):\n    request.config\n    apply_discount(20)\n",
+            none,
+        ),
+        (
+            "request.applymarker",
+            "import pytest\ndef test_x(request):\n    request.applymarker(pytest.mark.xfail)\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "request.node.add_marker",
+            "import pytest\ndef test_x(request):\n    request.node.add_marker(pytest.mark.skip)\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "request.addfinalizer",
+            "def test_x(request):\n    request.addfinalizer(print)\n    apply_discount(20)\n",
+            unresolved,
+        ),
+        (
             "usefixtures mark",
             "import pytest\n@pytest.mark.usefixtures('db')\ndef test_x():\n    apply_discount(20)\n",
             unresolved,
@@ -3270,6 +3707,76 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "capsys.readouterr and caplog.clear stay inert (control)",
+            "def test_x(capsys, caplog):\n    apply_discount(20)\n    capsys.readouterr()\n    caplog.clear()\n",
+            none,
+        ),
+        (
+            "recwarn.pop raises AssertionError",
+            "def test_x(recwarn):\n    apply_discount(20)\n    recwarn.pop(UserWarning)\n",
+            unresolved,
+        ),
+        (
+            "testdir member",
+            "def test_x(testdir):\n    apply_discount(20)\n    testdir.runpytest()\n",
+            unresolved,
+        ),
+        (
+            "pytester member",
+            "def test_x(pytester):\n    apply_discount(20)\n    pytester.runpytest().assert_outcomes(passed=1)\n",
+            unresolved,
+        ),
+        (
+            "unittest class without run override (control)",
+            "import unittest\nclass T(unittest.TestCase):\n    def helper(self):\n        return 1\n    def test_x(self):\n        apply_discount(20)\n",
+            none,
+        ),
+        (
+            "unittest run override asserts",
+            "import unittest\nclass T(unittest.TestCase):\n    def run(self, result=None):\n        super().run(result)\n        assert result.wasSuccessful()\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest _callTestMethod override asserts",
+            "import unittest\nclass T(unittest.TestCase):\n    def _callTestMethod(self, method):\n        method()\n        assert self.ok\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest __init__ override",
+            "import unittest\nclass T(unittest.TestCase):\n    def __init__(self, *a):\n        self.addCleanup(self.assertTrue, False)\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest doCleanups override",
+            "import unittest\nclass T(unittest.TestCase):\n    def doCleanups(self):\n        self.assertTrue(False)\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest __init_subclass__ override",
+            "import unittest\nclass T(unittest.TestCase):\n    def __init_subclass__(cls, **kw):\n        cls.check_all()\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest debug override",
+            "import unittest\nclass T(unittest.TestCase):\n    def debug(self):\n        self.assertTrue(False)\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest __call__ override",
+            "import unittest\nclass T(unittest.TestCase):\n    def __call__(self, *a):\n        self.assertTrue(False)\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest _callSetUp override",
+            "import unittest\nclass T(unittest.TestCase):\n    def _callSetUp(self):\n        self.assertTrue(False)\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
+            "unittest _callTearDown override",
+            "import unittest\nclass T(unittest.TestCase):\n    def _callTearDown(self):\n        self.assertTrue(False)\n    def test_x(self):\n        apply_discount(20)\n",
+            unresolved,
+        ),
+        (
             "assertion-like match guard",
             "def test_x():\n    match apply_discount(20):\n        case 10 if verify(10):\n            pass\n",
             unresolved,
@@ -3292,6 +3799,11 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
 #[test]
 fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let mocked = PythonTest {
+        setup_receivers: Vec::new(),
+        fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
+        parametrize_argnames: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_x".to_string(),
         qualified_name: "test_x".to_string(),
@@ -3306,13 +3818,20 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        simple_literal_parametrize: false,
         generated_inputs: Vec::new(),
-        framework: "pytest",
+        framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
+        bare_sibling_modules: Vec::new(),
     };
     assert!(test_has_mocked_module(&mocked));
     let bare = PythonTest {
+        setup_receivers: Vec::new(),
+        fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
+        parametrize_argnames: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_y".to_string(),
         qualified_name: "test_y".to_string(),
@@ -3325,13 +3844,20 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        simple_literal_parametrize: false,
         generated_inputs: Vec::new(),
-        framework: "pytest",
+        framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
+        bare_sibling_modules: Vec::new(),
     };
     assert!(test_has_mocked_module(&bare));
     let clean = PythonTest {
+        setup_receivers: Vec::new(),
+        fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
+        parametrize_argnames: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_z".to_string(),
         qualified_name: "test_z".to_string(),
@@ -3344,10 +3870,12 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        simple_literal_parametrize: false,
         generated_inputs: Vec::new(),
-        framework: "pytest",
+        framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
+        bare_sibling_modules: Vec::new(),
     };
     assert!(!test_has_mocked_module(&clean));
 }
@@ -3360,6 +3888,27 @@ fn contains_dynamic_dispatch_detects_registry_indexed_call() {
     assert!(contains_dynamic_dispatch("    return registry[key]()"));
     assert!(!contains_dynamic_dispatch("    return registry[key]"));
     assert!(!contains_dynamic_dispatch("    return notify()"));
+}
+
+#[test]
+fn contains_dynamic_dispatch_reads_getattr_as_a_bare_call_name() {
+    assert!(contains_dynamic_dispatch("    return getattr(x, 'a')"));
+    // A space before `(` is still a call (RIPR-SPEC-0238 example 33).
+    assert!(contains_dynamic_dispatch("    return getattr (x, 'a')"));
+    assert!(contains_dynamic_dispatch(
+        "    return builtins.getattr(x, 'a')"
+    ));
+    // Another identifier ending in `getattr` is not the builtin (example 28).
+    assert!(!contains_dynamic_dispatch("    return my_getattr(x)"));
+    assert!(!contains_dynamic_dispatch("    return getattr_default"));
+}
+
+#[test]
+fn contains_metaprogramming_reads_type_and_setattr_calls_with_a_space() {
+    assert!(contains_metaprogramming("    return type (x)"));
+    assert!(contains_metaprogramming("    setattr (o, 'a', 1)"));
+    assert!(!contains_metaprogramming("    return content_type(x)"));
+    assert!(!contains_metaprogramming("    return type_name(x)"));
 }
 
 #[test]
@@ -3541,7 +4090,7 @@ fn visit_workspace_returns_silently_when_directory_is_unreadable() {
         Path::new("/definitely-not-a-real-dir-ripr"),
         Path::new("/definitely-not-a-real-dir-ripr"),
         &[],
-        &mut out,
+        &mut |file| out.push(file),
     );
     assert!(out.is_empty());
 }
@@ -3571,10 +4120,10 @@ class Async(unittest.TestCase):
                 tests.iter().map(|t| t.name.as_str()).collect::<Vec<_>>()
             )
         })?;
-    if async_test.framework != "unittest" {
+    if async_test.framework != PythonFramework::Unittest {
         return Err(format!(
             "async test inside unittest.TestCase should be unittest, got {}",
-            async_test.framework
+            async_test.framework.as_str()
         ));
     }
     Ok(())
@@ -3629,6 +4178,69 @@ fn line_uses_imported_symbol_matches_attribute_access_on_imported_alias() {
     ));
     // A bare identifier with no dot and no call form should not match.
     assert!(!line_uses_imported_symbol("    unrelated", &imports));
+}
+
+/// RIPR-SPEC-0238 rule 8: an imported name is read as a token. `pos.x` and
+/// `repos(` merely end in `os`; a real use, a use after an operator or
+/// bracket, and an f-string field still count.
+#[test]
+fn an_import_alias_is_matched_as_a_whole_name() {
+    let os = vec![PythonImport {
+        imported: "os".to_string(),
+        alias: "os".to_string(),
+        source_module: String::new(),
+    }];
+    for line in [
+        "    return pos.x + 2",
+        "    return repos(x)",
+        "    return other.os.getcwd()",
+        "    return cosmos.get(x)",
+    ] {
+        assert!(!line_uses_imported_symbol(line, &os), "{line}");
+    }
+    for line in [
+        "    return os.getcwd()",
+        "    return x + os.cpu_count()",
+        "    return (os.getcwd())",
+        "    return f\"{os.getcwd()}\"",
+        "    return os(x)",
+    ] {
+        assert!(line_uses_imported_symbol(line, &os), "{line}");
+    }
+}
+
+/// `file=sys.stderr` on a `print` names a standard stream; any other `sys`
+/// attribute use is still an imported symbol the adapter does not resolve.
+#[test]
+fn print_to_a_standard_stream_is_not_an_unresolved_import() {
+    let sys = vec![PythonImport {
+        imported: "sys".to_string(),
+        alias: "sys".to_string(),
+        source_module: String::new(),
+    }];
+    for line in [
+        "    print(f\"warning: {message}\", file=sys.stderr)",
+        "    print(message, file = sys.stdout)",
+        "    print(message, flush=True, file=sys.stderr)",
+    ] {
+        assert!(!line_uses_imported_symbol(line, &sys), "{line}");
+    }
+    for line in [
+        "    print(message, file=sys.argv)",
+        "    print(sys.argv[0], file=sys.stderr)",
+        "    print(f\"warning: {message}\", sys.platform, file=sys.stderr)",
+        "    print(\"a\", file=sys.stderr) if sys.argv else print(\"b\", file=open(\"f\", \"w\"))",
+        "    log(sys.argv, file=sys.stderr); print(\"x\")",
+        "    x = fmt(sys.argv, \"file=sys.stderr\"); print(x)",
+        "    print(message, file=sys.stderr if flag else other)",
+        "    print(message, file=sys.stderr_alt())",
+        "    print(message, file=sys.stderr, flush=sys.flags)",
+        "    log(message, file=sys.stderr)",
+        "    return sys.platform",
+        "    print(sys.modules)",
+    ] {
+        assert!(line_uses_imported_symbol(line, &sys), "{line}");
+    }
 }
 
 #[test]
@@ -3743,14 +4355,24 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -3763,6 +4385,8 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     };
 
     // Strong oracle on a wrapper's return value -> does not observe the owner.
@@ -3814,14 +4438,24 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -3834,12 +4468,19 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     }];
     // Without the alias import, the oracle names neither owner nor sink.
     assert!(!strong_oracle_observes_owner(&owner, line, &related, &[]));
 
     // With `apply_tax as taxed`, the oracle's `taxed(...)` observes the owner.
     let alias_test = PythonTest {
+        setup_receivers: Vec::new(),
+        fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
+        parametrize_argnames: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_alias".to_string(),
         qualified_name: "test_alias".to_string(),
@@ -3857,10 +4498,12 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        simple_literal_parametrize: false,
         generated_inputs: Vec::new(),
-        framework: "pytest",
+        framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
+        bare_sibling_modules: Vec::new(),
     };
     assert!(strong_oracle_observes_owner(
         &owner,
@@ -3882,14 +4525,24 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         imports: Vec::new(),
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
     }
 }
 
@@ -3904,6 +4557,8 @@ fn align_strong(oracle: &str) -> RelatedTest {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     }
 }
 
@@ -3914,6 +4569,11 @@ fn align_strong(oracle: &str) -> RelatedTest {
 fn align_importing_test(imported: &str, module: &str) -> PythonTest {
     PythonTest {
         activation_controls: Vec::new(),
+        setup_receivers: Vec::new(),
+        fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
+        parametrize_argnames: Vec::new(),
         constant_rebinding: Default::default(),
         name: "t".to_string(),
         qualified_name: "t".to_string(),
@@ -3929,10 +4589,12 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        simple_literal_parametrize: false,
         generated_inputs: Vec::new(),
-        framework: "pytest",
+        framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
+        bare_sibling_modules: Vec::new(),
     }
 }
 
@@ -3958,6 +4620,11 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
     let line = "return amount + 2";
     let related = [align_strong("assert taxed(10) == 12")];
     let alias_test = PythonTest {
+        setup_receivers: Vec::new(),
+        fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
+        parametrize_argnames: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_alias".to_string(),
         qualified_name: "test_alias".to_string(),
@@ -3975,10 +4642,12 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        simple_literal_parametrize: false,
         generated_inputs: Vec::new(),
-        framework: "pytest",
+        framework: PythonFramework::Pytest,
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
+        bare_sibling_modules: Vec::new(),
     };
     let a = classify_sink_alignment(&owner, line, &related, std::slice::from_ref(&alias_test));
     assert_eq!(a.oracle_alignment, "alias");
@@ -4225,4 +4894,429 @@ fn python_structural_lines_are_recognized() {
     ] {
         assert!(!is_python_structural_line(behavioral), "{behavioral:?}");
     }
+}
+
+#[test]
+fn same_named_function_in_unimported_module_is_not_related() -> Result<(), String> {
+    let source = "def quote(total):\n    return round(total * 1.07, 2)\n";
+    let owners_for = |files: &[&str]| -> Result<Vec<PythonOwner>, String> {
+        let mut owners = Vec::new();
+        for file in files {
+            owners.extend(
+                extract_owners(Path::new(file), source)
+                    .into_iter()
+                    .filter(|owner| owner.name == "quote"),
+            );
+        }
+        super::related_tests::apply_rival_definition_modules(&mut owners);
+        Ok(owners)
+    };
+    let related = |owner: &PythonOwner, source: &str| -> Result<usize, String> {
+        let tests = extract_tests(Path::new("tests/test_a.py"), source);
+        if tests.len() != 1 {
+            return Err(format!("expected one test, got {}", tests.len()));
+        }
+        Ok(related_test_candidates(owner, &tests).len())
+    };
+    let call = "\n\ndef test_a():\n    assert quote(100.0) == 107.0\n";
+
+    let owners = owners_for(&["pkg/a.py", "pkg/b.py"])?;
+    let [owner_a, owner_b] = owners.as_slice() else {
+        return Err(format!("expected two owners, got {}", owners.len()));
+    };
+    let imports_a = format!("from pkg.a import quote{call}");
+    // Positive control: the module the test imports.
+    assert_eq!(related(owner_a, &imports_a)?, 1);
+    // The same-named function in a module the test never imports.
+    assert_eq!(related(owner_b, &imports_a)?, 0);
+    // An aliased import of the other module is still the other module.
+    let aliased = "from pkg.a import quote as q\n\ndef test_a():\n    assert q(100.0) == 107.0\n";
+    assert_eq!(related(owner_b, aliased)?, 0);
+    // Calling the owner through its imported module keeps the relation.
+    let both = "from pkg.a import quote\nimport pkg.b\n\ndef test_a():\n    assert quote(100.0) == 107.0\n    assert pkg.b.quote(100.0) == 107.0\n";
+    assert_eq!(related(owner_b, both)?, 1);
+    // No import of the name (local definition) and a star import stay
+    // name-related: only affirmative evidence withholds the relation.
+    assert_eq!(related(owner_b, call.trim_start())?, 1);
+    assert_eq!(related(owner_b, &format!("from pkg.a import *{call}"))?, 1);
+    // An unused import of the owner's module, or of another name from it, is
+    // no evidence the test exercises the owner.
+    assert_eq!(
+        related(
+            owner_b,
+            &format!("from pkg.a import quote\nfrom pkg.b import helper{call}")
+        )?,
+        0
+    );
+    assert_eq!(
+        related(
+            owner_b,
+            &format!("from pkg.a import quote\nimport pkg.b{call}")
+        )?,
+        0
+    );
+    // A star import from the owner's module can bind the owner's name even
+    // when the foreign function is imported under another alias.
+    assert_eq!(
+        related(
+            owner_b,
+            &format!("from pkg.b import *\nfrom pkg.a import quote as q{call}")
+        )?,
+        1
+    );
+    // Calling the owner through other module spellings keeps the relation.
+    for reaches in [
+        "from pkg.a import quote\nfrom pkg import b\n\ndef test_a():\n    assert quote(1.0) == b.quote(1.0)\n",
+        "from pkg.a import quote\nimport pkg.b as m\n\ndef test_a():\n    assert quote(1.0) == m.quote(1.0)\n",
+    ] {
+        assert_eq!(related(owner_b, reaches)?, 1, "{reaches}");
+    }
+    // A package or facade that is not itself a defining module cannot be told
+    // from the owner's module: the relation stays.
+    assert_eq!(
+        related(owner_b, &format!("from pkg import quote{call}"))?,
+        1
+    );
+    assert_eq!(
+        related(owner_b, &format!("from pkg.api import quote{call}"))?,
+        1
+    );
+
+    // An import root the adapter cannot see (`app/` on sys.path) spells the
+    // owner `pricing.discounts`; that is not a different module.
+    let owners = owners_for(&["app/pricing/discounts.py", "pricing/discounts.py"])?;
+    let [rooted, _] = owners.as_slice() else {
+        return Err("expected two owners".to_string());
+    };
+    assert_eq!(
+        related(
+            rooted,
+            &format!("from pricing.discounts import quote{call}")
+        )?,
+        1
+    );
+    // A single definition has no rival to be confused with.
+    let owners = owners_for(&["pkg/b.py"])?;
+    let [only] = owners.as_slice() else {
+        return Err("expected one owner".to_string());
+    };
+    assert_eq!(related(only, &format!("from pkg.a import quote{call}"))?, 1);
+    Ok(())
+}
+
+#[test]
+fn workspace_pass_withholds_relation_for_same_named_function_in_unimported_module()
+-> Result<(), String> {
+    // The production path (#8759): the workspace pass records the rival
+    // definition, so a test importing `pkg.a.quote` is not related to
+    // `pkg/b.py::quote` when that line changes.
+    let root = unique_tempdir("analyze-same-named-function")?;
+    write_file(
+        &root.join("pkg/a.py"),
+        "def quote(total):\n    return round(total * 1.07, 2)\n",
+    )?;
+    write_file(
+        &root.join("pkg/b.py"),
+        "def quote(total):\n    return round(total * 1.07, 2)\n",
+    )?;
+    write_file(
+        &root.join("tests/test_a.py"),
+        "from pkg.a import quote\n\ndef test_a():\n    assert quote(100.0) == 107.0\n",
+    )?;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let changed = |path: &str| ChangedFile {
+        path: PathBuf::from(path),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "    return round(total * 1.07, 2)".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    };
+    let analyze = |path: &str| {
+        PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &[changed(path)])
+    };
+    let rival = analyze("pkg/b.py");
+    let imported = analyze("pkg/a.py");
+    let cleanup = std::fs::remove_dir_all(&root);
+    let (rival, imported) = (rival?, imported?);
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+
+    let [rival_finding] = rival.findings.as_slice() else {
+        return Err(format!(
+            "expected one rival finding, got {}",
+            rival.findings.len()
+        ));
+    };
+    assert_eq!(rival_finding.class, ExposureClass::NoStaticPath);
+    assert!(rival_finding.related_tests.is_empty());
+    let [imported_finding] = imported.findings.as_slice() else {
+        return Err(format!(
+            "expected one finding, got {}",
+            imported.findings.len()
+        ));
+    };
+    assert_eq!(imported_finding.related_tests.len(), 1);
+    Ok(())
+}
+
+fn route_relation_for(decorator: &str, call: &str) -> Result<bool, String> {
+    let owners = extract_owners(
+        Path::new("app/items.py"),
+        &format!("api = object()\n\n{decorator}\ndef items(payload):\n    return payload\n"),
+    );
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "items")
+        .ok_or_else(|| "expected items owner".to_string())?;
+    let tests = extract_tests(
+        Path::new("tests/test_items.py"),
+        &format!(
+            "from starlette.testclient import TestClient\nfrom app.items import api\n\ndef test_items():\n    client = TestClient(api)\n    response = client.{call}\n    assert response\n"
+        ),
+    );
+    Ok(related_test_candidates(owner, &tests)
+        .iter()
+        .any(|candidate| candidate.relation == PythonRelationKind::ApiClientRouteCall))
+}
+
+#[test]
+fn api_client_route_relation_requires_the_decorator_verb() -> Result<(), String> {
+    // Verb decorators relate only to a client call with the same verb.
+    assert!(route_relation_for(
+        "@api.post(\"/items\")",
+        "post(\"/items\")"
+    )?);
+    assert!(!route_relation_for(
+        "@api.post(\"/items\")",
+        "get(\"/items\")"
+    )?);
+    assert!(!route_relation_for(
+        "@api.delete(\"/items\")",
+        "put(\"/items\")"
+    )?);
+    // A GET route also serves HEAD.
+    assert!(route_relation_for(
+        "@api.get(\"/items\")",
+        "head(\"/items\")"
+    )?);
+    assert!(!route_relation_for(
+        "@api.get(\"/items\")",
+        "post(\"/items\")"
+    )?);
+    // A literal methods list names the accepted verbs.
+    let multi = "@api.route(\"/items\", methods=[\"POST\", \"PUT\"])";
+    assert!(route_relation_for(multi, "put(\"/items\")")?);
+    assert!(!route_relation_for(multi, "get(\"/items\")")?);
+    // A GET route declared through `methods` also serves HEAD.
+    assert!(route_relation_for(
+        "@api.route(\"/items\", methods=[\"GET\"])",
+        "head(\"/items\")"
+    )?);
+    // A path that contains the word does not hide the real keyword argument.
+    let tricky = "@api.route(\"/api/methods/list\", methods=[\"POST\"])";
+    assert!(route_relation_for(tricky, "post(\"/api/methods/list\")")?);
+    assert!(!route_relation_for(tricky, "get(\"/api/methods/list\")")?);
+    // Only the decorator's own `methods` keyword names verbs: another call's
+    // `methods=` keyword nested in its arguments is not the route's.
+    let nested =
+        "@api.api_route(\"/items\", openapi_extra=dict(methods=[\"POST\"]), methods=[\"GET\"])";
+    assert!(route_relation_for(nested, "get(\"/items\")")?);
+    assert!(!route_relation_for(nested, "post(\"/items\")")?);
+    // A comment inside a plain literal list does not make it unknown.
+    let commented =
+        "@api.api_route(\"/items\", methods=[\n    \"POST\",  # create\n    \"PUT\",\n])";
+    assert!(route_relation_for(commented, "put(\"/items\")")?);
+    assert!(!route_relation_for(commented, "get(\"/items\")")?);
+    // A concatenated list is not a plain literal, so the verb stays unknown
+    // rather than being truncated to its first half.
+    let joined = "@api.api_route(\"/items\", methods=[\"POST\"] + [\"PUT\"])";
+    assert!(route_relation_for(joined, "put(\"/items\")")?);
+    assert!(route_relation_for(joined, "get(\"/items\")")?);
+    // An unknown verb keeps the path-only relation instead of dropping it.
+    assert!(route_relation_for(
+        "@api.route(\"/items\")",
+        "post(\"/items\")"
+    )?);
+    assert!(route_relation_for(
+        "@api.api_route(\"/items\", methods=VERBS)",
+        "get(\"/items\")"
+    )?);
+    Ok(())
+}
+
+#[test]
+fn same_name_import_gate_keeps_independent_route_relation() -> Result<(), String> {
+    let route = "api = object()\n\n@api.post(\"/checkout\")\ndef quote(payload):\n    return {\"detail\": \"coupon expired\"}\n";
+    let rival = "def quote(payload):\n    return payload\n";
+    let mut owners: Vec<PythonOwner> = extract_owners(Path::new("app/checkout.py"), route)
+        .into_iter()
+        .chain(extract_owners(Path::new("pkg/a.py"), rival))
+        .filter(|owner| owner.name == "quote")
+        .collect();
+    super::related_tests::apply_rival_definition_modules(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.file == Path::new("app/checkout.py"))
+        .ok_or_else(|| "expected route owner".to_string())?;
+    let tests = extract_tests(
+        Path::new("tests/test_checkout.py"),
+        "from starlette.testclient import TestClient\nfrom app.checkout import api\nfrom pkg.a import quote\n\ndef test_expired():\n    client = TestClient(api)\n    assert quote({}) == {}\n    response = client.post(\"/checkout\", json={})\n    assert response\n",
+    );
+    let relation = related_test_candidates(owner, &tests)
+        .first()
+        .map(|candidate| candidate.relation);
+    assert_eq!(relation, Some(PythonRelationKind::ApiClientRouteCall));
+    Ok(())
+}
+
+#[test]
+fn same_name_import_gate_leaves_class_owners_alone() -> Result<(), String> {
+    // Only free functions are gated: a subclass can run the other module's
+    // class under the same name.
+    let source = "class Base:\n    pass\n";
+    let mut owners: Vec<PythonOwner> = extract_owners(Path::new("pkg/b.py"), source)
+        .into_iter()
+        .chain(extract_owners(Path::new("pkg/a.py"), source))
+        .filter(|owner| owner.name == "Base")
+        .collect();
+    super::related_tests::apply_rival_definition_modules(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.file == Path::new("pkg/b.py"))
+        .ok_or_else(|| "expected class owner".to_string())?;
+    assert!(owner.rival_definition_modules.is_empty());
+    Ok(())
+}
+
+/// Run the diff pipeline over a lone `LIMIT = 10` -> `LIMIT = 12` replacement
+/// with `extra` workspace files, optionally listing the test file as changed
+/// too, and return the finding's class (#9423).
+fn module_constant_pipeline_class(
+    label: &str,
+    extra: &[(&str, &str)],
+    test_also_changed: bool,
+) -> Result<ExposureClass, String> {
+    let root = unique_tempdir(label)?;
+    let write_all = || -> Result<(), String> {
+        write_file(
+            &root.join("hostile/settings.py"),
+            "LIMIT = 12\n\n\ndef over_limit(n):\n    return n > LIMIT\n",
+        )?;
+        write_file(
+            &root.join("tests/test_settings.py"),
+            "from hostile.settings import over_limit\n\n\ndef test_it():\n    assert over_limit(11)\n",
+        )?;
+        for (file, source) in extra {
+            write_file(&root.join(file), source)?;
+        }
+        Ok(())
+    };
+    let written = write_all();
+    let line = |text: &str| crate::analysis::diff::ChangedLine {
+        line: 1,
+        new_side_line: 1,
+        text: text.to_string(),
+    };
+    let mut changed_files = vec![ChangedFile {
+        path: PathBuf::from("hostile/settings.py"),
+        added_lines: vec![line("LIMIT = 12")],
+        removed_lines: vec![line("LIMIT = 10")],
+    }];
+    if test_also_changed {
+        changed_files.push(ChangedFile {
+            path: PathBuf::from("tests/test_settings.py"),
+            added_lines: vec![line("from hostile.settings import over_limit")],
+            removed_lines: Vec::new(),
+        });
+    }
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let result = written.and_then(|()| {
+        PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files)
+    });
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    match result.findings.as_slice() {
+        [finding] => Ok(finding.class.clone()),
+        other => Err(format!("expected one finding, got {}", other.len())),
+    }
+}
+
+#[test]
+fn module_constant_edit_credits_through_the_diff_pipeline_only_when_the_workspace_is_quiet()
+-> Result<(), String> {
+    let reader = (
+        "app/main.py",
+        "from hostile import settings\n\nprint(settings.LIMIT)\n",
+    );
+    assert_eq!(
+        module_constant_pipeline_class("module-value-read", &[reader], false)?,
+        ExposureClass::Exposed
+    );
+    for (label, file) in [
+        (
+            "module-value-production-write",
+            (
+                "app/main.py",
+                "import os\nfrom hostile import settings\n\nsettings.LIMIT = int(os.environ['L'])\n",
+            ),
+        ),
+        (
+            "module-value-conftest-patch",
+            (
+                "tests/conftest.py",
+                "import pytest\nfrom hostile import settings\n\n\n@pytest.fixture(autouse=True)\ndef big(monkeypatch):\n    monkeypatch.setattr(settings, 'LIMIT', 100)\n",
+            ),
+        ),
+        (
+            "module-value-helper-setattr",
+            (
+                "tests/support.py",
+                "from hostile import settings\n\n\ndef bump():\n    setattr(settings, 'LIMIT', 100)\n",
+            ),
+        ),
+    ] {
+        assert_ne!(
+            module_constant_pipeline_class(label, &[file], false)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
+    // The diff also edits the test file: its assertion is not a pre-existing oracle.
+    assert_ne!(
+        module_constant_pipeline_class("module-value-test-edited", &[reader], true)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
 }

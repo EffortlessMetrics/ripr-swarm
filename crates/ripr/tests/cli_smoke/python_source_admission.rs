@@ -407,8 +407,14 @@ fn python_source_admission_preserves_read_failure_and_honest_comment_zero() -> T
     assert_eq!(outcome(&comment)["kind"], "no_behavioral_candidates");
     assert_eq!(comment["summary"]["findings"], 0);
     assert_eq!(python_count(&comment), Some(1));
+    // A comment-only change has no analysis subject (#8827): the badge names
+    // that outcome with a warning instead of a clean green zero.
     let badge: Value = serde_json::from_str(&check(&root, "badge-json")?)?;
-    assert_eq!(badge["color"], "brightgreen");
+    assert_eq!(badge["color"], "yellow");
+    assert_eq!(
+        badge["message"],
+        "no analysis subject: no_behavioral_candidates"
+    );
     fs::remove_dir_all(root)?;
     Ok(())
 }

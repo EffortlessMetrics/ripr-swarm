@@ -1103,11 +1103,12 @@ const AGENT_VERIFY_COMMAND_TITLE: &str = "Verify after test: copy verify command
 const AGENT_RECEIPT_COMMAND_TITLE: &str = "Review result: copy receipt command";
 const AGENT_CARD_COMMAND_TITLE: &str = "Agent handoff: copy repair card";
 const COPY_STATIC_LIMIT_NOTE_TITLE: &str = "Inspect gap: copy static-limit note";
-const COPY_FIRST_REPAIR_PACKET_TITLE: &str = "Copy first repair packet";
+const COPY_FIRST_REPAIR_PACKET_TITLE: &str = "Copy repair instructions for an AI agent";
 const COPY_PYTHON_AGENT_PACKET_TITLE: &str = "Agent handoff: copy Python packet";
-const COPY_PYTHON_REPAIR_CARD_TITLE: &str = "Copy Python repair card";
+const COPY_PYTHON_REPAIR_CARD_TITLE: &str = "Copy Python repair instructions for an AI agent";
 const COPY_PYTHON_PYTEST_SKELETON_TITLE: &str = "Write Python test: copy pytest skeleton";
-const COPY_TYPESCRIPT_REPAIR_PACKET_TITLE: &str = "Copy TypeScript repair packet (advisory)";
+const COPY_TYPESCRIPT_REPAIR_PACKET_TITLE: &str =
+    "Copy TypeScript repair instructions for an AI agent (advisory)";
 const REFRESH_ANALYSIS_TITLE: &str = "Refresh Analysis - Saved Workspace Check";
 
 fn copy_agent_loop_command_action(
@@ -1663,7 +1664,7 @@ fn python_pytest_skeleton_target(snapshot: &AnalysisSnapshot, data: &Value) -> O
     }))
 }
 
-/// Build the LSP action target for "Copy TypeScript repair packet (advisory)"
+/// Build the LSP action target for "Copy TypeScript repair instructions for an AI agent (advisory)"
 /// (RIPR-SPEC-0088 §PR8). Returns `None` unless:
 /// - `data.preview_actionability.repair_packet_ready == true`
 /// - `data.language == "typescript"` (or javascript)
@@ -2453,20 +2454,37 @@ mod tests {
 
     #[test]
     fn receipt_command_falls_back_past_a_route_it_cannot_bind() {
-        // #4001: a safe receipt route the binder withholds (a `\` escape next
-        // to `--root .`) does not hide a later bindable candidate.
+        // #4001: a safe receipt route the binder withholds does not hide a
+        // later bindable candidate. The `--root=.` spelling is withheld on
+        // every host, so the fallback is demonstrated on every host (#8499).
         let root = std::env::temp_dir().join("ripr-receipt-fallback");
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+        );
+        let fallback = Some(format!("ripr agent receipt --root {bound} --json"));
+        let data = serde_json::json!({
+            "receipt_command": "ripr receipt write --root=. --json",
+            "commands": { "receipt": "ripr agent receipt --root . --json" },
+        });
+        assert_eq!(first_safe_receipt_command(&root, &data), fallback);
+        // The original #4001 scenario: a `\` escape next to `--root .` is
+        // withheld only where the shell reads `\` as an escape. The Windows
+        // console form reads it literally, so the route binds instead of
+        // falling back (#8153).
         let data = serde_json::json!({
             "receipt_command": "ripr receipt write --note it\\s --root . --json",
             "commands": { "receipt": "ripr agent receipt --root . --json" },
         });
-        let bound = crate::agent::loop_commands::shell_arg(
-            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
-        );
-        assert_eq!(
-            first_safe_receipt_command(&root, &data),
-            Some(format!("ripr agent receipt --root {bound} --json"))
-        );
+        if cfg!(windows) {
+            assert_eq!(
+                first_safe_receipt_command(&root, &data),
+                Some(format!(
+                    "ripr receipt write --note it\\s --root {bound} --json"
+                ))
+            );
+        } else {
+            assert_eq!(first_safe_receipt_command(&root, &data), fallback);
+        }
     }
 
     #[test]
@@ -3028,6 +3046,7 @@ mod tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         }
     }
 

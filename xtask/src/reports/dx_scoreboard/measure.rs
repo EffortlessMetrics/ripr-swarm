@@ -6,6 +6,7 @@
 //! and the warm check reuses that same cache.
 
 mod check_admission;
+mod editor_refresh;
 
 use super::{Config, CorpusEntry, Options, RunContext, Sample, SampleOutcome};
 use crate::run::{MeasuredOutput, capture_bytes_in_dir_with_timeout, capture_output_measured};
@@ -17,6 +18,7 @@ pub(crate) use check_admission::{
 pub(crate) use check_admission::{
     CheckAdmission, CheckSubject, admit_check_sample, scan_check_contradictions,
 };
+use ripr::domain::RelationReason;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
@@ -24,6 +26,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const CACHE_ENV: &str = "RIPR_CACHE_DIR";
+/// Lifts the byte bound on `ripr check --format json` findings (`0` = full set).
+const FINDINGS_BYTES_ENV: &str = "RIPR_CHECK_FINDINGS_BYTES";
 const GIT_TIMEOUT: Duration = Duration::from_mins(10);
 const SHORT_TIMEOUT: Duration = Duration::from_mins(2);
 /// Warm-check samples are always draft. The flag is explicit so a checkout
@@ -184,6 +188,8 @@ fn measure_corpus_entry(
         "speed.cold_pilot_peak_rss_mb",
         "speed.warm_check_ms",
         "speed.warm_check_peak_rss_mb",
+        "speed.editor_refresh_ms",
+        "speed.editor_refresh_unanswered_progress_ms",
         "trust.self_contradictions",
     ];
     let checkout = match prepare_checkout(entry, options) {
@@ -200,7 +206,13 @@ fn measure_corpus_entry(
             for metric in corpus_metrics {
                 samples.push(sample(metric, outcome.clone(), reason.clone()));
             }
-            return json!({"id": entry.id, "sha": entry.sha, "status": status, "reason": reason});
+            return json!({
+                "id": entry.id,
+                "sha": entry.sha,
+                "language": entry.language(),
+                "status": status,
+                "reason": reason,
+            });
         }
     };
 
@@ -214,6 +226,7 @@ fn measure_corpus_entry(
             "id": entry.id,
             "sha": entry.sha,
             "url": entry.url,
+            "language": entry.language(),
             "status": "failed",
             "reason": reason,
         });
@@ -310,7 +323,12 @@ fn measure_corpus_entry(
         .map(|output| output.trim().to_string())
         .filter(|value| !value.is_empty());
     let check_args = warm_check_args(&root, &base);
+    let editor_base = base.clone();
     let subject = warm_check_subject(root, base, head);
+    // The contradiction scan reads every finding, so the measured check
+    // renders the full set instead of the byte-bounded prefix that a large
+    // diff (131 findings on `ripr-swarm-2026-10`) is otherwise cut to.
+    let check_envs = warm_check_envs(&cache_text);
     // The first run warms the cache for this exact diff; the second is the
     // edit-check loop a developer repeats. Warm-up success is required
     // before the measured population may be described as warm.
@@ -318,7 +336,7 @@ fn measure_corpus_entry(
         &binary.display().to_string(),
         &check_args,
         None,
-        &envs,
+        &check_envs,
         timeout,
         "dx-scoreboard warm-up check",
     );
@@ -327,7 +345,7 @@ fn measure_corpus_entry(
             &binary.display().to_string(),
             &check_args,
             None,
-            &envs,
+            &check_envs,
             timeout,
             "dx-scoreboard warm check",
         )
@@ -344,9 +362,58 @@ fn measure_corpus_entry(
         &mut missing_sources,
     );
 
+    // The same edit-save refresh through the editor server, once with the
+    // client answering progress creation and once never answering it.
+    for (metric, reply) in [
+        (
+            "speed.editor_refresh_ms",
+            editor_refresh::ProgressReply::Answer,
+        ),
+        (
+            "speed.editor_refresh_unanswered_progress_ms",
+            editor_refresh::ProgressReply::Withhold,
+        ),
+    ] {
+        samples.push(
+            match editor_refresh::measure_editor_refresh(
+                binary,
+                &checkout,
+                &editor_base,
+                &envs,
+                reply,
+                timeout,
+            ) {
+                Ok(Some(refresh)) => sample(
+                    metric,
+                    if refresh.complete() {
+                        SampleOutcome::Value(refresh.ms)
+                    } else {
+                        SampleOutcome::Incomplete(refresh.ms)
+                    },
+                    format!(
+                        "edited save of `{}` against {editor_base}, terminal state `{}`",
+                        refresh.file, refresh.state
+                    ),
+                ),
+                Ok(None) => sample(
+                    metric,
+                    SampleOutcome::NotMeasured,
+                    format!("{editor_base}..HEAD changes no Rust file to open in the editor"),
+                ),
+                Err(err) => sample(metric, SampleOutcome::Failed, err),
+            },
+        );
+    }
+
     let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
     samples.push(sample("trust.self_contradictions", outcome, detail));
-    json!({"id": entry.id, "sha": entry.sha, "url": entry.url, "status": "measured"})
+    json!({
+        "id": entry.id,
+        "sha": entry.sha,
+        "url": entry.url,
+        "language": entry.language(),
+        "status": "measured",
+    })
 }
 
 /// Measured `ripr check` argv for a warm-check sample. `--mode draft` is
@@ -364,6 +431,13 @@ pub(crate) fn warm_check_args(root: &str, base: &str) -> Vec<String> {
         "--mode".to_string(),
         WARM_CHECK_MODE.to_string(),
     ]
+}
+
+/// Environment for the warm-check pair: the corpus cache plus the unbounded
+/// findings rendering the contradiction scan needs. Without the second entry
+/// a large diff is cut to a prefix and the scan reports `incomplete`.
+pub(crate) fn warm_check_envs(cache: &str) -> [(&str, &str); 2] {
+    [(CACHE_ENV, cache), (FINDINGS_BYTES_ENV, "0")]
 }
 
 pub(crate) fn warm_check_subject(root: String, base: String, head: Option<String>) -> CheckSubject {
@@ -683,13 +757,22 @@ pub(crate) fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
 }
 
 /// Self-contradiction rules over one pilot `repo-exposure.json`:
-/// `R1` a seam says reach is `no` while it lists related tests.
+/// `R1` a seam says reach is `no` while it lists a related test whose
+/// relation establishes reach. Proximity relations (`same_test_file`,
+/// `same_module`, `assertion_target_affinity` on a function owner, and the
+/// other non-reaching relations) are listed
+/// as suggestions beside `reach: no` by design (#5335, #6866), so they are
+/// not a contradiction. A listed relation this scan cannot read, or a total
+/// with no listed window to inspect, still counts: unknown is not clean.
 pub(crate) fn repo_exposure_contradictions(exposure: &Value) -> (usize, Vec<String>) {
     let mut count = 0;
     let mut examples = Vec::new();
     for seam in exposure["seams"].as_array().into_iter().flatten() {
         let related = seam["related_tests_total"].as_u64().unwrap_or(0);
-        if seam["evidence"]["reach"].as_str() == Some("no") && related > 0 {
+        if seam["evidence"]["reach"].as_str() == Some("no")
+            && related > 0
+            && listed_relation_may_establish_reach(seam)
+        {
             count += 1;
             if examples.len() < 3 {
                 examples.push(format!(
@@ -701,6 +784,25 @@ pub(crate) fn repo_exposure_contradictions(exposure: &Value) -> (usize, Vec<Stri
         }
     }
     (count, examples)
+}
+
+/// Whether any listed related test of a seam carries a relation that the
+/// analyzer's own rule ([`RelationReason::establishes_reach`]) counts as a
+/// path to the owner. The owner is read as a function, the strictest reading
+/// for `assertion_target_affinity`; a module-level owner is not told apart.
+fn listed_relation_may_establish_reach(seam: &Value) -> bool {
+    let window = seam["related_tests"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    // The listed window is capped below the total and ranked by confidence
+    // before relation, so an unlisted test may still be a reaching one.
+    let total = seam["related_tests_total"].as_u64().unwrap_or(0);
+    window.is_empty()
+        || total > window.len() as u64
+        || window.iter().any(|test| {
+            serde_json::from_value::<RelationReason>(test["relation_reason"].clone())
+                .map_or(true, |reason| reason.establishes_reach(true))
+        })
 }
 
 /// Self-contradiction rules over one `ripr check --format json` result:

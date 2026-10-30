@@ -58,6 +58,26 @@
       "sha256": "2184f4638427c3256aaec5add093a8599a00f5ca4e6f876aaf67139aaaf14b7d"
     },
     {
+      "path": "src/feeNegated.ts",
+      "sha256": "3ddf3d1a3e2056fcc06ecb0d09760393b150bb7297d6173ec2b1878fb8427760"
+    },
+    {
+      "path": "src/feeTwice.ts",
+      "sha256": "3ddf3d1a3e2056fcc06ecb0d09760393b150bb7297d6173ec2b1878fb8427760"
+    },
+    {
+      "path": "src/feeVacuous.ts",
+      "sha256": "3ddf3d1a3e2056fcc06ecb0d09760393b150bb7297d6173ec2b1878fb8427760"
+    },
+    {
+      "path": "src/identityExtend.ts",
+      "sha256": "5ac4e2eb3a1fc684093263a38b1ff7a7d5c837d44b2f2c99037577bb1784f36b"
+    },
+    {
+      "path": "src/mail.ts",
+      "sha256": "ef0c1bd79cdd20ff37762305e11aaaf82b08d86dc7298674387f84c7d6199b88"
+    },
+    {
       "path": "src/options.ts",
       "sha256": "2748f8c77ece47de065d064e43d17cc38235bfbc16d2ab2e850847e0bd9fd5ee"
     },
@@ -90,12 +110,24 @@
       "sha256": "769c2f5b963f6d462ad0f7f9493c6e56f7d352f2ddec8c8a96264622f4ccba6a"
     },
     {
+      "path": "src/settingsBoth.ts",
+      "sha256": "d6cb1cea179fec98cfadf0a5fcb9143be278630cd8cc728f4245bfc27a99c273"
+    },
+    {
       "path": "src/settingsCopy.ts",
       "sha256": "5a9a036b4ec24e2d88cb031b5d2cf18be68b1da1d0375b8396dd49a5abca76d7"
     },
     {
+      "path": "src/settingsLoaded.ts",
+      "sha256": "f36af391dc5d645d67a95919d57a746f99c2d836432730dbc0b7b843ca6e9211"
+    },
+    {
       "path": "src/settingsOk.ts",
       "sha256": "b89326f211ff15923a6c1aaa83bb74869107fc7f4b03746e8f51a44327a30d2b"
+    },
+    {
+      "path": "src/settingsPinned.ts",
+      "sha256": "8d34ce4e32aad094d57a72829f61c93df36b01325fa9a7cbe35aeda6b299069d"
     },
     {
       "path": "src/store.ts",
@@ -104,6 +136,14 @@
     {
       "path": "src/sum.ts",
       "sha256": "42c652625aaf272d68dd28dfc2d73cfdbe9f79ee61315c10e31647dc1694f969"
+    },
+    {
+      "path": "src/sumNoopDescribe.ts",
+      "sha256": "fef7f1a1c5d3a0048c6d5632895b992e07bbfaca4c0554ec2ec6f8bbc115e725"
+    },
+    {
+      "path": "src/sumNoopTest.ts",
+      "sha256": "3e1211814a507b6fbc5b02e292b39bdf3a7db19e3a367f96b4f1bab0aaecae03"
     },
     {
       "path": "src/utils.ts",
@@ -150,6 +190,26 @@
       "sha256": "6ce98c635c68480864c4bd9995e51c1ad2ffa1441ed39e2de5e3536c479ae6e6"
     },
     {
+      "path": "test/feeNegated.test.ts",
+      "sha256": "9416e88e21de78006d9068c5f939f7cdf1095dd876fda4de8d95840a2d09c510"
+    },
+    {
+      "path": "test/feeTwice.test.ts",
+      "sha256": "55648f68f29cc841bd9df39b26a09ed72d6e3cf57fe378626197229271324828"
+    },
+    {
+      "path": "test/feeVacuous.test.ts",
+      "sha256": "9d92b9174ead6a9461f982504ec8d772666c7277cadacfc8e9b9d528a3bcb531"
+    },
+    {
+      "path": "test/identityExtend.test.ts",
+      "sha256": "f20784ae8f0a8ed3272c08e08806d5e083e52028e0e7d2c0974c6a1dd509c5ed"
+    },
+    {
+      "path": "test/mail.test.ts",
+      "sha256": "a2d10a574058135b2f5e341266a3f59f5b833f3e5d10758c67b4ad91b6e3e51d"
+    },
+    {
       "path": "test/options.test.ts",
       "sha256": "2fb73644d24aae2e4ce06b0e9dbafc916613eb1eccea2ae06149f8fb9ed49f97"
     },
@@ -182,12 +242,24 @@
       "sha256": "780f4f45218c02ceba21ac97beb5f31b1add28aa9b93baa7b295f9f3aff19571"
     },
     {
+      "path": "test/settingsBoth.test.ts",
+      "sha256": "8c22a446df4ce764c818cfb6cab58544a6ae6ef6c94df4acd1123735cffcc93d"
+    },
+    {
       "path": "test/settingsCopy.test.ts",
       "sha256": "53f39c140a73f091f888b2a901277638d720df5bfb3d384b42864835fc098d2e"
     },
     {
+      "path": "test/settingsLoaded.test.ts",
+      "sha256": "fc7b88f939108ffba96a24eb04ad4a2ef6b1d9fcba11163f32ef26d0466deb16"
+    },
+    {
       "path": "test/settingsOk.test.ts",
       "sha256": "ee80704bd3000dfae654438bc429bee1654a3a3dbc356cf059a3ef67ced08338"
+    },
+    {
+      "path": "test/settingsPinned.test.ts",
+      "sha256": "d64c4ecc18805f30abd084aa70807717505f637c118d4499ab8d9f38d53e7586"
     },
     {
       "path": "test/store.test.ts",
@@ -196,6 +268,14 @@
     {
       "path": "test/sum.test.ts",
       "sha256": "01a3700577d04d6daf0baa2936fc0c47281c5711a5817fd815ac6229428e7a12"
+    },
+    {
+      "path": "test/sumNoopDescribe.test.ts",
+      "sha256": "c1de1b8f27c74c8dfa1d5799eae0d54857fa88362b13ca760adf6c29508dc88d"
+    },
+    {
+      "path": "test/sumNoopTest.test.ts",
+      "sha256": "0c3ed9b1ef7caf784c86381be6121dd2757f650a10fa4402e33ccfbedc3598cd"
     },
     {
       "path": "test/utils.test.ts",

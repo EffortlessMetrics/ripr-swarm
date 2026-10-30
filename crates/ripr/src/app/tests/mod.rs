@@ -19,12 +19,18 @@ mod python_test_note;
 mod python_family_selection_packets;
 #[cfg(feature = "lang-python")]
 mod python_packet_eligibility;
+#[cfg(feature = "lang-python")]
+mod python_repo_mode_repair_failclosed;
 mod rendering_contracts;
 #[cfg(feature = "lang-typescript")]
 mod typescript_family_selection_packets;
+#[cfg(feature = "lang-typescript")]
+mod typescript_repo_mode_repair_failclosed;
 
 fn sample_finding(file: &str, line: usize) -> Finding {
     Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: "probe:src_lib_rs:42:error_path".to_string(),
         canonical_gap: None,
         probe: Probe {
@@ -70,6 +76,8 @@ fn sample_finding(file: &str, line: usize) -> Finding {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }],
         recommended_next_step: Some("add stronger assertion".to_string()),
         language: None,
@@ -84,8 +92,9 @@ fn sample_finding(file: &str, line: usize) -> Finding {
     }
 }
 
-fn check_output_with(findings: Vec<Finding>) -> CheckOutput {
+pub(crate) fn check_output_with(findings: Vec<Finding>) -> CheckOutput {
     CheckOutput {
+        value_origins: Default::default(),
         harness_projections: Vec::new(),
         schema_version: CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
         tool: "ripr".to_string(),
@@ -99,6 +108,7 @@ fn check_output_with(findings: Vec<Finding>) -> CheckOutput {
         no_scope_provided: false,
         unanalyzed_working_tree: false,
         untracked_working_tree_source_paths: Vec::new(),
+        ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
         suppression: None,
         analysis_outcome: None,

@@ -1,0 +1,9 @@
+diff --git a/src/barrel/rates.ts b/src/barrel/rates.ts
+index 0000000..1111111 100644
+--- a/src/barrel/rates.ts
++++ b/src/barrel/rates.ts
+@@ -1,3 +1,3 @@
+ export function rate(): number {
+-  return 0.2;
++  return 0.9;
+ }

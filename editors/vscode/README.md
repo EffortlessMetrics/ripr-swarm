@@ -160,6 +160,7 @@ The development extension also exposes the following commands:
 - `ripr: Open Report`
 - `ripr: Show Top Limitation`
 - `ripr: Show Receipt Status`
+- `ripr: Show Repair Attempt Status`
 - `ripr: Copy Receipt Command (Receipt Status)`
 - `ripr: Open Attempt Ledger`
 - `ripr: Show Route Quality`

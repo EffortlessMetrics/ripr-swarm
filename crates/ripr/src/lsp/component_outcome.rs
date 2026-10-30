@@ -21,6 +21,17 @@
 //!   findings remain usable evidence under the degradation; nothing about a
 //!   degraded optional component downgrades the findings themselves.
 
+use super::client_features::ClientFeatureProfile;
+
+/// The VS Code palette command the stored recovery routes name. It exists
+/// only when the client explicitly advertised it in `riprEditor.commands`
+/// (#9895, RIPR-SPEC-0129/0143: absence never implies support).
+const EDITOR_REFRESH_COMMAND: &str = "ripr.refreshDiagnostics";
+
+/// The route every other client can act on: the server-executed refresh
+/// command registered in `executeCommandProvider` for all clients.
+const SERVER_REFRESH_ROUTE: &str = "ripr.refresh (workspace/executeCommand)";
+
 /// One optional analysis component whose outcome is recorded per refresh.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum AnalysisComponent {
@@ -191,7 +202,7 @@ impl ComponentOutcome {
 
     /// One concise, single-line client-facing summary of the degraded
     /// outcome, naming the recovery route without overclaiming.
-    pub(super) fn log_summary(&self) -> String {
+    pub(super) fn log_summary(&self, client: &ClientFeatureProfile) -> String {
         let kind = self.kind.unwrap_or(self.state.as_str());
         let detail = self
             .message
@@ -199,7 +210,7 @@ impl ComponentOutcome {
             .map(|message| format!(": {message}"))
             .unwrap_or_default();
         let recovery = self
-            .recovery
+            .recovery_for_client(client)
             .map(|recovery| format!(" — recovery: {recovery}"))
             .unwrap_or_default();
         format!(
@@ -209,17 +220,38 @@ impl ComponentOutcome {
         )
     }
 
+    /// The recovery route as this client can act on it (#9895). The stored
+    /// route names the VS Code palette command `ripr.refreshDiagnostics`,
+    /// which only exists when the client explicitly advertised it in its
+    /// `riprEditor.commands` list. A version-only, empty-commands or
+    /// unrelated-commands block does not qualify. Every other LSP client is
+    /// pointed at the server-executed `ripr.refresh` command instead, which
+    /// the server registers for all clients. Capability absence never implies
+    /// support, so a pre-initialize or malformed-block profile gets the
+    /// generic route.
+    fn recovery_for_client(&self, client: &ClientFeatureProfile) -> Option<String> {
+        let recovery = self.recovery?;
+        if client.supports_client_command(EDITOR_REFRESH_COMMAND) {
+            return Some(recovery.to_string());
+        }
+        Some(recovery.replace(EDITOR_REFRESH_COMMAND, SERVER_REFRESH_ROUTE))
+    }
+
     /// The typed payload exposed through `ripr/analysisStatus` (and embedded
     /// in workspace status). `snapshot_identity` binds the record to the
     /// snapshot/input identity that produced it.
-    pub(super) fn status_payload(&self, snapshot_identity: Option<&str>) -> serde_json::Value {
+    pub(super) fn status_payload(
+        &self,
+        snapshot_identity: Option<&str>,
+        client: &ClientFeatureProfile,
+    ) -> serde_json::Value {
         serde_json::json!({
             "component": self.component.as_str(),
             "state": self.state.as_str(),
             "kind": self.kind,
             "message": self.message,
             "findings_trustworthy": self.findings_trustworthy,
-            "recovery": self.recovery,
+            "recovery": self.recovery_for_client(client),
             "snapshot_identity": snapshot_identity,
         })
     }
@@ -265,11 +297,14 @@ pub(super) fn degradation_signature(outcomes: &[ComponentOutcome]) -> Option<Str
 
 /// The concise warning text for one distinct degradation signature, naming
 /// each degraded component and its recovery route.
-pub(super) fn degradation_log_message(outcomes: &[ComponentOutcome]) -> Option<String> {
+pub(super) fn degradation_log_message(
+    outcomes: &[ComponentOutcome],
+    client: &ClientFeatureProfile,
+) -> Option<String> {
     let degraded = outcomes
         .iter()
         .filter(|outcome| outcome.is_degraded())
-        .map(ComponentOutcome::log_summary)
+        .map(|outcome| outcome.log_summary(client))
         .collect::<Vec<_>>();
     if degraded.is_empty() {
         return None;
@@ -277,10 +312,18 @@ pub(super) fn degradation_log_message(outcomes: &[ComponentOutcome]) -> Option<S
     Some(format!("ripr analysis limited: {}", degraded.join("; ")))
 }
 
+/// Client-visible LSP detail budget (#1997, #8584). Truncation keeps a
+/// one-character marker inside this count so `ripr/analysisStatus` summaries
+/// never grow past the bound and never look complete when text was dropped.
+pub(super) const CLIENT_VISIBLE_MESSAGE_CHAR_BOUND: usize = 240;
+
 /// Normalize, path-redact, and size-bound one free-text detail string before
 /// it can reach a client surface. Single source for the LSP path: the
 /// backend's health-failure messages delegate here so error text is governed
-/// once (#1997).
+/// once (#1997). Absolute path tokens remain redacted when they are wrapped
+/// in quotes, backticks, or brackets; the wrappers stay in place (#8724).
+/// When the redacted text exceeds the bound, the result ends with `…` and
+/// still fits in the 240-character budget (#8584).
 pub(super) fn bounded_message(message: &str) -> String {
     let normalized = message
         .chars()
@@ -291,31 +334,75 @@ pub(super) fn bounded_message(message: &str) -> String {
         .collect::<String>();
     let path_safe = normalized
         .split_whitespace()
-        .map(|token| {
-            if token.starts_with('/')
-                || token.starts_with('\\')
-                || token
-                    .as_bytes()
-                    .get(1)
-                    .is_some_and(|character| *character == b':')
-            {
-                "<path>"
-            } else {
-                token
-            }
-        })
+        .map(redact_absolute_path_token)
         .collect::<Vec<_>>()
         .join(" ");
-    let mut bounded = path_safe.chars().take(240).collect::<String>();
-    if path_safe.chars().count() > 240 {
-        bounded.push('…');
+    if path_safe.chars().count() <= CLIENT_VISIBLE_MESSAGE_CHAR_BOUND {
+        return path_safe;
     }
+    let mut bounded = path_safe
+        .chars()
+        .take(CLIENT_VISIBLE_MESSAGE_CHAR_BOUND.saturating_sub(1))
+        .collect::<String>();
+    bounded.push('…');
     bounded
+}
+
+/// Quote, backtick, and bracket wrappers that can hide an absolute path
+/// at the start of a whitespace token (#8724).
+const PATH_TOKEN_LEADING_WRAPPERS: &[char] = &['`', '\'', '"', '[', '{'];
+
+/// Matching closers plus ordinary trailing sentence punctuation. The
+/// wrappers are stripped only for the path test and then put back so
+/// `` `/abs` `` becomes `` `<path>` `` rather than a rewritten sentence.
+const PATH_TOKEN_TRAILING_PUNCTUATION: &[char] =
+    &['`', '\'', '"', ']', '}', ',', '.', ';', '!', '?'];
+
+fn redact_absolute_path_token(token: &str) -> std::borrow::Cow<'_, str> {
+    let leading_len = token
+        .chars()
+        .take_while(|character| PATH_TOKEN_LEADING_WRAPPERS.contains(character))
+        .map(char::len_utf8)
+        .sum();
+    let Some((leading, remainder)) = token.split_at_checked(leading_len) else {
+        return std::borrow::Cow::Borrowed(token);
+    };
+    let trailing_len = remainder
+        .chars()
+        .rev()
+        .take_while(|character| PATH_TOKEN_TRAILING_PUNCTUATION.contains(character))
+        .map(char::len_utf8)
+        .sum();
+    let Some(core_end) = remainder.len().checked_sub(trailing_len) else {
+        return std::borrow::Cow::Borrowed(token);
+    };
+    let Some((core, trailing)) = remainder.split_at_checked(core_end) else {
+        return std::borrow::Cow::Borrowed(token);
+    };
+    if is_absolute_path_token(core) {
+        std::borrow::Cow::Owned(format!("{leading}<path>{trailing}"))
+    } else {
+        std::borrow::Cow::Borrowed(token)
+    }
+}
+
+fn is_absolute_path_token(token: &str) -> bool {
+    token.starts_with('/')
+        || token.starts_with('\\')
+        || token
+            .as_bytes()
+            .get(1)
+            .is_some_and(|character| *character == b':')
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AnalysisComponent, ComponentOutcome, ComponentState, degradation_signature};
+    use super::{
+        AnalysisComponent, ComponentOutcome, ComponentState, EDITOR_REFRESH_COMMAND,
+        degradation_signature,
+    };
+    use crate::lsp::client_features::{ClientFeatureProfile, RiprEditorClientCapabilities};
+    use tower_lsp_server::ls_types::InitializeParams;
 
     /// #4350: the editor bounds failure text, and the long-root failure
     /// reaches it behind the workspace-analysis and diff prefixes. The
@@ -346,6 +433,11 @@ mod tests {
             "{bounded}"
         );
         assert!(bounded.contains("(MAX_PATH)"), "{bounded}");
+        assert_eq!(
+            bounded.chars().count(),
+            super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "{bounded}"
+        );
     }
 
     #[test]
@@ -400,13 +492,164 @@ mod tests {
         if message.contains("/home/user") {
             return Err(format!("message leaked an absolute path: {message}"));
         }
-        if message.chars().count() > 241 {
+        if message.chars().count() > super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND {
             return Err(format!("message exceeded the bound: {message}"));
+        }
+        if !message.ends_with('…') {
+            return Err(format!("truncated message must carry a marker: {message}"));
         }
         if !message.contains("<path>") {
             return Err(format!("message must redact the path token: {message}"));
         }
         Ok(())
+    }
+
+    /// #8584: clients must see that status-summary text was dropped, and the
+    /// marker must stay inside the published 240-character bound.
+    #[test]
+    fn bounded_message_marks_truncation_inside_the_char_bound() {
+        let message = format!("cargo metadata failed: {}", "x".repeat(400));
+        let bounded = super::bounded_message(&message);
+        assert!(
+            bounded.ends_with('…'),
+            "truncated status text must carry a marker: {bounded}"
+        );
+        assert_eq!(
+            bounded.chars().count(),
+            super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "the marker must stay inside the published bound: {bounded}"
+        );
+        assert!(
+            !bounded.contains('\n') && !bounded.contains('\t'),
+            "{bounded}"
+        );
+        assert!(bounded.starts_with("cargo metadata failed: "), "{bounded}");
+    }
+
+    /// #8584: the 240 bound counts Unicode scalars, not bytes. A
+    /// multi-byte scalar at the retained edge must survive whole, and
+    /// the marker replaces scalar 240. No grapheme claim is made.
+    #[test]
+    fn bounded_message_bounds_unicode_scalars_not_bytes() {
+        // Exact scalar boundaries, multi-byte scalar at the edge.
+        let at_239 = format!("{}é", "a".repeat(238)); // 239 scalars
+        assert_eq!(super::bounded_message(&at_239), at_239);
+        let at_240 = format!("{}€", "a".repeat(239)); // 240 scalars
+        assert_eq!(super::bounded_message(&at_240), at_240);
+        assert!(!super::bounded_message(&at_240).ends_with('…'));
+        let at_241 = format!("{}€x", "a".repeat(239)); // 241 scalars
+        let bounded_241 = super::bounded_message(&at_241);
+        assert_eq!(
+            bounded_241.chars().count(),
+            super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND
+        );
+        assert!(bounded_241.ends_with("a…"), "{bounded_241}");
+
+        // Straddle: 238 ASCII + 'é' (U+00E9, 2 bytes) is scalar 239,
+        // followed by 10 ASCII scalars (249 scalars, 250 bytes total).
+        let message = format!("{}é{}", "a".repeat(238), "b".repeat(10));
+        assert_eq!(message.chars().count(), 249);
+        assert_eq!(message.len(), 250);
+        let bounded = super::bounded_message(&message);
+        assert_eq!(
+            bounded.chars().count(),
+            super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "{bounded}"
+        );
+        assert!(bounded.ends_with("é…"), "{bounded}");
+        // Negative control vs byte truncation: a 239-BYTE cut lands
+        // inside 'é' (panic on str slicing, or a lost/replaced scalar),
+        // and a byte-count bound cannot satisfy the scalar count above.
+        // Byte length proves the bound is not a byte bound:
+        assert_eq!(bounded.len(), 238 + 2 + 3, "{bounded}");
+    }
+
+    #[test]
+    fn bounded_message_leaves_an_exact_bound_text_unmarked() {
+        let message = "a".repeat(super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND);
+        let bounded = super::bounded_message(&message);
+        assert_eq!(bounded, message);
+        assert!(!bounded.ends_with('…'));
+        assert_eq!(
+            bounded.chars().count(),
+            super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND
+        );
+    }
+
+    #[test]
+    fn bounded_message_redacts_a_long_path_instead_of_slicing_it() {
+        let message = format!("/{}", "secret-segment/".repeat(40));
+        let bounded = super::bounded_message(&message);
+        assert_eq!(bounded, "<path>");
+        assert!(!bounded.contains("secret-segment"));
+        assert!(!bounded.ends_with('…'));
+    }
+
+    #[test]
+    fn bounded_message_redacts_paths_that_remain_after_the_cut() {
+        let message = format!(
+            "read {} failed: {}",
+            "/tmp/ripr-failure-secret.toml",
+            "y".repeat(400)
+        );
+        let bounded = super::bounded_message(&message);
+        assert!(bounded.contains("<path>"), "{bounded}");
+        assert!(
+            !bounded.contains("/tmp/ripr-failure-secret.toml"),
+            "redaction must cover the text that remains: {bounded}"
+        );
+        assert!(bounded.ends_with('…'), "{bounded}");
+        assert_eq!(
+            bounded.chars().count(),
+            super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "{bounded}"
+        );
+    }
+
+    /// #8724: a backticked POSIX path starts with a backtick, so a
+    /// leading-slash-only test left the absolute token intact.
+    #[test]
+    fn bounded_message_redacts_a_backticked_posix_path() {
+        let leaked = "/abs/root/target/debug/missing-base";
+        let message = format!("the base `{leaked}` does not resolve to a commit");
+        let bounded = super::bounded_message(&message);
+        assert_eq!(
+            bounded, "the base `<path>` does not resolve to a commit",
+            "{bounded}"
+        );
+        assert!(
+            !bounded.contains("/abs/root"),
+            "backticks must not hide the path token: {bounded}"
+        );
+    }
+
+    /// #8724: a quoted Windows drive path starts with `"` rather than
+    /// the drive letter. Assemble the drive so the local-context gate
+    /// does not see a path literal.
+    #[test]
+    fn bounded_message_redacts_a_quoted_windows_path() {
+        let drive = "D:";
+        let leaked = format!(r#""{drive}\abs\root\file.rs""#);
+        let message = format!("read {leaked} failed");
+        let bounded = super::bounded_message(&message);
+        assert_eq!(bounded, r#"read "<path>" failed"#, "{bounded}");
+        assert!(
+            !bounded.contains(r"\abs\root"),
+            "quotes must not hide the path token: {bounded}"
+        );
+    }
+
+    /// #8724: trailing sentence punctuation stays after `<path>`.
+    #[test]
+    fn bounded_message_redacts_a_path_and_keeps_trailing_punctuation() {
+        let leaked = "/abs/root/ledger.json";
+        let message = format!("read {leaked}, then retry");
+        let bounded = super::bounded_message(&message);
+        assert_eq!(bounded, "read <path>, then retry", "{bounded}");
+        assert!(
+            !bounded.contains("/abs/root"),
+            "trailing punctuation must not hide the path token: {bounded}"
+        );
     }
 
     #[test]
@@ -418,7 +661,8 @@ mod tests {
             true,
             "run ripr check to regenerate the causal delta artifact",
         );
-        let payload = outcome.status_payload(Some("snapshot:7"));
+        let payload =
+            outcome.status_payload(Some("snapshot:7"), &ClientFeatureProfile::unsupported());
         if payload["component"].as_str() != Some("causal_projection")
             || payload["state"].as_str() != Some("failed")
             || payload["kind"].as_str() != Some("causal_projection_unusable")
@@ -446,7 +690,8 @@ mod tests {
         if outcome.is_degraded() {
             return Err("an unavailable outcome must never degrade the run".to_string());
         }
-        let payload = outcome.status_payload(Some("snapshot:1"));
+        let payload =
+            outcome.status_payload(Some("snapshot:1"), &ClientFeatureProfile::unsupported());
         if payload["state"].as_str() != Some("unavailable")
             || payload["kind"].as_str() != Some("seam_diagnostics_not_enabled")
             || payload["findings_trustworthy"].as_bool() != Some(true)
@@ -530,14 +775,167 @@ mod tests {
             true,
             "retry ripr.refreshDiagnostics",
         )];
-        let message = super::degradation_log_message(&outcomes)
-            .ok_or_else(|| "degraded outcomes must produce a log message".to_string())?;
+        let message =
+            super::degradation_log_message(&outcomes, &ClientFeatureProfile::unsupported())
+                .ok_or_else(|| "degraded outcomes must produce a log message".to_string())?;
         if !message.contains("seam_inventory failed")
-            || !message.contains("retry ripr.refreshDiagnostics")
+            || !message.contains("retry ripr.refresh (workspace/executeCommand)")
         {
             return Err(format!(
                 "log message must name component and recovery: {message}"
             ));
+        }
+        Ok(())
+    }
+
+    fn editor_profile() -> ClientFeatureProfile {
+        let mut profile = ClientFeatureProfile::unsupported();
+        profile.ripr_editor = Some(RiprEditorClientCapabilities {
+            version: "0.10.0".to_string(),
+            commands: vec![EDITOR_REFRESH_COMMAND.to_string()],
+            guarded_test_edit: false,
+        });
+        profile
+    }
+
+    /// #9895: `ripr.refreshDiagnostics` is a VS Code palette command. A
+    /// generic client (no `riprEditor` block) must be pointed at the
+    /// server-executed `ripr.refresh`; the editor client keeps the palette
+    /// command. Covers the status payload and the degradation log line.
+    #[test]
+    fn editor_only_refresh_command_is_not_named_to_generic_clients() -> Result<(), String> {
+        let deferred = ComponentOutcome::deferred(
+            AnalysisComponent::SeamInventory,
+            "interactive_refresh_deferral",
+            "run ripr.refreshDiagnostics for the full seam inventory",
+        );
+        let failed = ComponentOutcome::failed(
+            AnalysisComponent::SeamInventory,
+            "seam_inventory_failed",
+            "walk failed",
+            true,
+            "retry ripr.refreshDiagnostics",
+        );
+        let generic = ClientFeatureProfile::unsupported();
+        let editor = editor_profile();
+
+        let generic_recovery = deferred.status_payload(Some("s:1"), &generic)["recovery"]
+            .as_str()
+            .map(str::to_string);
+        if generic_recovery.as_deref()
+            != Some("run ripr.refresh (workspace/executeCommand) for the full seam inventory")
+        {
+            return Err(format!("generic deferred recovery: {generic_recovery:?}"));
+        }
+        let editor_recovery = deferred.status_payload(Some("s:1"), &editor)["recovery"]
+            .as_str()
+            .map(str::to_string);
+        if editor_recovery.as_deref()
+            != Some("run ripr.refreshDiagnostics for the full seam inventory")
+        {
+            return Err(format!("editor deferred recovery: {editor_recovery:?}"));
+        }
+
+        let outcomes = vec![failed];
+        let generic_log = super::degradation_log_message(&outcomes, &generic)
+            .ok_or_else(|| "failed outcome must log".to_string())?;
+        if generic_log.contains("refreshDiagnostics")
+            || !generic_log.contains("retry ripr.refresh (workspace/executeCommand)")
+        {
+            return Err(format!(
+                "generic log names the editor command: {generic_log}"
+            ));
+        }
+        let editor_log = super::degradation_log_message(&outcomes, &editor)
+            .ok_or_else(|| "failed outcome must log".to_string())?;
+        if !editor_log.contains("retry ripr.refreshDiagnostics") {
+            return Err(format!("editor log lost the palette command: {editor_log}"));
+        }
+        Ok(())
+    }
+
+    /// #9895: the palette route is selected only by an explicit
+    /// `riprEditor.commands` advertisement (RIPR-SPEC-0129/0143). Every
+    /// block shape that does not list the command gets the universal route,
+    /// parsed through the real initialize-params owner.
+    #[test]
+    fn palette_route_requires_explicit_refresh_command_advertisement() -> Result<(), String> {
+        let outcome = ComponentOutcome::failed(
+            AnalysisComponent::SeamInventory,
+            "seam_inventory_failed",
+            "walk failed",
+            true,
+            "retry ripr.refreshDiagnostics",
+        );
+        let generic = Some("retry ripr.refresh (workspace/executeCommand)");
+        let editor = Some("retry ripr.refreshDiagnostics");
+        let cases = [
+            ("absent experimental", serde_json::json!({}), generic),
+            (
+                "empty experimental",
+                serde_json::json!({"experimental": {}}),
+                generic,
+            ),
+            (
+                "null block",
+                serde_json::json!({"experimental": {"riprEditor": null}}),
+                generic,
+            ),
+            (
+                "scalar block",
+                serde_json::json!({"experimental": {"riprEditor": 1}}),
+                generic,
+            ),
+            (
+                "empty object block",
+                serde_json::json!({"experimental": {"riprEditor": {}}}),
+                generic,
+            ),
+            (
+                "missing version",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"commands": ["ripr.refreshDiagnostics"]}}}),
+                generic,
+            ),
+            (
+                "malformed commands",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"version": "0.1", "commands": "ripr.refreshDiagnostics"}}}),
+                generic,
+            ),
+            (
+                "version only",
+                serde_json::json!({"experimental": {"riprEditor": {"version": "0.1"}}}),
+                generic,
+            ),
+            (
+                "empty commands",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"version": "0.1", "commands": []}}}),
+                generic,
+            ),
+            (
+                "unrelated commands only",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"version": "0.1", "commands": ["ripr.copyContext"]}}}),
+                generic,
+            ),
+            (
+                "explicitly advertised",
+                serde_json::json!({"experimental": {"riprEditor":
+                    {"version": "0.1", "commands": ["ripr.copyContext", "ripr.refreshDiagnostics"]}}}),
+                editor,
+            ),
+        ];
+        for (name, capabilities, expected) in cases {
+            let params: InitializeParams =
+                serde_json::from_value(serde_json::json!({"capabilities": capabilities}))
+                    .map_err(|error| format!("{name}: {error}"))?;
+            let profile = ClientFeatureProfile::from_initialize_params(&params);
+            let payload = outcome.status_payload(Some("s:1"), &profile);
+            if payload["recovery"].as_str() != expected {
+                return Err(format!("{name}: got {}", payload["recovery"]));
+            }
         }
         Ok(())
     }

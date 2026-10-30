@@ -5,6 +5,7 @@ use super::*;
 /// produces diagnostics, but lands on whichever pool thread is free and
 /// brings back per-arena RSS growth, so only the thread identity tells.
 #[test]
+#[serial]
 fn every_backend_refresh_runs_on_the_named_analysis_thread() -> Result<(), String> {
     let root = unique_lsp_test_root("analysis-thread-routing")?;
     write_lsp_scope_fixture(root.path())?;

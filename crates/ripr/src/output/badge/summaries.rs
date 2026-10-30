@@ -4,7 +4,7 @@ use crate::analysis::SeamGripClassCounts;
 use crate::analysis::canonical_gap::canonical_gap_identities;
 #[cfg(test)]
 use crate::analysis::seams::SeamGripClass;
-use crate::analysis_outcome::AnalysisOutcome;
+use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeKind};
 use crate::app::CheckOutput;
 #[cfg(test)]
 use crate::config::{ConfigSeverity, RiprConfig};
@@ -100,6 +100,24 @@ pub(super) fn apply_analysis_outcome_disclosure(
     let Some(outcome) = analysis_outcome.as_ref() else {
         return (status, color, message, None);
     };
+    if matches!(
+        outcome.kind,
+        AnalysisOutcomeKind::NoScope
+            | AnalysisOutcomeKind::NoChangedLines
+            | AnalysisOutcomeKind::NoBehavioralCandidates
+    ) {
+        let (status, color) = if status == BadgeStatus::Pass {
+            (BadgeStatus::Warn, "yellow")
+        } else {
+            (status, color)
+        };
+        return (
+            status,
+            color,
+            format!("no analysis subject: {}", outcome.kind.as_str()),
+            analysis_outcome,
+        );
+    }
     if outcome.kind.is_complete() {
         return (status, color, message, analysis_outcome);
     }

@@ -37,7 +37,8 @@ Each doc has exactly one role. Avoid mixing roles in one file.
 Incoming handoffs and agent prompts may use generic terms like PRD, proof
 stack, source-of-truth stack, policy ledger, or active goal. Translate those
 terms into the repo-native artifacts above instead of creating a parallel
-namespace:
+namespace (a legacy "active goal" reference is historical only — it selects
+nothing):
 
 | Generic term | Repo-native artifact |
 | --- | --- |
@@ -46,6 +47,7 @@ namespace:
 | ADR | `docs/adr/` |
 | Implementation plan | `docs/IMPLEMENTATION_PLAN.md`, `docs/IMPLEMENTATION_CAMPAIGNS.md`, and `plans/` |
 | Agent-local execution state | External agent task systems only; live work selection comes from GitHub and the local worktree. |
+| Active goal (retired singleton) | None — retired with the `.ripr/goals/` scheduler (#1701); historical campaigns live in `docs/IMPLEMENTATION_CAMPAIGNS.md`, and current selection comes from the live GitHub/worktree state. |
 | Support tiers | `docs/status/SUPPORT_TIERS.md` |
 | Policy ledgers | `policy/*.toml`, `.ripr/traceability.toml`, `docs/CAPABILITY_MATRIX.md`, and `metrics/capabilities.toml` |
 | Closeout | `docs/handoffs/` |

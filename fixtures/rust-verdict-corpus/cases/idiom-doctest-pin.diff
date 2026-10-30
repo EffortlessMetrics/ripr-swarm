@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -16,7 +16,7 @@
+ /// assert_eq!(idiomkit::cube(3), 27);
+ /// ```
+ pub fn cube(n: u32) -> u32 {
+-    n * n * n
++    n.pow(3)
+ }
+ 
+ pub fn slugify(title: &str) -> String {

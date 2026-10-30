@@ -27,6 +27,8 @@ mod blind_journey;
 mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
+mod check_fast_cli;
+mod check_fast_selector;
 mod command;
 pub mod convergence;
 mod dispatch;
@@ -64,6 +66,8 @@ mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod repo_readiness;
 mod schema_pattern;
+mod size_scaling;
+mod termination_qualification;
 mod types;
 mod work_adapter_identity;
 mod work_burndown_identity;
@@ -84,8 +88,11 @@ mod rust_judged_panel;
 mod rust_region_scan;
 mod schema_producer_sweep;
 mod verification_contracts;
+mod verify_test_shards;
 mod version;
 mod windows_advisory;
+mod windows_advisory_acl_evidence;
+mod windows_advisory_run;
 
 use command::{
     CommandCatalogEntry, XtaskCommand, command_catalog, known_command_root, known_commands,
@@ -209,8 +216,8 @@ pub(crate) use evidence_promotion::{
     evidence_promotion_external_failure_kind, evidence_promotion_external_semantic_violations,
     evidence_promotion_human_class_line_matches, evidence_promotion_human_oracle_line_matches,
     evidence_promotion_pure_failure_kind, evidence_promotion_semantic_violations,
-    evidence_promotion_semantic_violations_scoped, validate_evidence_promotion_honesty_corpus_at,
-    write_evidence_promotion_external_report,
+    evidence_promotion_semantic_violations_scoped, read_evidence_promotion_corpus,
+    validate_evidence_promotion_honesty_corpus_at, write_evidence_promotion_external_report,
 };
 pub(crate) use evidence_promotion::{
     check_evidence_promotion_honesty, validate_evidence_promotion_honesty_corpus,
@@ -290,15 +297,15 @@ use policy::{
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
-use repo_readiness::{PrReadyStep, pr_ready_next_action, pr_ready_status_from_report_status};
+use repo_readiness::{PrReadyStep, pr_ready_next_action};
 use repo_readiness::{
-    cockpit_json, cockpit_markdown, pr_ready_json, pr_ready_markdown, pr_ready_status,
-    run_readiness_step,
+    ReadinessOutcome, cockpit_json, cockpit_markdown, pr_ready_json, pr_ready_markdown,
+    pr_ready_status, run_readiness_step,
 };
 #[cfg(test)]
 pub(crate) use reports::release_server::{
-    ReleaseServerAsset, normalize_release_version, release_server_archive, release_server_assets,
-    release_server_manifest, release_server_readme, required_release_arg,
+    ReleaseServerAsset, bound_descriptor_source, normalize_release_version, release_server_archive,
+    release_server_assets, release_server_manifest, release_server_readme, required_release_arg,
 };
 use reports::release_server::{create_zip_archive, sha256_file};
 #[cfg(test)]
@@ -593,6 +600,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-identity-registry",
     "check-doc-artifacts",
     "check-doc-index",
+    "check-doc-roles",
     "check-changelog-fragments",
     "check-readme-state",
     "markdown-links",
@@ -634,7 +642,59 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
         check_allow_attributes()?;
         check_local_context()?;
     }
-    check_file_policy()?;
+    // #8793: an infrastructure timeout in file policy (cargo lock wait or a
+    // slow enumeration) must not hide the later checks, but it is never a pass:
+    // the remaining checks run and the instrument failure is returned before
+    // any passing report is published.
+    let mut deferred = None;
+    check_file_policy_deferring(&mut deferred)?;
+    let remaining = precommit_policy_remaining(collect_all, preflight_receipt);
+    finish_precommit_policy(deferred, remaining, collect_all)
+}
+
+/// Prefix of a `precommit` failure that is only a deferred file-policy
+/// instrument failure (no source or policy gate failed). `precommit-v2`
+/// classifies exactly these as infrastructure failures.
+const PRECOMMIT_INSTRUMENT_PREFIX: &str =
+    "precommit instrument failure (no source or policy gate failed): ";
+
+/// `check_file_policy`, except that an instrument failure (cargo lock wait or
+/// timeout) is stored in `deferred` instead of returned.
+fn check_file_policy_deferring(deferred: &mut Option<String>) -> Result<(), String> {
+    match check_file_policy() {
+        Err(error) if policy::is_covered_by_instrument_failure(&error) => {
+            *deferred = Some(error);
+            Ok(())
+        }
+        other => other,
+    }
+}
+
+/// A deferred instrument failure never reads as a pass and never hides a real
+/// later failure: both are reported when both occur.
+fn finish_precommit_policy(
+    deferred: Option<String>,
+    remaining: Result<(), String>,
+    collect_all: bool,
+) -> Result<(), String> {
+    match (deferred, remaining) {
+        (None, remaining) => {
+            remaining?;
+            publish_precommit_policy_report(collect_all)
+        }
+        (Some(deferred), Ok(())) => Err(format!("{PRECOMMIT_INSTRUMENT_PREFIX}{deferred}")),
+        (Some(deferred), Err(error)) => Err(format!(
+            "{error}; also check-file-policy hit an instrument failure: {deferred}"
+        )),
+    }
+}
+
+/// Every gate after file policy. It stops at the first genuine policy error
+/// (intentional: only an instrument failure is deferred past later gates).
+fn precommit_policy_remaining(
+    collect_all: bool,
+    preflight_receipt: Option<std::ffi::OsString>,
+) -> Result<(), String> {
     if !collect_all {
         check_covered_by()?;
         check_executable_files()?;
@@ -666,6 +726,7 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     check_identity_registry()?;
     check_doc_artifacts()?;
     check_doc_index()?;
+    check_doc_roles()?;
     check_changelog_fragments()?;
     check_readme_state()?;
     markdown_links()?;
@@ -682,7 +743,7 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
         check_network_policy()?;
         check_lint_policy()?;
     }
-    publish_precommit_policy_report(collect_all)
+    Ok(())
 }
 
 /// Output-surface diffs must not reach review with stale goldens (#8421): main
@@ -753,32 +814,38 @@ pub(crate) fn check_fast() -> Result<(), String> {
 /// (#3549 review).
 fn check_fast_in(repository_root: &Path) -> Result<(), String> {
     ensure_reports_dir()?;
-    let changed = match changed_files_vs_base(repository_root) {
+    let selection = match check_fast_selector::discover(repository_root) {
         Ok(changed) => changed,
         Err(error) => {
             write_report("check-fast.md", &check_fast_selector_failure_report(&error))?;
             return Err(check_fast_selector_failure(&error));
         }
     };
-    let categories = categorize_changed_files(&changed);
+    eprintln!("{}", selection.diagnostic());
+    let changed = &selection.files;
+    let categories = categorize_changed_files(changed);
     let mut ran = Vec::new();
     let mut skipped = Vec::new();
 
     let mut child_diagnostics = Vec::new();
     if let Err(error) = check_fast_gates(
-        &changed,
+        changed,
         &categories,
         &mut ran,
         &mut skipped,
         &mut child_diagnostics,
     ) {
         return check_fast_failure_report(&error, &child_diagnostics, |body| {
-            write_report("check-fast.md", body)
+            write_report(
+                "check-fast.md",
+                &format!("{body}\n{}", selection.diagnostic()),
+            )
         });
     }
 
     let body = format!(
-        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n\nRan:\n{}\n\nSkipped:\n{}\n",
+        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n{}\nRan:\n{}\n\nSkipped:\n{}\n",
+        selection.diagnostic(),
         ran.iter()
             .map(|g| format!("- {g}"))
             .collect::<Vec<_>>()
@@ -821,6 +888,15 @@ fn check_fast_gates(
         ran.push("check-support-tiers");
     } else {
         skipped.push("check-support-tiers (not applicable)");
+    }
+
+    // #8631: keep the existing cross-file help/parser validator in the
+    // focused path, before the broader compilation-bearing Rust gates.
+    if categories.cli_help {
+        check_fast_cli::run(child_diagnostics)?;
+        ran.push(check_fast_cli::GATE);
+    } else {
+        skipped.push(check_fast_cli::GATE);
     }
 
     // Conditional gates based on changed file categories.
@@ -898,7 +974,7 @@ fn check_fast_gates(
 
 fn check_fast_diagnostics(diagnostics: &[run::CommandDiagnostic]) -> String {
     format!(
-        "\n## Child command diagnostics\n\n{} Capture scope: fmt and workspace Clippy only; streams remain inherited, so Cargo progress is unavailable.\n\n{}\n",
+        "\n## Child command diagnostics\n\n{} Capture scope: fmt and workspace Clippy inherit streams; selected CLI help parity captures streams and reports recognized Cargo stderr progress.\n\n{}\n",
         run::COMMAND_DIAGNOSTIC_DISCLOSURE,
         diagnostics
             .iter()
@@ -927,6 +1003,7 @@ fn check_fast_failure_report(
 
 struct ChangedFileCategories {
     support_tiers: bool,
+    cli_help: bool,
     rust_src: bool,
     workflow: bool,
     policy: bool,
@@ -946,14 +1023,33 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
                 || f.starts_with(".github/workflows/")
                 || f.starts_with("scripts/")
         }),
+        // Command parsing lives in these existing semantic owners. Select
+        // their Rust surfaces without copying help.rs's parser-owner table.
+        cli_help: files.iter().any(|f| {
+            f.ends_with(".rs")
+                && [
+                    "crates/ripr/src/cli",
+                    "crates/ripr/src/app",
+                    "crates/ripr/src/mcp",
+                    "crates/ripr/src/output/first_pr",
+                ]
+                .iter()
+                .any(|owner| {
+                    f.strip_prefix(owner)
+                        .is_some_and(|tail| tail == ".rs" || tail.starts_with('/'))
+                })
+        }),
+        // The retained Rust gates include workspace/all-target Clippy and
+        // test-source policy. Include package tests, examples and build scripts,
+        // with anchored roots so fixture lookalikes keep their own category.
         rust_src: files.iter().any(|f| {
             f == "Cargo.lock"
                 || f == "Cargo.toml"
                 || f.ends_with("/Cargo.toml")
                 || (f.ends_with(".rs")
-                    && (f.contains("crates/ripr/src")
-                        || f.contains("xtask/src")
-                        || f.starts_with("tools/repo-policy/")))
+                    && ["crates/ripr/", "xtask/", "tools/repo-policy/"]
+                        .iter()
+                        .any(|root| f.starts_with(root)))
         }),
         workflow: files.iter().any(|f| f.starts_with(".github/workflows/")),
         policy: files
@@ -972,10 +1068,11 @@ fn git_changed_files(root: &Path, rev: &str) -> Result<Vec<String>, String> {
     // Raw NUL-delimited inventory (#4006): `-z` output is never C-quoted,
     // so exotic names survive byte-exact; parsing rules come from the
     // shared authority in `decode_changed_files`, not from line splitting
-    // here. The spawn site is unchanged (gate-runner policy entry).
+    // here. Keep both sides of renames: the removed path can select checks
+    // that the destination does not. The spawn site is unchanged.
     let output = std::process::Command::new("git")
         .current_dir(root)
-        .args(["diff", "--name-only", "-z", rev])
+        .args(["diff", "--no-renames", "--name-only", "-z", rev])
         .output()
         .map_err(|err| format!("git diff --name-only failed: {err}"))?;
     if !output.status.success() {
@@ -1013,13 +1110,6 @@ fn decode_changed_files(output: &[u8]) -> Result<Vec<String>, String> {
         })
 }
 
-/// Origin-main rooted selector for callers that run from the repository
-/// root — including the strict check-fast module, which binds this
-/// function as its discovery authority.
-fn changed_files_vs_origin_main() -> Result<Vec<String>, String> {
-    changed_files_vs_base(Path::new("."))
-}
-
 fn check_fast_selector_failure(error: &str) -> String {
     format!("check-fast selector unavailable (instrument_failure): {error}")
 }
@@ -1029,6 +1119,10 @@ fn check_fast_selector_failure_report(error: &str) -> String {
         "# check-fast report\n\nStatus: instrument_failure\n\nSelector: failed\nBase: origin/main\n\nError: {error}\n\nRemediation: run `git fetch origin main` and retry `cargo xtask check-fast`.\n"
     )
 }
+
+#[cfg(test)]
+#[path = "tests/check_fast_renames.rs"]
+mod check_fast_rename_tests;
 
 #[cfg(test)]
 mod check_fast_selector_tests {
@@ -1063,6 +1157,51 @@ mod check_fast_selector_tests {
         );
         assert_eq!(rows.len(), 2);
         Ok(())
+    }
+
+    #[test]
+    fn workspace_rust_targets_select_existing_rust_gates() {
+        for path in [
+            "crates/ripr/src/lib.rs",
+            "crates/ripr/tests/agent_stub_compiles.rs",
+            "crates/ripr/tests/cli_smoke/workflow_directory.rs",
+            "crates/ripr/build.rs",
+            "crates/ripr/examples/check_diff.rs",
+            "xtask/src/main.rs",
+            "xtask/tests/spec_format_determinism.rs",
+            "xtask/examples/mandatory_partitions.rs",
+            "tools/repo-policy/src/lib.rs",
+            "tools/repo-policy/tests/frontdoor.rs",
+            "tools/repo-policy/build.rs",
+            "tools/repo-policy/examples/inventory.rs",
+            "Cargo.toml",
+            "Cargo.lock",
+            "crates/ripr/Cargo.toml",
+        ] {
+            assert!(
+                categorize_changed_files(&[path.to_string()]).rust_src,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_workspace_rust_and_near_prefixes_keep_existing_categories() {
+        assert!(!categorize_changed_files(&[]).rust_src);
+        for path in [
+            "docs/selector.md",
+            "crates/ripr/tests/README.md",
+            "crates/ripr-not/src/lib.rs",
+            "xtask-not/src/main.rs",
+            "tools/repo-policy-not/src/lib.rs",
+            "fixtures/crates/ripr/src/lib.rs",
+            "fixtures/xtask/src/main.rs",
+            "fixtures/control/input/src/lib.rs",
+        ] {
+            let categories = categorize_changed_files(&[path.to_string()]);
+            assert!(!categories.rust_src, "{path}");
+            assert_eq!(categories.fixture, path.starts_with("fixtures/"), "{path}");
+        }
     }
 
     fn run_fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
@@ -1161,6 +1300,56 @@ mod check_fast_selector_tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn committed_workspace_test_changes_select_rust_gates() -> Result<(), String> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-check-fast-workspace-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let result = (|| {
+            let git = |args: &[&str]| run_fixture_git(&root, args);
+            git(&["init", "--initial-branch=main"])?;
+            git(&["config", "user.email", "ripr@example.invalid"])?;
+            git(&["config", "user.name", "ripr test"])?;
+            std::fs::write(root.join("README.md"), "baseline\n")
+                .map_err(|error| error.to_string())?;
+            git(&["add", "."])?;
+            git(&["commit", "-m", "baseline"])?;
+            git(&["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+            if !changed_files_vs_base(&root)?.is_empty() {
+                return Err("clean selector fixture was not empty".to_string());
+            }
+            for path in ["crates/ripr/tests/changed.rs", "xtask/tests/changed.rs"] {
+                let file = root.join(path);
+                let parent = file.parent().ok_or("fixture path has no parent")?;
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                std::fs::write(file, "// changed Rust test\n")
+                    .map_err(|error| error.to_string())?;
+            }
+            git(&["add", "."])?;
+            git(&["commit", "-m", "workspace tests"])?;
+            let paths = changed_files_vs_base(&root)?;
+            if paths != ["crates/ripr/tests/changed.rs", "xtask/tests/changed.rs"] {
+                return Err(format!("unexpected native selector paths: {paths:?}"));
+            }
+            for path in paths {
+                if !categorize_changed_files(std::slice::from_ref(&path)).rust_src {
+                    return Err(format!(
+                        "workspace Rust test did not select Rust gates: {path}"
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
+        result.and(cleanup)
     }
 
     #[test]
@@ -1548,6 +1737,7 @@ fn run_policy_checks() -> Result<(), String> {
     check_identity_registry()?;
     check_doc_artifacts()?;
     check_doc_index()?;
+    check_doc_roles()?;
     check_changelog_fragments()?;
     check_readme_state()?;
     markdown_links()?;
@@ -1602,8 +1792,106 @@ fn vscode_package() -> Result<(), String> {
 fn vscode_verify_vsix(args: &[String]) -> Result<(), String> {
     let vsix_path = vscode_verify_vsix_path(args)?;
     let notices = load_repository_license_notices(&repo_root()?)?;
-    println!("{}", verify_packaged_vsix(&vsix_path, &notices)?);
+    let summary = verify_packaged_vsix(&vsix_path, &notices)?;
+    verify_packaged_vsix_version(&vsix_path)?;
+    println!("{summary}");
     Ok(())
+}
+
+/// The VSIX file name carries the release version (`ripr-<version>.vsix`);
+/// its own `extension/package.json` and `extension.vsixmanifest` must agree
+/// (#10731: `ripr-0.10.0.vsix` shipped extension 0.8.0).
+fn verify_packaged_vsix_version(vsix_path: &Path) -> Result<(), String> {
+    let name = vsix_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let expected = name
+        .strip_prefix("ripr-")
+        .and_then(|rest| rest.strip_suffix(".vsix"))
+        .filter(|version| !version.is_empty())
+        .ok_or_else(|| {
+            format!("VSIX file name {name:?} must be ripr-<version>.vsix to bind its version")
+        })?;
+    let file = fs::File::open(vsix_path)
+        .map_err(|err| format!("packaged VSIX {} is missing: {err}", vsix_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|err| format!("packaged VSIX {} is not a zip: {err}", vsix_path.display()))?;
+    let package_json = read_vsix_text_member(&mut archive, "extension/package.json", vsix_path)?;
+    let package: Value = serde_json::from_str(&package_json).map_err(|err| {
+        format!(
+            "packaged VSIX {} extension/package.json is not JSON: {err}",
+            vsix_path.display()
+        )
+    })?;
+    let manifest_version = package.get("version").and_then(Value::as_str).unwrap_or("");
+    let vsixmanifest = read_vsix_text_member(&mut archive, "extension.vsixmanifest", vsix_path)?;
+    let identity_version = vsixmanifest_identity_version(&vsixmanifest);
+    if manifest_version != expected || identity_version != expected {
+        return Err(format!(
+            "packaged VSIX {} is named for version {expected} but carries extension/package.json version {manifest_version:?} and extension.vsixmanifest Identity Version {identity_version:?}",
+            vsix_path.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Version of the `<Identity>` element inside `<Metadata>`, read after removing
+/// XML comments and CDATA so Identity-like text there cannot be mistaken for
+/// the real element (no XML dependency exists in the workspace).
+fn vsixmanifest_identity_version(text: &str) -> String {
+    let mut cleaned = text.to_string();
+    for (open, close) in [("<!--", "-->"), ("<![CDATA[", "]]>")] {
+        while let Some(start) = cleaned.find(open) {
+            let end = cleaned[start..]
+                .find(close)
+                .map_or(cleaned.len(), |offset| start + offset + close.len());
+            cleaned.replace_range(start..end, "");
+        }
+    }
+    let Some(metadata) = cleaned.find("<Metadata") else {
+        return String::new();
+    };
+    let rest = &cleaned[metadata..];
+    let mut search = 0;
+    while let Some(found) = rest[search..].find("<Identity") {
+        let tag_start = search + found + "<Identity".len();
+        search = tag_start;
+        if !rest[tag_start..].starts_with(|c: char| c.is_whitespace() || c == '/' || c == '>') {
+            continue;
+        }
+        let tag = rest[tag_start..].split('>').next().unwrap_or("");
+        for quote in ['"', '\''] {
+            let needle = format!("Version={quote}");
+            let mut from = 0;
+            while let Some(at) = tag[from..].find(&needle) {
+                let abs = from + at;
+                from = abs + needle.len();
+                if tag[..abs].ends_with(|c: char| c.is_whitespace()) {
+                    return tag[from..].split(quote).next().unwrap_or("").to_string();
+                }
+            }
+        }
+        return String::new();
+    }
+    String::new()
+}
+
+fn read_vsix_text_member(
+    archive: &mut zip::ZipArchive<fs::File>,
+    member: &str,
+    vsix_path: &Path,
+) -> Result<String, String> {
+    let mut entry = archive.by_name(member).map_err(|err| {
+        format!(
+            "packaged VSIX {} is missing {member}: {err}",
+            vsix_path.display()
+        )
+    })?;
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut entry, &mut text)
+        .map_err(|err| format!("failed to read {member} in {}: {err}", vsix_path.display()))?;
+    Ok(text)
 }
 
 fn vscode_verify_vsix_path(args: &[String]) -> Result<PathBuf, String> {
@@ -2342,56 +2630,57 @@ fn pr_ready() -> Result<(), String> {
             "cargo xtask worktree doctor",
             "target/ripr/reports/worktree-doctor.md",
             true,
-            worktree_doctor,
+            worktree_doctor_readiness,
         ),
         run_readiness_step(
             "command_mutability_catalog",
             "cargo xtask commands",
             "target/ripr/reports/commands.md",
             false,
-            commands_report,
+            || commands_report().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "pr_summary",
             "cargo xtask pr-summary",
             "target/ripr/reports/pr-summary.md",
             false,
-            pr_summary,
+            // A summary is completion evidence, not a report-status assertion.
+            || pr_summary().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "critic",
             "cargo xtask critic",
             "target/ripr/reports/critic.md",
             false,
-            critic_impl,
+            critic_readiness,
         ),
         run_readiness_step(
             "receipts_check",
             "cargo xtask receipts check",
             "target/ripr/reports/receipts.md",
             false,
-            receipts_check,
+            || receipts_check().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "suggested_fixes",
             "cargo xtask suggested-fixes",
             "target/ripr/reports/suggested-fixes.md",
             false,
-            suggested_fixes,
+            || suggested_fixes().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "generated_clean",
             "cargo xtask check-generated-clean",
             "target/ripr/reports/generated-clean.md",
             true,
-            check_generated_clean,
+            || check_generated_clean().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "badge_diff_policy",
             "cargo xtask check-badge-diff-policy",
             "target/ripr/reports/badge-diff-policy.md",
             true,
-            check_badge_diff_policy,
+            || check_badge_diff_policy().map(|()| ReadinessOutcome::Completed),
         ),
     ];
     let status = pr_ready_status(&steps);
@@ -2417,49 +2706,49 @@ fn cockpit() -> Result<(), String> {
             "cargo xtask worktree doctor",
             "target/ripr/reports/worktree-doctor.md",
             true,
-            worktree_doctor,
+            worktree_doctor_readiness,
         ),
         run_readiness_step(
             "command_mutability_catalog",
             "cargo xtask commands",
             "target/ripr/reports/commands.md",
             false,
-            commands_report,
+            || commands_report().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "command_catalog_check",
             "cargo xtask check-command-catalog",
             "target/ripr/reports/command-catalog.md",
             true,
-            check_command_catalog,
+            || check_command_catalog().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "spec_numbering",
             "cargo xtask check-spec-numbering",
             "target/ripr/reports/spec-numbering.md",
             true,
-            check_spec_numbering,
+            || check_spec_numbering().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "pr_triage",
             "cargo xtask pr-triage-report",
             "target/ripr/reports/pr-triage.md",
             false,
-            reports::pr_triage_report,
+            pr_triage_readiness,
         ),
         run_readiness_step(
             "generated_clean",
             "cargo xtask check-generated-clean",
             "target/ripr/reports/generated-clean.md",
             true,
-            check_generated_clean,
+            || check_generated_clean().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "badge_diff_policy",
             "cargo xtask check-badge-diff-policy",
             "target/ripr/reports/badge-diff-policy.md",
             true,
-            check_badge_diff_policy,
+            || check_badge_diff_policy().map(|()| ReadinessOutcome::Completed),
         ),
     ];
 
@@ -3373,21 +3662,265 @@ pub(crate) fn pr_summary_impl() -> Result<(), String> {
 }
 
 fn check_pr_shape() -> Result<(), String> {
+    check_pr_shape_with_args(&[])
+}
+
+pub(crate) fn check_pr_shape_with_args(args: &[String]) -> Result<(), String> {
+    let body = pr_body_input(args)?;
     let changes = collect_pr_changes()?;
-    let warnings = pr_shape_warnings(&changes);
-    write_report("pr-shape.md", &pr_shape_report_body(&warnings))
+    let mut warnings = pr_shape_warnings(&changes);
+    let mut missing: Vec<&'static str> = Vec::new();
+    if let Some(body) = &body {
+        missing = pr_body_template_missing_lines(body);
+        for line in &missing {
+            warnings.push(format!(
+                "PR body is missing or has a placeholder value for `{line}`; add the line from .github/pull_request_template.md with a real value."
+            ));
+        }
+    }
+    write_report("pr-shape.md", &pr_shape_report_body(&warnings))?;
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(pr_body_template_missing_error(&missing))
+    }
+}
+
+/// Template lines an agent-authored PR body must carry verbatim, with real
+/// values, before first Ready (#8601). Mirrors the Source-of-truth Links and
+/// Candidate Relationships sections of `.github/pull_request_template.md`.
+const PR_BODY_TEMPLATE_LINES: [&str; 11] = [
+    "Proposal:",
+    "Spec:",
+    "ADR:",
+    "Plan item:",
+    "Governing issue or accepted claim:",
+    "Acceptance delta (one sentence):",
+    "Candidate branch (GitHub PR head is authoritative after publication):",
+    "Stack parent or prerequisite PR (if any):",
+    "Proposed replacement of PR (if any; not yet accepted):",
+    "Acceptance retained from a replaced candidate (if any):",
+    "Accepted winner and losing candidate disposition (when decided):",
+];
+
+/// Lines admission gates on (`claim_identity_missing`): a placeholder counts
+/// as missing, mirroring `candidate_admission.py`'s placeholder set.
+const PR_BODY_GATED_LINES: [&str; 2] = [
+    "Governing issue or accepted claim:",
+    "Acceptance delta (one sentence):",
+];
+
+const PR_BODY_PLACEHOLDERS: [&str; 11] = [
+    "",
+    "n/a",
+    "na",
+    "none",
+    "not applicable",
+    "tbd",
+    "todo",
+    "unknown",
+    "pending",
+    "-",
+    "\u{2014}",
+];
+
+fn pr_body_template_missing_error(missing: &[&'static str]) -> String {
+    format!(
+        "claim_identity_missing: missing or placeholder PR body line(s): {}; add the line(s) from .github/pull_request_template.md with a real value",
+        missing.join(", ")
+    )
+}
+
+fn pr_body_template_missing_lines(body: &str) -> Vec<&'static str> {
+    PR_BODY_TEMPLATE_LINES
+        .iter()
+        .copied()
+        .filter(|line| {
+            let Some(value) = pr_body_template_line_value(body, line) else {
+                return true;
+            };
+            if value.is_empty() {
+                return true;
+            }
+            if PR_BODY_GATED_LINES.contains(line) {
+                return pr_body_value_is_placeholder(value);
+            }
+            pr_body_value_is_unfilled_placeholder(value)
+        })
+        .collect()
+}
+
+/// Labels admission accepts for a template line, in admission's order.
+/// Mirrors `LABELS` in `candidate_admission.py:32-49`: the canonical
+/// template label first, then any shorter/alternate label admission
+/// also accepts at line start.
+fn pr_body_template_labels(template_line: &str) -> Vec<&str> {
+    let primary = template_line.trim_end_matches(':');
+    let mut labels = vec![primary];
+    match template_line {
+        "Governing issue or accepted claim:" => labels.push("Owner / governing claim"),
+        "Acceptance delta (one sentence):" => labels.push("Acceptance delta"),
+        "Proposed replacement of PR (if any; not yet accepted):" => {
+            labels.push("Proposed replacement of PR");
+        }
+        "Accepted winner and losing candidate disposition (when decided):" => {
+            labels.push("Accepted winner and losing candidate disposition");
+        }
+        _ => {}
+    }
+    labels
+}
+
+fn pr_body_template_line_value<'a>(body: &'a str, template_line: &str) -> Option<&'a str> {
+    // Mirror `extract_fields` in `candidate_admission.py:62-75` exactly:
+    // a line counts only when its whitespace-stripped form starts with
+    // `label:` (case-insensitive). Bulleted (`- Label: ...`) and spaced
+    // (`Label : ...`) forms therefore do not count. The first non-empty
+    // value wins; a blank occurrence does not mask a later filled one.
+    let labels: Vec<String> = pr_body_template_labels(template_line)
+        .iter()
+        .map(|label| format!("{}:", label.to_lowercase()))
+        .collect();
+    let mut saw_match = false;
+    for raw in body.lines() {
+        let line = raw.trim().trim_start_matches('\u{feff}');
+        let folded = line.to_lowercase();
+        for prefix in &labels {
+            if folded.starts_with(prefix.as_str()) {
+                saw_match = true;
+                let Some(value) = line.get(prefix.len()..) else {
+                    continue;
+                };
+                let value = value.trim();
+                if !value.is_empty() {
+                    return Some(value);
+                }
+                break;
+            }
+        }
+    }
+    saw_match.then_some("")
+}
+
+fn pr_body_normalized_value(value: &str) -> String {
+    // Mirror `normalize` in `candidate_admission.py:57-59`.
+    value
+        .trim()
+        .trim_matches('`')
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn pr_body_value_is_placeholder(value: &str) -> bool {
+    // Mirror `invalid` in `candidate_admission.py:78-80` over
+    // `PLACEHOLDERS` (`candidate_admission.py:19-31`).
+    let normalized = pr_body_normalized_value(value);
+    PR_BODY_PLACEHOLDERS.contains(&normalized.as_str()) || normalized.starts_with('<')
+}
+
+/// Unfilled-template markers for the non-gated template lines. Unlike
+/// the admission-gated lines, these lines may legitimately record an
+/// explicit non-applicable value such as `none` or `n/a`; only the
+/// still-unfilled markers (`TBD`, `<...>`, ...) count as missing.
+fn pr_body_value_is_unfilled_placeholder(value: &str) -> bool {
+    let normalized = pr_body_normalized_value(value);
+    normalized.starts_with('<')
+        || matches!(normalized.as_str(), "tbd" | "todo" | "pending" | "unknown")
+}
+
+/// Resolve the optional offline PR-body input for `check-pr-shape`.
+/// `--body-file <path>` reads raw Markdown or `gh pr view --json body`
+/// JSON; `--body-env <var>` reads the same from an environment variable.
+/// No network or `gh` call happens inside xtask.
+fn pr_body_input(args: &[String]) -> Result<Option<String>, String> {
+    let mut body_file: Option<String> = None;
+    let mut body_env: Option<String> = None;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--body-file" => {
+                body_file =
+                    Some(iter.next().cloned().ok_or_else(|| {
+                        "check-pr-shape: --body-file requires a path".to_string()
+                    })?);
+            }
+            "--body-env" => {
+                body_env = Some(iter.next().cloned().ok_or_else(|| {
+                    "check-pr-shape: --body-env requires a variable name".to_string()
+                })?);
+            }
+            other => {
+                return Err(format!(
+                    "check-pr-shape: unknown argument `{other}`; usage: cargo xtask check-pr-shape [--body-file <path> | --body-env <var>]"
+                ));
+            }
+        }
+    }
+    match (body_file, body_env) {
+        (Some(_), Some(_)) => {
+            Err("check-pr-shape: pass only one of --body-file or --body-env".to_string())
+        }
+        (Some(path), None) => {
+            let text = std::fs::read_to_string(&path).map_err(|err| {
+                format!("check-pr-shape: cannot read --body-file `{path}`: {err}")
+            })?;
+            Ok(Some(pr_body_from_input_text(&text)?))
+        }
+        (None, Some(var)) => {
+            let text = std::env::var(&var).map_err(|err| {
+                format!(
+                    "check-pr-shape: environment variable `{var}` named by --body-env is not set: {err}"
+                )
+            })?;
+            Ok(Some(pr_body_from_input_text(&text)?))
+        }
+        (None, None) => Ok(None),
+    }
+}
+
+/// Accept raw Markdown, or the JSON object emitted by
+/// `gh pr view --json body` (its `body` field carries the Markdown).
+fn pr_body_from_input_text(text: &str) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.starts_with('{')
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
+        && let Some(body) = value.get("body").and_then(serde_json::Value::as_str)
+    {
+        return Ok(body.to_string());
+    }
+    Ok(text.to_string())
 }
 
 pub(crate) fn pr_triage_report_impl() -> Result<(), String> {
+    pr_triage_readiness().map(|_| ())
+}
+
+fn pr_triage_readiness() -> Result<ReadinessOutcome, String> {
     let prs = collect_open_prs_for_triage()?;
     let today = current_epoch_day()?;
     let generated_at = generated_at_unix_ms()?;
     let findings = pr_triage_findings(&prs, today);
-    write_report("pr-triage.md", &pr_triage_markdown(&prs, &findings, today))?;
+    finish_pr_triage_report(&prs, &findings, today, &generated_at)
+}
+
+fn finish_pr_triage_report(
+    prs: &[PrTriagePullRequest],
+    findings: &[PrTriageFinding],
+    today: i64,
+    generated_at: &str,
+) -> Result<ReadinessOutcome, String> {
+    write_report("pr-triage.md", &pr_triage_markdown(prs, findings, today))?;
     write_report(
         "pr-triage.json",
-        &pr_triage_json(&prs, &findings, today, &generated_at),
-    )
+        &pr_triage_json(prs, findings, today, generated_at),
+    )?;
+    Ok(if findings.is_empty() {
+        ReadinessOutcome::Completed
+    } else {
+        ReadinessOutcome::NeedsAttention
+    })
 }
 
 pub(crate) fn gh_pr_status_impl(args: &[String]) -> Result<(), String> {
@@ -4807,16 +5340,30 @@ fn markdown_escape_table(value: &str) -> String {
 }
 
 pub(crate) fn critic_impl() -> Result<(), String> {
+    critic_readiness().map(|_| ())
+}
+
+fn critic_readiness() -> Result<ReadinessOutcome, String> {
     ensure_reports_dir()?;
     let changes = collect_pr_changes()?;
     let reports = report_index_entries()?;
     let receipts = receipt_index_entries()?;
     let findings = critic_findings(&changes, &reports, &receipts);
-    write_report(
-        "critic.md",
-        &critic_markdown(&findings, &reports, &receipts),
-    )?;
-    write_report("critic.json", &critic_json(&findings, &reports, &receipts))
+    finish_critic_report(&findings, &reports, &receipts)
+}
+
+fn finish_critic_report(
+    findings: &[CriticFinding],
+    reports: &[ReportIndexEntry],
+    receipts: &[ReportIndexEntry],
+) -> Result<ReadinessOutcome, String> {
+    write_report("critic.md", &critic_markdown(findings, reports, receipts))?;
+    write_report("critic.json", &critic_json(findings, reports, receipts))?;
+    Ok(if findings.is_empty() {
+        ReadinessOutcome::Completed
+    } else {
+        ReadinessOutcome::NeedsAttention
+    })
 }
 
 pub(crate) fn reports_impl(args: &[String]) -> Result<(), String> {
@@ -5173,7 +5720,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-doc-roles`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -5927,7 +6474,7 @@ fn finish_spec_numbering_report(violations: &[String]) -> Result<(), String> {
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Run `cargo xtask specs next` before creating a new docs/specs/RIPR-SPEC-NNNN file.",
-                "Add every spec file to docs/specs/README.md.",
+                "Add every spec file to the index: one row in docs/spec-index.d/RIPR-SPEC-NNNN.md (or docs/specs/README.md).",
                 "Use only existing RIPR-SPEC-NNNN IDs in traceability and capability surfaces.",
             ],
             rerun_command: "cargo xtask check-spec-numbering",
@@ -5971,6 +6518,7 @@ fn spec_numbering_violations(root: &Path) -> Result<Vec<String>, String> {
     }
 
     validate_specs_readme_index(root, &specs, &ids, &mut violations)?;
+    validate_spec_index_fragments(root, &mut violations)?;
     validate_spec_references(root, &ids, &mut violations)?;
 
     violations.sort();
@@ -6018,6 +6566,106 @@ fn collect_spec_files_for_root(root: &Path) -> Result<Vec<SpecFile>, String> {
     Ok(specs)
 }
 
+/// Directory of one-row spec index fragments (`docs/spec-index.d/*.md`). A new
+/// spec adds its row here instead of appending to the README table, so two PRs
+/// that each add a spec no longer conflict on the README tail (#10455).
+const SPEC_INDEX_FRAGMENT_DIR: &str = "docs/spec-index.d";
+
+/// The README index plus every row fragment, in file-name order. A fragment
+/// lives one directory away from the specs, so its links read
+/// `../specs/<file>`; they are normalised to the README's bare file names so one
+/// index-link match serves both places.
+fn specs_index_text(root: &Path, readme: &Path) -> Result<String, String> {
+    let mut text = read_text_lossy(readme)?;
+    for (name, fragment) in spec_index_fragments(root)? {
+        let Some(stem) = name.strip_suffix(".md") else {
+            continue;
+        };
+        if let Some(row) = spec_index_fragment_row(stem, &fragment) {
+            text.push('\n');
+            text.push_str(&row.replace("](../specs/", "]("));
+        }
+    }
+    Ok(text)
+}
+
+/// The one index row of a fragment, or `None` when the fragment is not exactly
+/// that: a single non-blank line, a table row whose only link is the canonical
+/// `[stem](../specs/<file>)`. Anything else (fenced examples, comments, a second
+/// row, an equivalent-but-different link spelling) earns no credit.
+fn spec_index_fragment_row<'a>(stem: &str, text: &'a str) -> Option<&'a str> {
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    let row = lines.next()?;
+    if lines.next().is_some() {
+        return None;
+    }
+    let prefix = format!("| [{stem}](../specs/");
+    (row.starts_with(&prefix) && row.ends_with('|') && row.matches("](").count() == 1)
+        .then_some(row)
+}
+
+/// Every `docs/spec-index.d/*.md` as (file name, text), in file-name order.
+fn spec_index_fragments(root: &Path) -> Result<Vec<(String, String)>, String> {
+    let directory = root.join(SPEC_INDEX_FRAGMENT_DIR);
+    let mut fragments = Vec::new();
+    if !directory.is_dir() {
+        return Ok(fragments);
+    }
+    for path in collect_files(&directory)? {
+        if path.extension().and_then(|value| value.to_str()) != Some("md") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        if name == "README.md" {
+            continue;
+        }
+        fragments.push((name, read_text_lossy(&path)?));
+    }
+    Ok(fragments)
+}
+
+/// A fragment registers exactly the spec its file name states: `RIPR-SPEC-NNNN.md`
+/// holds spec rows for `RIPR-SPEC-NNNN` only, so a misnamed fragment cannot
+/// satisfy another spec's index entry.
+fn validate_spec_index_fragments(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
+    let readme = root.join("docs/specs/README.md");
+    let readme_text = if readme.exists() {
+        read_text_lossy(&readme)?
+    } else {
+        String::new()
+    };
+    for (name, text) in spec_index_fragments(root)? {
+        let Some(stem) = name.strip_suffix(".md").filter(|stem| is_spec_id(stem)) else {
+            violations.push(format!(
+                "{SPEC_INDEX_FRAGMENT_DIR}/{name} must be named RIPR-SPEC-NNNN.md"
+            ));
+            continue;
+        };
+        for id in spec_ids_in_text(&text) {
+            if id != stem {
+                violations.push(format!(
+                    "{SPEC_INDEX_FRAGMENT_DIR}/{name} names `{id}` but only `{stem}` may appear in it"
+                ));
+            }
+        }
+        if spec_index_fragment_row(stem, &text).is_none() {
+            violations.push(format!(
+                "{SPEC_INDEX_FRAGMENT_DIR}/{name} must hold exactly one table row `| [{stem}](../specs/<file>) | status | topic |` and nothing else"
+            ));
+        }
+        if readme_text.contains(&format!("[{stem}](")) {
+            violations.push(format!(
+                "{SPEC_INDEX_FRAGMENT_DIR}/{name} duplicates the README row for `{stem}`; keep one"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_specs_readme_index(
     root: &Path,
     specs: &[SpecFile],
@@ -6029,7 +6677,7 @@ fn validate_specs_readme_index(
         violations.push("docs/specs/README.md is missing".to_string());
         return Ok(());
     }
-    let text = read_text_lossy(&readme)?;
+    let text = specs_index_text(root, &readme)?;
     for spec in specs {
         let link = format!("[{}]({})", spec.id, spec.file_name);
         if !text.contains(&link) {
@@ -6054,11 +6702,26 @@ fn validate_spec_references(
     ids: &BTreeMap<String, Vec<String>>,
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
-    for relative in [
-        ".ripr/traceability.toml",
-        "metrics/capabilities.toml",
-        "docs/CAPABILITY_MATRIX.md",
-    ] {
+    let mut references = vec![
+        ".ripr/traceability.toml".to_string(),
+        "metrics/capabilities.toml".to_string(),
+        "docs/CAPABILITY_MATRIX.md".to_string(),
+    ];
+    if let Ok(entries) = fs::read_dir(root.join(TRACEABILITY_FRAGMENT_DIR)) {
+        let mut fragments: Vec<String> = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "toml"))
+            .map(|entry| {
+                format!(
+                    "{TRACEABILITY_FRAGMENT_DIR}/{}",
+                    entry.file_name().to_string_lossy()
+                )
+            })
+            .collect();
+        fragments.sort();
+        references.extend(fragments);
+    }
+    for relative in &references {
         let path = root.join(relative);
         if !path.exists() {
             continue;
@@ -6121,7 +6784,7 @@ fn check_traceability() -> Result<(), String> {
         return finish_traceability_report(&violations, &advisories);
     }
 
-    let (behaviors, parse_violations) = parse_traceability_manifest(manifest)?;
+    let (behaviors, parse_violations) = load_traceability_behaviors(manifest)?;
     violations.extend(parse_violations);
     if behaviors.is_empty() {
         violations.push(".ripr/traceability.toml has no [[behavior]] entries".to_string());
@@ -6230,7 +6893,7 @@ fn traceability_recommended_fixes() -> &'static [&'static str] {
     &[
         "Add or update the matching [[behavior]] entry in .ripr/traceability.toml.",
         "Run `cargo xtask specs next` to get the next free RIPR-SPEC-NNNN number.",
-        "Known spec IDs are listed in docs/specs/README.md.",
+        "Known spec IDs are listed in docs/specs/README.md and docs/spec-index.d/.",
         "Keep every docs/specs/RIPR-SPEC-*.md file represented in the manifest.",
         "Use valid RIPR-SPEC-NNNN IDs (exactly 4 digits) in specs, fixtures, and manifest entries.",
         "List only paths that exist, or leave planned fields empty until the artifact exists.",
@@ -6469,6 +7132,76 @@ fn is_ascii_digits(value: &str) -> bool {
     value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+/// Directory of traceability fragments. A PR registers its tests, fixtures,
+/// code, outputs and metrics, or a whole new behavior, in a file of its own
+/// here instead of editing the shared `.ripr/traceability.toml` arrays that
+/// every PR otherwise appends to.
+const TRACEABILITY_FRAGMENT_DIR: &str = ".ripr/traceability.d";
+
+/// The base manifest plus every fragment, with `[[extend]]` entries folded
+/// into the behavior they name. An `[[extend]]` whose id no behavior carries
+/// is a violation, and a fragment may not set `name` or `spec` on an extend.
+fn load_traceability_behaviors(
+    manifest: &Path,
+) -> Result<(Vec<TraceBehavior>, Vec<String>), String> {
+    let (mut all, mut violations) = parse_traceability_manifest(manifest)?;
+    let dir = manifest
+        .parent()
+        .map(|parent| parent.join("traceability.d"))
+        .unwrap_or_else(|| PathBuf::from(TRACEABILITY_FRAGMENT_DIR));
+    if dir.is_dir() {
+        let mut fragments: Vec<PathBuf> = fs::read_dir(&dir)
+            .map_err(|error| format!("failed to read {}: {error}", dir.display()))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .collect();
+        fragments.sort();
+        for fragment in fragments {
+            let (behaviors, fragment_violations) = parse_traceability_manifest(&fragment)?;
+            violations.extend(fragment_violations);
+            all.extend(behaviors);
+        }
+    }
+
+    let mut merged: Vec<TraceBehavior> = Vec::new();
+    let mut extends = Vec::new();
+    for behavior in all {
+        if behavior.extends {
+            extends.push(behavior);
+        } else {
+            merged.push(behavior);
+        }
+    }
+    for extend in extends {
+        let location = format!("{}:{}", extend.source, extend.line);
+        let Some(id) = extend.id.as_ref() else {
+            violations.push(format!("{location} [[extend]] is missing `id`"));
+            continue;
+        };
+        if extend.name.is_some() || extend.spec.is_some() {
+            violations.push(format!(
+                "{location} [[extend]] for {id} sets `name` or `spec`; those belong to its [[behavior]]"
+            ));
+        }
+        let Some(base) = merged
+            .iter_mut()
+            .find(|behavior| behavior.id.as_ref() == Some(id))
+        else {
+            violations.push(format!(
+                "{location} [[extend]] names {id}, which no [[behavior]] carries"
+            ));
+            continue;
+        };
+        base.tests.extend(extend.tests);
+        base.fixtures.extend(extend.fixtures);
+        base.code.extend(extend.code);
+        base.outputs.extend(extend.outputs);
+        base.metrics.extend(extend.metrics);
+    }
+    Ok((merged, violations))
+}
+
 fn parse_traceability_manifest(path: &Path) -> Result<(Vec<TraceBehavior>, Vec<String>), String> {
     let text = read_text_lossy(path)?;
     let mut behaviors = Vec::new();
@@ -6513,12 +7246,14 @@ fn parse_traceability_manifest(path: &Path) -> Result<(Vec<TraceBehavior>, Vec<S
             }
             continue;
         }
-        if trimmed == "[[behavior]]" {
+        if trimmed == "[[behavior]]" || trimmed == "[[extend]]" {
             if let Some(behavior) = current.take() {
                 behaviors.push(behavior);
             }
             current = Some(TraceBehavior {
                 line: line_number,
+                extends: trimmed == "[[extend]]",
+                source: normalize_path(path),
                 ..TraceBehavior::default()
             });
             continue;
@@ -10063,6 +10798,7 @@ const REPO_EXPOSURE_LATENCY_DEFAULT_TIMEOUT_MS: u64 = 30_000;
 #[derive(Clone, Debug)]
 struct RepoExposureLatencyReport {
     status: String,
+    output_parity: RepoExposureOutputParity,
     timeout_ms: u64,
     binary: String,
     runs: Vec<RepoExposureLatencyRun>,
@@ -10079,8 +10815,85 @@ struct RepoExposureLatencyRun {
     trace: Vec<RepoExposureLatencyTrace>,
     file_fact_cache: Option<RepoExposureFileFactCache>,
     file_fact_cache_limitation: Option<String>,
+    /// Classified-seam and corpus-fingerprint store outcome (#9633).
+    cache_family_store: Option<RepoExposureCacheFamilyStore>,
+    cache_family_store_limitation: Option<String>,
     resource_cost: Option<RepoExposureResourceCost>,
     resource_cost_limitation: Option<String>,
+}
+
+/// The analyzer's end-of-run classified-seam / corpus-fingerprint store
+/// receipt: the same bounded `{path, stage, error}` rows as the file-fact
+/// receipt, without the file-fact counters (#9633).
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepoExposureCacheFamilyStore {
+    schema_version: String,
+    store_errors: usize,
+    store_failures: Vec<RepoExposureStoreFailure>,
+    store_failures_dropped: usize,
+    /// Producer-observed subject of the run (cache key identity and file
+    /// disclosure digests); `None` from a producer that does not report one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    subject: Option<Value>,
+}
+
+/// Whether cache-served output equals a cold recomputation, per format.
+/// `pass` needs every format checked and equal; any difference is `mismatch`;
+/// anything unchecked keeps the report from `pass` with a named reason.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RepoExposureOutputParity {
+    checks: Vec<RepoExposureParityCheck>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RepoExposureParityCheck {
+    /// Named diagnostics from the comparison legs' receipts (store errors,
+    /// unobserved or invalid receipts); any makes the report non-`pass`.
+    diagnostics: Vec<String>,
+    format: String,
+    /// `pass`, `mismatch`, `fail` (the served run failed after a passing cold
+    /// run) or `not_checked`.
+    status: &'static str,
+    reason: Option<String>,
+}
+
+/// The formats a complete latency report covers; an aggregate parity `pass`
+/// needs each exactly once.
+const REPO_EXPOSURE_EXPECTED_FORMATS: [&str; 2] = ["repo-exposure-json", "repo-exposure-md"];
+
+impl RepoExposureOutputParity {
+    /// Why the checks do not cover the expected formats exactly once.
+    fn coverage_gap(&self) -> Option<String> {
+        for format in REPO_EXPOSURE_EXPECTED_FORMATS {
+            match self
+                .checks
+                .iter()
+                .filter(|check| check.format == format)
+                .count()
+            {
+                1 => {}
+                0 => return Some(format!("missing_format:{format}")),
+                _ => return Some(format!("duplicate_format:{format}")),
+            }
+        }
+        (self.checks.len() != REPO_EXPOSURE_EXPECTED_FORMATS.len())
+            .then(|| "unexpected_format".to_string())
+    }
+
+    fn label(&self) -> &'static str {
+        if self.checks.iter().any(|check| check.status == "mismatch") {
+            "mismatch"
+        } else if self.checks.iter().any(|check| check.status == "fail") {
+            "fail"
+        } else if self.coverage_gap().is_none()
+            && self.checks.iter().all(|check| check.status == "pass")
+        {
+            "pass"
+        } else {
+            "not_checked"
+        }
+    }
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -10172,20 +10985,40 @@ enum RepoExposureMeasurement {
 /// the operator lane indefinitely.
 pub(crate) fn repo_exposure_latency_report_impl() -> Result<(), String> {
     let timeout_ms = repo_exposure_latency_timeout_ms();
-    run("cargo", &["build", "-p", "ripr"])?;
-    let binary = ripr_debug_binary();
-    write_repo_exposure_latency_report(&binary, timeout_ms, repo_exposure_latency_run)
+    // `RIPR_REPO_EXPOSURE_LATENCY_BINARY` names an already built `ripr` (for
+    // example to run the report against a small fixture root); otherwise the
+    // workspace debug binary is built and used.
+    let binary = match std::env::var_os("RIPR_REPO_EXPOSURE_LATENCY_BINARY") {
+        Some(path) => PathBuf::from(path),
+        None => {
+            run("cargo", &["build", "-p", "ripr"])?;
+            ripr_debug_binary()
+        }
+    };
+    write_repo_exposure_latency_report(
+        &binary,
+        timeout_ms,
+        repo_exposure_latency_run,
+        repo_exposure_parity_run,
+    )
 }
 
-fn write_repo_exposure_latency_report<F>(
+fn write_repo_exposure_latency_report<F, P>(
     binary: &Path,
     timeout_ms: u64,
     run_format: F,
+    run_parity: P,
 ) -> Result<(), String>
 where
     F: FnMut(&Path, &str, Duration) -> Result<RepoExposureLatencyRun, String>,
+    P: FnMut(
+        &Path,
+        &str,
+        RepoExposureParityPhase,
+        Duration,
+    ) -> Result<RepoExposureParityRun, String>,
 {
-    let report = build_repo_exposure_latency_report(binary, timeout_ms, run_format)?;
+    let report = build_repo_exposure_latency_report(binary, timeout_ms, run_format, run_parity)?;
     write_report(
         "repo-exposure-latency.json",
         &repo_exposure_latency_json(&report),
@@ -10196,13 +11029,20 @@ where
     )
 }
 
-fn build_repo_exposure_latency_report<F>(
+fn build_repo_exposure_latency_report<F, P>(
     binary: &Path,
     timeout_ms: u64,
     mut run_format: F,
+    mut run_parity: P,
 ) -> Result<RepoExposureLatencyReport, String>
 where
     F: FnMut(&Path, &str, Duration) -> Result<RepoExposureLatencyRun, String>,
+    P: FnMut(
+        &Path,
+        &str,
+        RepoExposureParityPhase,
+        Duration,
+    ) -> Result<RepoExposureParityRun, String>,
 {
     let binary_display = binary.display().to_string();
     let timeout = Duration::from_millis(timeout_ms);
@@ -10224,13 +11064,17 @@ where
             trace: Vec::new(),
             file_fact_cache: None,
             file_fact_cache_limitation: Some("format_skipped".to_string()),
+            cache_family_store: None,
+            cache_family_store_limitation: Some("format_skipped".to_string()),
             resource_cost: None,
             resource_cost_limitation: Some("format_skipped".to_string()),
         });
     }
 
+    let output_parity = repo_exposure_output_parity(binary, &runs, timeout, &mut run_parity);
     let report = RepoExposureLatencyReport {
-        status: repo_exposure_latency_status(&runs),
+        status: repo_exposure_latency_status(&runs, &output_parity),
+        output_parity,
         timeout_ms,
         binary: binary_display,
         runs,
@@ -10258,22 +11102,428 @@ fn ripr_debug_binary_in(target_dir: Option<PathBuf>) -> PathBuf {
         .join(binary_name)
 }
 
-fn repo_exposure_latency_run(
-    binary: &Path,
-    format: &str,
-    timeout: Duration,
-) -> Result<RepoExposureLatencyRun, String> {
-    let args = vec![
+/// Environment variable the analyzer reads to authenticate its stderr
+/// receipts (mirrors the producer's `RECEIPT_TOKEN_ENV`).
+const REPO_EXPOSURE_RECEIPT_TOKEN_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN";
+
+/// A per-process unpredictable token: receipts are machine data only when
+/// they carry it, so a stderr line that merely starts with a receipt prefix
+/// (for example injected through a hostile file name echoed by a diagnostic)
+/// cannot forge cache or resource evidence (#9633, audit F-C4-3). The value is
+/// fixed under `cfg(test)` so unit tests can build authenticated lines; the
+/// verification path is the same.
+fn repo_exposure_receipt_token() -> &'static str {
+    #[cfg(test)]
+    {
+        "unittesttoken"
+    }
+    #[cfg(not(test))]
+    {
+        use std::hash::{BuildHasher, Hasher};
+        static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        TOKEN.get_or_init(|| {
+            use std::io::Read;
+            // Prefer the OS entropy source; fall back to std's randomly keyed
+            // hasher where `/dev/urandom` is absent (for example Windows).
+            let mut bytes = [0u8; 16];
+            if fs::File::open("/dev/urandom")
+                .and_then(|mut file| file.read_exact(&mut bytes))
+                .is_ok()
+            {
+                return bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+            }
+            let mut token = String::new();
+            for _ in 0..2 {
+                let value = std::collections::hash_map::RandomState::new()
+                    .build_hasher()
+                    .finish();
+                token.push_str(&format!("{value:016x}"));
+            }
+            token
+        })
+    }
+}
+
+/// Receipt records on `stderr` for `prefix` (which ends in a space). Only
+/// lines carrying this process's token are records; a line with the bare
+/// prefix is counted as untrusted and never parsed.
+fn repo_exposure_authenticated_receipts<'a>(
+    stderr: &'a str,
+    prefix: &str,
+) -> (Vec<&'a str>, usize) {
+    let trusted = format!("{prefix}token={} ", repo_exposure_receipt_token());
+    let mut records = Vec::new();
+    let mut untrusted = 0;
+    for line in stderr.lines() {
+        if let Some(record) = line.strip_prefix(trusted.as_str()) {
+            records.push(record);
+        } else if line.starts_with(prefix) {
+            untrusted += 1;
+        }
+    }
+    (records, untrusted)
+}
+
+/// Final `cache_load` status from phase lines that carry this process's
+/// token; a bare phase line (forgeable like a bare receipt line) is ignored.
+fn repo_exposure_authenticated_cache_load(stderr: &str) -> Option<String> {
+    let prefix = format!(
+        "ripr_repo_exposure_latency token={} phase=cache_load status=",
+        repo_exposure_receipt_token()
+    );
+    stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix(prefix.as_str()))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .rfind(|status| matches!(*status, "hit" | "miss" | "corrupt_ignored"))
+        .map(str::to_string)
+}
+
+fn repo_exposure_latency_envs(token: &str) -> [(&str, &str); 2] {
+    [
+        (REPO_EXPOSURE_LATENCY_TRACE_ENV, "1"),
+        (REPO_EXPOSURE_RECEIPT_TOKEN_ENV, token),
+    ]
+}
+
+fn repo_exposure_latency_args(format: &str) -> Vec<String> {
+    vec![
         "check".to_string(),
         "--root".to_string(),
         ".".to_string(),
         "--format".to_string(),
         format.to_string(),
-    ];
+    ]
+}
+
+fn repo_exposure_latency_run(
+    binary: &Path,
+    format: &str,
+    timeout: Duration,
+) -> Result<RepoExposureLatencyRun, String> {
+    let args = repo_exposure_latency_args(format);
     let binary_text = binary.display().to_string();
-    let envs = [(REPO_EXPOSURE_LATENCY_TRACE_ENV, "1")];
-    let output = capture_output_with_timeout(&binary_text, &args, &envs, timeout, format)?;
-    Ok(repo_exposure_latency_run_from_output(format, output))
+    // A private, empty cache per format: every primary run is cold, so it
+    // computes and emits the file-fact receipt. With the shared default cache
+    // the second format (or a warm first one) takes the classified-seam cache
+    // hit, never reaches the file-fact phase, and `pass` would be unreachable.
+    let cache_dir = repo_exposure_private_cache_dir("primary", format)?;
+    repo_exposure_reset_dir(&cache_dir)?;
+    let cache_dir_text = cache_dir
+        .to_str()
+        .ok_or_else(|| format!("{} is not valid UTF-8", cache_dir.display()))?
+        .to_string();
+    let mut envs = repo_exposure_latency_envs(repo_exposure_receipt_token()).to_vec();
+    envs.push(("RIPR_CACHE_DIR", cache_dir_text.as_str()));
+    let output = capture_output_with_timeout(&binary_text, &args, &envs, timeout, format);
+    // Best effort: a leftover private cache is ignored build output.
+    let _ = fs::remove_dir_all(&cache_dir);
+    Ok(repo_exposure_latency_run_from_output(format, output?))
+}
+
+/// One half of a parity comparison: the same `ripr check` as the latency run,
+/// against a private cache directory under `target/ripr/reports`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RepoExposureParityPhase {
+    /// Fresh, empty cache: the output is computed, nothing is served.
+    Cold,
+    /// The cache the cold run just populated: the output should be served.
+    Served,
+}
+
+#[derive(Clone, Debug, Default)]
+struct RepoExposureParityRun {
+    /// `pass`, `fail` or `timeout`, as for a latency run.
+    status: String,
+    stdout: String,
+    /// Final `cache_load` trace status (`hit`, `miss`, `corrupt_ignored`).
+    cache_load: Option<String>,
+    /// Producer-observed subject identity from the leg's family receipt.
+    subject: Option<Value>,
+    /// Named store-failure / limitation diagnostics from the leg's
+    /// authenticated receipts.
+    diagnostics: Vec<String>,
+}
+
+fn repo_exposure_private_cache_dir(kind: &str, format: &str) -> Result<PathBuf, String> {
+    let cwd = std::env::current_dir()
+        .map_err(|err| format!("failed to read the current directory: {err}"))?;
+    Ok(cwd
+        .join("target")
+        .join("ripr")
+        .join("reports")
+        .join(format!("repo-exposure-{kind}-cache"))
+        .join(format))
+}
+
+fn repo_exposure_reset_dir(dir: &Path) -> Result<(), String> {
+    match fs::remove_dir_all(dir) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(format!("failed to clear {}: {err}", dir.display())),
+    }
+    fs::create_dir_all(dir).map_err(|err| format!("failed to create {}: {err}", dir.display()))
+}
+
+fn repo_exposure_parity_run(
+    binary: &Path,
+    format: &str,
+    phase: RepoExposureParityPhase,
+    timeout: Duration,
+) -> Result<RepoExposureParityRun, String> {
+    let cache_dir = repo_exposure_private_cache_dir("parity", format)?;
+    if phase == RepoExposureParityPhase::Cold {
+        repo_exposure_reset_dir(&cache_dir)?;
+    }
+    let cache_dir_text = cache_dir
+        .to_str()
+        .ok_or_else(|| format!("{} is not valid UTF-8", cache_dir.display()))?
+        .to_string();
+    let args = repo_exposure_latency_args(format);
+    let binary_text = binary.display().to_string();
+    let envs = [
+        (REPO_EXPOSURE_LATENCY_TRACE_ENV, "1"),
+        (
+            REPO_EXPOSURE_RECEIPT_TOKEN_ENV,
+            repo_exposure_receipt_token(),
+        ),
+        ("RIPR_CACHE_DIR", cache_dir_text.as_str()),
+    ];
+    let output = capture_output_with_timeout(&binary_text, &args, &envs, timeout, format);
+    if phase == RepoExposureParityPhase::Served {
+        // Best effort: a leftover private cache is ignored build output.
+        let _ = fs::remove_dir_all(&cache_dir);
+    }
+    let output = output?;
+    // `fail` is a real nonzero exit code; a signal kill (no code) is `killed`
+    // and stays unverified.
+    let status = if output.timed_out {
+        "timeout"
+    } else if output.status.is_some_and(|status| status.success()) {
+        "pass"
+    } else if output.status.and_then(|status| status.code()).is_some() {
+        "fail"
+    } else {
+        "killed"
+    };
+    let cache_load = repo_exposure_authenticated_cache_load(&output.stderr);
+    let (subject, diagnostics) = repo_exposure_parity_leg_receipts(&output.stderr, phase);
+    Ok(RepoExposureParityRun {
+        status: status.to_string(),
+        stdout: output.stdout,
+        cache_load,
+        subject,
+        diagnostics,
+    })
+}
+
+/// Compare cache-served output with a cold recomputation for every format the
+/// latency run completed. `pass` is reachable only when each format was run
+/// cold against an empty private cache, then again against that now-populated
+/// cache with the trace confirming a cache hit, and the outputs are equal.
+fn repo_exposure_output_parity<P>(
+    binary: &Path,
+    runs: &[RepoExposureLatencyRun],
+    timeout: Duration,
+    run_parity: &mut P,
+) -> RepoExposureOutputParity
+where
+    P: FnMut(
+        &Path,
+        &str,
+        RepoExposureParityPhase,
+        Duration,
+    ) -> Result<RepoExposureParityRun, String>,
+{
+    RepoExposureOutputParity {
+        checks: runs
+            .iter()
+            .map(|run| repo_exposure_parity_check(binary, run, timeout, run_parity))
+            .collect(),
+    }
+}
+
+fn repo_exposure_parity_check<P>(
+    binary: &Path,
+    run: &RepoExposureLatencyRun,
+    timeout: Duration,
+    run_parity: &mut P,
+) -> RepoExposureParityCheck
+where
+    P: FnMut(
+        &Path,
+        &str,
+        RepoExposureParityPhase,
+        Duration,
+    ) -> Result<RepoExposureParityRun, String>,
+{
+    let format = run.format.as_str();
+    // Diagnostics from the comparison legs' own authenticated receipts; they
+    // ride on every outcome so a store failure on a leg can never be dropped.
+    let diagnostics = std::cell::RefCell::new(Vec::<String>::new());
+    let finish = |status: &'static str, reason: Option<String>| RepoExposureParityCheck {
+        format: format.to_string(),
+        status,
+        reason,
+        diagnostics: diagnostics.borrow().clone(),
+    };
+    let not_checked = |reason: String| finish("not_checked", Some(reason));
+    if run.status != "pass" {
+        return not_checked(format!("primary_run_{}", run.status));
+    }
+    let cold = match run_parity(binary, format, RepoExposureParityPhase::Cold, timeout) {
+        Ok(cold) => cold,
+        Err(err) => return not_checked(format!("cold_run_error: {err}")),
+    };
+    diagnostics
+        .borrow_mut()
+        .extend(cold.diagnostics.iter().map(|d| format!("cold_{d}")));
+    if cold.status != "pass" {
+        return not_checked(format!("cold_run_{}", cold.status));
+    }
+    if cold.cache_load.as_deref() == Some("hit") {
+        return not_checked("cold_run_served_from_cache".to_string());
+    }
+    // The cold run just succeeded against the same binary and inputs, so a
+    // served run that exits with a nonzero code is the cache path failing: it
+    // is a `fail`, not a quiet `not_checked`. A spawn/reader error, a signal
+    // kill or a timeout is not evidence about the cache and stays unverified.
+    let served = match run_parity(binary, format, RepoExposureParityPhase::Served, timeout) {
+        Ok(served) => served,
+        Err(err) => return not_checked(format!("served_run_error: {err}")),
+    };
+    diagnostics
+        .borrow_mut()
+        .extend(served.diagnostics.iter().map(|d| format!("served_{d}")));
+    if served.status == "fail" {
+        return finish("fail", Some("served_run_fail".to_string()));
+    }
+    if served.status != "pass" {
+        return not_checked(format!("served_run_{}", served.status));
+    }
+    if served.cache_load.as_deref() != Some("hit") {
+        return not_checked("served_run_not_cache_hit".to_string());
+    }
+    // One repository state: the producer's own account of each leg's source,
+    // config and generated-disclosure subject must agree before outputs are
+    // compared. Movement between the legs is not evidence about the cache.
+    match (
+        repo_exposure_leg_subject(format, &cold),
+        repo_exposure_leg_subject(format, &served),
+    ) {
+        (Some(cold_subject), Some(served_subject)) => {
+            if cold_subject != served_subject {
+                return not_checked("comparison_subject_moved".to_string());
+            }
+        }
+        _ => return not_checked("comparison_subject_unobserved".to_string()),
+    }
+    // Equality of nothing, or of text that is not the expected document, is
+    // not parity.
+    let (Some(cold_text), Some(served_text)) = (
+        repo_exposure_normalized_output(format, &cold.stdout),
+        repo_exposure_normalized_output(format, &served.stdout),
+    ) else {
+        return not_checked("output_unparseable".to_string());
+    };
+    let equal = cold_text == served_text;
+    finish(
+        if equal { "pass" } else { "mismatch" },
+        (!equal).then(|| "served_output_differs_from_cold".to_string()),
+    )
+}
+
+/// The subject a comparison leg was produced for, from the producer's own
+/// output: its cache-family receipt `subject` (cache key identity and the
+/// generated/naming-only/declined file disclosure) and, for JSON, the
+/// artifact's input and snapshot identity and source subject. `None` when the
+/// producer did not report one.
+fn repo_exposure_leg_subject(format: &str, leg: &RepoExposureParityRun) -> Option<Value> {
+    let receipt = leg.subject.clone()?;
+    if format != "repo-exposure-json" {
+        return Some(serde_json::json!({ "receipt": receipt }));
+    }
+    // Unparseable output is not a subject problem; the output comparison
+    // reports it as `output_unparseable`.
+    let document = serde_json::from_str::<Value>(&leg.stdout).unwrap_or(Value::Null);
+    Some(serde_json::json!({
+        "receipt": receipt,
+        "input_identity": document.pointer("/artifact/analysis/input_identity"),
+        "snapshot_identity": document.pointer("/artifact/snapshot_identity"),
+        "source_subject": document.get("source_subject"),
+    }))
+}
+
+/// Named diagnostics for one comparison leg's authenticated receipts, and the
+/// leg's subject. The cold leg must show both receipts; the served leg hits
+/// the classified-seam cache and so legitimately has no file-fact receipt.
+fn repo_exposure_parity_leg_receipts(
+    stderr: &str,
+    phase: RepoExposureParityPhase,
+) -> (Option<Value>, Vec<String>) {
+    let mut diagnostics = Vec::new();
+    let (family, family_limitation) = repo_exposure_cache_family_store_from_stderr(stderr);
+    let subject = match &family {
+        Some(store) => {
+            if store.store_errors > 0 {
+                diagnostics.push(format!("cache_family_store_errors={}", store.store_errors));
+            }
+            store.subject.clone()
+        }
+        None => {
+            diagnostics.push(
+                family_limitation.unwrap_or_else(|| "cache_family_store_not_observed".to_string()),
+            );
+            None
+        }
+    };
+    let (file_fact, file_fact_limitation) = repo_exposure_file_fact_cache_from_stderr(stderr);
+    match file_fact {
+        Some(cache) => {
+            if cache.store_errors > 0 {
+                diagnostics.push(format!(
+                    "file_fact_cache_store_errors={}",
+                    cache.store_errors
+                ));
+            }
+            if cache.corrupt_ignored > 0 {
+                diagnostics.push(format!(
+                    "file_fact_cache_corrupt_ignored={}",
+                    cache.corrupt_ignored
+                ));
+            }
+        }
+        // Absent on a served (cache-hit) leg is expected; any other limitation
+        // (malformed, duplicate, invalid, untrusted) is named.
+        None => {
+            let limitation = file_fact_limitation.unwrap_or_default();
+            if phase == RepoExposureParityPhase::Cold || limitation != "cache_phase_not_observed" {
+                diagnostics.push(format!("file_fact_cache_{limitation}"));
+            }
+        }
+    }
+    (subject, diagnostics)
+}
+
+/// The comparable form of a format's stdout. The JSON artifact envelope stamps
+/// `generated_at` and a `content_sha256` that covers it, so those two keys
+/// differ between any two runs; every other byte must match. Markdown has no
+/// volatile field.
+/// `None` when the text is empty, or for JSON is not a document with an
+/// `artifact` object: a raw-string fallback would false-mismatch on
+/// `generated_at` and an empty-equals-empty comparison would pass vacuously.
+fn repo_exposure_normalized_output(format: &str, stdout: &str) -> Option<String> {
+    if stdout.trim().is_empty() {
+        return None;
+    }
+    if format != "repo-exposure-json" {
+        return Some(stdout.to_string());
+    }
+    let mut value = serde_json::from_str::<Value>(stdout).ok()?;
+    let artifact = value.get_mut("artifact").and_then(Value::as_object_mut)?;
+    artifact.remove("generated_at");
+    artifact.remove("content_sha256");
+    Some(value.to_string())
 }
 
 fn repo_exposure_latency_run_from_output(
@@ -10289,6 +11539,8 @@ fn repo_exposure_latency_run_from_output(
     };
     let (file_fact_cache, file_fact_cache_limitation) =
         repo_exposure_file_fact_cache_from_stderr(&output.stderr);
+    let (cache_family_store, cache_family_store_limitation) =
+        repo_exposure_cache_family_store_from_stderr(&output.stderr);
     let (resource_cost, resource_cost_limitation) =
         repo_exposure_resource_cost_from_stderr(&output.stderr);
     RepoExposureLatencyRun {
@@ -10301,6 +11553,8 @@ fn repo_exposure_latency_run_from_output(
         trace: repo_exposure_latency_trace(&output.stderr),
         file_fact_cache,
         file_fact_cache_limitation,
+        cache_family_store,
+        cache_family_store_limitation,
         resource_cost,
         resource_cost_limitation,
     }
@@ -10309,13 +11563,22 @@ fn repo_exposure_latency_run_from_output(
 fn repo_exposure_resource_cost_from_stderr(
     stderr: &str,
 ) -> (Option<RepoExposureResourceCost>, Option<String>) {
-    let mut records = stderr
-        .lines()
-        .filter_map(|line| line.strip_prefix(REPO_EXPOSURE_RESOURCE_COST_PREFIX));
-    let Some(record) = records.next() else {
-        return (None, Some("resource_cost_receipt_not_observed".to_string()));
+    let (records, untrusted) =
+        repo_exposure_authenticated_receipts(stderr, REPO_EXPOSURE_RESOURCE_COST_PREFIX);
+    let Some(record) = records.first() else {
+        return (
+            None,
+            Some(
+                if untrusted > 0 {
+                    "untrusted_resource_cost_receipt_line"
+                } else {
+                    "resource_cost_receipt_not_observed"
+                }
+                .to_string(),
+            ),
+        );
     };
-    if records.next().is_some() {
+    if records.len() > 1 {
         return (None, Some("duplicate_resource_cost_receipt".to_string()));
     }
     let Ok(cost) = serde_json::from_str::<RepoExposureResourceCost>(record) else {
@@ -10333,58 +11596,234 @@ fn repo_exposure_resource_cost_from_stderr(
     (Some(cost), None)
 }
 
+/// Mirrors the producer's `MAX_STORE_FAILURE_ROWS` row cap.
+const MAX_RETAINED_STORE_FAILURES: usize = 32;
+
+/// Whether `rows` plus `dropped` account exactly for `store_errors` under the
+/// producer's cap, with only `stages` and portable row paths. Shared by the
+/// file-fact and the classified-seam / fingerprint receipts so both enforce
+/// one projection contract.
+fn repo_exposure_store_failures_valid(
+    rows: &[RepoExposureStoreFailure],
+    dropped: usize,
+    store_errors: usize,
+    stages: &[&str],
+    path_required: bool,
+) -> bool {
+    rows.len() <= MAX_RETAINED_STORE_FAILURES
+        && rows
+            .len()
+            .checked_add(dropped)
+            .is_some_and(|count| count == store_errors)
+        && !(rows.len() < MAX_RETAINED_STORE_FAILURES && dropped > 0)
+        && rows.iter().all(|row| {
+            stages.contains(&row.stage.as_str())
+                && match row.path.as_deref() {
+                    None => !path_required,
+                    Some(path) => {
+                        !(path.is_empty()
+                            || path.starts_with('/')
+                            || path
+                                .split('/')
+                                .any(|part| part == "." || part == ".." || part.is_empty())
+                            || path.contains('\\')
+                            || has_windows_drive_prefix(path)
+                            || path.chars().any(char::is_control))
+                    }
+                }
+        })
+}
+
 fn repo_exposure_file_fact_cache_from_stderr(
     stderr: &str,
 ) -> (Option<RepoExposureFileFactCache>, Option<String>) {
     const PREFIX: &str = "ripr_file_fact_cache_receipt ";
-    // Mirrors the producer's `MAX_STORE_FAILURE_ROWS` row cap.
-    const MAX_RETAINED_STORE_FAILURES: usize = 32;
-    let mut records = stderr.lines().filter_map(|line| line.strip_prefix(PREFIX));
-    let Some(record) = records.next() else {
-        return (None, Some("cache_phase_not_observed".to_string()));
+    let (records, untrusted) = repo_exposure_authenticated_receipts(stderr, PREFIX);
+    let Some(record) = records.first() else {
+        return (
+            None,
+            Some(
+                if untrusted > 0 {
+                    "untrusted_cache_receipt_line"
+                } else {
+                    "cache_phase_not_observed"
+                }
+                .to_string(),
+            ),
+        );
     };
-    if records.next().is_some() {
+    if records.len() > 1 {
         return (None, Some("duplicate_cache_receipt".to_string()));
     }
     let Ok(value) = serde_json::from_str::<RepoExposureFileFactCache>(record) else {
         return (None, Some("malformed_cache_receipt".to_string()));
     };
     if value.schema_version != "0.1"
-        || value.store_failures.len() > MAX_RETAINED_STORE_FAILURES
-        || value
-            .store_failures
-            .len()
-            .checked_add(value.store_failures_dropped)
-            .is_none_or(|count| count != value.store_errors)
-        || (value.store_failures.len() < MAX_RETAINED_STORE_FAILURES
-            && value.store_failures_dropped > 0)
-        || value.store_failures.iter().any(|row| {
-            !matches!(row.stage.as_str(), "create_dir" | "encode" | "write")
-                || row.path.as_deref().is_some_and(|path| {
-                    path.is_empty()
-                        || path.starts_with('/')
-                        || path
-                            .split('/')
-                            .any(|part| part == "." || part == ".." || part.is_empty())
-                        || path.contains('\\')
-                        || path.contains(':')
-                        || path.chars().any(char::is_control)
-                })
-        })
+        || !repo_exposure_store_failures_valid(
+            &value.store_failures,
+            value.store_failures_dropped,
+            value.store_errors,
+            &["create_dir", "encode", "write"],
+            false,
+        )
     {
         return (None, Some("invalid_cache_receipt".to_string()));
     }
     (Some(value), None)
 }
 
-fn repo_exposure_latency_status(runs: &[RepoExposureLatencyRun]) -> String {
-    if runs.iter().any(|run| run.status == "fail") {
+/// The classified-seam / corpus-fingerprint store receipt (#9633). A healthy
+/// run still emits it with no rows, so a missing line is "not observed", not
+/// "no failures".
+fn repo_exposure_cache_family_store_from_stderr(
+    stderr: &str,
+) -> (Option<RepoExposureCacheFamilyStore>, Option<String>) {
+    const PREFIX: &str = "ripr_cache_family_store_receipt ";
+    let (records, untrusted) = repo_exposure_authenticated_receipts(stderr, PREFIX);
+    let Some(record) = records.first() else {
+        return (
+            None,
+            Some(
+                if untrusted > 0 {
+                    "untrusted_cache_family_store_receipt_line"
+                } else {
+                    "cache_family_store_not_observed"
+                }
+                .to_string(),
+            ),
+        );
+    };
+    if records.len() > 1 {
+        return (
+            None,
+            Some("duplicate_cache_family_store_receipt".to_string()),
+        );
+    }
+    let Ok(value) = serde_json::from_str::<RepoExposureCacheFamilyStore>(record) else {
+        return (
+            None,
+            Some("malformed_cache_family_store_receipt".to_string()),
+        );
+    };
+    if value.schema_version != "0.1"
+        || !repo_exposure_store_failures_valid(
+            &value.store_failures,
+            value.store_failures_dropped,
+            value.store_errors,
+            &["classified_seam_store", "corpus_fingerprint_store"],
+            true,
+        )
+    {
+        return (None, Some("invalid_cache_family_store_receipt".to_string()));
+    }
+    (Some(value), None)
+}
+
+/// A Windows drive-qualified path (letter, colon, slash) is an absolute, non-portable
+/// receipt identity. A `:` elsewhere is an ordinary Unix file-name character
+/// (`a:b.rs`) and must not invalidate the whole receipt (#9503).
+fn has_windows_drive_prefix(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
+}
+
+/// Named reasons a completed run set cannot be called `pass`. Empty means
+/// every completed run carried clean cache receipts and every format's
+/// cache-served output equalled a cold recomputation.
+fn repo_exposure_latency_status_reasons(
+    runs: &[RepoExposureLatencyRun],
+    parity: &RepoExposureOutputParity,
+) -> Vec<String> {
+    let mut reasons = Vec::new();
+    for run in runs {
+        match &run.file_fact_cache {
+            Some(cache) => {
+                if cache.store_errors > 0 {
+                    reasons.push(format!(
+                        "{}: file_fact_cache_store_errors={}",
+                        run.format, cache.store_errors
+                    ));
+                }
+                if cache.corrupt_ignored > 0 {
+                    reasons.push(format!(
+                        "{}: file_fact_cache_corrupt_ignored={}",
+                        run.format, cache.corrupt_ignored
+                    ));
+                }
+            }
+            None => reasons.push(format!(
+                "{}: file_fact_cache_{}",
+                run.format,
+                run.file_fact_cache_limitation
+                    .as_deref()
+                    .unwrap_or("not_observed")
+            )),
+        }
+        match &run.cache_family_store {
+            Some(store) => {
+                if store.store_errors > 0 {
+                    reasons.push(format!(
+                        "{}: cache_family_store_errors={}",
+                        run.format, store.store_errors
+                    ));
+                }
+            }
+            None => reasons.push(format!(
+                "{}: {}",
+                run.format,
+                run.cache_family_store_limitation
+                    .as_deref()
+                    .unwrap_or("cache_family_store_not_observed")
+            )),
+        }
+    }
+    if parity.checks.is_empty() {
+        reasons.push("output_parity_not_checked".to_string());
+    } else if let Some(gap) = parity.coverage_gap() {
+        reasons.push(format!("output_parity_not_checked_{gap}"));
+    }
+    for check in &parity.checks {
+        for diagnostic in &check.diagnostics {
+            reasons.push(format!("{}: parity_{diagnostic}", check.format));
+        }
+        match check.status {
+            "pass" => {}
+            "mismatch" => reasons.push(format!("{}: output_parity_mismatch", check.format)),
+            "fail" => reasons.push(format!(
+                "{}: output_parity_fail_{}",
+                check.format,
+                check.reason.as_deref().unwrap_or("unknown")
+            )),
+            _ => reasons.push(format!(
+                "{}: output_parity_not_checked_{}",
+                check.format,
+                check.reason.as_deref().unwrap_or("unknown")
+            )),
+        }
+    }
+    reasons
+}
+
+fn repo_exposure_latency_status(
+    runs: &[RepoExposureLatencyRun],
+    parity: &RepoExposureOutputParity,
+) -> String {
+    // A cache-served output that differs from a cold recomputation is a
+    // correctness failure of the cache path, not a performance warning.
+    if matches!(parity.label(), "mismatch" | "fail") || runs.iter().any(|run| run.status == "fail")
+    {
         return "fail".to_string();
     }
     if runs
         .iter()
         .any(|run| run.status == "timeout" || run.status == "skipped_after_json_timeout")
     {
+        return "warn".to_string();
+    }
+    // `pass` is evidence about the cache path and output, not only exit codes:
+    // cache store errors, ignored corrupt entries, an unobserved cache phase
+    // or unchecked output parity are all `warn`.
+    if !repo_exposure_latency_status_reasons(runs, parity).is_empty() {
         return "warn".to_string();
     }
     "pass".to_string()
@@ -10421,13 +11860,45 @@ fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
     body.push_str("{\n");
     // 0.3 adds the analyzer's own `resource_cost` block (#5213). The bump is
     // because the JSON gained fields a 0.2 reader does not know; nothing in
-    // the 0.2 shape changed.
-    body.push_str("  \"schema_version\": \"0.3\",\n");
+    // the 0.2 shape changed. 0.4 adds `output_parity` and `status_reasons`
+    // (#9503); no 0.3 field changed. 0.5 makes `output_parity` a real
+    // comparison (`pass`, `mismatch`, `not_checked`), adds
+    // `output_parity_checks` and the per-run `cache_family_store` receipt
+    // (#9633); no 0.4 field was removed.
+    body.push_str("  \"schema_version\": \"0.5\",\n");
     body.push_str("  \"tool\": \"ripr\",\n");
     body.push_str("  \"report\": \"repo-exposure-latency\",\n");
     body.push_str(&format!(
         "  \"status\": \"{}\",\n",
         json_escape(&report.status)
+    ));
+    body.push_str(&format!(
+        "  \"output_parity\": \"{}\",\n",
+        report.output_parity.label()
+    ));
+    let parity_checks: Vec<Value> = report
+        .output_parity
+        .checks
+        .iter()
+        .map(|check| {
+            serde_json::json!({
+                "format": check.format,
+                "status": check.status,
+                "reason": check.reason,
+                "diagnostics": check.diagnostics,
+            })
+        })
+        .collect();
+    body.push_str(&format!(
+        "  \"output_parity_checks\": {},\n",
+        serde_json::json!(parity_checks)
+    ));
+    body.push_str(&format!(
+        "  \"status_reasons\": {},\n",
+        serde_json::json!(repo_exposure_latency_status_reasons(
+            &report.runs,
+            &report.output_parity
+        ))
     ));
     body.push_str(&format!("  \"timeout_ms\": {},\n", report.timeout_ms));
     body.push_str(&format!(
@@ -10462,6 +11933,16 @@ fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
         }
         body.push_str(",\n      \"file_fact_cache_limitation\": ");
         match &run.file_fact_cache_limitation {
+            Some(limitation) => body.push_str(&serde_json::json!(limitation).to_string()),
+            None => body.push_str("null"),
+        }
+        body.push_str(",\n      \"cache_family_store\": ");
+        match &run.cache_family_store {
+            Some(store) => body.push_str(&serde_json::json!(store).to_string()),
+            None => body.push_str("null"),
+        }
+        body.push_str(",\n      \"cache_family_store_limitation\": ");
+        match &run.cache_family_store_limitation {
             Some(limitation) => body.push_str(&serde_json::json!(limitation).to_string()),
             None => body.push_str("null"),
         }
@@ -10501,6 +11982,33 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
     let mut body = String::new();
     body.push_str("# Repo Exposure Latency Report\n\n");
     body.push_str(&format!("Status: `{}`\n\n", report.status));
+    body.push_str(&format!(
+        "Output parity: `{}`\n\n",
+        report.output_parity.label()
+    ));
+    for check in &report.output_parity.checks {
+        body.push_str(&format!(
+            "- `{}` parity `{}`{}\n",
+            check.format,
+            check.status,
+            check
+                .reason
+                .as_deref()
+                .map(|reason| format!(" ({})", latency_markdown_cell(reason)))
+                .unwrap_or_default()
+        ));
+    }
+    if !report.output_parity.checks.is_empty() {
+        body.push('\n');
+    }
+    let reasons = repo_exposure_latency_status_reasons(&report.runs, &report.output_parity);
+    if !reasons.is_empty() {
+        body.push_str("Status reasons (`pass` requires none):\n\n");
+        for reason in &reasons {
+            body.push_str(&format!("- `{reason}`\n"));
+        }
+        body.push('\n');
+    }
     body.push_str(&format!(
         "Timeout: `{}` ms per format\n\n",
         report.timeout_ms
@@ -10629,6 +12137,40 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
             body.push_str(&format!(
                 "Unavailable: `{}`. No zero cache counts are inferred.\n\n",
                 run.file_fact_cache_limitation
+                    .as_deref()
+                    .unwrap_or("unknown")
+            ));
+        }
+    }
+    body.push_str("\n## Classified Seam And Corpus Fingerprint Store\n\n");
+    for run in &report.runs {
+        body.push_str(&format!("### `{}`\n\n", run.format));
+        if let Some(store) = &run.cache_family_store {
+            body.push_str(&format!(
+                "Store errors: {}; retained failures: {}; dropped failures: {}.\n\n",
+                store.store_errors,
+                store.store_failures.len(),
+                store.store_failures_dropped
+            ));
+            if !store.store_failures.is_empty() {
+                body.push_str("| Path | Stage | Error |\n| --- | --- | --- |\n");
+                for row in &store.store_failures {
+                    body.push_str(&format!(
+                        "| {} | {} | {} |\n",
+                        row.path.as_deref().map_or_else(
+                            || "_unrepresentable path_".to_string(),
+                            latency_markdown_cell
+                        ),
+                        row.stage,
+                        latency_markdown_cell(&row.error)
+                    ));
+                }
+                body.push('\n');
+            }
+        } else {
+            body.push_str(&format!(
+                "Unavailable: `{}`. No zero store counts are inferred.\n\n",
+                run.cache_family_store_limitation
                     .as_deref()
                     .unwrap_or("unknown")
             ));
@@ -12082,6 +13624,9 @@ fn check_capabilities() -> Result<(), String> {
     violations.extend(parse_violations);
     validate_capabilities(&capabilities, &mut violations)?;
     validate_capability_matrix(&capabilities, &mut violations)?;
+    if violations.is_empty() {
+        policy::check_capability_cells(&capabilities, &mut violations)?;
+    }
     finish_capabilities_report(&violations)
 }
 
@@ -12420,6 +13965,10 @@ fn assign_capability_array(
     match key {
         "evidence" => capability.evidence = values,
         "fixtures" => capability.fixtures = values,
+        "cells" if capability.cells.is_none() => capability.cells = Some(values),
+        "cells" => violations.push(format!(
+            "capability line {line_number} repeats `cells` field"
+        )),
         _ => violations.push(format!(
             "capability line {line_number} uses unsupported array field `{key}`"
         )),
@@ -12912,7 +14461,12 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// the reason it is not a role authority. New entries need the reason in
     /// the surrounding code and a review that the check stays display- or
     /// identity-scoped.
-    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 8] = [
+    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 9] = [
+        (
+            "crates/ripr/src/output/related_test_role_tests.rs",
+            "\"#[cfg(test)]\"",
+            "#5563 source-text guard strips test modules from production text it scans for miss-based eligibility; it decides no analysis role",
+        ),
         (
             "crates/ripr/src/output/review_comments.rs",
             "starts_with(\"tests",
@@ -12982,7 +14536,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 12] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 14] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
@@ -13011,6 +14565,14 @@ fn check_rust_source_role_authority() -> Result<(), String> {
         // modules never name the owner's; the layout authority stays
         // `is_test_file` and the module decides no role of its own.
         "crates/ripr/src/analysis/classify/call_identity.rs",
+        // #9442: a test in an integration-test file sees the owner only as a
+        // value through the crate's public path; the layout authority stays
+        // `is_test_file` and the module decides no role of its own.
+        "crates/ripr/src/analysis/classify/indirect_owner.rs",
+        // #9982: a facade crate's integration test is a file under `tests/**`
+        // of the facade package; the layout authority stays `is_test_file`
+        // and the module decides no role of its own.
+        "crates/ripr/src/analysis/classify/facade_reach.rs",
     ];
 
     let files = tracked_files()?;
@@ -13489,6 +15051,7 @@ fn check_output_contracts() -> Result<(), String> {
             | "value_context"
             | "oracle_alignment"
             | "related_test_miss"
+            | "related_test_role"
             | "source_currentness"
             | "static_limit_kind"
             | "agent_card_refusal_kind"
@@ -13668,8 +15231,9 @@ fn check_doc_index() -> Result<(), String> {
         &["README.md"],
         &mut violations,
     )?;
-    require_index_mentions_files(
-        Path::new("docs/specs/README.md"),
+    require_index_mentions_files_in(
+        "docs/specs/README.md",
+        &specs_index_text(Path::new("."), Path::new("docs/specs/README.md"))?,
         Path::new("docs/specs"),
         &["README.md"],
         &mut violations,
@@ -13740,7 +15304,7 @@ fn check_doc_index() -> Result<(), String> {
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Update docs/adr/README.md when adding or removing ADRs.",
-                "Update docs/specs/README.md when adding or removing specs.",
+                "Update docs/spec-index.d/ (or docs/specs/README.md) when adding or removing specs.",
                 "Keep README.md and docs/DOCUMENTATION.md linked to the active planning, automation, metrics, ADR, and spec docs.",
                 "Keep docs/README.md indexing the user-facing top-level reference pages (exit codes, static limits, repair recovery, blocking readiness, install channels, server provisioning).",
             ],
@@ -13752,6 +15316,10 @@ fn check_doc_index() -> Result<(), String> {
 }
 
 const DOC_ARTIFACT_LEDGER: &str = "policy/doc-artifacts.toml";
+/// Per-PR `[[artifact]]` fragments beside the ledger (`<ledger stem>.d/`), so a
+/// PR that registers a spec adds a file instead of appending to the ledger
+/// tail every other such PR edits (#9859).
+const DOC_ARTIFACT_FRAGMENT_EXTENSION: &str = "d";
 const DOC_ARTIFACT_SCHEMA_VERSION: &str = "1.0";
 /// Count of unregistered RIPR-SPEC files when the reverse-direction ratchet
 /// was added (#1718). Lower this as specs are registered.
@@ -13800,6 +15368,8 @@ struct DocArtifactLedger {
 #[derive(Clone, Debug, Default)]
 struct DocArtifactEntry {
     line: usize,
+    /// Fragment file the entry came from; `None` for the main ledger.
+    source: Option<String>,
     seen_fields: BTreeSet<String>,
     id: Option<String>,
     kind: Option<String>,
@@ -13962,16 +15532,19 @@ fn doc_artifact_violations(root: &Path, ledger_path: &Path) -> Result<Vec<String
 
     let mut ids_by_line = BTreeMap::new();
     for artifact in &ledger.artifacts {
+        let origin = artifact.source.as_deref().unwrap_or(&ledger_display);
         let Some(id) = artifact.id.as_deref() else {
             violations.push(format!(
-                "{ledger_display}:{} artifact is missing required field `id`",
+                "{origin}:{} artifact is missing required field `id`",
                 artifact.line
             ));
             continue;
         };
-        if let Some(previous_line) = ids_by_line.insert(id.to_string(), artifact.line) {
+        if let Some((previous_origin, previous_line)) =
+            ids_by_line.insert(id.to_string(), (origin.to_string(), artifact.line))
+        {
             violations.push(format!(
-                "{ledger_display}:{} duplicate artifact id `{id}`; first defined at line {previous_line}",
+                "{origin}:{} duplicate artifact id `{id}`; first defined at {previous_origin}:{previous_line}",
                 artifact.line
             ));
         }
@@ -13994,7 +15567,54 @@ fn doc_artifact_violations(root: &Path, ledger_path: &Path) -> Result<Vec<String
 fn parse_doc_artifact_ledger(path: &Path) -> Result<DocArtifactLedger, String> {
     let text = read_text_lossy(path)?;
     let display = normalize_path(path);
-    parse_doc_artifact_ledger_text(&display, &text)
+    let mut ledger = parse_doc_artifact_ledger_text(&display, &text)?;
+    ledger.artifacts.extend(parse_doc_artifact_fragments(path)?);
+    Ok(ledger)
+}
+
+/// Reads `<ledger stem>.d/*.toml` in file-name order. Only an absent directory
+/// is optional: an unreadable directory, a non-`.toml` entry, or a fragment
+/// that sets `schema_version` fails, so a fragment cannot be silently skipped.
+fn parse_doc_artifact_fragments(ledger_path: &Path) -> Result<Vec<DocArtifactEntry>, String> {
+    let dir = ledger_path.with_extension(DOC_ARTIFACT_FRAGMENT_EXTENSION);
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("{}: cannot read: {error}", normalize_path(&dir))),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("{}: cannot list: {error}", normalize_path(&dir)))?;
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "toml") {
+            return Err(format!(
+                "{} is not a .toml artifact fragment",
+                normalize_path(&path)
+            ));
+        }
+        paths.push(path);
+    }
+    paths.sort();
+    let mut artifacts = Vec::new();
+    for path in paths {
+        let display = normalize_path(&path);
+        let text = read_text_lossy(&path)?;
+        let fragment = parse_doc_artifact_ledger_text(&display, &text)?;
+        if fragment.schema_version.is_some() {
+            return Err(format!(
+                "{display} must not set schema_version; only the main ledger does"
+            ));
+        }
+        if fragment.artifacts.is_empty() {
+            return Err(format!("{display} has no [[artifact]] entries"));
+        }
+        for mut artifact in fragment.artifacts {
+            artifact.source = Some(display.clone());
+            artifacts.push(artifact);
+        }
+    }
+    Ok(artifacts)
 }
 
 fn parse_doc_artifact_ledger_text(display: &str, text: &str) -> Result<DocArtifactLedger, String> {
@@ -14113,6 +15733,7 @@ fn validate_doc_artifact_entry(
     artifact_ids: &BTreeSet<String>,
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
+    let ledger_display = artifact.source.as_deref().unwrap_or(ledger_display);
     let id_label = artifact.id.as_deref().unwrap_or("<missing id>");
     let Some(id) = artifact.id.as_deref() else {
         return Ok(());
@@ -15522,6 +17143,10 @@ fn worktree(args: &[String]) -> Result<(), String> {
 }
 
 fn worktree_doctor() -> Result<(), String> {
+    worktree_doctor_readiness().map(|_| ())
+}
+
+fn worktree_doctor_readiness() -> Result<ReadinessOutcome, String> {
     let branch = git_value(&["rev-parse", "--abbrev-ref", "HEAD"]);
     let status_changes = collect_worktree_status_changes()?;
     let behind_origin_main = branch_behind_origin_main()?;
@@ -15536,7 +17161,12 @@ fn worktree_doctor() -> Result<(), String> {
         sample_target_exists,
         badge_refresh_context,
     );
-    finish_worktree_doctor_report(&findings)
+    finish_worktree_doctor_report(&findings)?;
+    Ok(if findings.is_empty() {
+        ReadinessOutcome::Completed
+    } else {
+        ReadinessOutcome::NeedsAttention
+    })
 }
 
 fn branch_behind_origin_main() -> Result<usize, String> {
@@ -15657,7 +17287,7 @@ fn changed_source_layers(changes: &[ChangedPath]) -> BTreeSet<&'static str> {
 fn source_layer_for_path(path: &str) -> Option<&'static str> {
     if path.starts_with(".github/workflows/") {
         Some("workflows")
-    } else if path == ".ripr/traceability.toml" {
+    } else if path == ".ripr/traceability.toml" || path.starts_with(".ripr/traceability.d/") {
         Some("traceability")
     } else if path.starts_with(".ripr/goals/") {
         Some("goal-manifest")
@@ -15851,6 +17481,22 @@ fn require_index_mentions_files(
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
     let index = read_text_lossy(index_path)?;
+    require_index_mentions_files_in(
+        &normalize_path(index_path),
+        &index,
+        directory,
+        excluded_names,
+        violations,
+    )
+}
+
+fn require_index_mentions_files_in(
+    index_label: &str,
+    index: &str,
+    directory: &Path,
+    excluded_names: &[&str],
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
     for path in collect_files(directory)? {
         if path.extension().and_then(|value| value.to_str()) != Some("md") {
             continue;
@@ -15863,8 +17509,7 @@ fn require_index_mentions_files(
         }
         if !index.contains(name) {
             violations.push(format!(
-                "{} does not index {}",
-                normalize_path(index_path),
+                "{index_label} does not index {}",
                 normalize_path(&path)
             ));
         }
@@ -17930,6 +19575,7 @@ fn check_count_policy(
     is_candidate: fn(&str) -> bool,
 ) -> Result<(), String> {
     let allowlist = read_count_policy_allowlist(allowlist_path)?;
+    let fragment_dir = normalize_path(&Path::new(allowlist_path).with_extension("d"));
     let mut counts = BTreeMap::<(String, String), usize>::new();
 
     for normalized in tracked_files()? {
@@ -17953,7 +19599,7 @@ fn check_count_policy(
             .unwrap_or(0);
         if *count > allowed {
             violations.push(format!(
-                "{path} contains `{pattern}` {count} time(s), allowed {allowed}\n  to allowlist, add to {allowlist_path}:\n  {path}|{pattern}|{count}|owner|reason"
+                "{path} contains `{pattern}` {count} time(s), allowed {allowed}\n  to allowlist, add a file under {fragment_dir}/ (named for this PR, e.g. <issue>-<slug>.txt) holding:\n  {path}|{pattern}|{count}|owner|reason"
             ));
         } else if *count < allowed {
             // Stale bound: the allowlist grants more budget than the code
@@ -19865,6 +21511,7 @@ fn pr_shape_warnings(changes: &[ChangedPath]) -> Vec<String> {
             || is_fixture_path(&change.path)
             || change.path.starts_with("metrics/")
             || change.path == ".ripr/traceability.toml"
+            || change.path.starts_with(".ripr/traceability.d/")
     });
     if analysis_changed && !analysis_evidence {
         warnings.push(
@@ -19930,11 +21577,30 @@ fn pr_shape_warnings(changes: &[ChangedPath]) -> Vec<String> {
 }
 
 fn pr_shape_report_body(warnings: &[String]) -> String {
-    let status = if warnings.is_empty() { "pass" } else { "warn" };
+    // A PR-body template failure is a failed check, not an advisory
+    // warning: `check_pr_shape_with_args` returns `Err` for it, so the
+    // report status must agree (`fail`) in body-file mode. Other shape
+    // warnings remain advisory (`warn`).
+    let body_failed = warnings
+        .iter()
+        .any(|warning| warning.contains("PR body is missing or has a placeholder value for"));
+    let status = if body_failed {
+        "fail"
+    } else if warnings.is_empty() {
+        "pass"
+    } else {
+        "warn"
+    };
     let mut body = format!("# ripr PR shape report\n\nStatus: {status}\n\n");
-    body.push_str(
-        "This report is advisory. It highlights likely missing evidence before review.\n\n",
-    );
+    if body_failed {
+        body.push_str(
+            "This report records a failed PR-body check. It highlights likely missing evidence before review.\n\n",
+        );
+    } else {
+        body.push_str(
+            "This report is advisory. It highlights likely missing evidence before review.\n\n",
+        );
+    }
     body.push_str("## Warnings\n\n");
     if warnings.is_empty() {
         body.push_str("None detected.\n");
@@ -19963,6 +21629,7 @@ fn critic_findings(
             || is_golden_path(&change.path)
             || change.path.starts_with("metrics/")
             || change.path == ".ripr/traceability.toml"
+            || change.path.starts_with(".ripr/traceability.d/")
     });
     if analysis_changed && !analysis_evidence {
         findings.push(CriticFinding {
@@ -20538,7 +22205,56 @@ fn strip_status_suffix(path: &str) -> &str {
 
 fn read_count_policy_allowlist(path: &str) -> Result<BTreeMap<(String, String), usize>, String> {
     let text = read_text_lossy(Path::new(path))?;
-    parse_count_policy_allowlist(path, &text)
+    let mut allowed = parse_count_policy_allowlist(path, &text)?;
+    let mut declared_in = allowed
+        .keys()
+        .map(|key| (key.clone(), path.to_string()))
+        .collect::<BTreeMap<_, _>>();
+    for (fragment_path, fragment_text) in count_policy_fragments(path)? {
+        for (key, max_count) in parse_count_policy_allowlist(&fragment_path, &fragment_text)? {
+            if let Some(first) = declared_in.get(&key) {
+                return Err(format!(
+                    "{fragment_path}: path|pattern `{}|{}` is already declared in {first}",
+                    key.0, key.1
+                ));
+            }
+            declared_in.insert(key.clone(), fragment_path.clone());
+            allowed.insert(key, max_count);
+        }
+    }
+    Ok(allowed)
+}
+
+/// Per-PR rows beside a count-policy allowlist (`<allowlist stem>.d/*.txt`),
+/// so a PR that adds a spawn or network site adds a file instead of appending
+/// to the list tail every such PR edits (#9859). Only an absent directory is
+/// optional; a non-`.txt` entry or a read error fails, and fragments are read
+/// in file-name order.
+fn count_policy_fragments(allowlist_path: &str) -> Result<Vec<(String, String)>, String> {
+    let dir = Path::new(allowlist_path).with_extension("d");
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("{}: cannot read: {error}", normalize_path(&dir))),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|error| format!("{}: cannot list: {error}", normalize_path(&dir)))?
+            .path();
+        if path.extension().is_none_or(|extension| extension != "txt") {
+            return Err(format!(
+                "{} is not a .txt allowlist fragment",
+                normalize_path(&path)
+            ));
+        }
+        paths.push(path);
+    }
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| Ok((normalize_path(&path), read_text_lossy(&path)?)))
+        .collect()
 }
 
 fn parse_count_policy_allowlist(
@@ -20769,13 +22485,13 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
         error.set_input(Some(&text));
         format!("{path}: invalid non-Rust allowlist TOML: {error}")
     })?;
-    let line_number = |offset| {
-        text.bytes()
-            .take(offset)
-            .filter(|byte| *byte == b'\n')
-            .count()
-            + 1
-    };
+    // Spans use byte offsets. Index line breaks once instead of rescanning
+    // every prefix for every entry and field in the allowlist.
+    let newline_offsets = text
+        .match_indices('\n')
+        .map(|(offset, _)| offset)
+        .collect::<Vec<_>>();
+    let line_number = |offset| newline_offsets.partition_point(|newline| *newline < offset) + 1;
     let mut entries = Vec::new();
     for (key, value) in document.get_ref().iter() {
         let key = key.get_ref().as_ref();
@@ -21065,7 +22781,7 @@ fn guarded_allow_attributes_in_text(
             cursor += 1;
         }
         let kind = &text[ident_start..cursor];
-        if kind != "allow" && kind != "expect" {
+        if kind != "allow" && kind != "expect" && kind != "cfg_attr" {
             index += 1;
             continue;
         }
@@ -21080,6 +22796,20 @@ fn guarded_allow_attributes_in_text(
             index += 1;
             continue;
         };
+        if kind == "cfg_attr" {
+            // #9501: `#[cfg_attr(<predicate>, allow(..), expect(..))]` is the
+            // same suppression under a condition; it spends the same budget
+            // as the plain attribute.
+            let mut line = None;
+            for (wrapped, lint) in cfg_attr_suppressed_lints(&text[content_start..content_end]) {
+                if guarded.contains(lint.as_str()) {
+                    let line = *line.get_or_insert_with(|| byte_line_number(text, index));
+                    findings.push((line, format!("{wrapped}({lint})")));
+                }
+            }
+            index = next_index;
+            continue;
+        }
         let mut line = None;
         for lint in attribute_lints(&text[content_start..content_end]) {
             if guarded.contains(lint.as_str()) {
@@ -21093,11 +22823,135 @@ fn guarded_allow_attributes_in_text(
     findings
 }
 
+/// `allow`/`expect` lints named by the attributes a `cfg_attr(<predicate>, ..)`
+/// conditionally applies, including nested `cfg_attr` wrappers. Splitting is
+/// parenthesis- and string-aware so predicates such as `all(a, b)` and reason
+/// strings do not shift the attribute boundaries.
+fn cfg_attr_suppressed_lints(content: &str) -> Vec<(&'static str, String)> {
+    let mut found = Vec::new();
+    // The first top-level part is the predicate; the rest are attributes.
+    for part in split_top_level_commas(content).into_iter().skip(1) {
+        let part = part.trim();
+        let Some((name, rest)) = part.split_once('(') else {
+            continue;
+        };
+        let inner = rest.trim_end().strip_suffix(')').unwrap_or(rest);
+        match name.trim() {
+            "allow" => found.extend(attribute_lints(inner).into_iter().map(|l| ("allow", l))),
+            "expect" => found.extend(attribute_lints(inner).into_iter().map(|l| ("expect", l))),
+            "cfg_attr" => found.extend(cfg_attr_suppressed_lints(inner)),
+            _ => {}
+        }
+    }
+    found
+}
+
+fn split_top_level_commas(content: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let bytes = content.as_bytes();
+    let mut start = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            index = attribute_string_end(bytes, index);
+            continue;
+        }
+        if bytes[index] == b'\''
+            && let Some(end) = attribute_char_end(bytes, index)
+        {
+            index = end;
+            continue;
+        }
+        match bytes[index] {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                parts.push(&content[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    parts.push(&content[start..]);
+    parts
+}
+
+/// Read a string from its opening quote. Raw strings close only at a quote
+/// followed by the opening hash suffix; backslashes escape only cooked strings.
+fn attribute_string_end(bytes: &[u8], quote: usize) -> usize {
+    let mut marker = quote;
+    while marker > 0 && bytes[marker - 1] == b'#' {
+        marker -= 1;
+    }
+    let raw_suffix = (marker > 0 && bytes[marker - 1] == b'r').then_some(&bytes[marker..quote]);
+    let mut index = quote + 1;
+    while index < bytes.len() {
+        if raw_suffix.is_none() && bytes[index] == b'\\' {
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        if bytes[index] == b'"' {
+            let after_quote = index + 1;
+            if let Some(hashes) = raw_suffix {
+                if bytes[after_quote..].starts_with(hashes) {
+                    return after_quote + hashes.len();
+                }
+            } else {
+                return after_quote;
+            }
+        }
+        index += 1;
+    }
+    bytes.len()
+}
+
+/// End (exclusive) of a char literal starting at the opening tick, or `None`
+/// when the tick is not one (for example a lifetime), so callers keep scanning.
+fn attribute_char_end(bytes: &[u8], tick: usize) -> Option<usize> {
+    let first = *bytes.get(tick + 1)?;
+    if first == b'\\' {
+        // Escape (`'\''`, `'\n'`, `'\x41'`, `'\u{1F980}'`): the closing tick is
+        // the first one after the escaped character, within a short window.
+        let limit = (tick + 12).min(bytes.len());
+        return (tick + 3..limit)
+            .find(|&i| bytes[i] == b'\'')
+            .map(|i| i + 1);
+    }
+    if first == b'\'' || first == b'\n' {
+        return None;
+    }
+    let width = match first {
+        0x00..=0x7f => 1,
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        _ => 4,
+    };
+    let close = tick + 1 + width;
+    (bytes.get(close) == Some(&b'\'')).then_some(close + 1)
+}
+
 fn attribute_paren_span(bytes: &[u8], open: usize) -> Option<(usize, usize, usize)> {
     let mut depth = 0usize;
     let mut index = open;
     while index < bytes.len() {
         match bytes[index] {
+            // A parenthesis inside a `reason = ")"` string is not attribute
+            // syntax; skipping the literal keeps a later suppression in the
+            // same attribute visible to the budget.
+            b'"' => {
+                index = attribute_string_end(bytes, index);
+                continue;
+            }
+            // A char literal such as `')'` or `'"'` is not attribute syntax;
+            // a lifetime tick has no closing quote and falls through.
+            b'\'' => {
+                if let Some(end) = attribute_char_end(bytes, index) {
+                    index = end;
+                    continue;
+                }
+            }
             b'(' => depth += 1,
             b')' => {
                 depth = depth.saturating_sub(1);
@@ -21585,6 +23439,16 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if path == ".ci/contabo-result.sh" {
+        return Some(
+            "Pinned EM CI requires a Bash result script; this lightweight jq consumer accepts only centrally authenticated exact-subject product imports without compiling or executing product code (#4988).",
+        );
+    }
+    if path == ".ci/contabo-product.sh" {
+        return Some(
+            "Pinned EM CI requires a Bash entrypoint; this shim only prepares Cargo temp and invokes the Rust-owned product adapter (#4988).",
+        );
+    }
     if matches!(
         path,
         "packaging/npm/launcher/bin/ripr.cjs" | "packaging/npm/launcher/lib/launcher.cjs"
@@ -21601,6 +23465,12 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     if path.starts_with("tools/python/portable-ripr-consumer/") && path.ends_with(".py") {
         return Some(
             "Portable packet consumer must run as stdlib Python 3.11+ in agent environments that have no Cargo/rustc.",
+        );
+    }
+
+    if path.starts_with(".github/actions/pr-candidate-admission/") && path.ends_with(".py") {
+        return Some(
+            "Pre-allocation admission runs before any Rust build exists, so its pure decision logic is stdlib Python on the hosted runner, kept out of embedded YAML shell (#5391, #2022).",
         );
     }
 
@@ -22230,8 +24100,89 @@ synonym (e.g. {hint}). To intentionally allow this line, append \
 mod tests;
 
 #[cfg(test)]
+mod release_website_tests;
+
+#[cfg(test)]
 #[path = "tests/sorted_allowlist_content.rs"]
 mod sorted_allowlist_content_tests;
+
+/// Mirrors `crates/ripr/src/output/json/report.rs::FINDINGS_BOUND_RUN_STATUS`
+/// (as `bench_agent_surfaces` and the DX scoreboard admission do).
+pub(crate) const CHECK_FINDINGS_BOUND_RUN_STATUS: &str = "limited_findings_bound";
+
+/// Whether a `ripr check --format json` document reports a complete analysis
+/// (#9010). `analysis_outcome.analysis_complete` is the analysis verdict, but a
+/// findings array cut by the byte budget adds `document_complete: false`; that
+/// document holds only a prefix of the findings and is never complete for a
+/// consumer. Returns `Some(false)` for it, otherwise the producer's boolean
+/// (`None` when absent or non-boolean). A non-boolean `document_complete` also
+/// fails closed.
+pub(crate) fn check_document_analysis_complete(check: &serde_json::Value) -> Option<bool> {
+    let outcome = check.get("analysis_outcome")?;
+    if let Some(document_complete) = outcome.get("document_complete")
+        && document_complete.as_bool() != Some(true)
+    {
+        return Some(false);
+    }
+    // Legacy shape: the bound disclosed only in `run_limitations[]`.
+    if check
+        .get("run_limitations")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|limitations| {
+            limitations.iter().any(|entry| {
+                ["run_status", "category"].iter().any(|key| {
+                    entry.get(key).and_then(serde_json::Value::as_str)
+                        == Some(CHECK_FINDINGS_BOUND_RUN_STATUS)
+                })
+            })
+        })
+    {
+        return Some(false);
+    }
+    outcome
+        .get("analysis_complete")
+        .and_then(serde_json::Value::as_bool)
+}
+
+#[cfg(test)]
+mod check_document_completeness_tests {
+    use super::check_document_analysis_complete;
+    use serde_json::json;
+
+    #[test]
+    fn bounded_document_is_never_complete_but_unbounded_control_is() {
+        let bounded = json!({"analysis_outcome": {
+            "analysis_complete": true, "document_complete": false,
+            "findings_rendered": 1, "findings_total": 3}});
+        assert_eq!(check_document_analysis_complete(&bounded), Some(false));
+        let corrupt = json!({"analysis_outcome": {
+            "analysis_complete": true, "document_complete": "false"}});
+        assert_eq!(check_document_analysis_complete(&corrupt), Some(false));
+        let legacy = json!({
+            "analysis_outcome": {"analysis_complete": true},
+            "run_limitations": [{"category": "limited_findings_bound"}]});
+        assert_eq!(check_document_analysis_complete(&legacy), Some(false));
+        let legacy_status = json!({
+            "analysis_outcome": {"analysis_complete": true},
+            "run_limitations": [{"run_status": "limited_findings_bound"}]});
+        assert_eq!(
+            check_document_analysis_complete(&legacy_status),
+            Some(false)
+        );
+        let other_limitation = json!({
+            "analysis_outcome": {"analysis_complete": true},
+            "run_limitations": [{"category": "limited_partial_scope"}]});
+        assert_eq!(
+            check_document_analysis_complete(&other_limitation),
+            Some(true)
+        );
+        let control = json!({"analysis_outcome": {"analysis_complete": true}});
+        assert_eq!(check_document_analysis_complete(&control), Some(true));
+        let incomplete = json!({"analysis_outcome": {"analysis_complete": false}});
+        assert_eq!(check_document_analysis_complete(&incomplete), Some(false));
+        assert_eq!(check_document_analysis_complete(&json!({})), None);
+    }
+}
 
 #[cfg(test)]
 mod inherited_failure_tests {

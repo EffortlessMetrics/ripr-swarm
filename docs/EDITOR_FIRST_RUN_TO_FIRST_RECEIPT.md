@@ -11,9 +11,9 @@ install/open -> diagnose setup -> read status -> inspect one diagnostic
 -> verify -> receipt -> refresh -> inspect first-pr packet
 ```
 
-Rust is the stable default. TypeScript and JavaScript are opt-in preview
-surfaces; Python preview is enabled automatically for Python-shaped
-repositories without a `ripr.toml`. Preview findings stay advisory,
+Rust is the stable default. JavaScript is an opt-in preview surface;
+TypeScript and Python previews are enabled automatically for TypeScript- or
+Python-shaped repositories without a `ripr.toml`. Preview findings stay advisory,
 syntax-first, and static-limit bounded.
 
 ## 1. Install And Open
@@ -116,7 +116,7 @@ Use one of the bounded editor actions:
 - `Copy Repo Gap Map` when you need read-only orientation across actionable,
   report-only, static-limit-only, preview, receipt, and no-action states.
 - `Open related test` when the path is workspace-local and same-language.
-- `Copy first repair packet` when the gap identity, repair route, verify
+- `Copy repair instructions for an AI agent` when the gap identity, repair route, verify
   command, and receipt command are all present.
 - `Copy verify command` and `Copy receipt command` when you want the command
   chain separately.

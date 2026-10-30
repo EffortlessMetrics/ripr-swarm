@@ -226,7 +226,7 @@ fn source_precheck_precedes_candidate_execution_and_keeps_source_receipt() -> Re
 }
 
 const NATIVE: &str = include_str!("../../.github/workflows/routed-rust.yml");
-const RESULT_NAME: &str = "    name: ${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
+const RESULT_NAME: &str = "    name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
 
 fn native_program(source: &str, name: &str) -> Result<String, String> {
     let (_, program) = source
@@ -292,14 +292,16 @@ fn prior_request_binding_is_current(source: &str) -> Result<bool, String> {
 
 #[test]
 fn native_request_and_nonrequest_names_are_event_bound() -> Result<(), String> {
-    assert!(NATIVE.contains("  pull_request:\n    types: [labeled]"));
+    assert!(NATIVE.contains("    types: [labeled]"));
     assert!(!NATIVE.contains("    types: [ready_for_review]"));
     assert!(NATIVE.contains(RESULT_NAME));
     assert!(!NATIVE.contains("    name: Ripr Rust Small Result\n"));
-    assert!(NATIVE.contains("  cancel-in-progress: false"));
-    assert!(NATIVE.contains("format('metadata-{0}', github.run_id)"));
+    assert!(NATIVE.contains("  cancel-in-progress: ${{ github.event_name == 'pull_request' }}"));
     assert!(NATIVE.contains(
-        "format('qualification-{0}-{1}', github.repository, github.event.pull_request.number)"
+        "format('{0}-{1}-nonrequest-{2}', github.workflow, github.event.pull_request.number, github.run_id)"
+    ));
+    assert!(NATIVE.contains(
+        "format('{0}-{1}-{2}', github.workflow, github.event.pull_request.number || github.ref, github.event_name)"
     ));
     assert!(prior_request_binding_is_current(NATIVE)?);
     Ok(())
@@ -317,9 +319,9 @@ fn requested_result_evaluates_admission_and_selected_obligations() -> Result<(),
     assert!(subject_binding_is_current(NATIVE)?);
     assert!(NATIVE.contains("    if: always()"));
     for fragment in [
-        "[ \"$ADMISSION_RESULT\" = success ]",
+        "[ \"$QUALIFICATION_RESULT\" = success ]",
         "[ \"$WINDOWS_RESULT\" = success ]",
-        "[ \"$PRIOR_RESULT\" = success ]",
+        "[ \"$QUALIFICATION_PRIOR_RESULT\" = success ]",
         "[ \"$PASTE_RESULT\" = success ]",
         "[ \"$CI_RESULT\" = success ]",
         "[ \"$WHEEL_RESULT\" = success ]",

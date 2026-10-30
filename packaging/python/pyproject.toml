@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "ripr-rs"
 dynamic = ["version"]
-description = "Find static mutation-exposure gaps before expensive mutation testing"
+description = "Static check for Rust changes: does your test suite notice if the behavior in this diff were wrong?"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
 license = "MIT OR Apache-2.0"

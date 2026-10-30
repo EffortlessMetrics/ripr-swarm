@@ -2,10 +2,10 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/currentness_matrix_move/input
 
-Summary: 2 probes (0 exposed, 0 weak, 0 unrevealed, 1 no path, 1 unknown); 2 of 2 findings unsuppressed
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 1 no test path, 1 unclear. 2 found, 0 suppressed by your settings (2 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 4 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 4 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Start here:
   State: no gap selected for repair
@@ -13,14 +13,15 @@ Start here:
 
 Hidden:
   All 2 finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence.
-    - ./src/lib.rs:3 (no path)
-    - ./src/lib.rs:3 (unknown)
+    - ./src/lib.rs:3 (no path); kind: predicate; reason: No detected boundary input for the changed predicate
+    - ./src/lib.rs:3 (unknown); kind: static_unknown; reason: No relevant oracle was detected
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
 
-Note: ripr found no static test path for any of the 2 changed expression(s) in this diff. Scope
-  analyzed: 1 changed Rust file(s), 2 changed expression(s), and 0 statically linked related
-  test(s). This is not a coverage assessment. A test may already exercise these changes through
-  macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
-  none does, add co-located tests that observe the changed behavior.
+Note: ripr established no static test path for any of the 2 changed expression(s) in this diff (1
+  found no path, 1 could not be classified). Scope analyzed: 1 changed Rust file(s), 2 changed
+  expression(s), and 0 statically linked related test(s). This is not a coverage assessment. A test
+  may already exercise these changes through macros, helper-call chains, or integration tests that
+  ripr's static model does not yet trace; if none does, add co-located tests that observe the
+  changed behavior.

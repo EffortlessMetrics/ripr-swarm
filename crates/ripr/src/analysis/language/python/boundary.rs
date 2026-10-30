@@ -4,7 +4,9 @@
 //! behaves differently when its operands are EQUAL. A strong exact-value
 //! assertion that calls the owner away from that boundary (`reserve(10, 3)`)
 //! still passes after the change, so reach plus a strong oracle does not
-//! discriminate it.
+//! discriminate it. The same rule covers an equality-to-equality constant
+//! change (`n == 11` -> `n == 10`): input 20 takes the else branch both ways.
+//! `!=` and `is` stay outside this gate.
 //!
 //! This mirrors the Rust activation rule
 //! (`analysis/classify/activation.rs::missing_boundary_discriminator`):
@@ -36,6 +38,7 @@
 
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::discriminators::{is_literal_python_model_field_value, python_string_literal_value};
+use super::guard_activation::name_rebound_in_owner;
 use super::module_constants::PythonModuleConstant;
 use super::no_behavior::{
     call_arglists_with_offsets, call_segment_keyword_name, matching_call_paren,
@@ -46,12 +49,17 @@ use super::related_tests::{
     owner_module_callees, owner_module_paths, python_text_hides_code, test_body_binds_local,
 };
 use super::{PythonOwner, PythonTest};
-use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
+use crate::{
+    domain::{OracleStrength, OwnerKind, ValueContext},
+    value_origins::LocatedValueFact as ValueFact,
+};
 use std::collections::BTreeMap;
 
 /// One strong related call to the owner with the literal value each bound
 /// parameter takes (an explicit argument or a literal default).
 pub(super) struct PythonOwnerCallValues {
+    /// Test file the call was read from (#8389).
+    pub(super) file: std::path::PathBuf,
     pub(super) line: usize,
     pub(super) text: String,
     pub(super) values: BTreeMap<String, String>,
@@ -76,6 +84,7 @@ pub(super) fn strong_owner_call_values(
     let rows = rows
         .into_iter()
         .map(|row| PythonOwnerCallValues {
+            file: row.file,
             line: row.line,
             text: row.text,
             values: row
@@ -138,20 +147,27 @@ pub(super) struct PythonBoundaryEvidence {
 }
 
 /// Boundary evidence for a changed Predicate line that contains a relational
-/// comparison (`<`, `<=`, `>`, `>=`). Returns None when the line has no
-/// relational comparison (for example `if flag:` or `if x == 5:`), leaving the
-/// caller's existing classification untouched.
+/// comparison (`<`, `<=`, `>`, `>=`) or a same-operator equality (`==` ->
+/// `==`). Returns None when the line has no such comparison (for example
+/// `if flag:`, `if x != 5:`, or `if x is None:`), leaving the caller's
+/// existing classification untouched. `relational_operators` still skips
+/// `==`/`!=` so returned equalities stay return-value probes.
 pub(super) fn python_boundary_evidence(
     line_text: &str,
+    old_line_text: Option<&str>,
     owner: &PythonOwner,
+    owner_source: Option<&str>,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Option<PythonBoundaryEvidence> {
     let condition = predicate_condition(line_text);
-    let operators = relational_operators(&condition);
-    if operators.is_empty() {
-        return None;
-    }
+    let relational = relational_operators(&condition);
+    let (operators, old_equality_operands) = if relational.is_empty() {
+        let gate = equality_predicate_gate(&condition, old_line_text)?;
+        (gate.operators, gate.old_operands)
+    } else {
+        (relational, None)
+    };
     let operands = match operators.as_slice() {
         [(start, len)] => simple_comparison_operands(&condition, *start, *len),
         _ => None,
@@ -162,6 +178,51 @@ pub(super) fn python_boundary_evidence(
 
     let constants = unrebound_constants(owner, related_candidates);
     let rows = strong_owner_call_rows(owner, &constants, related_candidates, focus);
+    if let (Some((left, right)), Some(old)) = (&operands, old_line_text)
+        && reversing_flip(&condition, old, left, right)
+        && rows.iter().any(|row| {
+            matches!(
+                (
+                    resolve_operand(left, row, &constants),
+                    resolve_operand(right, row, &constants),
+                ),
+                (Some(l), Some(r)) if !literals_equal(&l, &r)
+            )
+        })
+    {
+        // A reversing flip (`a > b` -> `a < b`) changes the result for every
+        // unequal pair, not only at the boundary. A strong call that places
+        // the operands at two statically unequal literals therefore
+        // discriminates it, and the equality boundary is not what differs.
+        // Calls that only place the operands equal (or unresolved) fall
+        // through to the adjacent-boundary rules below and stay unproven.
+        return None;
+    }
+    if let (Some((left, right)), Some(source)) = (&operands, owner_source) {
+        for operand in [left, right] {
+            if owner
+                .parameters
+                .iter()
+                .any(|parameter| parameter.name == *operand)
+                && name_rebound_in_owner(source, owner, operand)
+            {
+                // The owner rebinds the operand (a loop counter such as
+                // `start -= 1`), so the call argument does not stay the
+                // value the predicate reads and the boundary may be reached
+                // inside the owner. Static evidence cannot place the input
+                // either way: unknown, never a missing-boundary gap.
+                return Some(PythonBoundaryEvidence {
+                    activation: BoundaryActivation::Unresolved,
+                    discriminator: None,
+                    observed_values: Vec::new(),
+                    reason: format!(
+                        "`{operand}` is rebound inside `{}`, so a call argument does not fix its value at the changed boundary of `{condition}`",
+                        owner.name
+                    ),
+                });
+            }
+        }
+    }
     let mut observed_values: Vec<ValueFact> = rows
         .iter()
         .flat_map(|row| {
@@ -169,6 +230,7 @@ pub(super) fn python_boundary_evidence(
                 .iter()
                 .filter(|(_, binding)| !binding.from_default)
                 .map(|(parameter, binding)| ValueFact {
+                    file: Some(row.file.clone()),
                     line: row.line,
                     text: row.text.clone(),
                     value: format!("{parameter} = {}", binding.value),
@@ -176,6 +238,21 @@ pub(super) fn python_boundary_evidence(
                 })
         })
         .collect();
+    // A comprehension filter ranges over a parameter's elements, so a call
+    // that binds that parameter to a literal list is an input the rule can see.
+    let filter = python_comprehension_filter(line_text);
+    if let Some(filter) = &filter {
+        observed_values.extend(rows.iter().filter_map(|row| {
+            let elements = row.elements.get(filter.iterable)?;
+            Some(ValueFact {
+                file: Some(row.file.clone()),
+                line: row.line,
+                text: row.text.clone(),
+                value: format!("{} = [{}]", filter.iterable, elements.join(", ")),
+                context: ValueContext::FunctionArgument,
+            })
+        }));
+    }
     if observed_values.is_empty() {
         return Some(PythonBoundaryEvidence {
             activation: BoundaryActivation::Unresolved,
@@ -207,17 +284,36 @@ pub(super) fn python_boundary_evidence(
         });
     };
 
-    let mut observed = false;
+    let mut observed_new = false;
+    let mut observed_old = false;
     let mut left_values = Vec::new();
     let mut right_values = Vec::new();
+    // The comprehension local takes each element of its iterable; any other
+    // operand resolves to its one value.
+    let candidates = |operand: &str, row: &CallRow| -> Vec<String> {
+        match &filter {
+            Some(filter) if filter.local == operand => row
+                .elements
+                .get(filter.iterable)
+                .cloned()
+                .unwrap_or_default(),
+            _ => resolve_operand(operand, row, &constants)
+                .into_iter()
+                .collect(),
+        }
+    };
     for row in &rows {
-        let left_value = resolve_operand(&left, row, &constants);
-        let right_value = resolve_operand(&right, row, &constants);
-        if let (Some(left_value), Some(right_value)) = (&left_value, &right_value)
-            && literals_equal(left_value, right_value)
-        {
-            observed = true;
+        let left_candidates = candidates(&left, row);
+        let right_candidates = candidates(&right, row);
+        if let Some((left_value, right_value)) = left_candidates.iter().find_map(|left_value| {
+            right_candidates
+                .iter()
+                .find(|right_value| literals_equal(left_value, right_value))
+                .map(|right_value| (left_value, right_value))
+        }) {
+            observed_new = true;
             observed_values.push(ValueFact {
+                file: Some(row.file.clone()),
                 line: row.line,
                 text: format!(
                     "{} | {}; {}",
@@ -229,16 +325,81 @@ pub(super) fn python_boundary_evidence(
                 context: ValueContext::FunctionArgument,
             });
         }
-        left_values.extend(left_value);
-        right_values.extend(right_value);
+        left_values.extend(left_candidates);
+        right_values.extend(right_candidates);
+        if let Some((old_left, old_right)) = &old_equality_operands {
+            let old_left_value = resolve_operand(old_left, row, &constants);
+            let old_right_value = resolve_operand(old_right, row, &constants);
+            if let (Some(old_left_value), Some(old_right_value)) =
+                (&old_left_value, &old_right_value)
+                && literals_equal(old_left_value, old_right_value)
+            {
+                observed_old = true;
+                observed_values.push(ValueFact {
+                    file: Some(row.file.clone()),
+                    line: row.line,
+                    text: format!(
+                        "{} | {}; {}",
+                        row.text,
+                        operand_provenance(old_left, old_left_value, &constants),
+                        operand_provenance(old_right, old_right_value, &constants)
+                    ),
+                    value: format!("{old_left} == {old_right}"),
+                    context: ValueContext::FunctionArgument,
+                });
+            }
+        }
     }
-    observed_values.sort_by(|a, b| {
-        a.line
-            .cmp(&b.line)
-            .then(a.value.cmp(&b.value))
-            .then(a.text.cmp(&b.text))
-    });
-    observed_values.dedup();
+    // A rewrite that keeps the predicate on every integer (`v >= 100` ->
+    // `v > 99`) changes no behavior, so what a test must notice is a wrong
+    // version of the new line. The equality row pins its operator flip, but
+    // Python's mutation tool also shifts a number literal up by one
+    // (mutmut: `n` -> `n + 1`). For `v > C` and `v <= C` (and their
+    // mirrors) that moves the boundary off the equality point to
+    // `v == C + 1`, which a further row must place (#10842). `v >= C` and
+    // `v < C` move it onto `v == C`. A behavior change keeps the equality
+    // rule: the equality row notices the edit itself (RIPR-SPEC-0238 #39).
+    let step = observed_new
+        .then(|| literal_step(&condition, &operators, &left, &right))
+        .flatten()
+        .filter(|step| {
+            static_operand(&step.variable, &constants).is_none()
+                && old_line_text.is_some_and(|old| integer_equivalent_rewrite(line_text, old))
+        })
+        .filter(|step| {
+            !rows.iter().any(|row| {
+                candidates(&step.variable, row)
+                    .iter()
+                    .any(|value| literals_equal(value, &step.value))
+            })
+        });
+    if let Some(step) = step {
+        let observed_lists = format!(
+            "observed {} values: {}",
+            step.variable,
+            list_or_unresolved(if step.variable == left {
+                left_values
+            } else {
+                right_values
+            })
+        );
+        crate::analysis::classify::sort_value_facts(&mut observed_values);
+        return Some(PythonBoundaryEvidence {
+            activation: BoundaryActivation::Missing,
+            discriminator: Some(format!("{} == {}", step.variable, step.value)),
+            observed_values,
+            reason: format!(
+                "A strong related test call places {left} equal to {right}, but none places {variable} equal to {value}, where the shifted bound `{shifted}` differs; {observed_lists}",
+                variable = step.variable,
+                value = step.value,
+                shifted = step.shifted,
+            ),
+        });
+    }
+    let observed = observed_new || observed_old;
+    // Preserve distinct source files while collapsing exact duplicate facts
+    // and ordering tied rows deterministically (#8389).
+    crate::analysis::classify::sort_value_facts(&mut observed_values);
 
     // An operand that no strong call resolves (`item.on_hand`, a test local)
     // leaves the boundary unknown rather than missed: the test input may sit
@@ -255,8 +416,12 @@ pub(super) fn python_boundary_evidence(
     } else {
         None
     };
-    let reason = if observed {
+    let reason = if observed_new {
         format!("A strong related test call places {left} equal to {right}")
+    } else if let Some((old_left, old_right)) = &old_equality_operands
+        && observed_old
+    {
+        format!("A strong related test call places {old_left} equal to {old_right}")
     } else {
         // A literal operand is its own value and a module constant names its
         // one value; only operands that vary with the test input are listed.
@@ -272,8 +437,14 @@ pub(super) fn python_boundary_evidence(
             .filter_map(|operand| module_constant(operand, &constants))
             .map(|constant| format!(" (module constant {})", constant_provenance(constant)))
             .collect::<String>();
+        let place = match &old_equality_operands {
+            Some((old_left, old_right)) if *old_left != left || *old_right != right => {
+                format!("{left} equal to {right} or {old_left} equal to {old_right}")
+            }
+            _ => format!("{left} equal to {right}"),
+        };
         format!(
-            "No strong related test call places {left} equal to {right}{constants}; {}",
+            "No strong related test call places {place}{constants}; {}",
             observed_lists.join("; ")
         )
     };
@@ -287,6 +458,384 @@ pub(super) fn python_boundary_evidence(
         observed_values,
         reason,
     })
+}
+
+/// Whether ONE related row's own calls provably leave the changed predicate
+/// boundary unexercised (#5491, RIPR-SPEC-0224 row-owned support). Unlike
+/// [`python_boundary_evidence`], which reads every strong row and is allowed
+/// to leave an operand unresolved, this holds only when every owner call of
+/// `candidate` binds, both compared operands resolve for every call, and no
+/// call places them on the boundary (new, or old for `==` -> `==`). Another
+/// row's input never counts, and an unreadable call, an unresolved operand or
+/// a computed comparison is unknown, not an omission. `all_candidates` only
+/// decides which module constants a related test rebinds.
+pub(super) fn python_row_boundary_omission(
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owner: &PythonOwner,
+    candidate: &PythonRelatedCandidate<'_>,
+    all_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> bool {
+    let condition = predicate_condition(line_text);
+    let relational = relational_operators(&condition);
+    // Old and new compared pairs. A relational change must keep the very same
+    // operands (`x >= 10` -> `x > 20` changes more than the operator), so its
+    // old pair is the new pair; an equality change must read both pairs.
+    let (operators, old_pair) = if relational.is_empty() {
+        let Some(gate) = equality_predicate_gate(&condition, old_line_text) else {
+            return false;
+        };
+        let Some(old_pair) = gate.old_operands else {
+            return false;
+        };
+        (gate.operators, Some(old_pair))
+    } else {
+        (relational, None)
+    };
+    let &[(start, len)] = operators.as_slice() else {
+        return false;
+    };
+    let Some((left, right)) = simple_comparison_operands(&condition, start, len) else {
+        return false;
+    };
+    let new_operator = condition[start..start + len].to_string();
+    // An equality change must be the whole condition on both sides, so a
+    // wider edit (`== 2 and f` -> `== 3 or f`) is not read as a constant move.
+    if old_pair.is_some()
+        && !(is_whole_comparison(&condition, &left, "==")
+            && old_line_text.is_some_and(|old| {
+                let old_condition = predicate_condition(old);
+                old_pair.as_ref().is_some_and(|(old_left, old_right)| {
+                    is_whole_comparison(&old_condition, old_left, "==")
+                        && is_whole_comparison(&old_condition, old_right, "==")
+                })
+            }))
+    {
+        return false;
+    }
+    // Recursion or a call back into project code can reach the boundary with
+    // inputs the test never names: the owner may call only builtins.
+    if owner.term_facts.calls_own_name()
+        || owner
+            .module_callees
+            .iter()
+            .chain(&owner.same_class_callees)
+            .any(|callee| {
+                callee == &owner.name
+                    || !super::row_reach::SAFE_BARE_CALLS.contains(&callee.as_str())
+            })
+    {
+        return false;
+    }
+    if old_pair.is_none()
+        && !relational_change_keeps_boundary(line_text, old_line_text, &left, &right, &new_operator)
+    {
+        return false;
+    }
+    // A compared parameter the body rebinds (`qty = qty + 1`) is not the
+    // call-site value; only parameters the body provably never rebinds count.
+    let operands = [Some(&left), Some(&right)]
+        .into_iter()
+        .chain(old_pair.iter().flat_map(|(l, r)| [Some(l), Some(r)]))
+        .flatten();
+    for operand in operands {
+        let base = integer_offset(operand).map_or(operand.as_str(), |(base, _)| base);
+        let is_parameter = owner
+            .parameters
+            .iter()
+            .any(|parameter| parameter.name == base);
+        if is_parameter && !owner.term_facts.is_stable_parameter(base) {
+            return false;
+        }
+    }
+    // A free function's bare-name call is the owner's only when this test's
+    // import resolves the name to the owner's module; a same-named function of
+    // another module is not an owner call.
+    let method_call = !matches!(owner.owner_kind, Some(OwnerKind::Function));
+    if !method_call && owner_module_callees(candidate.test, owner).is_empty() {
+        return false;
+    }
+    let names = owner_call_names(owner, candidate.test, method_call);
+    if !super::row_reach::row_reaches_owner_only_by_direct_calls(owner, candidate.test, &names) {
+        return false;
+    }
+    let constants = unrebound_constants(owner, all_candidates);
+    let (rows, gaps) =
+        strong_owner_call_rows_with_gaps(owner, &constants, std::slice::from_ref(candidate), focus);
+    if gaps || rows.is_empty() {
+        return false;
+    }
+    let off_boundary = |left_operand: &str, right_operand: &str, row: &CallRow| match (
+        resolve_operand(left_operand, row, &constants),
+        resolve_operand(right_operand, row, &constants),
+    ) {
+        (Some(left_value), Some(right_value)) => provably_unequal(&left_value, &right_value),
+        _ => false,
+    };
+    rows.iter().all(|row| {
+        off_boundary(&left, &right, row)
+            && old_pair
+                .as_ref()
+                .is_none_or(|(old_left, old_right)| off_boundary(old_left, old_right, row))
+    })
+}
+
+/// Whether `condition` is exactly `<operand> <operator> <operand>` (spacing
+/// aside), with no `and`/`or`/`not` or other term around it.
+fn is_whole_comparison(condition: &str, operand: &str, operator: &str) -> bool {
+    let squashed = condition.split_whitespace().collect::<Vec<_>>().join(" ");
+    let squashed = squashed.trim_start_matches('(').trim_end_matches(')');
+    squashed.contains(&format!(" {operator} "))
+        && squashed.contains(operand)
+        && !squashed
+            .split_whitespace()
+            .any(|word| matches!(word, "and" | "or" | "not" | "if" | "else" | "in" | "is"))
+}
+
+/// A relational change whose changed lines are identical once the single
+/// relational operator is normalized, with the same operands and the same
+/// direction (`>` <-> `>=`, `<` <-> `<=`): only inclusivity moves, so the old
+/// and new predicates agree everywhere but at equality. A reversed direction,
+/// a moved operand or any other edit on the line (`and force` -> `or force`)
+/// differs away from the boundary.
+fn relational_change_keeps_boundary(
+    line_text: &str,
+    old_line_text: Option<&str>,
+    left: &str,
+    right: &str,
+    new_operator: &str,
+) -> bool {
+    let Some(old) = old_line_text else {
+        return false;
+    };
+    let old_condition = predicate_condition(old);
+    let &[(start, len)] = relational_operators(&old_condition).as_slice() else {
+        return false;
+    };
+    let direction = |operator: &str| {
+        if operator.starts_with('>') {
+            Some(true)
+        } else if operator.starts_with('<') {
+            Some(false)
+        } else {
+            None
+        }
+    };
+    let old_operator = &old_condition[start..start + len];
+    if direction(old_operator).is_none()
+        || direction(old_operator) != direction(new_operator)
+        || !simple_comparison_operands(&old_condition, start, len)
+            .is_some_and(|(old_left, old_right)| old_left == left && old_right == right)
+    {
+        return false;
+    }
+    // Same line once the operator is blanked out on both sides.
+    let new_condition = predicate_condition(line_text);
+    let &[(new_start, new_len)] = relational_operators(&new_condition).as_slice() else {
+        return false;
+    };
+    let blank = |line: &str, condition: &str, at: usize, width: usize| {
+        let marked = format!("{}\u{1}{}", &condition[..at], &condition[at + width..]);
+        line.replacen(condition, &marked, 1)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    blank(old, &old_condition, start, len) == blank(line_text, &new_condition, new_start, new_len)
+}
+
+/// Both literals are of one comparable kind and differ. Mixed kinds
+/// (`True` vs `1`), escaped or prefixed strings and anything unparsed are
+/// unknown, never "unequal".
+fn provably_unequal(left: &str, right: &str) -> bool {
+    #[derive(PartialEq)]
+    enum Kind {
+        Number(String),
+        Text(String),
+        Singleton(String),
+    }
+    fn kind(value: &str) -> Option<Kind> {
+        if matches!(value, "True" | "False" | "None") {
+            return Some(Kind::Singleton(value.to_string()));
+        }
+        if let Some(number) = canonical_decimal(value) {
+            return Some(Kind::Number(number));
+        }
+        let quoted = value.starts_with(['\'', '"']);
+        if quoted && !value.contains('\\') {
+            return python_string_literal_value(value).map(Kind::Text);
+        }
+        None
+    }
+    match (kind(left), kind(right)) {
+        (Some(left), Some(right)) => {
+            std::mem::discriminant(&left) == std::mem::discriminant(&right) && left != right
+        }
+        _ => false,
+    }
+}
+
+/// Whether the old and new predicates are each one relational comparison of
+/// the same name against an integer literal, true on exactly the same
+/// integers (`v >= 100` and `v > 99`, `v < 10` and `9 >= v`), with the rest
+/// of the condition unchanged (`and flag` -> `or flag` is a behavior change)
+/// and the line around the condition unchanged (`return 0 if v >= 100 else 6`
+/// -> `return 0 if v > 99 else 5` changes a branch value).
+fn integer_equivalent_rewrite(new_line_text: &str, old_line_text: &str) -> bool {
+    let new_condition = predicate_condition(new_line_text);
+    let old_condition = predicate_condition(old_line_text);
+    let outside = |line: &str, condition: &str| {
+        line.replacen(condition, "\u{0}", 1)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    if outside(new_line_text, &new_condition) != outside(old_line_text, &old_condition) {
+        return false;
+    }
+    match (integer_bound(&new_condition), integer_bound(&old_condition)) {
+        (Some(new), Some(old)) => new == old,
+        _ => false,
+    }
+}
+
+/// The inclusive bound a comparison of a name against an integer literal
+/// sets on the name, and the condition text around the comparison:
+/// (name, lower bound?, bound, surrounding text).
+fn integer_bound(condition: &str) -> Option<(String, bool, i128, String)> {
+    let operators = relational_operators(condition);
+    let [(start, len)] = operators.as_slice() else {
+        return None;
+    };
+    let operator = condition.get(*start..start + len)?;
+    let (left, right) = simple_comparison_operands(condition, *start, *len)?;
+    let before = condition
+        .get(..*start)?
+        .trim_end()
+        .strip_suffix(left.as_str())?;
+    let after = condition
+        .get(start + len..)?
+        .trim_start()
+        .strip_prefix(right.as_str())?;
+    let surrounding = format!("{before}\u{0}{after}")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let integer = |operand: &str| -> Option<i128> {
+        let value = canonical_decimal(&literal_value(operand)?)?;
+        if value.contains('.') {
+            return None;
+        }
+        value.parse().ok()
+    };
+    // Read as `name <operator> bound`.
+    let (name, operator, bound) = match (integer(&left), integer(&right)) {
+        (None, Some(bound)) => (left, operator, bound),
+        (Some(bound), None) => (
+            right,
+            match operator {
+                "<" => ">",
+                "<=" => ">=",
+                ">" => "<",
+                ">=" => "<=",
+                _ => return None,
+            },
+            bound,
+        ),
+        _ => return None,
+    };
+    if literal_value(&name).is_some() {
+        return None;
+    }
+    let (lower, bound) = match operator {
+        ">" => (true, bound.checked_add(1)?),
+        ">=" => (true, bound),
+        "<" => (false, bound.checked_sub(1)?),
+        "<=" => (false, bound),
+        _ => return None,
+    };
+    Some((name, lower, bound, surrounding))
+}
+
+/// The row a one-up shift of a literal integer bound needs (#10842).
+struct LiteralStep {
+    /// The operand that varies with the test input.
+    variable: String,
+    /// `C + 1`, where the shifted comparison first differs.
+    value: String,
+    /// The comparison with the bound shifted (`amount > 100`).
+    shifted: String,
+}
+
+/// For one relational comparison of a name against an integer literal,
+/// the input value at which the literal shifted up by one changes the
+/// result, when that is not the equality point already required. A bound
+/// spelled as a module constant or an offset (`LIMIT - 1`), a float and a
+/// comparison of two names keep the equality rule alone.
+fn literal_step(
+    condition: &str,
+    operators: &[(usize, usize)],
+    left: &str,
+    right: &str,
+) -> Option<LiteralStep> {
+    let [(start, len)] = operators else {
+        return None;
+    };
+    let operator = condition.get(*start..start + len)?;
+    let integer = |operand: &str| {
+        literal_value(operand)
+            .and_then(|value| canonical_decimal(&value))
+            .filter(|value| !value.contains('.'))
+    };
+    let (variable, bound, needs_step) = match (integer(left), integer(right)) {
+        (None, Some(bound)) => (left, bound, matches!(operator, ">" | "<=")),
+        (Some(bound), None) => (right, bound, matches!(operator, "<" | ">=")),
+        _ => return None,
+    };
+    if !needs_step || literal_value(variable).is_some() {
+        return None;
+    }
+    let value = shifted_integer(&bound, 1)?;
+    let shifted = if variable == left {
+        format!("{left} {operator} {value}")
+    } else {
+        format!("{value} {operator} {right}")
+    };
+    Some(LiteralStep {
+        variable: variable.to_string(),
+        value,
+        shifted,
+    })
+}
+
+/// Whether the old predicate compares the same operands in the same order
+/// with the mirrored relational operator (`<` <-> `>`, `<=` <-> `>=`).
+fn reversing_flip(new_condition: &str, old_line_text: &str, left: &str, right: &str) -> bool {
+    let old_condition = predicate_condition(old_line_text);
+    let new_ops = relational_operators(new_condition);
+    let old_ops = relational_operators(&old_condition);
+    let ([(new_start, new_len)], [(old_start, old_len)]) = (new_ops.as_slice(), old_ops.as_slice())
+    else {
+        return false;
+    };
+    let Some((old_left, old_right)) =
+        simple_comparison_operands(&old_condition, *old_start, *old_len)
+    else {
+        return false;
+    };
+    let (Some(new_op), Some(old_op)) = (
+        new_condition.get(*new_start..new_start + new_len),
+        old_condition.get(*old_start..old_start + old_len),
+    ) else {
+        return false;
+    };
+    old_left == left
+        && old_right == right
+        && matches!(
+            (old_op, new_op),
+            ("<", ">") | (">", "<") | ("<=", ">=") | (">=", "<=")
+        )
 }
 
 fn operand_provenance(operand: &str, value: &str, constants: &[PythonModuleConstant]) -> String {
@@ -341,6 +890,9 @@ fn predicate_condition(line_text: &str) -> String {
     if let Some(condition) = python_return_comparison(line_text) {
         return condition.to_string();
     }
+    if let Some(filter) = python_comprehension_filter(line_text) {
+        return filter.condition.to_string();
+    }
     let text = line_text.trim().trim_end_matches(':').trim();
     for prefix in ["if ", "elif ", "while "] {
         if let Some(stripped) = text.strip_prefix(prefix) {
@@ -353,6 +905,89 @@ fn predicate_condition(line_text: &str) -> String {
         return condition.trim().to_string();
     }
     text.to_string()
+}
+
+/// The `if` clause of a comprehension or generator expression on a changed
+/// line: `sum(p for p in prices if p > 0)`.
+pub(super) struct ComprehensionFilter<'a> {
+    pub(super) condition: &'a str,
+    /// The element name the clause binds (`p`).
+    pub(super) local: &'a str,
+    /// The iterable it ranges over (`prices`), a plain name.
+    pub(super) iterable: &'a str,
+}
+
+/// The filter clause of a comprehension when it is exactly one relational
+/// comparison between simple operands. The kept elements change only where an
+/// element meets the bound, so the line is a predicate: an exact oracle over
+/// elements far from the bound passes before and after the change. A clause
+/// with several comparisons, a computed operand, or an iterable that is not a
+/// plain name stays a return-value probe.
+pub(super) fn python_comprehension_filter(line_text: &str) -> Option<ComprehensionFilter<'_>> {
+    let text = line_text.trim();
+    let mut quote: Option<char> = None;
+    let mut depth = 0usize;
+    let mut for_at = None;
+    for (idx, ch) in text.char_indices() {
+        if let Some(open) = quote {
+            if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ if depth > 0 && text[idx..].starts_with(" for ") => {
+                for_at = Some(idx + " for ".len());
+                break;
+            }
+            _ => {}
+        }
+    }
+    let rest = text.get(for_at?..)?;
+    let (local, rest) = rest.split_once(" in ")?;
+    let (iterable, rest) = rest.split_once(" if ")?;
+    let local = local.trim();
+    let iterable = iterable.trim();
+    if !super::static_limits::is_simple_python_identifier(local)
+        || !super::static_limits::is_simple_python_identifier(iterable)
+    {
+        return None;
+    }
+    let mut closer = rest.len();
+    let mut nested = 0usize;
+    for (idx, ch) in rest.char_indices() {
+        match ch {
+            '(' | '[' | '{' => nested += 1,
+            ')' | ']' | '}' if nested == 0 => {
+                closer = idx;
+                break;
+            }
+            ')' | ']' | '}' => nested -= 1,
+            _ => {}
+        }
+    }
+    let condition = rest.get(..closer)?.trim();
+    let [(start, len)] = relational_operators(condition)[..] else {
+        return None;
+    };
+    let (left, right) = simple_comparison_operands(condition, start, len)?;
+    // The comparison must be the whole clause: a trailing `and False` or a
+    // further `if` clause can exclude the very element that meets the bound.
+    let whole_sides = is_simple_operand(&left)
+        && is_simple_operand(&right)
+        && condition.get(..start)?.trim() == left
+        && condition.get(start + len..)?.trim() == right;
+    if !whole_sides {
+        return None;
+    }
+    Some(ComprehensionFilter {
+        condition,
+        local,
+        iterable,
+    })
 }
 
 /// The comparison of a `return <a> <op> <b>` line whose returned expression
@@ -424,6 +1059,110 @@ fn relational_operators(text: &str) -> Vec<(usize, usize)> {
         idx += 1;
     }
     operators
+}
+
+struct EqualityGate {
+    operators: Vec<(usize, usize)>,
+    old_operands: Option<(String, String)>,
+}
+
+/// `==` -> `==` only. Mixed old forms (`!=`, `is`, relational) stay outside
+/// the gate so complementary mutations keep today's verdict.
+fn equality_predicate_gate(condition: &str, old_line_text: Option<&str>) -> Option<EqualityGate> {
+    if contains_ungated_identity_or_inequality(condition) {
+        return None;
+    }
+    let operators = equality_operators(condition);
+    if operators.len() != 1 {
+        return None;
+    }
+    // `==` -> `==` only: an added line has no old equality to compare.
+    let old = old_line_text?;
+    let old_condition = predicate_condition(old);
+    if contains_ungated_identity_or_inequality(&old_condition)
+        || !relational_operators(&old_condition).is_empty()
+    {
+        return None;
+    }
+    let old_eq = equality_operators(&old_condition);
+    let [(start, len)] = old_eq.as_slice() else {
+        return None;
+    };
+    let old_operands = simple_comparison_operands(&old_condition, *start, *len);
+    Some(EqualityGate {
+        operators,
+        old_operands,
+    })
+}
+
+/// Byte offset and length of every `==` comparison outside string literals.
+/// `!=` is not an equality boundary (handle `==` only).
+fn equality_operators(text: &str) -> Vec<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut operators = Vec::new();
+    let mut quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        let byte = bytes[idx];
+        if escaped {
+            escaped = false;
+            idx += 1;
+            continue;
+        }
+        if byte == b'\\' {
+            escaped = true;
+            idx += 1;
+            continue;
+        }
+        if let Some(active) = quote {
+            if byte == active {
+                quote = None;
+            }
+            idx += 1;
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' => quote = Some(byte),
+            b'#' => break,
+            b'=' => {
+                let next = bytes.get(idx + 1).copied();
+                let prev = idx.checked_sub(1).map(|p| bytes[p]);
+                if next == Some(b'=') && prev != Some(b'!') && prev != Some(b'=') {
+                    operators.push((idx, 2));
+                    idx += 2;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        idx += 1;
+    }
+    operators
+}
+
+fn contains_ungated_identity_or_inequality(text: &str) -> bool {
+    live_token(text, "!=") || live_keyword(text, "is")
+}
+
+fn live_token(text: &str, token: &str) -> bool {
+    text.match_indices(token)
+        .any(|(idx, _)| !python_text_hides_code(text, idx))
+}
+
+fn live_keyword(text: &str, keyword: &str) -> bool {
+    text.match_indices(keyword).any(|(idx, _)| {
+        let end = idx + keyword.len();
+        !python_text_hides_code(text, idx)
+            && !text[..idx]
+                .chars()
+                .next_back()
+                .is_some_and(is_python_identifier_char)
+            && !text[end..]
+                .chars()
+                .next()
+                .is_some_and(is_python_identifier_char)
+    })
 }
 
 /// The two operands of the only relational comparison in `condition`, when
@@ -600,6 +1339,14 @@ fn starts_with_keyword(text: &str, keyword: &str) -> bool {
 /// Owner parameters paired with the parametrize argname their argument names.
 type CaseArguments = Vec<(String, String)>;
 
+/// What one call's arguments bind: scalar literals, the parametrize pairing,
+/// and the element literals of list-like arguments.
+type BoundArguments = (
+    BTreeMap<String, Binding>,
+    CaseArguments,
+    BTreeMap<String, Vec<String>>,
+);
+
 /// A literal binding for one owner parameter in one test call.
 #[derive(Clone, Debug)]
 pub(super) struct Binding {
@@ -610,9 +1357,15 @@ pub(super) struct Binding {
 /// One analyzable call to the owner from a strong related test.
 #[derive(Clone, Debug)]
 pub(super) struct CallRow {
+    /// Test file the call was read from (#8389).
+    pub(super) file: std::path::PathBuf,
     pub(super) line: usize,
     pub(super) text: String,
     pub(super) bindings: BTreeMap<String, Binding>,
+    /// The scalar literals of each owner parameter bound to a list, tuple or
+    /// set display (`prices` in `fetch_total([3, -1, 4])`), for the
+    /// comprehension-element boundary rule. Never read as a scalar binding.
+    pub(super) elements: BTreeMap<String, Vec<String>>,
 }
 
 /// Owner calls from related tests whose strongest assertion is strong: the
@@ -668,46 +1421,94 @@ pub(super) fn strong_owner_call_rows_with_gaps(
         if !strong {
             continue;
         }
-        // The test body, plus the call each callable-form exception assertion
-        // makes (RIPR-SPEC-0238 rule 13: `assertRaisesRegex(E, 'm', owner, 20)`
-        // calls `owner(20)`).
-        let mut sources = vec![(candidate.test.line, candidate.test.body_text.as_str())];
-        sources.extend(candidate.test.assertions.iter().filter_map(|assertion| {
-            assertion
-                .callable_call
-                .as_deref()
-                .map(|call| (assertion.line, call))
-        }));
-        let mut candidate_rows = 0usize;
-        for name in owner_call_names(owner, candidate.test, method_call) {
-            for (first_line, text) in &sources {
-                for (offset, arglist) in call_arglists_with_offsets(text, &name, method_call) {
-                    let Some((bindings, case_arguments)) =
-                        bind_call_arguments(owner, constants, candidate.test, skip, arglist)
-                    else {
-                        gaps = true;
-                        continue;
-                    };
-                    candidate_rows += 1;
-                    let line = first_line + text[..offset].matches('\n').count();
-                    let text = call_line_text(text, offset);
-                    match (&candidate.test.parametrize, case_arguments.is_empty()) {
-                        (Some(parametrize), false) => {
-                            rows.extend(parametrize.cases.iter().map(|case| {
-                                parametrize_case_row(line, &text, &bindings, &case_arguments, case)
-                            }));
-                        }
-                        _ => rows.push(CallRow {
-                            line,
-                            text,
-                            bindings,
-                        }),
+        let (candidate_rows, candidate_gaps) =
+            candidate_call_rows(owner, constants, candidate, method_call, skip);
+        rows.extend(candidate_rows);
+        gaps |= candidate_gaps;
+    }
+    (rows, gaps)
+}
+
+/// The analyzable owner calls of one related test regardless of how strong
+/// its selected assertion is, for a rule that reads a weaker assertion
+/// (`caplog_text.rs`). None when any call of the test goes unbound or the
+/// test makes no recognized owner call.
+pub(super) fn owner_call_rows_for_candidate(
+    owner: &PythonOwner,
+    constants: &[PythonModuleConstant],
+    candidate: &PythonRelatedCandidate<'_>,
+) -> Option<Vec<CallRow>> {
+    if owner.owner_kind != Some(OwnerKind::Function) || !candidate.relation.uses_oracle() {
+        return None;
+    }
+    let (rows, gaps) = candidate_call_rows(owner, constants, candidate, false, 0);
+    (!gaps && !rows.is_empty()).then_some(rows)
+}
+
+/// One related test's owner-call rows, and whether some call went unbound or
+/// none was recognized.
+fn candidate_call_rows(
+    owner: &PythonOwner,
+    constants: &[PythonModuleConstant],
+    candidate: &PythonRelatedCandidate<'_>,
+    method_call: bool,
+    skip: usize,
+) -> (Vec<CallRow>, bool) {
+    let mut rows = Vec::new();
+    let mut gaps = false;
+    // The test body, plus the call each callable-form exception assertion
+    // makes (RIPR-SPEC-0238 rule 13: `assertRaisesRegex(E, 'm', owner, 20)`
+    // calls `owner(20)`).
+    let mut sources = vec![(candidate.test.line, candidate.test.body_text.as_str())];
+    sources.extend(candidate.test.assertions.iter().filter_map(|assertion| {
+        assertion
+            .callable_call
+            .as_deref()
+            .map(|call| (assertion.line, call))
+    }));
+    let mut candidate_rows = 0usize;
+    for name in owner_call_names(owner, candidate.test, method_call) {
+        for (first_line, text) in &sources {
+            for (offset, arglist) in call_arglists_with_offsets(text, &name, method_call) {
+                let Some((bindings, case_arguments, elements)) =
+                    bind_call_arguments(owner, constants, candidate.test, skip, arglist)
+                else {
+                    gaps = true;
+                    continue;
+                };
+                candidate_rows += 1;
+                let line = first_line + text[..offset].matches('\n').count();
+                // The call runs from its name to its closing parenthesis,
+                // the byte after the arglist; whitespace between the name
+                // and `(` is part of it.
+                let arglist_end = arglist.as_ptr().addr() - text.as_ptr().addr() + arglist.len();
+                let text = call_line_text(text, offset, arglist_end + 1 - offset);
+                match (&candidate.test.parametrize, case_arguments.is_empty()) {
+                    (Some(parametrize), false) => {
+                        rows.extend(parametrize.cases.iter().map(|case| {
+                            parametrize_case_row(
+                                &candidate.test.file,
+                                line,
+                                &text,
+                                &bindings,
+                                &elements,
+                                &case_arguments,
+                                case,
+                            )
+                        }));
                     }
+                    _ => rows.push(CallRow {
+                        file: candidate.test.file.clone(),
+                        line,
+                        text,
+                        bindings,
+                        elements,
+                    }),
                 }
             }
         }
-        gaps |= candidate_rows == 0;
     }
+    gaps |= candidate_rows == 0;
     (rows, gaps)
 }
 
@@ -715,7 +1516,11 @@ pub(super) fn strong_owner_call_rows_with_gaps(
 /// module-qualified spelling (`utils.sign`, #4567); a method is only called
 /// through its own attribute name. Module-qualified calls must bind here too,
 /// or a call the alignment credits would skip the boundary gate.
-fn owner_call_names(owner: &PythonOwner, test: &PythonTest, method_call: bool) -> Vec<String> {
+pub(super) fn owner_call_names(
+    owner: &PythonOwner,
+    test: &PythonTest,
+    method_call: bool,
+) -> Vec<String> {
     let mut names = vec![owner.name.clone()];
     if !method_call {
         names.extend(
@@ -735,12 +1540,56 @@ fn owner_call_names(owner: &PythonOwner, test: &PythonTest, method_call: bool) -
     names
 }
 
-fn call_line_text(body: &str, offset: usize) -> String {
+/// The longest source excerpt, in bytes, a call row keeps as evidence text.
+/// A row is kept per owner call and its text is cloned into every value fact
+/// of that call, so an unbounded physical line (`assert f(0) == 1 and f(1) == 1
+/// and ...`) would cost O(calls x line length) memory. An ordinary line is
+/// shown whole; only a longer one is cut to a window of at most this many
+/// bytes around the call (plus up to six bytes of `...` cut markers).
+const CALL_ROW_TEXT_LIMIT: usize = 240;
+/// How much of a cut line is kept before the call; the rest follows it.
+const CALL_ROW_TEXT_LEAD: usize = 60;
+
+fn call_line_text(body: &str, offset: usize, call_len: usize) -> String {
     let start = body[..offset].rfind('\n').map_or(0, |idx| idx + 1);
     let end = body[offset..]
         .find('\n')
         .map_or(body.len(), |idx| offset + idx);
-    body[start..end].trim().to_string()
+    let line = body[start..end].trim();
+    if line.len() <= CALL_ROW_TEXT_LIMIT {
+        return line.to_string();
+    }
+    // Cut to a window that starts a little before the call, on character
+    // boundaries, and mark each cut side.
+    // A call that fits the window is kept whole: the lead shrinks so its
+    // closing parenthesis stays inside.
+    let lead = CALL_ROW_TEXT_LEAD.min(CALL_ROW_TEXT_LIMIT.saturating_sub(call_len));
+    // Round the start forward (toward the call) so the window never loses
+    // trailing bytes of a call that fits it.
+    let mut from = offset.saturating_sub(lead).max(start);
+    while !body.is_char_boundary(from) {
+        from += 1;
+    }
+    let mut to = (from + CALL_ROW_TEXT_LIMIT).min(end);
+    while !body.is_char_boundary(to) {
+        to -= 1;
+    }
+    let window = body[from..to].trim();
+    format!(
+        "{}{window}{}",
+        // A marker only where visible text was cut, not bare indentation or
+        // trailing whitespace.
+        if body[start..from].trim().is_empty() {
+            ""
+        } else {
+            "..."
+        },
+        if body[to..end].trim().is_empty() {
+            ""
+        } else {
+            "..."
+        }
+    )
 }
 
 /// Bind a call's literal arguments to owner parameters. Positional arguments
@@ -755,13 +1604,18 @@ fn call_line_text(body: &str, offset: usize) -> String {
 /// parametrize argname of the test (`sign(x)` under `parametrize("x", ...)`)
 /// with that argname, for per-case expansion (#4559). An argname the test body
 /// rebinds is not paired.
+/// Whether the call segment is `name=value` (a keyword argument).
+fn keyword_segment(segment: &str) -> bool {
+    call_segment_keyword_name(segment).is_some()
+}
+
 fn bind_call_arguments(
     owner: &PythonOwner,
     constants: &[PythonModuleConstant],
     test: &PythonTest,
     skip: usize,
     arglist: &str,
-) -> Option<(BTreeMap<String, Binding>, CaseArguments)> {
+) -> Option<BoundArguments> {
     let positional: Vec<&str> = owner
         .parameters
         .iter()
@@ -771,6 +1625,7 @@ fn bind_call_arguments(
         .collect();
     let mut bound_names = Vec::new();
     let mut bindings = BTreeMap::new();
+    let mut elements = BTreeMap::new();
     let mut case_arguments = Vec::new();
     let mut position = 0usize;
     for segment in split_top_level_args(arglist) {
@@ -798,8 +1653,22 @@ fn bind_call_arguments(
         let Some(name) = name else {
             continue;
         };
+        // A keyword names a declared, keyword-bindable parameter or it is
+        // captured by `**kwargs`; it never binds an owner local of that name
+        // (`limit = 10` in the body is not `limit=3` at the call).
+        if !owner
+            .parameters
+            .iter()
+            .skip(skip)
+            .any(|parameter| parameter.name == name && !parameter.positional_only)
+            && keyword_segment(segment)
+        {
+            continue;
+        }
         bound_names.push(name.clone());
-        if let Some(value) =
+        if let Some(literals) = literal_elements(value) {
+            elements.insert(name, literals);
+        } else if let Some(value) =
             literal_value(value).or_else(|| imported_constant_value(owner, constants, test, value))
         {
             bindings.insert(
@@ -833,25 +1702,52 @@ fn bind_call_arguments(
             );
         }
     }
-    Some((bindings, case_arguments))
+    Some((bindings, case_arguments, elements))
+}
+
+/// The scalar literals of a list, tuple or set display whose every element is
+/// a scalar literal (`[3, -1, 4]`); None for anything else, including a
+/// display with a computed or nested element, whose elements are not all
+/// known.
+fn literal_elements(text: &str) -> Option<Vec<String>> {
+    let text = text.trim();
+    let inner = ["[]", "()", "{}"].into_iter().find_map(|pair| {
+        let (open, close) = (pair.chars().next()?, pair.chars().nth(1)?);
+        text.strip_prefix(open)?.strip_suffix(close)
+    })?;
+    let segments: Vec<&str> = split_top_level_args(inner)
+        .into_iter()
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    segments
+        .iter()
+        .map(|segment| literal_value(segment))
+        .collect()
 }
 
 /// One call row per parametrize case: each paired owner parameter binds the
 /// case's argvalue when it is a literal and stays unresolved otherwise.
 fn parametrize_case_row(
+    file: &std::path::Path,
     line: usize,
     text: &str,
     bindings: &BTreeMap<String, Binding>,
+    elements: &BTreeMap<String, Vec<String>>,
     case_arguments: &[(String, String)],
     case: &BTreeMap<String, String>,
 ) -> CallRow {
     let mut bindings = bindings.clone();
+    let mut elements = elements.clone();
     let mut shown = Vec::new();
     for (parameter, argname) in case_arguments {
         let Some(value) = case.get(argname) else {
             continue;
         };
         shown.push(format!("{argname}={value}"));
+        if let Some(literals) = literal_elements(value) {
+            elements.insert(parameter.clone(), literals);
+        }
         if let Some(value) = literal_value(value) {
             bindings.insert(
                 parameter.clone(),
@@ -863,9 +1759,11 @@ fn parametrize_case_row(
         }
     }
     CallRow {
+        file: file.to_path_buf(),
         line,
         text: format!("{text} [parametrize {}]", shown.join(", ")),
         bindings,
+        elements,
     }
 }
 
@@ -1041,4 +1939,70 @@ fn test_body_after_header(text: &str) -> Option<&str> {
     let close = matching_call_paren(text, open)?;
     let colon = close + text[close..].find(':')?;
     text.get(colon + 1..)
+}
+
+#[cfg(test)]
+mod call_line_text_tests {
+    use super::{CALL_ROW_TEXT_LIMIT, call_line_text};
+
+    #[test]
+    fn indentation_only_cut_emits_no_leading_marker() {
+        let body = format!("{}price(1) {}", " ".repeat(70), "x".repeat(250));
+        let text = call_line_text(&body, 70, "price(1)".len());
+        assert!(text.starts_with("price(1)"), "{text}");
+        assert!(text.ends_with("..."), "{text}");
+    }
+
+    #[test]
+    fn cut_content_still_emits_leading_marker() {
+        let body = format!("{} price(1) {}", "y".repeat(100), "x".repeat(250));
+        let text = call_line_text(&body, 101, "price(1)".len());
+        assert!(text.starts_with("..."), "{text}");
+    }
+
+    #[test]
+    fn multibyte_start_keeps_the_whole_call() {
+        // The lead lands inside a 3-byte char; a 238-byte call must still end
+        // with its closing parenthesis.
+        let call = format!("price({})", "a".repeat(238 - "price()".len()));
+        assert_eq!(call.len(), 238);
+        for pad in 0..4 {
+            let body = format!(
+                "{}{}{call} {}",
+                "x".repeat(pad),
+                "\u{20ac}".repeat(30),
+                "z".repeat(50)
+            );
+            let offset = body.find("price").unwrap_or(0);
+            let text = call_line_text(&body, offset, call.len());
+            assert!(text.contains(&call), "pad {pad}: {text}");
+        }
+    }
+
+    #[test]
+    fn exact_limit_line_is_whole_and_one_over_is_cut() {
+        let call = "price(1)";
+        let whole = format!("{call}{}", "x".repeat(CALL_ROW_TEXT_LIMIT - call.len()));
+        assert_eq!(whole.len(), CALL_ROW_TEXT_LIMIT);
+        assert_eq!(call_line_text(&whole, 0, call.len()), whole);
+        let over = format!("{whole}x");
+        let cut = call_line_text(&over, 0, call.len());
+        assert!(cut.starts_with(call) && cut.ends_with("..."), "{cut}");
+        assert!(!cut.contains(&over));
+    }
+
+    #[test]
+    fn exact_call_length_with_space_before_paren_keeps_the_closing_paren() {
+        let spaces = " ".repeat(30);
+        let argument = "a".repeat(200);
+        let body = format!(
+            "{}price{spaces}({argument}) tail {}",
+            "p".repeat(80),
+            "t".repeat(60)
+        );
+        let offset = body.find("price").unwrap_or(0);
+        let call_len = "price".len() + spaces.len() + argument.len() + 2;
+        let text = call_line_text(&body, offset, call_len);
+        assert!(text.contains(&format!("({argument})")), "{text}");
+    }
 }

@@ -24,6 +24,9 @@ use std::time::{Duration, Instant};
 #[path = "common/mod.rs"]
 mod common;
 
+#[path = "common/printed_words.rs"]
+mod printed_words;
+
 use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
 static NEXT_BASE: AtomicU64 = AtomicU64::new(0);
@@ -139,6 +142,10 @@ fn assert_sane(ran: &Ran, what: &str) -> Result<(), String> {
     if !matches!(ran.code, Some(0..=2)) {
         return Err(format!("{what}: exit {:?}\n{}", ran.code, ran.stderr));
     }
+    assert_no_panic(ran, what)
+}
+
+fn assert_no_panic(ran: &Ran, what: &str) -> Result<(), String> {
     if ran.stderr.contains("panicked at") || ran.stderr.contains("RUST_BACKTRACE") {
         return Err(format!("{what}: panic\n{}", ran.stderr));
     }
@@ -211,9 +218,11 @@ fn summary_line(ran: &Ran) -> &str {
 
 fn assert_found_change(ran: &Ran, what: &str) -> Result<(), String> {
     assert_sane(ran, what)?;
-    if ran.code != Some(0) || !summary_line(ran).starts_with("Summary: 1 probe (") {
+    if ran.code != Some(0)
+        || !summary_line(ran).starts_with("Summary: 1 changed behavior checked: ")
+    {
         return Err(format!(
-            "{what}: expected one probe, got {:?}\n{}\n{}",
+            "{what}: expected one changed behavior, got {:?}\n{}\n{}",
             ran.code, ran.stdout, ran.stderr
         ));
     }
@@ -250,9 +259,15 @@ fn option_shaped_base_is_rejected_without_side_effects() -> Result<(), String> {
 fn shell_metacharacter_root_name_does_not_execute() -> Result<(), String> {
     let scratch = Scratch::new("meta")?;
     let marker = "PWNED";
-    let root = scratch
-        .path
-        .join("d$(touch PWNED)`touch PWNED`;touch PWNED&|");
+    // Windows forbids `|` in a file name, so its root swaps it for the cmd.exe
+    // metacharacters `^`, `%` and `!` and uses `mkdir`, which cmd.exe and
+    // PowerShell both run if the name ever reaches a shell (#9272).
+    let name = if cfg!(windows) {
+        "d$(mkdir PWNED)`mkdir PWNED`;mkdir PWNED&mkdir PWNED^ %CD% !CD!"
+    } else {
+        "d$(touch PWNED)`touch PWNED`;touch PWNED&|"
+    };
+    let root = scratch.path.join(name);
     repo(&root, change_lib)?;
     assert_found_change(&ripr(&root, &["check"], &[])?, "metacharacter root")?;
     let ran = ripr(&root, &["pilot", "--root", ".", "--quiet"], &[])?;
@@ -261,6 +276,56 @@ fn shell_metacharacter_root_name_does_not_execute() -> Result<(), String> {
         if dir.join(marker).exists() {
             return Err(format!("{} was created by command injection", marker));
         }
+    }
+    Ok(())
+}
+
+/// A summary alone cannot detect a printed command selecting an encoded
+/// sibling: both repositories deliberately contain the same one-probe change.
+#[test]
+fn printed_drill_in_round_trips_a_percent_root_from_another_cwd() -> Result<(), String> {
+    let scratch = Scratch::new("percent-root")?;
+    let root = plain(&scratch, "repo 100% %25")?;
+    let encoded_sibling = plain(&scratch, "repo 100%25 %2525")?;
+    let canonical = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+    assert_ne!(
+        canonical,
+        fs::canonicalize(&encoded_sibling).map_err(|e| e.to_string())?
+    );
+    // On Windows canonicalize supplies the verbatim prefix; the printed
+    // command must fold it while preserving the literal percent characters.
+    let root_arg = canonical.to_str().ok_or("root is not UTF-8")?;
+    let report = ripr(&scratch.path, &["check", "--root", root_arg], &[])?;
+    assert_found_change(&report, "percent root from another cwd")?;
+    let command = report
+        .stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ripr explain "))
+        .ok_or_else(|| format!("no drill-in command in\n{}", report.stdout))?;
+    let words = printed_words::printed_words(command)?;
+    let printed_root = words
+        .windows(2)
+        .find(|pair| pair[0] == "--root")
+        .map(|pair| pair[1].as_str())
+        .ok_or_else(|| format!("no --root operand in {command}"))?;
+    assert_eq!(
+        fs::canonicalize(printed_root).map_err(|e| e.to_string())?,
+        canonical,
+        "the printed root must select the literal directory, not its encoded sibling"
+    );
+    if cfg!(windows) {
+        assert!(!printed_root.contains('\\'), "{command}");
+        assert!(!printed_root.starts_with("//?/"), "{command}");
+    }
+    let replay_args: Vec<&str> = words.iter().skip(1).map(String::as_str).collect();
+    let replay = ripr(&scratch.path, &replay_args, &[])?;
+    assert_sane(&replay, "replayed percent-root drill-in")?;
+    if replay.code != Some(0) || !replay.stdout.contains("probe:") {
+        return Err(format!(
+            "drill-in replay failed: {:?}\n{}\n{}",
+            replay.code, replay.stdout, replay.stderr
+        ));
     }
     Ok(())
 }
@@ -356,6 +421,203 @@ fn awkward_file_names_each_produce_a_probe() -> Result<(), String> {
             "expected check finding paths {expected_paths:?}, got {reported_paths:?}\n{}",
             ran.stderr
         ));
+    }
+    Ok(())
+}
+
+/// A repository whose `src/<ff><fe>_bad.rs` is byte-invalid UTF-8 beside the
+/// valid change in `src/lib.rs`. `tracked` commits it; otherwise it stays
+/// untracked. A tracked, byte-invalid `data.bin` is the unrouted control.
+#[cfg(target_os = "linux")]
+fn non_utf8_repo(scratch: &Scratch, name: &str, tracked: bool) -> Result<PathBuf, String> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let root = scratch.path.join(name);
+    let bad = |root: &Path| root.join("src").join(OsStr::from_bytes(b"\xff\xfe_bad.rs"));
+    repo(&root, |root| {
+        change_lib(root)?;
+        fs::write(root.join("data.bin"), b"\xff\xfe\x00")
+            .map_err(|e| format!("write failed: {e}"))?;
+        if tracked {
+            fs::write(bad(root), b"pub fn z() {}\n").map_err(|e| format!("write failed: {e}"))?;
+        }
+        Ok(())
+    })?;
+    if tracked {
+        // An uncommitted edit makes `git status` list the tracked file.
+        fs::write(bad(&root), b"pub fn z() { let _ = 1; }\n")
+            .map_err(|e| format!("write failed: {e}"))?;
+    } else {
+        fs::write(bad(&root), b"pub fn z() {}\n").map_err(|e| format!("write failed: {e}"))?;
+    }
+    Ok(root)
+}
+
+#[cfg(target_os = "linux")]
+fn assert_non_utf8_refusal(ran: &Ran, what: &str) -> Result<(), String> {
+    assert_sane(ran, what)?;
+    if ran.code != Some(2) || !ran.stderr.contains("is not valid UTF-8") {
+        return Err(format!("{what}: expected the path refusal\n{}", ran.stderr));
+    }
+    for needle in ["`git mv` and commit the rename", "plain filesystem rename"] {
+        if !ran.stderr.contains(needle) {
+            return Err(format!("{what}: missing `{needle}`\n{}", ran.stderr));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn assert_lib_finding(ran: &Ran, what: &str) -> Result<(), String> {
+    assert_sane(ran, what)?;
+    if ran.code != Some(0) {
+        return Err(format!("{what}: expected exit 0\n{}", ran.stderr));
+    }
+    // A stdout substring could name `src/lib.rs` inside a hint or diagnostic
+    // instead of a real finding, so require the parsed `probe.file` (the same
+    // oracle `awkward_file_names_each_produce_a_probe` uses).
+    let report: serde_json::Value = serde_json::from_str(&ran.stdout)
+        .map_err(|e| format!("{what}: invalid JSON from check: {e}\n{}", ran.stdout))?;
+    let findings = report["findings"]
+        .as_array()
+        .ok_or_else(|| format!("{what}: check JSON is missing findings\n{}", ran.stdout))?;
+    let hit = findings.iter().any(|finding| {
+        finding["probe"]["file"]
+            .as_str()
+            .map(|file| file.strip_prefix("./").unwrap_or(file) == "src/lib.rs")
+            .unwrap_or(false)
+    });
+    if !hit {
+        return Err(format!(
+            "{what}: expected a probe.file finding for src/lib.rs\n{}",
+            ran.stdout
+        ));
+    }
+    Ok(())
+}
+
+/// A tracked path that is not valid UTF-8 is refused rather than looked up
+/// lossily, and the recovery the refusal names works in every selection mode
+/// (#10568). Renaming alone leaves the old name in the staged rename record, so
+/// the rename must be committed; an unrouted byte-invalid `.bin` is never
+/// refused.
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_tracked_path_recovery_works_in_every_mode() -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let scratch = Scratch::new("nonutf8-tracked")?;
+    for (index, mode) in [None, Some("--worktree"), Some("--committed")]
+        .into_iter()
+        .enumerate()
+    {
+        let root = non_utf8_repo(&scratch, &format!("tracked-{index}"), true)?;
+        let mut args = vec!["check", "--base", "main"];
+        args.extend(mode);
+        let mut json_args = args.clone();
+        json_args.extend(["--format", "json"]);
+        let what = format!("tracked, mode {mode:?}");
+        // `--committed` reads history, where the dirty edit is irrelevant but
+        // the committed path is still byte-invalid.
+        let refused = ripr(&root, &args, &[])?;
+        assert_non_utf8_refusal(&refused, &what)?;
+
+        // Negative control: the rename alone is still refused.
+        let from = root.join("src").join(OsStr::from_bytes(b"\xff\xfe_bad.rs"));
+        let to = root.join("src/good.rs");
+        let mv = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("mv")
+            .arg(&from)
+            .arg(&to)
+            .output()
+            .map_err(|e| format!("git mv spawn failed: {e}"))?;
+        if !mv.status.success() {
+            return Err(format!(
+                "git mv failed: {}",
+                String::from_utf8_lossy(&mv.stderr)
+            ));
+        }
+        let staged = ripr(&root, &args, &[])?;
+        assert_non_utf8_refusal(&staged, &format!("{what}, rename staged"))?;
+
+        git(&root, &["commit", "-q", "-m", "rename"])?;
+        let fixed = ripr(&root, &json_args, &[])?;
+        assert_lib_finding(&fixed, &format!("{what}, rename committed"))?;
+    }
+    Ok(())
+}
+
+/// An untracked byte-invalid routed file is repaired by a filesystem rename.
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_untracked_path_recovery_is_a_filesystem_rename() -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let scratch = Scratch::new("nonutf8-untracked")?;
+    let root = non_utf8_repo(&scratch, "untracked", false)?;
+    let refused = ripr(&root, &["check", "--base", "main"], &[])?;
+    assert_non_utf8_refusal(&refused, "untracked")?;
+    let from = root.join("src").join(OsStr::from_bytes(b"\xff\xfe_bad.rs"));
+    fs::rename(&from, root.join("src/good.rs")).map_err(|e| format!("rename failed: {e}"))?;
+    let fixed = ripr(&root, &["check", "--base", "main", "--format", "json"], &[])?;
+    assert_lib_finding(&fixed, "untracked, renamed")
+}
+
+/// An ignored byte-invalid routed file is refused with the same message
+/// (`committed_source.rs` pushes ignored routed files through `utf8_path`)
+/// and is repaired by the plain filesystem rename the refusal names. The
+/// journeys demonstrate the default mode; the refusal itself comes from the
+/// status parse every selection mode shares.
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_ignored_path_recovery_is_a_filesystem_rename() -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let scratch = Scratch::new("nonutf8-ignored")?;
+    let root = scratch.path.join("ignored");
+    let bad = root.join("src").join(OsStr::from_bytes(b"\xff\xfe_bad.rs"));
+    repo(&root, |root| {
+        fs::write(root.join(".gitignore"), b"*_bad.rs\n")
+            .map_err(|e| format!("write failed: {e}"))?;
+        change_lib(root)
+    })?;
+    // Written after the commit and matched by the committed `.gitignore`, so
+    // the record arrives as an ignored routed path, not `??`.
+    fs::write(&bad, b"pub fn z() {}\n").map_err(|e| format!("write failed: {e}"))?;
+    let refused = ripr(&root, &["check", "--base", "main"], &[])?;
+    assert_non_utf8_refusal(&refused, "ignored")?;
+    fs::rename(&bad, root.join("src/good.rs")).map_err(|e| format!("rename failed: {e}"))?;
+    let fixed = ripr(&root, &["check", "--base", "main", "--format", "json"], &[])?;
+    assert_lib_finding(&fixed, "ignored, renamed")
+}
+
+/// A byte-invalid file *name* that no analyzer routes is not an overbroad
+/// refusal in any selection mode: the tracked `<ff>.bin` is modified beside the
+/// Rust change and the real `src/lib.rs` finding still appears.
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_unrouted_bin_does_not_refuse() -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let scratch = Scratch::new("nonutf8-bin")?;
+    for (index, mode) in [None, Some("--worktree"), Some("--committed")]
+        .into_iter()
+        .enumerate()
+    {
+        let root = scratch.path.join(format!("bin-{index}"));
+        let bin = root.join(OsStr::from_bytes(b"\xff.bin"));
+        repo(&root, |root| {
+            change_lib(root)?;
+            fs::write(root.join(OsStr::from_bytes(b"\xff.bin")), b"\x00")
+                .map_err(|e| format!("write failed: {e}"))
+        })?;
+        fs::write(&bin, b"\x01").map_err(|e| format!("write failed: {e}"))?;
+        let mut args = vec!["check", "--base", "main", "--format", "json"];
+        args.extend(mode);
+        let ran = ripr(&root, &args, &[])?;
+        assert_lib_finding(&ran, &format!("unrouted byte-named .bin, mode {mode:?}"))?;
     }
     Ok(())
 }
@@ -514,6 +776,38 @@ fn detached_head_worktree_and_submodule_roots_work() -> Result<(), String> {
 }
 
 #[test]
+fn dirty_submodule_is_a_skipped_pointer_not_a_non_source_file() -> Result<(), String> {
+    // A submodule with uncommitted edits diffs as `Subproject commit <sha>-dirty`
+    // with no mode header; it was reported as a non-source file whose empty
+    // result "is correct" (#10648).
+    let scratch = Scratch::new("submodule-dirty")?;
+    let inner = plain(&scratch, "inner")?;
+    let outer = plain(&scratch, "outer")?;
+    let inner_arg = inner.to_string_lossy().into_owned();
+    git(
+        &outer,
+        &["submodule", "add", "-q", &inner_arg, "vendor/dep"],
+    )?;
+    git(&outer, &["commit", "-q", "-m", "add submodule"])?;
+    git(&outer, &["branch", "-f", "main", "HEAD"])?;
+    let inner_lib = outer.join("vendor/dep/src/lib.rs");
+    let mut text = fs::read_to_string(&inner_lib).map_err(|e| e.to_string())?;
+    text.push_str("// edited\n");
+    fs::write(&inner_lib, text).map_err(|e| e.to_string())?;
+
+    let ran = ripr(&outer, &["check"], &[])?;
+    assert_sane(&ran, "dirty submodule")?;
+    let notice = "skipped 1 submodule pointer change(s); ripr does not analyze submodule contents.";
+    if ran.code != Some(0) || !ran.stderr.contains(notice) || ran.stderr.contains("non-source") {
+        return Err(format!(
+            "expected the submodule notice and no non-source claim; got {:?}\n{}\n{}",
+            ran.code, ran.stdout, ran.stderr
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn submodule_ignore_settings_cannot_hide_pointer_changes() -> Result<(), String> {
     let scratch = Scratch::new("submodule-ignore")?;
     let inner = plain(&scratch, "inner")?;
@@ -580,7 +874,9 @@ fn submodule_ignore_settings_cannot_hide_pointer_changes() -> Result<(), String>
                     return Err(format!("wrong changed behavior: {finding}"));
                 }
             }
-        } else if !summary_line(&ran).starts_with(&format!("Summary: {expected_count} probe")) {
+        } else if !summary_line(&ran)
+            .starts_with(&format!("Summary: {expected_count} changed behavior"))
+        {
             return Err(format!("unexpected human summary: {}", ran.stdout));
         }
         Ok(())
@@ -648,8 +944,12 @@ fn submodule_ignore_settings_cannot_hide_pointer_changes() -> Result<(), String>
                     .stdout
                     .lines()
                     .find(|line| line.starts_with("- Recommended first command:"));
-                if !command
-                    .is_some_and(|line| line.contains("--worktree") && line.contains("--base HEAD"))
+                // `ripr check` analyzes tracked edits by default, so the dirty
+                // submodule is carried by the scope note, not by extra flags.
+                if !command.is_some_and(|line| line.ends_with("ripr check"))
+                    || !doctor
+                        .stdout
+                        .contains("`--worktree` analyzes staged and unstaged tracked edits")
                 {
                     return Err(format!(
                         "doctor lost the tracked edit: {}\n{}",
@@ -821,6 +1121,31 @@ fn repository_without_a_usable_base_refuses_with_a_route() -> Result<(), String>
     if ran.code != Some(2) || !ran.stderr.contains("no commits yet") {
         return Err(format!("expected no-commits route\n{}", ran.stderr));
     }
+
+    assert_default_base_refusal_json(
+        &empty,
+        "base_unresolvable",
+        "analysis/base-resolution",
+        &["no commits yet", "commit once"],
+    )?;
+    // A valid symbolic-ref chain to an absent branch is also truly unborn.
+    git(
+        &empty,
+        &["symbolic-ref", "refs/heads/main", "refs/heads/first"],
+    )?;
+    let symbolic = ripr(&empty, &["check"], &[])?;
+    if symbolic.code != Some(2) || !symbolic.stderr.contains("no commits yet") {
+        return Err(format!(
+            "expected unborn symbolic branch recovery\n{}",
+            symbolic.stderr
+        ));
+    }
+    assert_default_base_refusal_json(
+        &empty,
+        "base_unresolvable",
+        "analysis/base-resolution",
+        &["no commits yet", "commit once"],
+    )?;
 
     let renamed = plain(&scratch, "trunk")?;
     git(&renamed, &["branch", "-m", "main", "trunk"])?;
@@ -1038,13 +1363,403 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
                 return Err(format!("{label}: missing `{needle}`\n{}", ran.stderr));
             }
         }
-        for wrong in ["No git remote is configured", "not inside a Git work tree"] {
+        for wrong in [
+            "No git remote is configured",
+            "not inside a Git work tree",
+            // These four damages all refuse with exit 128 and no index damage:
+            // the all-platform negative control for the rebuild-advice gate,
+            // whose only red-refusal test is #[cfg(unix)] (#10567).
+            "damaged index",
+            "git -C",
+        ] {
             if ran.stderr.contains(wrong) {
                 return Err(format!("{label}: wrong cause `{wrong}`\n{}", ran.stderr));
             }
         }
     }
     Ok(())
+}
+
+/// Parse the public refusal rather than accepting identity words in prose.
+fn assert_default_base_refusal_json(
+    root: &Path,
+    identity: &str,
+    route: &str,
+    expected_message: &[&str],
+) -> Result<(), String> {
+    let ran = ripr(root, &["check", "--format", "json"], &[])?;
+    assert_sane(&ran, "default-base JSON refusal")?;
+    if ran.code != Some(2) {
+        return Err(format!(
+            "expected exit 2, got {:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(&ran.stdout)
+        .map_err(|e| format!("invalid refusal JSON: {e}\n{}", ran.stdout))?;
+    for (pointer, expected) in [
+        ("/analysis_scope/run_status", identity),
+        ("/analysis_scope/basis", identity),
+        ("/analysis_scope/limitation", identity),
+        ("/analysis_scope/repair_route", route),
+        ("/run_limitations/0/category", identity),
+        ("/run_limitations/0/run_status", identity),
+        ("/run_limitations/0/repair_route", route),
+    ] {
+        if value.pointer(pointer).and_then(serde_json::Value::as_str) != Some(expected) {
+            return Err(format!("expected {pointer} = {expected}\n{}", ran.stdout));
+        }
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or_else(|| format!("missing refusal message\n{}", ran.stdout))?;
+    for needle in expected_message {
+        if !message.contains(needle) {
+            return Err(format!("JSON refusal missing {needle}\n{}", ran.stdout));
+        }
+    }
+    if value["analysis_scope"]["downstream_consumable"] != false
+        || value["run_limitations"][0]["downstream_consumable"] != false
+        || value["findings"].as_array().map(Vec::len) != Some(0)
+    {
+        return Err(format!("expected a non-consumable refusal\n{}", ran.stdout));
+    }
+    if identity == "repository_root_unusable"
+        && ["no commits yet", "commit once", "base_unresolvable"]
+            .iter()
+            .any(|needle| ran.stdout.contains(needle) || ran.stderr.contains(needle))
+    {
+        return Err(format!(
+            "damaged refs must not offer a base repair\n{}\n{}",
+            ran.stdout, ran.stderr
+        ));
+    }
+    Ok(())
+}
+
+fn assert_damaged_default_base(root: &Path, reason: &str) -> Result<(), String> {
+    let ran = ripr(root, &["check"], &[])?;
+    assert_sane(&ran, "damaged default-base refs")?;
+    if ran.code != Some(2) {
+        return Err(format!(
+            "expected exit 2, got {:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
+    for needle in [
+        reason,
+        "correct or restore",
+        "the analysis did not run",
+        "git symbolic-ref HEAD",
+        "read access",
+    ] {
+        if !ran.stderr.contains(needle) {
+            return Err(format!("missing {needle}\n{}", ran.stderr));
+        }
+    }
+    if ran.stderr.contains("no commits yet") || ran.stderr.contains("commit once") {
+        return Err(format!(
+            "damaged refs cannot be repaired by a commit\n{}",
+            ran.stderr
+        ));
+    }
+    assert_default_base_refusal_json(
+        root,
+        "repository_root_unusable",
+        "analysis/repository-root",
+        &[
+            reason,
+            "correct or restore",
+            "git symbolic-ref HEAD",
+            "read access",
+        ],
+    )?;
+    assert_doctor_damaged_refs(root, reason)
+}
+
+/// Doctor completes a diagnosis (exit 3), unlike check's refusal (exit 2).
+fn assert_doctor_damaged_refs(root: &Path, reason: &str) -> Result<(), String> {
+    let human = ripr(root, &["doctor"], &[])?;
+    assert_no_panic(&human, "doctor damaged refs")?;
+    if human.code != Some(3)
+        || !human.stdout.contains(reason)
+        || !human.stdout.contains("correct or restore")
+        || !human
+            .stdout
+            .contains("Recommended first command: correct or restore the ref metadata")
+        || !human.stdout.lines().any(|line| line.starts_with("! "))
+        || human.stdout.contains("commit once")
+        || human.stdout.contains("no commits yet")
+    {
+        return Err(format!(
+            "doctor must diagnose damaged refs, exit {:?}\n{}\n{}",
+            human.code, human.stdout, human.stderr
+        ));
+    }
+    let json = ripr(root, &["doctor", "--json"], &[])?;
+    assert_no_panic(&json, "doctor damaged refs JSON")?;
+    let value: serde_json::Value = serde_json::from_str(&json.stdout)
+        .map_err(|e| format!("invalid doctor JSON: {e}\n{}", json.stdout))?;
+    let head = value["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == "git_head"))
+        .ok_or_else(|| format!("missing git_head check\n{}", json.stdout))?;
+    let evidence = head["evidence"].as_str().unwrap_or_default();
+    let action = &value["canonical_next_action"];
+    if json.code != Some(3)
+        || value["status"] != "fail"
+        || head["status"] != "fail"
+        || !evidence.contains(reason)
+        || !evidence.contains("correct or restore")
+        || action["stop"]["kind"] != "doctor_recovery"
+        || action["stop"]["check_name"] != "git_head"
+        || !action["stop"]["recovery_route"]
+            .as_str()
+            .is_some_and(|route| route.contains("ref metadata"))
+        || !action["command"].is_null()
+        || json.stdout.contains("commit once")
+        || json.stdout.contains("no commits yet")
+    {
+        return Err(format!(
+            "doctor must fail with metadata recovery\n{}\n{}",
+            json.stdout, json.stderr
+        ));
+    }
+    Ok(())
+}
+
+/// A truncated `.git/index` is refused with Git's reason and a rebuild route
+/// bound to the selected root, not Git's `fatal:` line alone (#10567). The run
+/// starts in a different repository with a staged change, and the root has a
+/// space and a single quote in its name, so an unbound, unquoted or unescaped
+/// `git reset` would be wrong.
+#[test]
+fn truncated_index_refusal_names_the_rebuild_repair() -> Result<(), String> {
+    let scratch = Scratch::new("truncated-index")?;
+    let root = plain(&scratch, "trunc'ated index")?;
+    let decoy = plain(&scratch, "decoy")?;
+    fs::write(decoy.join("staged.txt"), "staged\n").map_err(|e| format!("write failed: {e}"))?;
+    git(&decoy, &["add", "staged.txt"])?;
+    let decoy_index =
+        fs::read(decoy.join(".git/index")).map_err(|e| format!("read failed: {e}"))?;
+
+    let index = root.join(".git/index");
+    let bytes = fs::read(&index).map_err(|e| format!("read index failed: {e}"))?;
+    fs::write(&index, &bytes[..bytes.len().min(20)]).map_err(|e| format!("write failed: {e}"))?;
+    let root_arg = root.to_string_lossy().into_owned();
+    // POSIX single-quoting with the `'` -> `'\''` escape: a needle built from
+    // the raw root would let an unescaped or unquoted command pass.
+    let quoted_root = format!("'{}'", root_arg.replace('\'', "'\\''"));
+    let ran = ripr(
+        &decoy,
+        &["check", "--root", &root_arg, "--base", "main"],
+        &[],
+    )?;
+    assert_sane(&ran, "truncated index")?;
+    if ran.code != Some(2) {
+        return Err(format!("expected a refusal\n{}", ran.stderr));
+    }
+    let bound = format!("git -C {quoted_root} reset");
+    for needle in [
+        "index file smaller than expected",
+        "discards staged changes",
+        "first copy the index file",
+        bound.as_str(),
+    ] {
+        if !ran.stderr.contains(needle) {
+            return Err(format!("missing `{needle}`\n{}", ran.stderr));
+        }
+    }
+    // Preservation comes before the destructive step.
+    let copy_at = ran.stderr.find("first copy the index file");
+    let remove_at = ran.stderr.find("Then remove it");
+    if !matches!((copy_at, remove_at), (Some(c), Some(r)) if c < r) {
+        return Err(format!("backup must precede removal\n{}", ran.stderr));
+    }
+
+    // Follow the advice literally: remove the named index, rebuild it in the
+    // selected root, and the same invocation now completes.
+    let backup = root.join(".git/index.bak");
+    fs::copy(&index, &backup).map_err(|e| format!("backup failed: {e}"))?;
+    fs::remove_file(&index).map_err(|e| format!("remove index failed: {e}"))?;
+    git(&root, &["reset", "-q"])?;
+    let again = ripr(
+        &decoy,
+        &["check", "--root", &root_arg, "--base", "main"],
+        &[],
+    )?;
+    assert_found_change(&again, "after the advised index rebuild")?;
+    let decoy_after =
+        fs::read(decoy.join(".git/index")).map_err(|e| format!("read failed: {e}"))?;
+    if decoy_after != decoy_index {
+        return Err("the refusal or repair touched the decoy repository's index".to_string());
+    }
+    let kept = fs::read(&backup).map_err(|e| format!("read backup failed: {e}"))?;
+    if kept != bytes[..bytes.len().min(20)] {
+        return Err("the retained copy is not the original damaged index".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn doctor_distinguishes_healthy_and_unborn_heads() -> Result<(), String> {
+    let scratch = Scratch::new("doctor-head")?;
+    let root = plain(&scratch, "healthy")?;
+    for unborn in [false, true] {
+        if unborn {
+            git(&root, &["checkout", "--orphan", "first"])?;
+        }
+        let human = ripr(&root, &["doctor"], &[])?;
+        let json = ripr(&root, &["doctor", "--json"], &[])?;
+        let value: serde_json::Value = serde_json::from_str(&json.stdout)
+            .map_err(|e| format!("invalid doctor JSON: {e}\n{}", json.stdout))?;
+        let head = value["checks"]
+            .as_array()
+            .and_then(|checks| checks.iter().find(|check| check["name"] == "git_head"));
+        let unborn_advisory = head.is_some_and(|check| {
+            check["status"] == "advisory"
+                && check["evidence"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("commit once"))
+        });
+        if human.code != Some(0)
+            || json.code != Some(0)
+            || value["status"] != "pass"
+            || unborn_advisory != unborn
+            || human.stdout.contains("commit once") != unborn
+            || !value["canonical_next_action"].is_null()
+        {
+            return Err(format!(
+                "wrong healthy/unborn doctor route ({unborn})\n{}\n{}",
+                human.stdout, json.stdout
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A readable-index failure that is not corruption (an unreadable but valid
+/// index) keeps Git's reason and gets no delete-and-reset advice (#10567).
+#[cfg(unix)]
+#[test]
+fn unreadable_valid_index_gets_no_rebuild_advice() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new("unreadable-index")?;
+    let root = plain(&scratch, "unreadable-index")?;
+    let index = root.join(".git/index");
+    fs::set_permissions(&index, fs::Permissions::from_mode(0o000))
+        .map_err(|e| format!("chmod failed: {e}"))?;
+    let restore = |index: &Path| fs::set_permissions(index, fs::Permissions::from_mode(0o644));
+    if fs::read(&index).is_ok() {
+        // Running as a user that bypasses file modes (root): nothing to observe.
+        restore(&index).map_err(|e| format!("chmod failed: {e}"))?;
+        return Ok(());
+    }
+    let ran = ripr(&root, &["check", "--base", "main"], &[]);
+    restore(&index).map_err(|e| format!("chmod failed: {e}"))?;
+    let ran = ran?;
+    assert_sane(&ran, "unreadable index")?;
+    if ran.code != Some(2) {
+        return Err(format!("expected a refusal\n{}", ran.stderr));
+    }
+    for banned in ["git reset", "remove it", "damaged index"] {
+        if ran.stderr.contains(banned) {
+            return Err(format!(
+                "unexpected rebuild advice `{banned}`\n{}",
+                ran.stderr
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// RIPR-SPEC-0084: a silent HEAD failure also occurs for corrupt loose refs
+/// and recursive symbolic-ref cycles, so exit 1 alone cannot justify a commit.
+#[test]
+fn corrupt_loose_refs_without_base_are_not_reported_as_unborn() -> Result<(), String> {
+    let scratch = Scratch::new("loose-default-base")?;
+    for (name, contents) in [
+        ("invalid", "garbage\n"),
+        ("cycle", "ref: refs/heads/feat\n"),
+    ] {
+        let root = plain(&scratch, name)?;
+        // Force the default-base failure arm; a healthy main would bypass it.
+        git(&root, &["branch", "-D", "main"])?;
+        fs::write(root.join(".git/refs/heads/feat"), contents)
+            .map_err(|e| format!("damage ref: {e}"))?;
+        assert_damaged_default_base(&root, "fatal: No such ref: HEAD")?;
+    }
+    Ok(())
+}
+
+/// RIPR-SPEC-0084: a real inaccessible ref, without an invented Git response.
+#[cfg(unix)]
+#[test]
+fn looping_ref_without_base_is_not_reported_as_unborn() -> Result<(), String> {
+    let scratch = Scratch::new("loop-default-base")?;
+    let root = plain(&scratch, "loop")?;
+    git(&root, &["branch", "-D", "main"])?;
+    let reference = root.join(".git/refs/heads/feat");
+    fs::remove_file(&reference).map_err(|e| format!("remove ref: {e}"))?;
+    std::os::unix::fs::symlink("feat", &reference).map_err(|e| format!("loop ref: {e}"))?;
+    assert_damaged_default_base(&root, "fatal: No such ref: HEAD")
+}
+
+/// RIPR-SPEC-0084: permissions can also be hidden by quiet rev-parse.
+#[cfg(unix)]
+#[test]
+fn unreadable_ref_without_base_is_not_reported_as_unborn() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = Scratch::new("unreadable-default-base")?;
+    let root = plain(&scratch, "unreadable")?;
+    git(&root, &["branch", "-D", "main"])?;
+    let reference = root.join(".git/refs/heads/feat");
+    let original = fs::metadata(&reference)
+        .map_err(|e| format!("ref metadata: {e}"))?
+        .permissions();
+    fs::set_permissions(&reference, fs::Permissions::from_mode(0o000))
+        .map_err(|e| format!("make ref unreadable: {e}"))?;
+    let result = (|| {
+        if fs::read(&reference).is_ok() {
+            eprintln!("permission control unavailable: this user can read a mode-000 ref");
+            return Ok(());
+        }
+        assert_damaged_default_base(&root, "fatal: No such ref: HEAD")
+    })();
+    fs::set_permissions(&reference, original)
+        .map_err(|e| format!("restore ref permissions: {e}"))?;
+    result
+}
+
+/// With no `--base`, a corrupt `packed-refs` must not read as an unborn HEAD:
+/// the repository has commits and "commit once" repairs nothing (#10566).
+#[test]
+fn corrupt_packed_refs_without_base_is_not_reported_as_unborn() -> Result<(), String> {
+    let scratch = Scratch::new("packed-refs-default-base")?;
+    let root = plain(&scratch, "packed-refs-default-base")?;
+    fs::write(root.join(".git/packed-refs"), b"garbage\n")
+        .map_err(|e| format!("write failed: {e}"))?;
+    let ran = ripr(&root, &["check"], &[])?;
+    assert_sane(&ran, "corrupt packed-refs, default base")?;
+    if ran.code != Some(2) {
+        return Err(format!("expected a refusal\n{}", ran.stderr));
+    }
+    for needle in ["packed-refs", "fatal:", "garbage", "correct or restore it"] {
+        if !ran.stderr.contains(needle) {
+            return Err(format!("missing `{needle}`\n{}", ran.stderr));
+        }
+    }
+    if ran.stderr.contains("no commits yet") {
+        return Err(format!("wrong cause `no commits yet`\n{}", ran.stderr));
+    }
+    assert_default_base_refusal_json(
+        &root,
+        "repository_root_unusable",
+        "analysis/repository-root",
+        &["fatal:", "garbage", "correct or restore it"],
+    )?;
+    assert_doctor_damaged_refs(&root, "fatal:")
 }
 
 /// A checkout whose `.git` is a gitfile pointing at a vanished gitdir is
@@ -1297,7 +2012,7 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
     fs::write(root.join("src/a\u{1b}[2Jb.rs"), "pub fn n() {}\n")
         .map_err(|e| format!("restore hostile file failed: {e}"))?;
 
-    // The typed refusal envelope on stderr is JSON: a bidi character in the
+    // The typed refusal envelope on stdout is JSON: a bidi character in the
     // seam id must stay a parseable JSON escape, not become `\u{202e}`.
     let refusal = ripr(
         &root,
@@ -1319,17 +2034,15 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
     if leaks(&refusal.stderr) {
         return Err(format!("refusal leaked\n{:?}", refusal.stderr));
     }
-    let envelope_end = refusal
-        .stderr
-        .find("\n}\n")
-        .ok_or_else(|| format!("no JSON envelope on stderr\n{}", refusal.stderr))?;
-    let envelope: serde_json::Value = serde_json::from_str(&refusal.stderr[..envelope_end + 2])
-        .map_err(|e| {
-            format!(
-                "refusal envelope is not valid JSON: {e}\n{}",
-                refusal.stderr
-            )
-        })?;
+    if leaks(&refusal.stdout) {
+        return Err(format!("refusal leaked\n{:?}", refusal.stdout));
+    }
+    let envelope: serde_json::Value = serde_json::from_str(&refusal.stdout).map_err(|e| {
+        format!(
+            "refusal envelope on stdout is not valid JSON: {e}\n{}",
+            refusal.stdout
+        )
+    })?;
     if envelope["error"]["seam_id"] != "x\u{202e}y" {
         return Err(format!("seam id did not round-trip\n{envelope}"));
     }

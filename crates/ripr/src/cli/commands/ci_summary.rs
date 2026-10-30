@@ -102,3 +102,164 @@ pub(super) fn parse_ci_summary_options_with(
     }
     Ok(options)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::ci_packet::CiSettings;
+    use super::{CiSummaryOptions, configured_languages, parse_ci_summary_options_with};
+    use std::path::PathBuf;
+
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| (*item).to_string()).collect()
+    }
+
+    fn parse(items: &[&str], settings: &CiSettings) -> Result<CiSummaryOptions, String> {
+        parse_ci_summary_options_with(&args(items), settings)
+    }
+
+    fn accepts(items: &[&str], settings: &CiSettings) -> bool {
+        parse(items, settings).is_ok()
+    }
+
+    fn workflow() -> CiSettings {
+        CiSettings {
+            base_ref: "release".to_string(),
+            default_branch: "trunk".to_string(),
+            upload_sarif: "true".to_string(),
+            gate_baseline: "baseline.json".to_string(),
+            comment_mode: "inline".to_string(),
+            ..CiSettings::default()
+        }
+    }
+
+    #[test]
+    fn every_flag_overrides_its_workflow_environment_value() -> Result<(), String> {
+        let settings = workflow();
+        // Control: with no flags the environment supplies every value.
+        let from_env = parse(&[], &settings)?;
+        assert_eq!(from_env.root, PathBuf::from("."));
+        assert_eq!(from_env.base_ref, "release");
+        assert_eq!(from_env.upload_sarif, "true");
+        assert_eq!(from_env.gate_baseline, "baseline.json");
+        assert_eq!(from_env.comment_mode, "inline");
+        let flagged = parse(
+            &[
+                "--root",
+                "/repo",
+                "--base-ref",
+                "dev",
+                "--upload-sarif",
+                "false",
+                "--gate-baseline",
+                "",
+                "--comment-mode",
+                "",
+            ],
+            &settings,
+        )?;
+        assert_eq!(flagged.root, PathBuf::from("/repo"));
+        assert_eq!(flagged.base_ref, "dev");
+        assert_eq!(flagged.upload_sarif, "false");
+        // An unset workflow variable arrives as an empty string and is kept.
+        assert_eq!(flagged.gate_baseline, "");
+        assert_eq!(flagged.comment_mode, "");
+        Ok(())
+    }
+
+    #[test]
+    fn the_base_falls_back_from_the_pr_base_to_the_default_branch_to_empty() -> Result<(), String> {
+        let pr = workflow();
+        let push = CiSettings {
+            base_ref: String::new(),
+            ..workflow()
+        };
+        let neither = CiSettings {
+            base_ref: String::new(),
+            default_branch: String::new(),
+            ..workflow()
+        };
+        assert_eq!(parse(&[], &pr)?.base_ref, "release");
+        assert_eq!(parse(&[], &push)?.base_ref, "trunk");
+        assert_eq!(parse(&[], &neither)?.base_ref, "");
+        // An explicit flag wins over every fallback.
+        assert_eq!(parse(&["--base-ref", "dev"], &neither)?.base_ref, "dev");
+        Ok(())
+    }
+
+    #[test]
+    fn a_flag_without_a_value_is_rejected_by_name() {
+        let settings = workflow();
+        for flag in [
+            "--root",
+            "--base-ref",
+            "--upload-sarif",
+            "--gate-baseline",
+            "--comment-mode",
+        ] {
+            // Control: the same flag with a value parses.
+            assert!(parse(&[flag, "v"], &settings).is_ok(), "{flag}");
+            assert_eq!(
+                parse(&[flag], &settings),
+                Err(format!("missing value for {flag}"))
+            );
+        }
+    }
+
+    #[test]
+    fn blank_root_and_base_values_are_rejected_but_blank_settings_are_kept() {
+        let settings = workflow();
+        assert_eq!(
+            parse(&["--root", ""], &settings),
+            Err("reports ci-summary --root requires a non-empty value".to_string())
+        );
+        assert_eq!(
+            parse(&["--base-ref", "  "], &settings),
+            Err("reports ci-summary --base-ref requires a non-empty value".to_string())
+        );
+        assert!(accepts(&["--root", "r", "--base-ref", "b"], &settings));
+        assert!(accepts(&["--upload-sarif", ""], &settings));
+        assert!(accepts(&["--gate-baseline", ""], &settings));
+        assert!(accepts(&["--comment-mode", ""], &settings));
+    }
+
+    #[test]
+    fn an_unknown_argument_stops_parsing_even_after_valid_flags() {
+        let settings = workflow();
+        assert!(accepts(&["--root", "r"], &settings));
+        for bad in ["--bogus", "positional", "--root=r"] {
+            let message = parse(&["--root", "r", bad], &settings)
+                .err()
+                .unwrap_or_default();
+            assert!(
+                message.starts_with(&format!("unknown reports ci-summary argument {bad:?}")),
+                "{message}"
+            );
+        }
+        // A value is consumed by its flag, not parsed as a flag itself.
+        assert!(accepts(&["--root", "--bogus"], &settings));
+    }
+
+    #[test]
+    fn configured_languages_come_from_the_config_and_default_to_none()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let parent =
+            std::env::temp_dir().join(format!("ripr-ci-summary-cli-{}", std::process::id()));
+        let loads = parent.join("loads");
+        let invalid = parent.join("invalid");
+        std::fs::create_dir_all(&loads)?;
+        std::fs::create_dir_all(&invalid)?;
+        std::fs::write(invalid.join("ripr.toml"), "this is not = [valid toml")?;
+        // Constructs: the invalid file exists and a missing config is a root
+        // with no file at all.
+        assert!(invalid.join("ripr.toml").is_file());
+        assert!(!loads.join("ripr.toml").exists());
+        let defaulted = configured_languages(&loads);
+        let broken = configured_languages(&invalid);
+        std::fs::remove_dir_all(&parent)?;
+        assert_eq!(defaulted, vec!["rust".to_string()]);
+        // A configuration that fails to load reports no languages rather than
+        // the default, as the doctor projection does.
+        assert!(broken.is_empty(), "{broken:?}");
+        Ok(())
+    }
+}

@@ -1,0 +1,42 @@
+{
+  "case_id": "shape-enum-member-value-unread",
+  "subject_id": "authored-ts-vitest-shapes",
+  "diff": "cases/shape-enum-member-value-unread.diff",
+  "anchor": {
+    "file": "src/level.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "lookup_constant",
+  "test_shape": "vitest_enum_symbolic_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "High = 3,",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: Tests reference members symbolically and never read their numeric value."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Tests reference members symbolically and never read their numeric value. The edited package's test command still passes, so no test notices the change and a gap is the honest verdict.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "case_id": "py-shapes-dunder-str-precision",
+  "subject_id": "authored-py-pytest-shapes",
+  "diff": "cases/py-shapes-dunder-str-precision.diff",
+  "anchor": {
+    "file": "shapes/money.py",
+    "line": 21
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "format_string",
+  "test_shape": "pytest_dunder_str_untested",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return f\"${self.cents / 100:.1f}\"",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 5 cents prints as $0.1 instead of $0.05"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No test calls str() on a Money, so the printed precision is unobserved.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

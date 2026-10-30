@@ -39,17 +39,25 @@ What are you trying to do?
   Guided repo adoption  ripr pilot --root .
   Understand a finding  ripr explain <finding-id>
                         ripr context --at <finding-id>
-  Repair one named gap  ripr repair [<item>]
+  Repair a Rust seam    ripr repair [<item>]
                         # edit one focused test
                         ripr continue
+  Repair a diff gap     follow the start from ripr check, when offered
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
-  Work in an editor     ripr lsp --stdio
+  Work in an editor     ripr lsp --stdio (started by your editor)
   Adopt advisory CI     ripr init --ci github
 
 More:
   ripr help <command>    Options for one command.
   ripr help --all        Every command, grouped by area.
   ripr help --json       Versioned machine-readable command catalog.
+
+Exit codes: 0 completed, 2 could not complete (usage, configuration, or
+operational error), 3 blocking decision or typed refusal, 130 interrupted
+standalone check. Full contract: docs/EXIT_CODES.md.
+Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: analyzed
+languages, mode, and probe/finding counts (any position, except on
+`ripr help --json`).
 
 ripr is static and advisory. It reads changed code, builds mutation-shaped
 probes, and estimates whether tests reach, infect, propagate, and reveal the
@@ -72,31 +80,35 @@ Machine catalog: ripr help --json  (this route accepts no other arguments)
 
 Global flags (accepted in any position, before or after the command, except on ripr help --json):
   -v, --verbose   Extra pipeline diagnostics on stderr: analyzed languages,
-                  mode, and probe/finding counts. A -v/--verbose token is
-                  always this global flag, never another flag's value.
+                  mode, and probe/finding counts; ripr pilot also prints a
+                  per-stage timing table after a complete run. A -v/--verbose
+                  token is always this global flag, never another flag's
+                  value.
 
 Task map:
   Diagnose setup        ripr doctor
   Inspect one change    ripr check
   Guided repo adoption  ripr pilot --root .
-  Repair one named gap  ripr repair [<item>] | ripr continue | ripr status
+  Repair a Rust seam    ripr repair [<item>] | ripr continue | ripr status
+  Repair a diff gap     follow the start from ripr check, when offered
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Adopt advisory CI     ripr init --ci github
 
 Setup:
   ripr doctor
+  ripr capabilities [--language NAME] [--json | --markdown]
   ripr init [--root PATH] [--ci github] [--dry-run] [--force]
   ripr config validate [--root PATH]
-  ripr cache status [--json]
+  ripr cache status [--root PATH] [--json]
   ripr cache export [--root PATH] --out NEW_DIRECTORY
-  ripr cache clear [--dry-run] [--force]
+  ripr cache clear [--root PATH] [--dry-run] [--force]
 
 Analysis:
   ripr pilot [--root PATH] [--out PATH] [--mode draft] [--max-seams 5] [--timeout-ms 30000] [--format json]
   ripr check [--base REV] [--worktree] [--diff PATH] [--mode draft] [--format FORMAT]
   ripr diff [--root .] [--base REV] [--head HEAD] [--mode draft] [--json]
-  ripr explain [--base REV] [--worktree|--diff PATH] <finding-id|file:line>
-  ripr context [--base REV] [--worktree|--diff PATH] --at <finding-id|file:line>
+  ripr explain [--base REV] [--worktree|--committed|--diff PATH] <finding-id|file:line>
+  ripr context [--base REV] [--worktree|--committed|--diff PATH] --at <finding-id|file:line>
   ripr rerun --changed-test PATH[::TEST_NODE] [--root PATH] [--json] [--out PATH]
   ripr rerun --gap CANONICAL_GAP_ID --gap-ledger PATH [--root PATH] [--json] [--out PATH]
   ripr evidence-health [--root PATH] [--out PATH] [--out-md PATH] [--mutation-calibration PATH]
@@ -141,14 +153,16 @@ PR & Review:
   ripr pr-comments existing [--root .] [--raw target/ripr/review/existing-comments.raw.json|-] [--out target/ripr/review/existing-comments.json]
   ripr pr-comments plan --pr-guidance target/ripr/review/comments.json [--existing-comments target/ripr/review/existing-comments.json] [--mode off|plan|inline] [--out target/ripr/review/comment-publish-plan.json]
   ripr pr-comments requests --pull-request N --head-sha SHA [--root .] [--plan target/ripr/review/comment-publish-plan.json] [--out-dir target/ripr/review/publish]
+  ripr pr-comments summary --pull-request N --head-sha SHA [--root .] [--pr-guidance target/ripr/review/comments.json] [--raw PATH|-] [--run-url URL] [--out-dir target/ripr/review/summary]
   ripr pr-review front-panel (--pr-guidance target/ripr/review/comments.json|--first-action target/ripr/reports/first-useful-action.json|--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json|--assistant-health target/ripr/reports/assistant-loop-health.json|--ledger target/ripr/reports/pr-evidence-ledger.json) [--out target/ripr/reports/pr-review-front-panel.json]
   ripr coverage-grip frontier (--ledger target/ripr/reports/pr-evidence-ledger.json|--baseline-delta target/ripr/reports/baseline-debt-delta.json|--zero-status target/ripr/reports/ripr-zero-status.json) [--coverage target/ripr/reports/coverage-summary.json] [--out target/ripr/reports/coverage-grip-frontier.json]
   ripr assistant-loop proof --pr-guidance target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-brief.json --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --receipt target/ripr/reports/agent-receipt.json [--out target/ripr/reports/test-oracle-assistant-proof.json]
   ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json [--out target/ripr/reports/assistant-loop-health.json]
 
 Policy & Gate:
-  ripr gate evaluate --pr-guidance PATH [--mode visible-only|acknowledgeable|baseline-check|calibrated-gate] [--labels-json PATH] [--out target/ripr/reports/gate-decision.json]
+  ripr gate evaluate --pr-guidance PATH [--mode visible-only|acknowledgeable|baseline-check|calibrated-gate] [--baseline PATH] [--labels-json PATH] [--out target/ripr/reports/gate-decision.json]
   # acknowledgeable mode blocks eligible gaps unless the PR carries the configured waiver label (default: ripr-waive)
+  # baseline-check and calibrated-gate modes require --baseline PATH (otherwise exit 2, config_error)
   ripr baseline create --from target/ripr/reports/gate-decision.json [--out .ripr/gate-baseline.json] [--dry-run] [--force]
   ripr baseline diff --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json [--out target/ripr/reports/baseline-debt-delta.json] [--out-md target/ripr/reports/baseline-debt-delta.md]
   ripr baseline update --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json --remove-resolved [--out .ripr/gate-baseline.json]

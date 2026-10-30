@@ -1,0 +1,6 @@
+# Registers the capability-gated rule 16 matcher-grading proof (#6582) under RIPR-SPEC-0235.
+[[extend]]
+id = "RIPR-SPEC-0235"
+tests = [
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_matcher_grading_separates_pinned_errors_from_broad_assertions",
+]

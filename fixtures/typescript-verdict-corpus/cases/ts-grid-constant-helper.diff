@@ -1,0 +1,12 @@
+diff --git a/src/constant.ts b/src/constant.ts
+--- a/src/constant.ts
++++ b/src/constant.ts
+@@ -11,7 +11,7 @@
+ }
+ 
+ export function handling(weight: number): number {
+-  return weight * 12;
++  return weight * 13;
+ }
+ 
+ export function roundingUnit(value: number): number {

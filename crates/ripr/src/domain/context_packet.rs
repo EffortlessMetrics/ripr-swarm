@@ -10,7 +10,32 @@ pub struct ContextPacket {
     /// consumers must not treat `base_deleted` / `moved_or_renamed` /
     /// `unresolved_subject` packets as candidate edit targets.
     pub source_currentness: &'static str,
+    /// The finding's exposure classification, the same `ExposureClass::as_str`
+    /// value `ripr check --json` findings carry (#8743). The five `ripr`
+    /// stage states below are documented as underdetermined — a `yes`
+    /// discriminate grade does not mean a discriminator exists — so the
+    /// packet states the verdict outright instead of making the consumer
+    /// derive it.
+    pub classification: &'static str,
+    /// The finding's configured severity, the same `ConfigSeverity::as_str`
+    /// value `ripr check --json` findings carry. `from_finding` seeds the
+    /// class profile default; renderers holding a `RiprConfig` re-resolve it
+    /// through `SeverityConfig::for_exposure` so a user override applies here
+    /// exactly as it does on the check surface.
+    pub severity: &'static str,
+    /// The finding's confidence score (`0.0..=1.0`), wire-identical to the
+    /// `confidence` float on the check finding (#8743).
+    pub confidence: f32,
+    /// Why `confidence` is capped for preview findings (#10700); empty for
+    /// Rust. Wire-identical to the check finding's `confidence_basis`.
+    pub confidence_basis: Vec<crate::domain::ConfidenceBasisEntry>,
+    /// One plain-English "why capped" line; `None` when `confidence_basis`
+    /// is empty.
+    pub confidence_why_capped: Option<String>,
     pub ripr: ContextPacketRipr,
+    /// Matched related-test rows before the packet's display window, using
+    /// the finding's conservative retained-count fallback for legacy data.
+    pub related_tests_total: usize,
     pub related_tests: Vec<RelatedTest>,
     pub observed_values: Vec<ValueFact>,
     pub missing_discriminators: Vec<MissingDiscriminatorFact>,
@@ -58,7 +83,10 @@ impl ContextPacket {
         root: &std::path::Path,
     ) -> Self {
         Self {
-            version: "1.0",
+            // 1.1 (#8743): `classification` / `severity` / `confidence` join
+            // the packet so an agent holding the packet alone can state the
+            // verdict without re-parsing `check --json`.
+            version: "1.1",
             tool: "ripr",
             canonical_gap_id: finding.canonical_gap.as_ref().map(|gap| gap.id.clone()),
             probe: ContextPacketProbe {
@@ -87,6 +115,17 @@ impl ContextPacket {
                 changed_expression: finding.probe.expression.clone(),
             },
             source_currentness: finding.source_currentness.as_str(),
+            classification: finding.class.as_str(),
+            severity: finding.class.severity(),
+            confidence: finding.confidence,
+            confidence_basis: crate::domain::basis_entries(
+                &finding.confidence_basis,
+                finding.language,
+            ),
+            confidence_why_capped: crate::domain::why_capped_line(
+                &finding.confidence_basis,
+                finding.language,
+            ),
             ripr: ContextPacketRipr {
                 reach: finding.ripr.reach.state.as_str().to_string(),
                 infect: finding.ripr.infect.state.as_str().to_string(),
@@ -94,6 +133,7 @@ impl ContextPacket {
                 observe: finding.ripr.reveal.observe.state.as_str().to_string(),
                 discriminate: finding.ripr.reveal.discriminate.state.as_str().to_string(),
             },
+            related_tests_total: finding.related_tests_total(),
             related_tests: finding
                 .related_tests
                 .iter()
@@ -130,7 +170,7 @@ mod tests {
             Path::new("."),
         );
 
-        assert_eq!(packet.version, "1.0");
+        assert_eq!(packet.version, "1.1");
         assert_eq!(packet.tool, "ripr");
         assert_eq!(packet.canonical_gap_id, None);
         assert_eq!(packet.probe.id, "probe:src_lib_rs:9:predicate");
@@ -290,6 +330,8 @@ mod tests {
 
     fn sample_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib_rs:9:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -335,6 +377,112 @@ mod tests {
         }
     }
 
+    #[test]
+    fn boundary_input_observed_flag_requires_every_condition() {
+        let mut positive = sample_finding();
+        positive.infect_for_boundary_test();
+        assert!(positive.boundary_input_observed_with_weak_oracle());
+
+        // The shared gate itself (not just the Finding wrapper) rejects another
+        // class or family.
+        let gate = |class: &ExposureClass, family: &ProbeFamily| {
+            crate::domain::probe::boundary_input_observed_with_weak_oracle(
+                class,
+                family,
+                &positive.ripr.infect,
+                &positive.ripr.reveal.discriminate,
+                &positive.related_tests,
+                &positive.stop_reasons,
+            )
+        };
+        assert!(gate(&positive.class, &positive.probe.family));
+        assert!(!gate(&ExposureClass::NoStaticPath, &positive.probe.family));
+        assert!(!gate(&positive.class, &ProbeFamily::ReturnValue));
+
+        let mut other_class = positive.clone();
+        other_class.class = ExposureClass::ReachableUnrevealed;
+        assert!(!other_class.boundary_input_observed_with_weak_oracle());
+
+        let mut other_family = positive.clone();
+        other_family.probe.family = ProbeFamily::ReturnValue;
+        assert!(!other_family.boundary_input_observed_with_weak_oracle());
+
+        let mut infect_weak = positive.clone();
+        infect_weak.ripr.infect.state = StageState::Weak;
+        assert!(!infect_weak.boundary_input_observed_with_weak_oracle());
+
+        let mut other_summary = positive.clone();
+        other_summary.ripr.infect.summary = "Possible infection".to_string();
+        assert!(!other_summary.boundary_input_observed_with_weak_oracle());
+
+        // An assertion-shaped owner gets the assertion-helper Next step, so
+        // the advisory must not claim the boundary is reached.
+        let mut assertion_shaped = positive.clone();
+        assertion_shaped.recommended_next_step =
+            Some(crate::domain::ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP.to_string());
+        assert!(!assertion_shaped.boundary_input_observed_with_weak_oracle());
+
+        // Pairing limitation (exact oracle elsewhere, not paired with the
+        // boundary call, e.g. split_test_boundary_oracle).
+        let mut pairing = positive.clone();
+        pairing.ripr.reveal.discriminate.summary = "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing)".to_string();
+        assert!(!pairing.boundary_input_observed_with_weak_oracle());
+
+        // Unverified observation (rust_predicate_returned_drop_exit).
+        let mut unverified = positive.clone();
+        unverified.ripr.reveal.discriminate.summary =
+            "Discriminator unconfirmed: a non-plain Drop may exit while unwinding (observation_unverified)"
+                .to_string();
+        assert!(!unverified.boundary_input_observed_with_weak_oracle());
+
+        // A strong or medium oracle credited on any related row.
+        for strength in [OracleStrength::Strong, OracleStrength::Medium] {
+            let mut credited = positive.clone();
+            let mut row = related("elsewhere");
+            row.oracle_strength = strength;
+            credited.related_tests.push(row);
+            assert!(!credited.boundary_input_observed_with_weak_oracle());
+        }
+
+        // Refused/unknown oracle rows only: no genuinely weak credited oracle
+        // (predicate_boundary_oracle_refused keeps the boundary call in `if false`).
+        let mut refused = positive.clone();
+        refused.related_tests[0].oracle_strength = OracleStrength::None;
+        refused.related_tests[0].oracle_kind = OracleKind::Unknown;
+        assert!(!refused.boundary_input_observed_with_weak_oracle());
+
+        // A stop reason that means the call may not run.
+        let mut stopped = positive.clone();
+        stopped.stop_reasons = vec![crate::domain::StopReason::NoChangedRustLine];
+        assert!(!stopped.boundary_input_observed_with_weak_oracle());
+
+        let mut no_step = positive;
+        no_step.recommended_next_step = None;
+        assert!(!no_step.boundary_input_observed_with_weak_oracle());
+    }
+
+    impl Finding {
+        fn infect_for_boundary_test(&mut self) {
+            self.ripr.infect = StageEvidence::new(
+                StageState::Yes,
+                Confidence::Medium,
+                crate::domain::BOUNDARY_INPUT_OBSERVED_SUMMARY,
+            );
+            self.ripr.reveal.discriminate = StageEvidence::new(
+                StageState::Weak,
+                Confidence::High,
+                "Only relational oracle found; it may not discriminate the changed value exactly",
+            );
+            let mut weak = related("boundary");
+            weak.oracle_kind = OracleKind::RelationalCheck;
+            weak.oracle_strength = OracleStrength::Weak;
+            self.related_tests = vec![weak];
+            self.stop_reasons = Vec::new();
+            self.recommended_next_step =
+                Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP.to_string());
+        }
+    }
+
     fn related(name: &str) -> RelatedTest {
         RelatedTest {
             name: name.to_string(),
@@ -346,6 +494,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 

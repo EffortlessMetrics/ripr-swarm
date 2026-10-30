@@ -19,14 +19,43 @@ sibling. A missing location-shaped selector such as `src/lib.rs:abc` or
 Syntax guidance follows unsuccessful selection; it must preserve exact-ID
 matching and location matching. A well-formed missing ID or
 location remains a lookup miss. Fresh-analysis recovery must list findings
-with the requested root and diff scope so a corrected selector can be retried
-from another working directory. Misses remain exit 2 with no machine stdout.
+with the requested root and explicit diff scope so a corrected selector can
+be retried from another working directory. After an implicit dirty-worktree
+analysis misses, the first listing intentionally selects committed history,
+with the analyzed worktree listing second (RIPR-SPEC-0116). This recovery-only
+exception does not change analysis or explicit worktree/diff/artifact choices.
+Committed-history recovery explicitly selects
+`--committed` on check, explain and context, including when tracked worktree
+edits would change the default. A committed check's printed drill-ins and
+context's reciprocal explain command retain that choice. Without an explicit
+source, the CLI siblings follow check's dirty-worktree default. Explicit
+`--worktree`, supplied `--diff`, and verified `--from` replay retain their own
+input sources. `--committed` conflicts with those three explicit sources and
+refuses before input or root reads. Misses remain exit 2 with no machine stdout.
 A selector naming several findings (for example two findings at one
 `file:line`, or a canonical gap identity shared by grouped findings) refuses
 as ambiguous with the bounded candidate finding IDs instead of silently
 selecting the first match; ambiguity is the same usage-class refusal as a
 miss. A unique canonical gap identity (`gap:...`) resolves exactly its
-finding, like a unique finding ID.
+finding, like a unique finding ID — including the hash form `gap:<16hex>`
+that JSON outputs emit for the canonical gap: both spellings of one gap
+resolve through the same seam-to-finding binding, on fresh and `--from`
+replay paths alike. A seam-shaped selector whose reverse lookup hits a
+budget-truncated seam inventory refuses as undecidable instead of rendering
+a clean miss the lookup did not establish: the refusal names the
+truncation, the wider-budget recovery, and the listing route.
+
+On a fresh `context` or `explain` lookup miss, retain the check producer's
+detected-but-unanalyzed language advisories and non-success language-run
+reasons under `Analysis limitations for this run:`. Reuse the producer's
+configured-off versus unavailable-binary recovery and TypeScript/JavaScript
+family names. This describes the run's scope; capped sample paths do not
+establish that a limitation caused this particular selector to miss. Preserve
+the selector's syntax/seam guidance and effective root/base/source/mode retry.
+Successful selection, ambiguity and ordinary misses without such limitations
+retain their existing behavior. Recorded `--from` lookups do not infer these
+facts from ambient configuration: the artifact has no complete advisory carrier.
+Exit 2, prose stderr and empty stdout remain the miss contract (#10720).
 
 The packet should include:
 
@@ -36,6 +65,7 @@ The packet should include:
 - owner symbol
 - recommended test location
 - related existing tests
+- the matched related-test row count before the packet's display window
 - fixture or builder hints
 - missing input values
 - missing oracle shape
@@ -44,6 +74,16 @@ The packet should include:
 - stop reasons
 
 ## Required Evidence
+
+### Bounded related-test totals (#8952)
+
+The shared packet DTO and JSON renderer retain `Finding::related_tests_total()`
+as `related_tests_total` beside the bounded `related_tests` window. Identical
+eight-row windows with matched totals of 12 and 13 remain distinguishable.
+The count uses the existing retained-count fallback and floor for legacy or
+underspecified metadata, before applying the packet's display limit. A zero
+display limit preserves the total. Rendering preserves producer evidence,
+witnesses, selection and identity algorithms.
 
 ### Unknown finding guidance (#7477)
 
@@ -115,6 +155,10 @@ Planned tests:
   with literal finding/class/reason identity, human/JSON section parity, and
   scope-preserving context replay
 - retained boundary, missing-assertion, and no-path verdict-change recipes
+- `crates/ripr/tests/cli_smoke/selector_language_recovery.rs` — fresh disabled,
+  unavailable-binary and enabled-run scope, exact retry replay from a separate
+  Git repository, capped samples, mixed-language hits, and artifact non-invention;
+  the enabled-Perl no-packet row requires a `lang-perl` test build
 
 ## Implementation Mapping
 

@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-op-add-impl",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-op-add-impl.diff",
+  "anchor": {
+    "file": "src/ops.rs",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "operator_overload_assert_eq",
+  "hard_case": "The owner is an `impl Add` body, and the test reaches it only through the `+` operator, never by name.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Money(self.0 - other.0)",
+        "mutated_line": "Money(self.0 - other.0)",
+        "outcome": "tests_failed",
+        "failing_test": "ops::tests::money_adds_through_the_operator",
+        "equivalence_review": "not equivalent: `Money(other.0 + self.0)` becomes `Money(self.0 - other.0)`"
+      },
+      {
+        "replacement": "Money(self.0 * other.0)",
+        "mutated_line": "Money(self.0 * other.0)",
+        "outcome": "tests_failed",
+        "failing_test": "ops::tests::money_adds_through_the_operator",
+        "equivalence_review": "not equivalent: `Money(other.0 + self.0)` becomes `Money(self.0 * other.0)`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "money_adds_through_the_operator asserts Money(2) + Money(3) == Money(5), so subtraction (-1) and multiplication (6) both fail it. Shape: operator overload reached through the operator.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

@@ -25,7 +25,7 @@ Only `Actionable` grants the consumer an actionable state; `Unknown` does not
 mean a clean result. Producer `AnalysisOutcome`, language-specific limitations,
 receipt lifecycle, and transport currentness keep their own authorities.
 
-## Migration and consequences
+## Consequences
 
 This first slice does not rename a public field or change its version. Follow-up
 consumer migrations replace string comparisons with the typed state at their
@@ -38,3 +38,14 @@ separate per-surface mapping and must not be silently recast as gap states.
 The enum's serialization preserves the five current wire values and rejects
 an unrecognized value. Future states require an explicit typed addition and
 consumer policy, rather than a new unreviewed string literal.
+
+## Alternatives Considered
+
+- **Keep inline string checks at each consumer.** Not chosen: the five gap
+  states were already inline strings at the decision point, so each consumer
+  could drift (see Context). One typed owner makes the decision once.
+- **Fold gap states into `AnalysisOutcome`.** Rejected: a review-card state
+  would then appear to describe an analysis stage (see Context).
+- **Rename `gap_state` to `evidence_state` now, or emit both fields.**
+  Rejected for this slice: it needs a versioned schema migration, and two
+  fields would create competing authorities (see Consequences).

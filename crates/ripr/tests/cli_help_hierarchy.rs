@@ -7,6 +7,10 @@ use std::process::Command;
 mod help_contract;
 use help_contract::{assert_contains, normalized, undocumented_doc_flags};
 
+#[path = "common/help_workspace.rs"]
+mod help_workspace;
+use help_workspace::in_help_workspace;
+
 fn run_ripr(args: &[&str]) -> Result<std::process::Output, String> {
     run_ripr_in(args, None)
 }
@@ -23,6 +27,249 @@ fn run_ripr_in(
     command
         .output()
         .map_err(|error| format!("failed to run ripr {args:?}: {error}"))
+}
+
+#[test]
+fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
+    for (value, suggestion) in [
+        ("githb", " Did you mean `github`?"),
+        ("githbu", " Did you mean `github`?"),
+        ("gitlab", " Did you mean `github`?"),
+        ("gitlab-ci", ""),
+        ("zzzzzzzzzzzz", ""),
+    ] {
+        let output = run_ripr(&["init", "--ci", value, "--dry-run"])?;
+        assert_eq!(output.status.code(), Some(2), "provider {value:?}");
+        assert!(output.stdout.is_empty(), "provider {value:?}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+            format!("ripr: unknown init --ci provider {value:?}.{suggestion} Accepted: github.\n"),
+            "provider {value:?}"
+        );
+    }
+    let missing = run_ripr(&["init", "--ci"])?;
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(missing.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&missing.stderr).replace("\r\n", "\n"),
+        "ripr: missing value for --ci\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn init_ci_provider_valid_preview_keeps_workflow_contract() -> Result<(), String> {
+    let output = run_ripr(&["init", "--ci", "github", "--dry-run", "--force"])?;
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(".github/workflows/ripr.yml"), "{stdout}");
+    assert!(stdout.contains("continue-on-error: true"), "{stdout}");
+    assert!(
+        stdout.contains("Rerun without --dry-run to apply."),
+        "{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn agent_repair_phase_refusals_render_scoped_recovery_without_writes() -> Result<(), String> {
+    in_help_workspace(|root| {
+        for (value, suggestion) in [
+            ("befor", " Did you mean `before`?"),
+            ("aftr", " Did you mean `after`?"),
+            ("verfy", " Did you mean `verify`?"),
+            ("", ""),
+            ("zzzzzzzzzzzz", ""),
+            ("packet", ""),
+        ] {
+            // A later valid occurrence must not hide an earlier invalid one.
+            for repeated in [false, true] {
+                let mut args = vec![
+                    "agent",
+                    "repair",
+                    "--store",
+                    "must-not-exist",
+                    "--phase",
+                    value,
+                ];
+                if repeated {
+                    args.extend(["--phase", "before"]);
+                }
+                let output = run_ripr_in(&args, Some(root))?;
+                assert_eq!(output.status.code(), Some(2), "{args:?}");
+                assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+                assert_eq!(
+                    String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+                    format!(
+                        "ripr: unknown --phase {value:?}.{suggestion} Accepted: before, after, verify.\n"
+                    ),
+                    "{args:?}"
+                );
+            }
+        }
+        let missing = run_ripr_in(&["agent", "repair", "--phase"], Some(root))?;
+        assert_eq!(missing.status.code(), Some(2));
+        assert!(missing.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8_lossy(&missing.stderr).replace("\r\n", "\n"),
+            "ripr: missing value for --phase\n"
+        );
+        let help = run_ripr_in(
+            &["agent", "repair", "--phase", "befor", "--help"],
+            Some(root),
+        )?;
+        assert!(help.status.success());
+        assert!(help.stderr.is_empty());
+        assert_contains(
+            "repair help",
+            &String::from_utf8_lossy(&help.stdout),
+            "Usage: ripr agent repair",
+        )?;
+        Ok(())
+    })
+}
+
+#[test]
+fn agent_repair_default_and_later_phase_selectors_match_help() -> Result<(), String> {
+    in_help_workspace(|root| {
+        let implicit = run_ripr_in(&["agent", "repair", "--root", "."], Some(root))?;
+        let explicit = run_ripr_in(
+            &["agent", "repair", "--root", ".", "--phase", "before"],
+            Some(root),
+        )?;
+        for output in [&implicit, &explicit] {
+            assert_eq!(output.status.code(), Some(2));
+            assert!(output.stdout.is_empty());
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .starts_with("ripr: agent repair --phase before requires --seam-id <id>;")
+            );
+        }
+        assert_eq!(implicit.stderr, explicit.stderr);
+        for (phase, expected) in [
+            ("after", "requires --attempt <id> or --seam-id <id>"),
+            ("verify", "requires --attempt <id>"),
+        ] {
+            let output = run_ripr_in(&["agent", "repair", "--phase", phase], Some(root))?;
+            assert_eq!(output.status.code(), Some(2), "{phase}: {output:?}");
+            assert!(output.stdout.is_empty());
+            assert_eq!(
+                String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+                format!("ripr: agent repair --phase {phase} {expected}\n")
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn agent_repair_later_phases_require_existing_attempts_without_writes() -> Result<(), String> {
+    in_help_workspace(|root| {
+        let attempt = "repair-attempt-0123456789abcdef01234567";
+        for phase in ["after", "verify"] {
+            let mut args = vec![
+                "agent",
+                "repair",
+                "--root",
+                ".",
+                "--phase",
+                phase,
+                "--attempt",
+                attempt,
+            ];
+            if phase == "verify" {
+                args.extend(["--verify-authorized", "--verify-authority", "help-contract"]);
+            }
+            let output = run_ripr_in(&args, Some(root))?;
+            assert_eq!(output.status.code(), Some(2), "{phase}: {output:?}");
+            assert!(output.stdout.is_empty());
+            assert_contains(
+                phase,
+                &String::from_utf8_lossy(&output.stderr),
+                &format!("repair attempt manifest not found for {attempt}"),
+            )?;
+        }
+        // After's compatibility selector still resolves an existing attempt;
+        // it must not start one, nor be refused as an unsupported selector.
+        let output = run_ripr_in(
+            &[
+                "agent",
+                "repair",
+                "--root",
+                ".",
+                "--phase",
+                "after",
+                "--seam-id",
+                "seam:missing",
+            ],
+            Some(root),
+        )?;
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_contains(
+            "after seam selector",
+            &String::from_utf8_lossy(&output.stderr),
+            "no awaiting repair attempt exists for seam `seam:missing`; start one with",
+        )?;
+        Ok(())
+    })
+}
+
+#[test]
+fn agent_subcommand_typos_render_scoped_recovery() -> Result<(), String> {
+    let accepted = "start, brief, packet, card, stub, verify, verify-execute, receipt, status, review-summary, repair";
+    for (typo, suggestion) in [("brief2", "brief"), ("verify-execue", "verify-execute")] {
+        let output = run_ripr(&["agent", typo])?;
+        assert_eq!(output.status.code(), Some(2), "agent {typo}");
+        assert!(output.stdout.is_empty(), "agent {typo} wrote stdout");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).trim_end(),
+            format!(
+                "ripr: unknown agent subcommand {typo:?}. Did you mean `{suggestion}`? Accepted: {accepted}."
+            )
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn agent_subcommand_far_and_sibling_misses_render_no_suggestion() -> Result<(), String> {
+    // `ingest` belongs to swarm and must not leak into agent recovery.
+    for value in ["zzzzzzzzzzzz", "ingest"] {
+        let output = run_ripr(&["agent", value])?;
+        assert_eq!(output.status.code(), Some(2), "agent {value}");
+        assert!(output.stdout.is_empty(), "agent {value} wrote stdout");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).trim_end(),
+            format!(
+                "ripr: unknown agent subcommand {value:?}. Accepted: start, brief, packet, card, stub, verify, verify-execute, receipt, status, review-summary, repair."
+            )
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn agent_recovery_preserves_group_and_child_help() -> Result<(), String> {
+    let group = run_ripr(&["agent", "--help"])?;
+    assert!(group.status.success());
+    assert!(group.stderr.is_empty());
+    assert!(!group.stdout.is_empty());
+    for args in [["agent"].as_slice(), ["help", "agent"].as_slice()] {
+        let output = run_ripr(args)?;
+        assert!(output.status.success(), "{args:?}");
+        assert!(output.stderr.is_empty(), "{args:?}");
+        assert_eq!(output.stdout, group.stdout, "{args:?}");
+    }
+    let child = run_ripr(&["agent", "brief", "--help"])?;
+    assert!(child.status.success());
+    assert!(child.stderr.is_empty());
+    assert_contains(
+        "agent brief help",
+        &String::from_utf8_lossy(&child.stdout),
+        "Usage: ripr agent brief",
+    )?;
+    Ok(())
 }
 
 const BARE_HELP_GROUPS: &[&str] = &[
@@ -404,37 +651,6 @@ mod discovery_rows {
     }
 }
 
-fn in_help_workspace(
-    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
-) -> Result<(), String> {
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_nanos();
-    let parent = std::env::temp_dir();
-    std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
-    let root = parent.join(format!("ripr-group-help-{}-{nonce}", std::process::id()));
-    std::fs::create_dir(&root).map_err(|error| error.to_string())?;
-    // Help must neither load configuration nor write reports, even in a
-    // workspace where an executing command would reject the configuration.
-    let config = "deliberately invalid TOML [";
-    std::fs::write(root.join("ripr.toml"), config).map_err(|error| error.to_string())?;
-    let result = test(&root).and_then(|()| {
-        let entries = std::fs::read_dir(&root).map_err(|error| error.to_string())?;
-        let entries = entries
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())?;
-        let actual =
-            std::fs::read_to_string(root.join("ripr.toml")).map_err(|error| error.to_string())?;
-        if entries.len() != 1 || actual != config {
-            return Err(format!("group help changed workspace contents: {root:?}"));
-        }
-        Ok(())
-    });
-    let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
-    result.and(cleanup)
-}
-
 #[test]
 fn bare_groups_display_their_documented_help() -> Result<(), String> {
     in_help_workspace(|root| {
@@ -726,7 +942,8 @@ fn default_help_keeps_the_task_roles_distinct() -> Result<(), String> {
             "Diagnose setup ripr doctor",
             "Inspect one change ripr check",
             "Guided repo adoption ripr pilot --root .",
-            "Repair one named gap ripr repair",
+            "Repair a Rust seam ripr repair",
+            "Repair a diff gap follow the start from ripr check, when offered",
             "Compose PR evidence ripr first-pr",
             "Adopt advisory CI ripr init --ci github",
             "ripr help --all",
@@ -742,6 +959,150 @@ fn default_help_keeps_the_task_roles_distinct() -> Result<(), String> {
     Ok(())
 }
 
+/// #9865: the first screen names the global exit vocabulary and the global
+/// `-v`/`--verbose` flag. Before this block, no help surface disclosed
+/// either: the exit contract lived only in docs/EXIT_CODES.md and `-v` only
+/// in the `help --all` preamble.
+#[test]
+fn default_help_discloses_exit_codes_and_global_verbose() -> Result<(), String> {
+    for args in [["--help"].as_slice(), ["help"].as_slice()] {
+        let stdout = normalized(&rendered_help(args)?);
+        for needle in [
+            "Exit codes: 0 completed",
+            "2 could not complete",
+            "3 blocking decision or typed refusal",
+            "130 interrupted",
+            "docs/EXIT_CODES.md",
+            "-v, --verbose",
+            "Extra pipeline diagnostics on stderr",
+        ] {
+            assert_contains(
+                "default help (`ripr --help` / `ripr help`)",
+                &stdout,
+                needle,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// #9864: per-command help renders the catalog `example` field — the same
+/// string `ripr help --json` emits for the command — so a runnable
+/// invocation is on the screen a new user actually reads. `check` keeps its
+/// richer hand-written examples; these cover the other command families,
+/// including parents (`agent`, `swarm`) and catalog-only nested paths
+/// (`gate evaluate`).
+#[test]
+fn per_command_help_renders_the_catalog_example() -> Result<(), String> {
+    for (args, example) in [
+        (
+            &["zero", "status", "--help"][..],
+            "ripr zero status --delta target/ripr/reports/baseline-debt-delta.json",
+        ),
+        (
+            &["cache", "export", "--help"][..],
+            "ripr cache export --out NEW_DIRECTORY",
+        ),
+        (
+            &["baseline", "diff", "--help"][..],
+            "ripr baseline diff --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json",
+        ),
+        (&["mcp", "--help"][..], "ripr mcp --stdio"),
+        (
+            &["feedback", "record", "--help"][..],
+            "ripr feedback record --snapshot ID --reason CODE",
+        ),
+        (&["status", "--help"][..], "ripr status --root ."),
+        (
+            &["first-pr", "--help"][..],
+            "ripr first-pr --root . --base BASE --head HEAD",
+        ),
+        (
+            &["gate", "evaluate", "--help"][..],
+            "ripr gate evaluate --pr-guidance PATH",
+        ),
+        (
+            &["agent", "--help"][..],
+            "ripr agent verify --root . --before before.json --after after.json --json",
+        ),
+        (
+            &["swarm", "--help"][..],
+            "ripr swarm ingest --root . --result target/ripr/workflow/agent-result.json",
+        ),
+    ] {
+        let stdout = normalized(&rendered_help(args)?);
+        let route = args[..args.len() - 1].join(" ");
+        assert_contains(&format!("help for `ripr {route}`"), &stdout, example)?;
+    }
+    Ok(())
+}
+
+/// #9867: `ripr help --all <extra>` used to print the full reference and exit
+/// 0 with the extra token silently discarded, so `ripr help --all check`
+/// (meant `ripr help check`) produced the widest possible output with a
+/// success code. The route is now as strict as `help --json`: exactly one
+/// flag, and any trailing argument exits 2 naming the accepted form.
+#[test]
+fn help_all_rejects_trailing_arguments() -> Result<(), String> {
+    for trailing in [&["check"][..], &["foo", "bar"][..]] {
+        let mut argv = vec!["help", "--all"];
+        argv.extend(trailing);
+        let output = run_ripr(&argv)?;
+        assert_eq!(output.status.code(), Some(2), "ripr {argv:?}");
+        assert!(output.stdout.is_empty(), "ripr {argv:?}: {output:?}");
+        assert_contains(
+            "ripr help --all trailing-argument error",
+            &String::from_utf8_lossy(&output.stderr),
+            "usage: ripr help --all (this route accepts no other arguments)",
+        )?;
+    }
+    // The bare selector is unchanged on both spellings.
+    for argv in [&["help", "--all"][..], &["--help", "--all"][..]] {
+        let output = run_ripr(argv)?;
+        assert!(output.status.success(), "ripr {argv:?}: {output:?}");
+    }
+    Ok(())
+}
+
+/// #9867: `--help --all` is a real extended-help grammar only on `check`
+/// (#8163). On every other command the pair exits 2 naming the supported
+/// routes, instead of printing ordinary help while silently discarding
+/// `--all` — the flag can no longer lie.
+#[test]
+fn help_all_flag_pair_is_rejected_outside_check() -> Result<(), String> {
+    for argv in [
+        &["repair", "--help", "--all"][..],
+        &["zero", "status", "--help", "--all"][..],
+        &["agent", "brief", "--help", "--all"][..],
+    ] {
+        let output = run_ripr(argv)?;
+        assert_eq!(output.status.code(), Some(2), "ripr {argv:?}");
+        assert!(output.stdout.is_empty(), "ripr {argv:?}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_contains(
+            &format!("extended-help rejection for `ripr {}`", argv.join(" ")),
+            &stderr,
+            "extended help is available via `ripr help --all`",
+        )?;
+        assert_contains(
+            &format!("extended-help rejection for `ripr {}`", argv.join(" ")),
+            &stderr,
+            "`ripr check --help --all` for check",
+        )?;
+    }
+    // `check` keeps its documented progressive-help grammar, in both
+    // spellings.
+    for argv in [
+        &["check", "--help", "--all"][..],
+        &["help", "check", "--all"][..],
+    ] {
+        let output = run_ripr(argv)?;
+        assert!(output.status.success(), "ripr {argv:?}: {output:?}");
+        assert!(!output.stdout.is_empty(), "ripr {argv:?}: {output:?}");
+    }
+    Ok(())
+}
+
 #[test]
 fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
     let stdout = normalized(&rendered_help(&["help", "--all"])?);
@@ -749,7 +1110,8 @@ fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
         "Diagnose setup ripr doctor",
         "Inspect one change ripr check",
         "Guided repo adoption ripr pilot --root .",
-        "Repair one named gap ripr repair [<item>] | ripr continue | ripr status",
+        "Repair a Rust seam ripr repair [<item>] | ripr continue | ripr status",
+        "Repair a diff gap follow the start from ripr check, when offered",
         "Compose PR evidence ripr first-pr --root . --base BASE --head HEAD",
         "Adopt advisory CI ripr init --ci github",
         "`ripr check` is the ordinary first-value analysis; `ripr pilot` is the guided repo-adoption workflow.",
@@ -872,7 +1234,7 @@ fn help_screens_state_the_surfaces_the_parsers_accept() -> Result<(), String> {
         assert_contains("exhaustive help (`ripr help --all`)", &all, needle)?;
     }
 
-    // Discriminators. The `Repair one named gap` role line is the task-first
+    // Discriminators. The `Repair a Rust seam` role line is the task-first
     // alternation `repair | continue | status`: it names the ordinary
     // commands rather than the internal phase vocabulary, and
     // `default_help_keeps_the_task_roles_distinct` pins it as role
@@ -919,8 +1281,8 @@ fn calibrate_help_names_how_to_produce_the_imported_artifacts() -> Result<(), St
         "cargo mutants",
         "mutants.out",
         "27.1.0",
-        "RIPR-SPEC-0006",
-        "fixtures/boundary_gap/calibration/runtime-mutants.json",
+        "calibration fixtures",
+        "runtime-mutants.json",
     ] {
         assert_contains(
             "calibrate help (`ripr calibrate cargo-mutants --help`)",
@@ -982,6 +1344,65 @@ fn outcome_help_matches_the_enforced_canonical_gap_contract() -> Result<(), Stri
         );
     }
     Ok(())
+}
+
+/// #9033: `--phase before` resolves a `ripr check` finding ID, so neither the
+/// group help nor the missing-`--seam-id` refusal may say those IDs are not
+/// seam IDs, and the group help points a newcomer at `ripr repair` first.
+#[test]
+fn agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve() -> Result<(), String> {
+    let stdout = normalized(&rendered_help(&["agent", "--help"])?);
+    assert_contains(
+        "agent help",
+        &stdout,
+        "Repair path (start here): ripr repair [<item>] # edit one focused test ripr continue The same transaction with explicit phases:",
+    )?;
+    assert_contains(
+        "agent help",
+        &stdout,
+        "`--phase before` also accepts a `ripr check` finding ID (`probe:...` or `repo-probe:...`)",
+    )?;
+    if stdout.contains("are not seam IDs") {
+        return Err("agent help still says finding IDs are not seam IDs".to_string());
+    }
+    // The inspect-change catalog entry carries the same claim in its repair
+    // handoff step and stop condition.
+    let catalog = normalized(&rendered_help(&["help", "workflow", "inspect-change"])?);
+    assert_contains(
+        "inspect-change workflow",
+        &catalog,
+        "`ripr repair` also accepts a probe: finding ID, a canonical gap ID or a file:line naming one repair-eligible seam",
+    )?;
+    for stale in ["finding ID is not a seam ID", "repair refuses a probe:"] {
+        if catalog.contains(stale) {
+            return Err(format!(
+                "inspect-change workflow still says {stale:?}: {catalog}"
+            ));
+        }
+    }
+    in_help_workspace(|root| {
+        let output = run_ripr_in(
+            &["agent", "repair", "--phase", "before", "--root", "."],
+            Some(root),
+        )?;
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert_contains(
+            "missing --seam-id refusal",
+            &stderr,
+            "requires --seam-id <id>",
+        )?;
+        assert_contains(
+            "missing --seam-id refusal",
+            &stderr,
+            "pass a `ripr check` finding ID (`probe:...` or `repo-probe:...`)",
+        )?;
+        if stderr.contains("are not seam IDs") {
+            return Err(format!(
+                "refusal still says finding IDs are not seam IDs: {stderr}"
+            ));
+        }
+        Ok(())
+    })
 }
 
 #[test]
@@ -1046,12 +1467,16 @@ fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<()
         "--verify-authorized",
         "--verify-authority ID",
         "--verify-rollback",
+        "Which phase of the repair loop to run. Defaults to `before` (start a new attempt); `after` and `verify` require an existing repair attempt.",
+        "--attempt ID Select one durable repair attempt; valid for `after` and `verify` (verify accepts only `--attempt`).",
         "ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase before",
         "ripr agent repair [--root PATH] [--store PATH] (--attempt ID|--seam-id ID) --phase after",
         "ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify",
         "--store PATH Explicit repair-attempt store, resolved against --root.",
         "The repair command does not generate or apply tests, execute mutation testing, or declare the repository safe to merge.",
-        "Inline `#[cfg(test)]` modules don't qualify their file: a repository whose only tests are inline in non-test-surface files is permanently out of repair scope",
+        "One exception: when a seam's only tests live in one inline `#[cfg(test)]`",
+        "production code outside the module stays",
+        "the file must be committed before the start",
     ] {
         assert_contains(
             "agent repair help (`ripr agent repair --help`)",
@@ -1116,11 +1541,16 @@ fn help_index_routes_agent_repair_to_repair_help() -> Result<(), String> {
 }
 
 /// `check` and `context` must say what each `--mode` value means and where
-/// the full table lives (#4378), not only list the bare names.
+/// the full table lives (#4378), not only list the bare names. `check` reads
+/// the mode table through its `--help --all` reference; `context` has no
+/// extended form (#9867), so its single `--help` screen must carry the table.
 #[test]
 fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), String> {
-    for command in ["check", "context"] {
-        let help = normalized(&rendered_help(&[command, "--help", "--all"])?);
+    for (command, help_args) in [
+        ("check", ["check", "--help", "--all"].as_slice()),
+        ("context", ["context", "--help"].as_slice()),
+    ] {
+        let help = normalized(&rendered_help(help_args)?);
         for needle in [
             "instant (changed files only, cheapest)",
             "deep and ready (whole workspace, slowest)",
@@ -1293,6 +1723,8 @@ const CHECK_REFERENCE_FORMATS: &[&str] = &[
 ];
 const CHECK_REFERENCE_ENVIRONMENT: &[&str] = &[
     "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
+    "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES",
+    "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES",
     "RIPR_MAX_DIFF_INDEX_FILES",
     "RIPR_DIFF_NARROW_INDEX_FILES",
     "RIPR_DIFF_DEPENDENT_SCOPE",
@@ -1328,7 +1760,14 @@ fn check_help_is_one_screen_and_all_is_the_full_reference() -> Result<(), String
         "--format FORMAT",
         "--json",
         "--mode MODE",
+        "instant, draft (default), fast, deep, or ready",
         "--root PATH",
+        // #10515: discover the shipped analysis budget and recover before a
+        // first run reaches it. Repo seam walks bypass that budget.
+        "--timeout SECS",
+        "Wall-clock analysis budget (600s default; 0 disables;",
+        "excludes repo seam-inventory formats)",
+        "On analysis_timeout, raise/disable it or narrow the diff; re-run.",
         "--quiet",
         "Unknown totals show no percentage or ETA",
         "progress makes no speed claim",

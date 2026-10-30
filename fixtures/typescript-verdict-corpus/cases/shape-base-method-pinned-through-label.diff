@@ -1,0 +1,12 @@
+diff --git a/src/shapes.ts b/src/shapes.ts
+index 0000000..1111111 100644
+--- a/src/shapes.ts
++++ b/src/shapes.ts
+@@ -1,6 +1,6 @@
+ export class Shape {
+   area(): number {
+-    return 0;
++    return 1;
+   }
+ 
+   label(): string {

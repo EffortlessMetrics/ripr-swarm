@@ -13,6 +13,7 @@ enum Expected {
     WrongFilter,
     WrongFirstPage,
     WrongCursorGuard,
+    WrongHeadGuard,
 }
 
 struct Case {
@@ -46,6 +47,7 @@ fn run_fixtures(strict: bool) -> Result<(), String> {
         .and_then(|(_, rest)| rest.split_once("\n```"))
         .map(|(code, _)| code.to_string())
         .ok_or_else(|| "missing executable recipe fence".to_string())?;
+    let recipe = bind_fixture_head(&recipe)?;
     let fixture: Value = serde_json::from_slice(
         &fs::read(reference.join("review-conversations.fixture.json"))
             .map_err(|error| error.to_string())?,
@@ -56,7 +58,7 @@ fn run_fixtures(strict: bool) -> Result<(), String> {
         return Err("fixture must supply two pages".to_string());
     }
     let cases = fixture_cases(&pages, &recipe)?;
-    if cases.len() != 27 {
+    if cases.len() != 36 {
         return Err("fixture case inventory changed without updating its denominator".to_string());
     }
     let stamp = SystemTime::now()
@@ -116,6 +118,15 @@ fn connection(pages: &mut Value, page: usize) -> &mut Value {
     &mut pages[page]["data"]["repository"]["pullRequest"]["reviewThreads"]
 }
 
+const EXPECTED_HEAD_INPUT: &str = "'<reviewed candidate full SHA>'";
+
+fn bind_fixture_head(recipe: &str) -> Result<String, String> {
+    if recipe.matches(EXPECTED_HEAD_INPUT).count() != 1 {
+        return Err("reviewed candidate input anchor disappeared or became ambiguous".to_string());
+    }
+    Ok(recipe.replace(EXPECTED_HEAD_INPUT, &format!("'{}'", "b".repeat(40))))
+}
+
 fn fixture_cases(pages: &Value, recipe: &str) -> Result<Vec<Case>, String> {
     let case = |name, pages, expected| Case {
         name,
@@ -125,6 +136,52 @@ fn fixture_cases(pages: &Value, recipe: &str) -> Result<Vec<Case>, String> {
         expected,
     };
     let mut cases = vec![case("two-pages", pages.clone(), Expected::Open)];
+    let bound_input = format!("'{}'", "b".repeat(40));
+    for (name, value) in [
+        ("null-expected-head", "$null".to_string()),
+        ("empty-expected-head", "''".to_string()),
+        ("short-expected-head", format!("'{}'", "b".repeat(39))),
+        ("nonhex-expected-head", format!("'{}'", "g".repeat(40))),
+        ("newline-expected-head", format!("'{}\n'", "b".repeat(40))),
+    ] {
+        let mut invalid = case(
+            name,
+            pages.clone(),
+            Expected::Refused(&["Select the full reviewed candidate SHA"], 0),
+        );
+        invalid.recipe = recipe.replace(&bound_input, &value);
+        cases.push(invalid);
+    }
+    let mut uppercase = case("uppercase-expected-head", pages.clone(), Expected::Open);
+    uppercase.recipe = recipe.replace(&bound_input, &format!("'{}'", "B".repeat(40)));
+    cases.push(uppercase);
+    let mut wrong_head = pages.clone();
+    for page in wrong_head
+        .as_array_mut()
+        .ok_or_else(|| "fixture pages must be an array".to_string())?
+    {
+        page["data"]["repository"]["pullRequest"]["headRefOid"] = json!("c".repeat(40));
+    }
+    cases.push(case(
+        "stable-wrong-head",
+        wrong_head.clone(),
+        Expected::Refused(&["PR head differs from reviewed candidate"], 1),
+    ));
+    let mut wrong_empty = json!([wrong_head[0].clone()]);
+    connection(&mut wrong_empty, 0)["nodes"] = json!([]);
+    connection(&mut wrong_empty, 0)["pageInfo"]["hasNextPage"] = json!(false);
+    cases.push(case(
+        "empty-wrong-head",
+        wrong_empty,
+        Expected::Refused(&["PR head differs from reviewed candidate"], 1),
+    ));
+    let mut wrong_head_guard = case("wrong-head-guard", wrong_head, Expected::WrongHeadGuard);
+    let head_guard = "    if ($conversationSubject.headRefOid -ine $conversationExpectedHead) { throw 'PR head differs from reviewed candidate; retain findings and refresh affected review before recollecting' }\n";
+    if recipe.matches(head_guard).count() != 1 {
+        return Err("expected-head guard anchor disappeared or became ambiguous".to_string());
+    }
+    wrong_head_guard.recipe = recipe.replace(head_guard, "");
+    cases.push(wrong_head_guard);
     let mut resolved = pages.clone();
     for index in 0..2 {
         for node in connection(&mut resolved, index)["nodes"]
@@ -290,7 +347,7 @@ fn fixture_cases(pages: &Value, recipe: &str) -> Result<Vec<Case>, String> {
 
 fn check_result(result: &Value, expected: &Expected) -> Result<(), String> {
     let calls = match expected {
-        Expected::Open | Expected::WrongFilter => 2,
+        Expected::Open | Expected::WrongFilter | Expected::WrongHeadGuard => 2,
         Expected::Clear(0) | Expected::WrongFirstPage => 1,
         Expected::Clear(_) => 2,
         Expected::Refused(_, calls) => *calls,
@@ -322,14 +379,20 @@ fn check_result(result: &Value, expected: &Expected) -> Result<(), String> {
         }
         return Ok(());
     }
-    if result["ok"] != true
-        || result["packet"]["observed_head"] != "b".repeat(40)
-        || result["packet"]["pr"] != 42
-    {
-        return Err(format!(
-            "expected successful exact-subject packet: {result}"
-        ));
+    if let Expected::WrongHeadGuard = expected {
+        let packet = &result["packet"];
+        if result["ok"] != true
+            || packet["expected_head"] != "b".repeat(40)
+            || packet["observed_head"] != "c".repeat(40)
+            || validate_subject(result).is_ok()
+        {
+            return Err(format!(
+                "candidate oracle accepted the wrong collector: {result}"
+            ));
+        }
+        return validate_open(packet);
     }
+    validate_subject(result)?;
     let packet = &result["packet"];
     match expected {
         Expected::Open => validate_open(packet),
@@ -354,8 +417,23 @@ fn check_result(result: &Value, expected: &Expected) -> Result<(), String> {
             Ok(())
         }
         Expected::Refused(_, _) => Err("refusal branch was not inspected".to_string()),
-        Expected::WrongCursorGuard => Err("cursor control branch was not inspected".to_string()),
+        Expected::WrongCursorGuard | Expected::WrongHeadGuard => {
+            Err("guard control branch was not inspected".to_string())
+        }
     }
+}
+
+fn validate_subject(result: &Value) -> Result<(), String> {
+    if result["ok"] != true
+        || result["packet"]["expected_head"] != "b".repeat(40)
+        || result["packet"]["observed_head"] != "b".repeat(40)
+        || result["packet"]["pr"] != 42
+    {
+        return Err(format!(
+            "expected successful exact-subject packet: {result}"
+        ));
+    }
+    Ok(())
 }
 
 fn validate_open(packet: &Value) -> Result<(), String> {

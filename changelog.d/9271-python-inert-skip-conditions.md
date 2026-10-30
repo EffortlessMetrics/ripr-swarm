@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Python: a skip or xfail whose condition is the literal that never triggers it (`skipif(False)`, `unittest.skipUnless(True)`) and `pytest.importorskip` of a module every interpreter ships no longer withhold credit from the test, so `py-trap-skipif-false` and `py-trap-module-loaded` are credited; conditions on names or comparisons and installable modules still abstain (#9271).

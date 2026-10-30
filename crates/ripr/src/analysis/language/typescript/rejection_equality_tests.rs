@@ -188,10 +188,20 @@ fn unresolved_rejection_checks_do_not_gain_exact_error_credit() {
             assert!(assertion.expected_value_or_variant.is_none());
         }
     }
+    // RIPR-SPEC-0243 rule 2 (#8712): a negated rejection equality is
+    // recognised with capped credit — `relational_check` / weak, no expected
+    // value — instead of being dropped from the assertion inventory.
     let negated = TEST.replace(".rejects.toBe", ".rejects.not.toBe");
     let tests = extract_tests(Path::new("tests/load.test.ts"), &negated);
     assert_eq!(tests.len(), 1);
-    assert!(tests[0].assertions.is_empty());
+    assert_eq!(tests[0].assertions.len(), 1);
+    let assertion = &tests[0].assertions[0];
+    assert_eq!(assertion.oracle_kind, OracleKind::RelationalCheck);
+    assert_eq!(assertion.oracle_strength, OracleStrength::Weak);
+    assert!(
+        assertion.expected_value_or_variant.is_none(),
+        "a negated matcher operand is not an expected value: {assertion:?}"
+    );
 }
 
 #[test]

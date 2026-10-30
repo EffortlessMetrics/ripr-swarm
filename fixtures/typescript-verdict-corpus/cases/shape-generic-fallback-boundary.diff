@@ -1,0 +1,9 @@
+diff --git a/src/firstOr.ts b/src/firstOr.ts
+index 0000000..1111111 100644
+--- a/src/firstOr.ts
++++ b/src/firstOr.ts
+@@ -1,3 +1,3 @@
+ export function firstOr<T>(xs: readonly T[], fallback: T): T {
+-  return xs.length > 0 ? xs[0] : fallback;
++  return xs.length >= 0 ? xs[0] : fallback;
+ }

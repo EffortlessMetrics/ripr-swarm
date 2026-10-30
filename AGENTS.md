@@ -127,15 +127,16 @@ checks load-bearing evidence and owns integration; it does not edit a delegated
 writer's checkout concurrently. Readers/reviewers add value through different
 oracles, sources, platforms or failure perspectives, not merely different names.
 
-A waiting PR, owned build or subagent blocks only its transition. Advance
-another ready claim on an available independent worker/worktree, or do useful
-read-only work. If all useful transitions are waiting, report `GOAL_IN_FLIGHT`
-and the awaited boundaries; do not poll unchanged state or claim unarranged
-background monitoring.
+A waiting PR, owned build or subagent blocks only its dependent transition. Keep
+its useful owning lead through a normal in-window CI wait and finish after actual
+result inspection and final judgment. Independent workers may advance other ready
+claims without abandoning that owner. If all useful transitions are waiting, retain
+`GOAL_IN_FLIGHT` and the exact run/attempt, owner and wake condition. Avoid tight
+polling; use a real interruption handoff only when needed, not for every CI run.
 
-Do not create rival implementations, fixed actor rosters, candidate tournaments,
-file/crate reservations, overlap maps, sibling monitoring or repository-global
-orchestration state. Consult other work for the same claim, an explicit
+Do not create rival implementations merely to consume capacity, fixed actor rosters,
+compulsory candidate tournaments, file/crate reservations, overlap maps, sibling
+monitoring or repository-global orchestration state. Consult other work for the same claim, an explicit
 prerequisite, or a concrete integration conflict. GitHub and committed artifacts
 carry durable state; model context does not. Do not invent tool/worker access.
 
@@ -160,6 +161,52 @@ conveyor, provider-crossing wrapper or Kiro lifecycle route.
 semantic truth, actual loading or obedience. A fresh runtime observation records
 version, loaded files, working directory, remote/HEAD, parent goal and a real
 PR transition. Keep that receipt with the issue; a structural pass is not it.
+
+## Selected-candidate pre-merge flow
+
+Keep development cheap: focused warm proof, substantive review and joined repairs
+before expensive qualification. Useful alternative Drafts may be compared, but
+select the candidate intended to land for that objective before requesting full
+pre-merge CI. Do not run full qualification on every alternative. Independent
+objectives may proceed concurrently; selection is not a repository-wide max-one
+queue. Complete each focused objective's code, tests and documentation together.
+
+Use the actual installed request interface. The intended #4984/#4985/#4986 flow is
+explicit late qualification, normally at most 20 minutes of complete CI execution,
+then a separate current-repository/product/integration judgment and protected
+expected-head squash. Queue time is separate. No routine auto-merge or merge queue.
+`merge-ready` is a request spelling under discussion; `premerge-ci-request` and
+`request-premerge-ci` are proposals, not installed commands. #8082 owns the staged
+caller/skills integration. Preserve live required enforcement until its qualified
+cutover; this root update does not change triggers, settings or result producers.
+
+Source review and focused proof can be complete while hosted qualification is
+still missing. Publish their actual scope and exact source; do not require future
+CI green to request CI or promote an incomplete final-merge review to clearance.
+Qualify only the selected reviewed candidate. A retained label, quoted readiness
+word, sibling's green result or completed agent session cannot authorize another
+head. Reconcile existing native request/run/attempt state before creating more work.
+
+The same useful lead normally stays with its candidate through an ordinary CI wait,
+inspects complete results and current review/Conversation findings, makes the final
+judgment, performs the authorized protected merge and reads back the landing.
+Separate decisions do not require separate agents or a new routine human approval.
+Use supported waits/events or bounded checks without tight polling. Retain context
+and ownership; a real interruption or exhausted window gets an exact continuation,
+not duplicate CI or an uncertain merge write repeated blindly.
+
+Inspect submitted reviews, all inline threads including outdated unresolved ones,
+and ordinary Conversation comments. Repair or refute material findings with current
+evidence; reply before resolving and read back both effects. Provider quotas,
+partial reads and zero visible threads are not clean review. A valid later finding
+can block merge despite an earlier clean pass. Preserve unaffected evidence while
+refreshing materially changed review/proof dimensions.
+
+After landing, reconcile the actual issue/parent acceptance. No routine full
+post-merge CI replay; the intended independent main-health cadence requires both
+at least one hour and ten merges. Incident, deep and release proof retain their
+own purposes and authority. Do not skip the currently enforced path or weaken
+proof to claim the timing/cost target.
 
 ## Product Contract
 
@@ -416,15 +463,19 @@ not merely the intended resolution order.
 Default delivery:
 
 ```text
-build/improve -> focused proof -> committed candidate -> review-pr
--> push/open/update PR -> published-head review-pr -> finish-pr
--> normal protected squash merge -> acceptance reconciliation
+build/improve -> focused proof and source review -> select candidate to land
+-> publish current source-review/proof -> actual pre-merge CI request
+-> owning lead waits and inspects complete results/current findings
+-> separate final published-head/integration judgment
+-> normal protected expected-head squash -> landing/acceptance reconciliation
 ```
 
-A pre-publication review may be `REVIEW_INCOMPLETE` while hosted artifacts do not
-exist. A ready merge requires current published-head `REVIEW_READY`, actual
-required checks, addressed material findings, scope agreement and applicable
-repository policy. Auto-merge, if used, follows the same readiness rule.
+Source review and focused proof may be complete while final-merge review remains
+`REVIEW_INCOMPLETE` for missing hosted evidence. Missing future CI cannot circularly
+block the selected candidate's CI request. A ready merge requires the final current
+published-head `REVIEW_READY`, actual required checks, addressed material findings,
+scope agreement and applicable repository policy. The same authorized lead makes
+that judgment and performs the merge; do not arm auto-merge or a merge queue.
 
 Read `.factory/skills/review-guidelines/SKILL.md`, `.factory/rules/rust.md`,
 `.factory/rules/github-actions.md`, `.factory/rules/security.md`, and

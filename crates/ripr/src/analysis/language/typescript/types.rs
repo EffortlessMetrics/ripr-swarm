@@ -5,7 +5,12 @@ use super::*;
 /// Owner extracted from a TypeScript / JavaScript source file.
 ///
 /// Covers the syntax-first owner kinds accepted for the preview surface.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// The serialized field spellings are on-disk cache identity (#10725): the
+/// per-file fact store persists owners across runs, so any field rename or
+/// type change is a schema change. Bump
+/// `TYPESCRIPT_FILE_FACT_SCHEMA_VERSION` in `fact_store.rs` with any edit.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptOwner {
     pub(crate) name: String,
     pub(crate) file: PathBuf,
@@ -47,6 +52,26 @@ pub(crate) struct TypeScriptOwner {
     /// export. Constructor matching uses it to credit
     /// `new <default-import local>(...)` (#4104-B, review #4138).
     pub(crate) class_default_export: bool,
+    /// `true` when the module's `export default { name }` (or `{ name: name
+    /// }`) object holds this top-level function under its own name, so a
+    /// default import `utils` calls it as `utils.name(...)`. Set only for a
+    /// literal made of plain same-name entries (no spread, computed key,
+    /// method, getter or duplicate), which keeps the member from being
+    /// replaced inside the object. RIPR-SPEC-0243 rule 5.
+    pub(crate) default_object_member: bool,
+    /// `true` when the owner is the whole value of a CommonJS
+    /// `module.exports = <function>` assignment (an anonymous or named
+    /// function expression, an arrow, or a plain reference to a top-level
+    /// function declaration). A `require()` of such a module IS the
+    /// function, so the test's binding is called directly; the `require()`
+    /// of an ES module's default export is a namespace object and is not.
+    /// RIPR-SPEC-0243 rule 19.
+    pub(crate) commonjs_default_export: bool,
+    /// `module.exports = <function>` as the file's whole export, independent of
+    /// the file-level gate that licenses `commonjs_default_export`: a named
+    /// import or member of such a module (`const { f } = require(...)`,
+    /// `k.f`) is a property of the function, never the owner.
+    pub(crate) commonjs_whole_function: bool,
     /// Exported names of the owner's module whose code reaches this
     /// top-level function through a bounded same-module call graph (an
     /// exported wrapper, or a value a same-module factory built). Empty for
@@ -64,7 +89,18 @@ pub(crate) struct TypeScriptOwner {
 }
 
 /// Syntactic method-shape refinement recorded during owner extraction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub(crate) enum TypeScriptMethodKind {
     /// An ordinary callable method — invoked only by member CALLS.
     #[default]
@@ -93,7 +129,7 @@ impl TypeScriptOwner {
 /// Covers syntax-first Jest/Vitest `test('name', fn)`, `it('name', fn)`,
 /// and array-form `.each(...)('name', fn)` expression statements, including
 /// nested `describe(...)` blocks.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptTest {
     /// Qualified display name. Nested `describe(...)` names are joined with the
     /// local `test(...)` / `it(...)` name so user surfaces can show context.
@@ -105,6 +141,9 @@ pub(crate) struct TypeScriptTest {
     pub(crate) file: PathBuf,
     pub(crate) line: usize,
     pub(crate) body_text: String,
+    /// Reach-only source with unreferenced local function values masked.
+    /// The original body remains available for snippets and oracle evidence.
+    pub(crate) reach_body_text: Option<String>,
     pub(crate) assertions: Vec<TypeScriptAssertion>,
     /// Module paths referenced by syntactic `vi.mock("...")` /
     /// `jest.mock("...")` calls discovered at the top level of the
@@ -112,24 +151,38 @@ pub(crate) struct TypeScriptTest {
     /// every `TypeScriptTest` parsed from that file so the classifier
     /// can surface the `mocked_module` static-limit without re-parsing.
     /// Empty when no syntactic mock indirection is present.
-    pub(crate) mocks_in_file: Vec<String>,
+    pub(crate) mocks_in_file: Shared<String>,
     /// Runtime imports discovered at the top level of the containing test
     /// file. Used only to map relative named or namespace imports back to a
     /// source owner before considering alias calls related.
-    pub(crate) imports_in_file: Vec<TypeScriptImport>,
+    pub(crate) imports_in_file: Shared<TypeScriptImport>,
+    /// Imported roots whose whole-file uses can rebind, mutate or escape
+    /// their member value. Rule 15 cannot infer enum identity through them.
+    pub(crate) unstable_member_roots_in_file: Shared<String>,
     /// Names the enclosing scopes bind for this test (declarations,
     /// `beforeEach`/`beforeAll` assignments, callback parameters), each
     /// resolved to its innermost scope. Used only to find receivers built
     /// outside the test body and to detect shadowed constructor names; owner
     /// calls and assertions must still sit in `body_text`.
-    pub(crate) scope_bindings: Vec<TypeScriptScopeBinding>,
+    pub(crate) scope_bindings: ScopeBindings,
     /// Test-local identity helpers of the containing test file
     /// (RIPR-SPEC-0249 / RIPR-SPEC-0250, amended 2026-10-15): top-level
     /// `function f(p) { return p; }` or `const f = (p) => p;` declarations
     /// whose name appears nowhere else in the file except as a direct call
     /// `f(`. Populated once per file by `extract_tests`; empty when anything
     /// could rebind or replace the name.
-    pub(crate) identity_helpers_in_file: Vec<String>,
+    pub(crate) identity_helpers_in_file: Shared<String>,
+    /// `(local, member)` pairs for default imports of the containing test
+    /// file whose local appears nowhere in the whole file (setup hooks and
+    /// file-level code included) except as its own import binding and as
+    /// calls `local.member(`, all of one member (RIPR-SPEC-0243 rule 5).
+    /// Populated once per file by `extract_tests`.
+    pub(crate) default_member_only_locals_in_file: Shared<(String, String)>,
+    /// Names the containing test file writes more than once (their
+    /// declaration initializer plus a reassignment, update or loop target),
+    /// so a binding such as `let f = require('./owner')` may no longer hold
+    /// the owner function. Populated once per file by `extract_tests`.
+    pub(crate) written_locals_in_file: Shared<String>,
     /// Test-local mock factories of the containing test file
     /// (RIPR-SPEC-0247 rule 1, amended 2026-10-15): top-level
     /// `function f() { return { ... }; }` or `const f = () => ({ ... });`
@@ -138,16 +191,69 @@ pub(crate) struct TypeScriptTest {
     /// the object literal it returns. Every call builds a fresh object, so a
     /// test-body `const p = f();` is read as that literal. Empty when
     /// anything could rebind or replace the name.
-    pub(crate) mock_factories_in_file: Vec<(String, String)>,
+    pub(crate) mock_factories_in_file: Shared<(String, String)>,
+    /// Test-file spread sources (RIPR-SPEC-0247 rule 1, amended 2026-10-18):
+    /// top-level `const defaults = { key: value, ... };` declarations whose
+    /// name appears nowhere else in the file except after a `...` spread,
+    /// each paired with the source of its object literal. Nothing can write
+    /// the object before a spread copies it, so `{ m: jest.fn(), ...defaults }`
+    /// keeps its mock when the literal has no `m` key. Empty when anything
+    /// could rebind or replace the name.
+    pub(crate) mock_spread_sources_in_file: Shared<(String, String)>,
     /// Whether the test's assertion state is established: a recognized
     /// assertion, an established absence of anything assertion-like, or
     /// something assertion-like RIPR cannot resolve (#5524). An empty
     /// `assertions` vector alone is never authority for "no assertion".
     pub(crate) assertion_admission: TypeScriptAssertionAdmission,
+    /// RIPR-SPEC-0243 rule 13: the line of the suite-factory call this test
+    /// was expanded from. `line` and each assertion's `line` stay offsets
+    /// from that call (the classifier indexes `body_text` by their
+    /// difference), so a rendered pointer reads this instead: the lines
+    /// after the call hold other statements, not the assertion. `None` for a
+    /// test written out in the file.
+    pub(crate) factory_call_line: Option<usize>,
+    /// RIPR-SPEC-0246 rule 7: the body source of every synchronous mocha
+    /// `before`/`beforeEach`/`beforeAll` hook in this test's describe chain
+    /// (the file's top level and each enclosing `describe`), outermost first.
+    /// Recorded only for a file with mocha provenance (a `mocha` import or a
+    /// mocha-style assertion import, and no jest/vitest signal) whose hook
+    /// identifier is the runner's global. A hook that is `async`, a
+    /// generator, takes a parameter (`done`), has an expression body, or
+    /// returns is not recorded. Internal: it feeds one abstention and never a
+    /// relation or credit.
+    pub(crate) setup_hook_bodies: Vec<String>,
+    /// #10438: the unevaluated `if` condition(s), outermost first and joined
+    /// with `&&`, that this test's registration sits under (a platform or
+    /// environment guard such as `if (isWindows) { test(...) }`). The test
+    /// is indexed so it reaches its owner, but it may never be registered at
+    /// runtime, so its assertions are not credited (fail-closed) and a
+    /// finding that consults it carries the
+    /// `typescript_conditional_registration` limitation. `None` for a test
+    /// registered unconditionally.
+    pub(crate) conditional_registration: Option<String>,
+}
+
+impl TypeScriptTest {
+    /// The file line a rendered pointer to `assertion` should name.
+    pub(crate) fn evidence_line(&self, assertion: &TypeScriptAssertion) -> usize {
+        self.factory_call_line.unwrap_or(assertion.line)
+    }
+}
+
+impl TypeScriptTest {
+    /// Relation decisions use the admitted execution surface without changing
+    /// the source/oracle object retained in a related-test candidate.
+    pub(crate) fn reach_view(&self) -> Option<Self> {
+        let body = self.reach_body_text.as_ref()?;
+        let mut view = self.clone();
+        view.body_text = body.clone();
+        view.reach_body_text = None;
+        Some(view)
+    }
 }
 
 /// One name an enclosing test scope binds, resolved to its innermost scope.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptScopeBinding {
     pub(crate) name: String,
     /// The constructor (`Cart`, `shop.Cart`) `name` holds when a test in the
@@ -164,9 +270,139 @@ pub(crate) struct TypeScriptScopeBinding {
     /// loop header, a hook write, a test callback parameter) shadows an
     /// import or owner of the same name for the test.
     pub(crate) file_level: bool,
+    /// Where the callback's parameter list ends in the test's `body_text`,
+    /// when `name` is a destructured fixture parameter. The destructuring is
+    /// the binding itself, so a shadow scan of the body starts after it.
+    pub(crate) parameter_end: Option<usize>,
 }
 
+/// A list several tests of one file hold in common. A file with thousands of
+/// tests would otherwise carry one copy of each file-wide list per test, which
+/// is quadratic in the file's size (#10017).
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Shared<T>(std::sync::Arc<Vec<T>>);
+
+impl<T: serde::Serialize> serde::Serialize for Shared<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.iter())
+    }
+}
+
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Shared<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self(std::sync::Arc::new(Vec::deserialize(deserializer)?)))
+    }
+}
+
+impl<T> Default for Shared<T> {
+    fn default() -> Self {
+        Self(std::sync::Arc::new(Vec::new()))
+    }
+}
+
+impl<T: PartialEq> Shared<T> {
+    /// Point at `previous`'s list when it holds the same items. Serialization
+    /// writes each test's copy, so a decoded file would otherwise hold one
+    /// list per test again.
+    fn share_with(&mut self, previous: &Self) {
+        if !std::sync::Arc::ptr_eq(&self.0, &previous.0) && self.0 == previous.0 {
+            self.0 = std::sync::Arc::clone(&previous.0);
+        }
+    }
+}
+
+/// Restore the sharing of one file's file-wide lists after decoding its
+/// tests: each list is compared with the previous test's only, so the pass is
+/// linear in the file's tests.
+pub(crate) fn reshare_file_lists(tests: &mut [TypeScriptTest]) {
+    let mut tests = tests.iter_mut();
+    let Some(mut previous) = tests.next() else {
+        return;
+    };
+    for test in tests {
+        test.mocks_in_file.share_with(&previous.mocks_in_file);
+        test.imports_in_file.share_with(&previous.imports_in_file);
+        test.unstable_member_roots_in_file
+            .share_with(&previous.unstable_member_roots_in_file);
+        test.identity_helpers_in_file
+            .share_with(&previous.identity_helpers_in_file);
+        test.default_member_only_locals_in_file
+            .share_with(&previous.default_member_only_locals_in_file);
+        test.written_locals_in_file
+            .share_with(&previous.written_locals_in_file);
+        test.mock_factories_in_file
+            .share_with(&previous.mock_factories_in_file);
+        test.mock_spread_sources_in_file
+            .share_with(&previous.mock_spread_sources_in_file);
+        previous = test;
+    }
+}
+
+#[cfg(test)]
+impl<T> Shared<T> {
+    pub(crate) fn same_list(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl<T> From<Vec<T>> for Shared<T> {
+    fn from(items: Vec<T>) -> Self {
+        Self(std::sync::Arc::new(items))
+    }
+}
+
+impl<T> std::ops::Deref for Shared<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+impl<T: Clone> std::ops::DerefMut for Shared<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        std::sync::Arc::make_mut(&mut self.0).as_mut_slice()
+    }
+}
+
+impl<T: PartialEq> PartialEq<Vec<T>> for Shared<T> {
+    fn eq(&self, other: &Vec<T>) -> bool {
+        self.0.as_slice() == other.as_slice()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Shared<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl<T: Clone> Shared<T> {
+    /// Identity of the shared list, so a pass over many tests can handle each
+    /// distinct list once.
+    pub(crate) fn identity(&self) -> *const Vec<T> {
+        std::sync::Arc::as_ptr(&self.0)
+    }
+
+    pub(crate) fn to_vec(&self) -> Vec<T> {
+        self.0.as_ref().clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn push(&mut self, item: T) {
+        std::sync::Arc::make_mut(&mut self.0).push(item);
+    }
+}
+
+/// The bindings of one test's scope; tests that see the same scope share one
+/// list.
+pub(crate) type ScopeBindings = Shared<TypeScriptScopeBinding>;
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptImport {
     pub(crate) source: String,
     pub(crate) imported: Option<String>,
@@ -219,6 +455,21 @@ pub(crate) struct TypeScriptOwnerExtractionGap {
     pub(crate) snippet: String,
 }
 
+/// One concrete, observed conditional or loop branch that holds an extracted
+/// assertion under a condition static analysis cannot evaluate (#8714).
+/// Produced by `detect_conditional_assertion_credit`; consumed by the
+/// `typescript_conditional_assertion_credit` named-limitation producer.
+/// Classification-neutral, additive disclosure only: the branch recursion is
+/// deliberate, and this record carries the caveat so a credited oracle is
+/// known to possibly never execute.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TypeScriptConditionalCreditGap {
+    pub(crate) file: PathBuf,
+    pub(crate) sample_line: usize,
+    /// Bounded single-line source text of the unevaluated condition.
+    pub(crate) condition: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypeScriptRelationKind {
     DirectOwnerCall,
@@ -247,6 +498,19 @@ pub(crate) enum TypeScriptRelationKind {
     /// Admitted only when no test calls the owner itself. Reach is real but
     /// indirect, so the classifier never promotes it to `exposed`.
     ModuleEntryCall,
+    /// Test calls an instance method that a bare `@owner` method decorator
+    /// wraps, where the owner is a straight-line pass-through decorator
+    /// (RIPR-SPEC-0243 rule 21, #10189). Unlike `ModuleEntryCall`, the
+    /// decorated method's call result *is* the wrapper's return value, so
+    /// the classifier may lend `exposed` when the changed line is that
+    /// return. Entries only exist for shapes `decorated_entries` proves.
+    DecoratedMethodCall,
+    /// Test imports a module-level value (`export const stop =
+    /// Symbol('stop')`) from the owner's module and uses it as a value
+    /// outside a direct `expect(...)` subject (#8568). Heuristic: the use
+    /// shows the test consumes the binding, not that an assertion observes
+    /// its initializer, so it never lends oracle credit.
+    ModuleValueUse,
     SameFileProximity,
     DescribeName,
     TestName,
@@ -264,8 +528,9 @@ impl TypeScriptRelationKind {
             // genuinely exercises the owner, just via an intermediate file.
             Self::ReExportChainFollowed => 4,
             // Below every relation that calls the owner itself.
-            Self::ModuleEntryCall => 3,
+            Self::ModuleEntryCall | Self::DecoratedMethodCall => 3,
             Self::SameFileProximity => 3,
+            Self::ModuleValueUse => 2,
             Self::DescribeName => 2,
             Self::TestName => 1,
         }
@@ -282,6 +547,7 @@ impl TypeScriptRelationKind {
                 | Self::ClassMethodCall
                 | Self::ReExportChainFollowed
                 | Self::ModuleEntryCall
+                | Self::DecoratedMethodCall
         )
     }
 
@@ -299,6 +565,8 @@ impl TypeScriptRelationKind {
             Self::ClassMethodCall => "class_method_call",
             Self::ReExportChainFollowed => "re_export_chain_followed",
             Self::ModuleEntryCall => "module_entry_call",
+            Self::DecoratedMethodCall => "decorated_method_call",
+            Self::ModuleValueUse => "module_value_use",
             Self::SameFileProximity => "same_file_proximity",
             Self::DescribeName => "describe_name",
             Self::TestName => "test_name",
@@ -458,7 +726,7 @@ impl<'a> TypeScriptRelatedCandidate<'a> {
 ///   expected value is a concrete literal.
 /// - `raw_evidence_ref` — `file:line` back to the `expect(...)` call site,
 ///   i.e. `<file>:<assertion_line>`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptAssertion {
     pub(crate) matcher: String,
     pub(crate) argument_count: usize,
@@ -476,6 +744,11 @@ pub(crate) struct TypeScriptAssertion {
     /// (RIPR-SPEC-0085 §PR5). When `true` and `expected_value_or_variant`
     /// is `None`, the `typescript_dynamic_assertion_unresolved` limitation is emitted.
     pub(crate) has_dynamic_matcher_arg: bool,
+    /// The dynamic matcher argument as written (`normalize(text)` in
+    /// `assert.equal(normalize(normalize(text)), normalize(text))`), so the
+    /// classifier can ask whether the expected side is built from the owner
+    /// alone. `None` when the argument is a literal or absent.
+    pub(crate) dynamic_expected_text: Option<String>,
     /// Confidence derived from oracle_strength + literal concreteness
     /// (RIPR-SPEC-0085 §PR5).
     pub(crate) oracle_confidence: OracleConfidence,
@@ -530,7 +803,7 @@ impl TypeScriptAssertion {
 
 /// Oracle confidence level derived from `oracle_strength` plus whether the
 /// expected value is a concrete literal (RIPR-SPEC-0085 §PR5).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum OracleConfidence {
     /// Strong oracle strength with a concrete literal expected value.
     High,
@@ -553,7 +826,7 @@ impl OracleConfidence {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptMockPayload {
     pub(crate) target: String,
     pub(crate) expected: String,
@@ -579,13 +852,13 @@ impl TypeScriptMockPayload {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum TypeScriptMockPayloadKind {
     CalledWith,
     CalledTimes,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptErrorPayload {
     pub(crate) expected: String,
     pub(crate) kind: TypeScriptErrorPayloadKind,
@@ -596,33 +869,45 @@ impl TypeScriptErrorPayload {
         match self.kind {
             TypeScriptErrorPayloadKind::ThrowsLiteral
             | TypeScriptErrorPayloadKind::ThrowsObject
+            | TypeScriptErrorPayloadKind::ThrowsRegex
             | TypeScriptErrorPayloadKind::ThrowsClass => {
                 format!("expect(...).toThrow({})", self.expected)
             }
             TypeScriptErrorPayloadKind::RejectsThrowLiteral
             | TypeScriptErrorPayloadKind::RejectsThrowObject
+            | TypeScriptErrorPayloadKind::RejectsThrowRegex
             | TypeScriptErrorPayloadKind::RejectsThrowClass => {
                 format!("await expect(...).rejects.toThrow({})", self.expected)
             }
             TypeScriptErrorPayloadKind::RejectsMatchObject => {
                 format!("await expect(...).rejects.toMatchObject({})", self.expected)
             }
-            TypeScriptErrorPayloadKind::ChaiThrowLiteral => {
+            TypeScriptErrorPayloadKind::ChaiThrowLiteral
+            | TypeScriptErrorPayloadKind::ChaiThrowClass
+            | TypeScriptErrorPayloadKind::ChaiThrowClassLiteral => {
                 format!("expect(...).to.throw({})", self.expected)
             }
             TypeScriptErrorPayloadKind::AssertThrowsRegex
+            | TypeScriptErrorPayloadKind::AssertThrowsContainsRegex
             | TypeScriptErrorPayloadKind::AssertThrowsObject => {
                 format!("assert.throws(..., {})", self.expected)
             }
             TypeScriptErrorPayloadKind::AssertRejectsRegex
+            | TypeScriptErrorPayloadKind::AssertRejectsContainsRegex
             | TypeScriptErrorPayloadKind::AssertRejectsObject => {
                 format!("await assert.rejects(..., {})", self.expected)
+            }
+            TypeScriptErrorPayloadKind::AvaThrowsObject => {
+                format!("t.throws(..., {})", self.expected)
+            }
+            TypeScriptErrorPayloadKind::AvaThrowsAsyncObject => {
+                format!("await t.throwsAsync(..., {})", self.expected)
             }
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum TypeScriptErrorPayloadKind {
     /// `.toThrow("exact message")` — string literal payload.
     ThrowsLiteral,
@@ -630,6 +915,8 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     /// literal-valued keys (fail-closed: shorthand / spread / dynamic
     /// computed properties are rejected).
     ThrowsObject,
+    /// `.toThrow(/^exact message$/)` — anchored regex (RIPR-SPEC-0243 rule 16).
+    ThrowsRegex,
     /// `.toThrow(SomeError)` or `.toThrow(SomeError.SubClass)` — class /
     /// constructor reference as a safe member path.
     ThrowsClass,
@@ -637,18 +924,34 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     RejectsThrowLiteral,
     /// `await expect(...).rejects.toThrow({ code: "X" })`.
     RejectsThrowObject,
+    /// `await expect(...).rejects.toThrow(/^exact message$/)`.
+    RejectsThrowRegex,
     /// `await expect(...).rejects.toThrow(SomeError)`.
     RejectsThrowClass,
     /// `await expect(...).rejects.toMatchObject({ code: "X" })`.
     RejectsMatchObject,
     /// chai `expect(...).to.throw("message")` (RIPR-SPEC-0243 rule 10).
     ChaiThrowLiteral,
+    /// chai `expect(...).to.throw(SomeError)` (RIPR-SPEC-0243 rule 10).
+    ChaiThrowClass,
+    /// chai `expect(...).to.throw(SomeError, "message")`: both the class and
+    /// the message substring must match (RIPR-SPEC-0243 rule 10).
+    ChaiThrowClassLiteral,
     /// `node:assert` `throws(fn, /^...$/)` (RIPR-SPEC-0243 rule 10).
     AssertThrowsRegex,
+    /// `node:assert` `throws(fn, /text/)`: an unanchored regex of plain text,
+    /// a substring test of `String(err)` (RIPR-SPEC-0243 rule 20).
+    AssertThrowsContainsRegex,
     /// `node:assert` `throws(fn, { message: "..." })` (RIPR-SPEC-0243 rule 10).
     AssertThrowsObject,
     /// `node:assert` `rejects(p, /^...$/)` (RIPR-SPEC-0243 rule 10).
     AssertRejectsRegex,
+    /// `node:assert` `rejects(p, /text/)` (RIPR-SPEC-0243 rule 20).
+    AssertRejectsContainsRegex,
     /// `node:assert` `rejects(p, { message: "..." })` (RIPR-SPEC-0243 rule 10).
     AssertRejectsObject,
+    /// AVA `t.throws(fn, { message: "..." })` (RIPR-SPEC-0243 rule 10, AVA).
+    AvaThrowsObject,
+    /// AVA `t.throwsAsync(fn, { message: "..." })` (RIPR-SPEC-0243 rule 10, AVA).
+    AvaThrowsAsyncObject,
 }

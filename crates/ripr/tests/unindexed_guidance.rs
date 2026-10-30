@@ -60,7 +60,9 @@ impl Drop for Fixture {
 
 #[test]
 fn unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim() -> Result<(), String> {
-    for fence in ["", "ignore", "no_run", "compile_fail", "text"] {
+    // A plain fence is a runnable doc example, indexed as a test since
+    // #6648 (RIPR-SPEC-0279); see `a_runnable_doc_example_is_indexed_and_pins_the_owner`.
+    for fence in ["ignore", "no_run", "compile_fail", "text"] {
         let fixture = Fixture::new(fence, "assert_eq!(2 + 2, 4);")?;
         let output = check_workspace(fixture.input())?;
         let finding = output
@@ -109,6 +111,28 @@ fn unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim() -> R
         let words = explanation.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(words.contains(INSPECT_RENDERED), "{fence}: {explanation}");
     }
+    Ok(())
+}
+
+#[test]
+fn a_runnable_doc_example_is_indexed_and_pins_the_owner() -> Result<(), String> {
+    // Contrast for the refused fences above: rustdoc runs a plain fence, so
+    // its exact assertion is a related test that pins the changed return.
+    let fixture = Fixture::new("", "assert_eq!(2 + 2, 4);")?;
+    let output = check_workspace(fixture.input())?;
+    let finding = output
+        .findings
+        .iter()
+        .find(|finding| finding.probe.family == ProbeFamily::ReturnValue)
+        .ok_or("setup: expected a real return-value finding")?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .any(|test| test.name == "src/lib.rs - read_u16 (line 3)"),
+        "{finding:?}"
+    );
     Ok(())
 }
 
@@ -186,5 +210,59 @@ fn assertion_helper_retains_oracle_inspection_guidance() -> Result<(), String> {
             "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing outside tests calls it); inspect the inputs and behavior this helper checks, including any existing boundary or negative-path assertions. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
         )
     );
+    Ok(())
+}
+
+#[test]
+fn owner_named_test_that_never_calls_the_owner_prompts_inspection() -> Result<(), String> {
+    // #10053: a test linked only because its name contains the owner's name
+    // never runs the owner, so the weak-reach finding must not tell the
+    // reader to strengthen that test's assertion.
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-owner-named-guidance-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let guard = Fixture(root.clone());
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    let write = |path: &str, text: &str| {
+        std::fs::write(root.join(path), text).map_err(|error| error.to_string())
+    };
+    write(
+        "Cargo.toml",
+        "[package]\nname = \"owner_named\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write(
+        "src/lib.rs",
+        "pub fn compute(n: u32) -> u32 {\n    if n > 5 {\n        return n * 3;\n    }\n    n\n}\n\npub fn run2(n: u32) -> u32 {\n    compute(n)\n}\n\npub fn ready(flag: bool) -> bool {\n    flag\n}\n",
+    )?;
+    write(
+        "tests/other.rs",
+        "use owner_named::ready;\n\n#[test]\nfn compute_flags_are_independent() {\n    assert_eq!(ready(false), false);\n}\n",
+    )?;
+    write(
+        "change.diff",
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,5 @@\n pub fn compute(n: u32) -> u32 {\n     if n > 5 {\n-        return n * 2;\n+        return n * 3;\n     }\n     n\n }\n",
+    )?;
+    let output = check_workspace(guard.input())?;
+    let finding = output
+        .findings
+        .iter()
+        .find(|finding| finding.probe.family == ProbeFamily::ReturnValue)
+        .ok_or("setup: expected a return-value finding")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert_eq!(finding.ripr.reach.state.as_str(), "weak");
+    assert!(
+        !finding.related_tests.is_empty()
+            && finding.related_tests.iter().all(|test| {
+                test.name == "compute_flags_are_independent"
+                    && test.relation_reason == Some(ripr::domain::RelationReason::OwnerNamedTest)
+            }),
+        "setup: the only related test is the owner-named one: {finding:?}"
+    );
+    assert_eq!(finding.recommended_next_step.as_deref(), Some(INSPECT));
+    assert_ne!(finding.recommended_next_step.as_deref(), Some(EXACT));
     Ok(())
 }

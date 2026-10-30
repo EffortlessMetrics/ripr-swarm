@@ -20,6 +20,7 @@ toml = "1"
 flate2 = "1"
 tar = "0.4"
 zip = { version = "9", default-features = false, features = ["deflate"] }
+roxmltree = "0.21"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Safe session, wait-without-reap and PID-handle operations for the isolated

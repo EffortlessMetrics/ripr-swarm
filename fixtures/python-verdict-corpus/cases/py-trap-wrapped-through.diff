@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -90,7 +90,7 @@
+ 
+ 
+ def wrapped_through(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def mocked_send(order_id, sender):

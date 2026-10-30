@@ -1,6 +1,6 @@
-use super::check::check_with_progress;
+use super::check::check_with_progress_core;
 use super::progress::{AnalysisProgressScope, AnalysisProgressSink};
-use super::selector::{FindingSelection, select_finding};
+use super::selector::FindingSelection;
 use super::{CheckInput, OutputFormat};
 use crate::config::RiprConfig;
 use crate::output;
@@ -56,10 +56,10 @@ pub fn collect_context_with_config(
 /// set (`ripr context --worktree`), so a finding `ripr check --worktree`
 /// listed from uncommitted edits can be selected.
 ///
-/// The typed core owns the refusal families (#7331): pipeline failures stay
-/// untyped (the honest `analysis_failed` fallback), while the
+/// The typed core preserves the pipeline's refusal families (#10720), with
+/// `analysis_failed` reserved for failures the producer leaves untyped. The
 /// selector-not-found branch is `SelectorMiss` — usage-class, so the CLI
-/// keeps it prose-only instead of enveloping it.
+/// keeps it prose-only instead of enveloping it (#7331).
 pub(crate) fn collect_context_with_config_and_worktree(
     input: CheckInput,
     selector: &str,
@@ -74,6 +74,7 @@ pub(crate) fn collect_context_with_config_and_worktree(
         max_related_tests,
         config,
         worktree,
+        false,
         mode_explicit,
         None,
     )
@@ -97,6 +98,7 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
     max_related_tests: usize,
     config: &RiprConfig,
     worktree: bool,
+    worktree_from_default: bool,
     mode_explicit: bool,
     sink: Option<&dyn AnalysisProgressSink>,
 ) -> Result<String, crate::core_error::CoreError> {
@@ -112,17 +114,25 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
         super::finding_navigation_with_worktree(&input, None, mode_explicit, true);
     let retry_command = worktree_navigation.context_command(selector);
     let worktree_list_command = worktree_navigation.list_command();
+    let committed_list_command =
+        super::finding_navigation_with_worktree(&input, None, mode_explicit, false).list_command();
     let committed_history = input.diff_file.is_none() && input.git_candidate.is_none();
     let output = if worktree {
-        check_with_progress(input, config, AnalysisProgressScope::Worktree, sink)?
+        check_with_progress_core(input, config, AnalysisProgressScope::Worktree, sink)?
     } else {
-        check_with_progress(input, config, AnalysisProgressScope::Diff, sink)?
+        check_with_progress_core(input, config, AnalysisProgressScope::Diff, sink)?
     };
-    match select_finding(&output.findings, selector) {
+    match super::selector::select_finding_with_seam_reverse(
+        &output.findings,
+        &root,
+        config,
+        selector,
+    ) {
         FindingSelection::Unique(finding) => {
             Ok(output::json::render_context_packet_with_explain_command(
                 finding,
                 max_related_tests,
+                config,
                 Some(navigation.explain_command(&finding.id)),
                 &output.root,
             ))
@@ -134,6 +144,15 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
                 &navigation.list_command(),
             )),
         ),
+        FindingSelection::Undecided(limitation) => {
+            Err(crate::core_error::CoreError::selector_miss(
+                super::explain::selector_limitation_fresh_run(
+                    selector,
+                    &navigation.list_command(),
+                    &limitation,
+                ),
+            ))
+        }
         FindingSelection::NoMatch => Err(crate::core_error::CoreError::selector_miss(
             super::explain::no_finding_matched_fresh_run(
                 selector,
@@ -143,6 +162,9 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
                 committed_history,
                 &retry_command,
                 &worktree_list_command,
+                &committed_list_command,
+                worktree_from_default,
+                &output,
             ),
         )),
     }
@@ -180,11 +202,20 @@ pub(crate) fn collect_context_from_artifact(
     // An explicit Draft must survive replay over a non-Draft repo default,
     // just as it does on the fresh context and artifact explain routes.
     let navigation = super::finding_navigation(&input, Some(artifact_path), mode_explicit);
-    match select_finding(&findings, selector) {
+    // Same seam-side reverse lookups as the fresh path, over the current
+    // root's classified seams: seam IDs and hash-form canonical gap IDs
+    // spell the same finding on every context surface (#8688).
+    match super::selector::select_finding_with_seam_reverse(
+        &findings,
+        &input.root,
+        config,
+        selector,
+    ) {
         FindingSelection::Unique(finding) => {
             Ok(output::json::render_context_packet_with_explain_command(
                 finding,
                 max_related_tests,
+                config,
                 Some(navigation.explain_command(&finding.id)),
                 // The artifact records the analyzed root; the packet location
                 // renders against it like every fresh route (#5996).
@@ -196,8 +227,20 @@ pub(crate) fn collect_context_from_artifact(
                 super::explain::ambiguous_finding_match(selector, &candidates, "ripr check --json"),
             ))
         }
+        // `select_finding` never inventories seams, so it cannot produce a
+        // limitation; the arm keeps the match exhaustive and renders the
+        // honest state if a future producer starts carrying one.
+        FindingSelection::Undecided(limitation) => {
+            Err(crate::core_error::CoreError::selector_miss(
+                super::explain::selector_limitation_fresh_run(
+                    selector,
+                    "ripr check --json",
+                    &limitation,
+                ),
+            ))
+        }
         FindingSelection::NoMatch => Err(crate::core_error::CoreError::selector_miss(
-            super::explain::no_finding_matched(selector, "ripr check --json"),
+            super::explain::no_finding_matched(selector, "ripr check --json", None),
         )),
     }
 }

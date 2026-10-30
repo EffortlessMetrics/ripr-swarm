@@ -522,6 +522,15 @@ pub struct ModuleDeclarationFact {
     /// A `cfg(any(test, ...))` alternative never requires test and never
     /// grants a composed role.
     pub requires_test: bool,
+    /// The declaration's only attribute-level guard when it is exactly one
+    /// simple `#[cfg(X)]` / `#[cfg(not(X))]` with `X` a bare identifier or
+    /// `name = "value"` (whitespace-normalized), as `(X, negated)`. Two
+    /// declarations of one file with `(X, false)` and `(X, true)` are
+    /// provably exclusive alternatives of one module. `None` for every other
+    /// shape (no cfg, compound predicates, `cfg_attr`, several cfgs), which
+    /// never grants exclusivity.
+    #[serde(default)]
+    pub cfg_guard: Option<(String, bool)>,
 }
 
 /// The `#[path]` target shape of one out-of-line module declaration (#3533).
@@ -1366,11 +1375,97 @@ pub struct OracleFact {
     pub ok_value_observed: Option<bool>,
 }
 
+/// A call's source line, shared by every call fact on that line so a line
+/// with many calls holds one allocation instead of one copy per call.
+/// Compares, prints and serializes as the plain string.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct CallText(std::sync::Arc<str>);
+
+impl CallText {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Whether both values read the same allocation.
+    pub fn shares_allocation(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::ops::Deref for CallText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for CallText {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for CallText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&*self.0, f)
+    }
+}
+
+impl std::fmt::Display for CallText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&*self.0, f)
+    }
+}
+
+impl From<String> for CallText {
+    fn from(text: String) -> Self {
+        Self(text.into())
+    }
+}
+
+impl From<&str> for CallText {
+    fn from(text: &str) -> Self {
+        Self(text.into())
+    }
+}
+
+impl From<&String> for CallText {
+    fn from(text: &String) -> Self {
+        Self(text.as_str().into())
+    }
+}
+
+impl From<CallText> for String {
+    fn from(text: CallText) -> Self {
+        text.0.to_string()
+    }
+}
+
+impl PartialEq<str> for CallText {
+    fn eq(&self, other: &str) -> bool {
+        &*self.0 == other
+    }
+}
+
+impl PartialEq<&str> for CallText {
+    fn eq(&self, other: &&str) -> bool {
+        &*self.0 == *other
+    }
+}
+
+impl PartialEq<String> for CallText {
+    fn eq(&self, other: &String) -> bool {
+        &*self.0 == other.as_str()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CallFact {
     pub line: usize,
     pub name: String,
-    pub text: String,
+    /// The call's source line, shared by every call fact on that line.
+    pub text: CallText,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1649,6 +1744,9 @@ impl ProbeShapeFactWire {
     }
 }
 
+/// Reference encoder for the differential test below; the borrowing
+/// [`FileFactsWireRef`] writes the cache bytes.
+#[cfg(test)]
 impl From<&FileFacts> for FileFactsWire {
     fn from(facts: &FileFacts) -> Self {
         Self {
@@ -1852,7 +1950,171 @@ impl serde::Serialize for ProbeShapeFact {
 
 impl serde::Serialize for FileFacts {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        FileFactsWire::from(self).serialize(serializer)
+        FileFactsWireRef::from(self).serialize(serializer)
+    }
+}
+
+/// Borrowing twin of [`WireText`]. Encoding a 4 MB test file's facts used to
+/// clone every call, literal and body into an owned [`FileFactsWire`] first,
+/// and the integrity digest encodes the same facts again. The twin writes
+/// identical JSON straight from the facts.
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum WireTextRef<'a> {
+    Span { start: u32, len: u32 },
+    Inline { text: &'a str },
+}
+
+impl<'a> WireTextRef<'a> {
+    /// Same span-or-inline rule as [`WireText::attached`].
+    fn attached(text: &'a SourceText, parent: &Arc<str>) -> Self {
+        match &text.inner {
+            SourceTextInner::Shared { source, start, len } if Arc::ptr_eq(source, parent) => {
+                WireTextRef::Span {
+                    start: *start,
+                    len: *len,
+                }
+            }
+            _ => WireTextRef::Inline {
+                text: text.as_str(),
+            },
+        }
+    }
+}
+
+// Field order and serde attributes must mirror the owned wire types: the
+// cache digest is over the serialized bytes of this encoding.
+#[derive(serde::Serialize)]
+struct FunctionFactWireRef<'a> {
+    id: &'a SymbolId,
+    name: &'a str,
+    file: &'a Path,
+    start_line: usize,
+    end_line: usize,
+    body: WireTextRef<'a>,
+    calls: &'a [CallFact],
+    returns: &'a [ReturnFact],
+    literals: &'a [LiteralFact],
+    source_role: FunctionSourceRole,
+    attrs: &'a [String],
+    impl_attrs: &'a [String],
+    nested_fn_names: &'a [String],
+    let_bindings: &'a [LetBindingFact],
+    item: &'a FunctionItemFact,
+    impl_context: &'a FunctionImplContext,
+}
+
+#[derive(serde::Serialize)]
+struct TestFactWireRef<'a> {
+    name: &'a str,
+    file: &'a Path,
+    start_line: usize,
+    end_line: usize,
+    body: WireTextRef<'a>,
+    calls: &'a [CallFact],
+    assertions: &'a [OracleFact],
+    literals: &'a [LiteralFact],
+    attrs: &'a [String],
+    nested_fn_names: &'a [String],
+    let_bindings: &'a [LetBindingFact],
+}
+
+#[derive(serde::Serialize)]
+struct ProbeShapeFactWireRef<'a> {
+    start_line: usize,
+    end_line: usize,
+    start_byte: usize,
+    end_byte: usize,
+    kind: ProbeShapeKind,
+    text: WireTextRef<'a>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    value_consumed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_lines: Option<(usize, usize)>,
+}
+
+#[derive(serde::Serialize)]
+struct FileFactsWireRef<'a> {
+    path: &'a Path,
+    functions: Vec<FunctionFactWireRef<'a>>,
+    tests: Vec<TestFactWireRef<'a>>,
+    returns: &'a [ReturnFact],
+    literals: &'a [LiteralFact],
+    probe_shapes: Vec<ProbeShapeFactWireRef<'a>>,
+    used_lexical_fallback: bool,
+    module_declarations: &'a [ModuleDeclarationFact],
+    unresolved_property_macros: &'a [UnresolvedPropertyMacroFact],
+    source: &'a str,
+    item_scopes: Option<&'a ModuleItemScopes>,
+    macro_candidates: Option<&'a MacroBindingCandidates>,
+}
+
+impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
+    fn from(facts: &'a FileFacts) -> Self {
+        Self {
+            path: &facts.path,
+            functions: facts
+                .functions
+                .iter()
+                .map(|fact| FunctionFactWireRef {
+                    id: &fact.id,
+                    name: &fact.name,
+                    file: &fact.file,
+                    start_line: fact.start_line,
+                    end_line: fact.end_line,
+                    body: WireTextRef::attached(&fact.body, &facts.source),
+                    calls: &fact.calls,
+                    returns: &fact.returns,
+                    literals: &fact.literals,
+                    source_role: fact.source_role,
+                    attrs: &fact.attrs,
+                    impl_attrs: &fact.impl_attrs,
+                    nested_fn_names: &fact.nested_fn_names,
+                    let_bindings: &fact.let_bindings,
+                    item: &fact.item,
+                    impl_context: &fact.impl_context,
+                })
+                .collect(),
+            tests: facts
+                .tests
+                .iter()
+                .map(|fact| TestFactWireRef {
+                    name: &fact.name,
+                    file: &fact.file,
+                    start_line: fact.start_line,
+                    end_line: fact.end_line,
+                    body: WireTextRef::attached(&fact.body, &facts.source),
+                    calls: &fact.calls,
+                    assertions: &fact.assertions,
+                    literals: &fact.literals,
+                    attrs: &fact.attrs,
+                    nested_fn_names: &fact.nested_fn_names,
+                    let_bindings: &fact.let_bindings,
+                })
+                .collect(),
+            returns: &facts.returns,
+            literals: &facts.literals,
+            probe_shapes: facts
+                .probe_shapes
+                .iter()
+                .map(|fact| ProbeShapeFactWireRef {
+                    start_line: fact.start_line,
+                    end_line: fact.end_line,
+                    start_byte: fact.start_byte,
+                    end_byte: fact.end_byte,
+                    kind: fact.kind,
+                    text: WireTextRef::attached(&fact.text, &facts.source),
+                    value_consumed: fact.value_consumed,
+                    source_lines: fact.source_lines,
+                })
+                .collect(),
+            used_lexical_fallback: facts.used_lexical_fallback,
+            module_declarations: &facts.module_declarations,
+            unresolved_property_macros: &facts.unresolved_property_macros,
+            source: &facts.source,
+            item_scopes: facts.item_scopes.as_deref(),
+            macro_candidates: facts.macro_candidates.as_deref(),
+        }
     }
 }
 
@@ -1928,7 +2190,7 @@ mod tests {
         let call = CallFact {
             line: 1,
             name: "test_fn".to_string(),
-            text: "test_fn()".to_string(),
+            text: "test_fn()".to_string().into(),
         };
         let call_cloned = call.clone();
         assert_eq!(call, call_cloned);
@@ -2134,7 +2396,7 @@ mod tests {
         let call = CallFact {
             line: 2,
             name: "helper".to_string(),
-            text: "helper()".to_string(),
+            text: "helper()".to_string().into(),
         };
         let facts = FileFacts {
             path: PathBuf::from("src/lib.rs"),
@@ -2394,6 +2656,69 @@ fn checks_helper() {
         let decoded: FileFacts = serde_json::from_value(wire)?;
         assert_eq!(decoded.functions[0].body.as_str(), "fn a() {}");
         assert_eq!(decoded.source.as_ref(), "fn b() {}\n");
+        Ok(())
+    }
+
+    #[test]
+    fn the_borrowed_encoding_writes_the_bytes_the_owned_wire_writes()
+    -> Result<(), serde_json::Error> {
+        let sources = [
+            ("src/mask.rs", include_str!("../extract/mask.rs")),
+            ("src/literals.rs", include_str!("../extract/literals.rs")),
+            (
+                "tests/probe.rs",
+                "#[test]\nfn t() { assert_eq!(f(\"é\"), 1); }\n",
+            ),
+        ];
+        let mut with_probe_shapes = 0;
+        let mut with_foreign_shared = 0;
+        for (path, text) in sources {
+            let mut facts =
+                crate::analysis::rust_index::summarize_file(PathBuf::from(path), text.to_string());
+            assert!(!facts.functions.is_empty(), "{path} parsed no functions");
+            // Reach the branches the parser may leave unset: an owned
+            // (foreign allocation) body encodes inline, and the two
+            // probe-shape fields are skipped on the wire only when false or
+            // absent.
+            facts.functions[0].body = SourceText::owned("fn foreign() {}");
+            // A `Shared` body over a different allocation must inline too:
+            // the `Arc::ptr_eq` guard is what keeps a span from resolving
+            // against the wrong `source` at decode.
+            let away: Arc<str> = Arc::from("fn away() {}");
+            let has_second = facts.functions.len() > 1;
+            if let Some(fact) = facts.functions.get_mut(1) {
+                fact.body = SourceText::shared_or_owned(&away, 0, "fn away() {}");
+            }
+            if let Some(shape) = facts.probe_shapes.first_mut() {
+                shape.value_consumed = true;
+                shape.source_lines = Some((1, 2));
+            }
+            let borrowed = serde_json::to_string(&facts)?;
+            assert!(borrowed.contains("\"fn foreign() {}\""), "{path}");
+            if has_second {
+                with_foreign_shared += 1;
+                assert!(borrowed.contains("\"fn away() {}\""), "{path}");
+            }
+            let owned = serde_json::to_string(&FileFactsWire::from(&facts))?;
+            assert_eq!(borrowed, owned, "{path}");
+            // Compare the twin itself, not only the `FileFacts` entry point
+            // that routes through it.
+            assert_eq!(
+                serde_json::to_string(&FileFactsWireRef::from(&facts))?,
+                owned,
+                "{path}"
+            );
+            if !facts.probe_shapes.is_empty() {
+                with_probe_shapes += 1;
+                assert!(borrowed.contains("\"value_consumed\":true"), "{path}");
+                assert!(borrowed.contains("\"source_lines\":[1,2]"), "{path}");
+            }
+        }
+        assert!(with_foreign_shared > 0, "no source had a second function");
+        assert!(
+            with_probe_shapes > 0,
+            "no source reached the probe-shape branches"
+        );
         Ok(())
     }
 

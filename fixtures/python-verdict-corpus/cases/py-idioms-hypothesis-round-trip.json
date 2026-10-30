@@ -1,0 +1,44 @@
+{
+  "case_id": "py-idioms-hypothesis-round-trip",
+  "subject_id": "authored-py-pytest-idioms",
+  "diff": "cases/py-idioms-hypothesis-round-trip.diff",
+  "anchor": {
+    "file": "idioms/rev.py",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "value_return",
+  "test_shape": "pytest_hypothesis_round_trip_property_only",
+  "hard_case": "the oracle calls the changed function on both sides of its own comparison",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return text",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: reverse no longer reverses"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only test is a round trip through reverse, which holds when reverse is the identity.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

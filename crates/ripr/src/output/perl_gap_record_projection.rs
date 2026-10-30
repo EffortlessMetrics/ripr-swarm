@@ -337,6 +337,8 @@ mod tests {
 
     fn complete_perl_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:lib_My_App_pm:8:perl_return".to_string(),
             canonical_gap: Some(FindingCanonicalGap {
                 id: "gap:perl:lib/My/App.pm:My::App::discount:return_value:exact_return_assertion:return_value"
@@ -433,6 +435,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: Some("Add a focused Perl assertion.".to_string()),
             language: Some(LanguageId::Perl),
@@ -584,7 +588,7 @@ mod tests {
         assert!(
             cmd.starts_with(&format!(
                 "ripr receipt write --gap gap:perl:lib/My/App.pm:discount --verify-command {} --status not_run --out ",
-                crate::agent::loop_commands::shell_arg("prove t/app.t")
+                "'prove t/app.t'"
             )),
             "receipt must be the canonical receipt write command: {cmd}"
         );

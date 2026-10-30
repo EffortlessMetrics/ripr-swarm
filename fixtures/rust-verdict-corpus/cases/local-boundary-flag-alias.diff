@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index d77c4de..9fea2c5 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,7 +5,7 @@ pub const KB: u64 = 1_000;
+ pub fn tier_alias(bytes: u64) -> &'static str {
+     const KB: u64 = 2_000;
+     let unit = KB;
+-    if bytes >= unit { "unit" } else { "byte" }
++    if unit <= bytes { "unit" } else { "byte" }
+ }
+ 
+ #[cfg(test)]

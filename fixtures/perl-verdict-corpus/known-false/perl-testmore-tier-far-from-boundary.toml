@@ -1,0 +1,3 @@
+case = "perl-testmore-tier-far-from-boundary"
+issue = 8979
+reason = "False exposed: test inputs far from the changed threshold; needs the row-owned discriminator fact from perl-lsp-swarm#17237, consumed by #5562."

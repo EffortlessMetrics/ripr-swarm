@@ -1,0 +1,59 @@
+{
+  "case_id": "ts-grid-delete-table",
+  "subject_id": "authored-ts-grid-delete",
+  "diff": "cases/ts-grid-delete-table.diff",
+  "anchor": {
+    "file": "src/delete.ts",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_field_write",
+  "test_shape": "nodetest_table_loop",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "node 22.22.0 (--experimental-strip-types); node:test (built in); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "(delete the statement)",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "miss table",
+        "equivalence_review": "not equivalent: the counter is never updated"
+      },
+      {
+        "replacement": "this.misses -= 1;",
+        "mutated_line": "this.misses -= 1;",
+        "outcome": "tests_failed",
+        "failing_test": "miss table",
+        "equivalence_review": "not equivalent: the counter moves the wrong way"
+      },
+      {
+        "replacement": "this.misses *= 1;",
+        "mutated_line": "this.misses *= 1;",
+        "outcome": "tests_failed",
+        "failing_test": "miss table",
+        "equivalence_review": "not equivalent: the counter stays at zero"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: deletion x table loop over zero, one and three calls.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

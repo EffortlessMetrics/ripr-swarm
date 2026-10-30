@@ -1,0 +1,58 @@
+{
+  "case_id": "py-grid-delete-none",
+  "subject_id": "authored-py-grid-delete",
+  "diff": "cases/py-grid-delete-none.diff",
+  "anchor": {
+    "file": "grid_delete/core.py",
+    "line": 30
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_field_write",
+  "test_shape": "pytest_smoke_call_no_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "(delete the statement)",
+        "mutated_line": "",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the counter is never updated"
+      },
+      {
+        "replacement": "self.evictions -= 1",
+        "mutated_line": "self.evictions -= 1",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the counter moves the wrong way"
+      },
+      {
+        "replacement": "self.evictions *= 1",
+        "mutated_line": "self.evictions *= 1",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the counter stays at zero"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: deletion x no assertion. The test only calls record_eviction.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

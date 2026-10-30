@@ -1,6 +1,9 @@
 #[path = "common/executable_index.rs"]
 mod executable_index;
 
+#[path = "../test_support.rs"]
+mod test_support;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -26,15 +29,8 @@ fn copy(from: &Path, to: &Path) -> Result<(), String> {
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Result<Self, String> {
-        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let root = source.join("target").join(format!(
-            "policy-frontdoor-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| e.to_string())?
-                .as_nanos()
-        ));
+        let source = test_support::workspace_root()?;
+        let root = test_support::scratch("policy-frontdoor")?;
         Self::from_paths(
             &source,
             root,
@@ -80,18 +76,20 @@ impl Fixture {
         executable_index::initialize(&fixture.0, |args| fixture.git(args).map(|_| ()))?;
         Ok(fixture)
     }
-    fn command(&self, argument: &str) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_repo-policy"));
+    fn command(&self, argument: &str) -> Result<Command, String> {
+        let mut command = Command::new(test_support::policy_binary(env!(
+            "CARGO_BIN_EXE_repo-policy"
+        ))?);
         command.arg(argument).current_dir(&self.0);
         git_environment::isolate_git_environment(&mut command);
         command.env(
             "GIT_CEILING_DIRECTORIES",
             self.0.parent().unwrap_or(&self.0),
         );
-        command
+        Ok(command)
     }
     fn run(&self, command: &str) -> Result<Output, String> {
-        self.command(command).output().map_err(|e| e.to_string())
+        self.command(command)?.output().map_err(|e| e.to_string())
     }
 }
 impl Drop for Fixture {
@@ -100,6 +98,50 @@ impl Drop for Fixture {
             eprintln!("retain fixture {}: {e}", self.0.display());
         }
     }
+}
+
+#[test]
+fn retired_unpinned_action_allowlist_cannot_be_reopened() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let baseline = fixture.run("check-workflows")?;
+    assert!(
+        baseline.status.success(),
+        "positive control: {}",
+        String::from_utf8_lossy(&baseline.stderr)
+    );
+    let ledger = fixture.0.join(repo_policy::UNPINNED_ACTION_ALLOWLIST);
+    let original = std::fs::read_to_string(&ledger).map_err(|e| e.to_string())?;
+    let workflow = fixture.0.join(".github/workflows/future-clippy.yml");
+    let pinned_workflow = std::fs::read_to_string(&workflow).map_err(|e| e.to_string())?;
+    for (label, reference, count, restore_tag) in [
+        ("zero-count stale row", "retired", 0, false),
+        ("positive-count stale row", "retired", 1, false),
+        ("restored action and matching row", "v2", 1, true),
+    ] {
+        let text = if restore_tag {
+            let pinned = "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2";
+            assert!(pinned_workflow.contains(pinned), "restored-tag setup");
+            pinned_workflow.replace(pinned, "Swatinem/rust-cache@v2")
+        } else {
+            pinned_workflow.clone()
+        };
+        std::fs::write(&workflow, text).map_err(|e| e.to_string())?;
+        std::fs::write(
+            &ledger,
+            format!(
+                "{original}\n.github/workflows/future-clippy.yml|Swatinem/rust-cache@{reference}|{count}|regression control\n"
+            ),
+        )
+        .map_err(|e| e.to_string())?;
+        let output = fixture.run("check-workflows")?;
+        assert!(!output.status.success(), "{label} reopened the allowlist");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("must remain empty after burn-down"),
+            "{label}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -119,7 +161,7 @@ fn nested_frontdoors_use_runtime_workspace_root() -> Result<(), String> {
             String::from_utf8_lossy(&root_output.stderr)
         );
         let nested_output = fixture
-            .command(command)
+            .command(command)?
             .current_dir(&nested)
             .output()
             .map_err(|e| e.to_string())?;
@@ -149,7 +191,7 @@ fn nested_frontdoors_use_runtime_workspace_root() -> Result<(), String> {
     }
     assert!(
         fixture
-            .command("preflight")
+            .command("preflight")?
             .current_dir(&incidental)
             .output()
             .map_err(|e| e.to_string())?
@@ -165,7 +207,7 @@ fn nested_frontdoors_use_runtime_workspace_root() -> Result<(), String> {
     for command in ["check-workflows", "preflight", "verify-preflight"] {
         let root_output = fixture.run(command)?;
         let nested_output = fixture
-            .command(command)
+            .command(command)?
             .current_dir(&nested)
             .output()
             .map_err(|e| e.to_string())?;
@@ -194,7 +236,7 @@ fn nested_frontdoors_use_runtime_workspace_root() -> Result<(), String> {
     for command in ["check-agent-skills", "preflight"] {
         let root_output = fixture.run(command)?;
         let nested_output = fixture
-            .command(command)
+            .command(command)?
             .current_dir(&nested)
             .output()
             .map_err(|e| e.to_string())?;
@@ -210,7 +252,7 @@ fn nested_frontdoors_use_runtime_workspace_root() -> Result<(), String> {
     bytes.extend_from_slice(b"\n// deliberate stale source control\n");
     std::fs::write(source, bytes).map_err(|e| e.to_string())?;
     let output = fixture
-        .command("preflight")
+        .command("preflight")?
         .current_dir(&nested)
         .output()
         .map_err(|e| e.to_string())?;
@@ -235,7 +277,7 @@ fn damaged_workspace_and_outside_directory_do_not_use_enclosing_source() -> Resu
     std::fs::remove_file(fixture.0.join("tools/repo-policy/Cargo.toml"))
         .map_err(|e| e.to_string())?;
     let output = fixture
-        .command("preflight")
+        .command("preflight")?
         .current_dir(fixture.0.join("tools/repo-policy/src"))
         .output()
         .map_err(|e| e.to_string())?;
@@ -268,7 +310,7 @@ fn damaged_workspace_and_outside_directory_do_not_use_enclosing_source() -> Resu
         .map_err(|e| e.to_string())?;
         std::fs::write(&receipt, "obsolete control receipt").map_err(|e| e.to_string())?;
         let output = fixture
-            .command("preflight")
+            .command("preflight")?
             .current_dir(fixture.0.join(".agents"))
             .output()
             .map_err(|e| e.to_string())?;
@@ -288,7 +330,7 @@ fn damaged_workspace_and_outside_directory_do_not_use_enclosing_source() -> Resu
         "outside control requires a filesystem root without a workspace"
     );
     let output = fixture
-        .command("check-workflows")
+        .command("check-workflows")?
         .current_dir(filesystem_root)
         .output()
         .map_err(|e| e.to_string())?;
@@ -448,14 +490,14 @@ fn partial_fixture_is_removed_after_copy_error() -> Result<(), String> {
 #[test]
 fn runtime_compiler_selection_rejects_a_changed_compiler() -> Result<(), String> {
     let fixture = Fixture::new()?;
-    let run = |compiler: &str| {
+    let run = |compiler: &std::ffi::OsStr| {
         fixture
-            .command("preflight")
+            .command("preflight")?
             .env("RUSTC", compiler)
             .output()
             .map_err(|e| e.to_string())
     };
-    let output = run("rustc")?;
+    let output = run(std::ffi::OsStr::new("rustc"))?;
     assert!(
         output.status.success(),
         "{}",
@@ -463,7 +505,7 @@ fn runtime_compiler_selection_rejects_a_changed_compiler() -> Result<(), String>
     );
     let receipt = fixture.0.join("target/ripr/reports/policy-preflight.json");
     assert!(receipt.is_file());
-    let output = run(env!("CARGO_BIN_EXE_repo-policy"))?;
+    let output = run(test_support::policy_binary(env!("CARGO_BIN_EXE_repo-policy"))?.as_os_str())?;
     assert!(
         !output.status.success(),
         "changed RUSTC must invalidate the producer"
@@ -489,7 +531,7 @@ fn unavailable_compiler_reports_executable_and_recovery() -> Result<(), String> 
         assert!(fixture.run("preflight")?.status.success());
         let receipt = fixture.0.join("target/ripr/reports/policy-preflight.json");
         assert!(receipt.is_file());
-        let mut command = fixture.command("preflight");
+        let mut command = fixture.command("preflight")?;
         command.env("PATH", &empty_path).env_remove("RUSTC");
         if let Some(compiler) = compiler {
             command.env("RUSTC", compiler);
@@ -527,7 +569,7 @@ fn non_executable_compiler_preserves_permission_error() -> Result<(), String> {
     let compiler = fixture.0.join("compiler-directory");
     std::fs::create_dir(&compiler).map_err(|e| e.to_string())?;
     let output = fixture
-        .command("preflight")
+        .command("preflight")?
         .env("RUSTC", &compiler)
         .output()
         .map_err(|e| e.to_string())?;
@@ -616,7 +658,7 @@ fn executable_frontdoor_matches_predecessor_decisions_and_report_bytes() -> Resu
             assert!(String::from_utf8_lossy(&output.stderr).starts_with("xtask: check-executable-files failed; see target/ripr/reports/executable-files.md\n"));
         }
         let nested = fixture
-            .command("check-executable-files")
+            .command("check-executable-files")?
             .current_dir(fixture.0.join("tools/repo-policy/src"))
             .output()
             .map_err(|e| e.to_string())?;

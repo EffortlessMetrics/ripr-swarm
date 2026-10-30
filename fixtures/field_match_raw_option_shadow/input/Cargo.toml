@@ -1,0 +1,6 @@
+[package]
+name = "field_match_raw_option_shadow_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]

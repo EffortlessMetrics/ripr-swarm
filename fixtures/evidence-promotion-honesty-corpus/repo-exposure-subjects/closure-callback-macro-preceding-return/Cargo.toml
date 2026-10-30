@@ -1,0 +1,8 @@
+[package]
+name = "closure_callback_macro_preceding_return_subject"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+name = "closure_callback_macro_preceding_return_subject"
+path = "src/lib.rs"

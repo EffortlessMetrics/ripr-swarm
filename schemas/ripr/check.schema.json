@@ -57,6 +57,10 @@
       "type": "array",
       "items": { "type": "string" }
     },
+    "ignored_working_tree_source_paths": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
     "preview_languages": {
       "type": "array",
       "items": { "$ref": "#/$defs/preview_language" }
@@ -195,7 +199,15 @@
       "required": ["analysis_complete", "outcome"],
       "properties": {
         "analysis_complete": { "type": "boolean" },
+        "document_complete": { "const": false },
+        "findings_rendered": { "type": "integer", "minimum": 0 },
+        "findings_total": { "type": "integer", "minimum": 0 },
         "outcome": { "$ref": "#/$defs/analysis_outcome" }
+      },
+      "dependentRequired": {
+        "document_complete": ["findings_rendered", "findings_total"],
+        "findings_rendered": ["document_complete"],
+        "findings_total": ["document_complete"]
       }
     },
     "analysis_outcome": {
@@ -340,12 +352,27 @@
         "id": { "type": "string", "minLength": 1 },
         "suppressed": { "type": "boolean" },
         "suppressed_by": { "type": "string", "minLength": 1 },
+        "analysis_scope": { "const": "repo" },
         "canonical_gap_id": { "type": "string", "minLength": 1 },
         "canonical_gap_group_size": { "type": "integer", "minimum": 1 },
         "canonical_gap": { "type": "object" },
         "classification": { "type": "string", "minLength": 1 },
         "severity": { "type": "string", "minLength": 1 },
         "confidence": { "type": "number", "minimum": 0 },
+        "confidence_basis": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["code", "summary"],
+            "additionalProperties": false,
+            "properties": {
+              "code": { "type": "string", "minLength": 1 },
+              "summary": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "confidence_why_capped": { "type": "string", "minLength": 1 },
         "probe": { "$ref": "#/$defs/probe" },
         "ripr": { "$ref": "#/$defs/ripr" },
         "evidence_path": { "type": "array", "items": { "type": "string" } },

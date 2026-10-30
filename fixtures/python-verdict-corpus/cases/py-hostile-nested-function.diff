@@ -1,0 +1,10 @@
+diff --git a/hostile/nested.py b/hostile/nested.py
+--- a/hostile/nested.py
++++ b/hostile/nested.py
+@@ -1,5 +1,5 @@
+ def label(n):
+     def inner(m):
+-        return f"#{m}"
++        return f"@{m}"
+ 
+     return inner(n)

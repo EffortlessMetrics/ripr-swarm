@@ -1,8 +1,9 @@
 mod attempt_inventory;
 mod framing;
-mod gaps;
+pub(crate) mod gaps;
 mod protocol;
 mod repair;
+mod repair_admission;
 mod repair_card;
 mod server;
 mod transport;
@@ -14,7 +15,17 @@ use std::path::PathBuf;
 pub(super) const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 pub(super) const MAX_RESPONSE_BYTES: usize = 128 * 1024;
 
-/// Fixed wire overhead the pinned SDK (rmcp 3.5.1) can add around a
+/// Largest JSON-serialized request id (quotes and escapes included) the
+/// transport admits. JSON-RPC ids are correlation tokens, not payloads; an
+/// id near the response cap leaves no room for any correlated reply and
+/// would otherwise make the writer's `MCP output limit` fatal to the whole
+/// session. Larger ids are answered at receive with a bounded `-32600`
+/// frame carrying `"id": null` (the id is never echoed) and the session
+/// stays alive. Far below [`MAX_RESPONSE_BYTES`], so
+/// [`outer_envelope_budget`] always leaves a usable budget.
+pub(super) const MAX_REQUEST_ID_BYTES: usize = 16 * 1024;
+
+/// Fixed wire overhead the pinned SDK (rmcp 3.7.0) can add around a
 /// measured tool or resource envelope when it serializes the complete
 /// JSON-RPC response: the `{"jsonrpc":"2.0","id":` + `,"result":` + `}` +
 /// `\n` frame fields (34 bytes) plus, when the negotiated peer keeps the
@@ -65,19 +76,24 @@ Options:
 
 The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
 `ripr_refresh`, `ripr_list_gaps`, `ripr_get_gap`, `ripr_prepare_repair`,
-`ripr_get_repair_attempt`, `ripr_get_receipt_status`, and
+`ripr_get_repair_attempt`, `ripr_get_receipt_status`,
 `ripr_get_repair_card`, and `ripr_list_repair_attempts`, the resource
 `ripr://workspace/status`, and the resource templates
 `ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
 `ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
 `ripr://repair-card/{canonical_id}`.
-`ripr_refresh` analyzes the committed default-branch diff through the shared
-check authority. In this snapshot, staged and unstaged tracked edits and
-untracked files are outside the analyzed scope. `ripr check` defaults to the
-working tree when staged or unstaged tracked edits exist; shared check
-authority does not mean identical input. Use `ripr check --committed` for
-committed input, or `ripr check --worktree --format json` for staged and
-unstaged tracked edits outside MCP. Gap and card tools read the committed snapshot and never re-run analysis.
+`ripr_refresh` analyzes the committed default-branch diff by default through
+the shared check authority; its optional `base` argument selects another
+revision. By default, staged and unstaged tracked edits and untracked files
+are outside the analyzed scope. Opt in with `source: "worktree"` to include
+saved staged and unstaged tracked edits; unsaved buffers and untracked files
+remain outside. Worktree snapshots withhold repair cards and readiness, with
+consumed-source commitment explicitly not established. Its warm cache lives
+under the root's `target/ripr/`. `ripr check` defaults to the working tree
+when staged or unstaged tracked edits exist; shared check authority does not
+mean identical input. Use `ripr check --committed` for committed input, or
+`ripr check --worktree --format json` for saved tracked edits outside MCP.
+Gap tools read their captured snapshot and never re-run analysis.
 `ripr_list_repair_attempts` discovers durable CLI attempts before or after
 refresh, with bounded inventory-bound pages; it never creates the store.
 `ripr_prepare_repair` evaluates producer
@@ -95,13 +111,38 @@ authorization. Protocol messages are the only stdout output. Operational
 failures use stderr.
 "#;
 
+/// A person who typed `ripr mcp` at a prompt would otherwise see a silent
+/// hang; an MCP client pipes stdin, so the hint never reaches one. The write is
+/// best effort so an unwritable stderr cannot keep the server from starting.
+fn write_terminal_hint(stdin_is_terminal: bool, stderr: &mut impl std::io::Write) {
+    if stdin_is_terminal {
+        let _ = writeln!(
+            stderr,
+            "ripr mcp serves MCP JSON-RPC over stdio for an MCP client; it is waiting for a client on stdin. Run `ripr init --mcp` to register it with your client, or `ripr mcp --help` for details."
+        );
+    }
+}
+
 pub fn run(args: &[String]) -> Result<(), String> {
+    // #9867: startup dispatches this route directly, bypassing
+    // `CliCommand::from_parts`, so the extended-help rejection owned there
+    // must be mirrored here: `mcp --help --all` is a usage error naming the
+    // supported routes, not ordinary help that silently discards `--all`.
+    if args.iter().any(|arg| arg == "--help" || arg == "-h")
+        && args.iter().any(|arg| arg == "--all")
+    {
+        return Err(
+            "`ripr mcp --help --all` is not supported; extended help is available via \
+             `ripr help --all` (or `ripr check --help --all` for check)"
+                .to_string(),
+        );
+    }
     let mut explicit_root = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
             "--help" | "-h" => {
-                println!("{MCP_HELP}");
+                println!("{}", crate::cli::help::render_command_help(MCP_HELP, &[]));
                 return Ok(());
             }
             "--version" | "-V" => {
@@ -140,6 +181,20 @@ pub fn run(args: &[String]) -> Result<(), String> {
         index += 1;
     }
 
+    write_terminal_hint(
+        std::io::IsTerminal::is_terminal(&std::io::stdin()),
+        &mut std::io::stderr().lock(),
+    );
+
+    // #9895: an external SIGTERM (or SIGINT) mid-refresh must not leave the
+    // in-flight git tree behind. Installing the process-lifetime cooperative
+    // interrupts lets the bounded child waits observe cancellation, terminate
+    // their owned process, and unwind cleanly. On non-Unix targets this is a
+    // no-op (Windows containment is the job-object ownership in
+    // `process_owner`).
+    crate::cli::interrupt::install_server_interrupts()
+        .map_err(|error| format!("install MCP interrupt containment: {error}"))?;
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -157,6 +212,65 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn help_tool_list_has_a_single_conjunction() {
+        // The tool sentence joins its last two names with one "and"; a second
+        // "and" before the final tool reads as a doubled conjunction.
+        assert!(
+            MCP_HELP.contains("`ripr_get_repair_card`, and `ripr_list_repair_attempts`"),
+            "{MCP_HELP}"
+        );
+        assert!(
+            !MCP_HELP.contains("`ripr_get_receipt_status`, and"),
+            "{MCP_HELP}"
+        );
+    }
+
+    #[test]
+    fn terminal_hint_is_written_only_for_terminal_stdin() {
+        let mut shown = Vec::new();
+        write_terminal_hint(true, &mut shown);
+        let text = String::from_utf8_lossy(&shown);
+        assert!(text.contains("ripr init --mcp"), "{text}");
+
+        let mut piped = Vec::new();
+        write_terminal_hint(false, &mut piped);
+        assert!(piped.is_empty());
+    }
+
+    #[test]
+    fn extended_help_pair_is_rejected_on_the_direct_route() -> Result<(), String> {
+        // #9867: startup dispatches `ripr mcp` straight here, bypassing
+        // `CliCommand::from_parts`; the pair must be a usage error naming
+        // the supported routes, not ordinary help discarding `--all`.
+        for argv in [
+            ["--help", "--all"].as_slice(),
+            ["--all", "--help"].as_slice(),
+            ["-h", "--all"].as_slice(),
+        ] {
+            let err = run(&args(argv))
+                .err()
+                .ok_or_else(|| format!("{argv:?} must be rejected on the direct MCP route"))?;
+            assert!(err.contains("not supported"), "{err}");
+            assert!(err.contains("ripr help --all"), "{err}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn terminal_hint_survives_an_unwritable_stderr() {
+        struct Closed;
+        impl std::io::Write for Closed {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+        }
+        write_terminal_hint(true, &mut Closed);
     }
 
     #[test]

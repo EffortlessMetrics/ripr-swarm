@@ -1,0 +1,61 @@
+{
+  "case_id": "shape-closure-returned-zero-input",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-closure-returned-zero-input.diff",
+  "anchor": {
+    "file": "src/flow.rs",
+    "line": 91
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "returned_closure_identity_offset",
+  "hard_case": "The test uses an offset of 0, which subtraction and addition both ignore.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "move |x| x - n",
+        "mutated_line": "move |x| x - n",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `move |x| n + x` becomes `move |x| x - n`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "move |x| x * n",
+        "mutated_line": "move |x| x * n",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::offset_of_zero",
+        "equivalence_review": "not equivalent: `move |x| n + x` becomes `move |x| x * n`"
+      },
+      {
+        "replacement": "move |x| x + 1",
+        "mutated_line": "move |x| x + 1",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::offset_of_zero",
+        "equivalence_review": "not equivalent: `move |x| n + x` becomes `move |x| x + 1`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "offset_of_zero pins make_offset(0)(7) to 7: `x - n` is 7 too, while `x * n` is 0 and `x + 1` is 8. Twin of shape-closure-returned-adder.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

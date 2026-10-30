@@ -1,0 +1,12 @@
+diff --git a/shapes/aio.py b/shapes/aio.py
+--- a/shapes/aio.py
++++ b/shapes/aio.py
+@@ -5,7 +5,7 @@
+ 
+ async def fetch_total(prices):
+     await asyncio.sleep(0)
+-    return sum(p for p in prices if p > 0)
++    return sum(p for p in prices if p > 1)
+ 
+ 
+ async def first_or_default(items, default):

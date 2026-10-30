@@ -85,7 +85,10 @@ all of these hold:
   shadow an outer `p`) with `const|let|var p = jest.fn(...)` or
   `vi.fn(...)`, or to a flat object literal whose `m` is such a call,
   whose keys are plain identifiers, which keys `m` once and which has no
-  spread that could replace it; amended 2026-10-15 (#8138), the mock
+  spread that could replace it (amended 2026-10-18: a `...name` entry
+  does not, when `name` is a test-file `const` object literal the file names
+  only there and after spreads, with plain `key: value` entries and no `m`
+  key; see example 4); amended 2026-10-15 (#8138), the mock
   call takes no argument or an arrow implementation that names neither
   `function` nor `this` (optionally after `<T>` type arguments), the
   literal's `m` value is that call and nothing more, and the call (or the
@@ -120,8 +123,9 @@ committed-history diff reads the committed owner, not the worktree.
 Without that source, or for an owner whose parameters
 the adapter does not record (destructuring, rest), nothing is credited.
 Anything else keeps `mock_expectation` / medium, including a mock from
-`jest.mock`, `jest.spyOn` or a helper, `toHaveBeenCalledTimes`, and every
-value seam, which RIPR-SPEC-0104 already closes to mock matchers.
+`jest.mock`, `jest.spyOn` (except the module-object spy of rule 4) or a
+helper, `toHaveBeenCalledTimes`, and every value seam, which
+RIPR-SPEC-0104 already closes to mock matchers.
 
 **Rule 2. Loose equality against a coercion-safe literal is exact.**
 Legacy `node:assert` `equal` and `deepEqual`, and chai's `assert.equal`,
@@ -211,6 +215,97 @@ snapshot with no argument, with an
 interpolation, or with a property-matcher object keeps `snapshot` /
 medium. Amended by RIPR-SPEC-0258: a `toMatchSnapshot()`
 whose committed entry the test file names reads `snapshot` / strong.
+
+**Rule 4. A spy on an exported module object pins the changed call.**
+(Added 2026-10-15.) On a SideEffect or CallDeletion seam, a
+`toHaveBeenCalledWith` assertion on `spy` with rule 1's primitive-literal
+payload reads `mock_expectation` / strong when all of these hold:
+
+- the changed line calls `o.m(...)`, the owner names `o` only there
+  (parameters included), the owner body makes no other call and runs the
+  changed line once (rule 1's loop, recursion and nested-function
+  check), its parameter list has no default, its body holds no
+  non-ASCII character, and
+  every word of the body outside member names is a parameter, a name the
+  body declares with `const`, `let` or `var`, `o`, or one of `return`,
+  `if`, `else`, `const`, `let`, `var`, `typeof`, `void`, `true`,
+  `false`, `null`, `undefined`, `as`, `string`, `number` and `boolean`
+  (a module binding such as `config.on` can be a getter or a `toString`
+  that calls `o.m` itself), and the owner starts at the module's top
+  level;
+- the owner's module declares `export const o = { ... }` (no type
+  annotation) at its top level, so the exported `o` the test imports is
+  the object the owner calls, and the object literal holds only method
+  shorthands `m(params): T { ... }` whose bodies make no call and name
+  nothing but their parameters and the owner words above outside member
+  names (amended 2026-10-17: the spy wraps the original method, so a
+  method that calls anything, itself through `this` included, has a
+  parameter default (which runs inside the call), or is a spread,
+  computed key, getter or property value could record the asserted
+  payload whatever the owner sent), and the module has no `import`,
+  `require`, `eval`, `from` (re-export), `exports`, `module` or
+  `globalThis` and names `o`, member positions included, only in that
+  declaration and the owner's call (`o.m = jest.fn(); o.m("x")` at the module's top level
+  would leave a mock with calls);
+- the test file imports `o` by name (renaming allowed) from a specifier
+  that resolves to the owner's module, and its callback declares
+  `const|let|var spy = jest.spyOn(o, "m")` (or `vi.spyOn`) at its top
+  level, names `o` only there and `spy` only there and in `expect(spy)`,
+  calls the owner exactly once, and spells no word but `const`, `let`,
+  `var`, `spy`, `o`, `jest`, `vi`, `spyOn`, the owner's name, `expect`,
+  `toHaveBeenCalledWith`, `true`, `false` and `null`, with no template
+  literal and no non-ASCII character;
+- the test file's top level is imports that each bind a name (no empty
+  `{}` and no `type` clause), each from the owner's module,
+  `@jest/globals` or `vitest`, and then exactly one `test(...)` or
+  `it(...)` call (amended 2026-10-17: a hook, an earlier test, a
+  top-level statement or another module's top level runs before the test
+  body and can leave a mock with calls on `o.m`, and `spyOn` on a method
+  that is already a mock returns that mock with those calls);
+- the test file spells `spyOn` exactly once (comments included) and has
+  no `\u` escape, dynamic `import(`, `each`, `concurrent`, `retryTimes`,
+  `mock`, `doMock`, `unstable_mockModule`, `resetModules`,
+  `isolateModules`, `isolateModulesAsync`, `require`, `requireActual` or
+  `eval`.
+
+A spy records every call that reaches `o.m` while it is installed, from
+any code, and `jest.spyOn` on a method that is already a spy returns that
+spy with its earlier calls. The conditions close each way a matching call
+could come from elsewhere: the owner makes no other call, the test makes
+no call but the spy, the one owner call and its assertion, and with no
+word but those the test runs no helper, getter, constructor or `await`
+(which would let other queued work run) between installing the spy and
+asserting. One test after the imports, one `spyOn` in the file and no
+repeated test (`each`, `concurrent`, `retryTimes`) means no earlier code
+left calls on the spy. Known limit: code ripr does not read, a Jest `automock` or
+`restoreMocks` setting, a Jest
+`setupFiles` / `setupFilesAfterEnv` module or a Vitest run with
+`isolate: false` whose earlier file left `o.m` a mock with calls, can
+still satisfy the assertion.
+No module mock, reset or isolation means the test's `o` and the owner's
+`o` are one object. A spy that keeps the method's implementation records
+the call either way. A different spied method, a spy on an object
+imported from another module, `.mockImplementation(...)` after the spy,
+or anything outside the allowed words keeps `mock_expectation` / medium.
+
+**Rule 5. A truthiness assertion on a literal call to a `boolean` owner
+pins the value.** On a Predicate or ReturnValue seam, `assert.ok(f(1))`,
+`assert.notOk(f(1))`, `assert.ok(!f(1))`, `expect(f(1)).toBeTruthy()` and
+`toBeFalsy()` read `exact_value` / strong when all of these hold:
+
+- the owner is a function or arrow function declared `: boolean` exactly
+  (no generic list, `async`, generator, union or `Promise<boolean>`), so
+  the call returns only `true` or `false` and truthiness is equality;
+- the assertion observes the whole owner call (leading `!` aside) through
+  a name the test imports from the owner's module, a rename or a
+  namespace member, and every argument is a number, string, boolean or
+  `null` literal;
+- the test does not declare its own owner name.
+
+Anything else stays `smoke_only` / weak: a non-literal argument, a wrapper
+(`Boolean(f(1))`, `f(1) && x`, `f(1).valueOf()`), an unannotated or
+wider return type, or a method owner. The pin is per call; whether the
+call sits at the changed boundary stays with the row activation witness.
 
 ### Decisions
 
@@ -311,6 +406,65 @@ and the rejected alternative. Recorded on #6654.
    implementations (`jest.fn((m) => m)`) that cannot reach the mock.
    Rejected: a full expression parse, which the text reader does not
    have; the statement-end check reads only what can follow.
+10. **Module-object spy (rule 4, 2026-10-15; amends example 5).**
+   Adopted: credit a spy on an exported top-level `const` object when the
+   owner's only call is the changed `o.m(...)` and the test body is only
+   the spy, one owner call and the assertion, spelled from a fixed word
+   list. The word list replaces a list of refused shapes because every
+   word outside it (a helper, a getter read, `new`, `await`) is a way
+   another call can reach the spy, and a list of refused shapes misses
+   the ones nobody wrote down. Rejected: credit any `jest.spyOn` pin,
+   which credits a test whose helper or earlier test also calls `o.m`
+   with the pinned payload. Rejected: keep every spy medium, which leaves
+   `jest-spec0247-ex05-spyon-send` (a discriminated test) a false gap.
+   Rejected for now: spies set in hooks, on namespace imports
+   (`jest.spyOn(ns.o, ...)`), on objects the owner's module imports from
+   a third module, and tests with more statements; each needs its own
+   reach argument and none is in the corpus.
+
+11. **Boolean owner truthiness (rule 5, 2026-10-22; #9532).** Adopted:
+   credit a truthiness assertion as an exact pin when the owner declares
+   `boolean` and the call has literal arguments. Rejected: infer
+   booleanness from the returned expression, which needs type inference
+   ripr does not do. Rejected: credit non-literal arguments, which hides
+   whether the assertion reaches the changed input. Rejected: leave the
+   three `ts-grid-*-exact` rows false actionable, which asks for an
+   assertion that already exists.
+
+**Rule 6. `toBeCloseTo` on a literal call pins a changed `return` the
+tolerance separates (2026-10-26).** On a ReturnValue seam,
+`expect(f(a)).toBeCloseTo(n)` is credited as a pin (the extracted oracle
+stays `unknown`; the classifier reads it strong) when all of these hold:
+
+- the matcher takes one number literal and no `numDigits`, so the tolerance
+  is the default `10 ** -2 / 2` (0.005); a second argument, a negation, a
+  variable or computed expected value, and a non-finite literal keep the
+  `unknown` reading;
+- the changed line is a one-line `return <expression>;` in an owner that
+  `plain_changed_return` accepts: arity known, no parameter reassigned, no
+  nested function before the return (the gate RIPR-SPEC-0243 rule 18
+  uses), and the owner is synchronous and not a generator with nothing
+  between its signature and the return that branches, returns or throws
+  early, so the changed line runs for every call;
+  the owner is read from the source it was parsed from, not the worktree;
+- the test body has no `.resolves` or `.rejects` (the extracted assertion keeps
+  no promise modifier, and a synchronous number cannot satisfy either);
+- the assertion observes the whole result of one owner call with scalar
+  literal arguments, through a name the test imports from the owner's
+  module (the observation gate of rules 2 and 5);
+- the evaluator (`literal_eval`, RIPR-SPEC-0243 rule 18) computes both the
+  old and the new `return` expression to numbers for those arguments, the
+  old value is within the tolerance of `n`, and the new value is outside it,
+  each by a margin of `1e-9` that floating-point rounding cannot close.
+
+The assertion then fails for that edit on that input, which is the fact a
+mutant run would observe, computed instead of executed. Nothing else changes:
+an edit the tolerance absorbs, an old value that already fails the test, an
+expression the evaluator does not support, and every other matcher keep
+their reading. Rejected: reading `toBeCloseTo` as exact for every call,
+which credits an edit smaller than 0.005; and reading it as weak, which
+leaves a discriminating pin `weakly_exposed` and so a false actionable
+gap.
 
 ## Required Evidence
 
@@ -328,10 +482,16 @@ and the rejected alternative. Recorded on #6654.
   moves from `gap` to `credited`, and no other row moves.
 - Amended 2026-10-15 (#8138, decision 9): no corpus row moves; the
   tightened binding refuses only shapes no corpus case uses.
+- Added 2026-10-15 (rule 4, decision 10): `jest-spec0247-ex05-spyon-send` moves from
+  `gap` to `credited`, and no other row moves.
+- Added 2026-10-26 (rule 6): `shape-barrel-namespace-reexport` moves from
+  `limited` to `credited` together with the RIPR-SPEC-0095 namespace
+  re-export amendment, and no other row moves.
 
 ## Non-Goals
 
-- No credit for `toHaveBeenCalledWith` on a module mock, a spy, a mock
+- No credit for `toHaveBeenCalledWith` on a module mock, a spy (except
+  rule 4's spy on an exported module object), a mock
   made by a helper (except the test-file mock factory of decision 8), an
   object payload, a mock the owner reaches other
   than through a parameter of the same name, or any mock another call
@@ -364,7 +524,20 @@ and the rejected alternative. Recorded on #6654.
    `send.call(null, "order 7")`, or `announce(send, 7)`; or with the
    mock declared in a nested block (`if (ready) { const send = jest.fn() }`)
    or, for example 2, `{ write: jest.fn(), ...defaults }` or a second
-   `write` key: `weakly_exposed`. Amended 2026-10-15: example 2 with
+   `write` key: `weakly_exposed`. Amended 2026-10-18: `...defaults` is
+   `exposed` when `const defaults = { flush: jest.fn() };` is a top-level
+   test-file `const` object literal with plain `key: value` entries, no
+   `write` key, no spread and no `__proto__`, and the file names `defaults`
+   only in that declaration and after `...` spreads; a source with a `write`
+   key (quoted, computed or a method included), a nested spread, a shorthand
+   entry, a `let`/`var` binding, a call or other initializer, a member
+   access or `Object.assign(defaults, ...)`, an import, an `export` or
+   `declare` binding, a body-local `defaults` (including an object-rest
+   binding `const { a, ...defaults } = cfg()` or a rest parameter), a
+   spread outside a `= { ... }` literal, a spread of an expression or
+   call, or a file that calls `eval`, uses `with` or holds a `\u` escape
+   stays `weakly_exposed`, and a spread inside a test-file factory
+   literal stays refused. Amended 2026-10-15: example 2 with
    `function makeDb() { return { write: jest.fn() }; }` in the test file
    and `const db = makeDb();` is `exposed`; a factory with a parameter, a
    spread, a second statement, an `export`, `async`, a generator, a
@@ -387,7 +560,8 @@ and the rejected alternative. Recorded on #6654.
    or `const send = makeSend()`, with an object payload `{ id: 7 }`, or
    for `ship(notifier, cb)` whose changed line is
    `notifier.send("shipped")` while the test passes its `send` mock as
-   `cb`: `weakly_exposed`.
+   `cb`: `weakly_exposed`. Amended 2026-10-15: the `jest.spyOn(mailer,
+   "send")` case is example 12, `exposed` under rule 4.
 6. Legacy `import assert from "node:assert"` and
    `assert.equal(tier(999), "bronze")`, `assert.equal(fee(10), 20)`,
    `assert.equal(delta(), -3)`, or
@@ -435,6 +609,41 @@ and the rejected alternative. Recorded on #6654.
     a test-local `lineCount`, or a class method owner
     `lineCount(): number` (the whole-result check reads only a free call,
     which a method's annotation does not cover): `relational_check` / weak.
+12. `src/mail.ts` is `export const mailer = { send(m: string) { return
+    m; } };` and `export function announceMail(id: number): void {
+    mailer.send("order " + id); }`; the test imports `{ announceMail,
+    mailer }` from it and runs `const send = jest.spyOn(mailer, "send");
+    announceMail(7); expect(send).toHaveBeenCalledWith("order 7");`:
+    `mock_expectation` / strong, `exposed`, with `vi.spyOn`, `it`, a
+    renamed import, or imports from `@jest/globals`. The same stays
+    `weakly_exposed` with any of these in the owner: a second call
+    (`log(id)`, `id.toFixed(0)`), a second mention of `mailer`, a read
+    of another module binding (`void config.suffix`), a parameter
+    default (`pre = warm()`), a non-ASCII name, `export let mailer`, an
+    unexported or imported `mailer`, `new Date`, or a getter read inside a
+    template (`` `${config.suffix}` ``); in the owner's module: a method
+    that calls (`this.send(...)`, `relay(m)`), has a parameter default,
+    or is a property value, spread or getter, `export const mailer:
+    Mailer =`, `mailer.send = jest.fn()` after the object, an
+    `exports.mailer.send = jest.fn()` (CommonJS output makes it the same
+    object), an `export * from`, or an `import`; in the test: `mailer.send("order 7")`, `send("order 7")`, a second
+    `announceMail(...)`, a helper call, a getter read (`other.warm`), a
+    non-ASCII helper name, `` announceMail`7` ``, `await`, an arrow, the
+    spy in a nested block, a spy on `"other"`, `.mockImplementation(...)`,
+    or `mailer` imported from another module; or in the file: a second
+    or commented `spyOn`, a `\u` escape, a dynamic `import(`,
+    `test.each`, `test.concurrent`, `jest.mock(...)` or
+    `jest.retryTimes(...)`, a hook (`beforeEach`), an earlier test, a
+    `describe` wrapper, a top-level statement, a side-effect, empty or
+    `type` import, or an import from any other module.
+
+13. `src/adult.ts` is `export function isAdult(age: number): boolean {
+    return age >= 18; }` and the test runs `assert.ok(isAdult(18));
+    assert.ok(!isAdult(17));` (or `expect(isAdult(18)).toBeTruthy()`):
+    `exact_value` / strong. The same with an unannotated, `number` or
+    `boolean | null` return, a variable argument, `Boolean(isAdult(18))`,
+    `isAdult(18) && true`, `isAdult(18).valueOf()` or a test-local
+    `isAdult`: `smoke_only` / weak.
 
 ## Test Mapping
 
@@ -445,6 +654,18 @@ and the rejected alternative. Recorded on #6654.
   decision 9.
 - `fixtures/typescript-verdict-corpus` pins the amended example 4:
   `jest-spec0243-ex30-factory-db` reads `credited`.
+- `crates/ripr/src/analysis/language/typescript/tests/mock_spread_source_tests.rs`
+  pins the 2026-10-18 spread-source amendment of example 4;
+  `jest-mock-fn-spread-object` reads `credited`.
+- `crates/ripr/src/analysis/language/typescript/tests/spy_module_object_tests.rs`
+  pins example 12; `spy_file_checks_read_the_committed_test_file` pins that
+  the spy file checks read HEAD's test file, not the working tree's, under
+  committed-history analysis; and
+  `crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs`
+  `module_object_call_needs_an_owner_at_the_module_top_level` pins the
+  top-level owner condition, which the owner extractor cannot reach today.
+- `fixtures/typescript-verdict-corpus` pins example 12:
+  `jest-spec0247-ex05-spyon-send` reads `credited`.
 - `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   keeps the loose-equality grading with coercion-reachable literals, and
   `loose_equality_reads_a_test_local_literal_const` pins example 10.
@@ -457,6 +678,17 @@ and the rejected alternative. Recorded on #6654.
 - `fixtures/typescript-verdict-corpus` pins the eight Problem rows: seven
   `credited`, and `ts-vitest-checkout-notify` still `gap`.
 
+- `crates/ripr/src/analysis/language/typescript/tests/boolean_pin_tests.rs`
+  pins example 13; `fixtures/typescript-verdict-corpus` pins it:
+  `ts-grid-boundary-exact`, `ts-grid-equality-exact` and
+  `ts-grid-logical-exact` read `credited`.
+- `crates/ripr/src/analysis/language/typescript/tests/close_to_pin_tests.rs`
+  pins rule 6: the pinned edit, the tolerance-absorbed edit, an old value
+  that already fails, an explicit `numDigits`, a negation, a wrapped call,
+  a variable argument or expected value, a shadowed owner and a rebound
+  parameter. `fixtures/typescript-verdict-corpus` pins it:
+  `shape-barrel-namespace-reexport` reads `credited`.
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs`:
@@ -465,9 +697,13 @@ and the rejected alternative. Recorded on #6654.
   `closed_mock_call` and `ends_statement` (decision 9), fed by
   `crates/ripr/src/analysis/language/typescript/tests_extract.rs`:
   `mock_factories`.
+- `crates/ripr/src/analysis/language/typescript/mock_payload_guard/spy.rs`:
+  `module_object_calls`, `spy_safe_test_file` and `credits_spy` (rule 4),
+  read through `MockCallFacts::read_module_object_calls`,
+  `admit_spy_files` and `credits_in_test`.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `strongest_family_matching_oracle` and `ts_changed_value_is_observed`
-  read the credited payload as strong, and `project_credited_mock_rows`
+  read the credited payload as strong (rules 1 and 4), and `project_credited_mock_rows`
   shows it as strong on the related-test row (rule 1).
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:
   `loose_equality_pins_literal` (rule 2), `loose_literal_consts` and
@@ -477,6 +713,13 @@ and the rejected alternative. Recorded on #6654.
 - `crates/ripr/src/analysis/language/typescript/typed_loose_equality_guard.rs`:
   `ts_owner_declares_number_return` and `ts_typed_loose_number_facts`
   (rule 2's typed owner), read by the classifier's pin facts.
+- `crates/ripr/src/analysis/language/typescript/boolean_pin_guard.rs`:
+  `ts_owner_declares_boolean_return` and `ts_boolean_pin_facts` (rule 5),
+  read by the classifier's pin facts.
+- `crates/ripr/src/analysis/language/typescript/close_to_guard.rs`:
+  `ts_close_to_pin_facts` (rule 6), read by the classifier's pin facts, with
+  `literal_eval::return_expression_numbers` and
+  `classifier::plain_changed_return`.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`: assertion
   extraction applies rules 2 and 3; `mock_payload_from_assertion` records
   multi-argument literal payloads.

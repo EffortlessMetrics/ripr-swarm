@@ -118,3 +118,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_full_repo_guidance (10)
+
+Reason:
+RIPR-SPEC-0026: pin the fixture to [languages] enabled = ["rust"] so TypeScript project detection does not enable the preview adapter; only the config path line is added
+
+Command:
+`cargo xtask goldens bless ts_full_repo_guidance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_full_repo_guidance (11)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless ts_full_repo_guidance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

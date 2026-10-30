@@ -1,0 +1,51 @@
+{
+  "case_id": "py-grid-boundary-none",
+  "subject_id": "authored-py-grid-boundary",
+  "diff": "cases/py-grid-boundary-none.diff",
+  "anchor": {
+    "file": "grid_boundary/core.py",
+    "line": 21
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pytest_smoke_call_no_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return 2000 < grams",
+        "mutated_line": "return 2000 < grams",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 2000 itself stops passing"
+      },
+      {
+        "replacement": "return 2000 > grams",
+        "mutated_line": "return 2000 > grams",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the comparison is inverted"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: boundary x no assertion. The test only calls overweight, so no mutant fails.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,10 @@
+diff --git a/src/ranges.rs b/src/ranges.rs
+--- a/src/ranges.rs
++++ b/src/ranges.rs
+@@ -1,5 +1,5 @@
+ pub fn span(lo: i32, hi: i32) -> i32 {
+-    if hi >= lo { hi - lo } else { lo - hi }
++    (hi - lo).abs()
+ }
+ 
+ #[cfg(test)]

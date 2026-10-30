@@ -4,19 +4,37 @@ Spec: RIPR-SPEC-0245
 
 ## Given
 
-Three small authored Perl distributions under `subjects/`, our own code under
+Seven small authored Perl distributions under `subjects/`, our own code under
 this repository's license: `authored-perl-testmore-shop` (Test::More),
-`authored-perl-test2-ledger` (Test2::V0) and
-`authored-perl-testexception-account` (Test::Exception). Each case is a
+`authored-perl-test2-ledger` (Test2::V0),
+`authored-perl-testexception-account` (Test::Exception),
+`authored-perl-testdeep-inventory` (Test::Deep),
+`authored-perl-moose-profile` (Moose and blessed hashes),
+`authored-perl-idioms-toolkit` (closures, wantarray, local, regexes) and
+`authored-perl-hostile-source` (decoys, AUTOLOAD, generated subs). Each case is a
 one-line behavior-preserving rewrite under `cases/` with the fact packet the
 pinned `perl-ripr-facts` producer wrote for that diff under `packets/`.
 Each case is labeled with what `prove -l t` discriminates when each listed
 hand-written mutant of the rewritten line is applied.
 
+A rewrite is behavior-preserving over the plain numeric, string and list
+arguments its subject's tests and callers use. Operator-overloaded objects are
+outside that domain: swapping the operands of `*` or `+`, or replacing `+=`
+with `+`, can dispatch to a different overload handler, and no case claims
+equivalence there.
+
 Cases named `perl-0235-*` start from another case's producer packet and edit
 it to carry a RIPR-SPEC-0235 fact the producer cannot emit yet. Their
 `perl_facts.provenance` is `edited_producer` and `perl_facts.edits` names the
 edit; their rates are reported apart from producer-packet rates.
+
+`spec-coverage.toml` lists RIPR-SPEC-0235 as the one in-scope spec and counts
+each of its 31 numbered examples once a case cites it in `spec_examples`. A
+`perl-0235-*` case derived from another case keeps that case's diff and run
+truth, because a packet edit changes which facts ripr reads, not what
+`prove -l t` does with the rewrite; its base is named in `perl_facts.edits`.
+Where the spec expects a gap, the base is a case whose own tests do not
+discriminate the rewrite, so the spec's class and the label agree.
 
 ## When
 

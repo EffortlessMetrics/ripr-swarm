@@ -1,0 +1,22 @@
+{
+  "case_id": "py-hostile-dead-version-branch",
+  "subject_id": "authored-py-pytest-hostile",
+  "origin": "authored",
+  "anchor": "hostile/versioned.py:11",
+  "behavior_family": "value_return",
+  "test_shape": "pytest_conditional_definition_dead_branch",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

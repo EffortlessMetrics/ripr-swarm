@@ -294,7 +294,7 @@ The eligibility decision has this closed outcome table:
 | Unsupported preview-language authority | Advisory only; it cannot gain blocking authority through projection. |
 | Explicit advisory mode | Never blocks, including for an otherwise complete route. |
 | Explicit calibrated blocking mode | Blocks only a complete, current, full-scope, policy-eligible decision. |
-| Baseline match only via the legacy path/line/static_class fallback | Disclosed compatibility event: a report-level warning plus decision `baseline_match_kind: "legacy_path_line_class"`; the candidate stays non-new and non-blocking during the compatibility window and must never match silently (RIPR-SPEC-0014 § Baseline Comparison). |
+| Baseline match only via the legacy path/line/static_class fallback | Disclosed compatibility event: a report-level warning plus decision `baseline_match_kind: "legacy_path_line_class"`; the candidate stays non-new and non-blocking during the compatibility window only for baseline entries with no canonical gap id (a fallback join to an entry whose canonical id differs is refused and the candidate is new, matching `ripr baseline diff`; a candidate with no canonical id still joins, disclosed), and must never match silently (RIPR-SPEC-0014 § Baseline Comparison). |
 
 This contract does not make the default-generated workflow blocking. The
 gap-ledger producer now carries an optional typed `GapRecord.seam_id` and an
@@ -485,6 +485,10 @@ disclosed and fails closed; it is never treated as a complete causal comparison.
   cases are `static_limitation` because propagation to a side-effect/call-effect
   sink is unknown, so they correctly lack a policy-eligible receipt. PR C must
   not manufacture a blocking call-observation route from that limited evidence.
+- The shared verification-contract validator reads schema `integer` per JSON
+  Schema Draft 2020-12: a whole-valued number such as `1.0` matches, a fraction
+  or a float beyond 2^53 does not (#11009). The xtask unit test
+  `integer_type_follows_json_schema_numeric_semantics` pins both sides.
 
 ## Implementation Mapping
 

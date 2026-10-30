@@ -1,7 +1,7 @@
 use crate::cli::commands_context::ensure_command_root;
 use crate::cli::commands_numeric::parse_positive_usize;
 use crate::cli::parse::expect_value;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::{Path, PathBuf};
 
@@ -54,9 +54,7 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--format")?;
                 if value != "json" {
-                    return Err(format!(
-                        "unknown swarm queue format {value:?}; expected `json`"
-                    ));
+                    return Err(unknown_value("swarm queue format", value, &["json"]));
                 }
             }
             "--json" => {}
@@ -75,15 +73,31 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
 
 pub(super) fn run(options: Options) -> Result<(), String> {
     ensure_command_root(&options.root, "swarm queue")?;
-    let contents = crate::bounded_input::read_to_string(&options.gap_ledger).map_err(|err| {
-        format!(
-            "swarm queue --gap-ledger {} is invalid: read failed: {err}",
-            options.gap_ledger.display()
-        )
-    })?;
+    let contents = read_gap_ledger(&options.gap_ledger)?;
     let rendered = render_from_gap_ledger_contents(&options, &contents)?;
     print!("{rendered}");
     Ok(())
+}
+
+/// Read the user-named `--gap-ledger` input with the shared missing-input
+/// diagnostic (#9851): plain `not found` — never a raw OS errno — plus the
+/// producer command, in the sibling `reports gap-ledger` vocabulary.
+fn read_gap_ledger(path: &Path) -> Result<String, String> {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
+        let mut message = format!(
+            "swarm queue --gap-ledger {} is invalid: {}",
+            output::outcome::display_path(path),
+            crate::bounded_input::read_failure_detail(&err)
+        );
+        if err.kind() == std::io::ErrorKind::NotFound {
+            message.push_str(
+                ". Generate it first (for example `ripr reports gap-ledger --root . \
+                 --repo-exposure target/ripr/reports/repo-exposure.json --out gap-ledger.json`), \
+                 or pass the correct path",
+            );
+        }
+        message
+    })
 }
 
 fn render_from_gap_ledger_contents(options: &Options, contents: &str) -> Result<String, String> {
@@ -183,6 +197,36 @@ mod tests {
     }
 
     #[test]
+    fn missing_gap_ledger_names_path_and_recovery_route() -> Result<(), String> {
+        let root = unique_command_test_dir("swarm-queue-missing-ledger");
+        std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
+        let options = Options {
+            root: root.clone(),
+            gap_ledger: root.join("missing-gap-ledger.json"),
+            language: "python".to_string(),
+            top: 10,
+        };
+        let expected_path = output::outcome::display_path(&options.gap_ledger);
+        let err = run(options)
+            .err()
+            .ok_or("missing gap ledger must fail")?;
+        assert!(
+            err.contains(&format!(
+                "swarm queue --gap-ledger {expected_path} is invalid:"
+            )),
+            "{err}"
+        );
+        assert!(err.contains("not found"), "{err}");
+        assert!(
+            err.contains("ripr reports gap-ledger --root . --repo-exposure"),
+            "error should name the gap-ledger recovery route, got: {err}"
+        );
+        assert!(!err.contains("os error"), "{err}");
+        std::fs::remove_dir_all(&root).map_err(|error| format!("remove root: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn parses_gap_ledger_language_top_and_format() {
         assert_eq!(
             parse_options(&args(&[
@@ -206,7 +250,14 @@ mod tests {
         );
         assert_eq!(
             parse_options(&args(&["--format", "md"])),
-            Err("unknown swarm queue format \"md\"; expected `json`".to_string())
+            Err("unknown swarm queue format \"md\". Accepted: json.".to_string())
+        );
+        assert_eq!(
+            parse_options(&args(&["--format", "jsn"])),
+            Err(
+                "unknown swarm queue format \"jsn\". Did you mean `json`? Accepted: json."
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_options(&args(&["--top", "0"])),

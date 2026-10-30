@@ -6,6 +6,10 @@ const RECEIPT_FILE = 'install-receipt.json';
 const LOCK_WAIT_MS = 120_000;
 const LOCK_POLL_MS = 50;
 const LOCK_HEARTBEAT_MS = 30_000;
+// A held lock refreshes its mtime every LOCK_HEARTBEAT_MS; a lock whose owner
+// pid is alive but whose heartbeat is older than this is a recycled pid or a
+// wedged owner and is reclaimed (#9304).
+const LOCK_STALE_MS = 10 * LOCK_HEARTBEAT_MS;
 const MANAGED_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 export interface InstallReceiptV1 {
@@ -17,6 +21,8 @@ export interface InstallReceiptV1 {
   readonly manifestUrl?: string;
   readonly platformTarget: string;
   readonly executableName: string;
+  /** Raw-byte SHA-256 of the manifest that admitted this install (#9304). */
+  readonly manifestSha256?: string;
   readonly archiveSha256: string;
   readonly executableSha256: string;
   readonly binaryVersion: string;
@@ -34,6 +40,14 @@ export interface ManagedServerInstallRequest {
   readonly platformTarget: string;
   readonly executableName: string;
   readonly archiveExtension: string;
+  /**
+   * The release-admitted raw-byte manifest digest for this request's
+   * distribution generation. When present, a cache hit must carry a receipt
+   * recorded under exactly this digest, and a fresh install must resolve a
+   * manifest with it (#9304). When absent no descriptor exists, so a hit is
+   * explicitly offline-trusted on version and local self-consistency alone.
+   */
+  readonly admittedManifestSha256?: string;
 }
 
 export interface ResolvedArchive {
@@ -42,6 +56,8 @@ export interface ResolvedArchive {
   readonly bytes: Buffer;
   readonly manifestUrl?: string;
   readonly manifestPlacement?: ManifestPlacement;
+  /** Raw-byte SHA-256 of the manifest the archive digest came from. */
+  readonly manifestSha256?: string;
 }
 
 /**
@@ -112,6 +128,7 @@ export async function installManagedServer(
   for (;;) {
     const completed = await readManagedServerInstallation(request);
     if (completed) {
+      await sweepReplacedOnCacheHit(request, finalDir, lockPath);
       return completed;
     }
 
@@ -128,6 +145,9 @@ export async function installManagedServer(
       if (!isAlreadyExists(error)) {
         throw error;
       }
+      if (await reclaimStaleLock(lockPath, request.serversRoot)) {
+        continue;
+      }
       if (Date.now() >= deadline) {
         throw new Error(`Timed out waiting for managed server install lock ${lockPath}.`);
       }
@@ -136,7 +156,13 @@ export async function installManagedServer(
     }
 
     const heartbeat = setInterval(() => {
-      fs.promises.utimes(lockPath, new Date(), new Date()).catch(() => undefined);
+      void (async () => {
+        // Only touch a lock this installer still owns (#9304): a lock taken
+        // over after a stale reclaim must not be kept alive by the old holder.
+        if (await ownsLock(lockPath, lockToken)) {
+          await fs.promises.utimes(lockPath, new Date(), new Date());
+        }
+      })().catch(() => undefined);
     }, LOCK_HEARTBEAT_MS);
     heartbeat.unref();
     try {
@@ -144,11 +170,164 @@ export async function installManagedServer(
       if (converged) {
         return converged;
       }
-      return await stageAndPromote(request, operations, finalDir);
+      await sweepOrphanInstallDirs(request.serversRoot, finalDir);
+      const installed = await stageAndPromote(request, operations, finalDir, () => ownsLock(lockPath, lockToken));
+      // A displaced `.replaced-*` directory may be the only recoverable copy
+      // until a new install succeeds, so it is swept only now.
+      await sweepOrphanInstallDirs(request.serversRoot, finalDir, ['.replaced-']);
+      return installed;
     } finally {
       clearInterval(heartbeat);
-      await fs.promises.rm(lockPath, { recursive: true, force: true });
+      if (await ownsLock(lockPath, lockToken)) {
+        await fs.promises.rm(lockPath, { recursive: true, force: true });
+      }
     }
+  }
+}
+
+/**
+ * A valid cache hit can still have a `.replaced-*` sibling left by a kill
+ * between promote and cleanup (#9304). Clear it under the target lock with a
+ * single non-blocking attempt; a busy lock or any failure is skipped silently.
+ */
+async function sweepReplacedOnCacheHit(
+  request: ManagedServerInstallRequest,
+  finalDir: string,
+  lockPath: string
+): Promise<void> {
+  try {
+    const base = path.basename(finalDir);
+    const entries = await fs.promises.readdir(path.dirname(finalDir));
+    if (!entries.some((entry) => entry.startsWith(`${base}.replaced-`))) {
+      return;
+    }
+    const token = `${process.pid}:${crypto.randomUUID()}`;
+    await fs.promises.mkdir(lockPath);
+    try {
+      try {
+        await fs.promises.writeFile(path.join(lockPath, 'owner'), `${token}\n`, { flag: 'wx' });
+      } catch (error) {
+        await fs.promises.rm(lockPath, { recursive: true, force: true });
+        throw error;
+      }
+      if (await readManagedServerInstallation(request)) {
+        await sweepOrphanInstallDirs(request.serversRoot, finalDir, ['.replaced-']);
+      }
+    } finally {
+      if (await ownsLock(lockPath, token)) {
+        await fs.promises.rm(lockPath, { recursive: true, force: true });
+      }
+    }
+  } catch {
+    // Busy lock or filesystem error: the leftover is retried on a later hit.
+  }
+}
+
+async function ownsLock(lockPath: string, lockToken: string): Promise<boolean> {
+  try {
+    return (await fs.promises.readFile(path.join(lockPath, 'owner'), 'utf8')).trim() === lockToken;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reclaims an install lock whose owner is gone (#9304): the owner pid is dead,
+ * or its heartbeat (lock mtime) is older than LOCK_STALE_MS. A live owner with
+ * a fresh heartbeat is never reclaimed. The lock is moved aside atomically so
+ * only one contender wins, and the moved directory's owner is re-checked so a
+ * lock freshly taken by someone else is put back rather than destroyed.
+ */
+export async function reclaimStaleLock(
+  lockPath: string,
+  serversRoot: string,
+  now: number = Date.now(),
+  hooks: { beforeMove?: () => Promise<void>; afterMove?: () => Promise<void> } = {}
+): Promise<boolean> {
+  assertDescendantPath(serversRoot, lockPath, 'install lock');
+  let owner: string | undefined;
+  let mtimeMs: number;
+  try {
+    mtimeMs = (await fs.promises.stat(lockPath)).mtimeMs;
+  } catch {
+    return false;
+  }
+  try {
+    owner = (await fs.promises.readFile(path.join(lockPath, 'owner'), 'utf8')).trim();
+  } catch {
+    owner = undefined;
+  }
+  const heartbeatStale = now - mtimeMs > LOCK_STALE_MS;
+  const ownerPid = owner === undefined ? undefined : Number.parseInt(owner.split(':')[0] ?? '', 10);
+  const ownerDead = ownerPid !== undefined && Number.isInteger(ownerPid) && ownerPid > 0 && !isProcessAlive(ownerPid);
+  if (!ownerDead && !heartbeatStale) {
+    return false;
+  }
+  await hooks.beforeMove?.();
+  const aside = `${lockPath}.stale-${process.pid}-${crypto.randomUUID()}`;
+  assertDescendantPath(serversRoot, aside, 'stale install lock');
+  try {
+    await fs.promises.rename(lockPath, aside);
+  } catch {
+    return false;
+  }
+  await hooks.afterMove?.();
+  let movedOwner: string | undefined;
+  try {
+    movedOwner = (await fs.promises.readFile(path.join(aside, 'owner'), 'utf8')).trim();
+  } catch {
+    movedOwner = undefined;
+  }
+  if (movedOwner !== owner) {
+    // Raced with a new owner: put it back. If the restore fails, leave the
+    // aside directory for the `.install.lock.stale-*` sweep rather than
+    // deleting a possibly live lock.
+    try {
+      await fs.promises.rename(aside, lockPath);
+    } catch {
+      // Best effort.
+    }
+    return false;
+  }
+  await fs.promises.rm(aside, { recursive: true, force: true }).catch(() => undefined);
+  return true;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the pid exists but belongs to another user.
+    return !(isNodeError(error) && error.code === 'ESRCH');
+  }
+}
+
+/**
+ * Removes this target's orphaned staging/displaced/stale-lock siblings left by
+ * a hard kill (#9304). Called only while holding the install lock, so no live
+ * installer owns any of them. The active install directory is never touched.
+ */
+export async function sweepOrphanInstallDirs(
+  serversRoot: string,
+  finalDir: string,
+  kinds: readonly string[] = ['.install-', '.install.lock.stale-']
+): Promise<void> {
+  const parent = path.dirname(finalDir);
+  const base = path.basename(finalDir);
+  let entries: string[];
+  try {
+    entries = await fs.promises.readdir(parent);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!kinds.some((kind) => entry.startsWith(`${base}${kind}`))) {
+      continue;
+    }
+    const orphan = path.join(parent, entry);
+    assertDescendantPath(serversRoot, orphan, 'orphan install directory');
+    await fs.promises.rm(orphan, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
@@ -202,8 +381,16 @@ function installDir(request: ManagedServerInstallRequest): string {
 async function stageAndPromote(
   request: ManagedServerInstallRequest,
   operations: ManagedServerInstallOperations,
-  finalDir: string
+  finalDir: string,
+  holdsLock: () => Promise<boolean>
 ): Promise<ManagedServerInstallation> {
+  // Fence promotion on lock ownership (#9304). The check-to-rename window is
+  // not atomic, so this is best-effort, not mutual exclusion.
+  const assertLockHeld = async (): Promise<void> => {
+    if (!(await holdsLock())) {
+      throw new Error('Managed server install lock was lost to another installer; retry the install.');
+    }
+  };
   const unique = `${process.pid}-${crypto.randomUUID()}`;
   const stagingDir = `${finalDir}.install-${unique}`;
   const displacedDir = `${finalDir}.replaced-${unique}`;
@@ -222,6 +409,12 @@ async function stageAndPromote(
       throw new Error(
         `Server manifest version ${resolved.manifestVersion} does not match requested version ${request.version}.`
       );
+    }
+    if (
+      request.admittedManifestSha256 !== undefined
+      && (resolved.manifestSha256 === undefined || !safeDigestEquals(resolved.manifestSha256, request.admittedManifestSha256))
+    ) {
+      throw new Error('Resolved server manifest does not match the admitted manifest SHA-256.');
     }
     if (!isSha256(resolved.expectedSha256)) {
       throw new Error('Server manifest asset digest is not a SHA-256 value.');
@@ -260,6 +453,7 @@ async function stageAndPromote(
       ...(resolved.manifestUrl !== undefined && resolved.manifestUrl.length > 0 ? { manifestUrl: resolved.manifestUrl } : {}),
       platformTarget: request.platformTarget,
       executableName: request.executableName,
+      ...(resolved.manifestSha256 !== undefined ? { manifestSha256: resolved.manifestSha256 } : {}),
       archiveSha256,
       executableSha256,
       binaryVersion
@@ -275,6 +469,7 @@ async function stageAndPromote(
       throw new Error('Staged managed server failed completed-receipt validation.');
     }
 
+    await assertLockHeld();
     try {
       await fs.promises.rename(finalDir, displacedDir);
       displaced = true;
@@ -284,6 +479,7 @@ async function stageAndPromote(
       }
     }
     try {
+      await assertLockHeld();
       await fs.promises.rename(stagingDir, finalDir);
     } catch (error) {
       if (displaced) {
@@ -293,7 +489,10 @@ async function stageAndPromote(
       throw error;
     }
     if (displaced) {
-      await fs.promises.rm(displacedDir, { recursive: true, force: true });
+      // Without the lock, leave the displaced copy for a later holder's sweep.
+      if (await holdsLock()) {
+        await fs.promises.rm(displacedDir, { recursive: true, force: true });
+      }
       displaced = false;
     }
 
@@ -332,10 +531,24 @@ function isMatchingReceipt(value: unknown, request: ManagedServerInstallRequest)
     && receipt.executableName === request.executableName
     && typeof receipt.binaryVersion === 'string'
     && receipt.binaryVersion.trim().length > 0
+    && manifestBindingMatches(receipt.manifestSha256, request.admittedManifestSha256)
     && typeof receipt.archiveSha256 === 'string'
     && isSha256(receipt.archiveSha256)
     && typeof receipt.executableSha256 === 'string'
     && isSha256(receipt.executableSha256);
+}
+
+/**
+ * A receipt recorded under a different (or no) manifest digest is not the
+ * admitted install: with an admitted digest in force the cache misses and the
+ * install re-verifies (#9304). Without one, a recorded digest must still be
+ * well formed, but nothing is compared (explicit offline trust).
+ */
+function manifestBindingMatches(recorded: unknown, admitted: string | undefined): boolean {
+  if (admitted !== undefined) {
+    return typeof recorded === 'string' && safeDigestEquals(recorded, admitted);
+  }
+  return recorded === undefined || (typeof recorded === 'string' && isSha256(recorded));
 }
 
 function isSha256(value: string): boolean {

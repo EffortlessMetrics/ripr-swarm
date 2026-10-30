@@ -1,0 +1,10 @@
+diff --git a/src/boundary.ts b/src/boundary.ts
+--- a/src/boundary.ts
++++ b/src/boundary.ts
+@@ -1,5 +1,5 @@
+ export function isAdult(age: number): boolean {
+-  return age >= 18;
++  return 18 <= age;
+ }
+ 
+ export function freeShipping(cents: number): boolean {

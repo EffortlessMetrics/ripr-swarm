@@ -20,6 +20,7 @@ Linked issues:
 - #3555 / #3556 (the judged-panel case authority and the eval-sweep subject
   authority these selections draw from)
 - #2927 (attempt convergence)
+- #10699 (Python test-run cache output in the repair edit cage)
 
 Linked PRs:
 
@@ -315,6 +316,11 @@ authorization, and the standing non-claims. The record carries no timestamps:
 equivalent preparation is byte-identical, and the manifest location is the
 declared telemetry. Equivalence requires identical accepted packet and before
 snapshot bytes, configuration, analyzer, selection, and authorization inputs.
+On Linux the running binary digest reads the kernel's executing-image link
+directly. Removing or replacing the executable pathname does not change that
+identity to the replacement file or prevent the binding from being recorded.
+Unavailable executing-image bytes still fail closed; no pathname fallback is
+accepted. Other platforms retain their existing executable-read behavior.
 Two fresh durable attempts have different exact continuations in their sealed
 packets and therefore different packet input digests, even for the same selected
 row. Each binding pins its own final packet bytes; attempt identity is never
@@ -475,6 +481,26 @@ no lifecycle state at all.
   fails: movement cannot be implied by a verification run.
 - An attempt that edits a target declared `unsafe` fails.
 
+## Edit-Cage Cache Exemption (#10699)
+
+The repair edit cage observes every ignored path, so running the project's
+Python tests between the phases would otherwise violate on interpreter and
+test-runner cache output. For an attempt whose selected target is a `.py` or
+`.pyi` file, untracked or git-ignored paths of these shapes are not observed:
+
+- `.pyc`/`.pyo` files directly under a `__pycache__` directory;
+- files inside `.pytest_cache`, `.mypy_cache` and `.ruff_cache` directories
+  that are not `.py`, `.pyi`, `.pyc`, `.pyo`, `.so`, `.pyd` or `.pth`;
+- `.coverage` and `.coverage.*` at the repository root.
+
+Boundaries: a tracked path is never exempt; importable source and extension
+files stay observed everywhere; `.pyc`/`.pyo` outside `__pycache__` stay
+observed; a Rust attempt gets no exemption. The same predicate is applied to
+both sides of the comparison, so a baseline saved before the exemption (which
+still lists cache files) does not read as deleting them. Accepted residuals: a
+a `__pycache__` `.pyc` can be forged outside the path filter: a hash-based pyc is loaded when its source hash matches (checked-hash) or with no source check at all (unchecked-hash), so an agent could compile modified production source into `__pycache__` and leave the `.py` untouched, invisible to the cage (and an mtime/size-matching timestamp pyc has the same effect), and the 10,000-path inventory cap is applied before the
+cache filter (tracked in #10801).
+
 ## Test Mapping
 
 - `xtask/src/reports/python_repair_trust.rs::python_repair_trust` — the
@@ -486,6 +512,10 @@ no lifecycle state at all.
   agreement, denied surfaces, authorization, non-claims, apply-phase shapes,
   end-to-end file and directory inputs). Listed in
   `.ripr/traceability.toml` under this spec.
+- `crates/ripr/src/edit_cage/mod.rs` unit tests `python_cache_exemption_*`
+  (production edit, importable and misplaced files, positive controls,
+  untracked deletion, tracked cache-named files, legacy baselines, Rust
+  repair). Listed in `.ripr/traceability.toml` under this spec.
 - `crates/ripr/tests/python_repair_attempt.rs` — the end-to-end driver
   binding case matrix (clean test-only positive, stale packet, wrong target,
   zero and ambiguous target matches, denied surfaces, outside-root manifest,
@@ -526,6 +556,11 @@ no lifecycle state at all.
   verification phase: identity revalidation, bounded execution, after
   analysis, native-identity movement comparison, rollback proof, and the
   immutable receipt.
+- `crates/ripr/src/app/running_binary.rs` — the shared executing-image reader
+  used by binding records and verification receipts. The Linux regression in
+  `crates/ripr/src/app/python_repair_binding/tests/driver_image.rs` drives the
+  binding-record producer after removing or replacing an owned executable link
+  and requires the original image's digest.
 - `crates/ripr/src/cli/agent.rs`, `crates/ripr/src/cli/mod.rs`,
   `crates/ripr/src/cli/commands/agent.rs` — the driver CLI surface (trust and
   authorization flags, before-phase publication hook, after-phase

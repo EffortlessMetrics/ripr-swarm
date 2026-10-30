@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0247-ex12-spyon-module-object",
+  "subject_id": "authored-ts-jest-mined",
+  "origin": "authored",
+  "anchor": "src/mail.ts:8",
+  "behavior_family": "call_argument",
+  "test_shape": "jest_spyon_module_object_called_with_literal",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

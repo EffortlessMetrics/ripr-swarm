@@ -7,7 +7,7 @@ fn counts() -> (usize, usize) {
     )
 }
 
-fn verdicts(memo: &RefCell<ProjectedCollectionWorkspaceMemo>, index: &RustIndex) -> (bool, bool) {
+fn verdicts(memo: &SyncMemo<ProjectedCollectionWorkspaceMemo>, index: &RustIndex) -> (bool, bool) {
     (
         ProjectedCollectionWorkspaceMemo::verdict(
             memo,
@@ -27,7 +27,7 @@ fn verdicts(memo: &RefCell<ProjectedCollectionWorkspaceMemo>, index: &RustIndex)
 #[test]
 fn workspace_collection_memo_reuses_actual_walks_and_parses() {
     let index = index(&[(LIB, "pub struct Bag;\npub fn add() {}\n")]);
-    let memo = RefCell::new(ProjectedCollectionWorkspaceMemo::default());
+    let memo = SyncMemo::new(ProjectedCollectionWorkspaceMemo::default());
     let before = counts();
     for _ in 0..12 {
         assert_eq!(verdicts(&memo, &index), (false, false));
@@ -38,7 +38,7 @@ fn workspace_collection_memo_reuses_actual_walks_and_parses() {
     for _ in 0..12 {
         assert_eq!(
             verdicts(
-                &RefCell::new(ProjectedCollectionWorkspaceMemo::default()),
+                &SyncMemo::new(ProjectedCollectionWorkspaceMemo::default()),
                 &index
             ),
             (false, false)
@@ -61,7 +61,7 @@ fn workspace_collection_memo_preserves_refusals_and_constructor_keys() {
         ("pub struct Bag {", (false, true)),
     ] {
         let index = index(&[(LIB, source)]);
-        let memo = RefCell::new(ProjectedCollectionWorkspaceMemo::default());
+        let memo = SyncMemo::new(ProjectedCollectionWorkspaceMemo::default());
         let direct = (
             projected_standard_roots_shadowed(&index),
             projected_constructor_shadowed("Bag", Path::new(LIB), &index),
@@ -71,7 +71,7 @@ fn workspace_collection_memo_preserves_refusals_and_constructor_keys() {
         assert_eq!(verdicts(&memo, &index), direct);
     }
     let index = index(&[(LIB, "pub struct Bag;")]);
-    let memo = RefCell::new(ProjectedCollectionWorkspaceMemo::default());
+    let memo = SyncMemo::new(ProjectedCollectionWorkspaceMemo::default());
     assert_eq!(verdicts(&memo, &index), (false, false));
     assert!(ProjectedCollectionWorkspaceMemo::verdict(
         &memo,
@@ -91,7 +91,7 @@ fn workspace_collection_memo_preserves_refusals_and_constructor_keys() {
 fn workspace_collection_memo_isolates_changed_sources_and_nested_misses() {
     let original = index(&[(LIB, "pub struct Bag;")]);
     let changed = index(&[(LIB, "mod std {}\nfn Bag() {}")]);
-    let memo = RefCell::new(ProjectedCollectionWorkspaceMemo::default());
+    let memo = SyncMemo::new(ProjectedCollectionWorkspaceMemo::default());
     assert_eq!(verdicts(&memo, &original), (false, false));
     let before = counts();
     assert_eq!(verdicts(&memo, &original.clone()), (false, false));

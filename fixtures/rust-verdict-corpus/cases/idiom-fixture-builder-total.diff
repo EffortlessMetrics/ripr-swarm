@@ -1,0 +1,12 @@
+diff --git a/src/unwinding.rs b/src/unwinding.rs
+--- a/src/unwinding.rs
++++ b/src/unwinding.rs
+@@ -12,7 +12,7 @@
+ 
+ impl Cart {
+     pub fn total(&self) -> u32 {
+-        self.items.iter().map(|(_, p)| p).sum()
++        self.items.iter().map(|(_, price)| price).sum()
+     }
+ }
+ 

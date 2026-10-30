@@ -43,93 +43,63 @@ reading raw logs.
 
 ## Draft to Ready handoff
 
-Draft and Ready are review/UI states. Neither opening, pushing nor marking Ready
-requests `Ripr Rust Small Result`. Keep frequent Draft pushes and warm author
-proof; obtain independent source review and repair known material findings.
+Publish a coherent candidate as Draft. The delivery owner completes this order
+before spending the `merge-ready`-requested `Ripr Rust Small Result` qualification:
 
-The explicit qualification request is adding `merge-ready` to a non-Draft PR.
-Before submission, bind H, current base B and the actual integration subject T;
-read native runs for the exact subject and preserve a queued/running request.
-Do not remove/re-add the label to refresh slow work. Native concurrency preserves
-running work but another identical request can replace an existing pending run;
-it is not exactly-once admission. Pending duplicates and completed requests without qualified same-attempt producer
-receipts refuse without replacement. Failed proof requires repair or an explicitly
-justified native retry; adding the label again is not that authorization.
+1. Bind the exact candidate head and integration basis. Complete independent
+   substantive review through `review-pr`, disposition every known finding, and
+   compose accepted repairs into that candidate while Draft.
+2. Run applicable, available local proof on the composed head and refresh affected review.
+   Follow changed expectations into their consumers: corpus rows can change a
+   scoreboard's literal tuple; shared rendering can have a Rust-only mock beyond
+   passing Python/card tests. Check the relevant test placement, private imports,
+   targets and feature selection. Preserve independent literal oracles and
+   meaningful negative controls; derive expected values from the contract, not
+   from the implementation being tested. This selects focused proof, not every
+   possible test or a duplicate of the hosted matrix.
+3. Reconcile actual conflicts, changed prerequisites and affected combined-tree
+   proof. Unrelated main movement alone needs no branch update or repeated proof.
+   If an applicable required gate has a known deterministic failure on this
+   basis, keep Draft, link the existing repair and its owner, and name the event
+   that permits resumption. Do not repeat that failure on each dependent PR,
+   duplicate its repair, or bless baseline failures. After the prerequisite lands,
+   verify the resulting basis and refresh only affected proof and review.
+   Before Ready, inspect GitHub's PR merge ref through an available permitted
+   Git/API read. Record its commit, parents and tree against the reviewed head,
+   basis and material prerequisites; local `merge-tree` proof does not establish
+   that remote subject. Judge differences for applicability, without behind-only
+   restacking. A stale subject missing a material prerequisite keeps Draft until
+   its owner corrects the source ancestry or remote ref state and the changed
+   subject is verified. A landing notification alone is not that verification.
+   If the ref cannot be queried, retain the exact read limit and leave the hosted
+   subject unestablished. An existing authorized, credibly expected-green route
+   may obtain that evidence; do not spend known-red qualification to discover
+   whether its prerequisite reached the hosted subject.
+4. Read back the live PR head, reviews, threads and workflow runs. Mark Ready
+   only for the unchanged, reviewed and composed candidate when green is
+   reasonably expected, with no unresolved material finding or known applicable
+   gate blocker. If local execution is genuinely unavailable, follow the existing
+   [local and hosted proof route](agent-context/validation.md#local-and-hosted-proof):
+   record the unavailable dimension and reason, completed available checks, and
+   existing authorized narrow hosted qualification that will establish it.
+   `REVIEW_INCOMPLETE` may retain that evidence gap and merge-ready-requested proof;
+   unavailable proof is not a pass. It cannot excuse an executable but unrun
+   applicable local check, unfinished review or repair, a known-red test, or
+   missing claim-essential native proof. After Ready, the `merge-ready` label (applied last, or removed and re-added for a new head) requests
+   qualification for the exact head; Ready alone requests nothing;
+   `REVIEW_READY` and required proof still govern merge under `finish-pr`.
 
-A current COMMENT review can record `SOURCE_REVIEW_READY` when independent source
-review and applicable local proof are complete and only admitted hosted evidence
-remains. Include exact H, surfaces, findings, dispositions and remaining proof.
-This marker is an attestation, not proof of reviewer independence or CI success;
-its GitHub author need not differ from the PR author when reporting a genuinely
-independent reviewer. Current native approvals are also observed. Quota notices,
-failed-to-review, skipped sensors, silence and naked LGTM cannot replace the
-substantive review-of-record. The trusted request owner verifies its adequacy.
-No new GitHub approval count is required.
+After Ready, inspect the actual job checkout commit, parents and tree against
+the reviewed candidate and basis. A run's head SHA or a pre-Ready ref observation
+does not guarantee the checkout. If a material mismatch appears, retain the
+actual run/subject, return to Draft and resume only after the changed prerequisite
+or subject is verified; do not relabel that run as proof for the local tree or
+re-apply `merge-ready` merely to refresh it.
 
-The COMMENT parser recognizes a direct positive declaration at the start of the
-first nonblank line (`SOURCE_REVIEW_READY` or `REVIEW_READY`, optionally followed
-by an explanation), or a standalone `disposition: SOURCE_REVIEW_READY` /
-`disposition: REVIEW_READY` field at column zero. Quoted, indented-code and fenced
-examples are not declarations. An explicit conflicting disposition field refuses.
-A source-ready declaration may separately report overall `REVIEW_INCOMPLETE`
-while qualification remains outstanding. Both admission and the final refresh,
-including diagnostics, use the same parser.
-
-This is a partial #8157 interpretation mitigation. It does not authenticate a
-publisher or validate proof references. The latest-comment reducer and native
-approval route remain unchanged: an ordinary later COMMENT can erase marker
-evidence, and an existing native approval can bypass a later negative COMMENT.
-The versioned current-disposition, publisher, withdrawal and proof-custody repair
-remains open under #8157/#4985/#4834. This parser does not classify arbitrary
-narrative contradictions or establish readiness by itself.
-
-Admission reads live open/non-Draft/label state, H/B/T, mergeability, current
-reviews and paginated unresolved threads without executing candidate code. The
-result refreshes the same readiness after selected proof; failed/missing/stale
-admission or selected evidence cannot emit required success. Ordinary unrelated
-labels use a distinct non-required name and per-run metadata concurrency.
-
-The staged v2 subject binds repository and PR object IDs, destination repository
-and fully qualified ref, H, qualification base Bq, actual GitHub merge Gq, tree Tq,
-complete ordered parents `[Bq,H]`, and workflow generation. Stored PR/event base metadata S is
-provenance only. The PR's live base ref and the independently named destination
-must both resolve to the same Commit Bq during admission. Bounded REST refresh
-must establish mergeable=true before candidate reliance; missing, partial,
-malformed or changing admission identities refuse before allocation.
-
-Before the final required result, a separate step authenticates immutable Q
-against its digest and Git object, including the complete ordered parents and
-the admission's native run/attempt. A partial rerun cannot present old child
-successes as fresh proof. Current H, repository/destination, open/non-Draft/label
-state, reviews and conversations are checked separately; coherent current-main
-observations bracket the review/thread checks. A new Bm does not erase Tq proof
-and does not establish its applicability to Bm. The completion receipt requires
-the same attempt's terminal job success; artifact existence alone is insufficient.
-It explicitly requires a later final-currentness judgment. Before merge, inspect
-intervening inputs and refresh affected proof; unknown compatibility blocks or
-widens that proof. These observations do not exclude ABA changes or establish a
-transaction with check publication or merge.
-
-The docs selector, separate docs producer and Rust producer each pin and verify
-the admitted G/tree/parents before substantive execution. PR diff evidence and
-the advisory proof route consume the verified B/H rather than event S/H.
-Explicit legacy profiles preserve push/manual behavior.
-
-A successful v2 admission marker discovers identity; it does not prove producer
-execution. Successful prior-result reuse is currently unavailable because exact
-same-attempt callable MSRV/VSCode producer-step receipt identities have not been
-qualified. Pending or matching ineligible completed origins refuse without
-replacement. A reused-success aggregate with skipped children cannot supply
-origin proof, and no recursive origin chain is followed. Qualification and
-source-stage corrections do not activate the caller or retire existing triggers.
-
-After qualification is green, refresh `review-pr` on exact H and current
-integration inputs, then make the final vision/current-state decision. Only a
-current `REVIEW_READY`, actual required proof and applicable server protections
-permit protected expected-head squash merge. There is no native merge queue.
-Separate base reads and check publication/merge are not atomic base guards;
-changed B requires an affected-proof disposition. Read back landed M against T,
-without launching another full suite merely because a merge happened.
+A new head or material finding returns the candidate to Draft for one joined
+repair/proof/review wave before the next `merge-ready` request (remove and re-add the label on the exact new
+head). Preserve unaffected evidence. Do not re-apply the label on an unchanged
+head with a queued or running required run: it cancels it. Retain its run link and yield the remote wait.
 
 ### PR-native continuation record
 
@@ -376,6 +346,14 @@ prepared in the environment, `precommit` prints `goldens check: INCOMPLETE
 to close the gap, and hosted CI still owns those fixtures. The step is not part
 of the hosted collect-all policy run, which has its own goldens job.
 
+The strict `check-fast` receipt consumer requires all six unconditional `Ran`
+receipts (`fmt --check`, static-language, command-catalog, generated,
+generated-clean and lint-policy), including for a valid empty diff. Policy and
+`.ripr/` changes additionally require covered-by, process-policy and
+network-policy receipts. A gate listed only under `Skipped` does not satisfy
+its execution obligation. This validates receipt completeness; it does not
+replace the gate execution or required hosted qualification.
+
 `cargo xtask check-fast` also runs `check-support-tiers` for committed spec
 Markdown, the support map, root README, Rust repair trust corpus, xtask source,
 and referenced workflow/script path changes. It runs before compilation-bearing
@@ -386,10 +364,23 @@ The established selector remains `origin/main...HEAD`; while authoring
 uncommitted or untracked specs, run `cargo xtask check-support-tiers` explicitly.
 This is one applicable local scan; precommit and hosted routing are unchanged.
 
+`check-fast` runs the existing exact help/parser parity library test when the
+committed diff touches Rust source in the command-parser owners `cli`, `app`,
+`mcp`, or `output/first_pr` (module files and directories). This catches parser
+extractions whose help-owner mapping was left behind, including parser-only
+edits. The validator's registration, resolution and bidirectional flag checks
+remain unchanged. Native failure or zero/ignored/missing test execution fails
+the gate; unrelated analyzer, renderer and documentation paths skip it. The
+report and strict selector receipt retain the `cli-help-parity` obligation.
+Cold library-test compilation is additional work; the single selected case
+does not claim full CLI/runtime or hosted qualification. Uncommitted edits keep
+the existing selector semantics; run the focused test directly while authoring.
+
 Local command diagnostics reuse the existing reports: `precommit-v2.{json,md}`
 records diff-check and selected Clippy children, `file-policy.md` records actual
-covered-by warmup/list children, and `check-fast.md` records fmt and workspace
-Clippy children. Other commands are outside this bounded capture scope. Reused
+covered-by warmup/list children, and `check-fast.md` records fmt, selected CLI
+help parity and workspace Clippy children. Other commands are outside this
+bounded capture scope. Reused
 selectors and skipped warmups create no execution rows. Precommit diagnostics
 remain bound by its report digest; they add no acceptance or waiver authority.
 The nullable numeric `exit_code` comes directly from the observed native status;
@@ -635,6 +626,35 @@ before any blessing. `goldens bless <fixture> --reason <reason>` requires the
 reason to cite an existing `RIPR-SPEC-NNNN` under `docs/specs/`, then records
 the explicit blessing reason, updates expected JSON and human outputs, and
 appends the fixture expected-output changelog.
+
+Human goldens (`human.txt`, `human-full.txt`) mask only the explanatory prose
+of the line `no repair start offered: <reason>`. Pinned: the line's presence and
+position, the fixed opening that identifies the refusal variant (no gap ID, no seam or no binding seam, several binding seams, Rust files only, seam
+budget, unreadable config, classification failure, static evidence incomplete,
+still missing, related test already reaches the boundary), and the
+`still missing:` / `It is also still missing:` evidence lists. Masked as
+`<reason>`: the wording around those pins, such as the trailing "follow the Next
+step" advice, the Rust-files-only explanation and the boundary-variant
+explanation. A reason that matches no known variant opening is compared
+verbatim, so a new or heavily reworded variant is drift to re-bless and add to
+`REPAIR_REFUSAL_RULES` in `xtask/src/reports/fixtures.rs`. `check.json` is never
+masked. The prose has focused tests of its own, and comparing it verbatim turned
+every rewording into one re-blessed line in hundreds of fixtures (#10702). A
+repair start that flips to a refusal, a refusal that appears or disappears, and
+a change of variant or missing-evidence list are still drift.
+
+Transitional (#10702): `xtask/src/reports/fixtures/transitional.rs` lists the
+exact `fixture/surface` human goldens (253) whose expected refusal opening is
+one of four retired openings (no gap ID, no binding seam, seam
+inventory, still missing) and may now open "nothing to repair here" (only when
+the expected golden itself says `Static exposure: exposed`), "found N seams …
+could not tie one … changed line" (43 no-seam surfaces) or "`ripr check` reads a
+gap or limit for this change" (93 no-seam surfaces whose seam the whole-seam view
+grips). Each listed surface approves exactly one new opening, taken from its
+unaliased output. An unlisted fixture, another surface, another pair, the other
+target on a listed surface and `check.json` are still compared strictly. This keeps the check-side
+change under the admission file cap; each follow-up re-bless batch deletes its
+entries and the file is removed once empty (tracking issue #10885).
 
 `golden-drift` writes the same advisory drift reports without failing merely
 because output drift exists. It still reports fixture execution errors as
@@ -936,6 +956,26 @@ appropriate.
 warns when a diff shape suggests missing evidence, such as analyzer code
 without specs/tests/fixtures, output code without output contract evidence, or
 policy changes without process docs.
+
+With a PR body supplied, `check-pr-shape` also validates the
+`.github/pull_request_template.md` Source-of-truth Links and Candidate
+Relationships lines offline, before the expensive Draft-to-Ready admission
+transit (#8601). It fails naming each missing or placeholder line, mirroring
+admission's `claim_identity_missing` detail. The check reads only the supplied
+input; it makes no `gh` or network call inside xtask. Feed it a body captured
+outside xtask, as raw Markdown or as `gh pr view --json body` JSON:
+
+```bash
+gh pr view <number> --json body > pr-body.json
+cargo xtask check-pr-shape --body-file pr-body.json
+# or: gh pr view <number> --json body --jq .body > pr-body.md
+cargo xtask check-pr-shape --body-file pr-body.md
+# or: RIPR_PR_BODY="$(gh pr view <number> --json body --jq .body)"
+cargo xtask check-pr-shape --body-env RIPR_PR_BODY
+```
+
+Without a body argument, the existing advisory diff-shape behavior is
+unchanged.
 
 ## Fix Kinds
 

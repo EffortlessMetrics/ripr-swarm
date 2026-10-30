@@ -1,6 +1,6 @@
 macro_rules! assert_result {
     ($actual:expr, $expected:expr) => {
-        assert_eq!($actual, $expected);
+        if $actual != $expected { panic!("mismatch"); }
     };
 }
 

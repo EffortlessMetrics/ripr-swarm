@@ -2,8 +2,11 @@
 //! A receipt is bound to the exact current inputs, implementation and toolchain.
 use sha2::{Digest, Sha256};
 use std::path::Path;
+#[cfg(not(test))]
 #[path = "../source_identity.rs"]
 mod source_identity;
+#[cfg(test)]
+use crate::test_support::source_identity;
 const RECEIPT: &str = "target/ripr/reports/policy-preflight.json";
 
 pub fn enter_workspace_root() -> Result<(), String> {

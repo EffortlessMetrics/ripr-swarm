@@ -15,7 +15,8 @@
 //! - an invoked local `macro_rules!` declares an item through a fragment
 //!   binder (`fn $name`) and an invocation mentions the name; or
 //! - an item-position invocation of a non-local macro passes the name as a
-//!   bare top-level argument (`emit!(suit_color)`). A call, path or method
+//!   bare argument (`emit!(suit_color)`, `emit!(inner!(suit_color))`) or
+//!   declares an item there (`emit!(fn suit_color() {})`). A call, path or method
 //!   use, or a mention nested in a braced body (`proptest! { fn t() {
 //!   f(suit_color(1)); } }`), binds nothing.
 //!
@@ -42,83 +43,129 @@ const ITEM_KEYWORDS: [&str; 8] = [
     "fn", "const", "static", "struct", "enum", "type", "trait", "mod",
 ];
 
+#[cfg(test)]
+thread_local! {
+    /// Scans performed on this thread (#9086 work-unit regression pin).
+    pub(in crate::analysis) static SCAN_COUNT: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// One parse of a file's macro definitions and its item- or statement-position
+/// invocations, so asking about many names parses the file once.
+#[derive(Clone, Debug)]
+pub(in crate::analysis) enum MacroSites {
+    /// Unparsable: undecided exactly when the file holds a `macro_rules!`.
+    Unparsed { has_macro_rules: bool },
+    Parsed {
+        definitions: Vec<(String, String)>,
+        /// (macro name, masked arguments, item position)
+        invocations: Vec<(String, String, bool)>,
+    },
+}
+
+impl MacroSites {
+    pub(in crate::analysis) fn scan(source: &str) -> Self {
+        #[cfg(test)]
+        SCAN_COUNT.with(|count| count.set(count.get() + 1));
+        let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+            return Self::Unparsed {
+                has_macro_rules: mask_comments_and_strings(source).contains("macro_rules!"),
+            };
+        };
+        let mut definitions = Vec::new();
+        let mut invocations = Vec::new();
+        for node in parse.tree().syntax().descendants() {
+            if let Some(rules) = ast::MacroRules::cast(node.clone()) {
+                if let Some(macro_name) = rules.name() {
+                    definitions.push((
+                        macro_name.text().to_string(),
+                        mask_comments_and_strings(&rules.syntax().text().to_string()),
+                    ));
+                }
+                continue;
+            }
+            let Some(call) = ast::MacroCall::cast(node.clone()) else {
+                continue;
+            };
+            let Some(macro_name) = call
+                .path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .map(|segment| segment.text().to_string())
+            else {
+                continue;
+            };
+            let arguments = call
+                .token_tree()
+                .map(|tree| mask_comments_and_strings(&tree.syntax().text().to_string()))
+                .unwrap_or_default();
+            let item_position = node.parent().is_some_and(|parent| {
+                ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
+            });
+            let statement_position = node.parent().is_some_and(|parent| {
+                ast::MacroStmts::can_cast(parent.kind())
+                    || ast::MacroExpr::can_cast(parent.kind())
+                        && parent.parent().is_some_and(|holder| {
+                            ast::ExprStmt::can_cast(holder.kind())
+                                || ast::StmtList::can_cast(holder.kind())
+                        })
+            });
+            if item_position || statement_position {
+                invocations.push((macro_name, arguments, item_position));
+            }
+        }
+        Self::Parsed {
+            definitions,
+            invocations,
+        }
+    }
+
+    /// Whether the file's macro invocations may define an item named `name`.
+    pub(in crate::analysis) fn may_define(&self, name: &str) -> bool {
+        let name = name.strip_prefix("r#").unwrap_or(name);
+        if name.is_empty() {
+            return false;
+        }
+        let (definitions, invocations) = match self {
+            Self::Unparsed { has_macro_rules } => return *has_macro_rules,
+            Self::Parsed {
+                definitions,
+                invocations,
+            } => (definitions, invocations),
+        };
+        invocations
+            .iter()
+            .any(|(macro_name, arguments, item_position)| {
+                let mentions_name = contains_as_whole_word(arguments, name);
+                let bare_item_argument =
+                    *item_position && passes_name_as_bare_argument(arguments, name);
+                let declares_in_arguments = declares_item_named(arguments, name);
+                let local = definitions
+                    .iter()
+                    .filter(|(defined, _)| defined == macro_name)
+                    .collect::<Vec<_>>();
+                if local.is_empty() {
+                    // An unread expansion can only receive the name through its
+                    // arguments, and only an item-position call defines items
+                    // for the whole file.
+                    // A std expression macro defines no item; a body fragment
+                    // (the helper-hop fallback source) parses its statement
+                    // macros at "item position".
+                    return bare_item_argument
+                        && !STD_EXPRESSION_MACROS.contains(&macro_name.as_str());
+                }
+                local.iter().any(|(_, definition)| {
+                    declares_item_named(definition, name)
+                        || mentions_name && declares_item_through_binder(definition)
+                        || declares_in_arguments && forwards_arguments_verbatim(definition)
+                })
+            })
+    }
+}
+
 /// Whether the file's macro invocations may define an item named `name`.
 pub(in crate::analysis) fn macro_may_define_item_named(source: &str, name: &str) -> bool {
-    let name = name.strip_prefix("r#").unwrap_or(name);
-    if name.is_empty() {
-        return false;
-    }
-    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
-        return mask_comments_and_strings(source).contains("macro_rules!");
-    };
-    let mut definitions = Vec::new();
-    let mut invocations = Vec::new();
-    for node in parse.tree().syntax().descendants() {
-        if let Some(rules) = ast::MacroRules::cast(node.clone()) {
-            if let Some(macro_name) = rules.name() {
-                definitions.push((
-                    macro_name.text().to_string(),
-                    mask_comments_and_strings(&rules.syntax().text().to_string()),
-                ));
-            }
-            continue;
-        }
-        let Some(call) = ast::MacroCall::cast(node.clone()) else {
-            continue;
-        };
-        let Some(macro_name) = call
-            .path()
-            .and_then(|path| path.segment())
-            .and_then(|segment| segment.name_ref())
-            .map(|segment| segment.text().to_string())
-        else {
-            continue;
-        };
-        let arguments = call
-            .token_tree()
-            .map(|tree| mask_comments_and_strings(&tree.syntax().text().to_string()))
-            .unwrap_or_default();
-        let item_position = node.parent().is_some_and(|parent| {
-            ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
-        });
-        let statement_position = node.parent().is_some_and(|parent| {
-            ast::MacroStmts::can_cast(parent.kind())
-                || ast::MacroExpr::can_cast(parent.kind())
-                    && parent.parent().is_some_and(|holder| {
-                        ast::ExprStmt::can_cast(holder.kind())
-                            || ast::StmtList::can_cast(holder.kind())
-                    })
-        });
-        if item_position || statement_position {
-            invocations.push((
-                macro_name,
-                contains_as_whole_word(&arguments, name),
-                item_position && passes_name_as_bare_argument(&arguments, name),
-            ));
-        }
-    }
-    invocations
-        .iter()
-        .any(|(macro_name, mentions_name, bare_item_argument)| {
-            let local = definitions
-                .iter()
-                .filter(|(defined, _)| defined == macro_name)
-                .collect::<Vec<_>>();
-            if local.is_empty() {
-                // An unread expansion can only receive the name through its
-                // arguments, and only an item-position call defines items
-                // for the whole file.
-                // A std expression macro defines no item; a body fragment
-                // (the helper-hop fallback source) parses its statement
-                // macros at "item position".
-                return *bare_item_argument
-                    && !STD_EXPRESSION_MACROS.contains(&macro_name.as_str());
-            }
-            local.iter().any(|(_, definition)| {
-                declares_item_named(definition, name)
-                    || *mentions_name && declares_item_through_binder(definition)
-            })
-        })
+    MacroSites::scan(source).may_define(name)
 }
 
 /// Whether the invocation's top-level arguments pass `name` as a bare
@@ -131,19 +178,26 @@ fn passes_name_as_bare_argument(masked_arguments: &str, name: &str) -> bool {
         .strip_prefix(['(', '[', '{'])
         .and_then(|rest| rest.strip_suffix([')', ']', '}']))
         .unwrap_or(trimmed);
-    // Keep depth-0 characters; a nested group collapses to one `(` marker.
+    // Keep top-level characters; a nested group collapses to one `(` marker.
+    // A group opened by a macro call (`inner!(..)`) is transparent: its
+    // arguments are read as if they were top-level, because the inner macro
+    // may forward them as items.
     let mut top_level = String::new();
-    let mut depth = 0usize;
+    let mut open_groups: Vec<bool> = Vec::new();
     for character in inner.chars() {
+        let collecting = open_groups.iter().all(|transparent| *transparent);
         match character {
             '(' | '[' | '{' => {
-                if depth == 0 {
+                let transparent = collecting && top_level.trim_end().ends_with('!');
+                if collecting {
                     top_level.push('(');
                 }
-                depth += 1;
+                open_groups.push(transparent);
             }
-            ')' | ']' | '}' => depth = depth.saturating_sub(1),
-            _ if depth == 0 => top_level.push(character),
+            ')' | ']' | '}' => {
+                open_groups.pop();
+            }
+            _ if collecting => top_level.push(character),
             _ => {}
         }
     }
@@ -152,14 +206,50 @@ fn passes_name_as_bare_argument(masked_arguments: &str, name: &str) -> bool {
         let end = at + name.len();
         let before = top_level[..at].trim_end();
         let after = top_level[end..].trim_start();
-        word_edge(top_level[..at].chars().next_back())
-            && word_edge(top_level[end..].chars().next())
-            && !before.ends_with("::")
+        if !word_edge(top_level[..at].chars().next_back())
+            || !word_edge(top_level[end..].chars().next())
+        {
+            return false;
+        }
+        // `fn name(..)` inside an argument declares the name; it is not a call.
+        if follows_item_keyword(before) {
+            return true;
+        }
+        !before.ends_with("::")
             && !before.ends_with('.')
             && !after.starts_with('(')
             && !after.starts_with("::")
             && !after.starts_with('.')
     })
+}
+
+/// Whether the text ends in an item keyword (`fn`, `static mut`, ..) as a
+/// whole word, so the identifier after it is being declared.
+fn follows_item_keyword(before: &str) -> bool {
+    let tokens = identifier_tokens(before);
+    let ends_on_word = before
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+    ends_on_word
+        && tokens.last().is_some_and(|last| {
+            ITEM_KEYWORDS.contains(last)
+                || *last == "mut" && tokens.iter().rev().nth(1) == Some(&"static")
+        })
+}
+
+/// Whether a local macro's transcriber can re-emit caller tokens untouched
+/// (`$($t:tt)*` / `$i:item` forwarded as `$($t)*` / `$i`), so an item the
+/// caller spells in the arguments is defined for the file.
+fn forwards_arguments_verbatim(masked_definition: &str) -> bool {
+    let squeezed = masked_definition
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("");
+    let Some((matcher, transcriber)) = squeezed.split_once("=>") else {
+        return false;
+    };
+    (matcher.contains(":tt") || matcher.contains(":item")) && transcriber.contains('$')
 }
 
 /// Standard-library macros that expand to expressions or statements and
@@ -192,13 +282,39 @@ const STD_EXPRESSION_MACROS: &[&str] = &[
 /// Whether masked macro text spells an item declaration of `name`.
 fn declares_item_named(masked: &str, name: &str) -> bool {
     let tokens = identifier_tokens(masked);
-    tokens.windows(2).enumerate().any(|(index, pair)| {
-        let named = |token: &str| token.strip_prefix("r#").unwrap_or(token) == name;
-        let keyword_then_name = ITEM_KEYWORDS.contains(&pair[0]) && named(pair[1]);
-        let mutable_static =
-            pair[0] == "mut" && named(pair[1]) && index > 0 && tokens[index - 1] == "static";
-        let renamed_import = pair[0] == "as" && named(pair[1]);
-        keyword_then_name || mutable_static || renamed_import
+    imports_name(masked, name)
+        || tokens.windows(2).enumerate().any(|(index, pair)| {
+            let named = |token: &str| token.strip_prefix("r#").unwrap_or(token) == name;
+            let keyword_then_name = ITEM_KEYWORDS.contains(&pair[0]) && named(pair[1]);
+            let mutable_static =
+                pair[0] == "mut" && named(pair[1]) && index > 0 && tokens[index - 1] == "static";
+            let renamed_import = pair[0] == "as" && named(pair[1]);
+            keyword_then_name || mutable_static || renamed_import
+        })
+}
+
+/// Whether masked text holds a plain import that binds `name`
+/// (`use other::name;`, `use other::{a, name};`). A rename (`name as x`) binds
+/// the new name and a mid-path segment (`use name::x;`) binds `x`.
+fn imports_name(masked: &str, name: &str) -> bool {
+    let word_edge = |c: Option<char>| c.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
+    masked.match_indices("use").any(|(at, _)| {
+        if !word_edge(masked[..at].chars().next_back())
+            || !word_edge(masked[at + 3..].chars().next())
+        {
+            return false;
+        }
+        let statement = masked[at + 3..].split(';').next().unwrap_or_default();
+        statement.match_indices(name).any(|(found, _)| {
+            let end = found + name.len();
+            word_edge(statement[..found].chars().next_back())
+                && word_edge(statement[end..].chars().next())
+                && statement[end..]
+                    .trim_start()
+                    .chars()
+                    .next()
+                    .is_none_or(|next| next == ',' || next == '}')
+        })
     })
 }
 
@@ -276,6 +392,23 @@ mod tests {
         ));
         assert!(macro_may_define_item_named("emit!(entry);\n", "entry"));
         assert!(macro_may_define_item_named("emit!(entry, u8);\n", "entry"));
+        // #8467: `fn name(..)` in the arguments declares the name even
+        // though `(` follows it; a call to it or a longer name does not.
+        for source in [
+            "emit!(fn entry() {});\n",
+            "emit!(fn entry(x: u8) -> u8 { x });\n",
+            "emit!(#[inline] fn entry() {});\n",
+            "emit!(pub static mut entry: u8 = 0);\n",
+        ] {
+            assert!(macro_may_define_item_named(source, "entry"), "{source}");
+        }
+        for source in [
+            "emit!(fn entry_other() {});\n",
+            "emit!(prefn entry(1));\n",
+            "emit!(entry(fn));\n",
+        ] {
+            assert!(!macro_may_define_item_named(source, "entry"), "{source}");
+        }
         // Item-position property macros that call the owner inside their
         // body bind nothing.
         for source in [
@@ -303,5 +436,113 @@ mod tests {
             "#[test]\nfn t() {\n    assert_eq!(suit_color('S'), 1);\n}\n",
             "suit_color"
         ));
+    }
+
+    #[test]
+    fn an_item_spelled_in_external_macro_arguments_defines_the_name() {
+        for source in [
+            "emit!(fn name() {});\n",
+            "emit!(fn name(x: u8) -> u8 { x });\n",
+            "emit!(#[inline] fn name() {});\n",
+            "emit!(pub const fn name() {});\n",
+        ] {
+            assert!(macro_may_define_item_named(source, "name"), "{source}");
+        }
+        // Controls: a call, a method call and another item's name bind nothing.
+        for source in [
+            "emit!(name());\n",
+            "emit!(other.name());\n",
+            "emit!(fn other() { name() });\n",
+            "emit!(x::name());\n",
+            "emit!(inner::name);\n",
+            "emit!((name, x));\n",
+        ] {
+            assert!(!macro_may_define_item_named(source, "name"), "{source}");
+        }
+    }
+
+    #[test]
+    fn a_passthrough_local_macro_defines_the_item_its_caller_spells() {
+        let tt = "macro_rules! emit {\n    ($($t:tt)*) => { $($t)* };\n}\n";
+        assert!(macro_may_define_item_named(
+            &format!("{tt}emit!(fn name() {{}});\n"),
+            "name"
+        ));
+        let item = "macro_rules! emit {\n    ($i:item) => { $i };\n}\n";
+        assert!(macro_may_define_item_named(
+            &format!("{item}emit!(fn name() {{}});\n"),
+            "name"
+        ));
+    }
+
+    #[test]
+    fn a_passthrough_macro_needs_a_spelled_item_and_a_forwarding_transcriber() {
+        let tt = "macro_rules! emit {\n    ($($t:tt)*) => { $($t)* };\n}\n";
+        assert!(!macro_may_define_item_named(
+            &format!("{tt}emit!(fn other() {{}});\n"),
+            "name"
+        ));
+        assert!(!macro_may_define_item_named(
+            &format!("{tt}emit!(fn other() {{ name() }});\n"),
+            "name"
+        ));
+        // A `:tt` matcher whose transcriber drops the tokens forwards nothing.
+        let dropped = "macro_rules! emit {\n    ($($t:tt)*) => { const _: () = (); };\n}\n";
+        assert!(!macro_may_define_item_named(
+            &format!("{dropped}emit!(fn name() {{}});\n"),
+            "name"
+        ));
+        let fixed = "macro_rules! emit {\n    ($e:expr) => { let _ = $e; };\n}\n";
+        assert!(!macro_may_define_item_named(
+            &format!("{fixed}emit!(fn name() {{}});\n"),
+            "name"
+        ));
+    }
+
+    #[test]
+    fn a_plain_import_inside_an_invoked_macro_defines_the_name() {
+        let body = |import: &str| {
+            format!("macro_rules! fake {{\n    () => {{ {import} }};\n}}\nfake!();\n")
+        };
+        for import in ["use other::name;", "use other::{a, name};", "use name;"] {
+            assert!(
+                macro_may_define_item_named(&body(import), "name"),
+                "{import}"
+            );
+        }
+        // Controls: a rename binds the new name; a mid-path segment binds the
+        // leaf; a differently named import binds nothing.
+        for import in [
+            "use other::name as x;",
+            "use name::leaf;",
+            "use other::thing;",
+        ] {
+            assert!(
+                !macro_may_define_item_named(&body(import), "name"),
+                "{import}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_nested_in_an_inner_macro_call_is_still_a_bare_argument() {
+        for source in [
+            "outer!(inner!(name));\n",
+            "outer!(a, inner![name, u8]);\n",
+            "outer!(inner!(deeper!(name)));\n",
+            "outer!(inner!{ name });\n",
+            "outer!(path::inner!(name));\n",
+        ] {
+            assert!(macro_may_define_item_named(source, "name"), "{source}");
+        }
+        // Controls: a call or a plain braced body nested in the inner macro
+        // still binds nothing.
+        for source in [
+            "outer!(inner!(name()));\n",
+            "outer!(inner!({ name(1) }));\n",
+            "outer!((name));\n",
+        ] {
+            assert!(!macro_may_define_item_named(source, "name"), "{source}");
+        }
     }
 }

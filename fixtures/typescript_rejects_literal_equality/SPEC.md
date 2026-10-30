@@ -47,7 +47,7 @@ runtime or mutation guarantee.
 - Extend the new credit to an unknown or shadowed `expect` binding.
 - Claim runtime adequacy, a support-tier change, or a complete repair packet.
 
-Observed with Node 24.19.0 / Vitest 4.1.11: the fixture passes; changing the
+Observed with Node 24.19.0 / Vitest 4.1.11 (re-observed on Node 22.22.0 / Vitest 5.0.5, same results): the fixture passes; changing the
 thrown string fails each of `toBe`, `toEqual` and `toStrictEqual` after module
 load. Changing the normal return or replacing the exact rejection assertion
 with `toBeTruthy()` leaves the respective wrong-value control passing.

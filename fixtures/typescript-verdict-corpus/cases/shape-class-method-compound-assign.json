@@ -1,0 +1,45 @@
+{
+  "case_id": "shape-class-method-compound-assign",
+  "subject_id": "authored-ts-vitest-shapes",
+  "diff": "cases/shape-class-method-compound-assign.diff",
+  "anchor": {
+    "file": "src/account.ts",
+    "line": 9
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "vitest_class_method_tobe",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "this.balance -= amount;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/account.test.ts > deposit returns the new balance",
+        "equivalence_review": "the edit itself: A class method's compound assignment feeds its return; the exact deposit assertion fails."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "A class method's compound assignment feeds its return; the exact deposit assertion fails. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

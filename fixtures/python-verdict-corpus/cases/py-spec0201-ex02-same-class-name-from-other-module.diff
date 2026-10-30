@@ -1,0 +1,11 @@
+diff --git a/reach/table_other.py b/reach/table_other.py
+--- a/reach/table_other.py
++++ b/reach/table_other.py
+@@ -1,6 +1,6 @@
+ class Table:
+     def _table_pad(self):
+-        return 2
++        return 3
+ 
+     def render_table(self):
+         return "|" + " " * self._table_pad() + "|"

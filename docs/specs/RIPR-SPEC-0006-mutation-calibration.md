@@ -48,7 +48,10 @@ The report should:
   cargo-mutants` returns an error instead of rendering
   "All imported runtime mutants matched a static seam." Vacuous all-matched
   wording is reserved for imports that actually contained mutant records;
-- disclose join provenance on stderr the way `ripr outcome` discloses
+- retain the full shared join-provenance disclosure on stderr, in JSON
+  `provenance.disclosure`, and in the Markdown Provenance section, so a saved
+  report keeps both input-head qualifications (see RIPR-SPEC-0294). Like
+  `ripr outcome`, disclose
   snapshot heads: when the repo-exposure snapshot carries a head SHA, name
   the subject the join assumes; when the cargo-mutants JSON names a
   different head, flag the mismatch; when either artifact lacks a head
@@ -74,6 +77,20 @@ The report should:
 Runtime mutation outcome words are allowed only in this calibration/runtime
 report family. Static check, exposure, badge, context, and editor reports must
 continue using the audit vocabulary.
+
+### Missing snapshot recovery paths
+
+When a supplied repo-exposure snapshot is missing, `calibrate cargo-mutants`
+names a capture command. The shared reader used by `outcome --before` and
+`--after` follows the same rule. Executable redirect operands retain the native
+UTF-8 path spelling before shell quoting; report path normalization is only for
+prose. On Unix, a literal backslash in a filename must not become a directory
+separator or retarget the capture to an existing slash-spelled file.
+
+The Unix CLI regression replays all three emitted capture routes with plain and
+quoted filenames, requires nonempty snapshot evidence at the requested path,
+and checks that the slash-spelled decoy keeps its bytes. This establishes POSIX
+shell replay on Unix, not universal shell or native Windows qualification.
 
 ## Required Evidence
 
@@ -146,7 +163,7 @@ keeps that range as one atomic value:
 1. **Explicit `seam_id`.** A runtime `seam_id` naming a static seam joins it.
 2. **Span containment.** When the runtime record has a complete span, every
    static seam in the same normalized file with a complete span
-   (`repo-exposure-json` 0.4 `column`, `end_line`, `end_column`) is compared,
+   (`repo-exposure-json` 0.4 and later `column`, `end_line`, `end_column`) is compared,
    whatever line the seam starts on. Positions compare lexicographically as
    `(line, column)` with exclusive ends; a seam contains the mutant when
    `seam.start <= mutant.start`, `mutant.start < seam.end` and
@@ -170,6 +187,14 @@ Candidate lists are ordered by seam line, column, end line, end column and
 seam ID, independent of snapshot order.
 
 `SeamId` generation does not change: geometry is join evidence, not identity.
+
+Repo-exposure 0.5 supplies complete parser-owned pattern-through-body spans
+for actual Rust arms (#5905), including their optional trailing comma.
+Multiline patterns use the span's start line. The `match` keyword remains
+span-less. Existing 0.4 snapshots and other span-less entries retain the
+same fallback contract; the join algorithm and mutation taxonomy do not
+change. Source-backed location controls exercise the production inventory,
+renderers and shared join without claiming cargo-mutants execution.
 
 Runtime gap signals that cannot be joined to a static seam should carry
 `runtime_only_signal`; they are calibration context only and must not create a
@@ -359,6 +384,7 @@ Current tests:
 - `crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_treats_combined_directory_array_as_no_mutants_head`
 - `crates/ripr/tests/cli_smoke.rs::calibrate_foreign_same_line_join_discloses_missing_head`
 - `crates/ripr/tests/cli_smoke.rs::calibrate_headed_snapshot_names_the_assumed_subject`
+- `crates/ripr/tests/cli_smoke/snapshot_recovery.rs::missing_snapshot_recovery_preserves_native_redirect_target`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::mutants_json_only_import_discloses_unexecuted_matched_total`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::mixed_import_names_how_many_matched_rows_lack_outcomes`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::unmatched_unknown_does_not_claim_matched_total_includes_it`

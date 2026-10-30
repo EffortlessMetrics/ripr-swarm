@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-grid-constants",
+  "origin": "authored",
+  "version_label": "authored 2026-10-22 for the mutation-operator x test-style grid",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "ed98b9c31cdbf184f757af2f1234835a3dea41be8f3b3679aab4c1af7ce7ca44"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "8363c97d5414ab3d5f241ffca68a9ba94955157a10d757ff39fba8181bc13725"
+    }
+  ]
+}

@@ -8,8 +8,9 @@ use crate::app::receipt::{
     RECEIPT_SCHEMA_VERSION, ReceiptCheckOptions, ReceiptCrossRefResult, ReceiptWriteOptions,
     check_receipt, receipt_out_path, validate_current_head, write_receipt,
 };
+use crate::cli::help;
 use crate::cli::parse::expect_value;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::PathBuf;
 
@@ -23,8 +24,10 @@ pub(in crate::cli) fn run_receipt(args: &[String]) -> Result<(), String> {
         }
         Some("write") => run_receipt_write(&args[1..]),
         Some("check") => run_receipt_check(&args[1..]),
-        Some(other) => Err(format!(
-            "unknown receipt subcommand {other:?}; expected `write` or `check`"
+        Some(other) => Err(unknown_value(
+            "receipt subcommand",
+            other,
+            &["write", "check"],
         )),
     }
 }
@@ -138,7 +141,7 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 let value = expect_value(args, i, "--gap")?;
                 if value.trim().is_empty() {
                     return Err(
-                        "receipt requires a canonical_gap_id; re-run with --gap".to_string()
+                        "receipt write requires a canonical_gap_id; re-run with --gap".to_string(),
                     );
                 }
                 canonical_gap_id = Some(value.to_string());
@@ -155,7 +158,7 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 i += 1;
                 let value = expect_value(args, i, "--verify-command")?;
                 if value.trim().is_empty() {
-                    return Err("receipt requires --verify-command".to_string());
+                    return Err("receipt write requires --verify-command".to_string());
                 }
                 verify_command = Some(value.to_string());
             }
@@ -188,10 +191,11 @@ pub(in crate::cli) fn parse_receipt_write_options(
         i += 1;
     }
 
-    let canonical_gap_id = canonical_gap_id
-        .ok_or_else(|| "receipt requires a canonical_gap_id; re-run with --gap".to_string())?;
+    let canonical_gap_id = canonical_gap_id.ok_or_else(|| {
+        "receipt write requires a canonical_gap_id; re-run with --gap".to_string()
+    })?;
     let verify_command =
-        verify_command.ok_or_else(|| "receipt requires --verify-command".to_string())?;
+        verify_command.ok_or_else(|| "receipt write requires --verify-command".to_string())?;
     let verify_status = verify_status
         .ok_or_else(|| "receipt requires --status (passed|failed|not_run|unknown)".to_string())?;
 
@@ -273,18 +277,21 @@ pub(in crate::cli) fn parse_receipt_check_options(
 // ── help text ─────────────────────────────────────────────────────────────────
 
 fn print_receipt_help() {
-    println!("{RECEIPT_HELP}");
+    println!(
+        "{}",
+        help::render_command_help(RECEIPT_HELP, &["receipt check", "receipt write"])
+    );
 }
 
 fn print_receipt_write_help() {
-    println!("{RECEIPT_WRITE_HELP}");
+    println!("{}", help::render_command_help(RECEIPT_WRITE_HELP, &[]));
 }
 
 fn print_receipt_check_help() {
-    println!("{RECEIPT_CHECK_HELP}");
+    println!("{}", help::render_command_help(RECEIPT_CHECK_HELP, &[]));
 }
 
-pub(in crate::cli) const RECEIPT_HELP: &str = r#"Write and validate canonical repair receipts (RIPR-SPEC-0079).
+pub(in crate::cli) const RECEIPT_HELP: &str = r#"Write and validate canonical repair receipts.
 
 Usage: ripr receipt <subcommand>
 
@@ -296,7 +303,7 @@ Subcommands:
 
 The `ripr receipt write` command is the canonical receipt command.
 New emitters must use `ripr receipt write`; `ripr agent receipt` remains
-a legacy alias during the transition (tracked in issue #1123).
+a legacy alias during the transition.
 
 Run `ripr receipt write --help` or `ripr receipt check --help` for details.
 "#;
@@ -335,7 +342,7 @@ Fail-closed:
   Missing --gap or --verify-command or --status -> error, no receipt written.
   Invalid --status value -> error listing valid values, no receipt written.
 
-This command is the canonical receipt writer per RIPR-SPEC-0079.
+This command is the canonical receipt writer.
 The legacy alias `ripr agent receipt` continues to work during the transition.
 "#;
 
@@ -783,19 +790,22 @@ mod tests {
     // ── dispatch ──────────────────────────────────────────────────────────────
 
     #[test]
-    fn run_receipt_unknown_subcommand_returns_error() -> Result<(), String> {
-        match run_receipt(&args(&["unknown"])) {
-            Ok(_) => Err("should have failed with unknown subcommand".to_string()),
-            Err(err) => {
-                if err.contains("unknown receipt subcommand") {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "expected 'unknown receipt subcommand' in error, got: {err}"
-                    ))
-                }
-            }
-        }
+    fn run_receipt_unknown_subcommand_returns_error() {
+        assert_eq!(
+            run_receipt(&args(&["unknown"])),
+            Err("unknown receipt subcommand \"unknown\". Accepted: write, check.".to_string())
+        );
+    }
+
+    #[test]
+    fn unknown_receipt_subcommand_suggests_write_for_writte() {
+        assert_eq!(
+            run_receipt(&args(&["writte"])),
+            Err(
+                "unknown receipt subcommand \"writte\". Did you mean `write`? Accepted: write, check."
+                    .to_string()
+            )
+        );
     }
 
     #[test]
@@ -809,7 +819,7 @@ mod tests {
     fn receipt_help_text_mentions_key_content() {
         assert!(RECEIPT_HELP.contains("ripr receipt write"));
         assert!(RECEIPT_HELP.contains("ripr receipt check"));
-        assert!(RECEIPT_HELP.contains("RIPR-SPEC-0079"));
+        assert!(RECEIPT_HELP.contains("canonical repair receipts"));
         assert!(RECEIPT_HELP.contains("ripr agent receipt"));
         assert!(RECEIPT_WRITE_HELP.contains("--gap"));
         assert!(RECEIPT_WRITE_HELP.contains("--verify-command"));

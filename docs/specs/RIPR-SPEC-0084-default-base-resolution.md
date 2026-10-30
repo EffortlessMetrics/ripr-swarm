@@ -126,6 +126,29 @@ never the current branch, with a `--base` example); the current branch is
 the only one. A Git probe that fails to run adds no context rather than a
 guessed cause.
 
+A damaged repository is not a missing base. When the `HEAD` probe itself
+fails with a Git `fatal:` line (exit 128, for example a corrupt
+`.git/packed-refs`), the default-base failure is the unreadable-repository
+refusal: Git's own reason plus the repair naming the file to correct or
+restore, typed as an unusable repository root (`repository_root_unusable`),
+never "no commits yet" and never `base_unresolvable` (#10566). A quiet exit 1
+alone does not establish an unborn `HEAD`: corrupt loose refs, recursive ref
+cycles and inaccessible refs can answer identically. The recursive
+`git symbolic-ref --quiet HEAD` probe must also successfully name a branch
+ref before the first-commit recovery is offered. Its fatal failures retain
+Git's reason, advise inspecting `HEAD` and restoring its referenced metadata
+or read access, and use `repository_root_unusable` with repair route
+`analysis/repository-root`. Unanswered or unexplained probes never justify a
+first-commit suggestion. A truly unborn branch retains `base_unresolvable`
+and `analysis/base-resolution`. Both refusals exit 2 and emit no consumable
+analysis. Concurrent ref mutation between probes is not a snapshot guarantee.
+
+Doctor uses the same HEAD discriminator: damaged metadata is a failed
+`git_head` check with Git's reason and metadata/access recovery, never an
+unborn advisory. Its completed diagnosis exits 3 and its canonical action
+names `git_head` recovery without a runnable check command. A genuine unborn
+branch remains advisory and exits 0 when other checks pass (RIPR-SPEC-0007).
+
 This message explicitly says the analysis did not run (unlike "No probes
 found", which means the analysis ran and found nothing). It names the
 problem and the two remediation paths.
@@ -139,6 +162,17 @@ the unshallow repair; otherwise the repair follows the repo's own remote
 configuration (a remote-qualified ref names its configured remote, a
 remote-less repo gets the add-remote step) instead of prescribing `origin`
 (#5252 item 8).
+
+When the missing ref already exists locally as a remote-tracking ref, the
+repair names that ref instead of re-prescribing the fetch that created it
+(#8652). Every configured remote is probed locally (no network) as the full
+`refs/remotes/<remote>/<ref>` ref — never the short `<remote>/<ref>`
+spelling, which a tag or local branch of that name can shadow — and the
+full ref is the suggested `--base`/`--head` value. Exactly one candidate
+is named as the followable advice; several candidates are all named
+without picking one. A nested branch name (`feature/topic`) probes the
+same tracking forms before its first segment is treated as a remote
+qualifier; explicit `refs/...` paths and rev expressions never probe.
 
 Commands that take both revisions (`diff`, `review-comments`) verify the
 head the same way: an unresolvable `--head` fails with ripr's named message
@@ -293,6 +327,11 @@ Start-here action owns the remediation instead.
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base`
 - `crates/ripr/src/cli/commands/check.rs::tests::default_base_equal_to_head_is_named_and_distinct_commits_stay_silent`
 - `crates/ripr/tests/hostile_repos.rs::default_base_equal_to_head_is_called_out`
+- `crates/ripr/tests/hostile_repos.rs::corrupt_packed_refs_without_base_is_not_reported_as_unborn`
+- `crates/ripr/tests/hostile_repos.rs::corrupt_loose_refs_without_base_are_not_reported_as_unborn`
+- `crates/ripr/tests/hostile_repos.rs::looping_ref_without_base_is_not_reported_as_unborn`
+- `crates/ripr/tests/hostile_repos.rs::unreadable_ref_without_base_is_not_reported_as_unborn`
+- `crates/ripr/tests/hostile_repos.rs::repository_without_a_usable_base_refuses_with_a_route`
 - `crates/ripr/src/cli/parse.rs::tests::base_and_diff_conflict_error_names_the_command_and_both_flags`
 - `crates/ripr/src/cli/parse.rs::tests::attached_terminal_stdin_note_fires_only_for_a_terminal`
 - `crates/ripr/src/cli/parse.rs::tests::terminal_stdin_disclosure_emits_once_only_for_a_terminal_diff_source`
@@ -303,6 +342,12 @@ Start-here action owns the remediation instead.
 - `crates/ripr/tests/cli_smoke.rs::check_diff_stdin_from_a_pipe_stays_silent_about_terminal_disclosure`
 - `crates/ripr/tests/cli_smoke.rs::stdin_probe_stalled_child_returns_bounded_timeout`
 - `crates/ripr/tests/cli_smoke.rs::stdin_probe_early_exit_returns_write_error`
+- `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_names_the_remote_tracking_form_it_can_resolve`
+- `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_no_remote_arm_names_remote_tracking_refs`
+- `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_tracking_advice_is_not_shadowed_by_a_tag`
+- `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_every_configured_remote`
+- `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_nested_branch_names`
+- `crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_names_the_resolvable_remote_tracking_ref`
 
 ## Implementation Mapping
 

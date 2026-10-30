@@ -1,0 +1,13 @@
+//! A one-function codec whose only test is a doc example that imports the
+//! function with `use` and calls it by its bare name.
+
+/// Reads a big-endian `u16` from the first two bytes.
+///
+/// ```
+/// use wire::read_u16;
+///
+/// assert_eq!(read_u16(&[0x12, 0x34]), 0x1234);
+/// ```
+pub fn read_u16(bytes: &[u8]) -> u16 {
+    u16::from_be_bytes([bytes[0], bytes[1]])
+}

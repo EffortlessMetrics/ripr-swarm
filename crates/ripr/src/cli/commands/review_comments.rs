@@ -317,6 +317,16 @@ fn load_review_comments_analysis_outcome(
             path.display()
         ));
     }
+    // #9010: a findings-bounded check document is a bounded subset, never a complete
+    // outcome; present non-`true` (including malformed) fails closed.
+    if crate::output::gate::discloses_limited_findings_bound(&value)
+        || crate::output::gate::discloses_bounded_analysis_document(&value)
+    {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: findings-bounded check document (document_complete is not true or run_limitations names limited_findings_bound); re-run with RIPR_CHECK_FINDINGS_BYTES=0",
+            path.display()
+        ));
+    }
     let declared_complete = envelope
         .get("analysis_complete")
         .and_then(serde_json::Value::as_bool)
@@ -439,6 +449,7 @@ fn review_comments_with_admission(
         ));
     }
 
+    crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let config = load_for_root(&options.root)?;
     let mut input = CheckInput {
         root: options.root.clone(),
@@ -572,8 +583,8 @@ fn review_comments_with_admission(
             output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
         write_text_file(&options.out, &rendered_json)?;
         receipt.write_atomic(&receipt_path)?;
-        println!("Wrote {}", options.out.display());
-        println!("Wrote {}", markdown_path.display());
+        println!("Wrote {}", output::path::human_path(&options.out));
+        println!("Wrote {}", output::path::human_path(&markdown_path));
         return Ok(());
     }
 
@@ -621,7 +632,23 @@ fn review_comments_with_admission(
     let owner_files = changed_lines
         .iter()
         .map(|line| line.file.clone())
+        // Test-edit disclosure also reads removed-only Rust paths. Admit
+        // those inputs without adding them to current placement/selection.
+        .chain(
+            analysis::parse_unified_diff(&diff_text)
+                .into_iter()
+                .filter_map(|file| {
+                    (file
+                        .path
+                        .extension()
+                        .is_some_and(|extension| extension == "rs")
+                        && (!file.added_lines.is_empty() || !file.removed_lines.is_empty()))
+                    .then_some(file.path)
+                }),
+        )
         .collect::<Vec<_>>();
+    receipt.step("corpus_admission");
+    receipt.write_atomic(&receipt_path)?;
     let corpus_payload = analysis::cancellation::with_token(&cancellation, || {
         analysis::analyzable_corpus_payload_size(&input.root, &config, &owner_files)
     })
@@ -645,7 +672,38 @@ fn review_comments_with_admission(
             error,
         ));
     }
-    let (changed_owners, enclosing_owners) = attribute_owners(&input.root, &changed_lines);
+    receipt.step("test_change_detection");
+    receipt.write_atomic(&receipt_path)?;
+    let changed_tests = analysis::cancellation::with_token(&cancellation, || {
+        analysis::diff_test_changes(
+            &input.root,
+            &options.head,
+            &diff_text,
+            &config,
+            ceiling
+                .max_index_files
+                .saturating_sub(corpus_payload.file_count),
+            ceiling.max_payload_bytes.saturating_sub(payload_bytes),
+        )
+    });
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        now(),
+        options.timeout_ms,
+        "language_facts",
+    )?;
+    // Owner attribution builds a Rust index over every changed file. Run it
+    // under the same token as the other analysis phases so a large diff
+    // cannot spend the budget here with no interior checkpoint to stop it
+    // (#1604); an expiry inside it surfaces at the deadline check below.
+    receipt.step("owner_attribution");
+    receipt.write_atomic(&receipt_path)?;
+    let (changed_owners, enclosing_owners) =
+        analysis::cancellation::with_token(&cancellation, || {
+            attribute_owners(&input.root, &changed_lines)
+        });
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
@@ -657,6 +715,7 @@ fn review_comments_with_admission(
     receipt.phase("language_facts", "canonical_analysis");
     receipt.write_atomic(&receipt_path)?;
     let working_set = AgentBriefResolvedWorkingSet::base(options.base.clone(), changed_lines)
+        .with_changed_tests(changed_tests)
         .with_changed_owners(changed_owners)
         .with_enclosing_owners(enclosing_owners);
     let changed_owner_names = working_set
@@ -836,8 +895,8 @@ fn review_comments_with_admission(
     let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
     write_text_file(&options.out, &rendered_json)?;
     receipt.write_atomic(&receipt_path)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", markdown_path.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&markdown_path));
     Ok(())
 }
 
@@ -998,6 +1057,79 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn check_output_loader_rejects_bounded_document_but_admits_control() -> Result<(), String> {
+        let dir = unique_command_test_dir("review-comments-bounded-check-output");
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let _cleanup = OwnedDeadlineFixture(dir.clone());
+        let root = dir.join("repo");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let diff_text = "diff";
+        let digest = Sha256::digest(diff_text.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let identity = crate::analysis_outcome::AnalysisIdentity {
+            input_identity: Some(format!("sha256:{digest}")),
+            base_revision: Some("main".to_string()),
+            ..crate::analysis_outcome::AnalysisIdentity::default()
+        };
+        let outcome = crate::analysis_outcome::AnalysisOutcome::new(
+            crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings,
+            identity,
+            crate::analysis_outcome::AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 1,
+                probe_count: 1,
+                finding_count: 0,
+            },
+            Vec::new(),
+        )?;
+        // `shape`: None = unbounded control; otherwise a bounded peer.
+        let write = |name: &str, shape: Option<&str>| -> Result<PathBuf, String> {
+            let mut envelope = serde_json::json!({
+                "analysis_complete": true,
+                "outcome": outcome
+            });
+            let mut document = serde_json::json!({
+                "schema_version": "0.2", "tool": "ripr", "mode": "draft",
+                "root": output::outcome::display_path(&root),
+                "base": "main", "summary": {}, "findings": []
+            });
+            match shape {
+                Some("false") => envelope["document_complete"] = serde_json::json!(false),
+                Some("string") => envelope["document_complete"] = serde_json::json!("false"),
+                Some("null") => envelope["document_complete"] = serde_json::Value::Null,
+                Some("legacy") => {
+                    document["run_limitations"] = serde_json::json!([
+                        {"category": "limited_findings_bound",
+                         "run_status": "limited_findings_bound"}
+                    ]);
+                }
+                _ => {}
+            }
+            document["analysis_outcome"] = envelope;
+            let path = dir.join(name);
+            std::fs::write(&path, document.to_string()).map_err(|error| error.to_string())?;
+            Ok(path)
+        };
+        let control = write("control.json", None)?;
+        assert!(
+            load_review_comments_analysis_outcome(Some(&control), &root, "main", diff_text)?
+                .is_some()
+        );
+        for shape in ["false", "string", "null", "legacy"] {
+            let path = write(&format!("bounded-{shape}.json"), Some(shape))?;
+            let error =
+                load_review_comments_analysis_outcome(Some(&path), &root, "main", diff_text)
+                    .err()
+                    .ok_or_else(|| format!("{shape}: a bounded check document must be refused"))?;
+            assert!(error.contains("findings-bounded"), "{shape}: {error}");
+        }
+        Ok(())
     }
 
     #[test]
@@ -1393,6 +1525,7 @@ mod tests {
                 PathBuf::from("README.md"),
             ],
             changed_lines: Vec::new(),
+            changed_tests: Default::default(),
             changed_owners: Vec::new(),
             enclosing_owners: Vec::new(),
             base: Some("HEAD~1".to_string()),
@@ -1917,6 +2050,153 @@ mod tests {
         Ok(())
     }
 
+    /// Owner attribution builds a Rust index over every changed file, so it
+    /// must run under the run's cancellation token like the other analysis
+    /// phases (#1604). Without the token its interior checkpoints are inert
+    /// and a large diff can spend the whole budget here before any phase
+    /// boundary notices.
+    #[test]
+    fn review_comments_owner_attribution_runs_under_the_run_token() -> Result<(), String> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let fixture_path = unique_command_test_dir("review-owner-attribution-token");
+        std::fs::create_dir(&fixture_path)
+            .map_err(|error| format!("claim attribution fixture root: {error}"))?;
+        let fixture = OwnedDeadlineFixture(fixture_path);
+        let root = &fixture.0;
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create attribution fixture: {error}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"review_owner_attribution\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| format!("write attribution fixture manifest: {error}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")
+            .map_err(|error| format!("write attribution fixture source: {error}"))?;
+
+        let out = root.join("target/ripr/review/comments.json");
+        let saw_token = AtomicBool::new(false);
+        let start = Instant::now();
+        let _ = review_comments_with_admission(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "BASE",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| {
+                Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn value() -> i32 { 0 }\n+pub fn value() -> i32 { 1 }\n".to_string())
+            },
+            move || start,
+            GuidancePayloadCeiling::from_env,
+            |_root, _lines| {
+                saw_token.store(
+                    analysis::cancellation::current_token().is_some(),
+                    Ordering::SeqCst,
+                );
+                (Vec::new(), Vec::new())
+            },
+        );
+        if !saw_token.load(Ordering::SeqCst) {
+            return Err(
+                "owner attribution ran without the run's cancellation token installed".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// An expiry observed during owner attribution comes back as empty owners
+    /// (the helper swallows the abort), so the guarantee that it cannot be
+    /// published as a complete run rests on the deadline check that follows.
+    /// Pin it: a budget spent inside attribution is a typed timeout and no
+    /// artifacts are written (#1604).
+    #[test]
+    fn review_comments_budget_spent_in_owner_attribution_records_timeout() -> Result<(), String> {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        let fixture_path = unique_command_test_dir("review-owner-attribution-expiry");
+        std::fs::create_dir(&fixture_path)
+            .map_err(|error| format!("claim attribution fixture root: {error}"))?;
+        let fixture = OwnedDeadlineFixture(fixture_path);
+        let root = &fixture.0;
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create attribution fixture: {error}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"review_owner_attribution_expiry\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| format!("write attribution fixture manifest: {error}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")
+            .map_err(|error| format!("write attribution fixture source: {error}"))?;
+
+        let out = root.join("target/ripr/review/comments.json");
+        let attributed = Arc::new(AtomicBool::new(false));
+        let clock_flag = Arc::clone(&attributed);
+        let start = Instant::now();
+        let result = review_comments_with_admission(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "BASE",
+                "--head",
+                "HEAD",
+                "--timeout-ms",
+                "1000",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| {
+                Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn value() -> i32 { 0 }\n+pub fn value() -> i32 { 1 }\n".to_string())
+            },
+            move || {
+                if clock_flag.load(Ordering::SeqCst) {
+                    start + Duration::from_secs(1)
+                } else {
+                    start
+                }
+            },
+            GuidancePayloadCeiling::from_env,
+            move |_root, _lines| {
+                attributed.store(true, Ordering::SeqCst);
+                (Vec::new(), Vec::new())
+            },
+        );
+        let receipt: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(out.with_file_name("run-receipt.json"))
+                .map_err(|error| format!("read attribution expiry receipt: {error}"))?,
+        )
+        .map_err(|error| format!("parse attribution expiry receipt: {error}"))?;
+        if receipt.get("status").and_then(serde_json::Value::as_str) != Some("limited_timeout") {
+            return Err(format!(
+                "budget spent in owner attribution must be a typed timeout: {receipt}; result {result:?}"
+            ));
+        }
+        if result.is_ok() {
+            return Err("run completed after its budget expired in attribution".to_string());
+        }
+        if receipt
+            .get("active_step")
+            .and_then(serde_json::Value::as_str)
+            != Some("owner_attribution")
+        {
+            return Err(format!(
+                "timeout receipt must name the owner_attribution pass: {receipt}"
+            ));
+        }
+        if out.exists() || out.with_extension("md").exists() {
+            return Err("expired attribution published review artifacts".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn review_comments_canonical_deadline_cancellation_records_timeout() -> Result<(), String> {
         use std::sync::{
@@ -2060,14 +2340,13 @@ mod tests {
         std::fs::metadata(&fixture.unreadable).map_err(|error| {
             format!("census uses metadata; unreadable fixture must still be stattable: {error}")
         })?;
-        if std::fs::read(&fixture.unreadable).is_ok() {
-            // Mode 000 that remains readable (typically euid 0) cannot
-            // produce the builder error. Passing here would be a
-            // zero-subject green for the receipt assertions below.
-            return Err(
-                "chmod 000 remained readable; this host cannot produce the ordinary-failure stimulus"
-                    .to_string(),
-            );
+        // Mode 000 that remains readable (typically euid 0) cannot produce
+        // the builder error. The skip prints, so it is not a silent green.
+        if crate::testing::access_denial::skip_unless_denied(
+            "review_comments_ordinary_canonical_analysis_failure_records_failed",
+            crate::testing::access_denial::file_read_denied(&fixture.unreadable)?,
+        ) {
+            return Ok(());
         }
 
         // The changed file stays readable so language_facts census and
@@ -2777,6 +3056,7 @@ mod tests {
         assert_eq!(receipt["status"], "failed");
         assert_eq!(receipt["active_phase"], "language_facts");
         assert_eq!(receipt["last_completed_phase"], "diff_discovery");
+        assert_eq!(receipt["active_step"], "corpus_admission");
         assert_eq!(
             receipt["limitations"][0]["category"],
             "review_guidance_oversized"
@@ -2868,6 +3148,131 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn review_comments_disclosure_keeps_test_named_production_source_in_its_role()
+    -> Result<(), String> {
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let root = over_ceiling_fixture("review-disclosure-production-role")?;
+        let path = root.join("src/unit_tests.rs");
+        std::fs::rename(root.join("src/unit_1.rs"), &path).map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["init", "-q"])?;
+        for (key, value) in [
+            ("user.name", "Review fixture"),
+            ("user.email", "review@example.invalid"),
+            ("commit.gpgsign", "false"),
+        ] {
+            fixture_git_ok(&root, &["config", "--local", key, value])?;
+        }
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-qm", "before"])?;
+        let before = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        std::fs::write(&path, before.replace("amount >= 10", "amount > 10"))
+            .map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["commit", "-qam", "after"])?;
+        let diff = load_review_comments_diff(&root, "HEAD^", "HEAD")?;
+        let changes = analysis::diff_test_changes(
+            &root,
+            "HEAD",
+            &diff,
+            &crate::config::RiprConfig::default(),
+            1,
+            u64::MAX,
+        );
+        assert!(!changes.unresolved, "production source must be resolved");
+        assert!(
+            changes.files.is_empty(),
+            "a filename alone cannot create test-role evidence: {changes:?}"
+        );
+        remove_fixture_tree(&root)
+    }
+
+    #[test]
+    fn review_comments_disclosure_bounds_head_blobs_beyond_dirty_worktree() -> Result<(), String> {
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let root = unique_command_test_dir("review-test-disclosure-head-budget");
+        std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname=\"head_budget\"\nversion=\"0.1.0\"\nedition=\"2024\"\n[workspace]\n",
+        )
+        .map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["init", "-q"])?;
+        for (key, value) in [
+            ("user.name", "Review fixture"),
+            ("user.email", "review@example.invalid"),
+            ("commit.gpgsign", "false"),
+        ] {
+            fixture_git_ok(&root, &["config", "--local", key, value])?;
+        }
+        let before = "pub fn price(points: u32) -> u32 {\n    if points > 10 { 20 } else { 10 }\n}\n#[cfg(test)]\nmod tests {\n    use super::price;\n    #[test]\n    fn above_threshold() { assert_eq!(price(11), 20); }\n}\n";
+        let padding = format!("// {}\n", "large head blob ".repeat(1024));
+        let lib = root.join("src/lib.rs");
+        std::fs::write(&lib, format!("{before}{padding}")).map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-qm", "before"])?;
+        let after = before.replace("points > 10", "points >= 10");
+        let head_source = format!("{after}{padding}");
+        std::fs::write(&lib, &head_source).map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["commit", "-qam", "after"])?;
+        // Admission sees the current worktree; disclosure must separately
+        // bound the larger requested-head source rather than trust that stat.
+        std::fs::write(&lib, &after).map_err(|err| err.to_string())?;
+        let config = crate::config::RiprConfig::default();
+        let census = analysis::analyzable_corpus_payload_size(&root, &config, &[])?;
+        assert_eq!(census.file_count, 1);
+        let diff = load_review_comments_diff(&root, "HEAD^", "HEAD")?;
+        let payload = census.total_bytes + diff.len() as u64;
+        let mut control = None;
+        for (label, files, bytes, unchanged) in [
+            ("admitted", 2, payload + head_source.len() as u64, true),
+            ("bytes", 2, payload + head_source.len() as u64 - 1, false),
+            ("files", 1, u64::MAX, false),
+        ] {
+            let out = root.join(format!("target/{label}/review.json"));
+            review_comments_with_diff_loader_at_with_ceiling(
+                &args(&[
+                    "--root",
+                    &root.display().to_string(),
+                    "--base",
+                    "HEAD^",
+                    "--head",
+                    "HEAD",
+                    "--out",
+                    &out.display().to_string(),
+                ]),
+                load_review_comments_diff,
+                Instant::now,
+                GuidancePayloadCeiling {
+                    max_index_files: files,
+                    max_payload_bytes: bytes,
+                },
+            )?;
+            let report: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&out).map_err(|err| err.to_string())?)
+                    .map_err(|err| err.to_string())?;
+            assert_eq!(report["summary"]["unchanged_tests"], unchanged, "{label}");
+            assert_eq!(read_receipt(&out)?["status"], "complete", "{label}");
+            let cards = report["comments"].as_array().ok_or("missing comments")?;
+            assert_eq!(cards.len(), 1, "fixture must retain its unresolved card");
+            if unchanged {
+                control = Some(report["comments"].clone());
+            } else {
+                assert_eq!(Some(&report["comments"]), control.as_ref(), "{label}");
+                assert!(
+                    report["warnings"].as_array().is_some_and(|warnings| {
+                        warnings.iter().any(|warning| {
+                            warning["message"].as_str().is_some_and(|text| {
+                                text.contains("Test-edit attribution is unresolved")
+                            })
+                        })
+                    }),
+                    "{label}: {report}"
+                );
+            }
+        }
+        remove_fixture_tree(&root)
+    }
+
     /// #4586: review-comments must name a changed production file that
     /// the working tree does not contain. `0/0` scoped production files
     /// without that disclosure is the false-clean the issue forbids.
@@ -2933,6 +3338,37 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn review_comments_refuses_a_target_ripr_review_link() -> Result<(), String> {
+        let base = unique_command_test_dir("review-comments-review-link");
+        let root = base.join("root");
+        let external = base.join("external");
+        std::fs::create_dir_all(root.join("target/ripr")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&external).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&external, root.join("target/ripr/review"))
+            .map_err(|e| e.to_string())?;
+        let result = review_comments(&args(&[
+            "--root",
+            &root.display().to_string(),
+            "--base",
+            "main",
+            "--head",
+            "HEAD",
+        ]));
+        let leaked = std::fs::read_dir(&external)
+            .map_err(|e| e.to_string())?
+            .count();
+        let _ = std::fs::remove_dir_all(&base);
+        let message = result.err().unwrap_or_default();
+        assert!(
+            message.contains("refusing to write ripr output"),
+            "{message}"
+        );
+        assert_eq!(leaked, 0);
         Ok(())
     }
 }

@@ -137,7 +137,7 @@ suite('Show Output Warning Action', () => {
     assert.strictEqual(warningCalls.length, 1, 'expected exactly one warning');
     assert.match(warningCalls[0], /ripr server failed to start: sentinel handshake failure/);
     const status = (controller as unknown as { status: { kind: string; nextStep: string } }).status;
-    assert.strictEqual(status.kind, 'serverUnavailable', 'status must leave the starting spinner');
+    assert.strictEqual(status.kind, 'serverFailed', 'status must leave the starting spinner');
     assert.match(status.nextStep, /Restart Server/);
   });
 });

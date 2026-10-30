@@ -1,0 +1,53 @@
+use std::future::Future;
+
+pub async fn add_tax(p: u32) -> u32 {
+    p + p / 10
+}
+
+async fn double(x: u32) -> u32 {
+    x * 2
+}
+
+pub async fn sum_doubled(xs: &[u32]) -> u32 {
+    let mut t = 0;
+    for x in xs {
+        t += double(*x).await;
+    }
+    t
+}
+
+pub fn lazy_square(n: u32) -> impl Future<Output = u32> {
+    async move { n * n }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::pin::pin;
+    use std::task::{Context, Poll, Waker};
+
+    fn block_on<F: Future>(fut: F) -> F::Output {
+        let mut fut = pin!(fut);
+        let mut cx = Context::from_waker(Waker::noop());
+        loop {
+            if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+                return v;
+            }
+        }
+    }
+
+    #[test]
+    fn tax_is_added() {
+        assert_eq!(block_on(add_tax(100)), 110);
+    }
+
+    #[test]
+    fn doubled_sum_of_three() {
+        assert_eq!(block_on(sum_doubled(&[1, 2, 3])), 12);
+    }
+
+    #[test]
+    fn square_future_is_built() {
+        let _pending = lazy_square(3);
+    }
+}

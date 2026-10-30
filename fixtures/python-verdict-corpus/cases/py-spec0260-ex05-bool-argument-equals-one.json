@@ -1,0 +1,48 @@
+{
+  "case_id": "py-spec0260-ex05-bool-argument-equals-one",
+  "subject_id": "authored-py-pytest-guard-arms",
+  "diff": "cases/py-spec0260-ex05-bool-argument-equals-one.diff",
+  "anchor": {
+    "file": "guards/flag_quote.py",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "pytest_bool_call_equals_numeric_guard",
+  "hard_case": "`True == 1` holds in Python, so a bool argument satisfies the numeric guard and the guarded line runs",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return 21",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_flag_quote.py::test_flag_quote",
+        "equivalence_review": "not equivalent: the edit changes the value the test asserts"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`return 20` becomes `return 21` inside `if flag == 1`. `quote_flag(True)` takes the guarded branch because `True == 1`, and `== 20` fails on 21. RIPR-SPEC-0260 example 5 keeps this `exposed`.",
+  "labeling_observation": {
+    "ripr_commit": "006eaf8",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0260#5"
+  ]
+}

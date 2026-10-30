@@ -177,6 +177,7 @@ struct Projection {
     in_place: bool,
     tty_width: usize,
     hold_success: bool,
+    user_fixable_failure: bool,
     pending_success: Option<AnalysisProgressEvent>,
     now: NowFn,
 }
@@ -278,6 +279,7 @@ impl CliProgressSink {
                     in_place: false,
                     tty_width: 0,
                     hold_success: false,
+                    user_fixable_failure: false,
                     pending_success: None,
                     now,
                 }),
@@ -349,6 +351,13 @@ impl CliProgressSink {
         projection.current_stage = Some(event.stage);
         projection.current_scope = Some(event.scope);
 
+        if event.stage == AnalysisProgressStage::Failed && projection.user_fixable_failure {
+            // #9922: the caller prints the real, user-fixable error; a
+            // `failed` line beside it reads like an internal crash.
+            projection.terminal = true;
+            Self::finish_in_place(&mut projection);
+            return;
+        }
         if stage_is_terminal(event.stage) {
             if projection.hold_success && stage_is_success_terminal(event.stage) {
                 projection.pending_success = Some(event);
@@ -387,6 +396,14 @@ impl CliProgressSink {
         let Some(event) = projection.pending_success.take() else {
             return;
         };
+        if projection.user_fixable_failure {
+            // #9922: the held analysis succeeded and the command then refused
+            // a user-fixable input (a `context` selector miss); the caller
+            // prints the real error, so no `failed` line beside it.
+            projection.terminal = true;
+            Self::finish_in_place(projection);
+            return;
+        }
         Self::project_terminal(
             projection,
             AnalysisProgressEvent {
@@ -483,13 +500,50 @@ impl CliProgressSink {
 }
 
 impl AnalysisProgressSink for CliProgressSink {
+    fn user_fixable_failure(&self) {
+        Self::lock_state(&self.inner).user_fixable_failure = true;
+    }
+
     fn emit(&self, event: AnalysisProgressEvent) {
         self.emit_event(event);
-        if stage_is_terminal(event.stage) {
+        if stage_is_terminal(event.stage) || Self::lock_state(&self.inner).terminal {
             self.stop_heartbeat();
         } else {
             self.start_heartbeat_thread();
         }
+    }
+}
+
+impl CliProgressSink {
+    /// Close the progress run of an analysis the caller has given up on
+    /// (the `check` wall-clock budget, #5369) while its worker may still be
+    /// running and holding this sink. Projects a `cancelled` terminal for the
+    /// stage in flight, ends the heartbeat and the in-place row, and ignores
+    /// later events, so the refusal text that follows does not interleave
+    /// with progress output.
+    pub(crate) fn abandon(&self) {
+        self.stop_heartbeat();
+        {
+            let mut projection = Self::lock_state(&self.inner);
+            if !projection.terminal
+                && let Some(scope) = projection.current_scope
+            {
+                Self::project_terminal(
+                    &mut projection,
+                    AnalysisProgressEvent {
+                        stage: AnalysisProgressStage::Cancelled,
+                        scope,
+                        completed_units: None,
+                        total_units: None,
+                        elapsed_ms: 0,
+                    },
+                );
+            }
+            projection.pending_success = None;
+            projection.terminal = true;
+            Self::finish_in_place(&mut projection);
+        }
+        self.uninstall_as_stderr_notice_owner();
     }
 }
 
@@ -796,6 +850,45 @@ mod tests {
     }
 
     #[test]
+    fn user_fixable_failure_projects_no_failed_line_but_genuine_failure_still_does() {
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.emit(event(AnalysisProgressStage::LoadingInput));
+        sink.user_fixable_failure();
+        sink.emit(event(AnalysisProgressStage::Failed));
+        let text = buffer.text();
+        assert!(text.contains("ripr progress: loading_input [diff]"));
+        assert!(!text.contains("failed"), "#9922: got {text:?}");
+        assert!(!text.contains("completed"));
+    }
+
+    #[test]
+    fn held_success_then_user_fixable_refusal_prints_no_failed_line_but_unflagged_drop_does() {
+        let flagged = Buffer::new();
+        {
+            let sink =
+                CliProgressSink::with_writer(Box::new(flagged.clone()), false, non_tty_policy());
+            sink.hold_success_terminal();
+            sink.emit(event(AnalysisProgressStage::BuildingOutput));
+            sink.emit(event(AnalysisProgressStage::Completed));
+            sink.user_fixable_failure();
+        }
+        let text = flagged.text();
+        assert!(!text.contains("failed"), "got {text:?}");
+        assert!(!text.contains("completed"), "got {text:?}");
+
+        let control = Buffer::new();
+        {
+            let sink =
+                CliProgressSink::with_writer(Box::new(control.clone()), false, non_tty_policy());
+            sink.hold_success_terminal();
+            sink.emit(event(AnalysisProgressStage::BuildingOutput));
+            sink.emit(event(AnalysisProgressStage::Completed));
+        }
+        assert!(control.text().contains("ripr progress: failed [diff]"));
+    }
+
+    #[test]
     fn failure_terminal_never_emits_completed() {
         let buffer = Buffer::new();
         let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
@@ -927,6 +1020,25 @@ mod tests {
             "Drop must fail-close a held success terminal: {text}"
         );
         assert!(!text.contains("completed"));
+    }
+
+    #[test]
+    fn abandon_projects_cancelled_and_ignores_later_worker_events() {
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.hold_success_terminal();
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        sink.abandon();
+        // An abandoned worker that wakes later must not reopen the run.
+        sink.emit(event(AnalysisProgressStage::BuildingOutput));
+        sink.emit(event(AnalysisProgressStage::Completed));
+        let text = buffer.text();
+        assert!(
+            text.contains("ripr progress: cancelled [diff]"),
+            "abandon must close the run as cancelled: {text}"
+        );
+        assert!(!text.contains("building_output"), "{text}");
+        assert!(!text.contains("completed"), "{text}");
     }
 
     #[test]

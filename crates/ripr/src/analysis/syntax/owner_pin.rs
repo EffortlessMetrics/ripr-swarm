@@ -3,12 +3,10 @@
 //! Oracle extraction intentionally retains deferred assertions. This query
 //! admits only uniquely identified assertions on ordinary statement paths,
 //! optionally through one syntactically bound, directly invoked closure.
-//! A test may also borrow the `assert_eq!` of one test-local check helper it
-//! calls eagerly (#6482); see [`local_helper_assertions`].
+//! A test may also borrow the `assert_eq!` or `assert!` of one test-local check
+//! helper it calls eagerly (#6482, #7788); see [`local_helper_assertions`].
 
 mod fallible_check;
-#[cfg(test)]
-mod json_authority_tests;
 mod literal_json;
 use literal_json::{
     json_namespace_rebound, literal_json_import_visible_among, literal_json_tokens,
@@ -16,14 +14,18 @@ use literal_json::{
 };
 mod slice_table;
 pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_syntax};
-pub(crate) use slice_table::{constant_table_call_column, owner_reference_count};
+pub(crate) use slice_table::{
+    constant_table_call_column, direct_literal_call_column, owner_reference_count,
+};
 
 use super::parse_clean_source_file;
 use super::ra::{
     LineIndex, expect_test_receiver, is_expect_test_comparison, slice_macro_call_text, slice_text,
     std_macro_root_is_unrebound,
 };
-use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
+use crate::analysis::facts::cfg_predicates::{
+    attribute_introduces_only_test, attribute_test_build_availability,
+};
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextSize,
     ast::{
@@ -41,6 +43,10 @@ pub(crate) struct OwnerPinAssertions {
     parsed: bool,
     functions: BTreeMap<FunctionKey, FunctionAssertions>,
     module_declarations: BTreeMap<(usize, String), ModuleDeclarationAdmission>,
+    /// Whether any item in the file may rebind `test` (#6749), judged
+    /// without regard to scope. A macro-generated test is not in the file's
+    /// text, so its expansion cannot see these items; the file answers for it.
+    file_binds_test: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -51,15 +57,48 @@ struct ModuleDeclarationAdmission {
 
 #[derive(Clone, Debug, Default)]
 struct FunctionAssertions {
-    body: String,
+    /// The parsed function text, kept as a fingerprint: a copy of every test
+    /// body stayed live for the whole run just to answer `StaleSource`.
+    body: BodyFingerprint,
     /// Why every assertion in this test is refused, when the refusal is a
     /// property of the whole test rather than of one invocation.
     refusal: Option<AssertionContextRefusal>,
+    /// Set when `refusal` is `MacroOperandExit` and the function is clean once
+    /// the [`COMPARISON_NESTED_MACROS`] count as plain expansions: `assertions`
+    /// then holds the per-assertion verdicts (#10389). The strict `refusal`
+    /// still answers every other query.
+    comparison_clean: bool,
     assertions: BTreeMap<AssertionKey, Result<(), AssertionContextRefusal>>,
     macros: BTreeSet<String>,
     /// Assertions of test-local check helpers this test calls on an eager
     /// path (#6482).
     helper_assertions: BTreeMap<AssertionKey, BorrowedAssertion>,
+}
+
+/// Length plus two 64-bit SipHash values (distinct prefix byte) of a function's text.
+/// Equal text always matches; differing text matching would need a collision
+/// in both hashes, and the compared texts are two reads of the same source
+/// span, not attacker-chosen pairs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct BodyFingerprint {
+    len: usize,
+    hashes: [u64; 2],
+}
+
+impl BodyFingerprint {
+    fn of(text: &str) -> Self {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let hash = |key: u8| {
+            let mut hasher = DefaultHasher::new();
+            key.hash(&mut hasher);
+            text.hash(&mut hasher);
+            hasher.finish()
+        };
+        Self {
+            len: text.len(),
+            hashes: [hash(0), hash(1)],
+        }
+    }
 }
 
 /// One assertion a test borrows from a check helper it calls.
@@ -85,6 +124,11 @@ pub(crate) struct HelperLoan {
     /// Lines of the test's calls to the helper that sit on its eager
     /// statement path, each the only call expression on its line.
     pub(crate) call_lines: Vec<usize>,
+    /// Lines of the test's calls to the helper on its eager statement path
+    /// whatever else the line holds (`check("1 big", Size::kib(1), true)`).
+    /// A superset of `call_lines`: a consumer must itself say which call an
+    /// activation fact on such a line describes (#9329).
+    pub(crate) eager_call_lines: Vec<usize>,
 }
 
 /// Why one `assert_eq!` invocation is not on an established execution path.
@@ -116,6 +160,11 @@ pub(crate) enum AssertionContextRefusal {
     ClosureExit,
     /// The same assertion text appears twice on one line.
     DuplicateSpelling,
+    /// The same assertion text appears twice on one line, and at least one
+    /// invocation provably runs. Refused like [`Self::DuplicateSpelling`]
+    /// (the oracle cannot say which one it names), but an effect probe may
+    /// still credit the text: the running copy is the same check (#8927).
+    DuplicateSpellingOneRuns,
     /// The invocation sits where it may not run: names the construct.
     ConditionalPath(&'static str),
     /// The test body's only `return` is the whole body of a root
@@ -168,6 +217,32 @@ impl OwnerPinAssertions {
         assertion: (usize, &str),
         ambiguous_macros: &BTreeSet<String>,
     ) -> Option<AssertionContextRefusal> {
+        self.refusal_trusting(function, body, assertion, ambiguous_macros, false)
+    }
+
+    /// [`Self::refusal`] with the [`COMPARISON_NESTED_MACROS`] read as plain
+    /// expansions: the first gate that refuses this assertion for a reason
+    /// other than the opaque nested comparison macro itself (#10389). The
+    /// function-level macro scan reports `MacroOperandExit` before any
+    /// per-assertion gate, which would hide a dead context.
+    pub(crate) fn refusal_trusting_comparison_macros(
+        &self,
+        function: (usize, usize, &str),
+        body: &str,
+        assertion: (usize, &str),
+        ambiguous_macros: &BTreeSet<String>,
+    ) -> Option<AssertionContextRefusal> {
+        self.refusal_trusting(function, body, assertion, ambiguous_macros, true)
+    }
+
+    fn refusal_trusting(
+        &self,
+        function: (usize, usize, &str),
+        body: &str,
+        assertion: (usize, &str),
+        ambiguous_macros: &BTreeSet<String>,
+        trust_comparison_macros: bool,
+    ) -> Option<AssertionContextRefusal> {
         let Some(facts) = self
             .functions
             .get(&(function.0, function.1, function.2.to_string()))
@@ -178,10 +253,14 @@ impl OwnerPinAssertions {
                 AssertionContextRefusal::UnparsedFile
             });
         };
-        if let Some(refusal) = &facts.refusal {
+        if let Some(refusal) = &facts.refusal
+            && !(trust_comparison_macros
+                && facts.comparison_clean
+                && matches!(refusal, AssertionContextRefusal::MacroOperandExit(_)))
+        {
             return Some(refusal.clone());
         }
-        if facts.body != body {
+        if facts.body != BodyFingerprint::of(body) {
             return Some(AssertionContextRefusal::StaleSource);
         }
         if let Some(name) = facts.macros.intersection(ambiguous_macros).next() {
@@ -200,6 +279,13 @@ impl OwnerPinAssertions {
                 None => Some(AssertionContextRefusal::UnidentifiedTest),
             },
         }
+    }
+
+    /// Whether some `use` or `extern crate` of the file binds `test`,
+    /// whatever module holds it. For tests whose own module is not in the
+    /// file's text.
+    pub(crate) fn file_binds_test(&self) -> bool {
+        self.file_binds_test
     }
 
     /// The check helper `function` borrows `assertion` from (#6482), or
@@ -314,7 +400,9 @@ pub(crate) enum MacroBindingKind {
     /// `#[macro_use]` on an `extern crate` or a module ripr did not resolve
     /// to an indexed file; the text is the item it is attached to.
     MacroUse(String),
-    /// A glob import from outside the workspace; the text is its path.
+    /// A glob import from outside the workspace and the manifest-verified
+    /// standard crates (`std`, `core`; `alloc` stays foreign, #8388); the
+    /// text is its path.
     ForeignGlob(String),
     /// A `macro_rules!` or `macro` definition with the trusted name.
     Definition,
@@ -382,7 +470,15 @@ pub(crate) fn macro_binding_scan(
 pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "assert",
     "assert_eq",
+    // claims' `assert_ok!`, `assert_err!`, `assert_some!` and `assert_none!`
+    // evaluate their operand and panic on the wrong variant; none can
+    // return. Only a manifest-verified `use claims::{assert_ok, ..}` import
+    // keeps one trusted.
+    "assert_err",
     "assert_ne",
+    "assert_none",
+    "assert_ok",
+    "assert_some",
     "cfg",
     "column",
     "concat",
@@ -474,13 +570,18 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
         if json_namespace_rebound(&node) {
             names.insert("json".to_string());
         }
+        if renames_standard_crate(&node) {
+            return MacroBindingCandidates::Any;
+        }
         if let Some(name) = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
             .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
         {
             names.extend(trusted(name.text()));
         }
-        if let Some(body) = macro_body_bindings(&node, &|name| trusted(name).is_some()) {
+        if let Some(body) =
+            macro_body_bindings(&node, &|name| trusted(name).is_some(), &|_, _, _| false)
+        {
             let trusted_name = ast::MacroRules::cast(node.clone())
                 .and_then(|item| item.name())
                 .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
@@ -547,9 +648,33 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
     MacroBindingCandidates::Names(names)
 }
 
+/// An `extern crate other as std;` (or `core`, `alloc`) alias.
+fn renames_standard_crate(node: &SyntaxNode) -> bool {
+    ast::ExternCrate::cast(node.clone())
+        .and_then(|item| item.rename())
+        .and_then(|rename| rename.name())
+        .is_some_and(|name| {
+            matches!(
+                name.text().trim_start_matches("r#"),
+                "std" | "core" | "alloc"
+            )
+        })
+}
+
 // [`macro_binding_candidates`] is a stored over-approximation of this scan:
 // a new site kind, or a wider existing one, must widen it too and bump
 // `FILE_FACT_CACHE_SCHEMA_VERSION`, or cached candidates hide the new sites.
+fn macro_binding_scan_needed(source: &str, trusted: &[&str]) -> bool {
+    trusted.contains(&"json") && source.contains("serde_json")
+        || source.contains("macro")
+        || source.contains("use")
+        || source.contains("extern")
+        || source.contains("no_implicit_prelude")
+        || source.contains('!')
+}
+
+type NamedMacroSites = Vec<(String, MacroBindingSite)>;
+
 fn macro_binding_ambiguities(
     source: &str,
     packages: &BTreeSet<String>,
@@ -558,15 +683,103 @@ fn macro_binding_ambiguities(
     module_resolved: &dyn Fn(usize, &str) -> bool,
     drop_in_verified: &dyn Fn(&str) -> bool,
 ) -> Vec<(String, MacroBindingSite)> {
-    let mut ambiguous = Vec::new();
-    if !(trusted.contains(&"json") && source.contains("serde_json")
-        || source.contains("macro")
-        || source.contains("use")
-        || source.contains("no_implicit_prelude")
-        || source.contains('!'))
-    {
-        return ambiguous;
+    macro_binding_ambiguity_sets(
+        source,
+        packages,
+        trusted,
+        allowed_empty,
+        module_resolved,
+        drop_in_verified,
+        None,
+    )
+    .0
+}
+
+/// Returns the admission union and per-name disclosure queries. Their trust
+/// contexts differ; only the parse and binding-free wrapper index are shared.
+pub(crate) fn trusted_macro_binding_site_sets(
+    source: &str,
+    packages: &BTreeSet<String>,
+    trusted: &[&str],
+    singleton_names: &[&str],
+    module_resolved: &dyn Fn(usize, &str) -> bool,
+    drop_in_verified: &dyn Fn(&str) -> bool,
+) -> (NamedMacroSites, NamedMacroSites) {
+    macro_binding_ambiguity_sets(
+        source,
+        packages,
+        trusted,
+        &BTreeSet::new(),
+        module_resolved,
+        drop_in_verified,
+        Some(singleton_names),
+    )
+}
+
+fn macro_binding_ambiguity_sets(
+    source: &str,
+    packages: &BTreeSet<String>,
+    trusted: &[&str],
+    allowed_empty: &BTreeSet<String>,
+    module_resolved: &dyn Fn(usize, &str) -> bool,
+    drop_in_verified: &dyn Fn(&str) -> bool,
+    singleton_names: Option<&[&str]>,
+) -> (NamedMacroSites, NamedMacroSites) {
+    if !macro_binding_scan_needed(source, trusted) {
+        return (Vec::new(), Vec::new());
     }
+    let Some(parse) = parse_clean_source_file(source) else {
+        let site = MacroBindingSite {
+            line: 0,
+            kind: MacroBindingKind::Unparsed,
+            scope: None,
+            crate_local: false,
+        };
+        let union: NamedMacroSites = trusted
+            .iter()
+            .map(|name| ((*name).to_string(), site.clone()))
+            .collect();
+        let singletons = singleton_names
+            .into_iter()
+            .flatten()
+            .filter(|name| macro_binding_scan_needed(source, &[name]))
+            .map(|name| ((*name).to_string(), site.clone()))
+            .collect();
+        return (union, singletons);
+    };
+    let tree = parse.tree();
+    let binding_free = BindingFreeFileIndex::collect(tree.syntax());
+    let scan = |names: &[&str]| {
+        macro_binding_sites_in_tree(
+            source,
+            packages,
+            names,
+            allowed_empty,
+            module_resolved,
+            drop_in_verified,
+            &binding_free,
+        )
+    };
+    let union = scan(trusted);
+    let singletons = singleton_names
+        .into_iter()
+        .flatten()
+        .filter(|name| macro_binding_scan_needed(source, &[name]))
+        .flat_map(|name| scan(&[name]))
+        .collect();
+    (union, singletons)
+}
+
+fn macro_binding_sites_in_tree(
+    source: &str,
+    packages: &BTreeSet<String>,
+    trusted: &[&str],
+    allowed_empty: &BTreeSet<String>,
+    module_resolved: &dyn Fn(usize, &str) -> bool,
+    drop_in_verified: &dyn Fn(&str) -> bool,
+    binding_free: &BindingFreeFileIndex,
+) -> NamedMacroSites {
+    let mut ambiguous = Vec::new();
     let all = |line: usize, kind: MacroBindingKind, crate_local: bool| {
         trusted
             .iter()
@@ -583,14 +796,6 @@ fn macro_binding_ambiguities(
             })
             .collect::<Vec<_>>()
     };
-    let Some(parse) = parse_clean_source_file(source) else {
-        return all(0, MacroBindingKind::Unparsed, false);
-    };
-    let tree = parse.tree();
-    // `binding_free_local_wrapper` used to walk every descendant for each
-    // untrusted macro. On a 20k-line test file that is macros × file size
-    // and hung PR evidence after the unseen-reach cache landed.
-    let binding_free = BindingFreeFileIndex::collect(tree.syntax());
     // Built only when a binding site is found, which most files lack.
     let lines = std::cell::OnceCell::new();
     let line_of = |node: &SyntaxNode| {
@@ -617,7 +822,7 @@ fn macro_binding_ambiguities(
         packages
             .iter()
             .any(|package| package.replace('-', "_") == root)
-            || parse.tree().syntax().descendants().any(|node| {
+            || binding_free.site_nodes.iter().cloned().any(|node| {
                 ast::Rename::cast(node.clone())
                     .and_then(|rename| rename.name())
                     .is_some_and(named)
@@ -627,14 +832,52 @@ fn macro_binding_ambiguities(
                             .is_some_and(named)
             })
     };
-    for node in parse.tree().syntax().descendants() {
+    // The names a plain import (no glob, or a list naming `self`) binds
+    // anywhere in the file. Every `use std::..` item asks whether its root is
+    // among them, so the one tree walk is shared instead of repeated per item.
+    let plain_imports = std::cell::OnceCell::new();
+    let plain_import_names = || -> &BTreeSet<String> {
+        plain_imports.get_or_init(|| {
+            binding_free
+                .uses
+                .iter()
+                .filter(|item| {
+                    item.star_token().is_none()
+                        && item.use_tree_list().is_none_or(|list| {
+                            // `use other::std::{self}` binds `std` too.
+                            list.use_trees()
+                                .any(|leaf| leaf.syntax().text().to_string().trim() == "self")
+                        })
+                })
+                .filter_map(|item| {
+                    item.path()
+                        .and_then(|path| path.segment())
+                        .and_then(|segment| segment.name_ref())
+                        .map(|name| name.text().trim_start_matches("r#").to_string())
+                })
+                .collect()
+        })
+    };
+    for node in &binding_free.site_nodes {
+        // `extern crate other as std;` at a crate root rebinds the name for
+        // every file, so a standard-root glob elsewhere cannot be trusted.
+        if let Some(rename) = ast::ExternCrate::cast(node.clone()).and_then(|k| k.rename())
+            && rename.name().is_some_and(|name| {
+                matches!(
+                    name.text().trim_start_matches("r#"),
+                    "std" | "core" | "alloc"
+                )
+            })
+        {
+            ambiguous.extend(all(line_of(node), MacroBindingKind::Import, false));
+        }
         // An extern-crate alias or module in another file can defeat this
         // import's root even when that file never mentions `json` itself.
-        if trusted.contains(&"json") && json_namespace_rebound(&node) {
+        if trusted.contains(&"json") && json_namespace_rebound(node) {
             ambiguous.push((
                 "json".to_string(),
                 MacroBindingSite {
-                    line: line_of(&node),
+                    line: line_of(node),
                     kind: MacroBindingKind::Import,
                     scope: None,
                     crate_local: false,
@@ -650,20 +893,30 @@ fn macro_binding_ambiguities(
             let admitted_declaration = allowed_empty.contains(name)
                 && ast::MacroRules::cast(node.clone()).is_some_and(|item| empty_catch_all(&item));
             if trusted.contains(&name) && !admitted_declaration {
-                let line = line_of(&node);
-                let scope = scope_of(textual_scope(&node));
+                let line = line_of(node);
+                let scope = scope_of(textual_scope(node));
                 ambiguous.push((
                     name.to_string(),
                     MacroBindingSite {
                         line,
                         kind: MacroBindingKind::Definition,
                         scope,
-                        crate_local: !is_exported_macro(&node),
+                        crate_local: !is_exported_macro(node),
                     },
                 ));
             }
         }
-        if let Some(body) = macro_body_bindings(&node, &|name| trusted.contains(&name)) {
+        if let Some(body) = macro_body_bindings(
+            node,
+            &|name| trusted.contains(&name),
+            // The same rule as a `use` item outside a macro: a verified,
+            // unshadowed drop-in import keeps the assertion's meaning (#8149).
+            &|root, name, external| {
+                drop_in_crates(name).contains(&root)
+                    && !drop_in_shadowed(root, external)
+                    && drop_in_verified(root)
+            },
+        ) {
             let macro_name = ast::MacroRules::cast(node.clone())
                 .and_then(|item| item.name())
                 .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
@@ -678,9 +931,9 @@ fn macro_binding_ambiguities(
                 // `no_implicit_prelude` body stays in its own target root,
                 // like a direct site there; an exported macro, or one whose
                 // body exports another, reaches other crates.
-                let crate_local = !body.exports && !is_exported_macro(&node);
+                let crate_local = !body.exports && !is_exported_macro(node);
                 return all(
-                    line_of(&node),
+                    line_of(node),
                     MacroBindingKind::BodyBindsAny {
                         macro_name,
                         binding,
@@ -691,12 +944,12 @@ fn macro_binding_ambiguities(
             // The expansion lands wherever the macro is invoked, so no
             // textual scope bounds it, and an exported macro or a
             // `#[macro_export]` in the body reaches other crates.
-            let crate_local = !body.exports && !is_exported_macro(&node);
+            let crate_local = !body.exports && !is_exported_macro(node);
             for name in body.names {
                 ambiguous.push((
                     name,
                     MacroBindingSite {
-                        line: line_of(&node),
+                        line: line_of(node),
                         kind: MacroBindingKind::MacroBody(macro_name.clone()),
                         scope: None,
                         crate_local,
@@ -715,7 +968,7 @@ fn macro_binding_ambiguities(
                 .any(|token| token.text().trim_start_matches("r#") == "no_implicit_prelude")
             {
                 ambiguous.extend(all(
-                    line_of(&node),
+                    line_of(node),
                     MacroBindingKind::NoImplicitPrelude,
                     true,
                 ));
@@ -747,7 +1000,7 @@ fn macro_binding_ambiguities(
                     let line = attr
                         .syntax()
                         .parent()
-                        .map_or_else(|| line_of(&node), |parent| item_line(&parent, source));
+                        .map_or_else(|| line_of(node), |parent| item_line(&parent, source));
                     // `#[macro_use] extern crate` only imports into this crate. An
                     // unresolved `#[macro_use] mod` may `#[macro_export]` its macros,
                     // which other crates reach through a glob, so it stays
@@ -780,7 +1033,7 @@ fn macro_binding_ambiguities(
                 matches!(word, "macro_use" | "no_implicit_prelude").then_some(word)
             }) {
                 return all(
-                    line_of(&node),
+                    line_of(node),
                     MacroBindingKind::ArgumentAttribute {
                         wrapper: path.syntax().text().to_string(),
                         attribute: attribute.to_string(),
@@ -795,13 +1048,22 @@ fn macro_binding_ambiguities(
             // tests then use it. The one exception is a wrapper whose only
             // definition this file shows and whose expansion cannot bind a
             // name at all (#6648).
-            if binding_free_local_wrapper(&binding_free, &call, &tokens, trusted) {
+            if binding_free_local_wrapper(binding_free, &call, &tokens, trusted) {
+                continue;
+            }
+            // An accepted identity invocation over literal `fn` items binds
+            // nothing; its tests are scanned from their own expansion
+            // (#8999).
+            if binding_free
+                .passthrough
+                .contains(&call.syntax().text_range().start())
+            {
                 continue;
             }
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
-                    let line = line_of(&node);
+                    let line = line_of(node);
                     ambiguous.push((
                         name.to_string(),
                         MacroBindingSite {
@@ -816,7 +1078,7 @@ fn macro_binding_ambiguities(
         }
         if let Some(import) = ast::Use::cast(node.clone()) {
             let Some(tree) = import.use_tree() else {
-                return all(line_of(&node), MacroBindingKind::Unparsed, false);
+                return all(line_of(node), MacroBindingKind::Unparsed, false);
             };
             let private = import.visibility().is_none();
             let root = tree
@@ -834,10 +1096,101 @@ fn macro_binding_ambiguities(
                 || packages
                     .iter()
                     .any(|package| package.replace('-', "_") == root);
+            // #8388: a glob rooted at the standard crates (`use
+            // core::simd::prelude::*`) names only items the standard library
+            // defines, and its one `assert_eq!` is the standard macro, so it
+            // cannot rebind a trusted name. A workspace package, module or
+            // alias taking the root's name can, which `drop_in_shadowed`
+            // already answers for the drop-in crates; that case, and every
+            // glob from any other root, stays a foreign glob.
+            // A plain import that binds the root name (`use crate::other::std;`)
+            // also takes it over for the module; `use x as std` is a rename
+            // and is caught by `drop_in_shadowed`.
+            let root_imported = || plain_import_names().contains(root);
+            let standard_root = matches!(root, "std" | "core" | "alloc") && !root_imported();
+            // #9676: a path in module M resolves its first segment only against
+            // M's own items and the extern prelude, never an enclosing module's
+            // (`mod core { pub use core::*; }` globs the real `core` although a
+            // module named `core` exists in the file). Admit a glob that is a
+            // direct item of an inline module when that module's own items
+            // cannot bind the root name; any macro-emitted or ambiguous item
+            // keeps the whole-file refusal.
+            let module_local_standard_root = || {
+                let Some(list) = import
+                    .syntax()
+                    .parent()
+                    .and_then(ast::ItemList::cast)
+                    .filter(|list| {
+                        list.syntax()
+                            .parent()
+                            .is_some_and(|p| ast::Module::can_cast(p.kind()))
+                    })
+                else {
+                    return false;
+                };
+                let named = |name: Option<ast::Name>| {
+                    name.is_some_and(|name| name.text().trim_start_matches("r#") == root)
+                };
+                matches!(root, "std" | "core" | "alloc")
+                    && !packages
+                        .iter()
+                        .any(|package| package.replace('-', "_") == root)
+                    && !list.syntax().children().any(|child| {
+                        if child == *import.syntax() {
+                            return false;
+                        }
+                        if let Some(module) = ast::Module::cast(child.clone()) {
+                            return named(module.name());
+                        }
+                        if let Some(krate) = ast::ExternCrate::cast(child.clone()) {
+                            return krate.name_ref().is_some_and(|n| n.text() == root)
+                                || named(krate.rename().and_then(|r| r.name()));
+                        }
+                        if let Some(other) = ast::Use::cast(child.clone()) {
+                            return other
+                                .syntax()
+                                .descendants()
+                                .filter_map(ast::UseTree::cast)
+                                .any(|leaf| {
+                                    if leaf.star_token().is_some() {
+                                        return false;
+                                    }
+                                    if let Some(rename) = leaf.rename() {
+                                        return named(rename.name());
+                                    }
+                                    let last = leaf
+                                        .path()
+                                        .and_then(|path| path.segment())
+                                        .and_then(|segment| segment.name_ref());
+                                    match leaf.use_tree_list() {
+                                        None => last.is_some_and(|n| n.text() == root),
+                                        Some(inner) => {
+                                            last.is_some_and(|n| n.text() == root)
+                                                && inner.use_trees().any(|t| {
+                                                    t.syntax().text().to_string().trim() == "self"
+                                                })
+                                        }
+                                    }
+                                });
+                        }
+                        // Item-position macro calls may emit any binding.
+                        ast::MacroCall::can_cast(child.kind())
+                            || ast::AnyHasName::cast(child.clone())
+                                .is_some_and(|item| named(item.name()))
+                    })
+            };
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
+                if item.star_token().is_some()
+                    && matches!(root, "std" | "core" | "alloc")
+                    && (standard_root && !drop_in_shadowed(root, external)
+                        || module_local_standard_root())
+                    && drop_in_verified(root)
+                {
+                    continue;
+                }
                 if item.star_token().is_some() && !own {
                     let path = import.syntax().text().to_string();
-                    let line = line_of(&node);
+                    let line = line_of(node);
                     let Some(scope) = scope_of(import_scope(&import)) else {
                         ambiguous.extend(all(line, MacroBindingKind::ForeignGlob(path), private));
                         continue;
@@ -879,7 +1232,7 @@ fn macro_binding_ambiguities(
                         None
                     };
                     if let Some(kind) = kind {
-                        let line = line_of(&node);
+                        let line = line_of(node);
                         ambiguous.push((
                             name.to_string(),
                             MacroBindingSite {
@@ -902,36 +1255,67 @@ fn macro_binding_ambiguities(
     // own calls opaque in turn.
     let mut bound: BTreeSet<String> = ambiguous.iter().map(|(name, _)| name.clone()).collect();
     let mut reported = BTreeSet::new();
+    // Calls spelled as tokens inside another call's tree (`dbg!(vec!(..))`)
+    // are no `MacroCall` nodes: the parser keeps `vec ! (..)` flat beside a
+    // nested tree. They count as calls of their bare name too (#8446).
+    let mut sites = Vec::new();
+    for node in &binding_free.call_nodes {
+        if let Some(call) = ast::MacroCall::cast(node.clone()) {
+            if let (Some(path), Some(tree)) = (call.path(), call.token_tree()) {
+                sites.push((
+                    path.syntax().text().to_string(),
+                    tree,
+                    node.clone(),
+                    Some(call),
+                ));
+            }
+        } else if let Some(tree) = ast::TokenTree::cast(node.clone())
+            && let Some(name) = nested_call_name(&tree)
+        {
+            sites.push((name, tree, node.clone(), None));
+        }
+    }
     loop {
         let before = bound.len();
-        for node in parse.tree().syntax().descendants() {
-            let Some(call) = ast::MacroCall::cast(node.clone()) else {
-                continue;
-            };
-            let Some(path) = call.path() else { continue };
-            let path = path.syntax().text().to_string();
-            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(&path, trusted) {
+        for (path, tree, node, call) in &sites {
+            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(path, trusted) {
                 continue;
             }
-            let Some(tree) = call.token_tree() else {
-                continue;
-            };
             let tokens: Vec<_> = tree
                 .syntax()
                 .descendants_with_tokens()
                 .filter_map(|element| element.into_token())
                 .filter(|token| !token.kind().is_trivia())
                 .collect();
+            // As for an untrusted wrapper: an attribute in the arguments may
+            // be applied by the expansion to an item.
+            if let Some(attribute) = tokens.iter().find_map(|token| {
+                let word = token.text().trim_start_matches("r#");
+                matches!(word, "macro_use" | "no_implicit_prelude").then_some(word)
+            }) {
+                return all(
+                    line_of(node),
+                    MacroBindingKind::ArgumentAttribute {
+                        wrapper: path.clone(),
+                        attribute: attribute.to_string(),
+                    },
+                    false,
+                );
+            }
             // As for an untrusted wrapper: a macro whose only definition
             // shows an expansion that cannot bind a name stays transparent.
-            if binding_free_local_wrapper(&binding_free, &call, &tokens, trusted) {
+            // A nested call has no node to locate that definition from, so
+            // it never takes the exemption.
+            if call.as_ref().is_some_and(|call| {
+                binding_free_local_wrapper(binding_free, call, &tokens, trusted)
+            }) {
                 continue;
             }
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
                     bound.insert(name.to_string());
-                    let line = line_of(&node);
+                    let line = line_of(node);
                     if !reported.insert((name.to_string(), line, path.clone())) {
                         continue;
                     }
@@ -954,6 +1338,23 @@ fn macro_binding_ambiguities(
     ambiguous
 }
 
+/// The bare name of a macro call written as `name ! (..)` tokens directly
+/// before a nested token tree, if any. A top-level call is a `MacroCall`
+/// node whose `!` follows a path node, so it never matches.
+fn nested_call_name(tree: &ast::TokenTree) -> Option<String> {
+    let mut previous = std::iter::successors(tree.syntax().prev_sibling_or_token(), |element| {
+        element.prev_sibling_or_token()
+    })
+    .filter(|element| !matches!(element, ra_ap_syntax::NodeOrToken::Token(token) if token.kind().is_trivia()));
+    let bang = previous.next()?.into_token()?;
+    if bang.text() != "!" {
+        return None;
+    }
+    let name = previous.next()?.into_token()?;
+    (name.kind() == ra_ap_syntax::SyntaxKind::IDENT)
+        .then(|| name.text().trim_start_matches("r#").to_string())
+}
+
 /// `pretty_assertions` exports `assert_eq!`/`assert_ne!` as drop-in
 /// replacements that panic exactly when the standard macros do (they only
 /// format the diff differently), so importing one under its own name keeps
@@ -965,13 +1366,24 @@ const DROP_IN_ASSERTION_CRATES: &[&str] = &["pretty_assertions"];
 /// is the one binding that makes the bare macro expect-test's.
 const EXPECT_TEST_CRATES: &[&str] = &["expect_test"];
 
-fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
-    let crates = match name {
+/// `claims` exports `assert_ok!`/`assert_err!`/`assert_some!`/`assert_none!`:
+/// each evaluates its operand once, panics unless it has the named variant,
+/// and (for `assert_ok!`/`assert_some!`) yields the payload.
+const CLAIMS_CRATES: &[&str] = &["claims"];
+
+/// The crates whose export under `name` is a drop-in for the trusted macro.
+fn drop_in_crates(name: &str) -> &'static [&'static str] {
+    match name {
+        "assert_ok" | "assert_err" | "assert_some" | "assert_none" => CLAIMS_CRATES,
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
-        _ => return false,
-    };
+        _ => &[],
+    }
+}
+
+fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
+    let crates = drop_in_crates(name);
     // Ancestor trees run inner to outer; reverse each path, then the whole.
     let mut segments: Vec<String> = item
         .syntax()
@@ -996,6 +1408,30 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
         [root, imported] if crates.contains(root) && *imported == name
     )
 }
+
+/// The claims macros `source` names by a `use claims::name;` (or
+/// `use claims::{name, ..};`) import, under their own names. A source that
+/// does not parse cleanly imports nothing provable. The import's manifest
+/// verdict and shadowing are the binding scan's, which already treats an
+/// unverified or foreign import of a trusted name as a binding site.
+pub(crate) fn source_imported_claims_macros(source: &str) -> Vec<&'static str> {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return Vec::new();
+    };
+    let uses: Vec<ast::UseTree> = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::UseTree::cast)
+        .filter(|item| item.use_tree_list().is_none() && item.rename().is_none())
+        .collect();
+    CLAIMS_MACRO_NAMES
+        .into_iter()
+        .filter(|name| uses.iter().any(|item| is_drop_in_assertion(item, name)))
+        .collect()
+}
+
+const CLAIMS_MACRO_NAMES: [&str; 4] = ["assert_err", "assert_none", "assert_ok", "assert_some"];
 
 /// Words that let tokens bind or import a name, or pull in unseen items,
 /// once a macro expansion parses them as items.
@@ -1032,6 +1468,14 @@ struct BindingFreeFileIndex {
     rules: Vec<ast::MacroRules>,
     modules: Vec<SyntaxNode>,
     calls: Vec<ast::MacroCall>,
+    /// Every node a binding-site scan can react to, in source order. The scan
+    /// runs once per queried name set over the same tree, so it walks this
+    /// short list instead of every node of the file.
+    site_nodes: Vec<SyntaxNode>,
+    /// Macro calls and token trees, in source order, for the call fixpoint.
+    call_nodes: Vec<SyntaxNode>,
+    /// Calls accepted as the identity over literal `fn` items (#8999).
+    passthrough: BTreeSet<ra_ap_syntax::TextSize>,
 }
 
 #[cfg(test)]
@@ -1052,7 +1496,26 @@ impl BindingFreeFileIndex {
         let mut rules = Vec::new();
         let mut modules = Vec::new();
         let mut calls = Vec::new();
+        let mut site_nodes = Vec::new();
+        let mut call_nodes = Vec::new();
         for node in root.descendants() {
+            use ra_ap_syntax::SyntaxKind as K;
+            match node.kind() {
+                K::EXTERN_CRATE
+                | K::RENAME
+                | K::MODULE
+                | K::USE_TREE
+                | K::MACRO_RULES
+                | K::MACRO_DEF
+                | K::ATTR
+                | K::USE => site_nodes.push(node.clone()),
+                K::MACRO_CALL => {
+                    site_nodes.push(node.clone());
+                    call_nodes.push(node.clone());
+                }
+                K::TOKEN_TREE => call_nodes.push(node.clone()),
+                _ => {}
+            }
             if let Some(tree) = ast::UseTree::cast(node.clone()) {
                 uses.push(tree);
                 continue;
@@ -1074,6 +1537,9 @@ impl BindingFreeFileIndex {
             rules,
             modules,
             calls,
+            site_nodes,
+            call_nodes,
+            passthrough: super::passthrough_item_macros::passthrough_invocation_starts(root),
         }
     }
 }
@@ -1436,6 +1902,7 @@ fn transcriber_tokens(tokens: &[ra_ap_syntax::SyntaxToken]) -> Vec<&ra_ap_syntax
 fn macro_body_bindings(
     definition: &SyntaxNode,
     trusted: &dyn Fn(&str) -> bool,
+    drop_in_ok: &dyn Fn(&str, &str, bool) -> bool,
 ) -> Option<MacroBodyBindings> {
     use ra_ap_syntax::SyntaxKind::{BANG, COLON, COLON2, COMMA, DOLLAR, R_CURLY, SEMICOLON, STAR};
     if !ast::MacroRules::can_cast(definition.kind()) && !ast::MacroDef::can_cast(definition.kind())
@@ -1495,6 +1962,23 @@ fn macro_body_bindings(
                 let mut start = index + 1;
                 while matches!(kind(start), Some(COLON | COLON2)) {
                     start += 1;
+                }
+                // `use root::name;` of a verified drop-in binds the standard
+                // assertion's meaning, as it does outside a macro (#8149).
+                // A token tree keeps `::` as two `:` tokens, so accept both.
+                let separator = if kind(start + 1) == Some(COLON2) {
+                    1
+                } else if kind(start + 1) == Some(COLON) && kind(start + 2) == Some(COLON) {
+                    2
+                } else {
+                    0
+                };
+                if separator > 0
+                    && end == start + 2 + separator
+                    && let (Some(root), Some(name)) = (word(start), word(start + 1 + separator))
+                    && drop_in_ok(root, name, start > index + 1)
+                {
+                    continue;
                 }
                 // `$crate` is this crate; any other fragment is unknown.
                 let root = if kind(start) == Some(DOLLAR) {
@@ -1711,12 +2195,47 @@ pub(crate) fn empty_local_macro_invocation_ranges(
         .collect()
 }
 
+/// #8051: every bare `debug_assert_eq!` call in `source`, as (line, text) in
+/// the same spelling [`owner_pin_assertions`] keys its context by. Empty when
+/// the file does not parse cleanly. The caller keeps the per-file result and
+/// filters it to a test's lines.
+pub(crate) fn debug_assert_eq_calls(source: &str) -> Vec<(usize, String)> {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return Vec::new();
+    };
+    let lines = LineIndex::new(source);
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|call| {
+            call.path().is_some_and(|path| {
+                path.syntax()
+                    .text()
+                    .to_string()
+                    .split_whitespace()
+                    .collect::<String>()
+                    == "debug_assert_eq"
+            })
+        })
+        .map(|call| {
+            let range = call.syntax().text_range();
+            (
+                lines.line(range.start()),
+                slice_macro_call_text(source, range.start(), range.end()),
+            )
+        })
+        .collect()
+}
+
 pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAssertions {
     let mut result = OwnerPinAssertions::default();
     let Some(parse) = parse_clean_source_file(source) else {
         return result;
     };
     result.parsed = true;
+    result.file_binds_test = file_binds_test_name(parse.tree().syntax());
     let lines = LineIndex::new(source);
     let empty_macros = local_empty_macros(parse.tree().syntax());
     let json_uses = literal_json_uses(&parse.tree());
@@ -1725,6 +2244,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
     // that binds the value name `Err` anywhere may route that return to an
     // `Ok`, so its guards are never twin candidates (#7130 review).
     let err_bound = file_binds_value_name(parse.tree().syntax(), "Err");
+    let process_names = StdProcessNames::of_file(parse.tree().syntax());
     for module in parse
         .tree()
         .syntax()
@@ -1811,15 +2331,35 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         } else {
             item_context_refusal(function.syntax())
         };
-        if let Some(refusal) = refusal {
+        // #10389: a function refused only for a nested comparison macro keeps
+        // its per-assertion verdicts, so a caller that trusts those macros
+        // still sees a dead context the function-level scan reported first.
+        let comparison_clean =
+            matches!(refusal, Some(AssertionContextRefusal::MacroOperandExit(_)))
+                && has_escape_among(
+                    body.syntax(),
+                    trusted,
+                    &empty_macros,
+                    &json_uses,
+                    COMPARISON_NESTED_MACROS,
+                )
+                .is_none()
+                && function
+                    .attrs()
+                    .all(|attr| runs_body_unchanged(&attr, function.syntax()))
+                && item_context_refusal(function.syntax()).is_none();
+        if let (Some(refusal), false) = (&refusal, comparison_clean) {
             // Only test functions are queried (`#[test]`, `#[tokio::test]`);
-            // a refused helper still counts toward duplicate detection.
-            if is_test_function(&function) {
+            // a refused helper still counts toward duplicate detection. A
+            // refused `#[test_case]` function stays unidentified: the
+            // `=> expected` form generates an assertion no scan reads, so
+            // it must keep reading as unknown rather than as a gap.
+            if is_test_function(&function) && !is_test_case_function(&function) {
                 insert_function(
                     &mut result.functions,
                     key,
                     FunctionAssertions {
-                        refusal: Some(refusal),
+                        refusal: Some(refusal.clone()),
                         ..FunctionAssertions::default()
                     },
                 );
@@ -1837,13 +2377,11 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             .descendants()
             .filter_map(ast::MacroCall::cast)
         {
-            // `assert!` is collected for the bool-owner pin; the classify
+            // `assert!` is collected for the bool-owner pin and
+            // `debug_assert_eq!` for its profile limit (#8051); the classify
             // side decides which spelling a pin may use.
             if call.path().is_none_or(|path| {
-                !names_candidate_assertion(
-                    &path.syntax().text().to_string(),
-                    &["assert_eq", "assert"],
-                )
+                !names_candidate_assertion(&path.syntax().text().to_string(), &ASSERTION_CANDIDATES)
             }) {
                 continue;
             }
@@ -1934,8 +2472,28 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                     .is_some_and(|owner| owner == *function.syntax())
             })
             .map(|expression| expression.syntax().text_range().start())
+            .chain(root_divergence_start(&function, &process_names))
             .min();
-        let assertions = admitted_assertions(candidates, &function, first_return);
+        let mut assertions = admitted_assertions(candidates, &function, first_return);
+        // RIPR-SPEC-0231 harness-compared return: a clean `#[test_case(..
+        // => literal)]` function has no assertion macro, so the oracle the
+        // harness runs is admitted here, on the same synthesis the fact
+        // producer uses. A refused function never reaches this point.
+        if is_test_case_function(&function) {
+            let attrs = function
+                .attrs()
+                .map(|attr| attr.syntax().text().to_string())
+                .collect::<Vec<_>>();
+            for oracle in crate::analysis::extract::arrow_row_oracles_for_fn(
+                &attrs,
+                &function,
+                lines.line(token.text_range().start()),
+            ) {
+                assertions
+                    .entry((oracle.line, oracle.text))
+                    .or_insert(Ok(()));
+            }
+        }
         let helper_assertions = if is_test_function(&function) {
             local_helper_assertions(
                 &function,
@@ -1953,8 +2511,9 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             &mut result.functions,
             key,
             FunctionAssertions {
-                body: body_source,
-                refusal: None,
+                body: BodyFingerprint::of(&body_source),
+                refusal,
+                comparison_clean,
                 assertions,
                 macros,
                 helper_assertions,
@@ -1967,14 +2526,200 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
     result
 }
 
+/// Where a root statement of `function` never completes: a `loop` (or
+/// `while true`) that no `break` leaves, or a standard-library
+/// `process::exit` / `abort` call, spelled in full, through an imported
+/// `std::process` module (renamed or not) or as an imported leaf. Like an
+/// earlier `return`, it keeps every later invocation from running (#8927).
+/// Nested statements do not count: only the body's own list. A `break` that
+/// belongs to an inner loop, closure or async block does not leave the outer
+/// loop (#8983); a labeled `break` leaves it when the label is its own or an
+/// enclosing one.
+fn root_divergence_start(function: &ast::Fn, process: &StdProcessNames) -> Option<TextSize> {
+    function
+        .body()?
+        .stmt_list()?
+        .statements()
+        .filter_map(|statement| match statement {
+            ast::Stmt::ExprStmt(statement) => statement.expr(),
+            _ => None,
+        })
+        .find(|expression| match expression {
+            ast::Expr::LoopExpr(body) => !loop_is_left_by_break(body.syntax()),
+            ast::Expr::WhileExpr(body) => {
+                body.condition()
+                    .is_some_and(|condition| is_literal_true(&condition))
+                    && !loop_is_left_by_break(body.syntax())
+            }
+            ast::Expr::CallExpr(call) => call.expr().is_some_and(|callee| {
+                let path: String = callee
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .split_whitespace()
+                    .collect();
+                process.diverges(path.strip_prefix("::").unwrap_or(&path))
+            }),
+            _ => false,
+        })
+        .map(|expression| expression.syntax().text_range().start())
+}
+
+/// `true`, however many parentheses wrap it (`while (true) {}`).
+fn is_literal_true(condition: &ast::Expr) -> bool {
+    match condition {
+        ast::Expr::ParenExpr(paren) => paren.expr().is_some_and(|inner| is_literal_true(&inner)),
+        other => other.syntax().text().to_string().trim() == "true",
+    }
+}
+
+/// Whether some `break` inside `loop_node` leaves exactly that loop.
+fn loop_is_left_by_break(loop_node: &SyntaxNode) -> bool {
+    let label_of = |node: &SyntaxNode| {
+        node.children()
+            .find_map(ast::Label::cast)
+            .and_then(|label| label.lifetime())
+            .map(|lifetime| lifetime.text().to_string())
+    };
+    loop_node
+        .descendants()
+        .filter_map(ast::BreakExpr::cast)
+        .any(|expression| {
+            let wanted = expression
+                .lifetime()
+                .map(|lifetime| lifetime.text().to_string());
+            for ancestor in expression.syntax().ancestors().skip(1) {
+                if ancestor == *loop_node {
+                    // Reached with no inner owner: the `break` is this loop's
+                    // own, or names its label or an enclosing one.
+                    return true;
+                }
+                // A closure, function or async block is its own control
+                // context: a `break` inside it never leaves an outer loop.
+                if ast::ClosureExpr::can_cast(ancestor.kind())
+                    || ast::Fn::can_cast(ancestor.kind())
+                    || ast::BlockExpr::cast(ancestor.clone())
+                        .is_some_and(|block| block.async_token().is_some())
+                {
+                    return false;
+                }
+                match &wanted {
+                    // An unlabeled `break` belongs to the nearest loop.
+                    None => {
+                        if ast::LoopExpr::can_cast(ancestor.kind())
+                            || ast::WhileExpr::can_cast(ancestor.kind())
+                            || ast::ForExpr::can_cast(ancestor.kind())
+                        {
+                            return false;
+                        }
+                    }
+                    // A labeled one belongs to the loop or block carrying
+                    // that label.
+                    Some(wanted) => {
+                        if label_of(&ancestor).as_ref() == Some(wanted) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            // Not under `loop_node` after all: keep the older answer.
+            true
+        })
+}
+
+/// The ways `function` can spell a standard-library process exit: the
+/// `std::process` module under whatever name an import gives it, and the
+/// `exit` / `abort` leaves under theirs. A glob import of `std::process`
+/// makes the bare names divergent too. Over-matching only withholds credit.
+struct StdProcessNames {
+    modules: Vec<String>,
+    leaves: Vec<String>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test witness: whole-file import scans this thread has paid.
+    static STD_PROCESS_NAME_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+impl StdProcessNames {
+    /// Read once per file: every function of a file sees the same imports, and
+    /// walking the whole tree per function made a file of many tests cost the
+    /// product of its test count and its size.
+    fn of_file(root: &SyntaxNode) -> Self {
+        #[cfg(test)]
+        STD_PROCESS_NAME_SCANS.with(|count| count.set(count.get() + 1));
+        let mut names = Self {
+            modules: Vec::new(),
+            leaves: Vec::new(),
+        };
+        let mut leaves = Vec::new();
+        for import in root.descendants().filter_map(ast::Use::cast) {
+            if let Some(tree) = import.use_tree() {
+                flatten_use_tree(&tree, &[], &mut leaves);
+            }
+        }
+        for leaf in leaves {
+            let path: Vec<&str> = leaf.path.iter().map(String::as_str).collect();
+            let path = match path.as_slice() {
+                ["core", rest @ ..] | ["std", rest @ ..] => {
+                    let mut with_std = vec!["std"];
+                    with_std.extend(rest);
+                    with_std
+                }
+                other => other.to_vec(),
+            };
+            match (&leaf.binding, path.as_slice()) {
+                (UseBinding::Name(name), ["std", "process"])
+                | (UseBinding::Name(name), ["std", "process", "self"]) => {
+                    names.modules.push(name.clone());
+                }
+                (UseBinding::Name(name), ["std", "process", "exit" | "abort"]) => {
+                    names.leaves.push(name.clone());
+                }
+                (UseBinding::Glob, ["std", "process"]) => {
+                    names.leaves.push("exit".to_string());
+                    names.leaves.push("abort".to_string());
+                }
+                _ => {}
+            }
+        }
+        names
+    }
+
+    fn diverges(&self, path: &str) -> bool {
+        if matches!(path, "std::process::exit" | "std::process::abort") {
+            return true;
+        }
+        if self.leaves.iter().any(|leaf| leaf == path) {
+            return true;
+        }
+        path.split_once("::").is_some_and(|(module, leaf)| {
+            matches!(leaf, "exit" | "abort") && self.modules.iter().any(|name| name == module)
+        })
+    }
+}
+
 /// `#[test]`, `#[tokio::test]` and other attributes whose last segment is
-/// `test`: the functions the admission is queried for.
+/// `test`, plus the `#[rstest]` and `#[test_case]` parameterizers: the
+/// functions the admission is queried for.
 fn is_test_function(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
         attr.path()
             .and_then(|path| path.segment())
             .and_then(|segment| segment.name_ref())
-            .is_some_and(|name| name.text() == "test" || name.text() == "rstest")
+            .is_some_and(|name| matches!(name.text(), "test" | "rstest" | "test_case"))
+            || attribute_introduces_only_test(&attr.syntax().text().to_string())
+    })
+}
+
+/// A function carrying a `#[test_case]` attribute, in either spelling.
+fn is_test_case_function(function: &ast::Fn) -> bool {
+    function.attrs().any(|attr| {
+        attr.path()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+            .is_some_and(|name| name.text() == "test_case")
     })
 }
 
@@ -1991,19 +2736,29 @@ fn admitted_assertions(
         .into_iter()
         .map(|(key, calls)| {
             // OracleFact has line/text, not an offset. No identical spelling
-            // on the same line may borrow another invocation's context.
-            let admitted = if calls.len() == 1 {
-                eager_path(calls[0].clone(), function, false, first_return).map_err(|construct| {
-                    match (construct == EARLIER_RETURN)
-                        .then(|| sole_return_guard(function))
-                        .flatten()
-                    {
-                        Some(condition) => AssertionContextRefusal::GuardedReturn(condition),
-                        None => AssertionContextRefusal::ConditionalPath(construct),
-                    }
+            // on the same line may borrow another invocation's context; the
+            // refusal records whether some invocation provably runs, which
+            // only the effect admission may use (`A; return; A;`, #8927).
+            let verdicts = calls
+                .iter()
+                .map(|call| {
+                    eager_path(call.clone(), function, false, first_return).map_err(|construct| {
+                        match (construct == EARLIER_RETURN)
+                            .then(|| sole_return_guard(function))
+                            .flatten()
+                        {
+                            Some(condition) => AssertionContextRefusal::GuardedReturn(condition),
+                            None => AssertionContextRefusal::ConditionalPath(construct),
+                        }
+                    })
                 })
-            } else {
-                Err(AssertionContextRefusal::DuplicateSpelling)
+                .collect::<Vec<_>>();
+            let admitted = match verdicts.as_slice() {
+                [only] => only.clone(),
+                _ if verdicts.iter().any(|verdict| verdict.is_ok()) => {
+                    Err(AssertionContextRefusal::DuplicateSpellingOneRuns)
+                }
+                _ => Err(AssertionContextRefusal::DuplicateSpelling),
             };
             (key, admitted)
         })
@@ -2067,6 +2822,7 @@ fn local_helper_assertions(
         .map(|name| name.text().to_string())
         .collect();
     let mut called = BTreeMap::<String, Vec<usize>>::new();
+    let mut eager_called = BTreeMap::<String, Vec<usize>>::new();
     let mut calls_per_line = BTreeMap::<usize, usize>::new();
     // Method calls and macro invocations count too: a macro's operand is
     // an unparsed token tree that may hold another call.
@@ -2100,6 +2856,9 @@ fn local_helper_assertions(
             && eager_path(call.syntax().clone(), test, false, first_return).is_ok()
         {
             let line = lines.line(call.syntax().text_range().start());
+            if lines.line(call.syntax().text_range().end()) == line {
+                eager_called.entry(name.clone()).or_default().push(line);
+            }
             let lines_of_name = called.entry(name).or_default();
             // A line holding another call cannot say which call an
             // activation fact on it describes.
@@ -2135,8 +2894,10 @@ fn local_helper_assertions(
             .descendants()
             .filter_map(ast::MacroCall::cast)
         {
+            // The same candidate spellings as the test's own assertions.
+            // Their execution and bindings still pass the shared helper gate.
             if call.path().is_none_or(|path| {
-                !names_candidate_assertion(&path.syntax().text().to_string(), &["assert_eq"])
+                !names_candidate_assertion(&path.syntax().text().to_string(), &ASSERTION_CANDIDATES)
             }) {
                 continue;
             }
@@ -2154,6 +2915,7 @@ fn local_helper_assertions(
             helper: text,
             parameters: plain_parameter_names(helper),
             call_lines,
+            eager_call_lines: eager_called.get(&name).cloned().unwrap_or_default(),
         };
         for (key, admitted) in admitted_assertions(candidates, helper, None) {
             if admitted.is_ok() {
@@ -2538,13 +3300,22 @@ fn item_context_refusal(item: &SyntaxNode) -> Option<AssertionContextRefusal> {
 /// attribute macros and `crate = ..` swaps the runtime that runs it, so any
 /// other argument refuses. Every other attribute (`ignore`, `should_panic`,
 /// an async runtime or a parameterizing macro) may skip, invert or rewrite
-/// the body, so it keeps the test out of the pin.
+/// the body, so it keeps the test out of the pin; attributes that only annotate
+/// the test (`is_inert_attribute_path`) are admitted.
 fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if attr.simple_name().as_deref() == Some("test") {
-        return true;
+        return test
+            .parent()
+            .is_some_and(|module| builtin_test_attribute_holds(&module));
     }
     if attr.excl_token().is_some() {
         return false;
+    }
+    // `#[cfg_attr(all(), test)]` is the built-in `#[test]` in a test build.
+    if attribute_introduces_only_test(&attr.syntax().text().to_string()) {
+        return test
+            .parent()
+            .is_some_and(|module| builtin_test_attribute_holds(&module));
     }
     let Some(path) = attr.path() else {
         return false;
@@ -2553,11 +3324,17 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     let Some(module) = test.parent() else {
         return false;
     };
+    if is_inert_attribute_path(&path) {
+        return builtin_attribute_holds(&path, &module);
+    }
     if is_tokio_test_path(&path) {
         return tokio_test_runs_body(attr, test);
     }
     if let Some(kind) = rstest_attribute(&path, &module) {
         return rstest_runs_body(attr, kind, test, &module);
+    }
+    if is_test_case_path(&path, &module) {
+        return test_case_runs_body(attr, test, &module);
     }
     let admitted = if path.contains("::") {
         serial_test_lock_leaf(&path).is_some() && serial_test_path_is_the_crate(&module)
@@ -2565,6 +3342,118 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
         bare_lock_bound_in_module(&path, &module) && serial_test_path_is_the_crate(&module)
     };
     admitted && lock_arguments_are_bare_keys(attr)
+}
+
+/// Built-in and tool attributes that annotate a test without changing whether
+/// or how its body runs: lint levels, documentation, formatter and linter
+/// directives, and inlining or diagnostics hints. `#[test]
+/// #[rustfmt::skip]` and `#[allow(clippy::eq_op)] #[test]` run the unchanged
+/// body, so they do not keep a pinned assertion out of the owner pin.
+/// `cfg`, `cfg_attr`, `ignore` and `should_panic` are not here: they are read
+/// by the shared availability evaluator and the outcome-settling check.
+fn is_inert_attribute_path(path: &str) -> bool {
+    matches!(
+        path,
+        "allow"
+            | "warn"
+            | "deny"
+            | "forbid"
+            | "expect"
+            | "doc"
+            | "inline"
+            | "cold"
+            | "must_use"
+            | "deprecated"
+            | "track_caller"
+    ) || path.starts_with("rustfmt::")
+        || path.starts_with("clippy::")
+}
+
+/// Whether the built-in attribute `path` names, in `module`, is the language's
+/// own. A tool attribute (`rustfmt::skip`, `clippy::..`) lives in the tool
+/// prelude and cannot be rebound by an import; a bare built-in name can be, by
+/// a `use` or `extern crate .. as`, exactly as `test` can.
+fn builtin_attribute_holds(path: &str, module: &SyntaxNode) -> bool {
+    path.contains("::") || builtin_name_holds(path, module)
+}
+
+/// Whether a bare `#[test]` in `module` is libtest's built-in attribute. An
+/// import that binds the name `test` (`use skipper::serial as test`) makes it
+/// another attribute macro that may replace the body, in this module or, by
+/// `use super::*`, in an enclosing module of this file. A glob of another
+/// crate is refused by the macro-binding authority, and one of the
+/// workspace's own modules is not seen into.
+fn builtin_test_attribute_holds(module: &SyntaxNode) -> bool {
+    builtin_name_holds("test", module)
+}
+
+/// Whether no import in `module` (or an enclosing module of this file reached
+/// by `use super::*`) rebinds the built-in attribute name `name`.
+fn builtin_name_holds(name: &str, module: &SyntaxNode) -> bool {
+    !extern_crate_binds_name(module, name)
+        && module_use_leaves(module)
+            .iter()
+            .all(|leaf| match &leaf.binding {
+                UseBinding::Name(binding) => unraw(binding) != name,
+                UseBinding::Glob => {
+                    let Some(levels) = super_glob_levels(leaf) else {
+                        return true;
+                    };
+                    let mut parent = Some(module.clone());
+                    for _ in 0..levels {
+                        parent = parent.and_then(|items| enclosing_module_items(&items));
+                    }
+                    parent.is_none_or(|parent| builtin_name_holds(name, &parent))
+                }
+            })
+}
+
+/// Whether a direct `extern crate .. as test;` of `module` rebinds `test`.
+fn extern_crate_binds_name(module: &SyntaxNode, name: &str) -> bool {
+    module
+        .children()
+        .filter_map(ast::ExternCrate::cast)
+        .any(|item| {
+            item.rename()
+                .and_then(|rename| rename.name())
+                .is_some_and(|renamed| unraw(renamed.text()) == name)
+        })
+}
+
+/// How many modules up a `super::*` / `super::super::*` glob reaches.
+fn super_glob_levels(leaf: &UseLeaf) -> Option<usize> {
+    (!leaf.path.is_empty() && leaf.path.iter().all(|segment| segment == "super"))
+        .then_some(leaf.path.len())
+}
+
+/// The item list or source file around the module whose items are `module`,
+/// when this file holds it.
+fn enclosing_module_items(module: &SyntaxNode) -> Option<SyntaxNode> {
+    module
+        .parent()
+        .filter(|owner| ast::Module::can_cast(owner.kind()))
+        .and_then(|owner| owner.parent())
+}
+
+/// Scope-blind: whether any `use` or `extern crate` of the file binds
+/// `test`.
+fn file_binds_test_name(file: &SyntaxNode) -> bool {
+    file.descendants().any(|item| {
+        if let Some(extern_crate) = ast::ExternCrate::cast(item.clone()) {
+            return extern_crate
+                .rename()
+                .and_then(|rename| rename.name())
+                .is_some_and(|name| unraw(name.text()) == "test");
+        }
+        let Some(tree) = ast::Use::cast(item).and_then(|import| import.use_tree()) else {
+            return false;
+        };
+        let mut leaves = Vec::new();
+        flatten_use_tree(&tree, &[], &mut leaves);
+        leaves.iter().any(
+            |leaf| matches!(&leaf.binding, UseBinding::Name(binding) if unraw(binding) == "test"),
+        )
+    })
 }
 
 /// `tokio::test`, rooted or not. Only the crate-qualified path: a bare
@@ -2735,6 +3624,107 @@ fn rstest_leaf_bound(name: &str, module: &SyntaxNode) -> Option<&'static str> {
     bound
 }
 
+/// Whether `path` names the `test_case` crate's attribute in `module`:
+/// `test_case::test_case` (rooted or not), or a bare `test_case` bound to it
+/// by exactly one explicit unrenamed `use test_case::test_case`. A rename is
+/// not discovered as a test, so it is not admitted here either; the caller
+/// still checks that `test_case` in that path is the crate.
+fn is_test_case_path(path: &str, module: &SyntaxNode) -> bool {
+    path.strip_prefix("::").unwrap_or(path) == "test_case::test_case"
+        || (path == "test_case" && test_case_leaf_bound(module))
+}
+
+/// Whether the bare name `test_case` is bound in `module` by exactly one
+/// explicit `use test_case::test_case`; globs and any second binding of the
+/// name refuse (compare [`rstest_leaf_bound`]).
+fn test_case_leaf_bound(module: &SyntaxNode) -> bool {
+    let mut bound = false;
+    for leaf in module_use_leaves(module) {
+        let UseBinding::Name(binding) = &leaf.binding else {
+            continue;
+        };
+        if unraw(binding) != "test_case" {
+            continue;
+        }
+        if bound || leaf.path != ["test_case", "test_case"] {
+            return false;
+        }
+        bound = true;
+    }
+    bound
+}
+
+/// Whether a `test_case` attribute on `test` leaves each generated test
+/// running the body unchanged with literal row values. `test_case` turns
+/// `#[test_case(3, 6)] fn t(n: u64, expected: u64)` into one `#[test]` per
+/// row that calls the function with the row's values. Admitted only when
+/// `test_case` is the crate in the test's module, every parameter is a plain
+/// immutable binding, and every row holds exactly one scalar literal per
+/// parameter. The `=> literal` form (RIPR-SPEC-0231 rule 9, a generated
+/// comparison the fact producer reads as `assert_eq!`) is admitted when the
+/// body is one returned expression; `matches`/`with` forms, other `=>`
+/// shapes, string or computed values (which could call the owner) all refuse.
+fn test_case_runs_body(attr: &ast::Attr, test: &SyntaxNode, module: &SyntaxNode) -> bool {
+    if attr.excl_token().is_some() {
+        return false;
+    }
+    let Some(function) = ast::Fn::cast(test.clone()) else {
+        return false;
+    };
+    // RIPR-SPEC-0231 harness-compared return: the one `=> literal` row whose
+    // generated comparison the fact producer reads as `assert_eq!`.
+    let arrow = crate::analysis::extract::arrow_row_is_read(
+        &function
+            .attrs()
+            .map(|attr| attr.syntax().text().to_string())
+            .collect::<Vec<_>>(),
+        &attr.syntax().text().to_string(),
+        &function,
+    );
+    extern_crate_path_holds(module, "test_case")
+        && test_case_parameters(&function)
+            .is_some_and(|parameters| case_row_literals(attr, arrow) == Some(parameters))
+}
+
+/// The number of parameters of a `#[test_case]` function when every one is a
+/// plain immutable `ident: Type` binding without attributes; `None`
+/// otherwise. Unlike rstest there are no fixtures: every parameter is filled
+/// from the row, and a `mut` one could be reassigned in the body where no
+/// binding scan sees it.
+fn test_case_parameters(function: &ast::Fn) -> Option<usize> {
+    if function.generic_param_list().is_some() || function.where_clause().is_some() {
+        return None;
+    }
+    let list = function.param_list()?;
+    if list.self_param().is_some() {
+        return None;
+    }
+    let mut count = 0;
+    for param in list.params() {
+        let ast::Pat::IdentPat(pat) = param.pat()? else {
+            return None;
+        };
+        if pat.ref_token().is_some()
+            || pat.mut_token().is_some()
+            || pat.pat().is_some()
+            || matches!(param.ty(), Some(ast::Type::ImplTraitType(_)))
+            || param.attrs().next().is_some()
+        {
+            return None;
+        }
+        count += 1;
+    }
+    Some(count)
+}
+
+/// Whether `attr` is the `test_case` crate's attribute, which emits a module
+/// named after the function it decorates and nothing else.
+fn test_case_attribute_trusted(attr: &ast::Attr, module: &SyntaxNode) -> bool {
+    attr.path().is_some_and(|path| {
+        is_test_case_path(&path.syntax().text().to_string().replace(' ', ""), module)
+    })
+}
+
 fn is_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     chars
@@ -2796,7 +3786,7 @@ fn rstest_runs_body(
         }
         RstestAttribute::Case => {
             attr.syntax().text_range().start() > *rstest_at
-                && case_row_literals(attr) == Some(parameters)
+                && case_row_literals(attr, false) == Some(parameters)
         }
     }
 }
@@ -2855,7 +3845,7 @@ fn case_parameters(function: &ast::Fn) -> Option<usize> {
 
 /// The number of values in a case row when each is a non-string literal,
 /// `-literal`, `true` or `false`; `None` for anything else.
-fn case_row_literals(attr: &ast::Attr) -> Option<usize> {
+fn case_row_literals(attr: &ast::Attr, arrow: bool) -> Option<usize> {
     let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
         return None;
     };
@@ -2871,6 +3861,18 @@ fn case_row_literals(attr: &ast::Attr) -> Option<usize> {
     if first.text() != "(" || last.text() != ")" {
         return None;
     }
+    // An admitted `=> literal` row (validated by `arrow_row_is_read`) is read
+    // up to its arrow; any other arrow form stays unread.
+    // The token tree may spell the arrow as one token or as `=` `>`.
+    let arrow_at = inner.iter().enumerate().position(|(at, token)| {
+        token.text() == "=>"
+            || (token.text() == "=" && inner.get(at + 1).is_some_and(|next| next.text() == ">"))
+    });
+    let inner = match arrow_at {
+        Some(at) if arrow => &inner[..at],
+        Some(_) => return None,
+        None => inner,
+    };
     let mut count = 0;
     for value in inner.split(|token| token.text() == ",") {
         // A string literal reaches the parameter through `FromStr`, which
@@ -2970,7 +3972,7 @@ fn extern_crate_path_holds(module: &SyntaxNode, krate: &str) -> bool {
 
 /// Crates whose own attributes a module check may trust (see
 /// [`extern_crate_path_holds`]).
-const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &["serial_test", "tokio", "rstest"];
+const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &["serial_test", "tokio", "rstest", "test_case"];
 
 /// Whether a direct item of `module` carries an attribute of `krate`: a
 /// `krate::..` path, or for `serial_test` a bare name bound to a lock.
@@ -2990,6 +3992,7 @@ fn crate_attribute_appears(module: &SyntaxNode, krate: &str) -> bool {
                     && !path.contains("::")
                     && bare_lock_bound_in_module(&path, module))
                 || (krate == "rstest" && rstest_attribute_trusted(&attr, module))
+                || (krate == "test_case" && test_case_attribute_trusted(&attr, module))
         })
 }
 
@@ -3001,15 +4004,16 @@ fn extern_crate_holds_trusting(module: &SyntaxNode, krate: &str, trusted: &[&str
         {
             return false;
         }
-        // `#[rstest]` and `#[fixture]` emit items named after the function
-        // they decorate (a module of cases, a fixture struct).
+        // `#[rstest]`, `#[fixture]` and `#[test_case]` emit items named after
+        // the function they decorate (a module of cases, a fixture struct).
         if let ast::Item::Fn(function) = &item
             && function
                 .name()
                 .is_some_and(|name| unraw(name.text()) == krate)
-            && function
-                .attrs()
-                .any(|attr| rstest_attribute_trusted(&attr, module))
+            && function.attrs().any(|attr| {
+                rstest_attribute_trusted(&attr, module)
+                    || test_case_attribute_trusted(&attr, module)
+            })
         {
             return false;
         }
@@ -3042,10 +4046,11 @@ fn extern_crate_holds_trusting(module: &SyntaxNode, krate: &str, trusted: &[&str
     for leaf in module_use_leaves(module) {
         match &leaf.binding {
             UseBinding::Name(binding) => {
-                // `use rstest::rstest` binds the attribute macro, which
+                // `use rstest::rstest` (or `use test_case::test_case`) binds the attribute macro, which
                 // leaves the crate's path in the type namespace untouched.
                 let real = (leaf.path.len() == 1 && leaf.path[0] == krate)
-                    || (krate == "rstest" && leaf.path == ["rstest", "rstest"]);
+                    || (krate == "rstest" && leaf.path == ["rstest", "rstest"])
+                    || (krate == "test_case" && leaf.path == ["test_case", "test_case"]);
                 if unraw(binding) == krate && !real {
                     return false;
                 }
@@ -3121,24 +4126,40 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode, trusted: &[&s
     if rstest_attribute_trusted(attr, module) {
         return trusted.contains(&"rstest");
     }
+    if test_case_attribute_trusted(attr, module) {
+        return trusted.contains(&"test_case");
+    }
     if path == "derive" {
-        let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
-            return false;
-        };
-        return meta.token_tree().is_some_and(|tree| {
-            let text = tree.syntax().text().to_string();
-            text.trim_start_matches('(')
-                .trim_end_matches(')')
-                .split(',')
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .all(|name| STD_DERIVES.contains(&name))
-        });
+        return standard_derive_names(attr).is_some();
     }
     BUILTIN.contains(&path.as_str())
         || (trusted.contains(&"serial_test")
             && !path.contains("::")
             && bare_lock_bound_in_module(&path, module))
+}
+
+/// Names accepted by the existing standard-derive grammar. This recognizes
+/// syntax only: callers must separately establish the macro bindings and
+/// close any opaque item expansion before trusting these derives.
+pub(crate) fn standard_derive_names(attr: &ast::Attr) -> Option<Vec<String>> {
+    if attr.path()?.syntax().text().to_string().replace(' ', "") != "derive" {
+        return None;
+    }
+    let ast::Meta::TokenTreeMeta(meta) = attr.meta()? else {
+        return None;
+    };
+    let text = meta.token_tree()?.syntax().text().to_string();
+    let names = text
+        .trim_start_matches('(')
+        .trim_end_matches(')')
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+    names
+        .iter()
+        .all(|name| STD_DERIVES.contains(name))
+        .then(|| names.into_iter().map(str::to_string).collect())
 }
 
 const STD_DERIVES: &[&str] = &[
@@ -3305,6 +4326,18 @@ fn has_escape(
     empty: &BTreeMap<String, ast::MacroRules>,
     json_uses: &[ast::Use],
 ) -> Option<AssertionContextRefusal> {
+    has_escape_among(body, trusted, empty, json_uses, &[])
+}
+
+/// [`has_escape`] with `plain_nested` names also read as plain nested
+/// expansions in a macro operand.
+fn has_escape_among(
+    body: &SyntaxNode,
+    trusted: &[&str],
+    empty: &BTreeMap<String, ast::MacroRules>,
+    json_uses: &[ast::Use],
+    plain_nested: &[&str],
+) -> Option<AssertionContextRefusal> {
     body.descendants().find_map(|node| {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
             // Discarded arguments are not executed. Cross-file/import/shadow
@@ -3330,7 +4363,11 @@ fn has_escape(
             // Macro operands are opaque to AST descendant walks. Refuse
             // hidden exits and nested expansion, but not boolean negation.
             if call.token_tree().is_some_and(|tree| {
-                opaque_macro_operand_with_json(&tree, || trusted.contains(&"json") && json_visible)
+                opaque_macro_operand_with_json(
+                    &tree,
+                    trusted.contains(&"json") && json_visible,
+                    plain_nested,
+                )
             }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
             }
@@ -3356,17 +4393,28 @@ fn has_escape(
     })
 }
 
+/// Whether `node` holds anything the shared owner-pin escape authority
+/// ([`has_escape`]) refuses with the full [`TRUSTED_MACRO_NAMES`] set and no
+/// recorded bindings: a macro outside that set, a trusted macro whose operand
+/// tokens hide an exit (`return`, `break`, `continue`, `yield`, `?`) or a
+/// nested expansion, and any `return`/`?`/`yield` owned by a closure inside
+/// `node`. The closure part is stricter than a plain early-exit scan: a
+/// closure's own exit also refuses. The same-file callback-helper producer
+/// (#9981) gates its credit on this before copying any facts, so diff output
+/// and the repo-exposure consumer agree on what may have exited.
+pub(crate) fn node_has_macro_escape(node: &SyntaxNode) -> bool {
+    has_escape(node, TRUSTED_MACRO_NAMES, &BTreeMap::new(), &[]).is_some()
+}
+
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
-    opaque_macro_operand_with_json(tree, || false)
+    opaque_macro_operand_with_json(tree, false, &[])
 }
 
 fn opaque_macro_operand_with_json(
     tree: &ast::TokenTree,
-    mut literal_json: impl FnMut() -> bool,
+    literal_json: bool,
+    plain_nested: &[&str],
 ) -> bool {
-    // Import visibility walks the enclosing file. Only a plain nested json!
-    // needs that authority, shared by this invocation's operands only.
-    let mut json_authority = None;
     let tokens = operand_tokens(tree);
     tokens.iter().any(|token| {
         matches!(
@@ -3376,7 +4424,8 @@ fn opaque_macro_operand_with_json(
     }) || nested_invocations(&tokens).any(|(name, plain)| {
         !(plain
             && (NESTED_EXPANSIONS.contains(&name)
-                || name == "json" && *json_authority.get_or_insert_with(&mut literal_json)))
+                || plain_nested.contains(&name)
+                || name == "json" && literal_json))
     }) || tokens.windows(3).enumerate().any(|(at, window)| {
         window[0].text() == "json"
             && window[1].text() == "!"
@@ -3390,6 +4439,13 @@ fn opaque_macro_operand_with_json(
 /// token scan above already reads for exits; its binding is checked with the
 /// invoking macros'.
 const NESTED_EXPANSIONS: &[&str] = &["matches", "format", "vec"];
+
+/// Pure comparison macros of `float_cmp` and `approx` (#10389). They expand
+/// to a boolean over their operands, but ripr does not expand third-party
+/// macros, so the nested spelling is only read as plain by the return-value
+/// boolean-assert carve-out, which also proves the import by name.
+pub(crate) const COMPARISON_NESTED_MACROS: &[&str] =
+    &["approx_eq", "relative_eq", "abs_diff_eq", "ulps_eq"];
 
 fn operand_tokens(tree: &ast::TokenTree) -> Vec<ra_ap_syntax::SyntaxToken> {
     tree.syntax()
@@ -3458,15 +4514,30 @@ fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {
     trusted.contains(&path)
 }
 
+/// The assertion macros the owner-pin collectors read (#8983), in the test body
+/// and in the check helpers it calls.
+const ASSERTION_CANDIDATES: [&str; 6] = [
+    "assert_eq",
+    "assert",
+    "debug_assert_eq",
+    "assert_ne",
+    "debug_assert_ne",
+    "debug_assert",
+];
+
 /// A macro path that may be one of the `leaves` assertions: the bare name,
-/// or `assert_eq` under a `std`/`core` root (#7857). A qualified candidate
+/// or `assert_eq` / `assert` under a `std`/`core` root (#7857, #8927). A qualified candidate
 /// is admitted only when [`has_escape`] finds its root unrebound, so a
 /// rebinding refuses the whole test with the path named.
 fn names_candidate_assertion(path: &str, leaves: &[&str]) -> bool {
     let path: String = path.split_whitespace().collect();
     let unrooted = path.strip_prefix("::").unwrap_or(&path);
     match unrooted.split_once("::") {
-        Some(("std" | "core", "assert_eq")) => leaves.contains(&"assert_eq"),
+        Some((
+            "std" | "core",
+            leaf @ ("assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" | "assert"
+            | "debug_assert"),
+        )) => leaves.contains(&leaf),
         Some(_) => false,
         None => leaves.contains(&unrooted),
     }
@@ -3474,14 +4545,22 @@ fn names_candidate_assertion(path: &str, leaves: &[&str]) -> bool {
 
 /// `std::assert_eq!` or `::core::assert_eq!` under a root nothing in the
 /// file can rebind runs as the standard macro, so it is no escape (#7857).
-/// Only `assert_eq` qualifies: the pin reads no other qualified macro, and
-/// the classify side adds the workspace root proof for the credited one.
+/// Only the six admitted assertion macros qualify (#8983): the classify side
+/// adds the workspace root proof for the credited one.
 fn is_standard_qualified_macro(path: &str, call: &ast::MacroCall, trusted: &[&str]) -> bool {
     // The parser keeps the spacing of `std :: assert_eq`.
     let path: String = path.split_whitespace().collect();
-    path.rsplit("::").next() == Some("assert_eq")
-        && trusted.contains(&"assert_eq")
-        && std_macro_root_is_unrebound(&path, call.syntax())
+    path.rsplit("::").next().is_some_and(|leaf| {
+        matches!(
+            leaf,
+            "assert_eq"
+                | "assert_ne"
+                | "debug_assert_eq"
+                | "debug_assert_ne"
+                | "assert"
+                | "debug_assert"
+        ) && trusted.contains(&leaf)
+    }) && std_macro_root_is_unrebound(&path, call.syntax())
 }
 
 /// `Ok` when the invocation runs on every execution of the test body;
@@ -3538,7 +4617,12 @@ fn eager_path(
         }
         if let Some(block) = ast::BlockExpr::cast(parent.clone()) {
             if block.async_token().is_some() {
-                return Err("an `async` block");
+                // `tokio::spawn(async { .. }).await.unwrap()` re-raises the
+                // task's panic on the test task, like a joined thread.
+                let Some(joined) = spawned_task_reaching_test(&block, function) else {
+                    return Err("an `async` block");
+                };
+                return eager_path(joined, function, true, first_return);
             }
             if block.const_token().is_some()
                 || block.gen_token().is_some()
@@ -3707,7 +4791,23 @@ fn bound_constant_rows(
 /// must be a tuple of the pattern's arity. `None` when any part is not
 /// established.
 pub(crate) fn constant_table_column(fn_text: &str, name: &str) -> Option<Vec<String>> {
-    table_column(fn_text, name).map(|(column, _)| column)
+    table_column(fn_text, name, None).map(|(column, _, _)| column)
+}
+
+/// [`constant_table_column`] for a loop that opens with one skip guard,
+/// `if SKIPPED.contains(&row_key) { continue; }`, over a `const SKIPPED:
+/// &[&str]` of plain string literals declared once in `module_source`
+/// (RIPR-SPEC-0229 decision 7): the cells of the rows the guard lets
+/// through, so a listed row never counts as run. `None` when any part is
+/// not established, including when the loop holds no such guard.
+pub(crate) fn skipping_table_column(
+    fn_text: &str,
+    name: &str,
+    module_source: &str,
+) -> Option<Vec<String>> {
+    table_column(fn_text, name, Some(module_source))
+        .filter(|(_, _, guarded)| *guarded)
+        .map(|(column, _, _)| column)
 }
 
 /// [`constant_table_column`], but only when the table's loop body holds
@@ -3718,12 +4818,19 @@ pub(crate) fn constant_table_column_around(
     name: &str,
     at: usize,
 ) -> Option<Vec<String>> {
-    let (column, body) = table_column(fn_text, name)?;
+    let (column, body, _) = table_column(fn_text, name, None)?;
     body.contains(&at).then_some(column)
 }
 
-/// The column and the byte range of its loop body.
-fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Range<usize>)> {
+/// The column, the byte range of its loop body, and whether a skip guard
+/// filtered the rows. `module_source` admits the one guard shape
+/// [`skipping_table_column`] reads; without it any `if` or `continue` in the
+/// body refuses the table.
+fn table_column(
+    fn_text: &str,
+    name: &str,
+    module_source: Option<&str>,
+) -> Option<(Vec<String>, std::ops::Range<usize>, bool)> {
     // Most tests hold no `for` at all; skip the parse for them.
     if !fn_text.contains("for") || !fn_text.contains(name) {
         return None;
@@ -3752,11 +4859,20 @@ fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Ran
         return None;
     }
     let parent = pattern.syntax().parent()?;
+    let mut row_keys: Vec<(String, Option<usize>)> = Vec::new();
     let (table, position) = if let Some(table) = ast::ForExpr::cast(parent.clone()) {
+        row_keys.push((name.to_string(), None));
         (table, None)
     } else {
         let tuple = ast::TuplePat::cast(parent)?;
         let fields: Vec<_> = tuple.fields().collect();
+        for (index, field) in fields.iter().enumerate() {
+            if let ast::Pat::IdentPat(ident) = field
+                && let Some(bound) = ident.name()
+            {
+                row_keys.push((bound.text().to_string(), Some(index)));
+            }
+        }
         if fields
             .iter()
             .any(|field| !matches!(field, ast::Pat::IdentPat(_) | ast::Pat::WildcardPat(_)))
@@ -3785,10 +4901,13 @@ fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Ran
     // `|` may open a closure that never runs, and `&&` or `||` may skip the
     // call on its right.
     let body = table.loop_body()?;
+    let guard = module_source.and_then(|source| skip_guard(&body, &row_keys, source));
+    let guard_range = guard.as_ref().map(|found| found.range);
     if body
         .syntax()
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
+        .filter(|token| !guard_range.is_some_and(|range| range.contains_range(token.text_range())))
         .any(|token| {
             matches!(
                 token.text(),
@@ -3803,6 +4922,8 @@ fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Ran
                     | "|"
                     | "||"
                     | "&&"
+                    // `?` leaves the test on an error, so later rows may not run.
+                    | "?"
             )
         })
     {
@@ -3835,11 +4956,11 @@ fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Ran
     let rows = constant_row_array(&table, &function)?;
     let range = body.syntax().text_range();
     let body_range = usize::from(range.start())..usize::from(range.end());
-    let column = rows
-        .exprs()
-        .map(|row| match position {
+    let arity = row_arity(&table)?;
+    let cell = |row: &ast::Expr, at: Option<usize>| -> Option<String> {
+        match at {
             None => Some(row.syntax().text().to_string()),
-            Some((index, arity)) => {
+            Some(index) => {
                 let ast::Expr::TupleExpr(tuple) = row else {
                     return None;
                 };
@@ -3851,9 +4972,200 @@ fn table_column(fn_text: &str, name: &str) -> Option<(Vec<String>, std::ops::Ran
                     .get(index)
                     .map(|cell| cell.syntax().text().to_string())
             }
+        }
+    };
+    let mut column = Vec::new();
+    for row in rows.exprs() {
+        let skipped = match &guard {
+            Some(found) => found.skips(&cell(&row, found.position)?)?,
+            None => false,
+        };
+        let value = cell(&row, position.map(|(index, _)| index))?;
+        if !skipped {
+            column.push(value);
+        }
+    }
+    Some((column, body_range, guard.is_some()))
+}
+
+/// The arity of the tuple pattern a `for` binds, 0 for a plain identifier.
+fn row_arity(table: &ast::ForExpr) -> Option<usize> {
+    match table.pat()? {
+        ast::Pat::TuplePat(tuple) => Some(tuple.fields().count()),
+        _ => Some(0),
+    }
+}
+
+/// A loop body's opening `if SKIPPED.contains(&key) { continue; }`.
+struct SkipGuard {
+    /// The guard statement's range, left out of the early-exit scan.
+    range: ra_ap_syntax::TextRange,
+    /// The tuple position of `key`, `None` when the pattern is `key` alone.
+    position: Option<usize>,
+    /// The skipped cells, plain string literals.
+    skipped: Vec<String>,
+}
+
+impl SkipGuard {
+    /// Whether the row whose key cell is `cell` is skipped; `None` when the
+    /// cell is not a plain string literal and so cannot be compared.
+    fn skips(&self, cell: &str) -> Option<bool> {
+        plain_string_literal(cell)?;
+        Some(self.skipped.iter().any(|listed| listed == cell))
+    }
+}
+
+/// A `"..."` literal with no escape, so equal text is equal value.
+fn plain_string_literal(text: &str) -> Option<&str> {
+    let inner = text.strip_prefix('"')?.strip_suffix('"')?;
+    (!inner.contains(['"', '\\'])).then_some(inner)
+}
+
+/// The guard `if SKIPPED.contains(&key) { continue; }` as the first
+/// statement of `body`, `key` bound by the loop pattern and `SKIPPED` a
+/// `const &[&str]` of plain string literals declared once in `source` and
+/// named by no `use`.
+fn skip_guard(
+    body: &ast::BlockExpr,
+    row_keys: &[(String, Option<usize>)],
+    source: &str,
+) -> Option<SkipGuard> {
+    let statements = body.stmt_list()?;
+    let first = statements.statements().next()?;
+    let ast::Stmt::ExprStmt(statement) = first else {
+        return None;
+    };
+    let ast::Expr::IfExpr(branch) = statement.expr()? else {
+        return None;
+    };
+    if branch.else_branch().is_some() {
+        return None;
+    }
+    let ast::Expr::MethodCallExpr(call) = branch.condition()? else {
+        return None;
+    };
+    if call.name_ref()?.text() != "contains" || call.generic_arg_list().is_some() {
+        return None;
+    }
+    let mut arguments = call.arg_list()?.args();
+    let ast::Expr::RefExpr(reference) = arguments.next()? else {
+        return None;
+    };
+    if arguments.next().is_some() || reference.mut_token().is_some() {
+        return None;
+    }
+    let key = single_name(&reference.expr()?)?;
+    let list = single_name(&call.receiver()?)?;
+    let position = row_keys
+        .iter()
+        .find(|(bound, _)| *bound == key)
+        .map(|(_, position)| *position)?;
+    let then = branch.then_branch()?;
+    let only = then.stmt_list()?;
+    if only.tail_expr().is_some() {
+        return None;
+    }
+    let mut inside = only.statements();
+    let ast::Stmt::ExprStmt(exit) = inside.next()? else {
+        return None;
+    };
+    if inside.next().is_some()
+        || !matches!(exit.expr()?, ast::Expr::ContinueExpr(ref jump) if jump.lifetime().is_none())
+    {
+        return None;
+    }
+    Some(SkipGuard {
+        range: statement.syntax().text_range(),
+        position,
+        skipped: skip_list(source, &list)?,
+    })
+}
+
+/// `name` when `expr` is a bare, unqualified identifier path.
+fn single_name(expr: &ast::Expr) -> Option<String> {
+    let ast::Expr::PathExpr(path) = expr else {
+        return None;
+    };
+    let path = path.path()?;
+    (path.qualifier().is_none() && path.segment()?.generic_arg_list().is_none())
+        .then(|| {
+            path.segment()?
+                .name_ref()
+                .map(|name| name.text().to_string())
         })
-        .collect::<Option<Vec<_>>>()?;
-    Some((column, body_range))
+        .flatten()
+}
+
+/// The string literals of `const NAME: &[&str] = &[..];` when `source`
+/// declares `NAME` exactly once, with no attribute, and no `use` names it.
+fn skip_list(source: &str, name: &str) -> Option<Vec<String>> {
+    let parse = parse_clean_source_file(source)?;
+    let tree = parse.tree();
+    let mut declarations = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::AnyHasName::cast)
+        .filter(|named| named.name().is_some_and(|bound| bound.text() == name));
+    let declaration = ast::Const::cast(declarations.next()?.syntax().clone())?;
+    // A glob import may bring in another module's `name`, and this reads the
+    // file's only declaration, so any glob but `super::*` inside an inline
+    // `mod` (which re-exports this file's own names) leaves the binding open.
+    let globbed = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|item| {
+            let inline_super = item.syntax().ancestors().skip(1).any(|node| {
+                ast::Module::cast(node).is_some_and(|module| module.item_list().is_some())
+            }) && item.use_tree().is_some_and(|tree| {
+                tree.syntax()
+                    .text()
+                    .to_string()
+                    .split_whitespace()
+                    .collect::<String>()
+                    == "super::*"
+            });
+            !inline_super
+                && item.syntax().descendants().any(|node| {
+                    ast::UseTree::cast(node).is_some_and(|inner| inner.star_token().is_some())
+                })
+        });
+    if globbed
+        || declarations.next().is_some()
+        || declaration
+            .syntax()
+            .children()
+            .any(|node| ast::Attr::can_cast(node.kind()))
+        || tree
+            .syntax()
+            .descendants()
+            .filter_map(ast::Use::cast)
+            .any(|item| {
+                item.syntax()
+                    .descendants()
+                    .filter_map(ast::NameRef::cast)
+                    .any(|used| used.text() == name)
+            })
+    {
+        return None;
+    }
+    let ast::Expr::RefExpr(reference) = declaration.body()? else {
+        return None;
+    };
+    let ast::Expr::ArrayExpr(items) = reference.expr()? else {
+        return None;
+    };
+    if items.semicolon_token().is_some() {
+        return None;
+    }
+    items
+        .exprs()
+        .map(|item| {
+            let text = item.syntax().text().to_string();
+            plain_string_literal(&text)?;
+            Some(text)
+        })
+        .collect()
 }
 
 fn constant_rows(rows: &ast::ArrayExpr) -> bool {
@@ -4001,13 +5313,20 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
         .collect();
     // `::thread::` names an extern crate `thread`, never the imported std
     // module, so only `::std::thread::` keeps its leading `::`.
-    let (item, needs_import) = if let Some(item) = text
+    // A bare `scope(..)` / `spawn(..)` (#8999) names std's function only
+    // through exactly one `use std::thread::<item>;` in the function's own
+    // module, and only when nothing else in the file is named `<item>`.
+    let (item, needs_import, bare) = if let Some(item) = text
         .strip_prefix("::std::thread::")
         .or_else(|| text.strip_prefix("std::thread::"))
     {
-        (item, false)
+        (item, false, false)
+    } else if let Some(item) = text.strip_prefix("thread::") {
+        (item, true, false)
+    } else if matches!(text.as_str(), "scope" | "spawn") {
+        (text.as_str(), true, true)
     } else {
-        (text.strip_prefix("thread::")?, true)
+        return None;
     };
     if !item
         .chars()
@@ -4037,7 +5356,8 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
             ra_ap_syntax::NodeOrToken::Node(node) => node,
         };
         if let Some(name) = ast::Name::cast(node.clone()) {
-            if matches!(name.text().trim_start_matches("r#"), "std" | "thread") {
+            let name = name.text().trim_start_matches("r#");
+            if matches!(name, "std" | "thread") || bare && name == item {
                 return None;
             }
             continue;
@@ -4108,7 +5428,19 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
             .syntax()
             .parent()
             .filter(|parent| ast::Use::can_cast(parent.kind()));
-        if path_text == "std::thread" && tree.rename().is_none() && direct_use.is_some() {
+        let std_item_import = bare
+            && path_text == format!("std::thread::{item}")
+            && tree.rename().is_none()
+            && direct_use.is_some();
+        if std_item_import {
+            // Only the whole `use std::thread::<item>;` imports the std
+            // function; any other leaf ending in `<item>` may be another.
+            imported |= direct_use
+                .and_then(|parent| parent.parent())
+                .is_some_and(|container| container == module);
+        } else if bare && last == item {
+            return None;
+        } else if path_text == "std::thread" && tree.rename().is_none() && direct_use.is_some() {
             imported |= direct_use
                 .and_then(|parent| parent.parent())
                 .is_some_and(|container| container == module);
@@ -4262,6 +5594,150 @@ fn spawned_thread_reaching_test(
     joined_and_unwrapped(spawn.syntax())
 }
 
+/// Where a spawned task's panic reaches the test task, for an `async` block
+/// that is the only argument of `tokio::spawn(..)` chained directly into
+/// `.await.unwrap()` or `.await.expect(..)` (RIPR-SPEC-0197): the awaited
+/// `JoinHandle` yields the task's panic as a `JoinError`, which `unwrap`
+/// re-raises. The test must be a `#[tokio::test]` that
+/// [`tokio_test_runs_body`] admits, and nothing in the file may be named
+/// `tokio` or `spawn`, so the path names the real crate's function.
+///
+/// Returns the expression from which the test task continues. A detached
+/// task, a handle kept in a binding, and an `.await` whose result is dropped,
+/// matched or converted lose the panic and stay refused.
+fn spawned_task_reaching_test(block: &ast::BlockExpr, function: &ast::Fn) -> Option<SyntaxNode> {
+    if block.const_token().is_some()
+        || block.gen_token().is_some()
+        || block.try_block_modifier().is_some()
+        || block.label().is_some()
+    {
+        return None;
+    }
+    // `first_return` skips a `return` owned by an `async` block and the escape
+    // gate only reads closures, so an exit inside this block would skip the
+    // assertion unseen: refuse any `return` or `?` the block itself owns,
+    // including inside macro tokens.
+    let owns_exit = block
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| {
+            matches!(
+                token.kind(),
+                ra_ap_syntax::SyntaxKind::RETURN_KW | ra_ap_syntax::SyntaxKind::QUESTION
+            )
+        })
+        .any(|token| {
+            token
+                .parent_ancestors()
+                .find(|node| {
+                    ast::ClosureExpr::can_cast(node.kind())
+                        || ast::Fn::can_cast(node.kind())
+                        || ast::BlockExpr::cast(node.clone())
+                            .is_some_and(|inner| inner.async_token().is_some())
+                })
+                .is_some_and(|owner| owner == *block.syntax())
+        });
+    if owns_exit {
+        return None;
+    }
+    let args = block.syntax().parent().and_then(ast::ArgList::cast)?;
+    if args.args().count() != 1 {
+        return None;
+    }
+    let call = args.syntax().parent().and_then(ast::CallExpr::cast)?;
+    let ast::Expr::PathExpr(path) = call.expr()? else {
+        return None;
+    };
+    let text: String = path
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    if text.strip_prefix("::").unwrap_or(&text) != "tokio::spawn"
+        || path
+            .path()?
+            .segments()
+            .any(|segment| segment.generic_arg_list().is_some())
+    {
+        return None;
+    }
+    if !function
+        .attrs()
+        .any(|attr| tokio_test_runs_body(&attr, function.syntax()))
+    {
+        return None;
+    }
+    let file = function.syntax().ancestors().last()?;
+    if file
+        .descendants()
+        .filter_map(ast::Name::cast)
+        .any(|name| matches!(unraw(name.text()), "tokio" | "spawn"))
+    {
+        return None;
+    }
+    // A `use` can supply `tokio` or `spawn` without declaring a `Name`: a
+    // glob import may pull in another module's `tokio`, and a path segment such
+    // as `crate::fake::tokio` is a `NameRef`. Only the crate's own
+    // `use tokio::..` keeps the spelling honest.
+    let rebinds_through_use = file.descendants().filter_map(ast::Use::cast).any(|item| {
+        let Some(tree) = item.use_tree() else {
+            return true;
+        };
+        let own_root = tree
+            .path()
+            .and_then(|path| path.first_segment())
+            .and_then(|segment| segment.name_ref());
+        // `use super::*;` inside an inline `mod` only re-exports names this
+        // file declares, which the scan above already covers.
+        let parent_glob =
+            item.syntax().ancestors().skip(1).any(|node| {
+                ast::Module::cast(node).is_some_and(|module| module.item_list().is_some())
+            }) && tree
+                .syntax()
+                .text()
+                .to_string()
+                .split_whitespace()
+                .collect::<String>()
+                == "super::*";
+        tree.syntax().descendants().any(|node| {
+            ast::UseTree::cast(node.clone())
+                .is_some_and(|inner| inner.star_token().is_some() && !parent_glob)
+                || ast::NameRef::cast(node.clone()).is_some_and(|name| {
+                    matches!(unraw(name.text()), "tokio" | "spawn")
+                        && !(unraw(name.text()) == "tokio"
+                            && own_root.as_ref().is_some_and(|root| root == &name))
+                })
+        })
+    });
+    if rebinds_through_use {
+        return None;
+    }
+    let awaited = call.syntax().parent().and_then(ast::AwaitExpr::cast)?;
+    if awaited.expr()?.syntax() != call.syntax() {
+        return None;
+    }
+    let parent = awaited.syntax().parent()?;
+    let outer = ast::MethodCallExpr::cast(parent)?;
+    let arguments = outer.arg_list()?.args().count();
+    let name = outer.name_ref()?;
+    // The `expect` message runs before `expect` does, so only a literal keeps
+    // an exit out of the call.
+    let message_is_literal = arguments == 0
+        || outer
+            .arg_list()?
+            .args()
+            .all(|argument| matches!(argument, ast::Expr::Literal(_)));
+    (message_is_literal
+        && (outer.receiver()?.syntax() == awaited.syntax())
+        && outer.generic_arg_list().is_none()
+        && ((name.text() == "unwrap" && arguments == 0)
+            || (name.text() == "expect" && arguments == 1)))
+        .then(|| outer.syntax().clone())
+}
+
 /// `<spawned>.join().unwrap()` or `<spawned>.join().expect(..)`: the outer
 /// call, which panics on the test thread when the spawned thread panicked.
 fn joined_and_unwrapped(spawned: &SyntaxNode) -> Option<SyntaxNode> {
@@ -4394,5 +5870,206 @@ mod binding_free_index_tests {
             1,
             "wrapper facts must be collected once per parsed file, not once per macro"
         );
+    }
+}
+
+#[cfg(test)]
+mod skipping_table_tests {
+    use super::*;
+
+    const SOURCE: &str = "const SKIPPED: &[&str] = &[\"gopher\"];\n";
+
+    /// The table written in the loop header, as `constant_row_array` reads it.
+    fn inline(guard: &str) -> String {
+        format!(
+            "fn rows() {{\n    for (scheme, want) in [(\"http\", Some(80)), (\"gopher\", Some(71)), (\"ftp\", Some(21))] {{\n        {guard}\n        assert_eq!(port(scheme), want);\n    }}\n}}\n"
+        )
+    }
+
+    const GUARD: &str = "if SKIPPED.contains(&scheme) { continue; }";
+
+    /// A glob import may bring a different `SKIPPED` into scope than the
+    /// file's own declaration, so the list is not read.
+    #[test]
+    fn a_glob_import_leaves_the_list_unestablished() {
+        let globbed = format!("use external_lists::*;\n{SOURCE}");
+        assert_eq!(
+            skipping_table_column(&inline(GUARD), "scheme", &globbed),
+            None
+        );
+        // `super::*` inside an inline module only re-exports this file's names.
+        let inner = format!("mod tests {{\n    use super::*;\n}}\n{SOURCE}");
+        assert!(skipping_table_column(&inline(GUARD), "scheme", &inner).is_some());
+    }
+
+    #[test]
+    fn a_listed_row_is_dropped_from_every_column() {
+        assert_eq!(
+            skipping_table_column(&inline(GUARD), "scheme", SOURCE),
+            Some(vec!["\"http\"".into(), "\"ftp\"".into()])
+        );
+        assert_eq!(
+            skipping_table_column(&inline(GUARD), "want", SOURCE),
+            Some(vec!["Some(80)".into(), "Some(21)".into()])
+        );
+    }
+
+    #[test]
+    fn the_plain_column_reader_still_refuses_a_guarded_loop() {
+        assert_eq!(constant_table_column(&inline(GUARD), "scheme"), None);
+    }
+
+    #[test]
+    fn a_loop_without_the_guard_is_not_a_skipping_table() {
+        let plain = inline("").replace("        \n", "");
+        assert_eq!(skipping_table_column(&plain, "scheme", SOURCE), None);
+    }
+
+    #[test]
+    fn only_the_exact_guard_shape_is_read() {
+        for (label, guard) in [
+            (
+                "an else branch",
+                "if SKIPPED.contains(&scheme) { continue; } else { }",
+            ),
+            (
+                "a labeled continue",
+                "if SKIPPED.contains(&scheme) { continue 'rows; }",
+            ),
+            ("a break", "if SKIPPED.contains(&scheme) { break; }"),
+            ("a return", "if SKIPPED.contains(&scheme) { return; }"),
+            (
+                "an extra statement",
+                "if SKIPPED.contains(&scheme) { let _x = 1; continue; }",
+            ),
+            (
+                "a negated test",
+                "if !SKIPPED.contains(&scheme) { continue; }",
+            ),
+            (
+                "a key the loop does not bind",
+                "if SKIPPED.contains(&other) { continue; }",
+            ),
+            (
+                "a different method",
+                "if SKIPPED.starts_with(&scheme) { continue; }",
+            ),
+            (
+                "a mutable borrow",
+                "if SKIPPED.contains(&mut scheme) { continue; }",
+            ),
+            (
+                "a qualified list",
+                "if m::SKIPPED.contains(&scheme) { continue; }",
+            ),
+        ] {
+            assert_eq!(
+                skipping_table_column(&inline(guard), "scheme", SOURCE),
+                None,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_skip_list_must_be_one_plain_literal_const() {
+        for (label, source) in [
+            (
+                "declared twice",
+                "const SKIPPED: &[&str] = &[\"gopher\"];\nmod m { const SKIPPED: &[&str] = &[\"ftp\"]; }\n",
+            ),
+            ("not declared", "const OTHER: &[&str] = &[\"gopher\"];\n"),
+            ("a static", "static SKIPPED: &[&str] = &[\"gopher\"];\n"),
+            (
+                "computed entry",
+                "const SKIPPED: &[&str] = &[\"gopher\", name()];\n",
+            ),
+            (
+                "an escaped entry",
+                "const SKIPPED: &[&str] = &[\"go\\u{70}her\"];\n",
+            ),
+            (
+                "a repeat form",
+                "const SKIPPED: &[&str] = &[\"gopher\"; 1];\n",
+            ),
+            (
+                "an attribute",
+                "#[cfg(any())]\nconst SKIPPED: &[&str] = &[\"gopher\"];\n",
+            ),
+            (
+                "an import of the name",
+                "use other::SKIPPED;\nconst SKIPPED: &[&str] = &[\"gopher\"];\n",
+            ),
+        ] {
+            assert_eq!(
+                skipping_table_column(&inline(GUARD), "scheme", source),
+                None,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_key_cell_that_is_not_a_plain_string_cannot_be_compared() {
+        let numbers = inline(GUARD).replace("\"http\"", "'h'");
+        assert_eq!(skipping_table_column(&numbers, "scheme", SOURCE), None);
+    }
+
+    #[test]
+    fn a_column_is_never_read_for_a_loop_that_skips_for_another_reason() {
+        let extra = inline("if want.is_none() { continue; }");
+        assert_eq!(skipping_table_column(&extra, "scheme", SOURCE), None);
+    }
+
+    #[test]
+    fn a_body_fingerprint_follows_the_text_exactly() {
+        assert_eq!(BodyFingerprint::of(""), BodyFingerprint::of(""));
+        assert_eq!(BodyFingerprint::of("é = 1;"), BodyFingerprint::of("é = 1;"));
+        assert_ne!(BodyFingerprint::of(""), BodyFingerprint::of(" "));
+        // Same length, one differing byte, and a multibyte character in place
+        // of two ASCII bytes.
+        assert_ne!(
+            BodyFingerprint::of("n = 12;"),
+            BodyFingerprint::of("n = 13;")
+        );
+        assert_ne!(BodyFingerprint::of("é"), BodyFingerprint::of("ab"));
+    }
+}
+
+#[cfg(test)]
+mod process_names_scan_tests {
+    use super::*;
+
+    /// The std-process imports are a property of the file. Reading them per
+    /// function walked the whole tree once per test, so a file of many tests
+    /// cost the product of its test count and its size.
+    #[test]
+    fn a_file_of_many_tests_reads_its_process_imports_once() {
+        let mut source = String::from("use std::process as p;\n");
+        for index in 0..40 {
+            source.push_str(&format!(
+                "#[test]\nfn t{index}() {{\n    assert_eq!(f({index}), {index});\n}}\n"
+            ));
+        }
+        STD_PROCESS_NAME_SCANS.with(|count| count.set(0));
+        let pins = owner_pin_assertions(&source, TRUSTED_MACRO_NAMES);
+        assert!(pins.parsed);
+        assert_eq!(STD_PROCESS_NAME_SCANS.with(std::cell::Cell::get), 1);
+    }
+
+    /// The per-file read must still see a renamed `std::process` for every
+    /// test: a root `p::exit(0)` ends the test before a later assertion.
+    #[test]
+    fn a_renamed_process_import_still_ends_each_test_before_its_assertions() {
+        let source = "use std::process as p;\n#[test]\nfn a() {\n    p::exit(0);\n    assert_eq!(f(1), 1);\n}\n#[test]\nfn b() {\n    assert_eq!(f(2), 2);\n}\n";
+        let pins = owner_pin_assertions(source, TRUSTED_MACRO_NAMES);
+        let admitted = |name: &str| {
+            pins.functions
+                .iter()
+                .find(|(key, _)| key.2 == name)
+                .map(|(_, function)| function.assertions.values().filter(|v| v.is_ok()).count())
+        };
+        assert_eq!(admitted("a"), Some(0), "{:?}", pins.functions.keys());
+        assert_eq!(admitted("b"), Some(1), "{:?}", pins.functions.keys());
     }
 }

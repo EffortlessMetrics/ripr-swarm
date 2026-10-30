@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- MCP resource-template descriptions are now budgeted and substantially leaner (the duplicated canonical-id grammar paragraph and payload prose are gone; the id-ambiguity retry behavior stays documented at its routing owner), and a length-budget guard pins every tool/resource description surface so future descriptions cannot silently re-inflate the per-session context (#9604).

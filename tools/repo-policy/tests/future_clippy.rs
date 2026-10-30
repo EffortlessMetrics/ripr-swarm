@@ -1,11 +1,10 @@
 //! Execute the advisory lane's production script, including failed instruments.
-use std::path::Path;
+#[path = "../test_support.rs"]
+mod test_support;
 
 fn workflow() -> Result<String, String> {
     std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(".github/workflows/future-clippy.yml"),
+        test_support::workspace_root()?.join(".github/workflows/future-clippy.yml"),
     )
     .map_err(|e| e.to_string())
 }
@@ -24,7 +23,9 @@ fn step(name: &str) -> Result<String, String> {
 #[test]
 fn pinned_component_and_failure_evidence_are_wired() -> Result<(), String> {
     let text = workflow()?;
-    assert!(text.contains("uses: dtolnay/rust-toolchain@1.95.0\n"));
+    assert!(text.contains(
+        "uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0\n"
+    ));
     assert!(text.contains("components: clippy\n"));
     assert!(step("Run future Clippy (advisory)")?.contains("cargo +1.95.0 clippy "));
     let (_, summary) = text
@@ -50,7 +51,6 @@ mod behavior {
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use std::process::{Command, Output};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::step;
 
@@ -77,16 +77,7 @@ echo '    Finished dev profile' >&2
 
     impl Fixture {
         fn new(case: &str) -> Result<Self, String> {
-            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../target")
-                .join(format!(
-                    "future-clippy-{case}-{}-{}",
-                    std::process::id(),
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .map_err(|e| e.to_string())?
-                        .as_nanos()
-                ));
+            let root = super::test_support::scratch(&format!("future-clippy-{case}"))?;
             fs::create_dir_all(root.join("bin")).map_err(|e| e.to_string())?;
             let fixture = Self(root);
             fixture.executable("cargo", CARGO)?;

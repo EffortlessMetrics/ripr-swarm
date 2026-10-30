@@ -492,3 +492,91 @@ fn explicit_diff_file_remains_verbatim_and_needs_no_git_base() -> io::Result<()>
     assert_eq!(actual, supplied);
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn git_patch_preserves_trailing_whitespace_paths_and_empty_renames() -> io::Result<()> {
+    use super::super::parse::parse_unified_diff_with_metadata;
+
+    let repo = Repo::new("trailing-whitespace")?;
+    for (path, text) in [
+        ("same.rs", "ordinary old\n"),
+        ("same.rs ", "spaced old\n"),
+        ("empty.rs ", ""),
+    ] {
+        fs::write(repo.root.join(path), text)?;
+    }
+    git(&repo.root, &["add", "."])?;
+    git(
+        &repo.root,
+        &["commit", "--quiet", "-m", "distinct whitespace paths"],
+    )?;
+    let base = git(&repo.root, &["rev-parse", "HEAD"])?;
+    fs::write(repo.root.join("same.rs"), "ordinary new\n")?;
+    fs::write(repo.root.join("same.rs "), "spaced new\n")?;
+    git(&repo.root, &["add", "."])?;
+    git(&repo.root, &["commit", "--quiet", "-m", "edit both paths"])?;
+    let patch = load_diff_range(&repo.root, base.trim(), "HEAD").map_err(io::Error::other)?;
+    assert!(patch.contains("+++ b/same.rs \t\n"), "{patch:?}");
+    let files = parse_unified_diff(&patch);
+    assert_eq!(files.len(), 2, "{files:?}");
+    for (file, path, text) in [
+        (&files[0], "same.rs", "ordinary new"),
+        (&files[1], "same.rs ", "spaced new"),
+    ] {
+        assert_eq!(file.path, Path::new(path));
+        assert_eq!(file.added_lines.len(), 1);
+        assert_eq!(file.removed_lines.len(), 1);
+        assert_eq!(file.added_lines[0].text, text);
+    }
+
+    let base = git(&repo.root, &["rev-parse", "HEAD"])?;
+    git(&repo.root, &["mv", "same.rs ", "renamed.rs "])?;
+    git(&repo.root, &["mv", "empty.rs ", "empty-renamed.rs "])?;
+    git(
+        &repo.root,
+        &["commit", "--quiet", "-m", "rename nonempty and empty paths"],
+    )?;
+    let patch = String::from_utf8(
+        run_git_diff_bytes(
+            &repo.root,
+            &format!("{}...HEAD", base.trim()),
+            &["--find-renames", "--rename-empty"],
+            "0",
+            Some(GIT_TIMEOUT),
+        )
+        .map_err(io::Error::other)?,
+    )
+    .map_err(io::Error::other)?;
+    assert!(
+        patch.contains("rename from empty.rs \nrename to empty-renamed.rs \n"),
+        "{patch:?}"
+    );
+    assert!(
+        patch.contains("rename from same.rs \nrename to renamed.rs \n"),
+        "{patch:?}"
+    );
+    let parsed = parse_unified_diff_with_metadata(&patch);
+    assert!(parsed.limitations.is_empty(), "{:?}", parsed.limitations);
+    assert_eq!(parsed.truncated_file_sections, 0);
+    assert_eq!(parsed.renamed_file_count, 2);
+    assert_eq!(parsed.pure_rename_file_count, 2);
+    assert_eq!(
+        parsed.pure_rename_paths,
+        vec![
+            PathBuf::from("empty-renamed.rs "),
+            PathBuf::from("renamed.rs ")
+        ]
+    );
+    assert_eq!(parsed.changed_files.len(), 2);
+    for (file, path) in parsed
+        .changed_files
+        .iter()
+        .zip(["empty-renamed.rs ", "renamed.rs "])
+    {
+        assert_eq!(file.path, Path::new(path));
+        assert!(file.added_lines.is_empty());
+        assert!(file.removed_lines.is_empty());
+    }
+    Ok(())
+}

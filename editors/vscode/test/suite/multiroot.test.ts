@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import type { LanguageClient } from 'vscode-languageclient/node';
 import { describeCodeActionFailure, observeCodeActionProvider, observeCodeActionRequests } from '../multiRootRequestDiagnostics';
 import { assertActionTargets, assertContextPacket, normalizeUriSpelling, RootExpectation } from '../multiRootAssertions';
+import { boundedRequestEvidence } from '../hostDiagnostics';
 
 // Read observations from the activated controller without supplying a runtime,
 // resolver, client, root selector, status producer or diagnostic collection.
@@ -40,6 +41,8 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
     let deactivateActual: (() => Promise<void>) | undefined;
     const processes: ProcessObservation[] = [];
     const stages: Record<string, unknown>[] = [];
+    const clientIds = new WeakMap<LanguageClient, number>();
+    let nextClientId = 1;
     let phase = 'setup';
     let outcome = 'not_established';
 
@@ -352,8 +355,32 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       const diagnostic = vscode.languages.getDiagnostics(uri).find(d => d.source === 'ripr'
         && (typeof d.code === 'object' ? d.code.value : d.code) === 'ripr-seam-weakly-gripped')!;
       assert.strictEqual(diagnostic.message,
-        `Weakly gripped behavioral seam (predicate_boundary): ${expected.changedExpression}`);
+        `Tests only loosely check this: ${expected.changedExpression}`);
       assert.strictEqual(diagnostic.range.start.line, 1);
+      const clientIdentity = (observed: LanguageClient | undefined) => {
+        if (!observed) { return undefined; }
+        if (!clientIds.has(observed)) { clientIds.set(observed, nextClientId++); }
+        return clientIds.get(observed);
+      };
+      const requestEvidence = (error?: unknown) => {
+        const currentClient = controller.client;
+        const document = vscode.workspace.textDocuments.find(d => d.uri.toString() === uri.toString());
+        const sampled = status.analysis_status as {
+          effective_root?: string; root_state?: string; attempt_id?: string; run_status?: string;
+        };
+        return boundedRequestEvidence({ method: 'vscode.executeCodeActionProvider',
+          document_uri: uri.toString(), document_version: document?.version,
+          workspace_root: controller.workspaceRoot, controller_status: controller.status.kind,
+          sampled_effective_root: sampled.effective_root,
+          sampled_root_state: sampled.root_state, sampled_attempt_id: sampled.attempt_id, sampled_run_status: sampled.run_status,
+          client_id: clientIdentity(client), current_client_id: clientIdentity(currentClient),
+          client_pid: client.serverProcess?.pid, current_client_pid: currentClient?.serverProcess?.pid,
+          same_client: currentClient === client,
+          range_start_line: diagnostic.range.start.line, range_start_character: diagnostic.range.start.character,
+          range_end_line: diagnostic.range.end.line, range_end_character: diagnostic.range.end.character }, error);
+      };
+      // Observe the original request once; do not retry or alter cancellation.
+      stages.push({ phase, code_action_request: requestEvidence() });
       let actions: Array<vscode.CodeAction | vscode.Command>;
       const requestEvents: Record<string, unknown>[] = [];
       const observe = () => ({ at: new Date().toISOString(), phase,
@@ -382,16 +409,13 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
           vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
             'vscode.executeCodeActionProvider', uri, diagnostic.range), observe, requestEvents);
       } catch (error) {
-        // Keep the failing request observable without retrying or replacing its result.
-        try { console.error('MULTIROOT_CODE_ACTION_TRACE', JSON.stringify(requestEvents)); }
-        catch { /* Trace serialization must not replace the provider failure. */ }
-        // Keep the original error identity/stack; phase and document context
-        // remain in the trace and the existing teardown phase retag.
-        throw error;
-      } finally {
-        stages.push({ phase, code_action_request: requestEvents });
-        restoreRequests();
-        subscriptions.forEach(subscription => subscription.dispose());
+        stages.push({ phase, code_action_failure: requestEvidence(error) });
+        // executeCodeActionProvider throws a bare illegal-argument when the
+        // URI has no open text model; disclose the open-document set so the
+        // failing point is diagnosable from the CI log alone.
+        throw new Error(`code actions for ${uri} failed: ${String(error)}`
+          + ` open=${vscode.workspace.textDocuments.map(d => d.uri.toString()).join(', ')}`
+          + ` phase=${phase}`, { cause: error });
       }
       const commands = (actions ?? []).flatMap(action => {
         const command = typeof action.command === 'string' ? action as vscode.Command : action.command;

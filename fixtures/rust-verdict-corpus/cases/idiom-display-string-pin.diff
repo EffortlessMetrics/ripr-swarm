@@ -1,0 +1,12 @@
+diff --git a/src/display.rs b/src/display.rs
+--- a/src/display.rs
++++ b/src/display.rs
+@@ -4,7 +4,7 @@
+ 
+ impl fmt::Display for Temp {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+-        write!(f, "{}°C", self.0)
++        write!(f, "{}\u{b0}C", self.0)
+     }
+ }
+ 

@@ -9,7 +9,8 @@
 //! - the witness is never added to `related_tests`;
 //! - `getattr`, `super()`, nested functions/lambdas, and other-module classes
 //!   do not create edges;
-//! - function-to-helper / cross-module façade paths are out of scope (#4568).
+//! - function-to-helper paths are the weak `helper_owner_call` relation
+//!   (#4568, `related_tests.rs`); cross-module façade paths are out of scope.
 
 use super::related_tests::{
     body_calls_method_on_owner_bound_receiver, contains_call_name,

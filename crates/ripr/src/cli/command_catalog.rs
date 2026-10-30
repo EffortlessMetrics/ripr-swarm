@@ -183,6 +183,7 @@ pub(crate) enum CommandDispatch {
     Explain,
     Context,
     Doctor,
+    Capabilities,
     Lsp,
     PrSummary,
     Annotations,
@@ -437,6 +438,14 @@ const CATALOG: &[CommandCatalogEntry] = &[
     nested(
         "cmd:pr-comments.requests",
         "pr-comments requests",
+        CommandClass::Public,
+        CommandDispatch::PrComments,
+        PR,
+        DiscoveryPosture::OrdinaryPublic,
+    ),
+    nested(
+        "cmd:pr-comments.summary",
+        "pr-comments summary",
         CommandClass::Public,
         CommandDispatch::PrComments,
         PR,
@@ -707,6 +716,11 @@ const CATALOG: &[CommandCatalogEntry] = &[
     public_top("cmd:explain", "explain", CommandDispatch::Explain),
     public_top("cmd:context", "context", CommandDispatch::Context),
     public_top("cmd:doctor", "doctor", CommandDispatch::Doctor),
+    public_top(
+        "cmd:capabilities",
+        "capabilities",
+        CommandDispatch::Capabilities,
+    ),
     public_top("cmd:lsp", "lsp", CommandDispatch::Lsp),
     public_top("cmd:cache", "cache", CommandDispatch::Cache),
     nested(
@@ -1017,16 +1031,34 @@ fn backtick_tokens(text: &str) -> Vec<String> {
 }
 
 /// Parse the expected-subcommand list from a parser unknown-subcommand error.
+///
+/// Nested family errors still use two wordings: inline `expected \`a\`, \`b\``
+/// lists, and the shared `unknown_value` `Accepted: a, b.` list. The catalog
+/// parity probe has to read both so a group can move to `unknown_value`
+/// without dropping out of the child-set check.
 #[cfg(test)]
 pub(crate) fn expected_subcommands_from_unknown_error(
     message: &str,
 ) -> Result<Vec<String>, String> {
-    let Some(idx) = message.find("expected `") else {
-        return Err(format!(
-            "unknown-subcommand error did not list expected tokens: {message}"
-        ));
-    };
-    Ok(backtick_tokens(&message[idx..]))
+    if let Some(idx) = message.find("expected `") {
+        return Ok(backtick_tokens(&message[idx..]));
+    }
+    if let Some((_, rest)) = message.split_once("Accepted: ") {
+        let tokens: Vec<String> = rest
+            .trim()
+            .trim_end_matches('.')
+            .split(',')
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .map(ToString::to_string)
+            .collect();
+        if !tokens.is_empty() {
+            return Ok(tokens);
+        }
+    }
+    Err(format!(
+        "unknown-subcommand error did not list expected tokens: {message}"
+    ))
 }
 
 #[cfg(test)]
@@ -1058,6 +1090,42 @@ mod tests {
             discovery,
             relation,
         }
+    }
+
+    #[test]
+    fn expected_subcommands_mine_backtick_expected_lists() -> Result<(), String> {
+        let message =
+            "unknown policy subcommand \"x\"; expected `readiness`, `operations`, or `history`";
+        assert_eq!(
+            expected_subcommands_from_unknown_error(message)?,
+            vec!["readiness", "operations", "history"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn expected_subcommands_mine_unknown_value_accepted_lists() -> Result<(), String> {
+        let far =
+            "unknown cache subcommand \"__catalog_probe__\". Accepted: status, export, clear.";
+        assert_eq!(
+            expected_subcommands_from_unknown_error(far)?,
+            vec!["status", "export", "clear"]
+        );
+        let near = "unknown cache subcommand \"stat\". Did you mean `status`? Accepted: status, export, clear.";
+        assert_eq!(
+            expected_subcommands_from_unknown_error(near)?,
+            vec!["status", "export", "clear"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn expected_subcommands_reject_a_message_without_a_list() {
+        let result = expected_subcommands_from_unknown_error("unknown cache subcommand \"x\"");
+        assert!(
+            matches!(result, Err(ref error) if error.contains("did not list expected tokens")),
+            "missing list must fail, got {result:?}"
+        );
     }
 
     #[test]
@@ -1416,6 +1484,30 @@ mod tests {
     }
 
     #[test]
+    fn agent_subcommand_typos_suggest_every_catalog_child() -> Result<(), String> {
+        let children = catalog_children("agent");
+        assert!(!children.is_empty());
+        for child in children {
+            // A trailing extra character is one edit, without prefix matching.
+            let typo = format!("{child}x");
+            let error = match parse_agent_args(&args(&[&typo])) {
+                Err(error) => error,
+                Ok(command) => return Err(format!("agent {typo} was accepted: {command:?}")),
+            };
+            assert!(
+                error.contains(&format!("Did you mean `{child}`?")),
+                "agent {typo}: {error}"
+            );
+            // Mine the production error through the same catalog consumer used
+            // by the far-miss parity sweep below, including suggested errors.
+            let accepted = expected_subcommands_from_unknown_error(&error)?;
+            let accepted_refs: Vec<&str> = accepted.iter().map(String::as_str).collect();
+            assert!(two_way_path_violations(&catalog_children("agent"), &accepted_refs).is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn nested_parser_families_have_two_way_parity_with_the_catalog() {
         let mut failures = Vec::new();
         type NestedParse = fn(&[String]) -> Result<(), String>;
@@ -1504,6 +1596,65 @@ mod tests {
         assert!(
             failures.is_empty(),
             "nested parser/catalog drift: {failures:?}"
+        );
+    }
+
+    fn distance_one_typo(name: &str) -> String {
+        let mut chars: Vec<char> = name.chars().collect();
+        let Some(last) = chars.last_mut() else {
+            return "x".to_string();
+        };
+        *last = if *last == 'x' { 'z' } else { 'x' };
+        chars.into_iter().collect()
+    }
+
+    #[test]
+    fn slice_b_nested_subcommand_typos_suggest_catalog_children() {
+        type NestedParse = fn(&[String]) -> Result<(), String>;
+        let families: &[(&str, NestedParse)] = &[
+            ("zero", commands::zero),
+            ("policy", commands::policy),
+            ("pr-ledger", commands::pr_ledger),
+            ("pr-comments", commands::pr_comments),
+            ("pr-review", commands::pr_review),
+            ("coverage-grip", commands::coverage_grip),
+            ("assistant-loop", commands::assistant_loop),
+            ("reports", commands::reports),
+            ("calibrate", commands::calibrate),
+            ("receipt", commands::receipt),
+        ];
+        let mut failures = Vec::new();
+        for (family, parse) in families {
+            let children = catalog_children(family);
+            if children.is_empty() {
+                failures.push(format!("{family}: catalog listed no nested children"));
+                continue;
+            }
+            for child in children {
+                let typo = distance_one_typo(child);
+                match parse(&args(&[&typo])) {
+                    Err(error) => {
+                        let expected = format!("Did you mean `{child}`?");
+                        if !error.contains(&expected) {
+                            failures.push(format!(
+                                "{family} {typo:?}: missing {expected:?} in {error:?}"
+                            ));
+                        }
+                        if !error.contains("Accepted:") {
+                            failures.push(format!(
+                                "{family} {typo:?}: missing Accepted list in {error:?}"
+                            ));
+                        }
+                    }
+                    Ok(()) => failures.push(format!(
+                        "{family} accepted distance-1 typo {typo:?} for {child}"
+                    )),
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "slice B nested typo suggestions: {failures:?}"
         );
     }
 }
