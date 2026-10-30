@@ -2098,6 +2098,21 @@ mod tests {
     }
 
     #[test]
+    fn gap_binding_over_a_non_findings_after_snapshot_names_the_after_artifact() {
+        let error = verify_gap_closure(
+            Path::new("."),
+            r#"{"artifact":{"kind":"check_findings"}}"#,
+            r#"{"artifact":{"kind":"repo_exposure"}}"#,
+            "gap:a",
+        );
+        assert_eq!(
+            error.map(|closure| closure.after_classification),
+            Err("agent verify --gap-id requires `check-findings-json` snapshots; the after artifact is not one"
+                .to_string())
+        );
+    }
+
+    #[test]
     fn resolve_commit_rev_refuses_option_shaped_and_blank_revisions() {
         for rev in ["", "  ", "--output=x", "-1"] {
             let error = resolve_commit_rev(Path::new("."), rev)
