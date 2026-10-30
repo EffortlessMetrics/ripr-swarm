@@ -580,3 +580,51 @@ fn optional_static_member_comparison_keeps_its_boundary() {
         Some("order.amount == 50")
     );
 }
+
+/// The module-bound boundary-input fact reads the full changed source line,
+/// not the narrowed label text: the fact gates' whole-side and verbatim-line
+/// rules need the source line's statement context, which the selected
+/// comparison alone does not carry. Without the source-line identity the fact
+/// is silently inert on exactly the compound lines this PR labels (#10399
+/// sweep review on `classifier.rs`).
+#[test]
+fn compound_line_boundary_fact_reads_the_source_line_identity() -> Result<(), String> {
+    let old = "  if (total >= 100 && ready) {";
+    let new = "  if (total > 100 && ready) {";
+    let root = super::tests::ts_unique_tempdir("boundary-fact-compound")?;
+    super::tests::ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function applyDiscount(total: number, ready: boolean): number {\n  if (total > 100 && ready) {\n    return total * 0.9;\n  }\n  return total;\n}\n",
+    )?;
+    let mut owner = test_owner("applyDiscount", "src/lib.ts");
+    owner.params = vec!["total".to_string(), "ready".to_string()];
+    owner.arity = Some(2);
+    // A weak assertion cannot witness the boundary row, so the row stays
+    // unresolved and the module-derived fact is what the evidence line reads.
+    let test = weak_direct_test_for("applyDiscount");
+    let finding = classify_change_with_alias_state(
+        Path::new("src/lib.ts"),
+        2,
+        new,
+        Some(old),
+        &[owner],
+        &[test],
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected TypeScript preview finding".to_string())?;
+    assert_eq!(
+        missing_discriminator_values(&finding),
+        vec!["total == 100".to_string()]
+    );
+    assert!(
+        finding.evidence.iter().any(|line| line
+            == "typescript_boundary_input: parameter=total;index=0;operand=100;value=100"),
+        "boundary-input evidence line missing on the compound line: {:?}",
+        finding.evidence
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}

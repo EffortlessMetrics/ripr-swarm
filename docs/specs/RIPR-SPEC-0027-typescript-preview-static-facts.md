@@ -432,6 +432,12 @@ predicate boundary. An added line with several comparisons is likewise
 unlabeled. The selected comparison and full changed source line retain separate
 identities: expected-side branch checks must still find the original owner line,
 so narrowing a label cannot credit an expectation that matches neither outcome.
+The module-bound boundary-input and boundary-parameters facts likewise keep
+reading the full changed source line rather than the selected text: their
+whole-side and verbatim-line gates need the source line's statement context and
+line identity, so a fact stays available on a compound line whose single
+comparison sits next to the statement opening (`if (total > 100 && ready) {`)
+and refuses on narrowed text alone or on a line holding several comparisons.
 Returned-ternary arm edits retain their sole condition boundary only when the
 condition tokens are unchanged.
 

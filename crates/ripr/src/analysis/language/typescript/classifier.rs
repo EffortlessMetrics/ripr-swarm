@@ -6546,8 +6546,13 @@ pub(crate) fn classify_resolved_owner(
                     )
             });
     if fact_can_change_a_row {
+        // The fact path keeps the full changed source line: its whole-side
+        // and verbatim-line module gates (boundary_input.rs) read statement
+        // context and line identity the narrowed label text does not carry,
+        // so narrowed label text here would make every boundary-input and
+        // parameters fact inert on compound lines (#10399 sweep review).
         let fact =
-            ts_boundary_fact_for_change(&probe_shape, line, boundary_text, owner, workspace_root);
+            ts_boundary_fact_for_change(&probe_shape, line, line_text, owner, workspace_root);
         if let Some(fact) = &fact {
             for (candidate, activation) in related_candidates.iter().zip(&mut predicate_activations)
             {
@@ -7134,7 +7139,9 @@ pub(crate) fn classify_resolved_owner(
     // an observed input that does not reach the boundary.
     if !missing_discriminators.is_empty()
         && let Some(fact) = boundary_fact.unwrap_or_else(|| {
-            ts_boundary_fact_for_change(&probe_shape, line, boundary_text, owner, workspace_root)
+            // Full changed source line, as above: the narrowed label text
+            // cannot pass the module gates (#10399 sweep review).
+            ts_boundary_fact_for_change(&probe_shape, line, line_text, owner, workspace_root)
         })
     {
         evidence.push(fact.evidence_line());
