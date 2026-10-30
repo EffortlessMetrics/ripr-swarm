@@ -602,6 +602,16 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str) -> String {
     let shape = match finding.probe.family {
         // Calling an async function only creates its future, so the test
         // must run that future to completion before asserting.
+        // The changed field sits in a value the owner does not return
+        // directly (an `Err` payload, a wrapper), so it cannot be read off
+        // the return value as `result.field`.
+        _ if stub_refusal == TestStubRefusal::FieldNotReturned.reason() => {
+            "call the function and assert on what it returns: match the wrapper that carries the changed field (for example the `Err` variant) and check the field inside it, or compare the whole returned value"
+        }
+        // A unit-returning owner has no result to compare.
+        _ if stub_refusal == TestStubRefusal::NoReturnValue.reason() => {
+            "call the function and assert what it changes (an argument it mutates, state it sets, or output it writes), or that it panics when the changed condition is hit, since it returns nothing to compare"
+        }
         _ if stub_refusal == TestStubRefusal::OwnerAsync.reason() => {
             "call the function, run the future it returns to completion under your async test runtime (await it), and assert the exact value it produces"
         }
@@ -638,7 +648,7 @@ fn push_ambiguous_stub_choices(
         "{indent}Choose a test-stub seam for {finding_id}: {reason}\n"
     ));
     let child = format!("{indent}  ");
-    out.push_str(&format!("{child}These syntax choices are unvalidated; their commands may refuse, including for already-gripped seams.\n"));
+    out.push_str(&format!("{child}Each command below produces a stub, but ripr could not tell which seam your change touches.\n"));
     out.push_str(&format!(
         "{child}They do not establish a repair binding or close a static limitation.\n"
     ));
@@ -1609,8 +1619,35 @@ mod tests {
         assert!(ambiguous.contains("Choose a test-stub seam for finding:hidden-unique:"));
         assert!(ambiguous.contains("--seam-id 0123456789abcdef"));
         assert!(ambiguous.contains("--seam-id fedcba9876543210"));
-        assert!(ambiguous.contains("syntax choices are unvalidated"));
-        assert!(ambiguous.contains("commands may refuse, including for already-gripped seams"));
+        assert!(ambiguous.contains("Each command below produces a stub"));
+        assert!(!ambiguous.contains("may refuse"));
+    }
+
+    /// #10710 review: the hand-written step must not ask for something the
+    /// refusal says is impossible.
+    #[test]
+    fn hand_written_step_respects_the_stub_refusal() {
+        let mut finding = test_finding("hand-written");
+        finding.probe.family = ProbeFamily::FieldConstruction;
+        let not_returned =
+            hand_written_test_step(&finding, TestStubRefusal::FieldNotReturned.reason());
+        assert!(
+            not_returned.contains("match the wrapper") && not_returned.contains("`Err`"),
+            "{not_returned}"
+        );
+        assert!(!not_returned.contains("changed field on what it returns"));
+
+        finding.probe.family = ProbeFamily::Predicate;
+        let unit = hand_written_test_step(&finding, TestStubRefusal::NoReturnValue.reason());
+        assert!(
+            unit.contains("returns nothing to compare") && !unit.contains("exact result"),
+            "{unit}"
+        );
+
+        let plain = hand_written_test_step(&finding, TestStubRefusal::ObserverRequired.reason());
+        assert!(plain.contains("exact result each time"), "{plain}");
+        let async_step = hand_written_test_step(&finding, TestStubRefusal::OwnerAsync.reason());
+        assert!(async_step.contains("await it"), "{async_step}");
     }
 
     #[test]

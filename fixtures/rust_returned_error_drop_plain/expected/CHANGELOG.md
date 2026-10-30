@@ -230,3 +230,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_returned_error_drop_plain (18)
+
+Reason:
+RIPR-SPEC-0122: the hand-written step respects a field-not-returned or no-return-value stub refusal, and a lone validated stub the changed expression did not pick stays a choice (#10710)
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_plain --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

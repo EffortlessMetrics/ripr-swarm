@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — struct_literal_untouched_field_builder (3)
+
+Reason:
+RIPR-SPEC-0122: the hand-written step respects a field-not-returned or no-return-value stub refusal, and a lone validated stub the changed expression did not pick stays a choice (#10710)
+
+Command:
+`cargo xtask goldens bless struct_literal_untouched_field_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

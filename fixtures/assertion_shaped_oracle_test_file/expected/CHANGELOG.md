@@ -468,3 +468,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_oracle_test_file (31)
+
+Reason:
+RIPR-SPEC-0122: the hand-written step respects a field-not-returned or no-return-value stub refusal, and a lone validated stub the changed expression did not pick stays a choice (#10710)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

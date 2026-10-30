@@ -430,7 +430,10 @@ fn seam_stub_refusal(
 /// `ripr agent stub --seam-id` command produces a stub (the classified
 /// resolution, `seam_stub_refusal`). One survivor becomes that command,
 /// several stay a choice among survivors, and none becomes the first refusal.
-/// If the seams cannot be classified, no command is printed.
+/// No command is printed when the seams cannot be classified, or when more
+/// than `AMBIGUOUS_VALIDATION_LIMIT` seams share the line: validating each
+/// costs a classified resolution, and a long list is not a useful choice, so
+/// the refusal is shown instead of unchecked commands.
 fn narrowed_ambiguity(
     root: &Path,
     config: &RiprConfig,
@@ -444,6 +447,7 @@ fn narrowed_ambiguity(
     let squash = |text: &str| text.split_whitespace().collect::<String>();
     let wanted = squash(expression);
     let mut candidates = seam_ids.clone();
+    let mut narrowed = false;
     if let Some(relative) = scoped_file(root, file)
         && let Ok(seams) = analysis::scoped_file_seams(root, config, &relative, seam_index)
     {
@@ -453,6 +457,7 @@ fn narrowed_ambiguity(
         });
         if let (Some(seam), None) = (matching.next(), matching.next()) {
             candidates = vec![seam.id().as_str().to_string()];
+            narrowed = true;
         }
     }
     if candidates.len() > AMBIGUOUS_VALIDATION_LIMIT {
@@ -474,7 +479,11 @@ fn narrowed_ambiguity(
     }
     match stubbable.len() {
         0 => withheld(first_refusal.unwrap_or(reason)),
-        1 => StubRouteDecision::SeamStub {
+        // Only a seam tied to the finding's changed expression is printed as
+        // the one command. When the expression did not pick a seam, a lone
+        // survivor is still just one of the seams on the line (it may be the
+        // unchanged field), so it stays a choice.
+        1 if narrowed => StubRouteDecision::SeamStub {
             seam_id: stubbable.swap_remove(0),
         },
         _ => StubRouteDecision::Ambiguous {
