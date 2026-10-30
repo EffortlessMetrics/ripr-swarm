@@ -37,7 +37,8 @@ c.onNotification('exit',()=>process.exit(0)); c.listen();`);
       createLanguageClient: (server: ServerOptions, options: LanguageClientOptions) => new LanguageClient('glob-probe', 'glob-probe', server, options),
       createFileSystemWatcher: () => ({ dispose: () => undefined })
     } as unknown as RiprClientRuntime;
-    const controller = new RiprClientController({} as vscode.ExtensionContext, { appendLine: () => undefined } as unknown as vscode.LogOutputChannel, runtime);
+    const output = vscode.window.createOutputChannel('glob probe', { log: true });
+    const controller = new RiprClientController({} as vscode.ExtensionContext, output, runtime);
     try {
       await controller.start();
       // Documents opened before client startup are synchronized on startup.
@@ -49,6 +50,6 @@ c.onNotification('exit',()=>process.exit(0)); c.listen();`);
       const other = notifications.includes(siblingDoc.uri.toString());
       if (process.env.RIPR_GLOB_PROBE_RESULT) fs.writeFileSync(process.env.RIPR_GLOB_PROBE_RESULT, JSON.stringify({ version: vscode.version, own, other }));
       assert.strictEqual(own, true); assert.strictEqual(other, false);
-    } finally { await controller.stop(); }
+    } finally { await controller.stop(); output.dispose(); }
   });
 });
