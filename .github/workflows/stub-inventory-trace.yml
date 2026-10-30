@@ -1,0 +1,179 @@
+name: Stub inventory trace (non-shipping)
+on:
+  push:
+    branches: [codex/8547-stub-tail-proof]
+    paths: [.github/workflows/stub-inventory-trace.yml]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: stub-inventory-trace
+  cancel-in-progress: false
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE: 79d2e55079e03dd1d3ac7e149270e04893f9b003
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 79d2e55079e03dd1d3ac7e149270e04893f9b003
+          path: build
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 79d2e55079e03dd1d3ac7e149270e04893f9b003
+          path: subject
+          persist-credentials: false
+      - name: Bind retained candidate and expose exact source for review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/stub-inventory-trace"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          mkdir -p "$EVIDENCE"
+          test "$(git -C build rev-parse HEAD)" = "$BASE"
+          test "$(git -C subject rev-parse HEAD)" = "$BASE"
+          gh api repos/$GITHUB_REPOSITORY/actions/artifacts/13015650267/zip > "$EVIDENCE/previous.zip"
+          python3 - <<'PY'
+          import hashlib, os, zipfile, shutil
+          from pathlib import Path
+          p = Path(os.environ['EVIDENCE']) / 'previous.zip'
+          assert hashlib.sha256(p.read_bytes()).hexdigest() == '1890e35fe5551400cb0b3f350a46e7a45bc3c394d25dfa1d4aae9a475a7344b8'
+          assert shutil.disk_usage('.').free > 20 * 1024**3
+          with zipfile.ZipFile(p) as z:
+              Path(os.environ['EVIDENCE'], 'candidate.patch').write_bytes(z.read('candidate.patch'))
+          PY
+          git -C build apply --index "$EVIDENCE/candidate.patch"
+          test "$(git -C build write-tree)" = 9c7554c2ae47cbb34a6d2d37701d3399916c4664
+          git -C build archive "$BASE" crates/ripr/src/analysis/seam_inventory.rs crates/ripr/src/analysis/generated_rust_corpus.rs crates/ripr/src/analysis/workspace crates/ripr/src/analysis/facts crates/ripr/src/app/test_stub.rs crates/ripr/src/app/task_first.rs crates/ripr/src/config.rs ripr.toml > "$EVIDENCE/source-context.tar"
+          sha256sum "$EVIDENCE/source-context.tar" "$EVIDENCE/candidate.patch" > "$EVIDENCE/source.sha256"
+          printf 'controller=%s\nbase=%s\ncandidate_tree=9c7554c2ae47cbb34a6d2d37701d3399916c4664\nrun=%s\n' "$GITHUB_SHA" "$BASE" "$GITHUB_RUN_ID" > "$EVIDENCE/identity.txt"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: stub-inventory-source
+          path: |
+            ${{ runner.temp }}/stub-inventory-trace/source-context.tar
+            ${{ runner.temp }}/stub-inventory-trace/source.sha256
+            ${{ runner.temp }}/stub-inventory-trace/identity.txt
+          retention-days: 14
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: build -> target
+          shared-key: ripr-8547-focused
+          save-if: 'true'
+      - name: Add timing-only probes to the candidate inspection copy
+        working-directory: build
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          target = Path('crates/ripr/src/inventory_trace.rs')
+          assert not target.exists()
+          target.write_text('''use std::io::Write;
+          pub(crate) struct Phase { name: &'static str, started: std::time::Instant }
+          impl Phase {
+              pub(crate) fn new(name: &'static str) -> Self {
+                  let _ = writeln!(std::io::stderr().lock(), "INVENTORY_TRACE begin {name}");
+                  Self { name, started: std::time::Instant::now() }
+              }
+          }
+          impl Drop for Phase {
+              fn drop(&mut self) {
+                  let _ = writeln!(std::io::stderr().lock(), "INVENTORY_TRACE end {} elapsed_ns={}", self.name, self.started.elapsed().as_nanos());
+              }
+          }
+          ''')
+          lib = Path('crates/ripr/src/lib.rs')
+          lib.write_text(lib.read_text() + '\nmod inventory_trace;\n')
+          names = ['try_no_impact_fast_path', 'collect_workspace_state', 'collect_workspace_state_from_files', 'production_files_with_role', 'production_role_context', 'inventory_diff_scoped_classified_seams_inner', 'verify_corpus_unchanged', 'discover_analyzable_rust_corpus', 'inventory_entry_facts']
+          files = list(Path('crates/ripr/src/analysis').rglob('*.rs')) + [Path('crates/ripr/src/app/test_stub.rs')]
+          for name in names:
+              found = [(p, m) for p in files for m in re.finditer(r'\bfn\s+' + re.escape(name) + r'\b', p.read_text())]
+              assert len(found) == 1, (name, len(found))
+              path, _ = found[0]
+              text = path.read_text()
+              start = next(re.finditer(r'\bfn\s+' + re.escape(name) + r'\b', text))
+              brace = text.index('{', start.end())
+              text = text[:brace+1] + f'\n    let _inventory_phase = crate::inventory_trace::Phase::new("{name}");' + text[brace+1:]
+              path.write_text(text)
+          p = Path('crates/ripr/src/analysis/seam_inventory.rs')
+          text = p.read_text()
+          anchor = '    // #8547: role filtering can leave an empty production scope'
+          assert text.count(anchor) == 1
+          line = '    std::eprintln!("INVENTORY_TRACE scope rust={} production={} changed={} owners={} global={} stages={} consumer={}", total_rust_files, total_production_files, changed_file_set.len(), changed_owner_names.len(), with_repo_seam_limit, stages.is_some(), consumer.is_some());\n'
+          p.write_text(text.replace(anchor, line + anchor))
+          PY
+          git add -N crates/ripr/src/inventory_trace.rs
+          git diff --binary > "$EVIDENCE/instrumentation.patch"
+          sha256sum "$EVIDENCE/instrumentation.patch" >> "$EVIDENCE/source.sha256"
+      - name: Compile one development binary and collect bounded traces
+        working-directory: build
+        run: |
+          set -euo pipefail
+          rustc +1.95.0 -Vv >> "$EVIDENCE/identity.txt"
+          set +e
+          timeout --signal=TERM --kill-after=30s 1200s cargo +1.95.0 build --locked -p ripr --bin ripr > "$EVIDENCE/build.stdout" 2> "$EVIDENCE/build.stderr"
+          status=$?
+          set -e
+          echo "build_exit=$status" > "$EVIDENCE/status.txt"
+          if [ "$status" != 0 ]; then tail -n 60 "$EVIDENCE/build.stderr"; exit "$status"; fi
+          python3 - <<'PY'
+          import hashlib, json, os, signal, subprocess, time
+          from pathlib import Path
+          e = Path(os.environ['EVIDENCE'])
+          binary = Path.cwd() / 'target/debug/ripr'
+          root = Path(os.environ['GITHUB_WORKSPACE']) / 'subject'
+          rows = []
+          for scope, fmt in [('repository','human'), ('repository','human-full'), ('fixture','human')]:
+              cache = e / 'caches' / (scope + '-' + fmt)
+              cache.mkdir(parents=True)
+              argv = [str(binary), 'check']
+              if scope == 'fixture':
+                  argv += ['--root','fixtures/boundary_gap/input','--diff','fixtures/boundary_gap/diff.patch']
+              else:
+                  argv += ['--diff','crates/ripr/examples/sample/example.diff']
+              argv += ['--format',fmt]
+              if fmt == 'human': argv += ['--legend']
+              label = scope + '-' + fmt
+              stopped = False
+              begin = time.perf_counter()
+              with (e/(label+'.stdout')).open('wb') as out, (e/(label+'.stderr')).open('wb') as err:
+                  p = subprocess.Popen(argv, cwd=root, env=dict(os.environ,RIPR_CACHE_DIR=str(cache),RIPR_REPO_EXPOSURE_LATENCY_TRACE='1'),stdout=out,stderr=err,start_new_session=True)
+                  try: code = p.wait(timeout=90)
+                  except subprocess.TimeoutExpired:
+                      stopped = True
+                      os.killpg(p.pid,signal.SIGTERM)
+                      try: code = p.wait(timeout=5)
+                      except subprocess.TimeoutExpired:
+                          os.killpg(p.pid,signal.SIGKILL)
+                          code = p.wait()
+              row = dict(scope=scope,format=fmt,elapsed_seconds=time.perf_counter()-begin,exit_code=code,external_stop=stopped,external_cap_seconds=90,binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),stdout_bytes=(e/(label+'.stdout')).stat().st_size)
+              rows.append(row)
+              (e/'measurements.json').write_text(json.dumps(rows,indent=2)+'\n')
+              print(json.dumps(row),flush=True)
+              print((e/(label+'.stderr')).read_text(errors='replace')[-18000:],flush=True)
+          PY
+          git -C ../subject diff --exit-code
+      - name: Retain phase evidence, not binaries or caches
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: stub-inventory-native-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/stub-inventory-trace/*.txt
+            ${{ runner.temp }}/stub-inventory-trace/*.json
+            ${{ runner.temp }}/stub-inventory-trace/*.sha256
+            ${{ runner.temp }}/stub-inventory-trace/*.patch
+            ${{ runner.temp }}/stub-inventory-trace/*.stdout
+            ${{ runner.temp }}/stub-inventory-trace/*.stderr
+          if-no-files-found: error
+          retention-days: 14
