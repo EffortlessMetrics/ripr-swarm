@@ -114,7 +114,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let config = load_for_root(&options.root)?;
     // Refuse an invalid RIPR_PILOT_SEAM_BUDGET (#4529) before the analysis
     // it would bound, not after it.
-    analysis::pilot_seam_budget()?;
+    // The same guard bounds the built-in inventory cap by that budget (#10726).
+    let _pilot_inventory_default = analysis::PilotInventoryDefault::enter()?;
     // RIPR_GIT_TIMEOUT bounds pilot's current-change git calls as it bounds
     // check's (#2613): seconds, `0` disables the deadline, and an invalid
     // value fails closed here rather than running with the default.
@@ -400,6 +401,10 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         }),
         (budget, inventory) => budget.clone().or_else(|| inventory.clone()),
     };
+    // The pilot-scoped default inventory cap (#10726) is below the cap
+    // `ripr check` applies, so a cut by it is not the check population either.
+    let inventory_cut_below_check =
+        analysis::PilotInventoryDefault::cut_below_check_default(inventory_limit_info.as_ref());
     let limit_info = pilot_budget_info.or(inventory_limit_info);
     let repo_exposure_limit = limit_info.as_ref().map(|info| {
         if pilot_budget_truncated {
@@ -453,7 +458,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         output::render::detect_python_repo_exposure_guidance_pub(&input.root, &classified);
     // The existing context is available only for the check-comparable full
     // population. Keep base None, matching pilot's printed after command.
-    let snapshot_context = if pilot_budget_truncated || change_seams_added || diff_bound_corpus {
+    let snapshot_context = if pilot_budget_truncated
+        || inventory_cut_below_check
+        || change_seams_added
+        || diff_bound_corpus
+    {
         None
     } else {
         Some(

@@ -11,6 +11,15 @@ are scoped or reviewed.
 
 ### Changed
 
+- `ripr pilot` no longer classifies seams it will not rank. With
+  `RIPR_REPO_EXPOSURE_SEAM_LIMIT` unset, the built-in inventory cap follows the
+  pilot artifact budget (2000, via `RIPR_PILOT_SEAM_BUDGET`) instead of 10000,
+  and still reports `limit_source: "default"`. Seams of the current change past
+  the cap are still classified. Measured on tokio (12,754 seams, one-line edit):
+  about 48 s down to about 16 s with identical pilot output; the cut pilot
+  snapshot carries no comparable artifact identity because `ripr check` keeps the
+  10000 cap. An explicit `RIPR_REPO_EXPOSURE_SEAM_LIMIT` (including `0`) is
+  unchanged (#10726).
 - LSP scale-degradation disclosures now say what the run actually did at
   all three surfaces where they previously overclaimed. An opened document
   whose changed lines sit outside the analyzed partial-diff partition is

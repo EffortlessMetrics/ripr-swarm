@@ -17752,6 +17752,90 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     Ok(())
 }
 
+/// #10726: the built-in inventory cap follows the pilot artifact budget, so
+/// pilot stops classifying seams it would only discard. Pin that the ranking
+/// does not move: the default run (inventory bounded by the budget) and a run
+/// that classifies the whole inventory before the same budget cuts it name
+/// the same top gap and the same ranked artifact seams, and the bounded run
+/// still discloses that the cap truncated the inventory as a default.
+#[test]
+fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("pilot-default-cap-follows-budget");
+    std::fs::create_dir_all(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let mut lib = std::fs::read_to_string(root.join("src/lib.rs"))?;
+    lib.push_str(
+        "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n\npub fn handling_fee(items: i32) -> i32 {\n    if items > 3 { 2 } else { 0 }\n}\n",
+    );
+    std::fs::write(root.join("src/lib.rs"), lib)?;
+    commit_repair_fixture(&root, &["-qam", "expanded pilot fixture"])?;
+
+    let run = |inventory_limit: Option<&str>| -> Result<
+        (String, serde_json::Value, serde_json::Value),
+        Box<dyn std::error::Error>,
+    > {
+        let mut env = vec![("RIPR_PILOT_SEAM_BUDGET", "2")];
+        if let Some(limit) = inventory_limit {
+            env.push(("RIPR_REPO_EXPOSURE_SEAM_LIMIT", limit));
+        }
+        let pilot = run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &root,
+            &["pilot", "--root", ".", "--mode", "draft"],
+            &env,
+        )?;
+        assert_success(&pilot);
+        let stdout = String::from_utf8_lossy(&pilot.stdout).into_owned();
+        let exposure: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+            root.join("target/ripr/pilot/repo-exposure.json"),
+        )?)?;
+        let summary: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+            root.join("target/ripr/pilot/pilot-summary.json"),
+        )?)?;
+        Ok((stdout, exposure, summary))
+    };
+    let seam_ids = |exposure: &serde_json::Value| -> Vec<String> {
+        exposure["seams"]
+            .as_array()
+            .map(|seams| {
+                seams
+                    .iter()
+                    .map(|seam| seam["id"].to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+
+    let (full_stdout, full_exposure, full_summary) = run(Some("0"))?;
+    let (default_stdout, default_exposure, default_summary) = run(None)?;
+
+    // Precondition: the whole inventory is larger than the budget, so the
+    // budget cut something in the unbounded run.
+    let full_total = full_summary["seam_limit"]["total"]
+        .as_u64()
+        .ok_or("the unbounded run must report the budget cut")?;
+    assert!(full_total > 2, "{full_summary}");
+    assert_eq!(seam_ids(&full_exposure).len(), 2, "{full_exposure}");
+
+    assert_eq!(seam_ids(&default_exposure), seam_ids(&full_exposure));
+    assert_eq!(
+        default_summary["top_actionable_seams"], full_summary["top_actionable_seams"],
+        "default: {default_summary}\nunbounded: {full_summary}"
+    );
+    assert_eq!(default_summary["seam_limit"]["analyzed"], 2);
+    assert_eq!(default_summary["seam_limit"]["total"], full_total);
+    // The default cap is disclosed as a default, not as an operator setting.
+    assert_eq!(default_summary["seam_limit"]["source"], "default");
+    assert_eq!(full_summary["seam_limit"]["source"], "configured");
+    assert_eq!(
+        default_stdout.contains("Top recommendation:"),
+        full_stdout.contains("Top recommendation:")
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 /// #5205: pilot honors `[languages] enabled` like `check` does. With Rust
 /// disabled, pilot ranks no Rust seam and discloses the exclusion — in the
 /// terminal and the summary packet — instead of silently ranking Rust.

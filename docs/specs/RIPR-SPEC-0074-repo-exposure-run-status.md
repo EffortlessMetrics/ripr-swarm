@@ -75,6 +75,13 @@ Full-repo `repo-exposure-json` runs with the env var unset now apply
 a built-in default cap of `DEFAULT_REPO_EXPOSURE_SEAM_LIMIT = 10_000`
 seams. This bounds the pathological 41-minute full-repo run.
 
+`ripr pilot` scopes the built-in default to its pilot artifact budget
+(`min(DEFAULT_PILOT_SEAM_BUDGET, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT)`, #10726)
+because it ranks and writes no more than that budget; classifying the rest
+only to discard it cost 3x the wall time on a mid-size repo. The source stays
+`"default"`, an explicit env var still wins, and a snapshot cut by that lower
+default carries no comparable artifact identity.
+
 - **Default-capped run** (env var unset, `total > 10_000`): emits
   `"run_status": "seam_limit_applied"` with `"limit_source": "default"`.
   The repair route advises setting `RIPR_REPO_EXPOSURE_SEAM_LIMIT=0`
