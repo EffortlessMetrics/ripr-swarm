@@ -90,7 +90,7 @@ from a scripted client):
 A first-open diagnostic of `ripr-diagnostic-analysis-pending` means the first
 analysis has not finished; save the file or run `ripr.refresh`.
 
-Neovim needs `vim.lsp.config()` and `vim.lsp.enable()` (Neovim 0.11 or newer)
+Neovim needs `vim.lsp.config` and `vim.lsp.enable` (Neovim 0.11 or newer)
 for the snippet below. Older versions can use `vim.lsp.start` with the same
 `cmd` and root markers.
 
