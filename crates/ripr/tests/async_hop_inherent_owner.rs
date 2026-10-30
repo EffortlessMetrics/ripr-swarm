@@ -1,9 +1,12 @@
-//! An `async fn` hop above an owner (inherent method or free function) must not earn helper
-//! credit (#7415). Calling an `async fn` constructs a future and nothing in
-//! the test establishes polling, so the owner never executes. Synchronous
-//! hops below the first `async` caller stay credited. Each case writes a small
-//! crate, changes the owner's boundary line, and reads the predicate finding
-//! through `check_workspace`.
+//! An `async fn` hop above an owner (inherent method or free function) earns
+//! helper credit only for a test that provably polls it (#7415, #11151).
+//! Calling an `async fn` constructs a future and nothing about the call alone
+//! establishes polling, so a test that only constructs or drops the future
+//! never executes the owner. A test that `.await`s the call in code it
+//! executes, or hands it to a test-local helper the poll-helper reader
+//! verified, does. Synchronous hops below the first `async` caller stay
+//! credited. Each case writes a small crate, changes the owner's boundary
+//! line, and reads the predicate finding through `check_workspace`.
 //!
 //! The chain is truncated at the first `async` caller, so the activation
 //! entry (the function a test must call to earn credit) moves with the
@@ -47,13 +50,33 @@ const FREE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\
 const FREE_OWNER: &str = "pub struct Meter {\n    limit: u32,\n}\nimpl Meter {}\nfn over(qty: u32) -> bool {\n    qty >= 10\n}\n// free owner above\n";
 const INHERENT_OWNER: &str = "pub struct Meter {\n    limit: u32,\n}\nimpl Meter {\n    fn over(&self, qty: u32) -> bool {\n        qty >= self.limit\n    }\n}\n";
 
-fn source(top: &str, tests: &str) -> String {
-    source_with(INHERENT_OWNER, top, tests)
+/// How the `subject` test is declared.
+#[derive(Clone, Copy)]
+enum Harness {
+    /// A plain `#[test] fn`.
+    Sync,
+    /// A `#[tokio::test] async fn` whose body can `.await`.
+    AsyncTest,
+    /// A plain `#[test] fn` with a test-local `block_on` that polls one future
+    /// to completion (the shape RIPR-SPEC-0197 verifies from source).
+    VerifiedBlockOn,
+    /// A plain `#[test] fn` whose `block_on` only spells the name: it never
+    /// polls the future it is handed.
+    CounterfeitBlockOn,
 }
 
-fn source_with(owner: &str, top: &str, tests: &str) -> String {
+const POLL_HELPER: &str = "    use std::future::Future;\n    use std::pin::pin;\n    use std::task::{Context, Poll, Waker};\n\n    fn block_on<F: Future>(fut: F) -> F::Output {\n        let mut fut = pin!(fut);\n        let mut cx = Context::from_waker(Waker::noop());\n        loop {\n            if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {\n                return v;\n            }\n        }\n    }\n\n";
+const COUNTERFEIT_HELPER: &str = "    fn block_on<F>(_fut: F) -> bool {\n        true\n    }\n\n";
+
+fn source_in(owner: &str, top: &str, tests: &str, harness: Harness) -> String {
+    let (preamble, header) = match harness {
+        Harness::Sync => ("", "#[test]\n    fn subject()"),
+        Harness::AsyncTest => ("", "#[tokio::test]\n    async fn subject()"),
+        Harness::VerifiedBlockOn => (POLL_HELPER, "#[test]\n    fn subject()"),
+        Harness::CounterfeitBlockOn => (COUNTERFEIT_HELPER, "#[test]\n    fn subject()"),
+    };
     format!(
-        "{owner}\n{top}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn subject() {{\n{tests}\n    }}\n}}\n"
+        "{owner}\n{top}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{preamble}    {header} {{\n{tests}\n    }}\n}}\n"
     )
 }
 
@@ -62,12 +85,20 @@ const FUTURE_ONLY: &str = "        let pending = load(10);\n        assert_eq!(s
 const SYNC_LEAF: &str = "fn load_item(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty)\n}\n";
 
 fn relation(top: &str, tests: &str) -> Result<Option<String>, String> {
-    let finding = predicate_finding_of(&source(top, tests), DIFF)?;
+    relation_in(top, tests, Harness::Sync)
+}
+
+fn relation_in(top: &str, tests: &str, harness: Harness) -> Result<Option<String>, String> {
+    let finding = predicate_finding_of(&source_in(INHERENT_OWNER, top, tests, harness), DIFF)?;
     Ok(relation_of(&finding, "subject").map(str::to_string))
 }
 
 fn free_relation(top: &str, tests: &str) -> Result<Option<String>, String> {
-    let finding = predicate_finding_of(&source_with(FREE_OWNER, top, tests), FREE_DIFF)?;
+    free_relation_in(top, tests, Harness::Sync)
+}
+
+fn free_relation_in(top: &str, tests: &str, harness: Harness) -> Result<Option<String>, String> {
+    let finding = predicate_finding_of(&source_in(FREE_OWNER, top, tests, harness), FREE_DIFF)?;
     Ok(relation_of(&finding, "subject").map(str::to_string))
 }
 
@@ -194,20 +225,217 @@ fn async_hops_above_free_owner_earn_no_helper_credit_but_sync_hops_do() -> Resul
     Ok(())
 }
 
+/// The owner's two spellings with an async entry directly over it, and the
+/// same over a synchronous hop, so each polling shape runs against both owner
+/// kinds and both chain depths.
+const INHERENT_ASYNC_ENTRY: &str =
+    "async fn load(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty)\n}\n";
+const FREE_ASYNC_ENTRY: &str = "async fn load(qty: u32) -> bool {\n    over(qty)\n}\n";
+const FREE_ASYNC_OVER_SYNC: &str = "fn load_item(qty: u32) -> bool {\n    over(qty)\n}\nasync fn load(qty: u32) -> bool {\n    load_item(qty)\n}\n";
+
+/// Run one polling shape against both owner kinds.
+fn both_owner_kinds(
+    inherent_top: &str,
+    free_top: &str,
+    tests: &str,
+    harness: Harness,
+) -> Result<(Option<String>, Option<String>), String> {
+    Ok((
+        relation_in(inherent_top, tests, harness)?.map(|r| r.to_string()),
+        free_relation_in(free_top, tests, harness)?.map(|r| r.to_string()),
+    ))
+}
+
+fn assert_both(case: &str, got: (Option<String>, Option<String>), expected: &str) {
+    assert_eq!(
+        (got.0.as_deref(), got.1.as_deref()),
+        (Some(expected), Some(expected)),
+        "{case}: (inherent, free) relations"
+    );
+}
+
 #[test]
-fn awaited_async_hop_is_a_known_conservative_gap_for_both_owner_kinds() -> Result<(), String> {
-    // Known limitation, pinned so a future polling-aware change flips it
-    // deliberately: the helper chain is resolved per probe, not per test, and
-    // establishes no polling. A test that awaits or blocks on the `async fn`
-    // hop does execute the owner, yet earns no helper credit for either owner
-    // kind. This is a fail-closed recall gap, never a promotion.
-    let async_free = "fn load_item(qty: u32) -> bool {\n    over(qty)\n}\nasync fn load(qty: u32) -> bool {\n    load_item(qty)\n}\n";
-    let async_inherent =
-        "async fn load(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty)\n}\n";
-    let awaited = "        assert_eq!(block_on(load(10)), true);";
-    let free = free_relation(async_free, awaited)?;
-    assert_eq!(free.as_deref(), Some("same_test_file"));
-    let inherent = relation(async_inherent, awaited)?;
-    assert_eq!(inherent.as_deref(), Some("same_test_file"));
+fn awaited_async_hop_in_an_async_test_keeps_helper_credit_for_both_owner_kinds()
+-> Result<(), String> {
+    let got = both_owner_kinds(
+        INHERENT_ASYNC_ENTRY,
+        FREE_ASYNC_ENTRY,
+        "        assert_eq!(load(10).await, true);",
+        Harness::AsyncTest,
+    )?;
+    assert_both("await inside assert_eq", got, "helper_owner_call");
+    // The same call bound first, then asserted, and the parenthesized form.
+    let got = both_owner_kinds(
+        INHERENT_ASYNC_ENTRY,
+        FREE_ASYNC_ENTRY,
+        "        let reached = (load(10)).await;\n        assert!(reached);",
+        Harness::AsyncTest,
+    )?;
+    assert_both("await bound then asserted", got, "helper_owner_call");
+    // An `async fn` over a synchronous hop: the sync hop needs no polling, the
+    // async entry is awaited.
+    let inherent_over_sync =
+        format!("{SYNC_LEAF}async fn load(qty: u32) -> bool {{\n    load_item(qty)\n}}\n");
+    let got = both_owner_kinds(
+        &inherent_over_sync,
+        FREE_ASYNC_OVER_SYNC,
+        "        assert_eq!(load(10).await, true);",
+        Harness::AsyncTest,
+    )?;
+    assert_both("await async over sync", got, "helper_owner_call");
+    Ok(())
+}
+
+#[test]
+fn async_chain_credit_needs_every_async_hop_polled() -> Result<(), String> {
+    let test = "        assert_eq!(load(10).await, true);";
+    // Two async hops, the upper one awaiting the lower.
+    let inherent_chain = "async fn inner(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty)\n}\nasync fn load(qty: u32) -> bool {\n    inner(qty).await\n}\n".to_string();
+    let free_chain = "async fn inner(qty: u32) -> bool {\n    over(qty)\n}\nasync fn load(qty: u32) -> bool {\n    inner(qty).await\n}\n";
+    let got = both_owner_kinds(&inherent_chain, free_chain, test, Harness::AsyncTest)?;
+    assert_both("both async hops polled", got, "helper_owner_call");
+    // The awaited entry builds the lower future and drops it: the owner never
+    // runs even though the test polls `load`.
+    let inherent_dropped = "async fn inner(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty)\n}\nasync fn load(qty: u32) -> bool {\n    let _unpolled = inner(qty);\n    true\n}\n".to_string();
+    let free_dropped = "async fn inner(qty: u32) -> bool {\n    over(qty)\n}\nasync fn load(qty: u32) -> bool {\n    let _unpolled = inner(qty);\n    true\n}\n";
+    let got = both_owner_kinds(&inherent_dropped, free_dropped, test, Harness::AsyncTest)?;
+    assert_both("lower hop built but never polled", got, "same_test_file");
+    Ok(())
+}
+
+#[test]
+fn block_on_credit_requires_a_verified_polling_helper() -> Result<(), String> {
+    let driven = "        assert_eq!(block_on(load(10)), true);";
+    // A test-local helper the poll-helper reader verified from source drives
+    // the future: credited.
+    let got = both_owner_kinds(
+        INHERENT_ASYNC_ENTRY,
+        FREE_ASYNC_ENTRY,
+        driven,
+        Harness::VerifiedBlockOn,
+    )?;
+    assert_both("verified test-local block_on", got, "helper_owner_call");
+    // The same call text against a helper that only spells the name and never
+    // polls is not driving anything.
+    let got = both_owner_kinds(
+        INHERENT_ASYNC_ENTRY,
+        FREE_ASYNC_ENTRY,
+        driven,
+        Harness::CounterfeitBlockOn,
+    )?;
+    assert_both("counterfeit block_on", got, "same_test_file");
+    // No helper at all: a bare `block_on` is a name, not a proof.
+    let got = both_owner_kinds(
+        INHERENT_ASYNC_ENTRY,
+        FREE_ASYNC_ENTRY,
+        driven,
+        Harness::Sync,
+    )?;
+    assert_both("undefined block_on", got, "same_test_file");
+    // A third-party executor is refused by design: ripr verifies no external
+    // crate's polling semantics.
+    for external in [
+        "        assert_eq!(futures::executor::block_on(load(10)), true);",
+        "        let rt = tokio::runtime::Runtime::new().unwrap();\n        assert_eq!(rt.block_on(load(10)), true);",
+    ] {
+        let got = both_owner_kinds(
+            INHERENT_ASYNC_ENTRY,
+            FREE_ASYNC_ENTRY,
+            external,
+            Harness::Sync,
+        )?;
+        assert_both(external, got, "same_test_file");
+    }
+    // Driving a hop whose own callee is unpolled still fails closed.
+    let chain_dropped_inherent = "async fn inner(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty)\n}\nasync fn load(qty: u32) -> bool {\n    let _unpolled = inner(qty);\n    true\n}\n";
+    let chain_dropped_free = "async fn inner(qty: u32) -> bool {\n    over(qty)\n}\nasync fn load(qty: u32) -> bool {\n    let _unpolled = inner(qty);\n    true\n}\n";
+    let got = both_owner_kinds(
+        chain_dropped_inherent,
+        chain_dropped_free,
+        driven,
+        Harness::VerifiedBlockOn,
+    )?;
+    assert_both("driven entry over an unpolled hop", got, "same_test_file");
+    Ok(())
+}
+
+#[test]
+fn unpolled_async_hops_stay_refused_even_in_an_async_test() -> Result<(), String> {
+    // Each body constructs the future in an async test and never polls it.
+    let mut mismatched = Vec::new();
+    for (case, tests) in [
+        ("held in a binding", "        let _pending = load(10);"),
+        (
+            "bound then size-inspected",
+            "        let pending = load(10);\n        assert!(std::mem::size_of_val(&pending) > 0);",
+        ),
+        ("dropped", "        drop(load(10));"),
+        (
+            "awaited only inside an async block that is never run",
+            "        let _block = async { load(10).await };",
+        ),
+        (
+            "awaited only inside a closure that is never called",
+            "        let _later = || async { load(10).await };",
+        ),
+        (
+            "one call polled, another dropped",
+            "        let _spare = load(1);\n        assert_eq!(load(10).await, true);",
+        ),
+        (
+            "handed to another call",
+            "        let pending = std::future::ready(load(10));\n        assert!(pending.await);",
+        ),
+    ] {
+        let got = both_owner_kinds(
+            INHERENT_ASYNC_ENTRY,
+            FREE_ASYNC_ENTRY,
+            tests,
+            Harness::AsyncTest,
+        )?;
+        if (got.0.as_deref(), got.1.as_deref()) != (Some("same_test_file"), Some("same_test_file"))
+        {
+            mismatched.push((case, got));
+        }
+    }
+    assert!(
+        mismatched.is_empty(),
+        "cases whose relation is not exactly same_test_file for both owner kinds: {mismatched:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn undeclared_awaited_callee_earns_no_helper_credit() -> Result<(), String> {
+    // `load` is declared nowhere, so there is no hop to follow whatever the
+    // test does with the call; and an owner-side `async fn` declared sync
+    // cannot be driven by the awaited call to an undeclared name either.
+    let got = both_owner_kinds(
+        "",
+        "",
+        "        assert_eq!(load(10).await, true);",
+        Harness::AsyncTest,
+    )?;
+    assert_both("awaited but undeclared", got, "same_test_file");
+    Ok(())
+}
+
+#[test]
+fn awaiting_a_synchronous_hop_below_an_async_entry_keeps_its_own_credit() -> Result<(), String> {
+    // The test calls the synchronous hop; it neither needs nor uses polling,
+    // and the awaited async entry beside it in the file changes nothing.
+    let inherent_top =
+        format!("{SYNC_LEAF}async fn load(qty: u32) -> bool {{\n    load_item(qty)\n}}\n");
+    let got = both_owner_kinds(
+        &inherent_top,
+        FREE_ASYNC_OVER_SYNC,
+        "        assert_eq!(load_item(10), true);",
+        Harness::AsyncTest,
+    )?;
+    assert_both(
+        "sync hop called from an async test",
+        got,
+        "helper_owner_call",
+    );
     Ok(())
 }

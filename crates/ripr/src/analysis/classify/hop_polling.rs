@@ -1,0 +1,405 @@
+//! Polling-aware helper-chain admission above an owner (#7415, #11065, #11151).
+//!
+//! Calling an `async fn` constructs a future; its body, and so the owner it
+//! calls, runs only when something polls it. The helper chain is resolved per
+//! probe, so the first non-synchronous hop cuts the chain by default and a test
+//! that merely constructs or drops the future earns no helper credit. A test
+//! that provably drives the hop earns it back:
+//!
+//! - the call is the operand of `.await` in code the test function itself
+//!   executes (an `async` test body such as `#[tokio::test]`; an `async` block
+//!   or closure only declares a future and is refused, the same boundary
+//!   `node_executes_in` draws for assertion operands); or
+//! - the call is the single argument of a test-local helper that the
+//!   RIPR-SPEC-0197 poll-helper reader verified polls one future to
+//!   completion, bound to the actual verified definition. A third-party
+//!   `block_on` (`futures::executor`, `tokio::runtime`) is a name, not a
+//!   proof, and is refused.
+//!
+//! Every async hop between the test and the owner must be driven too: the
+//! test polls the entry hop it calls, and each `async` hop's body must
+//! `.await` its callee. A declaration that cannot be read as either `async` or
+//! synchronous, a call that is held in a binding, spawned, joined or passed on,
+//! and any same-named call the test leaves unpolled all fail closed.
+
+use super::helper_transfer::HelperChain;
+use super::owner_pin::{OwnerPinSyntax, function_declaration_is_async};
+use super::related_tests::{node_executes_in, order_related};
+use super::{DependencyEdgeContext, RelatedTestCandidateIndex};
+use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
+use crate::domain::{Probe, RelationReason};
+use ra_ap_syntax::{
+    AstNode, SyntaxNode,
+    ast::{self},
+};
+use std::cell::OnceCell;
+use std::collections::BTreeSet;
+
+/// The related tests and the chain activation should read.
+pub(in crate::analysis) struct PolledHops<'a> {
+    pub(in crate::analysis) related: Vec<(&'a TestSummary, RelationReason)>,
+    pub(in crate::analysis) chain: Option<HelperChain>,
+}
+
+/// Position of the first hop that is not provably synchronous. Hops run
+/// owner-upward, so everything below it is a synchronous call path.
+fn first_non_sync_hop(chain: &HelperChain, index: &RustIndex) -> Option<usize> {
+    chain
+        .hops
+        .iter()
+        .position(|hop| function_declaration_is_async(&hop.caller, index) != Some(false))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the related-test finder's explicit inputs"
+)]
+pub(in crate::analysis) fn related_through_polled_hops<'a>(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    index: &'a RustIndex,
+    workspace_complete: bool,
+    resolved: Option<HelperChain>,
+    dependency_edges: Option<&DependencyEdgeContext<'_>>,
+    candidate_index: &RelatedTestCandidateIndex,
+) -> PolledHops<'a> {
+    let cut = resolved
+        .as_ref()
+        .and_then(|chain| first_non_sync_hop(chain, index));
+    // The default: truncate at the first non-synchronous hop. Empty-hop chains
+    // stay off the relation/activation path (fail closed).
+    let base = resolved
+        .clone()
+        .map(|mut chain| {
+            if let Some(cut) = cut {
+                chain.hops.truncate(cut);
+            }
+            chain
+        })
+        .filter(|chain| !chain.hops.is_empty());
+    let mut related = super::find_related_tests_with_candidate_index(
+        probe,
+        owner_fn,
+        index,
+        workspace_complete,
+        base.as_ref(),
+        dependency_edges,
+        candidate_index,
+    );
+    let (Some(full), Some(cut)) = (resolved.as_ref(), cut) else {
+        return PolledHops {
+            related,
+            chain: base,
+        };
+    };
+    let through = super::find_related_tests_with_candidate_index(
+        probe,
+        owner_fn,
+        index,
+        workspace_complete,
+        Some(full),
+        dependency_edges,
+        candidate_index,
+    );
+    let oracle = PollOracle {
+        index,
+        syntax: candidate_index.owner_pin_syntax(),
+        verified: OnceCell::new(),
+    };
+    let mut top: Option<usize> = None;
+    let mut changed = false;
+    for (test, reason) in through {
+        if reason != RelationReason::HelperOwnerCall
+            || related.iter().any(|(seen, kept)| {
+                std::ptr::eq(*seen, test) && *kept == RelationReason::HelperOwnerCall
+            })
+        {
+            continue;
+        }
+        let Some(entry) = polled_entry(full, cut, test, &oracle) else {
+            continue;
+        };
+        top = top.max(Some(entry));
+        match related
+            .iter_mut()
+            .find(|(seen, _)| std::ptr::eq(*seen, test))
+        {
+            Some(slot) => slot.1 = reason,
+            None => related.push((test, reason)),
+        }
+        changed = true;
+    }
+    if changed {
+        order_related(&mut related, candidate_index);
+    }
+    let chain = match top {
+        Some(top) => Some(HelperChain {
+            hops: full.hops[..=top].to_vec(),
+            stop_above: full.stop_above.clone(),
+        }),
+        None => base,
+    };
+    PolledHops { related, chain }
+}
+
+struct PollOracle<'a> {
+    index: &'a RustIndex,
+    syntax: &'a OwnerPinSyntax,
+    verified: OnceCell<BTreeSet<String>>,
+}
+
+impl PollOracle<'_> {
+    /// `name` is a test-local poll-to-completion helper bound to its verified
+    /// definition (RIPR-SPEC-0197), not merely spelled like one.
+    fn drives(&self, test: &TestSummary, name: &str) -> bool {
+        self.verified
+            .get_or_init(|| super::poll_helper::verified_helpers(self.index))
+            .contains(name)
+            && super::poll_helper::binding_is_verified(test, name, self.index, self.syntax)
+    }
+}
+
+/// The highest async-region hop `test` enters, provided every call the test
+/// makes to an async-region hop is provably polled and every async hop under
+/// the entry polls its own callee. `None` when the test enters none or any
+/// driven call is unproven.
+fn polled_entry(
+    chain: &HelperChain,
+    cut: usize,
+    test: &TestSummary,
+    oracle: &PollOracle<'_>,
+) -> Option<usize> {
+    let parse = oracle.index.source_syntax.parse_fragment(&test.body)?;
+    let syntax = parse.tree().syntax().clone();
+    let function = syntax.children().find_map(ast::Fn::cast)?;
+    let mut entry = None;
+    for (at, hop) in chain.hops.iter().enumerate().skip(cut) {
+        match test_call_sites(&function, test, &hop.caller.name, oracle) {
+            Sites::None => continue,
+            Sites::Unpolled => return None,
+            Sites::Polled => {}
+        }
+        if !hops_below_poll_their_callees(chain, cut, at, oracle.index) {
+            return None;
+        }
+        entry = Some(at);
+    }
+    entry
+}
+
+/// Every async hop from the first non-synchronous one up to the entry has its
+/// call driven by the hop above it (the entry's own call is the test's).
+fn hops_below_poll_their_callees(
+    chain: &HelperChain,
+    cut: usize,
+    entry: usize,
+    index: &RustIndex,
+) -> bool {
+    (cut..=entry).all(
+        |at| match function_declaration_is_async(&chain.hops[at].caller, index) {
+            Some(false) => true,
+            Some(true) if at == entry => true,
+            Some(true) => {
+                hop_call_sites(
+                    &chain.hops[at + 1].caller,
+                    &chain.hops[at].caller.name,
+                    index,
+                ) == Sites::Polled
+            }
+            None => false,
+        },
+    )
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Sites {
+    /// No call of the name.
+    None,
+    /// At least one call is held, spawned, passed on or not executed.
+    Unpolled,
+    /// At least one call, and every one is driven by `.await` or a verified
+    /// polling helper in code the function executes.
+    Polled,
+}
+
+fn call_name(node: &SyntaxNode) -> Option<String> {
+    if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
+        return call.name_ref().map(|name| name.text().to_string());
+    }
+    let call = ast::CallExpr::cast(node.clone())?;
+    let ast::Expr::PathExpr(callee) = call.expr()? else {
+        return None;
+    };
+    callee
+        .path()?
+        .segment()?
+        .name_ref()
+        .map(|name| name.text().to_string())
+}
+
+/// The call's value is awaited directly, or is the only argument of a
+/// verified polling helper. Parentheses are transparent; any other consumer
+/// (a binding, a combinator, an argument of another call, `spawn`, `join!`)
+/// is not a proof.
+fn call_is_driven(node: &SyntaxNode, helper: &dyn Fn(&str) -> bool) -> bool {
+    let mut current = node.clone();
+    while let Some(parent) = current.parent() {
+        if ast::ParenExpr::can_cast(parent.kind()) {
+            current = parent;
+            continue;
+        }
+        if let Some(awaited) = ast::AwaitExpr::cast(parent.clone()) {
+            return awaited
+                .expr()
+                .is_some_and(|operand| *operand.syntax() == current);
+        }
+        let Some(arguments) = ast::ArgList::cast(parent) else {
+            return false;
+        };
+        let Some(call) = arguments.syntax().parent().and_then(ast::CallExpr::cast) else {
+            return false;
+        };
+        let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+            return false;
+        };
+        let mut args = arguments.args();
+        let sole = args
+            .next()
+            .is_some_and(|argument| *argument.syntax() == current)
+            && args.next().is_none();
+        let name = callee
+            .path()
+            .filter(|path| path.qualifier().is_none())
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+            .map(|name| name.text().to_string());
+        return sole && name.is_some_and(|name| helper(&name));
+    }
+    false
+}
+
+fn hop_call_sites(caller: &FunctionSummary, callee: &str, index: &RustIndex) -> Sites {
+    let Some(function) = index
+        .source_syntax
+        .get(index, &caller.file)
+        .and_then(|snapshot| snapshot.declaration(caller))
+    else {
+        return Sites::Unpolled;
+    };
+    // A synchronous caller cannot `.await`, and ripr verifies no polling
+    // helper from a production body.
+    scan(function.syntax(), callee, &|_| false, &mut |_| Vec::new())
+}
+
+fn test_call_sites(
+    function: &ast::Fn,
+    test: &TestSummary,
+    callee: &str,
+    oracle: &PollOracle<'_>,
+) -> Sites {
+    let helper = |name: &str| oracle.drives(test, name);
+    scan(function.syntax(), callee, &helper, &mut |call| {
+        assertion_operands(call, test, oracle)
+    })
+}
+
+fn scan(
+    scope: &SyntaxNode,
+    callee: &str,
+    helper: &dyn Fn(&str) -> bool,
+    macro_operands: &mut dyn FnMut(&ast::MacroCall) -> Vec<String>,
+) -> Sites {
+    let mut found = false;
+    for node in scope.descendants() {
+        if call_name(&node).as_deref() == Some(callee) {
+            found = true;
+            if !node_executes_in(&node, scope) || !call_is_driven(&node, helper) {
+                return Sites::Unpolled;
+            }
+        } else if let Some(call) = ast::MacroCall::cast(node.clone())
+            && node_executes_in(&node, scope)
+        {
+            for operand in macro_operands(&call) {
+                let text = format!("fn ripr_hop_operand() {{ let _ = {operand}; }}");
+                let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&text) else {
+                    return Sites::Unpolled;
+                };
+                let syntax = parse.tree().syntax().clone();
+                let Some(wrapper) = syntax.children().find_map(ast::Fn::cast) else {
+                    return Sites::Unpolled;
+                };
+                for inner in wrapper.syntax().descendants() {
+                    if call_name(&inner).as_deref() == Some(callee) {
+                        found = true;
+                        if !node_executes_in(&inner, wrapper.syntax())
+                            || !call_is_driven(&inner, helper)
+                        {
+                            return Sites::Unpolled;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if found { Sites::Polled } else { Sites::None }
+}
+
+/// The operands of a standard assertion macro whose name the test does not
+/// rebind, the same boundary the executable-call reader applies.
+fn assertion_operands(
+    call: &ast::MacroCall,
+    test: &TestSummary,
+    oracle: &PollOracle<'_>,
+) -> Vec<String> {
+    let Some(path) = call.path() else {
+        return Vec::new();
+    };
+    let name = path.syntax().text().to_string();
+    let name = name.trim();
+    let operands = match name {
+        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
+        "assert" | "debug_assert" => 1,
+        _ => return Vec::new(),
+    };
+    let rebound_locally = call.syntax().ancestors().any(|scope| {
+        ast::StmtList::cast(scope).is_some_and(|list| {
+            list.syntax().children().any(|node| {
+                ast::MacroRules::cast(node.clone())
+                    .and_then(|item| ast::HasName::name(&item))
+                    .or_else(|| {
+                        ast::MacroDef::cast(node).and_then(|item| ast::HasName::name(&item))
+                    })
+                    .is_some_and(|bound| bound.text() == name)
+            })
+        })
+    });
+    let offset = u32::from(call.syntax().text_range().start()) as usize;
+    let line = test.start_line
+        + test.body[..offset]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count();
+    if rebound_locally
+        || !oracle
+            .syntax
+            .targeted_macro_binding_is_unambiguous(test, line, name, oracle.index)
+    {
+        return Vec::new();
+    }
+    let Some(tree) = call.token_tree() else {
+        return Vec::new();
+    };
+    let text = tree.syntax().text().to_string();
+    let Some(arguments) = text.get(1..text.len().saturating_sub(1)) else {
+        return Vec::new();
+    };
+    super::reveal::split_top_level_arguments(arguments)
+        .map(|arguments| {
+            arguments
+                .into_iter()
+                .take(operands)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}

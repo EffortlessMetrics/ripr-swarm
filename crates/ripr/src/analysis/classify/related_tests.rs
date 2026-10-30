@@ -1673,6 +1673,28 @@ fn find_related_tests_with_candidates<'a>(
     related
 }
 
+/// Restore the finder's final order after a caller replaced or appended
+/// entries (#11151): confidence tier, then diff-touched, then name, file and
+/// start line. This is the composition of the finder's two stable sorts.
+pub(super) fn order_related(
+    related: &mut [(&TestSummary, RelationReason)],
+    candidate_index: &RelatedTestCandidateIndex,
+) {
+    let touched = |test: &TestSummary| {
+        candidate_index
+            .diff_touched()
+            .touches(&test.file, test.start_line)
+    };
+    related.sort_by(|(a, a_reason), (b, b_reason)| {
+        relation_rank(*b_reason)
+            .cmp(&relation_rank(*a_reason))
+            .then_with(|| touched(b).cmp(&touched(a)))
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.file.cmp(&b.file))
+            .then_with(|| a.start_line.cmp(&b.start_line))
+    });
+}
+
 /// Sort rank of a relation: higher confidence ranks first.
 fn relation_rank(reason: RelationReason) -> u8 {
     match reason.confidence() {
@@ -5234,7 +5256,7 @@ fn executable_call_resolves(
 
 /// Both source and synthetic assertion trees obey the same execution boundary.
 /// Constructing an unpolled future does not execute calls in its body.
-fn node_executes_in(node: &SyntaxNode, function: &SyntaxNode) -> bool {
+pub(super) fn node_executes_in(node: &SyntaxNode, function: &SyntaxNode) -> bool {
     node.ancestors()
         .skip(1)
         .take_while(|scope| scope != function)
