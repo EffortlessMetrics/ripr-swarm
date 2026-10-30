@@ -66,9 +66,9 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    AnalyzedRevisions, HeadRefState, another_base_candidate, artifact_root_gitignore_entry,
-    artifact_root_pathspec, load_diff, load_diff_core, load_diff_range_with_deadline_core,
-    load_diff_with_effective_base_core, load_worktree_diff,
+    AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
+    artifact_root_gitignore_entry, artifact_root_pathspec, load_diff, load_diff_core,
+    load_diff_range_with_deadline_core, load_diff_with_effective_base_core, load_worktree_diff,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
     probe_head_ref_state, probe_working_tree_tracked_changes_within, resolve_base_commit,
     resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
