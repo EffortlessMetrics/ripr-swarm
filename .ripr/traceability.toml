@@ -4015,6 +4015,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_runner_invoke_in_a_test_of_the_package_is_named_without_changing_the_class",
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::without_a_recognised_runner_invoke_the_generic_line_stays",
   "crates/ripr/src/analysis/language/python/effect_order_tests.rs",
+  "crates/ripr/src/analysis/language/python/trailing_comment_tests.rs::a_trailing_comment_or_whitespace_edit_emits_no_probe",
+  "crates/ripr/src/analysis/language/python/trailing_comment_tests.rs::a_changed_token_keeps_its_probe",
+  "crates/ripr/src/analysis/language/python/trailing_comment_tests.rs::the_edit_predicate_is_token_exact_and_fails_closed",
+  "crates/ripr/src/analysis/language/python/trailing_comment_tests.rs::string_content_lines_are_found_from_the_whole_file",
 ]
 fixtures = [
   "fixtures/python_dynamic_namespace_dunder_setattr",
@@ -4091,6 +4095,9 @@ fixtures = [
   "fixtures/python_fixture_name_relation",
   "fixtures/python_unrelated_test_mention",
   "fixtures/python_noop_multiline_docstring_interior",
+  "fixtures/python_noop_trailing_comment",
+  "fixtures/python_noop_trailing_whitespace",
+  "fixtures/python_trailing_whitespace_in_multiline_string",
   "fixtures/python_dynamic_dispatch_limit",
   "fixtures/python_decorator_indirection_limit",
   "fixtures/python_functools_memoization_not_indirection",
