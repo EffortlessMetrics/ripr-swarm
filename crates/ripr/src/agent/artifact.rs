@@ -775,10 +775,12 @@ fn check_findings_gaps(
             "agent verify {label} artifact carries no analysis outcome, so a gap's absence cannot be read as closed"
         ));
     };
-    if outcome.analysis_complete != Some(true) || outcome.document_complete == Some(false) {
+    if !check_findings_outcome_is_complete(outcome.analysis_complete, outcome.document_complete) {
         return Err(format!(
-            "agent verify {label} artifact is incomplete (analysis_complete={:?}, document_complete={:?}); regenerate it before verifying",
-            outcome.analysis_complete, outcome.document_complete
+            "agent verify {label} artifact is incomplete (analysis_complete={:?}, document_complete={:?}); {}",
+            outcome.analysis_complete,
+            outcome.document_complete,
+            outcome.incomplete_next_step()
         ));
     }
     let mut gaps = Vec::new();
@@ -1196,10 +1198,75 @@ struct CheckFindingsDocument {
     findings: Vec<CheckFindingsFinding>,
 }
 
+/// The one completeness predicate for a check-findings artifact (#11136): a
+/// gap's absence is only readable as closure when the producer reported a
+/// complete analysis and the findings document was not bounded. The verify and
+/// after phases consult it through [`check_findings_gaps`]; `ripr check`
+/// consults it before printing a gap-bound repair start, so a start is never
+/// offered for a before artifact the after phase will refuse.
+pub(crate) const fn check_findings_outcome_is_complete(
+    analysis_complete: Option<bool>,
+    document_complete: Option<bool>,
+) -> bool {
+    matches!(analysis_complete, Some(true)) && !matches!(document_complete, Some(false))
+}
+
 #[derive(serde::Deserialize)]
 struct CheckFindingsOutcome {
     analysis_complete: Option<bool>,
     document_complete: Option<bool>,
+    outcome: Option<CheckFindingsTypedOutcome>,
+}
+
+#[derive(serde::Deserialize)]
+struct CheckFindingsTypedOutcome {
+    limitations: Option<Vec<CheckFindingsLimitation>>,
+}
+
+#[derive(serde::Deserialize)]
+struct CheckFindingsLimitation {
+    kind: Option<String>,
+    path: Option<String>,
+    recovery: Option<CheckFindingsRecovery>,
+}
+
+#[derive(serde::Deserialize)]
+struct CheckFindingsRecovery {
+    detail: Option<String>,
+}
+
+impl CheckFindingsOutcome {
+    /// What the user does next: names the first producer limitation and its
+    /// recovery when the artifact carries one, instead of "regenerate it",
+    /// which reproduces the same incomplete artifact (#11136).
+    fn incomplete_next_step(&self) -> String {
+        if self.document_complete == Some(false) {
+            return "the findings document was bounded, so a gap's absence cannot be read as closed; rerun `ripr check` with RIPR_CHECK_FINDINGS_BYTES=0 for the full set, then start the repair again".to_string();
+        }
+        let limitation = self
+            .outcome
+            .as_ref()
+            .and_then(|outcome| outcome.limitations.as_ref())
+            .and_then(|limitations| limitations.first());
+        let Some(limitation) = limitation else {
+            return "the producer reported no complete analysis and named no limitation, so regenerating it would not help; resolve what `ripr check` reports as incomplete, then start the repair again".to_string();
+        };
+        let kind = limitation.kind.as_deref().unwrap_or("unnamed");
+        let location = limitation
+            .path
+            .as_deref()
+            .map(|path| format!(" in `{path}`"))
+            .unwrap_or_default();
+        let recovery = limitation
+            .recovery
+            .as_ref()
+            .and_then(|recovery| recovery.detail.as_deref())
+            .map(|detail| format!(" ({})", detail.trim_end_matches('.')))
+            .unwrap_or_default();
+        format!(
+            "the analysis is incomplete because of limitation `{kind}`{location}{recovery}; regenerating the artifact reproduces it, so resolve that limitation (or treat the repair packet as manual guidance and add the test by hand), then rerun `ripr check` and start the repair again"
+        )
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -1999,6 +2066,59 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn check_findings_incomplete_refusal_names_the_limitation_not_regenerate() -> Result<(), String>
+    {
+        let document = serde_json::json!({
+            "analysis_outcome": {
+                "analysis_complete": false,
+                "outcome": { "limitations": [{
+                    "kind": "unevaluated_condition",
+                    "path": "test/scule.test.ts",
+                    "recovery": { "detail": "Static analysis cannot evaluate the branch condition." }
+                }] }
+            },
+            "findings": []
+        });
+        let (outcome, findings) = findings_fixture(document)?;
+        let Err(message) = check_findings_gaps("before", outcome, &findings) else {
+            return Err("an incomplete analysis was accepted".to_string());
+        };
+        for needle in [
+            "unevaluated_condition",
+            "test/scule.test.ts",
+            "cannot evaluate the branch condition",
+            "regenerating the artifact reproduces it",
+        ] {
+            if !message.contains(needle) {
+                return Err(format!("refusal lacks `{needle}`: {message}"));
+            }
+        }
+        if message.contains("regenerate it before verifying") {
+            return Err(format!("refusal still says regenerate: {message}"));
+        }
+        let (bounded, findings) = findings_fixture(serde_json::json!({
+            "analysis_outcome": { "analysis_complete": true, "document_complete": false },
+            "findings": []
+        }))?;
+        let Err(bounded) = check_findings_gaps("before", bounded, &findings) else {
+            return Err("a bounded findings document was accepted".to_string());
+        };
+        if !bounded.contains("RIPR_CHECK_FINDINGS_BYTES=0") {
+            return Err(format!("bounded refusal lacks its recovery: {bounded}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_findings_outcome_completeness_is_one_predicate() {
+        assert!(check_findings_outcome_is_complete(Some(true), None));
+        assert!(check_findings_outcome_is_complete(Some(true), Some(true)));
+        assert!(!check_findings_outcome_is_complete(Some(true), Some(false)));
+        assert!(!check_findings_outcome_is_complete(Some(false), None));
+        assert!(!check_findings_outcome_is_complete(None, None));
     }
 
     #[test]

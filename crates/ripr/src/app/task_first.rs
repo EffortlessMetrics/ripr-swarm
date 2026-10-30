@@ -1258,12 +1258,30 @@ fn gap_bound_route(
     output: &super::CheckOutput,
     check_config: &crate::config::RiprConfig,
     finding: &crate::domain::Finding,
-) -> Result<Option<crate::app::GapRepairRoute>, &'static str> {
+) -> Result<Option<crate::app::GapRepairRoute>, super::navigation::RepairRouteRefusal> {
+    use super::navigation::RepairRouteRefusal::{AnalysisIncomplete, GapRouteUnavailable};
     let Some((base, record)) = gap_bound_record(output, check_config, finding) else {
         return Ok(None);
     };
-    let uncommitted_files = uncommitted_production_files(&output.root, &record)
-        .map_err(|_error| "could not validate the prerequisites for the repair start")?;
+    // #11136: the after phase refuses a before artifact whose analysis is
+    // incomplete, so a start printed beside "analysis incomplete" cannot
+    // finish. Ask the same predicate the verify/after phases apply instead of
+    // forking one; fail closed when the run carries no outcome at all.
+    let analysis_complete = output
+        .analysis_outcome
+        .as_ref()
+        .map(|outcome| outcome.kind.is_complete());
+    if !crate::agent::artifact::check_findings_outcome_is_complete(analysis_complete, None) {
+        return Err(AnalysisIncomplete {
+            limitation: incomplete_limitation_summary(output),
+        });
+    }
+    let uncommitted_files =
+        uncommitted_production_files(&output.root, &record).map_err(|_error| {
+            GapRouteUnavailable {
+                reason: "could not validate the prerequisites for the repair start",
+            }
+        })?;
     let repair_base = if uncommitted_files.is_empty() {
         base
     } else {
@@ -1272,14 +1290,17 @@ fn gap_bound_route(
             .as_ref()
             .is_some_and(|r| !r.working_tree)
         {
-            return Err(
-                "the committed-only check excluded dirty tracked files; commit or restore them before rerunning",
-            );
+            return Err(GapRouteUnavailable {
+                reason: "the committed-only check excluded dirty tracked files; commit or restore them before rerunning",
+            });
         }
         if output.unanalyzed_working_tree {
-            return Err("the working tree contains source or test changes that were not analyzed");
+            return Err(GapRouteUnavailable {
+                reason: "the working tree contains source or test changes that were not analyzed",
+            });
         }
-        let origin = resolved_dirty_origin(&output.root, output.analyzed_revisions.as_ref())?;
+        let origin = resolved_dirty_origin(&output.root, output.analyzed_revisions.as_ref())
+            .map_err(|reason| GapRouteUnavailable { reason })?;
         return Ok(Some(crate::app::GapRepairRoute {
             finding_id: finding.id.clone(),
             gap_id: record.canonical_gap_id,
@@ -1293,6 +1314,28 @@ fn gap_bound_route(
         base: repair_base.to_string(),
         uncommitted_files,
     }))
+}
+
+/// The named cause of an incomplete run for the withheld repair start
+/// (#11136): the first limitation the producer disclosed, in plain words with
+/// its file and recovery, or the bare fact when the run carries none.
+fn incomplete_limitation_summary(output: &super::CheckOutput) -> String {
+    let Some(limitation) = output
+        .analysis_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.limitations.first())
+    else {
+        return "the run disclosed no analysis outcome".to_string();
+    };
+    let mut summary = limitation.kind.plain_label().to_string();
+    if let Some(path) = &limitation.path {
+        summary.push_str(&format!(" (in `{path}`)"));
+    }
+    summary.push_str(&format!(
+        "; to proceed: {}",
+        limitation.recovery.detail.trim_end_matches('.')
+    ));
+    summary
 }
 
 fn resolved_dirty_origin(
@@ -1478,11 +1521,7 @@ pub(crate) fn check_repair_route(
     if !static_limited {
         match gap_bound_route(output, check_config, finding) {
             Ok(Some(route)) => return CheckRepairRoute::GapRoute(route),
-            Err(reason) => {
-                return CheckRepairRoute::Refused(RepairRouteRefusal::GapRouteUnavailable {
-                    reason,
-                });
-            }
+            Err(refusal) => return CheckRepairRoute::Refused(refusal),
             Ok(None) => {}
         }
     }
@@ -1756,7 +1795,7 @@ pub(crate) fn no_seam_inventory_reason(language: &str, file: &str) -> String {
 /// the other non-Rust languages.
 pub(crate) fn gap_bound_start_pointer(language: &str) -> &'static str {
     if matches!(language, "TypeScript" | "Python") {
-        ". When the finding's repair packet is complete, `ripr check --base <base>` prints a gap-bound start (`ripr agent repair --gap-id <gap> --base <base> --phase before`) that runs the delegated loop by gap instead of by seam"
+        ". When the finding's repair packet is complete and the check analysis is complete, `ripr check --base <base>` prints a gap-bound start (`ripr agent repair --gap-id <gap> --base <base> --phase before`) that runs the delegated loop by gap instead of by seam"
     } else {
         ""
     }
