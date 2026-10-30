@@ -347,7 +347,7 @@ pub(super) const LAMBDA_LIMIT_EVIDENCE: &str =
 /// is a plain one-line string literal return (`return "lambda x"`): no braces
 /// (an f-string expression or a dict could hold code), no triple quotes (the
 /// line may close a string opened above) and no other quote state to track.
-fn contains_lambda_keyword(text: &str) -> bool {
+pub(super) fn contains_lambda_keyword(text: &str) -> bool {
     let plain_line =
         !text.contains(['{', '\\']) && !text.contains("\"\"\"") && !text.contains("'''");
     text.match_indices("lambda").any(|(idx, _)| {
@@ -1399,6 +1399,13 @@ fn owner_called_inside_lambda(body_text: &str, owner: &PythonOwner) -> bool {
 /// limit stands.
 pub(super) fn integer_literal_swap(old: &str, new: &str) -> bool {
     use rustpython_parser::{Mode, Tok, lexer::lex};
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    // Re-indenting moves the statement under or out of a block, which changes
+    // which inputs reach it.
+    if old.get(..indent(old)) != new.get(..indent(new)) {
+        return false;
+    }
+    let (old, new) = (old.trim(), new.trim());
     let tokens = |text: &str| -> Option<Vec<Tok>> {
         lex(text, Mode::Module)
             .map(|result| result.ok().map(|(token, _)| token))

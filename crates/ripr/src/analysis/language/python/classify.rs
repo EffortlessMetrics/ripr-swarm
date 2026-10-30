@@ -34,9 +34,10 @@ use super::sink_alignment::{
     enclosing_literal_pair,
 };
 use super::static_limits::{
-    LAMBDA_LIMIT_EVIDENCE, heuristic_only_relation_limit, implicit_dunder_dispatch_limit,
-    integer_literal_swap, module_object_rebind_limit, static_limit_for_focused_change,
-    unpinned_equality_dunder_limit, unresolved_pytest_fixture_names,
+    LAMBDA_LIMIT_EVIDENCE, contains_lambda_keyword, heuristic_only_relation_limit,
+    implicit_dunder_dispatch_limit, integer_literal_swap, module_object_rebind_limit,
+    static_limit_for_focused_change, unpinned_equality_dunder_limit,
+    unresolved_pytest_fixture_names,
 };
 use super::table_rows::python_unvaried_table_operand;
 use super::term_activation::python_inactive_term_evidence;
@@ -892,7 +893,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     let imported_literal_gap = static_limit
         .as_ref()
         .is_some_and(|limit| limit.evidence == IMPORTED_CALL_LIMIT_EVIDENCE)
-        && old_line_text.is_some_and(|old| integer_literal_swap(old.trim(), line_text.trim()))
+        && old_line_text.is_some_and(|old| integer_literal_swap(old, line_text))
+        && !contains_lambda_keyword(line_text)
         && log_evidence.is_none()
         && has_oracle_eligible_relation
         && strongest_strength >= OracleStrength::Strong.rank()

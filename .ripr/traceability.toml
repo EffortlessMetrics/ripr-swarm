@@ -3900,6 +3900,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/imported_literal_tests.rs::without_the_old_line_the_abstention_stays",
   "crates/ripr/src/analysis/language/python/imported_literal_tests.rs::the_subscript_swap_has_no_repair_signal",
   "crates/ripr/src/analysis/language/python/imported_literal_tests.rs::an_equal_valued_integer_respelling_is_not_an_edit",
+  "crates/ripr/src/analysis/language/python/imported_literal_tests.rs::re_indenting_the_line_is_not_an_integer_only_edit",
+  "crates/ripr/src/analysis/language/python/imported_literal_tests.rs::lambda_syntax_on_the_line_keeps_its_limit",
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_runner_invoke_in_a_test_of_the_package_is_named_without_changing_the_class",
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::without_a_recognised_runner_invoke_the_generic_line_stays",
   "crates/ripr/src/analysis/language/python/effect_order_tests.rs",

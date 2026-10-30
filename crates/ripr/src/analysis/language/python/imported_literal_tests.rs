@@ -222,3 +222,31 @@ fn an_equal_valued_integer_respelling_is_not_an_edit() -> Result<(), String> {
     assert!(abstains_on_the_import(&finding), "{:?}", finding.evidence);
     Ok(())
 }
+
+#[test]
+fn re_indenting_the_line_is_not_an_integer_only_edit() -> Result<(), String> {
+    let finding = finding(
+        "        return itertools.islice(seq, 0, None, n)",
+        "    return itertools.islice(seq, 1, None, n)",
+        TEST_SOURCE,
+    )?;
+    assert!(abstains_on_the_import(&finding), "{:?}", finding.evidence);
+    Ok(())
+}
+
+#[test]
+fn lambda_syntax_on_the_line_keeps_its_limit() -> Result<(), String> {
+    let finding = finding(
+        "    return itertools.islice(seq, 0 if (lambda: True) else 2, None, n)",
+        "    return itertools.islice(seq, 1 if (lambda: True) else 2, None, n)",
+        TEST_SOURCE,
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.evidence
+    );
+    assert!(finding.canonical_gap.is_none());
+    Ok(())
+}
