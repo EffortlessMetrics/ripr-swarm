@@ -129,6 +129,16 @@ receipt strength, and currentness as separate facts:
   manifest's own limitations/non-claims, and the store resolver's
   non-claims.
 
+- Bare `ripr repair` (no item) offers a start only on a seam the diff a bare
+  `ripr check` reads actually changes (#11111): when that diff touches at
+  least one seam, or changes Rust production lines that touch none, every
+  eligible seam outside the changed lines is counted in the refusal, not
+  offered, so repair never starts on a different change than the one `check`
+  reported (a changed constant has no seam, so `check` offers no start and
+  neither does repair). A diff with no Rust production change, or no readable
+  diff, leaves the whole-repository selection unscoped, and an explicit
+  `ripr repair <seam-id>` is never scoped.
+
 - A restart or fresh-start route is named only when the shared repair
   eligibility gate admits the seam (#8766): `repair_refusal` (the gate
   `ripr repair` applies), the recommended-test edit-target predicate and the

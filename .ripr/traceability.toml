@@ -14213,6 +14213,9 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests/boolean_owner_pin.rs::boolean_boundary_assertions_do_not_borrow_unobserved_or_wrong_results",
   "crates/ripr/src/analysis/test_grip_evidence/tests/boolean_owner_pin.rs::boolean_consistency_distinguishes_the_current_true_and_false_result",
   "crates/ripr/src/analysis/test_grip_evidence/tests/boolean_owner_pin.rs::boolean_consistency_requires_representable_matching_integer_literals",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/boolean_owner_pin.rs::boolean_tail_return_value_seam_reads_the_predicate_seams_verdict",
+  "crates/ripr/tests/check_repair_agree.rs::compound_boolean_tail_is_not_read_as_exposed_by_repair",
+  "crates/ripr/tests/check_repair_agree.rs::exposed_boolean_tail_is_gripped_for_both_check_and_repair",
   "crates/ripr/tests/boundary_gap_closure/boolean_owner_pin.rs::natural_boolean_repair_receipt_requires_the_boundary_result",
   "crates/ripr/tests/return_value_repair_start.rs::equality_assert_pinning_the_owner_is_not_a_repair_start",
   "crates/ripr/tests/return_value_repair_start.rs::terminal_err_return_guard_pinning_the_owner_is_not_a_repair_start",
@@ -15982,6 +15985,8 @@ name = "Repair-attempt discovery selection and fresh-process resume"
 spec = "docs/specs/RIPR-SPEC-0217-agent-attempt-status-selection.md"
 tests = [
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_selects_and_resumes_an_awaiting_attempt",
+  "crates/ripr/tests/check_repair_agree.rs::changed_constant_with_no_seam_does_not_start_repair_elsewhere",
+  "crates/ripr/tests/check_repair_agree.rs::test_only_diff_keeps_the_whole_repository_selection",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_types_a_missing_attempt_instead_of_erroring",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_uses_only_the_selected_store",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_never_claims_resumable_past_a_moved_head",
