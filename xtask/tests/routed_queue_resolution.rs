@@ -52,7 +52,7 @@ fn resolve_shell(source: &str) -> Result<String, String> {
         .split_once("      - name: Resolve queued PR\n")
         .ok_or("missing actual Resolve queued PR step")?;
     let (step, _) = rest
-        .split_once("      - name: Admit exact candidate\n")
+        .split_once("\n      - name:")
         .ok_or("missing step after Resolve queued PR")?;
     let (_, body) = step
         .split_once("        run: |\n")
@@ -465,16 +465,30 @@ fn moved_or_unavailable_pull_ref_is_refused() -> Result<(), String> {
 fn head_that_conflicts_with_the_base_cannot_bind_any_queued_tree() -> Result<(), String> {
     let world = World::new()?;
     let shell = resolve_shell(&workflow()?)?;
-    // A queued commit claiming the conflicting head; its tree is arbitrary
-    // because no clean merge exists to compare with.
-    let queued = world.commit_tree(
-        &git(
-            &world.work,
-            &["rev-parse", &format!("{}^{{tree}}", world.base)],
-        )?,
-        &world.base,
-        "conflicting (#42)",
-    )?;
+    // A conflicting `merge-tree --write-tree` exits 1 but still prints a tree OID
+    // (with conflict markers) on its first stdout line. Queue exactly that tree,
+    // so only the step honouring merge-tree's exit status can refuse it.
+    let output = git_command(&world.work)
+        .args([
+            "merge-tree",
+            "--write-tree",
+            &world.base,
+            &world.conflicting_head,
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.code() != Some(1) {
+        return Err(format!(
+            "expected a conflicting merge, got {:?}",
+            output.status
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let tree = stdout
+        .lines()
+        .next()
+        .ok_or("conflicting merge-tree printed no tree")?;
+    let queued = world.commit_tree(tree, &world.base, "conflicting (#42)")?;
     let run = Run {
         queued,
         api_head: world.conflicting_head.clone(),
