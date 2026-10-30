@@ -331,6 +331,54 @@ fn extra_passed_row_cannot_hide_a_missing_required_row() -> Result<(), String> {
 }
 
 #[test]
+fn wrong_package_channel_fails_required_row() -> Result<(), String> {
+    let mut value = valid_receipt_value();
+    value["required_rows"][0]["channel"] = json!("npm");
+    value["rows"][0]["channel"] = json!("npm");
+    let gate = evaluate_value(&value)?;
+    assert_eq!(
+        gate.verdict,
+        GateVerdict::Failed,
+        "wrong package channel must fail"
+    );
+    assert_eq!(gate.required_row_results[0].disposition, "channel_mismatch");
+    assert!(
+        gate.failures
+            .iter()
+            .any(|failure| failure.contains("npm") && failure.contains("pypi")),
+        "{:#?}",
+        gate.failures
+    );
+    Ok(())
+}
+
+#[test]
+fn matching_npm_channel_can_pass() -> Result<(), String> {
+    let mut value = valid_receipt_value();
+    value["package"]["channel"] = json!("npm");
+    value["package"]["name"] = json!("@effortlessmetrics/ripr");
+    value["required_rows"][0]["channel"] = json!("npm");
+    value["rows"][0]["channel"] = json!("npm");
+    let gate = evaluate_value(&value)?;
+    assert_eq!(gate.verdict, GateVerdict::Passed, "{:#?}", gate.failures);
+    Ok(())
+}
+
+#[test]
+fn wrong_channel_and_target_report_both_mismatches() -> Result<(), String> {
+    let mut value = valid_receipt_value();
+    value["required_rows"][0]["channel"] = json!("npm");
+    value["rows"][0]["channel"] = json!("npm");
+    value["payload"]["target"] = json!("aarch64-unknown-linux-gnu");
+    let gate = evaluate_value(&value)?;
+    assert_eq!(gate.verdict, GateVerdict::Failed);
+    assert!(gate.failures.iter().any(|f| f.contains("package channel")));
+    assert!(gate.failures.iter().any(|f| f.contains("payload target")));
+    assert_eq!(gate.required_row_results[0].disposition, "channel_mismatch");
+    Ok(())
+}
+
+#[test]
 fn wrong_payload_target_fails_required_row() -> Result<(), String> {
     let mut value = valid_receipt_value();
     value["payload"]["target"] = json!("aarch64-unknown-linux-gnu");

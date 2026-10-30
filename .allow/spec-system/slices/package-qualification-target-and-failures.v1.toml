@@ -6,14 +6,15 @@ design_reference = "docs/PYPI_NPM_DISTRIBUTION.md#installed-qualification"
 change_class = "behavior_change"
 claim_boundary = """
 A passing package qualification gate requires zero failed subjects and every
-required row target to match the single receipt payload target. A passed row
-with a mismatched target is reported as target_mismatch. A declared matrix
+required row channel and target to match the single receipt package channel
+and payload target. A passed row with a mismatched channel is reported as channel_mismatch; a
+matching channel with a mismatched target is reported as target_mismatch. A declared matrix
 spanning multiple targets cannot pass this single-payload receipt schema.
 This does not qualify an installed artifact or implement a multi-target schema.
 """
 non_goals = ["multi-target receipt schema", "installed package qualification", "registry publication"]
 return_conditions = [
-  "Return to root if a wrong payload target or nonzero failed count can pass.",
+  "Return to root if a wrong package channel, payload target or nonzero failed count can pass.",
   "Return to root if a multi-target matrix passes using one payload target.",
 ]
 owned_seams = ["seam:ripr:xtask:package-qualification-gate"]

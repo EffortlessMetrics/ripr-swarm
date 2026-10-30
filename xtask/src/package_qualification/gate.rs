@@ -78,6 +78,15 @@ pub(crate) fn evaluate(input: &GateInput<'_>) -> PackageQualificationGate {
 
     let mut required_row_results = Vec::new();
     for key in &receipt.required_rows {
+        let channel_matches = key.channel == receipt.package.channel;
+        if !channel_matches {
+            failures.push(format!(
+                "required row {}/{} does not match package channel {}",
+                key.channel.as_str(),
+                key.target,
+                receipt.package.channel.as_str()
+            ));
+        }
         let target_matches = key.target == receipt.payload.target;
         if !target_matches {
             failures.push(format!(
@@ -136,10 +145,12 @@ pub(crate) fn evaluate(input: &GateInput<'_>) -> PackageQualificationGate {
                 (
                     Some(row.status),
                     Some(row.subject_count),
-                    if target_matches {
-                        "passed"
-                    } else {
+                    if !channel_matches {
+                        "channel_mismatch"
+                    } else if !target_matches {
                         "target_mismatch"
+                    } else {
+                        "passed"
                     }
                     .to_string(),
                 )
