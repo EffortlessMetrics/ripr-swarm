@@ -7806,7 +7806,7 @@ const PUSH_BUDGET_DISCLOSURE_MAX_OMITTED_ITEMS: usize = 20;
 /// stored on the snapshot and read by push publication and both pull
 /// handlers, so no transport re-evaluates the budget with a different
 /// result.
-fn compute_delivery_selection(
+pub(super) fn compute_delivery_selection(
     snapshot: &AnalysisSnapshot,
 ) -> Arc<crate::lsp::diagnostic_budget::DiagnosticDeliverySelection> {
     let complete_evidence_identity =

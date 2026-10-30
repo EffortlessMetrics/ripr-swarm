@@ -50,7 +50,7 @@ constructor that is the single source of truth for that family:
   report that would claim a clean workspace;
   `ripr-diagnostic-language-not-analyzed` (#10715) names a changed file whose
   language adapter is not enabled, so an empty list for it is not a clean
-  result. These are not analyzer findings or actionable repairs.
+  result (served for every document of that language when the producer's file sample is incomplete). These are not analyzer findings or actionable repairs.
 
 Each catalog entry carries the code identity used today: the stable `code` and
 the deprecated `aliases` that still resolve to it. Compatibility aliases are

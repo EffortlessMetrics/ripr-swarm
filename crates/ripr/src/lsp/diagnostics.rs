@@ -667,7 +667,41 @@ pub(super) fn delivered_diagnostics_for_uri(
     {
         diagnostics.push(delivery_omission_diagnostic(omission));
     }
+    push_unlisted_language_not_analyzed(snapshot, uri, &mut diagnostics);
     diagnostics
+}
+
+/// The producer names at most three changed files per disabled language, so
+/// the stored batches mark only those. A document it did not name but whose
+/// language the run reports as not analyzed with an incomplete listing
+/// (`incomplete_languages`) still must not read as clean (#10715): mark it at
+/// serve time, once, like the budget omission above.
+fn push_unlisted_language_not_analyzed(
+    snapshot: &AnalysisSnapshot,
+    uri: &Uri,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let marked = diagnostics.iter().any(|diagnostic| {
+        diagnostic.code
+            == Some(NumberOrString::String(
+                super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+            ))
+    });
+    if marked {
+        return;
+    }
+    let Some(relative) = super::uri::file_uri_relative_to_root(&snapshot.root, uri) else {
+        return;
+    };
+    if let Some(language) = snapshot
+        .unavailable_adapter
+        .not_enabled_language(&relative, snapshot.language_view.as_ref())
+    {
+        diagnostics.push(language_not_analyzed_diagnostic(
+            language,
+            &relative.to_string_lossy().replace('\\', "/"),
+        ));
+    }
 }
 
 /// One visible summary of the same budget omission the selection and log
@@ -1540,29 +1574,41 @@ fn append_unavailable_language_diagnostics(
         let Ok(uri) = file_uri_for_path(&root.join(path)) else {
             continue;
         };
-        let recovery = super::backend::language_adapter_not_enabled_recovery(language);
-        let name = language.as_str();
-        grouped.entry(uri).or_default().push(Diagnostic {
-            range: Range::default(),
-            severity: Some(DiagnosticSeverity::INFORMATION),
-            code: Some(NumberOrString::String(
-                super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
-            )),
-            source: Some("ripr".to_string()),
-            message: format!(
-                "ripr did not analyze this file: the {name} adapter is not enabled, so having no \
-                 findings here does not mean it is clean. Fix: {recovery}."
-            ),
-            data: Some(serde_json::json!({
-                "kind": "language_not_analyzed",
-                "limitation": "language_adapter_unavailable",
-                "not_analyzed_reason": "language_adapter_not_enabled",
-                "language": name,
-                "recovery": recovery,
-                "path": path,
-            })),
-            ..Default::default()
-        });
+        grouped
+            .entry(uri)
+            .or_default()
+            .push(language_not_analyzed_diagnostic(language, path));
+    }
+}
+
+/// The marker for one changed file of a language whose adapter is not enabled.
+pub(super) fn language_not_analyzed_diagnostic(language: LanguageId, path: &str) -> Diagnostic {
+    let recovery = super::backend::language_adapter_not_enabled_recovery(language);
+    let name = language.as_str();
+    Diagnostic {
+        range: Range::default(),
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!(
+            "ripr did not analyze this file: the {name} adapter is not enabled, so having no \
+             findings here does not mean it is clean. Fix: {recovery}."
+        ),
+        data: Some(serde_json::json!({
+            // Producer delivery stamp (#4325 model): the governed code is an
+            // identity, not an eligibility authority, so without this the
+            // delivery budget profile-filters the marker out of push and pull.
+            "delivery_eligible": true,
+            "kind": "language_not_analyzed",
+            "limitation": "language_adapter_unavailable",
+            "not_analyzed_reason": "language_adapter_not_enabled",
+            "language": name,
+            "recovery": recovery,
+            "path": path,
+        })),
+        ..Default::default()
     }
 }
 
