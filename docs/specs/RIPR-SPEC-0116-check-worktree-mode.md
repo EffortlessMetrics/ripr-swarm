@@ -166,6 +166,18 @@ path (the stdin sentinel `-` stays), never the relative spelling repeated as
 typed, so pasting one from another directory analyzes the same repository
 (#3948).
 
+When Git refuses the repository state while reading committed content (exit
+128), the refusal keeps Git's reason. Only when that reason says the index
+itself is damaged (for example a truncated index) does it add rebuild advice:
+copy the index file Git names aside first, since a rebuild from HEAD discards
+staged changes, then remove it and run a single-quoted `git -C '<root>' reset`
+bound to the selected root. The quoting is POSIX single-quoting, which POSIX
+shells and PowerShell both accept (cmd.exe does not treat single quotes as
+quoting), so the advice works from another directory, from a root with spaces
+or single quotes, and for a linked worktree whose index lives under its gitdir.
+An unreadable but valid index, or any other exit-128 cause, gets no
+delete-and-reset advice (#10567).
+
 ### Doctor guidance
 
 When `ripr doctor --root <repo>` sees staged or unstaged tracked changes **and
@@ -290,6 +302,12 @@ that untracked source was analyzed.
 ## Test Mapping
 
 - `crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes`
+- `crates/ripr/tests/hostile_repos.rs::truncated_index_refusal_names_the_rebuild_repair`
+  - truncated index refusal names a backup-first rebuild repair bound to the
+  selected root; following it restores the run and leaves a decoy repository
+  untouched.
+- `crates/ripr/tests/hostile_repos.rs::unreadable_valid_index_gets_no_rebuild_advice`
+  - an unreadable but valid index gets no delete-and-reset advice.
 - `crates/ripr/tests/cli_smoke.rs::check_worktree_base_head_analyzes_uncommitted_tracked_edit`
 - `crates/ripr/tests/cli_smoke.rs::check_worktree_drill_in_commands_reach_the_uncommitted_finding`
 - `crates/ripr/src/app/navigation.rs::tests::finding_navigation_carries_worktree_scope_after_the_base`

@@ -13,6 +13,11 @@ use std::path::PathBuf;
 
 const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change; a test may still reach it through paths ripr cannot follow.";
 const PROXIMITY_ONLY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.";
+/// The same inspection step when the finding's own missing-check line says no
+/// boundary input was detected (#10978): the step names that missing input
+/// instead of leaving the two lines to read as unrelated.
+const PROXIMITY_ONLY_BOUNDARY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner, and no test input that exercises the changed condition was detected. Inspect existing tests, doctests and examples for a call whose input makes that condition both true and false before changing assertions; add a test only if that inspection finds none.";
+const NO_BOUNDARY_INPUT_MISSING: &str = "No detected boundary input for the changed predicate";
 
 #[cfg(test)]
 pub(in crate::analysis) fn build_finding(
@@ -156,7 +161,13 @@ pub(in crate::analysis) fn build_finding_with_origins(
         // Proximity is an inspection pointer, not a finding that an
         // existing assertion is broad or missing. Unindexed doctests
         // and examples may already constrain this owner (#7593).
-        Some(PROXIMITY_ONLY_INSPECTION_NEXT_STEP.to_string())
+        Some(
+            if missing.iter().any(|line| line == NO_BOUNDARY_INPUT_MISSING) {
+                PROXIMITY_ONLY_BOUNDARY_INSPECTION_NEXT_STEP.to_string()
+            } else {
+                PROXIMITY_ONLY_INSPECTION_NEXT_STEP.to_string()
+            },
+        )
     } else if class == ExposureClass::StaticUnknown
         && evidence.reach.state == StageState::No
         && !context.owner_assertion_shaped
