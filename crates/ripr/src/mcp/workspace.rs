@@ -1560,6 +1560,36 @@ fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
     summary
 }
 
+/// #11213: a committed snapshot that analyzed nothing (`no_scope`,
+/// `no_changed_lines`, `no_behavioral_candidates` with zero items) reads like
+/// an all-clear unless it says why and which arguments widen it. The hint is
+/// additive and never changes the outcome kind or any verdict: it names the
+/// two honest causes (the default base resolved to the analyzed commit, or the
+/// diff holds no analyzable change) and the `base`/`source` arguments to pass.
+fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
+    let snapshot = session.last_good.as_ref()?;
+    let empty_kind = matches!(
+        snapshot.outcome.kind,
+        AnalysisOutcomeKind::NoScope
+            | AnalysisOutcomeKind::NoChangedLines
+            | AnalysisOutcomeKind::NoBehavioralCandidates
+    );
+    if !empty_kind || !snapshot.items.is_empty() || snapshot.source != RefreshSource::Committed {
+        return None;
+    }
+    let why = match &session.desired_base {
+        Some(base) => format!(
+            "the committed diff against requested base `{base}` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
+        ),
+        None => "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear".to_string(),
+    };
+    Some(json!({
+        "why": why,
+        "pass_base": "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}",
+        "pass_source": "for saved uncommitted tracked edits retry with {\"source\": \"worktree\"}; that source reports findings but withholds repair cards",
+    }))
+}
+
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     let snapshot = session.last_good.as_ref().map(|snapshot| {
@@ -1605,6 +1635,9 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     });
     if let Some(base) = &session.desired_base {
         document["requested_base"] = json!(base);
+    }
+    if let Some(hint) = empty_scope_hint(session) {
+        document["empty_scope_hint"] = hint;
     }
     // #7357: requested and captured source are distinct facts. Both appear
     // only once a worktree source is involved, so source-less callers keep
@@ -4559,6 +4592,64 @@ mod tests {
             Some(&json!(1)),
             "{dirty}"
         );
+        Ok(())
+    }
+
+    /// #11213: an empty committed snapshot says why and what to pass; a
+    /// populated or complete-clean one invents no hint.
+    #[test]
+    fn refresh_document_explains_an_empty_scope() -> Result<(), String> {
+        for kind in [
+            AnalysisOutcomeKind::NoScope,
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+        ] {
+            let counts = if kind == AnalysisOutcomeKind::NoBehavioralCandidates {
+                AnalysisOutcomeCounts {
+                    changed_file_count: 1,
+                    changed_line_count: 2,
+                    ..Default::default()
+                }
+            } else {
+                AnalysisOutcomeCounts::default()
+            };
+            let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+            empty.analysis_outcome = Some(AnalysisOutcome::new(
+                kind,
+                Default::default(),
+                counts,
+                Vec::new(),
+            )?);
+            let snapshot = Snapshot::from_output(&empty, Some("root:sha256:test"))
+                .map_err(|failure| failure.detail)?;
+            let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+            session.last_good = Some(Arc::new(snapshot));
+            let document = refresh_document(&session);
+            let hint = document
+                .get("empty_scope_hint")
+                .ok_or_else(|| format!("{kind:?} must carry a hint: {document}"))?;
+            let text = hint.to_string();
+            if !text.contains("default base")
+                || !text.contains("\\\"base\\\"")
+                || !text.contains("worktree")
+            {
+                return Err(format!("hint must name why, base and source: {text}"));
+            }
+            session.desired_base = Some("origin/main".to_string());
+            let named = refresh_document(&session)["empty_scope_hint"]["why"].to_string();
+            if !named.contains("origin/main") {
+                return Err(format!("requested base must be named: {named}"));
+            }
+        }
+        for (kind, findings) in [
+            (AnalysisOutcomeKind::CompleteNoFindings, 0),
+            (AnalysisOutcomeKind::CompleteWithFindings, 1),
+        ] {
+            let document = refresh_document(&session_with(kind, findings)?);
+            if document.get("empty_scope_hint").is_some() {
+                return Err(format!("{kind:?} must not carry a hint: {document}"));
+            }
+        }
         Ok(())
     }
 }

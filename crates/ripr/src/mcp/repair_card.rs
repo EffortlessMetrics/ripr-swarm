@@ -415,13 +415,13 @@ fn agent_card_failure(error: AgentCardError) -> AttemptFailure {
                     "run `ripr check --format json` in the repository, then re-run ripr_refresh"
                 }
                 AgentCardRefusalKind::IdentityUnnameable => {
-                    "run `ripr agent packet --seam-id <seam> --json` in the repository for the full evidence packet"
+                    "run `ripr agent packet --seam-id <seam> --json` in the repository for the full evidence packet, or read the item's finding-level evidence with ripr_get_gap"
                 }
                 AgentCardRefusalKind::BudgetOverflow => {
-                    "run `ripr agent packet --seam-id <seam> --json` in the repository for the unbounded packet"
+                    "run `ripr agent packet --seam-id <seam> --json` in the repository for the unbounded packet; ripr_get_gap carries the finding-level evidence over MCP"
                 }
                 AgentCardRefusalKind::IncompleteInventory => {
-                    "run `ripr agent packet --seam-id <seam> --json` in the repository for the full evidence packet"
+                    "run `ripr agent packet --seam-id <seam> --json` in the repository for the full evidence packet, or read the item's finding-level evidence with ripr_get_gap"
                 }
             };
             AttemptFailure::new(kind.as_str(), message, recovery)
@@ -550,7 +550,7 @@ impl WorkspaceSession {
             AttemptFailure::new(
                 CODE_IDENTITY_UNNAMEABLE,
                 message,
-                "run `ripr agent packet --seam-id <seam> --json` in the repository for the full evidence packet",
+                "run `ripr agent packet --seam-id <seam> --json` in the repository for the full evidence packet, or read the item's finding-level evidence with ripr_get_gap",
             )
         })?;
         // The durable attempt store is filesystem state, not analysis: the
@@ -605,7 +605,18 @@ impl WorkspaceSession {
             ),
             None => (None, None),
         };
-        let document = json!({
+        // #11213: the card names CLI routes (`ripr agent packet`, `ripr
+        // explain`, `ripr check --json`) that an MCP-only agent cannot run.
+        // The CLI strings stay verbatim; `mcp_detail_routes` adds the MCP
+        // tool carrying the finding-level detail, and a not-ready card
+        // carries the finding's `missing`/`recommended_next_step`.
+        let mcp_detail_routes = mcp_detail_routes(&card_value, &item_canonical_id);
+        let not_ready = card_value
+            .pointer("/readiness/repair_ready")
+            .and_then(Value::as_bool)
+            != Some(true);
+        let finding_guidance = not_ready.then(|| super::gaps::finding_guidance(item));
+        let mut document = json!({
             "schema_version": REPAIR_CARD_SCHEMA_VERSION,
             "snapshot_id": snapshot_id,
             "requested_snapshot_id": requested,
@@ -632,8 +643,52 @@ impl WorkspaceSession {
                 "receipt": receipt,
             },
         });
+        if let Some(guidance) = finding_guidance {
+            document["finding_guidance"] = guidance;
+        }
+        if !mcp_detail_routes.is_empty() {
+            document["mcp_detail_routes"] = Value::Array(mcp_detail_routes);
+        }
         bounded_document(document, RECOVERY_REPAIR_TOO_LARGE)
     }
+}
+
+/// The CLI routes a card names whose finding-level detail `ripr_get_gap`
+/// carries (evidence, related tests, `missing`, `recommended_next_step`).
+/// `ripr_get_gap` is not the unbounded agent packet; the CLI route string is
+/// preserved unchanged for that.
+fn mcp_detail_routes(card: &Value, canonical_id: &str) -> Vec<Value> {
+    let mut cli_routes: Vec<&str> = Vec::new();
+    if let Some(route) = card
+        .pointer("/canonical_next_action/stop/detail_route")
+        .and_then(Value::as_str)
+    {
+        cli_routes.push(route);
+    }
+    if let Some(references) = card.get("detail_references").and_then(Value::as_array) {
+        cli_routes.extend(
+            references
+                .iter()
+                .filter_map(|reference| reference.get("route").and_then(Value::as_str)),
+        );
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    cli_routes
+        .into_iter()
+        .filter(|route| {
+            route.starts_with("ripr agent packet")
+                || route.starts_with("ripr explain")
+                || route.starts_with("ripr check")
+        })
+        .filter(|route| seen.insert(*route))
+        .map(|route| {
+            json!({
+                "cli_route": route,
+                "mcp_tool": "ripr_get_gap",
+                "canonical_id": canonical_id,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -878,6 +933,38 @@ mod tests {
     }
 
     #[test]
+    fn mcp_detail_routes_twin_only_cli_routes_once() {
+        let card = json!({
+            "canonical_next_action": { "stop": { "detail_route": "ripr agent packet --seam-id s --json" } },
+            "detail_references": [
+                { "route": "ripr agent packet --seam-id s --json" },
+                { "route": "ripr explain probe:x" },
+                { "route": null },
+                { "route": "cargo test" },
+            ],
+        });
+        let routes = mcp_detail_routes(&card, "gap:x");
+        let cli: Vec<&str> = routes
+            .iter()
+            .filter_map(|r| r.get("cli_route").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            cli,
+            [
+                "ripr agent packet --seam-id s --json",
+                "ripr explain probe:x"
+            ]
+        );
+        assert!(
+            routes
+                .iter()
+                .all(|r| r["mcp_tool"] == "ripr_get_gap" && r["canonical_id"] == "gap:x")
+        );
+        // Negative control: a card that names no CLI route gains no twin.
+        assert!(mcp_detail_routes(&json!({ "detail_references": [] }), "gap:x").is_empty());
+    }
+
+    #[test]
     fn repair_card_resource_uri_parsing_is_strict() {
         assert_eq!(
             repair_card_resource_id("ripr://repair-card/gap:test:1"),
@@ -1047,6 +1134,32 @@ mod tests {
             != Some("finding:test:1")
         {
             return Err("the witness-bound card must name the finding identity".to_string());
+        }
+        // #11213: the not-ready card carries the finding's own guidance, equal
+        // to what ripr_get_gap serves, and names the MCP tool beside every
+        // CLI route without rewriting the CLI string.
+        let guidance = document
+            .get("finding_guidance")
+            .ok_or_else(|| format!("a not-ready card must carry finding_guidance: {document}"))?;
+        if guidance.pointer("/gap_route/tool").and_then(Value::as_str) != Some("ripr_get_gap") {
+            return Err(format!("guidance must route to ripr_get_gap: {guidance}"));
+        }
+        if guidance.get("missing").is_none() || guidance.get("recommended_next_step").is_none() {
+            return Err(format!("guidance lost missing/next step: {guidance}"));
+        }
+        let routes = document
+            .get("mcp_detail_routes")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("CLI-only detail routes need MCP twins: {document}"))?;
+        let stop_route = document
+            .pointer("/card/canonical_next_action/stop/detail_route")
+            .and_then(Value::as_str);
+        if let Some(stop_route) = stop_route
+            && !routes
+                .iter()
+                .any(|r| r.get("cli_route").and_then(Value::as_str) == Some(stop_route))
+        {
+            return Err(format!("stop route lacks its MCP twin: {routes:?}"));
         }
         // The weakly-gripped fixture never exposes a route: the gate stays
         // closed and the wire card carries the typed none, never a weakened
