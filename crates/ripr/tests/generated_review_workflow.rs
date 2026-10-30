@@ -165,6 +165,27 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         "workflow step parser found no `Run RIPR` step; the template layout changed"
     );
     let runs = replay::run_workflow(&root, &base, &steps)?;
+    // #11145: no upload failed in the replay (it skips every `uses:` step), so
+    // the failed-upload explanation is skipped; its text, run on its own, is
+    // a valid workflow command that names the fix and exits 0.
+    assert!(
+        runs.iter()
+            .all(|run| run.name != "Explain failed SARIF upload"),
+        "the explanation must not run when no upload failed"
+    );
+    let explain = steps
+        .iter()
+        .find(|step| step.name == "Explain failed SARIF upload")
+        .and_then(|step| step.run.as_deref())
+        .ok_or("generated workflow has no `Explain failed SARIF upload` run step")?;
+    let explained = replay::bash(&root, explain, &[])?;
+    let explained_out = String::from_utf8_lossy(&explained.stdout);
+    assert!(explained.status.success(), "{explained_out}");
+    assert!(
+        explained_out.starts_with("::warning title=RIPR SARIF upload failed::")
+            && explained_out.contains("RIPR_UPLOAD_SARIF to false"),
+        "{explained_out}"
+    );
     // Precondition: the packet command printed its steps as log groups.
     assert!(
         runs.iter().filter(|run| run.name != "Run RIPR").count() > 20,
@@ -2122,6 +2143,14 @@ fn far_above_threshold_discounts() {
         if text == "github.actor" {
             return Ok("ripr-test-user".to_string());
         }
+        // The replay skips every `uses:` step, the SARIF uploads included, so
+        // no upload failed (#11145).
+        if matches!(
+            text,
+            "steps.sarif_findings.outcome" | "steps.sarif_seams.outcome"
+        ) {
+            return Ok("success".to_string());
+        }
         Err(format!("replay does not model the condition operand `{text}`").into())
     }
 
@@ -2130,6 +2159,21 @@ fn far_above_threshold_discounts() {
         root: &Path,
         env: &BTreeMap<String, String>,
     ) -> TestResult<bool> {
+        // A conjunction whose last atom is one parenthesized disjunction:
+        // `always() && (a == 'x' || b == 'x')`.
+        if let Some((head, group)) = condition.split_once("&& (")
+            && let Some(group) = group.trim().strip_suffix(')')
+        {
+            if !condition_holds(head, root, env)? {
+                return Ok(false);
+            }
+            for alternative in group.split("||") {
+                if condition_holds(alternative, root, env)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
         for atom in condition.split("&&").map(str::trim) {
             let holds = if atom == "always()" {
                 true

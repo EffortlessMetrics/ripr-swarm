@@ -368,7 +368,11 @@ files first with `--dry-run`. On a PR, read the summary comment it posts on the
 conversation (one comment, updated on every push; same-repository PRs only), then the job summary
 and the linked artifacts for the evidence and suggested test.
 The generated workflow is non-blocking by default; a policy gate is a separate,
-explicit adoption decision.
+explicit adoption decision. It also uploads SARIF to the Security tab; that needs
+code scanning (free on public repositories, GitHub Code Security on private
+ones). Where it is unavailable the upload fails without failing the job, and
+the run page shows a `RIPR SARIF upload failed` warning; set
+`RIPR_UPLOAD_SARIF` to `"false"` in the workflow to stop trying.
 The workflow runs on `ubuntu-latest` and pins `shell: bash`, so its steps
 still parse if you move the job to another runner; only the Linux runner is
 covered by ripr's own tests.
