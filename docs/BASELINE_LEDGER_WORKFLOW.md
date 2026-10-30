@@ -221,9 +221,47 @@ scoped seams, entries in non-Rust changed files, a scope missing the
 `cap_omitted_seams`/`omitted_by_policy` disclosure, and any malformed scope
 fail closed too. A gate decision whose review-comments source drops any seam by
 policy keeps every absent entry `not_evaluated`. A gate decision built from
-`--gap-ledger` currently always yields `not_evaluated`, because the ledger
-disclosure lists only surviving records' anchor files (limitation tracked in
-#9599); use a `--pr-guidance` gate decision to retire baselined gaps. To retire a gap, feed
+`--gap-ledger` yields `not_evaluated` unless the ledger carries an
+`analysis_coverage` disclosure: `ripr reports gap-ledger --repo-exposure` over a
+complete `ripr check --format repo-exposure-json` run (no seam limit, no
+parser-declined or generated-skipped Rust files) records that the whole Rust
+workspace was analyzed, bound to the ledger's exact records and to the corpus of
+the tree `gate evaluate` runs on (so generate the ledger and evaluate the gate on
+the same checkout). With it, an absent baseline entry on a normalized relative
+Rust path in `corpus.analyzed_production_files` resolves; a
+filtered, edited or stale ledger, a limited run, and other paths stay
+`not_evaluated` (#9599). The digest is tamper-evident, not authentication.
+Accepted limits: a ledger rewritten by someone who recomputes the digest on a
+matching current tree and membership still earns the scope (no producer
+authentication), and `baseline diff`/`update` trust a hand-edited gate-decision.
+The membership list is one sorted path per production file (about 50 bytes
+each; roughly 47 KB for 900 files) and is carried in the repo-exposure
+artifact, the ledger and the gate decision; very large workspaces carry a
+proportionally larger list.
+Gate admission also recomputes the non-Rust analysis inputs (classified config
+including raw `ripr.toml` bytes, `.ripr/test_intent.toml`, the suppressions
+file, `RIPR_CFG_FEATURES`, Cargo workspace manifests/configuration,
+`Cargo.lock`, the toolchain label and the ripr build) and requires them to equal
+the ledger's `analysis_coverage.corpus.analysis_inputs` (copied from the
+repo-exposure artifact's top-level `analysis_inputs`, not from
+`source_subject.corpus`). A ledger produced under different inputs
+stays `not_evaluated`, so run the gate under the same inputs: a byte-different
+`ripr.toml` (comments, whitespace, CRLF) refuses coverage, `RIPR_CFG_FEATURES`
+and the toolchain must match the producer's, and the Cargo manifest identity is
+bound to the checkout path, so gate in the checkout that produced the ledger.
+The hashes are 64-bit FNV digests (non-adversarial change detection). The
+differing classes are named in the gate scope's `coverage_refused` and quoted by
+`baseline diff`. A writer who deletes
+records and recomputes `records_digest`/`records_total` still earns the
+disclosure: the digest is tamper-evident against accidental filtering only.
+The inventory discloses `corpus.analyzed_production_files` from its actual
+production-role inputs, including cache hits. Gate admission requires both
+that membership and the corpus hash to match current discovery and source-role
+selection. Source symlinks and symlinked parents are never followed; their
+aliased paths, deleted sources, and evidence-only files remain `not_evaluated`.
+Missing, malformed or unverified membership also remains `not_evaluated`;
+an empty membership list covers no paths. Without verified coverage, use a
+`--pr-guidance` gate decision to retire baselined gaps. To retire a gap, feed
 `update` a gate decision whose scope covers the gap's file, normally the PR
 that fixes it.
 

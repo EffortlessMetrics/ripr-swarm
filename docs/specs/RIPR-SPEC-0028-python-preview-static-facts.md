@@ -574,7 +574,20 @@ integer. An exact integer assertion is taken to describe the returned value,
 and the abstention covers only arithmetic defined in reachable workspace
 files. A third-party or dynamically built type with its own `+`, `-` or `*` is
 not visible to this scan, and a pinned number it produced may not behave as the
-algebra assumes. A function defined under a
+algebra assumes. An edit that changes only the value of integer literals on a line that calls an
+imported symbol (`islice(seq, 0, None, n)` to `islice(seq, 1, None, n)`,
+`chunks[-1]` to `chunks[-2]`) lifts `missing_import_graph` on token equality
+alone: the old and new lines must lex to the same tokens except integer
+values, so no callee, keyword, operator, operand, string or float moved (#9226).
+The abstention is lifted only when a strong exact oracle observes the owner;
+no test, a smoke assertion or an assertion on another value keeps it. The callee
+is not evaluated, so a strong exact oracle that reaches the owner is
+not credited as `exposed`: the finding is `weakly_exposed` with no nameable
+discriminator, no canonical gap or flow sink, no `suggested_*` repair card and no
+next step. Any other limit that applies (rebind, dunder dispatch,
+heuristic-only relation, `caplog` evidence) still wins. Without the old
+line the limit stays.
+A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only
 decided shapes are Python 2/3 version tuples, with `sys` the single plain
 import) is an ordinary function owner when its name has no other live

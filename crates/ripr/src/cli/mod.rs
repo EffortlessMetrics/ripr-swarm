@@ -41,10 +41,10 @@ pub(crate) const EXIT_DECISION_OR_REFUSAL: i32 = 3;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandError {
     /// The command could not complete: usage, parse, operational, or
-    /// internal error. Maps to [`EXIT_COULD_NOT_COMPLETE`].
+    /// internal error. Maps to `EXIT_COULD_NOT_COMPLETE`.
     Failure(String),
     /// The command ran successfully and reached a blocking decision or a
-    /// typed refusal. Maps to [`EXIT_DECISION_OR_REFUSAL`], so orchestrators
+    /// typed refusal. Maps to `EXIT_DECISION_OR_REFUSAL`, so orchestrators
     /// can branch on `0` (completed), `3` (decision/refusal), and `2`
     /// (could not complete) without parsing output.
     Decision(String),

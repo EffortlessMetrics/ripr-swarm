@@ -2701,7 +2701,10 @@ fn write_agent_repo_exposure_snapshot_with_report(
         None,
         config,
     )?
-    .with_rust_corpus_key(report.corpus_key.as_ref());
+    .with_rust_inventory(
+        report.corpus_key.as_ref(),
+        &report.analyzed_production_files,
+    );
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -2858,7 +2861,12 @@ fn repair_after_cage_recovery_lines(
                 violations.len() - CAGE_RECOVERY_MAX_VIOLATIONS
             ));
         }
-        lines.extend(untracked_output_hints(root, store, after));
+        lines.extend(untracked_output_hints(
+            root,
+            store,
+            after,
+            gap_base.is_some(),
+        ));
     }
     let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
     let restart = crate::app::gap_bound_repair::repair_start_command(
@@ -2942,6 +2950,7 @@ fn untracked_output_hints(
     root: &Path,
     store: Option<&Path>,
     after: &crate::app::repair_attempt::RepairAttemptAfter,
+    gap_bound: bool,
 ) -> Vec<String> {
     use crate::edit_cage::EditCageViolationKind;
 
@@ -2977,8 +2986,13 @@ fn untracked_output_hints(
     if untracked.is_empty() {
         return hints;
     }
+    let packet = if gap_bound {
+        crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT
+    } else {
+        crate::agent::loop_commands::WORKFLOW_AGENT_PACKET_ARTIFACT
+    };
     hints.push(format!(
-        "{} {} not tracked by Git when the before phase ran. If {} a file you redirected ripr output into (for example `> packet.json` or `2> before.err`), it counts as an edit and fails the repair: delete it, and write `agent repair` output outside the repo (for example under target/ripr/); the first step already writes the packet to target/ripr/workflow/agent-packet.json.",
+        "{} {} not tracked by Git when the repair started. If {} a file you redirected ripr output into (for example `> packet.json` or `2> before.err`), it counts as an edit and fails the repair: delete it, and write `agent repair` output outside the checkout or under target/ripr/ (the first step already writes the packet to {packet}).",
         untracked.join(", "),
         if untracked.len() == 1 { "was" } else { "were" },
         if untracked.len() == 1 {

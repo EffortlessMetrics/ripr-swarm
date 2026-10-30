@@ -406,6 +406,174 @@ fn a_path_qualified_annotation_from_another_crate_stays_unrelated() -> Result<()
 }
 
 #[test]
+fn a_foreign_prefixed_struct_literal_initializer_stays_unrelated() -> Result<(), String> {
+    let repo = TempRepo::create(
+        "",
+        "    #[test]
+    fn t_case() {
+        let merge = other_crate::Merge { labels: vec![] };
+        assert_eq!(
+            merge.to_string(),
+            \"\"
+        );
+    }
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        call_related(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_foreign_prefixed_constructor_initializer_stays_unrelated() -> Result<(), String> {
+    let repo = TempRepo::create(
+        "",
+        "    #[test]
+    fn t_case() {
+        let merge = other_crate::Merge::new(vec![]);
+        assert_eq!(
+            merge.to_string(),
+            \"\"
+        );
+    }
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        call_related(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_foreign_prefixed_tuple_initializer_stays_unrelated() -> Result<(), String> {
+    let repo = TempRepo::create(
+        "",
+        "    #[test]
+    fn t_case() {
+        let merge = other_crate::Merge(vec![]);
+        assert_eq!(
+            merge.to_string(),
+            \"\"
+        );
+    }
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        call_related(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_crate_qualified_struct_literal_initializer_is_related() -> Result<(), String> {
+    let repo = TempRepo::create(
+        "",
+        "    #[test]
+    fn t_case() {
+        let merge = crate::Merge { labels: vec![] };
+        assert_eq!(
+            merge.to_string(),
+            \"\"
+        );
+    }
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        call_related(&findings),
+        vec!["t_case".to_string()],
+        "{findings:?}"
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_self_qualified_struct_literal_initializer_is_related() -> Result<(), String> {
+    let repo = TempRepo::create(
+        "",
+        "    #[test]
+    fn t_case() {
+        let merge = self::Merge { labels: vec![] };
+        assert_eq!(
+            merge.to_string(),
+            \"\"
+        );
+    }
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        call_related(&findings),
+        vec!["t_case".to_string()],
+        "{findings:?}"
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_super_qualified_struct_literal_initializer_is_related() -> Result<(), String> {
+    let repo = TempRepo::create(
+        "",
+        "    #[test]
+    fn t_case() {
+        let merge = super::Merge { labels: vec![] };
+        assert_eq!(
+            merge.to_string(),
+            \"\"
+        );
+    }
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        call_related(&findings),
+        vec!["t_case".to_string()],
+        "{findings:?}"
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_bare_struct_literal_initializer_is_related() -> Result<(), String> {
+    let repo = TempRepo::create(
+        "",
+        "    #[test]
+    fn t_case() {
+        let merge = Merge { labels: vec![] };
+        assert_eq!(
+            merge.to_string(),
+            \"\"
+        );
+    }
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        call_related(&findings),
+        vec!["t_case".to_string()],
+        "{findings:?}"
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
 fn a_renamed_foreign_import_named_like_the_type_stays_unrelated() -> Result<(), String> {
     let repo = TempRepo::create(
         "",
@@ -413,6 +581,31 @@ fn a_renamed_foreign_import_named_like_the_type_stays_unrelated() -> Result<(), 
     fn renamed_foreign_type() {
         use foreign::Other as Merge;
         let merge: Merge = foreign::Other::new();
+        assert_eq!(
+            merge.to_string(),
+            \"\"
+        );
+    }
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        call_related(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_renamed_foreign_import_struct_literal_initializer_stays_unrelated() -> Result<(), String> {
+    let repo = TempRepo::create(
+        "",
+        "    #[test]
+    fn renamed_foreign_literal() {
+        use foreign::Other as Merge;
+        let merge = Merge { labels: vec![] };
         assert_eq!(
             merge.to_string(),
             \"\"
