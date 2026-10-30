@@ -1,8 +1,8 @@
 use super::uri::{file_uri_for_path, file_uris_match};
 /// Advisory LSP codeLens for changed symbols.
 ///
-/// RIPR-SPEC-0100: emits one advisory `CodeLens` per `Finding` whose probe
-/// location maps to the requested document URI. The title cites the finding's
+/// RIPR-SPEC-0100: emits one advisory `CodeLens` per distinct line and title
+/// among the `Finding`s whose probe location maps to the requested document URI. The title cites the finding's
 /// `related_tests.len()` from the cached `AnalysisSnapshot` — the same source
 /// that feeds `finding.class` — so the count is never fabricated.
 ///

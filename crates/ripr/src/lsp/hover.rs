@@ -109,7 +109,7 @@ const MAX_LINE_HOVER_FINDINGS: usize = 5;
 const ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE: &str = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing value or check and a fix site), so these are not diagnostics. Set `diagnosticProfile` to `full` (VS Code setting `ripr.diagnosticProfile`) or `[lsp] diagnostic_profile = \"full\"` in `ripr.toml` to publish them with their Inspect finding quick fix.";
 
 /// Hover for a position with no published diagnostic but with snapshot
-/// findings on its line — the findings the code lens on that line shows.
+/// findings on its line — the findings the code lens on that line summarizes.
 /// Under the `actionable` profile these are route-less or exposed findings
 /// the profile does not publish; describing them here keeps the editor
 /// surfaces consistent instead of sending the reader to the CLI.
@@ -121,7 +121,7 @@ pub(super) fn line_findings_hover_response(
         "**ripr** no published diagnostic at this position".to_string(),
         String::new(),
         format!(
-            "The current analysis snapshot has {} finding(s) on this line; the code lens shows the same findings.",
+            "The current analysis snapshot has {} finding(s) on this line; the code lens on this line summarizes them (one lens per distinct title).",
             findings.len()
         ),
     ];
