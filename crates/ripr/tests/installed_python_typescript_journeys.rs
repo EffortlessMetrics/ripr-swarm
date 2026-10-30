@@ -1145,6 +1145,112 @@ fn typescript_excluded_by_config_is_not_a_clean_result() -> Result<(), String> {
 
 #[cfg(feature = "lang-typescript")]
 #[test]
+fn check_findings_verify_rejects_changed_test_scope() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "scope-identity",
+        Some(
+            "[languages]\nenabled = [\"typescript\"]\n[analysis]\ninclude_unchanged_tests = true\n",
+        ),
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    let dir = root.join("target/ripr");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let produce = |name: &str| -> Result<(PathBuf, serde_json::Value), String> {
+        let output = ripr_output(
+            &decoy,
+            &[
+                "check",
+                "--root",
+                &root_arg,
+                "--base",
+                &base,
+                "--mode",
+                "deep",
+                "--format",
+                "check-findings-json",
+            ],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "producer failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        if value["analysis_outcome"]["analysis_complete"] != true
+            || value["findings"].as_array().is_none_or(Vec::is_empty)
+        {
+            return Err(format!(
+                "fixture must yield complete nonempty findings: {value}"
+            ));
+        }
+        let path = dir.join(name);
+        std::fs::write(&path, output.stdout).map_err(|e| e.to_string())?;
+        Ok((path, value))
+    };
+    let (before, before_value) = produce("before.json")?;
+    std::fs::write(root.join("scope-marker.txt"), "next revision\n").map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "scope-marker.txt"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "next revision"])?;
+    let (same_scope, same_value) = produce("same.json")?;
+    assert_eq!(
+        before_value["artifact"]["analysis"]["input_identity"],
+        same_value["artifact"]["analysis"]["input_identity"]
+    );
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"typescript\"]\n[analysis]\ninclude_unchanged_tests = false\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let (changed_scope, changed_value) = produce("changed.json")?;
+    let verify = |after: &Path| {
+        ripr_output(
+            &decoy,
+            &[
+                "agent",
+                "verify",
+                "--json",
+                "--root",
+                &root_arg,
+                "--before",
+                &before.to_string_lossy(),
+                "--after",
+                &after.to_string_lossy(),
+            ],
+        )
+    };
+    let control = verify(&same_scope)?;
+    if !control.status.success() {
+        return Err(format!(
+            "same-scope control: {}",
+            String::from_utf8_lossy(&control.stderr)
+        ));
+    }
+    let mismatch = verify(&changed_scope)?;
+    if mismatch.status.success() {
+        return Err(format!(
+            "different effective test scope was accepted; identities before={} after={}; output={}",
+            before_value["artifact"]["analysis"]["input_identity"],
+            changed_value["artifact"]["analysis"]["input_identity"],
+            String::from_utf8_lossy(&mismatch.stdout)
+        ));
+    }
+    need(
+        &String::from_utf8_lossy(&mismatch.stderr),
+        "incomparable",
+        "scope mismatch",
+    )?;
+    decoy_untouched(&decoy)
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
 fn typescript_check_findings_artifacts_verify_by_gap_id_and_reject_forgery() -> Result<(), String> {
     let toml = "[languages]\nenabled = [\"typescript\"]\n";
     let (_guard, root, decoy) = materialize(
