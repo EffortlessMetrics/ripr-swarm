@@ -6115,10 +6115,13 @@ fn e2e_real_ledger_symlink_keeps_baseline_debt(parent: bool) -> Result<(), Strin
 }
 
 /// #11101: the aliased-path refusal must run on every host, including the
-/// Windows evidence lane where the `#[cfg(unix)]` symlink tests cannot. The
-/// refusal is platform-neutral (membership equality plus the shared path
-/// shape owner), so this injects aliased spellings into the membership of a
-/// real, otherwise-current coverage ledger instead of creating a link.
+/// Windows evidence lane where the `#[cfg(unix)]` symlink tests cannot. Every
+/// forged spelling below is refused by membership-set equality against the
+/// discovered (component-normalized) membership; this test does not isolate
+/// the path shape owner, which is pinned directly by
+/// `rust_workspace_path_gap_refuses_aliased_spellings` in `corpus.rs`. It
+/// injects aliased spellings into the membership of a real, otherwise-current
+/// coverage ledger instead of creating a link.
 #[test]
 fn e2e_aliased_path_in_forged_membership_keeps_baseline_debt() -> Result<(), String> {
     let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
@@ -6194,8 +6197,8 @@ fn e2e_aliased_path_in_forged_membership_keeps_baseline_debt() -> Result<(), Str
 
     // Negative: each aliased membership must keep the debt unresolved, whatever
     // the host's link support. Same bytes at a different path (the parent-alias
-    // shape), an alias beside the real file, spellings the shared shape owner
-    // refuses, and the real path dropped.
+    // shape), an alias beside the real file, non-normalized spellings, and the
+    // real path dropped (an empty membership, not an alias).
     let aliased: [(&str, Vec<&str>); 6] = [
         (
             "parent alias replaces the real path",
@@ -6220,6 +6223,20 @@ fn e2e_aliased_path_in_forged_membership_keeps_baseline_debt() -> Result<(), Str
             "{label}: {gate}"
         );
         assert_eq!(delta["delta"]["resolved"], 0, "{label}: {delta}");
+        assert_eq!(
+            delta["delta"]["stale_baseline_entry"], before as u64,
+            "{label}: {delta}"
+        );
+        assert_eq!(
+            delta["items"].as_array().map(|items| {
+                items
+                    .iter()
+                    .filter(|item| item["evaluation"] == "not_evaluated")
+                    .count()
+            }),
+            Some(before),
+            "{label}: {delta}",
+        );
         assert_eq!(after, before, "{label}: debt must be retained");
     }
     ignore_remove_dir_all(root);

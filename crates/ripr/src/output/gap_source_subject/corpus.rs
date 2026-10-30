@@ -259,6 +259,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rust_workspace_path_gap_refuses_aliased_spellings() {
+        for aliased in [
+            "src/../src/lib.rs",
+            "./src/lib.rs",
+            "src\\lib.rs",
+            "src//lib.rs",
+        ] {
+            assert!(
+                rust_workspace_path_gap(aliased).is_some(),
+                "{aliased} must be refused by the shape owner"
+            );
+        }
+        assert_eq!(rust_workspace_path_gap("src/lib.rs"), None);
+    }
+
+    #[test]
     fn a_colon_after_the_first_character_is_a_legal_unix_filename_but_drive_forms_are_refused() {
         assert_eq!(rust_workspace_path_gap("weird:name.rs"), None);
         assert_eq!(rust_workspace_path_gap("src/a:b.rs"), None);
