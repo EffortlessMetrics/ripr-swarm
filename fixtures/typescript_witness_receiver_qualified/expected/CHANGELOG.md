@@ -362,3 +362,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_witness_receiver_qualified (31)
+
+Reason:
+RIPR-SPEC-0122: #11229 script-file ObservationUnconfirmed wording names the preview adapter (wording only; verdict and credit unchanged)
+
+Command:
+`cargo xtask goldens bless typescript_witness_receiver_qualified --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

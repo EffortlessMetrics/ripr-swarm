@@ -77,7 +77,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter does not run the code, so it cannot tell whether this test's input reaches the changed branch"
         },
         {
           "name": "discounts far above threshold",
