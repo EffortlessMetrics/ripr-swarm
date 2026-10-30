@@ -1588,6 +1588,22 @@ fn check_bound_test_drift(committed: bool) -> Result<(), String> {
     if current()? != Some(true) {
         return Err("exact restoration did not recover currentness".to_string());
     }
+    fixture_git_ok(
+        &attempt.root,
+        &["commit", "--allow-empty", "-q", "-m", "move HEAD"],
+    )?;
+    if current()? != Some(false) {
+        return Err("moved HEAD was not stale".to_string());
+    }
+    for json in [false, true] {
+        let mut args = vec!["agent", "status", "--root", &attempt.root_arg];
+        if json {
+            args.push("--json");
+        }
+        let (ok, status) = ripr(&attempt.decoy, &args)?;
+        expect_exit(ok, true, "moved-HEAD status")?;
+        need(&status, "stale against HEAD", "moved-HEAD warning")?;
+    }
     decoy_untouched(&attempt.decoy)
 }
 
