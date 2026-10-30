@@ -199,16 +199,39 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Value, String> {
         .map_err(|e| e.to_string())?;
     decoder.end().map_err(|e| e.to_string())?;
     let source = std::str::from_utf8(bytes).map_err(|e| e.to_string())?;
-    let raw: &serde_json::value::RawValue =
-        serde_json::from_str(source).map_err(|e| e.to_string())?;
     let mut scan_budget = 64 * 1024 * 1024;
-    convert(raw, &mut scan_budget)
+    convert(source.trim(), &mut scan_budget)
 }
 
-// RawValue preserves the validated source spelling. Deserializing each level
-// scans its subtree again; cumulative scanned subtree bytes are capped.
-fn convert(raw: &serde_json::value::RawValue, scan_budget: &mut usize) -> Result<Value, String> {
-    let text = raw.get();
+// StreamDeserializer exposes the end of a successfully consumed value without
+// requiring serde_json/raw_value on a dependency shared with the product.
+// IgnoredAny identifies only the source boundary; CountSeed has already checked
+// the entire document, including discarded duplicate values and finite numbers.
+fn take_raw<'a>(input: &mut &'a str) -> Result<&'a str, String> {
+    let text = input.trim_start();
+    let mut stream = serde_json::Deserializer::from_str(text).into_iter::<serde::de::IgnoredAny>();
+    stream
+        .next()
+        .ok_or("expected JSON value")?
+        .map_err(|e| e.to_string())?;
+    let end = stream.byte_offset();
+    let value = text.get(..end).ok_or("invalid JSON value boundary")?;
+    *input = text.get(end..).ok_or("invalid JSON value boundary")?;
+    Ok(value)
+}
+
+fn take_separator(input: &mut &str, separator: char) -> Result<(), String> {
+    *input = input
+        .trim_start()
+        .strip_prefix(separator)
+        .ok_or_else(|| format!("expected JSON separator {separator}"))?;
+    Ok(())
+}
+
+// Each container scans its children to locate their original byte slices. As
+// with RawValue, repeated subtree scans are capped by a cumulative byte budget.
+// This is only called after the complete document passes the serde preflight.
+fn convert(text: &str, scan_budget: &mut usize) -> Result<Value, String> {
     *scan_budget = scan_budget
         .checked_sub(text.len())
         .ok_or("JSON scan work limit exceeded")?;
@@ -220,17 +243,34 @@ fn convert(raw: &serde_json::value::RawValue, scan_budget: &mut usize) -> Result
             .map(Value::String)
             .map_err(|e| e.to_string()),
         Some(b'[') => {
-            let children: Vec<&serde_json::value::RawValue> =
-                serde_json::from_str(text).map_err(|e| e.to_string())?;
-            children
-                .into_iter()
-                .map(|value| convert(value, scan_budget))
-                .collect::<Result<Vec<_>, _>>()
-                .map(Value::Array)
+            let mut rest = text
+                .strip_prefix('[')
+                .and_then(|text| text.strip_suffix(']'))
+                .ok_or("expected JSON array")?;
+            let mut children = Vec::new();
+            while !rest.trim_start().is_empty() {
+                children.push(convert(take_raw(&mut rest)?, scan_budget)?);
+                if !rest.trim_start().is_empty() {
+                    take_separator(&mut rest, ',')?;
+                }
+            }
+            Ok(Value::Array(children))
         }
         Some(b'{') => {
-            let children: BTreeMap<String, &serde_json::value::RawValue> =
-                serde_json::from_str(text).map_err(|e| e.to_string())?;
+            let mut rest = text
+                .strip_prefix('{')
+                .and_then(|text| text.strip_suffix('}'))
+                .ok_or("expected JSON object")?;
+            let mut children = BTreeMap::new();
+            while !rest.trim_start().is_empty() {
+                let key: String =
+                    serde_json::from_str(take_raw(&mut rest)?).map_err(|e| e.to_string())?;
+                take_separator(&mut rest, ':')?;
+                children.insert(key, take_raw(&mut rest)?);
+                if !rest.trim_start().is_empty() {
+                    take_separator(&mut rest, ',')?;
+                }
+            }
             children
                 .into_iter()
                 .map(|(key, value)| Ok((key, convert(value, scan_budget)?)))
@@ -269,8 +309,7 @@ mod tests {
 
     #[test]
     fn raw_subtree_scan_budget_fails_closed() -> Result<(), String> {
-        let raw: &serde_json::value::RawValue =
-            serde_json::from_str("[[1]]").map_err(|e| e.to_string())?;
+        let raw = "[[1]]";
         let mut insufficient = 7;
         match convert(raw, &mut insufficient) {
             Err(error) if error.contains("scan work limit") => {}
@@ -343,6 +382,51 @@ mod tests {
         expect_parse(within_depth.as_bytes(), true)?;
         let deep = format!("{}0{}", "[".repeat(129), "]".repeat(129));
         expect_parse(deep.as_bytes(), false)?;
+        Ok(())
+    }
+    #[test]
+    fn parser_preserves_lexical_boundaries_and_number_spellings() -> Result<(), String> {
+        let value = parse(
+            br#"
+            { "1": [-0, 0.00, 1E+02, 1e-2, 18446744073709551616, 1.00000000000000001],
+              "s": "1, [2], {\"3\": \"4\"}, \uD83D\uDE00",
+              "\u0061": {"": null, "t": true, "f": false}, "tail": 42 }
+        "#,
+        )?;
+        let numbers = value
+            .get("1")
+            .and_then(Value::as_array)
+            .ok_or("missing number array")?;
+        assert_eq!(
+            numbers.iter().map(Value::as_number).collect::<Vec<_>>(),
+            vec![
+                Some("-0"),
+                Some("0.00"),
+                Some("1E+02"),
+                Some("1e-2"),
+                Some("18446744073709551616"),
+                Some("1.00000000000000001")
+            ]
+        );
+        assert_eq!(
+            value.get("s").and_then(Value::as_str),
+            Some("1, [2], {\"3\": \"4\"}, 😀")
+        );
+        assert_eq!(value.pointer("/a/"), Some(&Value::Null));
+        assert_eq!(value.pointer("/a/t").and_then(Value::as_bool), Some(true));
+        assert_eq!(value.pointer("/a/f").and_then(Value::as_bool), Some(false));
+        assert_eq!(value.get("tail").and_then(Value::as_number), Some("42"));
+        for malformed in [
+            "[1 2]",
+            "{\"a\" 1}",
+            "{\"a\":1 \"b\":2}",
+            "[1,]",
+            "{\"a\":1,}",
+            "1true",
+            "truefalse",
+        ] {
+            expect_parse(malformed.as_bytes(), false)?;
+        }
         Ok(())
     }
 }
