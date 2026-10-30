@@ -19935,6 +19935,10 @@ fn same_line_helper_callers_keep_distinct_module_function_identity() -> Result<(
             Some(&RelationReason::HelperOwnerCall)
         );
         assert!(
+            full_rows.contains_key("decoy"),
+            "retain the decoy caller: {full_rows:?}"
+        );
+        assert!(
             !matches!(
                 full_rows.get("decoy"),
                 Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
