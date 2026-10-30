@@ -2034,9 +2034,12 @@ fn analyze_related_assertions(
         // is no token, as for a bare literal: `1` or `2` would match any
         // assertion that mentions them (`one() + 1 == 2`).
         let mut tokens = extract_identifier_tokens(analysis_expression);
+        // The folded value goes through the same token reader, so the one
+        // token-length rule in `extract_identifier_tokens` decides.
         tokens.extend(
             super::value_transfer::fold_literal_integer(analysis_expression)
-                .filter(|folded| folded.len() > 2),
+                .into_iter()
+                .flat_map(|folded| extract_identifier_tokens(&folded)),
         );
         tokens
     };
