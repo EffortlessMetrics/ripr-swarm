@@ -39,9 +39,10 @@ What are you trying to do?
   Guided repo adoption  ripr pilot --root .
   Understand a finding  ripr explain <finding-id>
                         ripr context --at <finding-id>
-  Repair one named gap  ripr repair [<item>]
+  Repair a Rust seam    ripr repair [<item>]
                         # edit one focused test
                         ripr continue
+  Repair a diff gap     follow the start from ripr check, when offered
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Work in an editor     ripr lsp --stdio (started by your editor)
   Adopt advisory CI     ripr init --ci github
@@ -88,7 +89,8 @@ Task map:
   Diagnose setup        ripr doctor
   Inspect one change    ripr check
   Guided repo adoption  ripr pilot --root .
-  Repair one named gap  ripr repair [<item>] | ripr continue | ripr status
+  Repair a Rust seam    ripr repair [<item>] | ripr continue | ripr status
+  Repair a diff gap     follow the start from ripr check, when offered
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Adopt advisory CI     ripr init --ci github
 

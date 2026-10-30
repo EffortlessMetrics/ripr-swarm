@@ -1417,6 +1417,7 @@ mod tests {
                 base_ref: base.to_string(),
                 base_commit: Some("1a2b3c4d5e6f".to_string()),
                 merge_base_commit: None,
+                loaded_diff_origin: None,
                 head_commit: Some("1a2b3c4d5e6f".to_string()),
                 working_tree: false,
             }),
@@ -1442,6 +1443,7 @@ mod tests {
             base_ref: "HEAD".to_string(),
             base_commit: Some("1a2b3c4d5e6f".to_string()),
             merge_base_commit: None,
+            loaded_diff_origin: None,
             head_commit: Some("1a2b3c4d5e6f".to_string()),
             working_tree: true,
         });
@@ -4004,6 +4006,7 @@ mod tests {
                 base_ref: "main".to_string(),
                 base_commit: Some("1a2b3c4d5e6f".to_string()),
                 merge_base_commit: None,
+                loaded_diff_origin: None,
                 head_commit: Some("1a2b3c4d5e6f".to_string()),
                 working_tree: true,
             }),

@@ -1795,6 +1795,9 @@ spec = "docs/specs/RIPR-SPEC-0011-llm-work-loop.md"
 tests = [
   "crates/ripr/src/cli/agent.rs::tests::agent_repair_phase_values_keep_their_exact_meaning",
   "crates/ripr/tests/cli_help_hierarchy.rs::agent_repair_phase_refusals_render_scoped_recovery_without_writes",
+  "crates/ripr/tests/cli_help_hierarchy.rs::agent_repair_help_names_the_primary_transaction_and_its_limits",
+  "crates/ripr/tests/cli_help_hierarchy.rs::agent_repair_default_and_later_phase_selectors_match_help",
+  "crates/ripr/tests/cli_help_hierarchy.rs::agent_repair_later_phases_require_existing_attempts_without_writes",
   "crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve",
   "crates/ripr/tests/cli_smoke/retained_evidence_guidance.rs::missing_retained_evidence_names_executable_status_without_mutation",
   "crates/ripr/tests/cli_smoke/retained_evidence_guidance.rs::continue_selection_failure_names_one_status_command",
@@ -3889,6 +3892,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::spellings_the_relation_accepts",
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_decorator_argument_call_is_not_a_helper_edge",
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_click_name_that_is_not_the_click_module_is_not_a_command",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_runner_invoke_in_a_test_of_the_package_is_named_without_changing_the_class",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::without_a_recognised_runner_invoke_the_generic_line_stays",
   "crates/ripr/src/analysis/language/python/effect_order_tests.rs",
 ]
 fixtures = [
@@ -7884,7 +7889,9 @@ tests = [
   "crates/ripr/src/output/json/report.rs::tests::typescript_repair_packet_json_field_absent_when_blocked",
   # Actionable-case consistency â€” no contradictory blocked-case messaging
   "crates/ripr/src/output/preview_actionability.rs::tests::actionable_repair_route_names_assertion_shape_not_blocked_text",
-  "crates/ripr/src/output/preview_actionability.rs::tests::actionable_repair_route_falls_back_to_discriminator_then_generic"
+  "crates/ripr/src/output/preview_actionability.rs::tests::actionable_repair_route_falls_back_to_discriminator_then_generic",
+  "crates/ripr/src/output/preview_actionability.rs::tests::projected_evidence_replaces_blocked_lines_for_packet_ready_finding",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_literal_threshold_packet_is_complete_and_controls_fail_closed"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -7902,6 +7909,7 @@ code = [
   "crates/ripr/src/app/explain.rs",
   "crates/ripr/src/output/human/sections.rs",
   "crates/ripr/src/output/json/report.rs",
+  "crates/ripr/src/output/json/context_packet.rs",
   "crates/ripr/src/output/preview_actionability.rs",
   "crates/ripr/src/lsp/hover.rs",
   "crates/ripr/src/lsp/actions.rs"
@@ -15196,7 +15204,7 @@ spec = "docs/specs/RIPR-SPEC-0210-installed-typescript-journey-fixture.md"
 tests = [
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_literal_threshold_packet_is_complete_and_controls_fail_closed",
-  "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_status_warning_keeps_the_no_start_claim_for_refused_variants",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_status_warning_reports_unconfirmed_start_for_refused_variants",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::committed_installed_typescript_manifest_binds_the_snapshot_bytes",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::committed_installed_typescript_scenarios_exist_in_the_executor_corpus",
   "xtask/src/fixture_contracts/general_validators.rs::installed_typescript_fixture_tests::unknown_installed_typescript_scenario_is_reported_missing",
@@ -18498,6 +18506,9 @@ tests = [
   "crates/ripr/tests/operator_call_credit.rs::an_operator_inside_stringify_is_text_not_a_call",
   "crates/ripr/tests/operator_call_credit.rs::an_owned_operand_reaches_the_owned_impl_beside_a_reference_impl",
   "crates/ripr/tests/operator_call_credit.rs::a_credit_no_assertion_confirms_is_withheld_not_a_gap",
+  "crates/ripr/tests/operator_call_credit.rs::module_type_bindings_do_not_name_the_operator_owner",
+  "crates/ripr/tests/operator_call_credit.rs::grouped_self_import_binds_the_enclosing_type_name",
+  "crates/ripr/tests/operator_call_credit.rs::an_unresolved_macro_invocation_in_the_test_scope_withholds_the_credit",
   "crates/ripr/tests/operator_call_credit.rs::reference_operands_do_not_reach_the_owned_impl",
   "crates/ripr/tests/implicit_call_limit.rs::a_dyn_trait_method_called_on_an_untyped_receiver_is_withheld",
   "crates/ripr/tests/implicit_call_limit.rs::an_operator_impl_controls_keep_the_gap",
@@ -20004,6 +20015,10 @@ id = "RIPR-SPEC-0311"
 name = "A complete TypeScript or Python packet offers a gap-bound repair start"
 spec = "docs/specs/RIPR-SPEC-0311-gap-bound-typescript-repair-start.md"
 tests = [
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::dirty_python_repair_start_keeps_original_diff_after_commit",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::dirty_typescript_start_uses_diverged_merge_base",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::dirty_python_check_withholds_start_when_git_inspection_fails",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::committed_python_dirty_file_requires_fresh_check",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_literal_threshold_packet_is_complete_and_controls_fail_closed",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_closes_the_gap_on_positive_evidence",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_refuses_a_gap_that_is_not_closed_and_stays_retryable",
@@ -20012,7 +20027,7 @@ tests = [
   "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_stops_when_the_retry_budget_is_spent",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_human_output_names_closure_and_replaces_a_stale_receipt",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_receipt_requires_the_verify_closure_and_rejects_forgery",
-  "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_status_warning_keeps_the_no_start_claim_for_refused_variants",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_status_warning_reports_unconfirmed_start_for_refused_variants",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::python_status_after_pilot_names_the_gap_bound_start",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::python_refused_variant_is_offered_no_gap_bound_start",

@@ -801,9 +801,18 @@ longer method name, text inside `stringify!` (never evaluated), and a
 module-qualified path (`crate::Money::name(`, which may name another module's
 `Money`) do not count and leave the test syntax-only, as does a test body that
 brings its own `Money` in by `use` or declares one (`type`, `struct`, `enum`,
-`trait`, `union`). A `Money` or trait imported or aliased outside the test body (file or
-enclosing module scope) is not resolved and still matches; the test must also reach this impl directly to be
-judged this way. The related rows are capped for display; a finding whose
+`trait`, `union`). A same-file path call can lift withholding only when the
+test's enclosing scopes leave the type and trait bindings clear. A foreign
+named import, local alias, local module or macro invocation in those scopes
+refuses the lift, because an invocation's expansion can introduce a binding
+without naming it at the invocation site; unrelated sibling modules do not. A direct
+`super::Money` import from the owner's module is admitted, including the
+grouped `super::Money::{self}` spelling. A grouped `other::Money::{self}`
+binds the foreign `Money` and refuses the lift. Other same-name imports,
+foreign globs, cross-file calls, unparsed or ambiguous scopes are withheld
+when their identity cannot be established. A local alias to the owner still
+fails closed at the relation stage. The test must also reach this impl directly
+to be judged this way. The related rows are capped for display; a finding whose
 rows were cut stays withheld, because a naming test may be among the cut rows
 and which rows survive depends on test names. The cap counts rows, so one
 test with more than eight assertion rows also stays withheld. The call only lifts the withholding: the finding is then
