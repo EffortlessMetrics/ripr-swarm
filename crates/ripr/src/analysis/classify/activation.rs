@@ -11606,30 +11606,31 @@ assert_eq!(input.amount, 100);"#
     fn rebound_memo_keeps_binding_detection_behavior() {
         // #10977: the memoized answer reports the same binding a fresh
         // scan would: a `macro_rules!` rebinding the name is rebound,
-        // and clearing the index (a rebuilt analysis) recomputes.
+        // and replacing the file on the same index (a rebuilt analysis)
+        // clears the memo and recomputes.
         use crate::analysis::classify::macro_names_rebound;
-        let rebound_source = "macro_rules! assert {\n    () => {};\n}\n";
         let mut index = crate::analysis::rust_index::RustIndex::default();
-        index.insert_file_only(
-            PathBuf::from("src/lib.rs"),
-            crate::analysis::facts::FileFacts {
-                path: PathBuf::from("src/lib.rs"),
-                source: rebound_source.into(),
-                ..Default::default()
-            },
-        );
+        let insert = |index: &mut crate::analysis::rust_index::RustIndex, source: &str| {
+            index.insert_file_only(
+                PathBuf::from("src/lib.rs"),
+                crate::analysis::facts::FileFacts {
+                    path: PathBuf::from("src/lib.rs"),
+                    source: source.into(),
+                    ..Default::default()
+                },
+            );
+        };
+        insert(&mut index, "macro_rules! assert {\n    () => {};\n}\n");
         assert!(macro_names_rebound(&index, &["assert"]));
         assert!(macro_names_rebound(&index, &["assert"]));
         assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
-        let mut clean = crate::analysis::rust_index::RustIndex::default();
-        clean.insert_file_only(
-            PathBuf::from("src/lib.rs"),
-            crate::analysis::facts::FileFacts {
-                path: PathBuf::from("src/lib.rs"),
-                source: "pub fn score(amount: i32) -> bool {\n    amount > 10\n}\n".into(),
-                ..Default::default()
-            },
+        // Replacing the file clears the memo: the same index recomputes
+        // and now reads clean.
+        insert(
+            &mut index,
+            "pub fn score(amount: i32) -> bool {\n    amount > 10\n}\n",
         );
-        assert!(!macro_names_rebound(&clean, &["assert"]));
+        assert!(!macro_names_rebound(&index, &["assert"]));
+        assert_eq!(index.call_identity_memos.rebound_scan_count(), 2);
     }
 }
