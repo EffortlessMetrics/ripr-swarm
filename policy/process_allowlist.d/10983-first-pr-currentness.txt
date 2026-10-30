@@ -1,0 +1,1 @@
+crates/ripr/tests/first_pr_check_output_currentness.rs|Command::new|6|cli-tests|#10983: real-producer first-pr tests run git and the built ripr binary in isolated temporary repositories; Unix controls execute the generated inspection command through sh and check that the input is unchanged. No network or user-repository mutation.

@@ -5090,8 +5090,13 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     };
     // The test fragment omits its file's imports, so a parameter's type name
     // is the owner only when no `use` or `type` in that file rebinds it.
+    // The answer is fixed per probe, so scan the file at most once.
+    let unrebound = std::cell::OnceCell::new();
     let owner_unrebound = || {
-        owner_local && index.is_some_and(|index| !file_rebinds_type(index, &test.file, impl_type))
+        *unrebound.get_or_init(|| {
+            owner_local
+                && index.is_some_and(|index| !file_rebinds_type(index, &test.file, impl_type))
+        })
     };
     executable_call_resolves(test, index, pin_syntax, &|node, scope| {
         inherent_call_node_resolves(
@@ -5530,8 +5535,8 @@ fn visible_receiver_binding_names_type(
 }
 
 /// Whether `function` declares a plain parameter `name` whose whole type is
-/// the unqualified `impl_type`, optionally behind `&`/`&mut`. An rstest
-/// fixture is injected through such a parameter, and any enclosing fn's
+/// the unqualified `impl_type`, optionally behind exactly one `&` or `&mut`
+/// (stacked borrows and lifetimes are refused). An rstest fixture is injected through such a parameter, and any enclosing fn's
 /// declared parameter type is its nominal type. A qualified path,
 /// generic argument list or `impl`/`dyn` type is not the nominal owner.
 fn fn_param_names_type(function: &ast::Fn, name: &str, impl_type: &str) -> bool {
@@ -5549,7 +5554,8 @@ fn fn_param_names_type(function: &ast::Fn, name: &str, impl_type: &str) -> bool 
                 return false;
             };
             let text = ty.syntax().text().to_string();
-            let text = text.trim().trim_start_matches('&').trim();
+            let text = text.trim();
+            let text = text.strip_prefix('&').map_or(text, str::trim_start);
             let text = text.strip_prefix("mut ").unwrap_or(text).trim();
             text == impl_type
         })

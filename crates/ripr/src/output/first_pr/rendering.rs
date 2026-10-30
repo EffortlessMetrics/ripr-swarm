@@ -789,9 +789,22 @@ fn render_blocked_markdown(selected: &Value, out: &mut String) {
         "- Output state: `{}`\n",
         selected_output_state(selected, state)
     ));
-    out.push_str(
-        "- Safe next action: resolve this fail-closed state before assigning repair work.\n",
-    );
+    if selected.get("reason_code").and_then(Value::as_str) == Some("source_currentness_unavailable")
+    {
+        if selected
+            .get("next_command")
+            .and_then(Value::as_str)
+            .is_some()
+        {
+            out.push_str("- Safe next action: inspect a fresh check of the selected workspace; do not infer no action while corpus currentness is unavailable.\n");
+        } else {
+            out.push_str("- Safe next action: establish a checkout at the selected head and inspect its intended analysis; do not infer no action while corpus currentness is unavailable.\n");
+        }
+    } else {
+        out.push_str(
+            "- Safe next action: resolve this fail-closed state before assigning repair work.\n",
+        );
+    }
     let message = selected
         .get("message")
         .and_then(Value::as_str)

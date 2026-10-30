@@ -793,10 +793,11 @@ reason alongside location, exposure class, and any currentness label. When
 `--at FILE:LINE --kind FAMILY` is ambiguous, check prints explicit
 `ripr agent stub --seam-id ID` choices from that resolver. Choices also appear beside eligible hidden findings within the same first
 twenty-row window, keyed by finding ID. Base-side/unresolved subjects and
-stale source bytes receive no choices. These syntax choices are unvalidated:
-the seam-ID command may refuse an already-gripped or unsupported seam. They
-do not establish stub readiness, a canonical finding-to-seam repair binding,
-or repair eligibility. Hidden rows resolve syntax ambiguity only; unique
+stale source bytes receive no choices. Each listed seam-ID command is validated
+with the stub resolver, so it produces a stub; an already-gripped or unsupported seam is not listed. A
+listed command does not establish a canonical finding-to-seam repair binding
+or repair eligibility. Hidden rows resolve syntax ambiguity only, and print a
+choice only when each listed seam-ID command produces a stub; unique
 hidden routes do not trigger classified inventory lookups merely to be omitted.
 A named Rust transitive/public-API reach limitation with retained unresolved-edge
 evidence says tests cannot close that analysis limitation, names the edge and
@@ -14312,6 +14313,32 @@ Field contract:
 - `missing_artifact`, `malformed_artifact`, `stale_artifact`, `wrong_root`,
   `blocked_artifact`, and `timeout` require `status = "blocked"` and a
   bounded next command when one is known.
+- For a check-output-derived or legacy preview/mixed, presentation-text, or unclassifiable
+  records ledger with no selected repair, `blocked_artifact`
+  carries `selected.reason_code = "source_currentness_unavailable"`
+  rather than claiming current no-action from incomplete corpus authority. A
+  known distinct producer root yields `wrong_root` with reason code
+  `check_output_wrong_root`. Its inspection command runs a fresh default
+  worktree check without redirecting over an input and is offered only when
+  selected head resolves to the live HEAD; it is not a replay of input options.
+  Missing, relative or unresolvable check-producer roots are unknown, not
+  same-root evidence. For every check-derived ledger status and record count,
+  unknown or foreign roots suppress write-oriented input and ledger regeneration
+  guidance; a verified same-root zero-record projection keeps its existing
+  bounded recovery route. A `--check-output` supplied as a plain root-relative
+  path is the selected root's own artifact: its present artifact keeps the
+  anchored regeneration command, and a zero-record projection miss on it keeps
+  the blocked repo-exposure recovery, without promoting its evidence.
+  A still-no-action preview/mixed result remains limited until corpus
+  provenance is available (#7452). `missing_artifacts` on this blocked state
+  means missing source authority, not necessarily a missing file.
+  `first-pr --check` also refuses an older check-output no-action packet; it
+  does not rerun analysis or rewrite that packet. Ledger-selected no-action
+  packets include `inputs.gap_ledger_sha256`, a SHA-256 of the exact ledger
+  bytes selection consumed. `--check` refuses a missing digest or a replaced
+  ledger; this binds the packet to its input, not the input to current source.
+  A currently revalidated unsupported-language preflight no-action never
+  consumed a ledger and does not need that digest.
 - When a Rust first-pr run lacks later inputs of the repo-exposure report,
   gap ledger, PR repair cards chain, `selected.artifact` remains the first
   recovery step and `selected.also_missing[]` names each later missing input
@@ -18833,6 +18860,14 @@ the ledger carries no `source_subject` and instead a top-level
 stays unstamped. A ledger rendered in memory by another report is not
 stamped.
 
+For `--check-output`, the top-level optional `input_root` retains the source
+report's root spelling separately from the ledger's selected `root`. A missing
+or relative producer root is not an absolute checkout identity. This additive
+field does not authenticate the input or imply complete corpus provenance.
+`check_output_provenance` retains that root and the original source-subject
+limitation across subsequent `--records` ledger projections; changing the
+immediate input kind cannot make a check-derived no-action conclusion current.
+
 ### Gap artifact source subject
 
 Line numbers in a gap artifact describe one version of the workspace files.
@@ -18843,7 +18878,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.121",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.122",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19611,7 +19646,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.121",
+      "schema_version": "1.122",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
