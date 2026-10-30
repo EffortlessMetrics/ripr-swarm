@@ -1175,6 +1175,73 @@ fn status_shares_one_worktree_capture_across_finished_attempts() -> Result<(), S
             "two finished attempts under one policy must share one worktree capture, saw {first_captures}"
         ));
     }
+    // Each finished attempt binds the identities of paths in its delta, not
+    // just HEAD. Finishing B changes B's manifest already bound by A, so A
+    // need not remain current. B must be current after its own producer-owned
+    // workflow backups are cleaned up; those temporary files are not edits.
+    if !finished_current.contains(&(attempt_b.clone(), "true".to_string())) {
+        return Err(format!(
+            "latest finished attempt {attempt_b} must remain current after producer cleanup:\n{first}"
+        ));
+    }
+    if !finished_current.contains(&(journey.attempt_id.clone(), "false".to_string())) {
+        return Err(
+            "finishing B must not revive A's changed sibling-manifest evidence".to_string(),
+        );
+    }
+    // The exact issued replacement is recognized, not arbitrary bytes at a
+    // canonical output path. Both retained pairs are custody requirements.
+    let global = compatibility_receipt_path(&journey.root);
+    let original = fs::read(&global).map_err(|error| error.to_string())?;
+    fs::write(&global, b"user-authored replacement").map_err(|error| error.to_string())?;
+    let (tampered, _) = traced("tampered receipt")?;
+    if !currentness(&tampered).contains(&(attempt_b.clone(), "false".to_string())) {
+        return Err("unowned receipt bytes were treated as an issued replacement".to_string());
+    }
+    fs::write(&global, &original).map_err(|error| error.to_string())?;
+    let (restored, _) = traced("restored receipt")?;
+    if !currentness(&restored).contains(&(attempt_b.clone(), "true".to_string())) {
+        return Err("restoring the exact issued receipt did not recover currentness".to_string());
+    }
+    let prior_manifest = attempt_manifest(&journey.root, &journey.attempt_id)?;
+    let prior_verify = prior_manifest["terminal_artifacts"]
+        .as_array()
+        .ok_or("prior terminal artifacts missing")?
+        .iter()
+        .find(|artifact| artifact["role"] == "agent_verify")
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("prior verify missing")?;
+    let prior_verify = journey.root.join(prior_verify);
+    let original_verify = fs::read(&prior_verify).map_err(|error| error.to_string())?;
+    fs::write(&prior_verify, b"unowned verify").map_err(|error| error.to_string())?;
+    let (uncustodied, _) = traced("uncustodied predecessor")?;
+    if !currentness(&uncustodied).contains(&(attempt_b.clone(), "false".to_string())) {
+        return Err("invalid predecessor evidence supplied replacement custody".to_string());
+    }
+    fs::write(&prior_verify, original_verify).map_err(|error| error.to_string())?;
+    // B's own retained verify appeared only after its bind, so ordinary
+    // bound-neighbor drift cannot explain this custody negative.
+    let own_manifest = attempt_manifest(&journey.root, &attempt_b)?;
+    let own_verify = own_manifest["terminal_artifacts"]
+        .as_array()
+        .ok_or("own terminal artifacts missing")?
+        .iter()
+        .find(|artifact| artifact["role"] == "agent_verify")
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("own verify missing")?;
+    let own_verify = journey.root.join(own_verify);
+    let own_original = fs::read(&own_verify).map_err(|error| error.to_string())?;
+    fs::write(&own_verify, b"invalid current producer verify")
+        .map_err(|error| error.to_string())?;
+    let (own_uncustodied, _) = traced("uncustodied current producer")?;
+    if !currentness(&own_uncustodied).contains(&(attempt_b.clone(), "false".to_string())) {
+        return Err("invalid current producer evidence supplied replacement custody".to_string());
+    }
+    fs::write(&own_verify, own_original).map_err(|error| error.to_string())?;
+    let (own_restored, _) = traced("restored current producer")?;
+    if !currentness(&own_restored).contains(&(attempt_b.clone(), "true".to_string())) {
+        return Err("restoring both retained pairs did not recover currentness".to_string());
+    }
     // An edit after the first call is not hidden by it: the next call
     // recaptures and the drift changes what status reports.
     edit_out_of_surface(&journey.root)?;
@@ -1184,11 +1251,83 @@ fn status_shares_one_worktree_capture_across_finished_attempts() -> Result<(), S
             "each status call captures once, saw {second_captures} on the second"
         ));
     }
-    if currentness(&second) == finished_current {
+    if !currentness(&second).contains(&(attempt_b.clone(), "false".to_string())) {
         return Err(format!(
-            "an edit between status calls must change the reported currentness:\nbefore {finished_current:?}\nafter {:?}",
-            currentness(&second)
+            "an authored edit must make latest finished attempt {attempt_b} stale:\n{second}"
         ));
+    }
+    Ok(())
+}
+
+#[test]
+fn receipt_projection_replacement_requires_an_exact_issued_predecessor() -> Result<(), String> {
+    for guard in ["unowned", "modified_issued", "missing_verify"] {
+        let (journey, _owned) = start_before(&format!("receipt-predecessor-{guard}"))?;
+        let attempt_b = run_before_phase(&journey.root, &journey.root_arg, &journey.seam_id)?;
+        add_in_surface_test(&journey.root)?;
+        let first = run_after(&journey)?;
+        if !first.status.success() {
+            return Err(format!("first finish failed: {}", combined_output(&first)));
+        }
+        let global = compatibility_receipt_path(&journey.root);
+        match guard {
+            "unowned" => {
+                fs::write(&global, b"user-authored receipt").map_err(|error| error.to_string())?
+            }
+            "modified_issued" => {
+                // Same parseable receipt and attempt id, different exact bytes.
+                let mut bytes = fs::read(&global).map_err(|error| error.to_string())?;
+                bytes.push(b' ');
+                fs::write(&global, bytes).map_err(|error| error.to_string())?;
+            }
+            "missing_verify" => {
+                let manifest = attempt_manifest(&journey.root, &journey.attempt_id)?;
+                let relative = manifest["terminal_artifacts"]
+                    .as_array()
+                    .ok_or("terminal artifacts missing")?
+                    .iter()
+                    .find(|artifact| artifact["role"] == "agent_verify")
+                    .and_then(|artifact| artifact["path"].as_str())
+                    .ok_or("verify path missing")?;
+                fs::remove_file(journey.root.join(relative)).map_err(|error| error.to_string())?;
+            }
+            _ => return Err("unknown custody guard".to_string()),
+        }
+        let second = run_after_attempt(&journey.root, &journey.root_arg, &attempt_b)?;
+        if !second.status.success() {
+            return Err(format!(
+                "second finish failed: {}",
+                combined_output(&second)
+            ));
+        }
+        let manifest = attempt_manifest(&journey.root, &attempt_b)?;
+        if manifest
+            .pointer("/after/receipt_projection_predecessor")
+            .is_some()
+        {
+            return Err(format!(
+                "{guard}: unowned predecessor received a custody witness"
+            ));
+        }
+        let output = run_ripr(
+            &journey.root,
+            &["agent", "status", "--json", "--root", &journey.root_arg],
+        )?;
+        if !output.status.success() {
+            return Err(combined_output(&output));
+        }
+        let status = parse_stdout_json(&output)?;
+        let row = status["repair_attempts"]
+            .as_array()
+            .ok_or("attempt rows missing")?
+            .iter()
+            .find(|attempt| attempt["attempt_id"] == attempt_b)
+            .ok_or("second attempt missing")?;
+        if row["head_current"] != false {
+            return Err(format!(
+                "{guard}: replacing unowned bound bytes must remain stale: {row}"
+            ));
+        }
     }
     Ok(())
 }

@@ -472,10 +472,14 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
             )
         })
         .collect();
-    // For each refusal: whether the spot is outside the change, and why.
-    let mut open_reasons: Vec<(bool, String)> = Vec::new();
+    // For each gripped refusal: whether the spot is outside the change, and why.
     let mut gripped_reasons: Vec<(bool, String)> = Vec::new();
     let mut eligible_off_change = 0usize;
+    let mut blocked_off_change = 0usize;
+    let mut open_on_change = 0usize;
+    // Distinct refusal reasons in first-seen order, each with the first seam
+    // that has it and how many seams share it.
+    let mut blocked_groups: Vec<(String, String, usize)> = Vec::new();
     for entry in &classified {
         let off = off_change(entry);
         match repair_refusal(entry, policy, Some(root)) {
@@ -489,10 +493,16 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
             Some((RefusalKind::AlreadyGripped, reason)) => {
                 gripped_reasons.push((off, format!("{}: {reason}", seam_label(entry))));
             }
+            // A seam the diff does not touch says nothing about the change
+            // (#11111 group 4): its "not ready" or "no gap here" reason is
+            // counted, not listed beside the verdict on the changed seam.
+            Some(_) if off_change(entry) => blocked_off_change += 1,
             // Name the shared gate's own reason among the no-eligible
-            // reasons so the limitation is diagnosable. A `return Err(V)`
-            // wrapper of an error variant that is already gripped is the
-            // same behavior, not an open check of its own.
+            // reasons so the limitation is diagnosable, with the seam it
+            // is about, so two reasons about two seams never read as two
+            // verdicts on one change. A `return Err(V)` wrapper of an error
+            // variant that is already gripped is the same behavior, not an
+            // open check of its own, so it is classified before counting.
             Some((_, reason)) => {
                 if wraps_gripped_error_variant(entry, &gripped_siblings) {
                     gripped_reasons.push((
@@ -500,13 +510,16 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
                         format!("{}: {GRIPPED_WRAPPER_REASON}", seam_label(entry)),
                     ));
                 } else {
-                    open_reasons.push((off, reason));
+                    open_on_change += 1;
+                    match blocked_groups.iter_mut().find(|group| group.0 == reason) {
+                        Some(group) => group.2 += 1,
+                        None => blocked_groups.push((reason, seam_label(entry), 1)),
+                    }
                 }
             }
         }
     }
     let gripped_on_change = gripped_reasons.iter().filter(|(off, _)| !off).count();
-    let open_on_change = open_reasons.iter().filter(|(off, _)| !off).count();
     let mut refusal_reasons: Vec<String> = Vec::new();
     if matches!(scope, Some(ChangeScope::TouchesSeams(_)))
         && gripped_on_change > 0
@@ -522,7 +535,16 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
                 .map(|(_, reason)| reason),
         );
     } else {
-        refusal_reasons.extend(open_reasons.into_iter().map(|(_, reason)| reason));
+        for (reason, label, count) in blocked_groups {
+            let mut text = format!("{label}: {reason}");
+            if count > 1 {
+                text.push_str(&format!(
+                    " (and {} other seams in the same state)",
+                    count - 1
+                ));
+            }
+            refusal_reasons.push(text);
+        }
         let mut gripped_off_change = 0usize;
         let mut gripped_other_check = 0usize;
         for (off, reason) in gripped_reasons {
@@ -556,6 +578,16 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
                     if eligible_off_change == 1 { "it" } else { "them" }
                 ),
             );
+        }
+        if blocked_off_change > 0 {
+            let noun = if blocked_off_change == 1 {
+                "spot outside your changed lines cannot start a repair either and is"
+            } else {
+                "spots outside your changed lines cannot start a repair either and are"
+            };
+            refusal_reasons.push(format!(
+                "{blocked_off_change} {noun} not listed, since that says nothing about your change"
+            ));
         }
         if gripped_off_change > 0 {
             let noun = if gripped_off_change == 1 {

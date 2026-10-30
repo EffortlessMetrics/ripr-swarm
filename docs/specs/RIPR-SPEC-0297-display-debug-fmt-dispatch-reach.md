@@ -68,7 +68,10 @@ link is established from syntax:
    argument exactly; width/precision arguments (`$`, `*`) refuse.
 5. The argument is built as the type by a struct literal, tuple struct, enum
    variant, the bare type name, or a `let` initialized that way or annotated
-   with the type. Associated consts and factory functions are not typed.
+   with the type. Associated consts and factory functions are not typed,
+   except a path call `Type::name(..)` (bare or `crate`/`self`/`super`
+   prefix, nothing chained) to an inherent associated fn the index declares
+   once, without `self`, synchronously, returning exactly `Self` or the type.
    Path prefixes before the type must be lowercase module segments, so a
    variant named like the type (`Error::DecodeError(..)`,
    `crate::Error::DecodeError(..)`) is not the type.
@@ -159,7 +162,10 @@ prefixed only by `crate`, `self` or `super` (`other_crate::Merge` may be a
 foreign type that shares the name), and a struct literal or tuple-struct
 initializer (`let merge = other_crate::Merge { .. };`) names the local type
 under the same prefix rule (bare, `crate`, `self` or `super`; #8999). A factory receiver without a type
-annotation (`let merge = Merge::new(..)`), the other trait's placeholder, a
+annotation (`let merge = Merge::new(..)`) is typed only through that
+unique-return rule (#8999); a `Result`/`Option` wrapper, another return
+type, a chained `.unwrap()`, a missing or doubled declaration and a trait-only
+constructor stay unrelated. The other trait's placeholder, a
 different type and a type declared twice stay unrelated.
 
 The route applies the direct route's entity-identity refusals to the `fmt`
@@ -190,7 +196,7 @@ finding stays `propagation_unknown`, never `exposed`. A hop through a local
 - Discriminator: Display and Debug impls of one type are told apart.
 - Helper entry (#8999): positive for `to_string()` in a multi-line
   `assert_eq!` on an annotated or struct-literal receiver; negative for an
-  untyped factory receiver, another type, the other trait, a doubly declared
+  unproven factory receiver (positive for an indexed `Self`-returning inherent constructor), another type, the other trait, a doubly declared
   type, a path-qualified foreign annotation or initializer, a macro-argument hop, a test in a
   separate file (positive), a second caller of the helper, and a non-Display/Debug `fmt` entry.
 

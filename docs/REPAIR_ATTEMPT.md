@@ -356,3 +356,17 @@ To gain a repair target for such a seam, keep exactly one inline
 test-surface file (a `tests/` path or `*_test.rs` name) in the crate that
 owns the seam, then rerun pilot. Until then, inspect the ranked seams by
 hand: they are still worth reading, just not repairable through RIPR.
+
+### Replacing an issued compatibility receipt
+
+An after phase can replace a previous attempt's issued compatibility receipt
+at `target/ripr/reports/agent-receipt.json`. When that exact slot was already
+bound by the finishing delta, `after.receipt_projection_predecessor` records
+the validated predecessor in the same attempt store, the path kind, and its
+executable state. Currentness recognizes only the producer's exact retained
+replacement bytes, validates both terminal receipt/verify pairs, and requires
+the original whole-delta commitment after reconstructing that one slot.
+Missing or modified retained evidence, user-authored bytes at the same path,
+tracked/authored/forbidden paths, and neighboring files do not gain an
+exception. The predecessor can remain historical; no currentness recursion or
+cross-store lookup occurs. No witness is added for an unowned projection.

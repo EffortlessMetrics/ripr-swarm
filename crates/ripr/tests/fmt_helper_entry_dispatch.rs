@@ -249,12 +249,42 @@ fn a_struct_literal_receiver_reaches_the_helper_too() -> Result<(), String> {
 }
 
 #[test]
-fn a_factory_receiver_without_a_type_annotation_stays_unrelated() -> Result<(), String> {
+fn a_self_returning_constructor_receiver_reaches_the_helper() -> Result<(), String> {
     let repo = TempRepo::create(
         "",
         "    #[test]
     fn factory_receiver() {
         let merge = Merge::new(vec![\"a\\nb\".to_string()]);
+        assert_eq!(
+            merge.to_string(),
+            \"a b\\n\"
+        );
+    }
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        tests_by(&findings, RelationReason::HelperOwnerCall),
+        ["factory_receiver"],
+        "{findings:?}"
+    );
+    assert_no_exposed(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_constructor_not_returning_the_type_stays_unrelated() -> Result<(), String> {
+    let repo = TempRepo::create(
+        "
+impl Merge {
+    pub fn wrap(labels: Vec<String>) -> Box<Self> {
+        Box::new(Merge { labels })
+    }
+}
+",
+        "    #[test]
+    fn wrapped_receiver() {
+        let merge = Merge::wrap(vec![\"a\\nb\".to_string()]);
         assert_eq!(
             merge.to_string(),
             \"a b\\n\"
