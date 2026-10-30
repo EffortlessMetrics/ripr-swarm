@@ -391,14 +391,46 @@ pub(crate) enum StubRouteDecision {
     SeamStub { seam_id: String },
 }
 
+/// The most ambiguous seams checked for a stub before the choices are
+/// withheld.
+const AMBIGUOUS_VALIDATION_LIMIT: usize = 8;
+
+/// Why `ripr agent stub --seam-id <id>` would refuse, or `None` when it
+/// produces a stub. This is the resolution `resolve_test_stub` runs for a seam
+/// ID (`resolution_for` over the classified inventory), not a second
+/// validator, so a command printed on `Ok` is a command that succeeds.
+fn seam_stub_refusal(
+    root: &Path,
+    config: &RiprConfig,
+    classified: &[ClassifiedSeam],
+    seam_id: &str,
+) -> Option<String> {
+    let Some(entry) = classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == seam_id)
+    else {
+        return Some(TestStubRefusal::NotAGap.reason().to_string());
+    };
+    let source = match read_owner_source(root, &entry.seam) {
+        Ok(source) => source,
+        Err(error) => return Some(format!("{error:?}")),
+    };
+    let resolution = resolution_for(root, config, entry, source);
+    match (resolution.outcome, resolution.weak_oracle_guidance) {
+        (Err(refusal), _) => Some(refusal.reason().to_string()),
+        (Ok(_), Some(guidance)) => Some(guidance),
+        (Ok(_), None) => None,
+    }
+}
+
 /// #10710: an ambiguous `--at` line names several seams, but the finding
 /// changed one expression (`P { x: 1, y: 3 }` holds one seam per field and
-/// only `y: 3` changed). Narrow the choices to the seams whose own expression
-/// is the finding's changed expression, from the same single-file parse that
-/// produced the choices (no classification, so nothing else is computed or
-/// cached). One match becomes the stub command for that seam, or the stub's
-/// own refusal when it cannot be written; anything else keeps the original
-/// choices.
+/// only `y: 3` changed). Narrow the choices to the seam whose own expression
+/// is the finding's changed expression, then keep only the seams whose
+/// `ripr agent stub --seam-id` command produces a stub (the classified
+/// resolution, `seam_stub_refusal`). One survivor becomes that command,
+/// several stay a choice among survivors, and none becomes the first refusal.
+/// If the seams cannot be classified, no command is printed.
 fn narrowed_ambiguity(
     root: &Path,
     config: &RiprConfig,
@@ -408,31 +440,46 @@ fn narrowed_ambiguity(
     seam_ids: Vec<String>,
     seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> StubRouteDecision {
-    let unchanged =
-        |reason: String, seam_ids: Vec<String>| StubRouteDecision::Ambiguous { reason, seam_ids };
+    let withheld = |reason: String| StubRouteDecision::Refused { reason };
     let squash = |text: &str| text.split_whitespace().collect::<String>();
     let wanted = squash(expression);
-    let Some(relative) = scoped_file(root, file) else {
-        return unchanged(reason, seam_ids);
+    let mut candidates = seam_ids.clone();
+    if let Some(relative) = scoped_file(root, file)
+        && let Ok(seams) = analysis::scoped_file_seams(root, config, &relative, seam_index)
+    {
+        let mut matching = seams.iter().filter(|seam| {
+            seam_ids.iter().any(|id| id == seam.id().as_str())
+                && squash(seam.expression()) == wanted
+        });
+        if let (Some(seam), None) = (matching.next(), matching.next()) {
+            candidates = vec![seam.id().as_str().to_string()];
+        }
+    }
+    if candidates.len() > AMBIGUOUS_VALIDATION_LIMIT {
+        return withheld(reason);
+    }
+    let Ok((classified, _)) = analysis::inventory_classified_seams_at_with_config(root, config)
+    else {
+        return withheld(reason);
     };
-    let Ok(seams) = analysis::scoped_file_seams(root, config, &relative, seam_index) else {
-        return unchanged(reason, seam_ids);
-    };
-    let mut matching = seams.iter().filter(|seam| {
-        seam_ids.iter().any(|id| id == seam.id().as_str()) && squash(seam.expression()) == wanted
-    });
-    let (Some(seam), None) = (matching.next(), matching.next()) else {
-        return unchanged(reason, seam_ids);
-    };
-    let Ok(source) = read_owner_source(root, seam) else {
-        return unchanged(reason, seam_ids);
-    };
-    match rust_test_stub(seam, None, &source) {
-        Ok(_) => StubRouteDecision::SeamStub {
-            seam_id: seam.id().as_str().to_string(),
+    let mut stubbable = Vec::new();
+    let mut first_refusal = None;
+    for seam_id in &candidates {
+        match seam_stub_refusal(root, config, &classified, seam_id) {
+            None => stubbable.push(seam_id.clone()),
+            Some(why) => {
+                first_refusal.get_or_insert(why);
+            }
+        }
+    }
+    match stubbable.len() {
+        0 => withheld(first_refusal.unwrap_or(reason)),
+        1 => StubRouteDecision::SeamStub {
+            seam_id: stubbable.swap_remove(0),
         },
-        Err(refusal) => StubRouteDecision::Refused {
-            reason: refusal.reason().to_string(),
+        _ => StubRouteDecision::Ambiguous {
+            reason,
+            seam_ids: stubbable,
         },
     }
 }
@@ -1806,6 +1853,58 @@ mod tests {
         .map_err(|error| error.to_string())?;
         std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
         Ok(root)
+    }
+
+    /// #10710: the narrowed seam is only offered when `ripr agent stub
+    /// --seam-id` itself produces a stub. Here the changed field's seam is
+    /// already strongly gripped by a whole-value assertion, so the classified
+    /// resolution refuses it and no stub command is printed; a gap in the
+    /// same shape (the test asserts one field only) does print it.
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn narrowed_field_seam_is_printed_only_when_the_seam_id_stub_succeeds() -> Result<(), String> {
+        const STRUCT: &str = "#[derive(Debug, PartialEq)]\npub struct P {\n    pub x: u32,\n    pub y: u32,\n}\n\npub fn mk() -> P {\n    P { x: 1, y: 3 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n";
+        let gripped = format!(
+            "{STRUCT}    #[test]\n    fn whole_value() {{\n        assert_eq!(mk(), P {{ x: 1, y: 3 }});\n    }}\n}}\n"
+        );
+        let weak = format!(
+            "{STRUCT}    #[test]\n    fn one_field() {{\n        assert_eq!(mk().x, 1);\n    }}\n}}\n"
+        );
+        let decide = |label: &str, source: &str| -> Result<StubRouteDecision, String> {
+            let root = scratch_stub_crate(label, source)?;
+            let config = RiprConfig::default();
+            let relative = PathBuf::from("src/lib.rs");
+            let mut index = None;
+            let seams = analysis::scoped_file_seams(&root, &config, &relative, &mut index)?;
+            let ids = seams
+                .iter()
+                .filter(|seam| seam.kind() == SeamKind::FieldConstruction)
+                .map(|seam| seam.id().as_str().to_string())
+                .collect::<Vec<_>>();
+            assert!(ids.len() >= 2, "precondition, one seam per field: {ids:?}");
+            let decision = narrowed_ambiguity(
+                &root,
+                &config,
+                "src/lib.rs",
+                "y: 3",
+                "several seams".to_string(),
+                ids,
+                &mut index,
+            );
+            let _ = std::fs::remove_dir_all(&root);
+            Ok(decision)
+        };
+        let decision = decide("narrow-weak", &weak)?;
+        assert!(
+            matches!(decision, StubRouteDecision::SeamStub { .. }),
+            "the changed field of a weak test gets its seam-id stub: {decision:?}"
+        );
+        let decision = decide("narrow-gripped", &gripped)?;
+        assert!(
+            matches!(decision, StubRouteDecision::Refused { .. }),
+            "a strongly gripped seam must not print a stub command: {decision:?}"
+        );
+        Ok(())
     }
 
     #[cfg(feature = "lang-rust")]

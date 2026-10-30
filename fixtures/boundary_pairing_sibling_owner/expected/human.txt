@@ -40,7 +40,6 @@ Next: drill into the top finding:
   ripr context --root <cwd>/fixtures/boundary_pairing_sibling_owner/input --diff <cwd>/fixtures/boundary_pairing_sibling_owner/diff.patch --mode fast --at probe:src_lib.rs:predicate:676f1723
   no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the whole seam and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the whole seam) and ripr does not start a repair on conflicting evidence; follow the Next step above
 No test stub here: the owner is in a nested module with no inline test module of its own
-Write this test by hand: call the function with an input just below, exactly on, and just above the changed limit, and assert the exact result each time. ripr has no repair route for this kind of change yet, so there is no command to run; add the test, then rerun `ripr check`.
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

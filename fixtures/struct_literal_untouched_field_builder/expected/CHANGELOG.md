@@ -11,3 +11,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — struct_literal_untouched_field_builder (2)
+
+Reason:
+RIPR-SPEC-0122: check prints an async-aware hand-written test step, withholds it when the repair view already counts the seam as noticed, and prints only stub commands that succeed (#10710)
+
+Command:
+`cargo xtask goldens bless struct_literal_untouched_field_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -152,6 +152,10 @@ fn async_gap_with_no_route_says_to_write_the_test_by_hand() -> Result<(), String
         check.contains(HAND_WRITTEN) && check.contains(NO_ROUTE),
         "check must name the hand-written test and the missing route:\n{check}"
     );
+    assert!(
+        check.contains("run the future it returns to completion"),
+        "an async owner's test must await the future, not call the function plainly:\n{check}"
+    );
     assert_eq!(repo.every_printed_stub_succeeds(&check)?, 0);
     Ok(())
 }

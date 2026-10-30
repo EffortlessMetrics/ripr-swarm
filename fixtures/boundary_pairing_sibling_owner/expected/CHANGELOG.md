@@ -50,3 +50,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — boundary_pairing_sibling_owner (5)
+
+Reason:
+RIPR-SPEC-0122: check prints an async-aware hand-written test step, withholds it when the repair view already counts the seam as noticed, and prints only stub commands that succeed (#10710)
+
+Command:
+`cargo xtask goldens bless boundary_pairing_sibling_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

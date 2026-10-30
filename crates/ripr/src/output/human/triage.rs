@@ -1,5 +1,7 @@
 use crate::agent::loop_commands::shell_arg;
+use crate::analysis::test_stub::TestStubRefusal;
 use crate::analysis::{SourceRoleContext, classify_with, seeds_diff_probes};
+use crate::app::RepairRouteRefusal;
 use crate::app::test_stub::StubRouteDecision;
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
@@ -449,8 +451,18 @@ pub(crate) fn render_human_triage(
                     }
                     Some(StubRouteDecision::Refused { reason }) => {
                         out.push_str(&format!("No test stub here: {reason}\n"));
-                        if !repair_printed {
-                            out.push_str(&hand_written_test_step(finding));
+                        // A finding the repair view already counts as gripped
+                        // or exposed is not told to write a new test: that
+                        // would contradict the line above it.
+                        let already_noticed = matches!(
+                            navigation.repair_route_refusal(),
+                            Some(
+                                RepairRouteRefusal::SeamGrippedFindingNot
+                                    | RepairRouteRefusal::FindingAlreadyExposed
+                            )
+                        );
+                        if !repair_printed && !already_noticed {
+                            out.push_str(&hand_written_test_step(finding, reason));
                         }
                     }
                     None => {}
@@ -586,8 +598,16 @@ pub(super) fn hidden_stub_route_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'
 /// start nor a test stub. It names the test to write by hand and says no ripr
 /// repair route exists for this kind of change yet, so the reader is never
 /// pointed at a command that would refuse.
-fn hand_written_test_step(finding: &Finding) -> String {
+fn hand_written_test_step(finding: &Finding, stub_refusal: &str) -> String {
     let shape = match finding.probe.family {
+        // Calling an async function only creates its future, so the test
+        // must run that future to completion before asserting.
+        _ if stub_refusal == TestStubRefusal::OwnerAsync.reason() => {
+            "call the function, run the future it returns to completion under your async test runtime (await it), and assert the exact value it produces"
+        }
+        _ if stub_refusal == TestStubRefusal::OwnerGeneric.reason() => {
+            "call the function with concrete types for its type parameters and an input on each side of the changed behavior, and assert the exact result each time"
+        }
         ProbeFamily::Predicate => {
             "call the function with an input just below, exactly on, and just above the changed limit, and assert the exact result each time"
         }
