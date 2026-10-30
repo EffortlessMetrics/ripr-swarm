@@ -319,7 +319,10 @@ fn names_value(
     identifier_offsets(code, name).any(|at| {
         let reference_at = code[..at].strip_suffix("r#").map_or(at, str::len);
         let before = code[..reference_at].trim_end();
-        if items.declaration_at(at) || (!before.ends_with("::") && items.shadows_at(at)) {
+        if items.declaration_at(at)
+            || (!before.ends_with("::") && items.shadows_at(at))
+            || (items.unreadable && use_line_mention(code, at))
+        {
             return false;
         }
         let after = code[at + name.len()..].trim_start();
@@ -427,6 +430,16 @@ fn ends_at_boundary(text: &str) -> bool {
     text.chars().next_back().is_none_or(|ch| !is_ident_char(ch))
 }
 
+/// Whether the mention at `at` sits on a line that begins with a `use` item.
+/// A parse-refused body cannot prove a declaration range, so this lexical
+/// exclusion keeps a `use` line from counting as the owner passed as a value;
+/// the parse-backed declaration ranges remain the primary path.
+fn use_line_mention(code: &str, at: usize) -> bool {
+    let start = code[..at].rfind('\n').map_or(0, |newline| newline + 1);
+    let line = code[start..at].trim_start();
+    line.starts_with("use ") || line.starts_with("pub use ")
+}
+
 /// Whether `name` is bound as a local anywhere in the test: a typed or
 /// untyped pattern after `let` (`let name`, `let (name, n)`, `if let
 /// Some(name) =`), after `for` (`for (name, _) in`), a closure parameter
@@ -451,6 +464,10 @@ fn is_bound_locally(code: &str, name: &str) -> bool {
 struct ItemBindings {
     declarations: Vec<ra_ap_syntax::TextRange>,
     scopes: Vec<(ra_ap_syntax::TextRange, bool)>,
+    /// The shared parser refused the body, so no declaration range is known.
+    /// Mentions on lexical `use` lines then keep the import exclusion instead
+    /// of counting the import as the owner passed as a value (RIPR-SPEC-0240).
+    unreadable: bool,
 }
 
 impl ItemBindings {
@@ -461,10 +478,11 @@ impl ItemBindings {
             ast::{self, HasAttrs, HasName},
         };
 
-        let Some(parse) = parse_clean_source_file(source) else {
-            return Self::default();
-        };
         let mut result = Self::default();
+        let Some(parse) = parse_clean_source_file(source) else {
+            result.unreadable = true;
+            return result;
+        };
         for node in parse.tree().syntax().descendants() {
             // An item scope cannot inherit the surrounding function's local
             // shadow. Its imports also need their own module context; leave
@@ -687,6 +705,43 @@ mod tests {
             &owner_names(),
             |_| false,
         )
+    }
+
+    fn value_raw(source: &str, name: &str) -> bool {
+        names_value(
+            source,
+            &mask_comments_and_strings(source),
+            name,
+            &owner_names(),
+            |_| false,
+        )
+    }
+
+    /// A body the shared parser refuses cannot prove a declaration range, so
+    /// a mention on a `use` line keeps the lexical exclusion instead of
+    /// counting the import as the owner passed as a value, while a real value
+    /// mention in the same refused body still counts (RIPR-SPEC-0240).
+    #[test]
+    fn a_use_line_keeps_its_exclusion_in_an_unparseable_body() {
+        let broken = "fn test_body() {\n    use super::inc;\n    let x = ;\n}\n";
+        assert!(
+            crate::analysis::syntax::parse_clean_source_file(broken).is_none(),
+            "premise: the body is parse-refused"
+        );
+        assert!(!value_raw(broken, "inc"));
+        // The lexical fallback excludes only import lines: a real value
+        // mention in the same refused body still counts.
+        let broken_value =
+            "fn test_body() {\n    let w: Vec<_> = rows.map(inc).collect();\n    let x = ;\n}\n";
+        assert!(
+            crate::analysis::syntax::parse_clean_source_file(broken_value).is_none(),
+            "premise: the value body is parse-refused"
+        );
+        assert!(value_raw(broken_value, "inc"));
+        // A readable body keeps the parse-backed path: the import does not
+        // shadow, so the bare value mention beside it still counts.
+        let readable = "fn test_body() {\n    use super::inc;\n    let w: Vec<_> = rows.map(inc).collect();\n}\n";
+        assert!(value_raw(readable, "inc"));
     }
 
     #[test]

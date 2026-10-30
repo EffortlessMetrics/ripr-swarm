@@ -306,8 +306,9 @@ fn detected_language_entries(
             language: id.as_str().to_string(),
             status: language_status(*id),
             adapter_available: id.is_available(),
-            // JavaScript has no config entry of its own: the `typescript`
-            // entry analyzes it, so enablement is read through the same
+            // JavaScript is analyzed by the `typescript` entry (and
+            // `javascript` is accepted as its alias), so enablement is read
+            // through the same
             // mapping the gaps path uses. `None` (no loaded configuration)
             // stays unknown rather than reading as disabled.
             enabled: enabled.map(|list| list.contains(&config_entry(*id))),
@@ -493,6 +494,30 @@ fn tool_probe_renderer_fix(evidence: &str) -> Option<&'static str> {
     })
 }
 
+/// Plain wording for the analysis-profile cargo/rustc notes on the compact
+/// screen (#10696). The JSON evidence keeps the producer string; this only
+/// rewrites the two known `<state>; <effect>; project verification ...`
+/// shapes and passes anything else through unchanged.
+fn plain_toolchain_note(text: &str) -> String {
+    const BUILD_TAIL: &str = "; project verification and source builds require their own toolchain";
+    let Some(head) = text.strip_suffix(BUILD_TAIL) else {
+        return text.to_string();
+    };
+    let Some((state, effect)) = head.split_once("; ") else {
+        return text.to_string();
+    };
+    let state = state.replace(" timed out after ", " did not answer within ");
+    if effect.contains("does not run rustc") {
+        format!("{state}. ripr does not need rustc to analyze your code; your own builds do.")
+    } else if effect.contains("cargo metadata") {
+        format!(
+            "{state}. ripr still analyzes, but skips test-target details that need `cargo metadata`; your own builds need cargo."
+        )
+    } else {
+        text.to_string()
+    }
+}
+
 fn compact_tilde_line(text: &str) -> String {
     format!("~ {}", display_text(text))
 }
@@ -561,11 +586,9 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         doctor_profile_name(profile),
         report.ripr_version
     ));
-    lines.push(format!(
-        "Root: {} · Rust {} MSRV",
-        display_path(root),
-        report.ripr_build_msrv
-    ));
+    // The build minimum is ripr's own source-build requirement (#10696); it
+    // stays in the JSON report, not on the first screen.
+    lines.push(format!("Root: {}", display_path(root)));
     lines.push(String::new());
 
     // Failures first, each with its own fix line (#8168).
@@ -711,7 +734,9 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
                         } else {
                             "-"
                         },
-                        display_text(check.evidence.as_deref().unwrap_or(check.name.as_str()))
+                        plain_toolchain_note(&display_text(
+                            check.evidence.as_deref().unwrap_or(check.name.as_str())
+                        ))
                     ));
                 }
                 output::doctor::DoctorCheckStatus::Fail => {}
@@ -1597,10 +1622,10 @@ fn preview_languages_to_enable(
     detected: &[LanguageId],
     config: &Result<RiprConfig, String>,
 ) -> Option<PreviewEnablement> {
-    // JavaScript is analyzed by the TypeScript adapter and has no config
-    // entry of its own (`parse_languages_enabled` accepts only `typescript`),
-    // so a detected JavaScript source maps to the `typescript` entry. Using
-    // the scanner id would print `"javascript"`, which config loading rejects.
+    // JavaScript is analyzed by the TypeScript adapter, so a detected
+    // JavaScript source maps to the `typescript` entry. The tip prints the
+    // canonical `typescript` name even though `javascript` is also accepted
+    // as an alias, so one spelling owns the suggestion.
     let mut preview_detected: Vec<LanguageId> = Vec::new();
     for id in detected
         .iter()
@@ -3782,6 +3807,25 @@ mod tests {
     }
 
     #[test]
+    fn header_keeps_the_build_msrv_off_the_first_screen() {
+        // #11114 / #10696: ripr's own build MSRV stays in the JSON report; the
+        // header line beside the analyzed root must not read as the
+        // workspace's MSRV.
+        let report = passing_report();
+        let environment = empty_environment();
+        let lines = render_screen(&report, &environment, false, true);
+        assert_eq!(
+            lines.get(1).map(String::as_str),
+            Some("Root: ."),
+            "{lines:?}"
+        );
+        assert!(
+            !lines.iter().take(3).any(|line| line.contains("MSRV")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
     fn default_screen_warns_when_config_launches_ripr_missing_from_path() {
         // #10347: advisory `~` line on the default screen, quiet without a
         // dependent config, and the exit decision (`passed`) is untouched.
@@ -3960,6 +4004,35 @@ mod tests {
             !lower.contains("install") && !lower.contains("rustup"),
             "timeout is not a missing-tool install: {timeout:?}"
         );
+    }
+
+    /// #10696 review: each recognized evidence shape is rewritten, and any
+    /// other text (older or newer producer wording) passes through unchanged.
+    #[test]
+    fn plain_toolchain_note_rewrites_known_shapes_and_passes_the_rest_through() {
+        let tail = "; project verification and source builds require their own toolchain";
+        let rustc = plain_toolchain_note(&format!(
+            "rustc timed out after 5s; the installed binary's static analysis does not run rustc{tail}"
+        ));
+        assert_eq!(
+            rustc,
+            "rustc did not answer within 5s. ripr does not need rustc to analyze your code; your own builds do."
+        );
+        let cargo = plain_toolchain_note(&format!(
+            "cargo not available; static analysis continues, but evidence that reads `cargo metadata` in the selected root is withheld{tail}"
+        ));
+        assert!(
+            cargo.starts_with("cargo not available. ripr still analyzes"),
+            "{cargo}"
+        );
+        assert!(!cargo.contains("project verification"), "{cargo}");
+        for other in [
+            "git version 2.43.0",
+            "rustc not available; some future effect wording; project verification and source builds require their own toolchain",
+            "rustc not available; the installed binary's static analysis does not run rustc",
+        ] {
+            assert_eq!(plain_toolchain_note(other), other);
+        }
     }
 
     #[test]

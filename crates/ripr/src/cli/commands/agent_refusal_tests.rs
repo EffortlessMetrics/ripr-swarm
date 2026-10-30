@@ -249,11 +249,11 @@ fn before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery() {
         &violations,
     );
     for fragment in [
-        "repair attempt cannot start",
-        "differ from HEAD: src/a.rs, src/b.rs",
+        "ripr repair needs your source changes committed first",
+        "Uncommitted: src/a.rs, src/b.rs",
         "`git commit -- src/a.rs`",
         "--seam-id seam:sample --phase before",
-        "No workflow was prepared and no repair attempt was started.",
+        "Nothing was started.",
     ] {
         assert!(
             message.contains(fragment),

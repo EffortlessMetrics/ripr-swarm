@@ -860,16 +860,59 @@ pub(super) fn contradiction_summary(expected: &str, evaluated: i128) -> String {
 }
 
 /// Whether the test's own body binds `owner_name` with a `let` (a local
-/// shadow the bare-name fold cannot see through, #6701 review).
+/// shadow the bare-name fold cannot see through, #6701 review), or carries a
+/// same-name item the bare-name fold must not read as the owner: a nested
+/// `fn` with the owner's name is by definition another item, and an explicit
+/// same-name import may bind a different definition — the fold's premise,
+/// that the written bare call text is the owner's call, is unproven for both
+/// (#10162). A body the shared parser refuses proves no item, so only the
+/// `let` answer stands there.
 pub(super) fn bare_owner_call_is_shadowed(
     test: &crate::analysis::facts::TestFact,
     owner_name: &str,
 ) -> bool {
-    !owner_name.is_empty()
-        && test
-            .let_bindings
-            .iter()
-            .any(|binding| binding.name == owner_name)
+    if owner_name.is_empty() {
+        return false;
+    }
+    if test
+        .let_bindings
+        .iter()
+        .any(|binding| binding.name == owner_name)
+    {
+        return true;
+    }
+    body_declares_same_name_item(test, owner_name)
+}
+
+/// Whether the test body itself declares or imports `owner_name` as an item:
+/// a `fn owner_name` definition, or an explicit `use` whose bound name is
+/// `owner_name` (globs bind nothing the fold can name). Read through the
+/// shared parser this crate already trusts for item scope (#10162).
+fn body_declares_same_name_item(test: &TestSummary, owner_name: &str) -> bool {
+    use crate::analysis::syntax::use_item_bindings;
+    use ra_ap_syntax::{ast, ast::HasName};
+    let Some(parse) = parse_clean_source_file(test.body.as_str()) else {
+        return false;
+    };
+    for node in parse.tree().syntax().descendants() {
+        if let Some(function) = ast::Fn::cast(node.clone())
+            && let Some(declared) = function.name()
+            && declared.text() == owner_name
+        {
+            return true;
+        }
+        if let Some(import) = ast::Use::cast(node.clone()) {
+            let scope = use_item_bindings(&import);
+            if scope
+                .imports
+                .iter()
+                .any(|binding| binding.bound == owner_name)
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Which equality macro family the assertion uses and its first operands.
@@ -2294,6 +2337,80 @@ mod tests {
             .ok_or("the shadow test carries an equality assertion")?;
         let verdict = exact_value_assertion_verdict(Some(owner), &assertion.text, true);
         assert_eq!(verdict, ExactValueVerdict::NotEvaluable);
+        Ok(())
+    }
+
+    #[test]
+    fn a_same_name_item_in_the_body_shadows_the_bare_name_fold() -> Result<(), String> {
+        // A nested `fn` with the owner's name and an explicit same-name
+        // import are other items (#10162): the bare-name fold must stay
+        // silent instead of folding a rival's call against the owner's body.
+        // A glob import binds nothing the fold names, so it stays readable.
+        let source = r#"
+pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64 {
+    if amount_cents >= discount_threshold_cents {
+        amount_cents * 70 / 100
+    } else {
+        amount_cents
+    }
+}
+pub mod other {
+    pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64 {
+        amount_cents
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_fn_shadow() {
+        {
+            fn discounted_total(a: u64, b: u64) -> u64 {
+                b
+            }
+            assert_eq!(discounted_total(5_000, 5_000), 5_000);
+        }
+    }
+
+    #[test]
+    fn rival_import_shadow() {
+        use super::other::discounted_total;
+        assert_eq!(discounted_total(5_000, 5_000), 5_000);
+    }
+
+    #[test]
+    fn glob_import_keeps_the_owner_readable() {
+        assert_eq!(discounted_total(5_000, 5_000), 5_000);
+    }
+}
+"#;
+        let adapter = RaRustSyntaxAdapter;
+        let facts = adapter
+            .summarize_file(std::path::Path::new("src/lib.rs"), source)
+            .map_err(|error| format!("source summarizes: {error}"))?;
+        let owner = facts
+            .functions
+            .iter()
+            .find(|function| {
+                function.name == "discounted_total"
+                    && function.file == std::path::Path::new("src/lib.rs")
+            })
+            .ok_or("owner function is indexed")?;
+        let shadowed = |name: &str| {
+            let test = facts
+                .tests
+                .iter()
+                .find(|test| test.name == name)
+                .ok_or_else(|| format!("{name} is indexed"))?;
+            Ok::<bool, String>(bare_owner_call_is_shadowed(test, "discounted_total"))
+        };
+        assert!(shadowed("nested_fn_shadow")?, "nested fn must shadow");
+        assert!(shadowed("rival_import_shadow")?, "rival import must shadow");
+        assert!(
+            !shadowed("glob_import_keeps_the_owner_readable")?,
+            "a glob import must not shadow"
+        );
         Ok(())
     }
 

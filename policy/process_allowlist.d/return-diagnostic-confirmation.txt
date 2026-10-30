@@ -1,0 +1,1 @@
+crates/ripr/tests/return_diagnostic_confirmation.rs|Command::new|2|return-diagnostic-confirmation|Native fixture controls compile isolated source with rustc and execute one exact test. OwnedProcess enforces deadlines and bounded file-backed output; no shell or network.

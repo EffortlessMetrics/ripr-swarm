@@ -275,6 +275,32 @@ fn a_direct_weak_assertion_keeps_the_gap() -> Result<(), String> {
     keeps_gap(&lib, BEFORE, AFTER, "direct weak assertion")
 }
 
+/// A body the shared parser refuses cannot prove a declaration range, so the
+/// bare-name fold and the mention scan must stay silent there. A parse
+/// artifact must never withdraw a real gap under the indirect-owner limit's
+/// no-gap reading; the composed analysis answers with a typed unknown instead
+/// (RIPR-SPEC-0240, #10162 review).
+#[test]
+fn a_parse_refused_test_body_never_reads_as_the_indirect_owner_limit() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        use super::inc;
+        assert_eq!(inc(1), 2);
+        let x = ;
+    }
+",
+    );
+    let findings = edited(&lib, BEFORE, AFTER)?;
+    if findings.iter().any(limited) || findings.iter().any(is_gap) {
+        return Err(format!(
+            "parse-refused body: expected a typed unknown without the indirect-owner limit or a claimed gap, got {:?}",
+            summary(&findings)
+        ));
+    }
+    Ok(())
+}
+
 fn with_other_module(lib: &str) -> String {
     lib.replacen(
         "#[cfg(test)]",

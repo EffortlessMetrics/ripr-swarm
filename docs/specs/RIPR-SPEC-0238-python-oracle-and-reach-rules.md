@@ -443,9 +443,17 @@ This order is the existing behavior and is normative:
   binding the root, is spelled `pytest.mark.parametrize` or
   `mark.parametrize`. An import root counts only when the module binds it
   exactly once (that import) and the enclosing class body does not bind
-  it; a canonical spelling whose root is not pinned that way (another
-  library's `mark`, a rebound or class-local root) leaves every argname
-  unsettled. A bare decorator name (`@cases`), the mark's callee
+  it, and the module has no dynamic writer (`setattr`, `globals()`,
+  `patch`). A writer name that only appears in an `import` statement
+  (`from unittest.mock import patch`) is not a write; an aliased import, a
+  call or a decorator using it still is (#11102). A writer inside a `test*` body or an
+  undecorated module-level helper does not count, because such a body runs only
+  when something calls it, after the decorators were applied; a module that
+  names that function outside a `test*` or helper body (a call at import, an
+  alias, an argument, a decorator; a name only another unreferenced body
+  mentions does not count) keeps its writers (#11018, #11144). A canonical spelling whose root is not pinned that way
+  (another library's `mark`, a rebound or class-local root) leaves every
+  argname unsettled. A bare decorator name (`@cases`), the mark's callee
   (`parametrize = pytest.mark.parametrize`), argnames and `indirect` may
   each be one module-scope `NAME = <value>` binding that nothing in the
   module rebinds, bound before the test and not shadowed by the enclosing
@@ -974,15 +982,20 @@ mutant calibrates the rule; ripr reports only the static shape.
     A local alias of a captured-log read (`msgs = caplog.text`,
     `.messages` or `.records`) reads as the read itself only when the name
     is bound once, to the read, at the assertion's own indentation and after
-    every owner call, and appears nowhere else in the test but the
-    assertion statement (a wrapped assertion counts as one statement). An
-    alias that is appended to, rebound, deleted, read in a comprehension,
+    every owner call, before the assertion, and appears nowhere else in the
+    test but as a read inside that native assertion span (a wrapped assertion
+    counts as one statement). A semicolon-separated mutation or use is a
+    separate statement even on the same physical line. Native store contexts,
+    including walrus expressions inside f-strings and comprehension targets,
+    cannot borrow the alias's captured-log evidence (#10595). An
+    alias that is appended to, rebound, deleted, used outside the selected assertion,
     taken before the call or inside a nested block keeps the abstention, as
     does a name spelled inside a quoted literal (single, double or triple
     quoted), which is data. A local called `text`, `messages` or `records`
-    is not confused with the attribute of `caplog.text` and the like. `caplog`'s
-    reads are rebuilt on each access, so an alias taken before the call
-    would hold earlier records (#10151).
+    is not confused with the attribute of `caplog.text` and the like. The
+    `caplog.text` and `.messages` reads are rebuilt on each access, so an alias
+    taken before the call would hold earlier records. `.records` exposes the
+    handler's record list but follows the same bounded eligibility policy (#10151).
 23. **An assertion that cannot run or cannot fail is not read.** The
     assertion collector skips the dead arm of an `if` or `while` whose
     condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;

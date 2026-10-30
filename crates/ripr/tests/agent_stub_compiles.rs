@@ -1297,7 +1297,7 @@ fn limited_journey_check_names_ambiguous_stub_seams() -> Result<(), String> {
 }
 
 #[test]
-fn limited_journey_mixed_grip_choices_disclose_unvalidated_refusal() -> Result<(), String> {
+fn limited_journey_mixed_grip_choices_print_only_the_validated_stub() -> Result<(), String> {
     const SOURCE: &str = "pub fn pair(a: u32, b: u32) -> u32 {\n    if a >= 10 { return 1; } if b >= 20 { return 2; } 0\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn pins_a() {\n        assert_eq!(pair(9, 0), 0);\n        assert_eq!(pair(10, 0), 1);\n        assert_eq!(pair(11, 0), 1);\n    }\n}\n";
     let scratch = kind_refusal_crate(SOURCE)?;
     let root = &scratch.directory;
@@ -1355,16 +1355,7 @@ fn limited_journey_mixed_grip_choices_disclose_unvalidated_refusal() -> Result<(
     }
     assert_ne!(subjects[0].0, subjects[1].0);
     let stdout = check_human(root, &diff)?;
-    assert!(stdout.contains("Choose a test-stub seam for "), "{stdout}");
-    assert!(
-        stdout.contains("syntax choices are unvalidated"),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains("commands may refuse, including for already-gripped seams"),
-        "{stdout}"
-    );
-    assert!(!stdout.contains("Write a test for it:"), "{stdout}");
+    assert!(!stdout.contains("may refuse"), "{stdout}");
     let mut choices = stdout
         .lines()
         .filter(|line| line.trim_start().starts_with("ripr agent stub "))
@@ -1374,14 +1365,16 @@ fn limited_journey_mixed_grip_choices_disclose_unvalidated_refusal() -> Result<(
         })
         .collect::<Vec<_>>();
     choices.sort();
-    let mut expected = subjects
+    // #10710: only the seam whose `--seam-id` stub succeeds is printed; the
+    // strongly gripped seam (which refuses `not_a_gap` below) is withheld.
+    let expected = subjects
         .iter()
+        .filter(|(_, _, eligible)| *eligible)
         .map(|(id, _, _)| id.clone())
         .collect::<Vec<_>>();
-    expected.sort();
     assert_eq!(
         choices, expected,
-        "same syntax identities, not filtered by readiness"
+        "only the validated stub identity is printed:\n{stdout}"
     );
     for (id, class, eligible) in subjects {
         let mut command = ripr_command();

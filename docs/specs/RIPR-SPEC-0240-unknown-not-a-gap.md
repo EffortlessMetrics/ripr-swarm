@@ -681,7 +681,10 @@ under `rust_indirect_owner_call_unresolved`:
   conditional and glob bindings do not establish another owner. Imports suppress
   a bare mention only when the shared call-identity resolver establishes a
   different same-name definition; unresolved reexports and aliases retain the
-  limit. This is not general name resolution or macro expansion (#10162).
+  limit. A test body the shared parser refuses proves no declaration range, so
+  a single-line `use` mention keeps its lexical exclusion there and the body's
+  remaining declarations stay unproven. This is not general name resolution or
+  macro expansion (#10162).
 - **generated owner**: the changed line lies in no function of its file and the
   changed expression is an item-position macro invocation
   (`def_add!(add_five, 2 + 3);`). The definition the macro emits is not source

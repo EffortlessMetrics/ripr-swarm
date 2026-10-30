@@ -1001,7 +1001,7 @@ fn finished_attempt_warnings(
                 kind: "repair_receipt_unconfirmed".to_string(),
                 artifact: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
                 message: format!(
-                    "repair attempt `{}` (seam `{}`) passed the edit cage, but {}; status does not report the loop complete{}{}",
+                    "repair `{}` (gap `{}`) changed only the files the repair allows, but {}; status does not report the loop complete{}{}",
                     attempt.attempt_id,
                     attempt.seam_id,
                     unconfirmed_receipt_reason(attempt),
@@ -1262,7 +1262,7 @@ fn select_next_command(
                     refused_after_phase_reason(&attempt.attempt_id, &attempt.seam_id, refusal)
                 }
                 None => format!(
-                    "repair attempt `{}` for seam `{}` is awaiting the focused test edit; once the test is in place, run the after phase its before phase recorded",
+                    "repair `{}` for gap `{}` is waiting for your test; once the test is in place, run the next command the repair printed",
                     attempt.attempt_id, attempt.seam_id
                 ),
             };
@@ -1297,7 +1297,7 @@ fn select_next_command(
             kind: "repair_attempt_head_unknown".to_string(),
             artifact: store.locator.to_string(),
             message: format!(
-                "the current Git HEAD could not be read or related to the head its attempt was prepared at, so status cannot tell whether {} awaiting repair attempt(s) are still current",
+                "the current Git HEAD could not be read or related to the head its attempt was prepared at, so status cannot tell whether {} repair(s) in progress are still current",
                 head_unknown.len()
             ),
         });
@@ -2331,7 +2331,7 @@ fn attempt_outcome(attempt: &AgentStatusRepairAttempt) -> String {
         }
     }
     if attempt.last_after_refusal.is_some() {
-        parts.push("last after phase refused".to_string());
+        parts.push("last step refused".to_string());
     }
     if parts.is_empty() {
         "-".to_string()
@@ -2401,8 +2401,14 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
     rendered.push_str("# RIPR Agent Status\n\n");
     rendered.push_str(&format!("Status: {}\n", report.status()));
     rendered.push_str(&format!("Root: {}\n", report.root));
+    // #10696: before any repair step has run there is no gap or artifact to
+    // report, so say that in a sentence instead of a table of `missing` rows.
+    let nothing_started = report.seam.is_none()
+        && report.repair_attempts.is_empty()
+        && report.artifacts.iter().all(|artifact| !artifact.present);
     match &report.seam {
         Some(seam) => rendered.push_str(&format!("Seam: {} ({})\n", seam.seam_id, seam.source)),
+        None if nothing_started => rendered.push_str("No repair in progress.\n"),
         None => rendered.push_str("Seam: unknown\n"),
     }
     if let Some(reading) = report.unrun_test_receipt() {
@@ -2412,19 +2418,21 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         ));
     }
 
-    rendered.push_str("\n## Artifacts\n\n");
-    rendered.push_str("| Artifact | State | Path |\n");
-    rendered.push_str("| --- | --- | --- |\n");
-    for artifact in &report.artifacts {
-        let state = if artifact.present {
-            "present"
-        } else {
-            "missing"
-        };
-        rendered.push_str(&format!(
-            "| {} | {} | `{}` |\n",
-            artifact.label, state, artifact.path
-        ));
+    if !nothing_started {
+        rendered.push_str("\n## Artifacts\n\n");
+        rendered.push_str("| Artifact | State | Path |\n");
+        rendered.push_str("| --- | --- | --- |\n");
+        for artifact in &report.artifacts {
+            let state = if artifact.present {
+                "present"
+            } else {
+                "missing"
+            };
+            rendered.push_str(&format!(
+                "| {} | {} | `{}` |\n",
+                artifact.label, state, artifact.path
+            ));
+        }
     }
 
     if !report.repair_attempts.is_empty() {
@@ -3204,12 +3212,12 @@ fn refused_after_phase_reason(id: &str, seam: &str, refusal: &AgentStatusAfterRe
     let reason = refusal.reason.trim_end_matches('.');
     if refusal.retry_budget_exhausted {
         return format!(
-            "the after phase of repair attempt `{id}` for seam `{seam}` was refused {} times and its retry budget is spent; the latest refusal was: {reason}. Stop retrying this attempt: its after phase now refuses without running. Inspect the recorded refusal history in the attempt manifest, fix the cause, then start a new attempt while the gap is still open",
+            "the last step of repair `{id}` for gap `{seam}` was refused {} times and its retry limit is used up; the latest refusal was: {reason}. Stop retrying this repair: it now refuses without running. Inspect the recorded refusal history in the repair's manifest, fix the cause, then start a new repair while the gap is still open",
             refusal.refusal_count
         );
     }
     format!(
-        "the last after phase of repair attempt `{id}` for seam `{seam}` was refused: {reason} (refusal {} of a {}-refusal retry budget). The attempt still awaits the focused test edit; the command below repeats that after phase and refuses again until the cause the refusal names is resolved",
+        "the last step of repair `{id}` for gap `{seam}` was refused: {reason} (refusal {} of a {}-refusal retry limit). The repair still waits for your test; the command below repeats that step and refuses again until the cause the refusal names is resolved",
         refusal.refusal_count,
         crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
     )
@@ -3226,7 +3234,7 @@ fn after_attempt_command(
     let reason = match &view.last_after_refusal {
         Some(refusal) => refused_after_phase_reason(id, seam, refusal),
         None => format!(
-            "repair attempt `{id}` for seam `{seam}` is awaiting the focused test edit; once the test is in place, run the after phase its before phase recorded"
+            "repair `{id}` for gap `{seam}` is waiting for your test; once the test is in place, run the next command the repair printed"
         ),
     };
     AgentStatusCommand {
@@ -3308,10 +3316,10 @@ fn restart_attempt_command(
             "repair attempt `{id}` for seam `{seam}` ended incomparable; start a new attempt while the gap is still open"
         )),
         "failed" => restart(format!(
-            "repair attempt `{id}` for seam `{seam}` ended failed; start a new attempt while the gap is still open"
+            "repair `{id}` for gap `{seam}` ended failed; start a new repair while the gap is still open"
         )),
         "limited" if view.disposition == "retry_budget_spent" => restart(format!(
-            "repair attempt `{id}` for seam `{seam}` spent its after-phase retry budget, so its after phase now refuses without running; start a new attempt while the gap is still open"
+            "repair `{id}` for gap `{seam}` used up its retry limit, so it now refuses without running; start a new repair while the gap is still open"
         )),
         "limited" => match &view.receipt {
             AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open() => {
@@ -5149,6 +5157,30 @@ mod tests {
         Ok(())
     }
 
+    /// #10696 review: the artifact table is hidden only while nothing has
+    /// started; one present artifact brings it (and the `Seam:` line) back.
+    #[test]
+    fn agent_status_markdown_keeps_artifact_table_once_an_artifact_exists() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("table-returns");
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow).map_err(|err| format!("create workflow: {err}"))?;
+        std::fs::write(workflow.join("before.repo-exposure.json"), "{}")
+            .map_err(|err| format!("write artifact: {err}"))?;
+
+        let report = build_agent_status_report(&root, Path::new("."));
+        let rendered = render_agent_status_markdown(&report);
+
+        assert!(!rendered.contains("No repair in progress."), "{rendered}");
+        assert!(rendered.contains("Seam: unknown"), "{rendered}");
+        assert!(
+            rendered.contains("| before snapshot | present |"),
+            "{rendered}"
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
     #[test]
     fn agent_status_markdown_names_next_command_and_limits() -> Result<(), String> {
         let root = unique_agent_status_test_dir("markdown");
@@ -5159,7 +5191,10 @@ mod tests {
 
         assert!(rendered.contains("# RIPR Agent Status"));
         assert!(rendered.contains("Status: incomplete"));
-        assert!(rendered.contains("| before snapshot | missing |"));
+        // #10696: nothing has run yet, so no table of `missing` rows.
+        assert!(rendered.contains("No repair in progress."), "{rendered}");
+        assert!(!rendered.contains("| before snapshot |"), "{rendered}");
+        assert!(!rendered.contains("Seam: unknown"), "{rendered}");
         assert!(rendered.contains("## Next Command"));
         assert!(rendered.contains(&pilot_select_command(&bound_root("."))));
         assert!(rendered.contains("No runtime mutation execution."));
@@ -5812,12 +5847,12 @@ mod tests {
 
         // Dirty-premise start refusal: the recipe is the tail of a clause and
         // a later sentence must survive.
-        let dirty = "repair attempt cannot start: tracked file(s) differ from HEAD: src/lib.rs. to recover: commit the listed file(s) (for example `git commit -- src/lib.rs`), or restore them, then rerun `ripr agent repair --root '/r' --seam-id abc --phase before`. No workflow was prepared and no repair attempt was started.";
+        let dirty = "ripr repair needs your source changes committed first, so it can tell your new test apart from them. Uncommitted: src/lib.rs. Commit them (for example `git commit -- src/lib.rs`) or restore them, then rerun `ripr agent repair --root '/r' --seam-id abc --phase before`. A test file you are still editing is fine. Nothing was started.";
         let cleaned = without_start_recipe(dirty);
         assert!(
             !cleaned.contains("--phase before")
                 && cleaned.contains("or restore them")
-                && cleaned.contains("No workflow was prepared and no repair attempt was started.")
+                && cleaned.contains("Nothing was started.")
                 && cleaned.contains(cut),
             "{cleaned}"
         );
