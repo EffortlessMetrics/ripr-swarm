@@ -776,8 +776,21 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
             ),
             (
                 "agent-card",
-                2,
+                1,
                 args(&["agent", "card", "--root", root, "--seam-id", &seam_id]),
+            ),
+            (
+                "agent-card-verbose",
+                2,
+                args(&[
+                    "agent",
+                    "card",
+                    "--verbose",
+                    "--root",
+                    root,
+                    "--seam-id",
+                    &seam_id,
+                ]),
             ),
             (
                 "agent-packet",
