@@ -2818,7 +2818,10 @@ fn regenerate_gap_ledger_command(root: &Path, options: &FirstPrOptions) -> Strin
 
 /// The repo-exposure report the gap ledger is built from: the default report
 /// when present, else (only while the ledger itself is still missing) the
-/// report `ripr pilot` wrote (#3905), else `None`. A ledger that already
+/// report `ripr pilot` wrote (#3905) when it parses and carries the producer
+/// `artifact` identity, else `None`. Pilot writes an identity-less snapshot
+/// when its seam budget truncated the population, which is not comparable
+/// with the default report, so that one stays missing. A ledger that already
 /// exists is stale, timed out, wrong-rooted or malformed, and regenerating it
 /// from the same pilot snapshot would reproduce that state, so those routes
 /// keep naming the default report.
@@ -2827,8 +2830,13 @@ fn available_repo_exposure(root: &Path, options: &FirstPrOptions) -> Option<&'st
         return Some(DEFAULT_REPO_EXPOSURE);
     }
     (!resolve_path(root, &options.gap_ledger).exists()
-        && resolve_path(root, PILOT_REPO_EXPOSURE).is_file())
+        && pilot_repo_exposure_is_identified(&resolve_path(root, PILOT_REPO_EXPOSURE)))
     .then_some(PILOT_REPO_EXPOSURE)
+}
+
+fn pilot_repo_exposure_is_identified(path: &Path) -> bool {
+    path.is_file()
+        && read_json(path).is_ok_and(|report| report.get("artifact").is_some_and(Value::is_object))
 }
 
 /// A blocked ledger could not use its input, so regenerating the ledger
@@ -4134,6 +4142,9 @@ mod tests {
         cleanup(&repo)
     }
 
+    /// A pilot report with the producer identity pilot stamps on a complete run.
+    const PILOT_REPORT: &str = r#"{"artifact":{"kind":"repo-exposure"}}"#;
+
     /// #3905: `ripr pilot` writes its own repo-exposure report, so the
     /// `pilot` then `first-pr` route must not call that input missing. The
     /// only missing artifact is the ledger, built from the pilot's report.
@@ -4142,7 +4153,7 @@ mod tests {
         let repo = temp_repo("first-pr-pilot-repo-exposure")?;
         fs::create_dir_all(repo.join("target/ripr/pilot"))
             .map_err(|err| format!("mkdir pilot dir: {err}"))?;
-        fs::write(repo.join(PILOT_REPO_EXPOSURE), "{}")
+        fs::write(repo.join(PILOT_REPO_EXPOSURE), PILOT_REPORT)
             .map_err(|err| format!("write pilot repo exposure: {err}"))?;
         let options = FirstPrOptions::default();
         write_first_pr(&repo, &options)?;
@@ -4179,8 +4190,13 @@ mod tests {
             if let Some(parent) = file.parent() {
                 fs::create_dir_all(parent).map_err(|err| format!("mkdir {path}: {err}"))?;
             }
-            fs::write(&file, "{}").map_err(|err| format!("write {path}: {err}"))
+            fs::write(&file, PILOT_REPORT).map_err(|err| format!("write {path}: {err}"))
         };
+        // A truncated pilot run writes no identity: that snapshot stays missing.
+        fs::create_dir_all(repo.join("target/ripr/pilot"))
+            .map_err(|err| format!("mkdir: {err}"))?;
+        fs::write(repo.join(PILOT_REPO_EXPOSURE), "{}").map_err(|err| format!("write: {err}"))?;
+        assert_eq!(available_repo_exposure(&repo, &options), None);
         write(PILOT_REPO_EXPOSURE)?;
         assert_eq!(
             available_repo_exposure(&repo, &options),

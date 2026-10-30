@@ -711,18 +711,18 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
             // on the verbose packet dump (#8168).
             ("doctor", 1, args(&["doctor", "--root", root])),
             ("pilot", 1, args(&["pilot", "--root", root])),
-            (
-                "first-pr",
-                2,
-                args(&[
-                    "first-pr", "--root", root, "--base", "HEAD~1", "--head", "HEAD",
-                ]),
-            ),
             // Right after `pilot`, first-pr reads the pilot's repo-exposure
             // report (#3905), so only the gap-ledger command is left to print.
             (
                 "first-pr-after-pilot",
                 1,
+                args(&[
+                    "first-pr", "--root", root, "--base", "HEAD~1", "--head", "HEAD",
+                ]),
+            ),
+            (
+                "first-pr",
+                2,
                 args(&[
                     "first-pr", "--root", root, "--base", "HEAD~1", "--head", "HEAD",
                 ]),
@@ -867,6 +867,13 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
                 }
             }
             let (stdout, stderr) = ripr_streams_in(cwd, args)?;
+            if *label == "first-pr-after-pilot"
+                && !stdout.contains("target/ripr/pilot/repo-exposure.json")
+            {
+                return Err(format!(
+                    "flow `{prefix}{label}` did not read the pilot's repo-exposure report:\n{stdout}"
+                ));
+            }
             sink.ingest(&format!("{prefix}{label}"), &stdout, &stderr);
         }
         for (label, minimum, _) in &flows {
@@ -894,10 +901,10 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
 /// the repository.
 const RELATIVE_ROOT_FLOWS: &[&str] = &[
     "check",
-    "first-pr",
     "doctor",
     "pilot",
     "first-pr-after-pilot",
+    "first-pr",
     "agent-card",
 ];
 
