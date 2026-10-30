@@ -1,0 +1,10 @@
+# Registers the truncated-index rebuild repair (#10567) under RIPR-SPEC-0116.
+[[extend]]
+id = "RIPR-SPEC-0116"
+tests = [
+  "crates/ripr/tests/hostile_repos.rs::truncated_index_refusal_names_the_rebuild_repair",
+  "crates/ripr/tests/hostile_repos.rs::unreadable_valid_index_gets_no_rebuild_advice",
+]
+code = [
+  "crates/ripr/src/analysis/committed_source.rs",
+]

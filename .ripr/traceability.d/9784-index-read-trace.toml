@@ -1,0 +1,13 @@
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/probe_read_trace/tests.rs::scope_is_per_invocation_and_disabled_or_outside_reads_emit_nothing",
+  "crates/ripr/src/analysis/probe_read_trace/tests.rs::nested_scope_restores_parent_and_interruption_never_becomes_completion",
+  "crates/ripr/src/analysis/probe_read_trace/tests.rs::scopes_do_not_cross_worker_threads",
+  "crates/ripr/src/analysis/probe_read_trace/tests.rs::abandonment_and_saturation_never_hide_whole_set_reads_or_claim_closure",
+  "crates/ripr/src/analysis/probe_read_trace/tests.rs::wire_bound_omits_whole_details_instead_of_truncating_and_writer_failure_is_fallible",
+  "crates/ripr/src/analysis/probe_read_trace/tests/producer.rs::actual_index_views_record_present_absent_and_all_conservative_sets",
+  "crates/ripr/src/analysis/probe_read_trace/tests/producer.rs::actual_classification_preserves_findings_and_value_origins_with_shared_memos",
+  "crates/ripr/tests/probe_read_trace.rs::real_check_trace_is_opt_in_and_preserves_nonempty_json",
+]
+outputs = ["docs/PER_PROBE_INCREMENTAL_ANALYSIS.md"]

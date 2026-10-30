@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/unreached_workspace_trait_impl_borrows_no_oracle/input
 
-Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 WARNING ./src/lib.rs:11
   id: probe:src_lib.rs:error_path:84ce0ae1
@@ -14,11 +19,12 @@ Changed
   before: Err("ovf".to_string())
   after:  Err("overflow".to_string())
 
-Probe
+Change type
+  error handling changed
   family: error_path
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::impl Step for Inc::process
-  canonical gap: gap:rust:src/lib.rs:impl Step for Inc::process:error_variant:error_path:err_lit6f766572666c6f77.to_string
+  gap id (for scripts): gap:rust:src/lib.rs:impl Step for Inc::process:error_variant:error_path:err_lit6f766572666c6f77.to_string
 
 Static exposure
   no_static_path (warning, confidence 0.35)
@@ -52,11 +58,12 @@ Changed
   after:  None =>
           (arm head only; open the arm at ./src/lib.rs:11 to read its new body)
 
-Probe
+Change type
+  a match arm changed
   family: match_arm
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/lib.rs::impl Step for Inc::process
-  canonical gap: gap:rust:src/lib.rs:impl Step for Inc::process:match_arm:match_arm:none
+  gap id (for scripts): gap:rust:src/lib.rs:impl Step for Inc::process:match_arm:match_arm:none
 
 Static exposure
   no_static_path (warning, confidence 0.43)

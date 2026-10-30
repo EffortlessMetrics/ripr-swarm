@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/constant_declaration_probe_reconciliation/input
 
-Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 NOTE ./src/lib.rs:1
   id: probe:src_lib.rs:static_unknown:c48715e6
@@ -14,16 +19,17 @@ Changed
   before: pub(crate) const OBSERVATION_SCHEMA_GENERATION: u32 = 4;
   after:  pub(crate) const OBSERVATION_SCHEMA_GENERATION: u32 = 3;
 
-Probe
+Change type
+  a change ripr could not classify
   family: static_unknown
-  delta:  unknown
+  delta:  unknown (kind of change not determined)
 
 Static exposure
   static_unknown (note, confidence 0.50)
 
 Evidence
   - reach yes: Related tests appear to reach changed owner: observation_schema_generation_matches_policy
-  - infection unknown: Changed syntax is not mapped to a high-confidence probe family
+  - infection unknown: Changed syntax is not mapped to a high-confidence change type
   - propagation unknown: No propagation model is available for this changed syntax
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator unknown: Assertions exist, but oracle strength is unknown
@@ -36,7 +42,7 @@ Weakness
   - Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests
 
 Stop reasons:
-  - no_changed_rust_line — ripr could not place the changed line inside a Rust function it analyzes
+  - ripr could not place the changed line inside a Rust function it analyzes (no_changed_rust_line)
     Next: Make sure the changed line sits inside a function (not a macro body or item attribute); if it does, report the shape in an issue.
 
 Next step
