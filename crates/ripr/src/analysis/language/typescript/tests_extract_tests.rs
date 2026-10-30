@@ -1471,3 +1471,39 @@ fn reassigned_hook_targets_withhold_setup_facts() {
         );
     }
 }
+
+/// Call-mediated ambient-hook rebindings are outside the parsed-target model:
+/// RIPR-SPEC-0243 scopes the hook-write fact to "parsed assignment, update,
+/// destructuring and loop targets", so `Reflect.set`, `Object.defineProperty`
+/// and `Object.assign` on a known global root record no write and a later
+/// registration keeps its documented trust. This control pins that boundary so
+/// modeling any of these spellings later flips a test consciously instead of
+/// drifting (review thread on #10599; boundary is not a desired end state).
+#[test]
+fn call_mediated_hook_rebinding_keeps_documented_trust() {
+    let source = |setup: &str| {
+        format!(
+            "import {{ expect }} from 'chai';\nimport {{ Cart }} from '../src/cart';\ndescribe('cart', () => {{\nlet cart = {{ total: () => 1 }};\n{setup}\nbeforeEach(() => {{ cart = new Cart(); }});\nit('total', () => {{ expect(cart.total()).to.equal(1); }});\n}});\n"
+        )
+    };
+    for setup in [
+        "Reflect.set(globalThis, 'beforeEach', () => {});",
+        "Object.defineProperty(globalThis, 'beforeEach', { value: () => {} });",
+        "Object.assign(globalThis, { beforeEach: () => {} });",
+    ] {
+        let tests = extract_tests(Path::new("tests/cart.test.ts"), &source(setup));
+        assert_eq!(tests.len(), 1, "{setup}: preserve the enabled test");
+        assert_eq!(
+            tests[0].setup_hook_bodies.len(),
+            1,
+            "{setup}: the registration keeps its documented trust"
+        );
+        assert!(
+            tests[0].scope_bindings.iter().any(|binding| {
+                binding.name == "cart" && binding.constructed_by.as_deref() == Some("Cart")
+            }),
+            "{setup}: {:?}",
+            tests[0].scope_bindings
+        );
+    }
+}
