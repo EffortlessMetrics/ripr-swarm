@@ -1355,6 +1355,12 @@ pub(crate) fn expect_assertion_from_expression(
         && oracle_kind == OracleKind::ExactValue
         && outer_call.arguments.len() == 1
         && expected_value_or_variant.is_some()
+        // A literal array is an equality expectation on the rejected reason
+        // that the rejection-literal credit does not model; keep it exact_value.
+        && outer_call
+            .arguments
+            .first()
+            .is_some_and(|argument| !is_literal_array_argument(argument))
         && bindings.runner_expects.iter().any(|name| name == "expect")
     {
         oracle_kind = OracleKind::ExactErrorVariant;
