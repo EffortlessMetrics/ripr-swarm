@@ -22861,7 +22861,6 @@ async fn code_lens_is_withdrawn_for_an_unsaved_buffer_and_restored_on_save() -> 
             work_done_progress_params: Default::default(),
             partial_result_params: PartialResultParams::default(),
         };
-        let backend = backend;
         async move {
             backend
                 .code_lens(params)
