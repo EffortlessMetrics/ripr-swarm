@@ -444,15 +444,32 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     // bare `ripr check` would read is available and touches a seam, an
     // already-gripped seam the diff does not touch says nothing about the
     // change, so it is counted, not listed as if it were the verdict.
-    let changed = live_check_diff_files(root).filter(|files| {
+    let live_diff = live_check_diff_files(root);
+    let changed = live_diff.as_ref().filter(|files| {
         classified
             .iter()
             .any(|entry| seam_touches_change(entry, files))
     });
     let mut gripped_off_change = 0usize;
+    let mut untied_reasons: Vec<String> = Vec::new();
     for entry in &classified {
         match repair_refusal(entry, policy, Some(root)) {
             None => {
+                // #11111: `ripr check` never offers a repair start for a seam
+                // it cannot tie to the changed lines of a file the diff
+                // changes. A bare `ripr repair` must not start from the very
+                // seam `check` declined: static evidence does not link that
+                // seam to the change, and a wrong actionable signal is worse
+                // than a missed advisory.
+                if let Some(files) = live_diff.as_deref()
+                    && seam_untied_in_changed_file(entry, files)
+                {
+                    untied_reasons.push(format!(
+                        "{}: it is in a file your change touches, but not on a changed line, and ripr cannot tie your change to it, so it starts no repair from it (`ripr check` reports the same)",
+                        seam_label(entry)
+                    ));
+                    continue;
+                }
                 eligible_ids.push(entry.seam.id().as_str().to_string());
                 candidate_notes.push(describe_candidate(entry, &bound));
             }
@@ -460,10 +477,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
             // never read as the verdict on a different changed line; it is
             // listed after the reasons that can still name work.
             Some((RefusalKind::AlreadyGripped, reason)) => {
-                if changed
-                    .as_ref()
-                    .is_some_and(|files| !seam_touches_change(entry, files))
-                {
+                if changed.is_some_and(|files| !seam_touches_change(entry, files)) {
                     gripped_off_change += 1;
                 } else {
                     gripped_reasons.push(format!("{}: {reason}", seam_label(entry)));
@@ -474,6 +488,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
             Some((_, reason)) => refusal_reasons.push(reason),
         }
     }
+    refusal_reasons.extend(untied_reasons);
     refusal_reasons.extend(gripped_reasons);
     if gripped_off_change > 0 {
         let noun = if gripped_off_change == 1 {
@@ -503,6 +518,21 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
         candidate_notes: &candidate_notes,
         start_spec: spec.as_ref(),
     })
+}
+
+/// Whether the parsed diff changes the seam's Rust file but none of the seam's
+/// own lines: the file is in scope for `ripr check`, which then cannot tie a
+/// finding on a changed line to this seam (#11111).
+fn seam_untied_in_changed_file(
+    entry: &crate::analysis::ClassifiedSeam,
+    files: &[crate::analysis::ChangedFile],
+) -> bool {
+    let seam_file = normalized_relative_path(entry.seam.file());
+    let in_changed_file = files.iter().any(|file| {
+        normalized_relative_path(&file.path) == seam_file
+            && !(file.added_lines.is_empty() && file.removed_lines.is_empty())
+    });
+    in_changed_file && !seam_touches_change(entry, files)
 }
 
 /// Whether `files` (a parsed diff) adds, or deletes next to, a line inside

@@ -308,3 +308,73 @@ fn exposed_boolean_tail_is_gripped_for_both_check_and_repair() -> Result<(), Str
     );
     Ok(())
 }
+
+/// Assert the fixture holds the intended shape before any downstream claim.
+fn assert_fixture_changes(repo: &Repo, needle: &str) -> Result<(), String> {
+    let source = std::fs::read_to_string(repo.0.join("src/lib.rs")).map_err(|e| e.to_string())?;
+    assert!(
+        source.contains(needle),
+        "fixture must hold the changed source {needle:?}:\n{source}"
+    );
+    Ok(())
+}
+
+/// #11111 group B: a changed constant whose consumer seam is a different,
+/// unchanged line. `check` offers no repair start (no gap ID); bare `repair`
+/// must refuse with the same plain reason instead of starting on the
+/// consumer's seam, which static evidence does not tie to the change.
+#[test]
+fn string_const_change_check_and_bare_repair_both_decline() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(
+        "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n",
+        "pub const GREETING: &str = \"hi\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n",
+        "use ar::greet;\n\n#[test]\nfn greet_mentions_name() {\n    assert!(greet(\"bob\").contains(\"bob\"));\n}\n",
+    )?;
+    assert_fixture_changes(&repo, "GREETING: &str = \"hi\"")?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Changed behavior: pub const GREETING")
+            && check.contains("no repair start offered: this finding has no gap ID"),
+        "precondition, check offers no repair start for the constant:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        !repair.contains("Repair prepared for seam"),
+        "repair must not prepare a repair check declined:\n{repair}"
+    );
+    assert!(
+        repair.contains("not on a changed line")
+            && repair.contains("cannot tie your change to it")
+            && repair.contains("`ripr check` reports the same"),
+        "repair must give the plain reason:\n{repair}"
+    );
+    Ok(())
+}
+
+/// #11111 group B: a private helper's body changed; its public caller's seam
+/// is the only eligible one but sits on an unchanged line. `check` cannot tie
+/// a seam to the changed line; bare `repair` must refuse too.
+#[test]
+fn private_helper_change_check_and_bare_repair_both_decline() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(
+        "fn tax(v: u32) -> u32 {\n    v / 10\n}\n\npub fn gross(v: u32) -> u32 {\n    v + tax(v)\n}\n",
+        "fn tax(v: u32) -> u32 {\n    v / 5\n}\n\npub fn gross(v: u32) -> u32 {\n    v + tax(v)\n}\n",
+        "use ar::gross;\n\n#[test]\nfn gross_exceeds_net() {\n    assert!(gross(100) > 100);\n}\n",
+    )?;
+    assert_fixture_changes(&repo, "v / 5")?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("could not tie one to this finding's changed line"),
+        "precondition, check cannot tie a seam to the change:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        !repair.contains("Repair prepared for seam")
+            && repair.contains("not on a changed line")
+            && repair.contains("`ripr check` reports the same"),
+        "repair must decline with the plain reason:\n{repair}"
+    );
+    Ok(())
+}
