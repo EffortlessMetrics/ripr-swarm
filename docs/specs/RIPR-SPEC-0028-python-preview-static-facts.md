@@ -579,7 +579,9 @@ imported symbol (`islice(seq, 0, None, n)` to `islice(seq, 1, None, n)`,
 `chunks[-1]` to `chunks[-2]`) lifts `missing_import_graph` on token equality
 alone: the old and new lines must lex to the same tokens except integer
 values, so no callee, keyword, operator, operand, string or float moved (#9226).
-The callee is not evaluated, so a strong exact oracle that reaches the owner is
+The abstention is lifted only when a strong exact oracle observes the owner;
+no test, a smoke assertion or an assertion on another value keeps it. The callee
+is not evaluated, so a strong exact oracle that reaches the owner is
 not credited as `exposed`: the finding is `weakly_exposed` with no nameable
 discriminator, no `suggested_*` repair card and no next step. Without the old
 line the limit stays.

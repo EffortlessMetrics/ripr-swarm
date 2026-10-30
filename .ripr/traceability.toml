@@ -3894,6 +3894,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_click_name_that_is_not_the_click_module_is_not_a_command",
   "crates/ripr/src/analysis/language/python/imported_literal_tests.rs::an_integer_literal_swap_reads_as_weakly_exposed_with_no_repair_card",
   "crates/ripr/src/analysis/language/python/imported_literal_tests.rs::a_negative_literal_and_a_subscript_swap_read_the_same_way",
+  "crates/ripr/src/analysis/language/python/imported_literal_tests.rs::a_predicate_line_gets_no_boundary_repair_either",
+  "crates/ripr/src/analysis/language/python/imported_literal_tests.rs::only_a_strong_observing_oracle_lifts_the_abstention",
   "crates/ripr/src/analysis/language/python/imported_literal_tests.rs::edits_that_move_anything_but_integer_values_keep_the_abstention",
   "crates/ripr/src/analysis/language/python/imported_literal_tests.rs::without_the_old_line_the_abstention_stays",
   "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_runner_invoke_in_a_test_of_the_package_is_named_without_changing_the_class",

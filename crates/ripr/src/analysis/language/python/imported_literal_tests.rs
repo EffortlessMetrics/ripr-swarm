@@ -25,6 +25,19 @@ fn abstains_on_the_import(finding: &Finding) -> bool {
             .any(|line| line.contains("missing_import_graph"))
 }
 
+fn assert_no_repair_signal(finding: &Finding) {
+    assert_eq!(finding.recommended_next_step, None);
+    assert!(finding.activation.missing_discriminators.is_empty());
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("suggested_")),
+        "{:?}",
+        finding.evidence
+    );
+}
+
 const OLD: &str = "    return itertools.islice(seq, 0, None, n)";
 
 #[test]
@@ -135,5 +148,60 @@ fn without_the_old_line_the_abstention_stays() -> Result<(), String> {
     let finding = classify_change_with_old(Path::new("src/seqs.py"), 5, new, None, &owners, &tests)
         .ok_or_else(|| "expected a finding".to_string())?;
     assert!(abstains_on_the_import(&finding), "{:?}", finding.evidence);
+    Ok(())
+}
+
+#[test]
+fn a_predicate_line_gets_no_boundary_repair_either() -> Result<(), String> {
+    let finding = finding(
+        "    return itertools.count(n) > 3",
+        "    return itertools.count(n) > 4",
+        TEST_SOURCE,
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.evidence
+    );
+    assert_no_repair_signal(&finding);
+    Ok(())
+}
+
+#[test]
+fn the_subscript_swap_has_no_repair_signal() -> Result<(), String> {
+    let finding = finding(
+        "    return itertools.chain(seq)[-1]",
+        "    return itertools.chain(seq)[-2]",
+        TEST_SOURCE,
+    )?;
+    assert_no_repair_signal(&finding);
+    Ok(())
+}
+
+#[test]
+fn only_a_strong_observing_oracle_lifts_the_abstention() -> Result<(), String> {
+    let new = "    return itertools.islice(seq, 1, None, n)";
+    // no test at all
+    let none = finding(OLD, new, "")?;
+    assert!(abstains_on_the_import(&none), "{:?}", none.evidence);
+    // a smoke assertion that observes nothing exact
+    let smoke = finding(
+        OLD,
+        new,
+        "from src.seqs import take_nth\n\n\ndef test_take_nth():\n    assert take_nth(2, 'ABCDE')\n",
+    )?;
+    assert!(abstains_on_the_import(&smoke), "{:?}", smoke.evidence);
+    // a strong assertion on a value the owner does not return
+    let unrelated = finding(
+        OLD,
+        new,
+        "from src.seqs import take_nth\n\n\ndef test_take_nth():\n    take_nth(2, 'ABCDE')\n    assert 1 + 1 == 2\n",
+    )?;
+    assert!(
+        abstains_on_the_import(&unrelated),
+        "{:?}",
+        unrelated.evidence
+    );
     Ok(())
 }

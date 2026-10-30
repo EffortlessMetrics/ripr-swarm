@@ -35,9 +35,8 @@ use super::sink_alignment::{
 };
 use super::static_limits::{
     LAMBDA_LIMIT_EVIDENCE, heuristic_only_relation_limit, implicit_dunder_dispatch_limit,
-    integer_literal_swap, line_uses_imported_symbol, module_object_rebind_limit,
-    static_limit_for_focused_change, unpinned_equality_dunder_limit,
-    unresolved_pytest_fixture_names,
+    integer_literal_swap, module_object_rebind_limit, static_limit_for_focused_change,
+    unpinned_equality_dunder_limit, unresolved_pytest_fixture_names,
 };
 use super::table_rows::python_unvaried_table_operand;
 use super::term_activation::python_inactive_term_evidence;
@@ -882,15 +881,22 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         })
         .flatten();
     let mut band_downgraded = false;
-    // #9226: an integer-literal edit on a line that calls an imported symbol.
-    // The callee's result under the new literal is not evaluated, so a strong
-    // exact oracle reaching the owner is not credited as a discriminator.
-    let imported_literal_gap = static_limit.is_none()
-        && old_line_text.is_some_and(|old| {
-            integer_literal_swap(old.trim(), line_text.trim())
-                && line_uses_imported_symbol(line_text.trim(), &owner.imports)
-        });
-    let mut imported_literal_downgraded = false;
+    // #9226: an integer-literal edit on a line the imported-symbol limit would
+    // abstain on. The callee is not evaluated, so a strong exact oracle that
+    // observes the owner is not credited as a discriminator: the limit is
+    // lifted to `weakly_exposed` with no repair signal. Any other oracle shape
+    // keeps the abstention.
+    let imported_literal_gap = static_limit
+        .as_ref()
+        .is_some_and(|limit| limit.evidence == IMPORTED_CALL_LIMIT_EVIDENCE)
+        && old_line_text.is_some_and(|old| integer_literal_swap(old.trim(), line_text.trim()))
+        && strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes();
+    let static_limit = if imported_literal_gap {
+        None
+    } else {
+        static_limit
+    };
     // An existing exact-list assertion cannot justify prescribing the same
     // assertion again when this bounded path cannot prove unequal values.
     let unproven_list_equality = !alignment.observes()
@@ -970,6 +976,20 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
+        && imported_literal_gap
+    {
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but the changed integer literal feeds an imported call whose result the preview adapter does not evaluate, so static evidence cannot confirm the assertion notices the edit.",
+                owner.name
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
         && changed_default_exercised_ok
         && boundary_gap.is_none()
         && inactive_term.is_none()
@@ -977,7 +997,6 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         && message_pin_gap.is_none()
         && unvaried_table.is_none()
         && band_gap.is_none()
-        && !imported_literal_gap
     {
         (
             ExposureClass::Exposed,
@@ -1129,21 +1148,6 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 owner.name, gap.reason,
             )],
         )
-    } else if strongest_strength >= OracleStrength::Strong.rank()
-        && alignment.observes()
-        && imported_literal_gap
-    {
-        imported_literal_downgraded = true;
-        (
-            ExposureClass::WeaklyExposed,
-            StageState::Yes,
-            StageState::Yes,
-            StageState::Weak,
-            vec![format!(
-                "A strong Python oracle reaches `{}`, but the changed integer literal feeds an imported call whose result the preview adapter does not evaluate, so static evidence cannot confirm the assertion notices the edit.",
-                owner.name
-            )],
-        )
     } else if strongest_strength >= OracleStrength::Strong.rank() {
         // A strong oracle reaches the owner, but its assertion observes a value
         // other than the changed owner's output, so static evidence cannot
@@ -1269,7 +1273,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             || guarded_arm_downgraded
             || table_downgraded
             || band_downgraded
-            || imported_literal_downgraded
+            || imported_literal_gap
         {
             StageState::Weak
         } else {
@@ -1293,7 +1297,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             "Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input.".to_string()
         } else if term_downgraded {
             "Related tests reach the changed term, but every strong related test call gives it the value 0.".to_string()
-        } else if imported_literal_downgraded {
+        } else if imported_literal_gap {
             "Related tests reach the changed line, but its integer literal feeds an imported call the adapter does not evaluate.".to_string()
         } else if band_downgraded {
             "Related tests reach the changed return, but the asserted `approx` band admits both the old and the new result.".to_string()
@@ -1318,7 +1322,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         && matches!(class, ExposureClass::WeaklyExposed)
         && has_oracle_eligible_relation
         && !unproven_list_equality
-        && !imported_literal_downgraded
+        && !imported_literal_gap
     {
         if boundary_downgraded {
             // The boundary downgrade names the equality that would activate the
@@ -1477,7 +1481,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         has_oracle_eligible_relation,
         &missing_discriminators,
     );
-    let repair_placement = (!unproven_list_equality && !imported_literal_downgraded)
+    let repair_placement = (!unproven_list_equality && !imported_literal_gap)
         .then(|| python_repair_placement(&class, &related_candidates))
         .flatten();
     let confidence_value = if matches!(class, ExposureClass::Exposed) {
