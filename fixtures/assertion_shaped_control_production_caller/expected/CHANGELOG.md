@@ -503,3 +503,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_control_production_caller (33)
+
+Reason:
+RIPR-SPEC-0122: check now prints one hand-written-test step when a gap has neither a repair start nor a stub, and only stub commands that produce a stub (#10710)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_control_production_caller --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

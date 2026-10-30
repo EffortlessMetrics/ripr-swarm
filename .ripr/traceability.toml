@@ -10267,6 +10267,10 @@ id = "RIPR-SPEC-0122"
 name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
+  "crates/ripr/tests/check_dead_end_routes.rs::async_gap_with_no_route_says_to_write_the_test_by_hand",
+  "crates/ripr/tests/check_dead_end_routes.rs::side_effect_gap_with_no_route_says_to_write_the_test_by_hand",
+  "crates/ripr/tests/check_dead_end_routes.rs::generic_gap_with_a_repair_start_is_not_told_there_is_no_route",
+  "crates/ripr/tests/check_dead_end_routes.rs::field_gap_with_two_seams_prints_only_the_stub_that_works",
   "crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action",
   "crates/ripr/src/output/human.rs::tests::render_finding_marks_a_match_arm_head_only_after_row",
   "crates/ripr/src/output/human.rs::tests::render_finding_adds_no_arm_note_when_the_after_row_is_complete",

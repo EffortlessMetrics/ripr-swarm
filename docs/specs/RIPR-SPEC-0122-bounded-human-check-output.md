@@ -377,7 +377,15 @@ finding. Two equally near seams of that kind whose source spans do not nest
 the stub is placed inline (integration-file placement needs classified
 evidence and stays with `--seam-id`). The block is printed only when the
 resolver produces a stub. When it refuses, the block is replaced by one line,
-`No test stub here: <reason>`, naming the producer's refusal. When the
+`No test stub here: <reason>`, naming the producer's refusal. When that
+finding also prints no repair start, one further line follows (#10710):
+`Write this test by hand: <what to call and assert>. ripr has no repair
+route for this kind of change yet, ...`, so a gap with neither route never ends
+without a named next step. A refusal that already names the existing test to
+strengthen (the weak-assertion pointer) gets no such line. When several seams
+share the line and exactly one is the finding's changed expression, the block
+prints the stub command for that seam (`--seam-id`) instead of listing the
+others, so every printed `ripr agent stub` command produces a stub. When the
 function has no seam of that kind, or the location is refused as ambiguous,
 nothing is printed. The resolver reads the files on disk, so a check
 that analyzed other bytes (`--candidate-tree`, or a committed-history diff

@@ -456,3 +456,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_oracle_test_file (30)
+
+Reason:
+RIPR-SPEC-0122: check now prints one hand-written-test step when a gap has neither a repair start nor a stub, and only stub commands that produce a stub (#10710)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

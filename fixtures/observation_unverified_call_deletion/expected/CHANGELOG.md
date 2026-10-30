@@ -431,3 +431,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_unverified_call_deletion (24)
+
+Reason:
+RIPR-SPEC-0122: check now prints one hand-written-test step when a gap has neither a repair start nor a stub, and only stub commands that produce a stub (#10710)
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

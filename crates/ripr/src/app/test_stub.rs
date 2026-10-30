@@ -412,9 +412,6 @@ fn narrowed_ambiguity(
         |reason: String, seam_ids: Vec<String>| StubRouteDecision::Ambiguous { reason, seam_ids };
     let squash = |text: &str| text.split_whitespace().collect::<String>();
     let wanted = squash(expression);
-    if std::env::var_os("RIPR_BISECT").is_some() {
-        return unchanged(reason, seam_ids);
-    }
     let Some(relative) = scoped_file(root, file) else {
         return unchanged(reason, seam_ids);
     };
