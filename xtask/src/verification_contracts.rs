@@ -1514,9 +1514,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn integer_schema_rejects_decimal_rounded_to_integer() {
-        let schema: Value = serde_json::from_str(r#"{"type":"integer"}"#).unwrap();
-        let value: Value = serde_json::from_str("1.00000000000000001").unwrap();
+    fn integer_schema_rejects_decimal_rounded_to_integer() -> Result<(), String> {
+        let schema: Value =
+            serde_json::from_str(r#"{"type":"integer"}"#).map_err(|e| e.to_string())?;
+        let value: Value =
+            serde_json::from_str("1.00000000000000001").map_err(|e| e.to_string())?;
         let mut violations = Vec::new();
         validate_value_against_schema(
             &value,
@@ -1529,20 +1531,22 @@ mod tests {
             !violations.is_empty(),
             "fraction must not be accepted as an integer"
         );
+        Ok(())
     }
 
     #[test]
-    fn exact_integer_and_bounds_controls() {
-        let integer: Value = serde_json::from_str(r#"{"type":"integer"}"#).unwrap();
+    fn exact_integer_and_bounds_controls() -> Result<(), String> {
+        let integer: Value =
+            serde_json::from_str(r#"{"type":"integer"}"#).map_err(|e| e.to_string())?;
         let bounded: Value = serde_json::from_str(
             r#"{"type":"integer","minimum":9007199254740993,"maximum":9007199254740995}"#,
         )
-        .unwrap();
-        let validate = |text: &str, schema: &Value| {
-            let value: Value = serde_json::from_str(text).unwrap();
+        .map_err(|e| e.to_string())?;
+        let validate = |text: &str, schema: &Value| -> Result<Vec<String>, String> {
+            let value: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
             let mut violations = Vec::new();
             validate_value_against_schema(&value, schema, schema, "value".into(), &mut violations);
-            violations
+            Ok(violations)
         };
         for text in [
             "1.0",
@@ -1552,7 +1556,7 @@ mod tests {
             "18446744073709551615",
             "1e256",
         ] {
-            assert!(validate(text, &integer).is_empty(), "{text}");
+            assert!(validate(text, &integer)?.is_empty(), "{text}");
         }
         for text in [
             "1.00000000000000001",
@@ -1562,25 +1566,26 @@ mod tests {
             "1e300",
             "1e-257",
         ] {
-            assert!(!validate(text, &integer).is_empty(), "{text}");
+            assert!(!validate(text, &integer)?.is_empty(), "{text}");
         }
         for text in ["9007199254740993", "9007199254740994.0", "9007199254740995"] {
-            assert!(validate(text, &bounded).is_empty(), "{text}");
+            assert!(validate(text, &bounded)?.is_empty(), "{text}");
         }
         for text in ["9007199254740992", "9007199254740996", "1e300"] {
-            assert!(!validate(text, &bounded).is_empty(), "{text}");
+            assert!(!validate(text, &bounded)?.is_empty(), "{text}");
         }
+        Ok(())
     }
 
     #[test]
-    fn unsupported_numbers_cannot_be_inverted_by_schema_combinators() {
+    fn unsupported_numbers_cannot_be_inverted_by_schema_combinators() -> Result<(), String> {
         for schema_text in [
             r#"{"not":{"type":"integer"}}"#,
             r#"{"if":{"minimum":0},"then":false,"else":{}}"#,
             r#"{"not":{"properties":{"n":{"type":"integer"}}}}"#,
             r#"{"not":{"minimum":1e300}}"#,
         ] {
-            let schema: Value = serde_json::from_str(schema_text).unwrap();
+            let schema: Value = serde_json::from_str(schema_text).map_err(|e| e.to_string())?;
             let input = if schema_text.contains("properties") {
                 r#"{"n":1e300}"#
             } else if schema_text.contains("minimum\":1e300") {
@@ -1588,7 +1593,7 @@ mod tests {
             } else {
                 "1e300"
             };
-            let value: Value = serde_json::from_str(input).unwrap();
+            let value: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
             let mut violations = Vec::new();
             validate_value_against_schema(
                 &value,
@@ -1599,6 +1604,63 @@ mod tests {
             );
             assert!(!violations.is_empty(), "{schema_text}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn schema_numeric_equality_handles_equivalent_representations() -> Result<(), String> {
+        let check = |schema_text: &str, value_text: &str| -> Result<bool, String> {
+            let schema: Value = serde_json::from_str(schema_text).map_err(|e| e.to_string())?;
+            let value: Value = serde_json::from_str(value_text).map_err(|e| e.to_string())?;
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "value".into(),
+                &mut violations,
+            );
+            Ok(violations.is_empty())
+        };
+        assert!(check(
+            r#"{"const":{"n":[1.0,0.0]}}"#,
+            r#"{"n":[1e0,-0.0]}"#
+        )?);
+        assert!(check(r#"{"enum":[1.0]}"#, "1e0")?);
+        assert!(!check(
+            r#"{"uniqueItems":true}"#,
+            r#"[{"n":1.0},{"n":1e0}]"#
+        )?);
+        assert!(check(
+            r#"{"uniqueItems":true}"#,
+            r#"[1.0,"1.0",true,1.00000000000000001]"#
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn json_number_marker_object_is_not_a_number() -> Result<(), String> {
+        let value: Value = serde_json::from_str(r#"{"$serde_json::private::Number":"42"}"#)
+            .map_err(|e| e.to_string())?;
+        let schema: Value =
+            serde_json::from_str(r#"{"type":"integer"}"#).map_err(|e| e.to_string())?;
+        let mut violations = Vec::new();
+        validate_value_against_schema(&value, &schema, &schema, "value".into(), &mut violations);
+        assert!(value.is_object());
+        assert!(!violations.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn example_data_is_not_treated_as_a_numeric_bound() -> Result<(), String> {
+        let value: Value = serde_json::from_str(r#""ok""#).map_err(|e| e.to_string())?;
+        let schema: Value =
+            serde_json::from_str(r#"{"type":"string","examples":[{"minimum":1e300}]}"#)
+                .map_err(|e| e.to_string())?;
+        let mut violations = Vec::new();
+        validate_value_against_schema(&value, &schema, &schema, "value".into(), &mut violations);
+        assert!(violations.is_empty(), "{violations:?}");
+        Ok(())
     }
 
     #[test]
