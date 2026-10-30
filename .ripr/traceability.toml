@@ -6788,7 +6788,8 @@ tests = [
   "crates/ripr/src/cli/commands/gate.rs::tests::gate_evaluate_refuses_relative_missing_root",
   "crates/ripr/src/output/gate/presentation.rs::tests::production_caller_target_markdown_preserves_explicit_location",
   "xtask/src/main.rs::tests::dogfood_blocking_gate_report_is_self_contained",
-  "xtask/src/verification_contracts.rs::check_verification_contracts"
+  "xtask/src/verification_contracts.rs::check_verification_contracts",
+  "xtask/src/verification_contracts.rs::tests::integer_type_follows_json_schema_numeric_semantics"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
