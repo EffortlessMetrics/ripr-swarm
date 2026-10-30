@@ -204,6 +204,38 @@ fn async_python_tests_use_default_name_prefix() -> Result<(), String> {
 }
 
 #[test]
+fn nested_function_owners_get_qualified_names() {
+    let owners = extract_owners(
+        Path::new("src/factory.py"),
+        "def outer():\n    def inner():\n        return 2\n    return inner\n\nclass Builder:\n    def build(self):\n        def step():\n            return 3\n        return step()\n",
+    );
+    let qualified: Vec<&str> = owners
+        .iter()
+        .map(|owner| owner.qualified_name.as_str())
+        .collect();
+    assert!(
+        qualified.contains(&"outer.inner"),
+        "nested def must be an owner qualified by its enclosing function: {qualified:?}"
+    );
+    assert!(
+        qualified.contains(&"Builder.build.step"),
+        "def nested in a method must not be credited to the method owner: {qualified:?}"
+    );
+    let inner = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "outer.inner")
+        .expect("inner owner");
+    let outer = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "outer")
+        .expect("outer owner");
+    assert!(
+        inner.start_line > outer.start_line && inner.end_line <= outer.end_line,
+        "inner owner span must lie inside outer: {inner:?} vs {outer:?}"
+    );
+}
+
+#[test]
 fn non_underscore_names_preserve_selectors_and_owner_relations() -> Result<(), String> {
     let tests = collect(
         RELATION_SOURCE,

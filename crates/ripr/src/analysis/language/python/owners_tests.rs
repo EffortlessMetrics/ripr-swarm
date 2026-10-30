@@ -28,16 +28,21 @@ pub(super) fn extract_owners(file: &Path, source: &str) -> Vec<PythonOwner> {
     extract_source_facts(file, source).owners
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "owner collection mirrors the per-file extraction inputs; the function-context input names the enclosing def for nested owners"
+)]
 pub(super) fn collect_owners_from_statements(
     file: &Path,
     source: &SourceText<'_>,
     statements: &[Stmt],
     class_context: Option<&str>,
+    function_context: Option<&str>,
     imports: &[PythonImport],
     module_constants: &[PythonModuleConstant],
     out: &mut Vec<PythonOwner>,
 ) {
-    let function_context = PythonOwnerContext {
+    let owner_context = PythonOwnerContext {
         file,
         source,
         class_context,
@@ -46,10 +51,10 @@ pub(super) fn collect_owners_from_statements(
     };
     // A definition under a statically decided module-level `if` runs on every
     // interpreter, so it is an owner like a top-level one (#9423).
-    if class_context.is_none() {
+    if class_context.is_none() && function_context.is_none() {
         for stmt in live_conditional_functions(source, statements) {
             let first = out.len();
-            push_function_owner(stmt, function_context, out);
+            push_function_owner(stmt, owner_context, out);
             for owner in &mut out[first..] {
                 owner.version_conditional = true;
             }
@@ -57,8 +62,51 @@ pub(super) fn collect_owners_from_statements(
     }
     for stmt in statements {
         match stmt {
-            Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) => {
-                push_function_owner(stmt, function_context, out);
+            Stmt::FunctionDef(function) => {
+                push_function_owner(stmt, owner_context, out);
+                if let Some(parent) = function_context
+                    && let Some(owner) = out.last_mut()
+                {
+                    owner.qualified_name = format!("{parent}.{}", function.name);
+                    owner.owner_kind = Some(OwnerKind::Function);
+                }
+                let parent_qualified = out
+                    .last()
+                    .map(|owner| owner.qualified_name.clone())
+                    .unwrap_or_default();
+                collect_owners_from_statements(
+                    file,
+                    source,
+                    &function.body,
+                    class_context,
+                    Some(parent_qualified.as_str()),
+                    imports,
+                    module_constants,
+                    out,
+                );
+            }
+            Stmt::AsyncFunctionDef(function) => {
+                push_function_owner(stmt, owner_context, out);
+                if let Some(parent) = function_context
+                    && let Some(owner) = out.last_mut()
+                {
+                    owner.qualified_name = format!("{parent}.{}", function.name);
+                    owner.owner_kind = Some(OwnerKind::Function);
+                }
+                let parent_qualified = out
+                    .last()
+                    .map(|owner| owner.qualified_name.clone())
+                    .unwrap_or_default();
+                collect_owners_from_statements(
+                    file,
+                    source,
+                    &function.body,
+                    class_context,
+                    Some(parent_qualified.as_str()),
+                    imports,
+                    module_constants,
+                    out,
+                );
             }
             Stmt::ClassDef(class) => {
                 let class_path = class_context.map_or_else(
@@ -71,6 +119,7 @@ pub(super) fn collect_owners_from_statements(
                     source,
                     &class.body,
                     Some(class_path.as_str()),
+                    None,
                     imports,
                     module_constants,
                     out,
