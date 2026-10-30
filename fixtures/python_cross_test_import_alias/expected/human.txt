@@ -27,7 +27,7 @@ Start here:
   Suggested test file: tests/test_shop.py
   Suggested test: test_fee_return
   Test node: tests/test_shop.py::test_fee_return
-  Verify command: python -m pytest tests/test_shop.py::test_fee_return (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_cross_test_import_alias/input && python -m pytest tests/test_shop.py::test_fee_return) (high)
   Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`
   Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
