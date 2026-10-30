@@ -1551,6 +1551,48 @@ mod tests {
         assert!(out.contains("\"oracle_kind\": \"exact_value\""));
     }
 
+    /// #11228: on an oracle-strength tie the JSON oracle summary describes the
+    /// same row the shared selector (card, packet, headline) names: the first.
+    #[test]
+    fn finding_json_oracle_summary_and_shared_selector_agree_on_a_tie() {
+        let row = |name: &str, line: usize, kind: OracleKind| RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/pricing.test.ts"),
+            line,
+            oracle: Some("expect(discount(200)).toBe(180)".to_string()),
+            oracle_kind: kind,
+            oracle_strength: OracleStrength::Strong,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        };
+        let mut finding = unknown_finding();
+        finding.language = Some(crate::domain::LanguageId::TypeScript);
+        finding.related_tests = vec![
+            row("big", 5, OracleKind::ExactValue),
+            row("small", 6, OracleKind::ExactErrorVariant),
+        ];
+        let picked =
+            crate::output::related_test_miss::strongest_related_test(&finding.related_tests)
+                .map(|t| t.name.clone());
+        assert_eq!(picked.as_deref(), Some("big"));
+
+        let mut out = String::new();
+        finding_json(&mut out, &finding, 0);
+        // The summary is the first `oracle_kind` the finding emits; it must be
+        // the first tied row's kind, not the last tied row's.
+        let first_kind = out
+            .find("\"oracle_kind\": \"")
+            .map(|at| &out[at..])
+            .unwrap_or_default();
+        assert!(
+            first_kind.starts_with("\"oracle_kind\": \"exact_value\""),
+            "{out}"
+        );
+    }
+
     #[test]
     fn finding_json_formats_observed_value_context_labels() {
         let mut finding = unknown_finding();
