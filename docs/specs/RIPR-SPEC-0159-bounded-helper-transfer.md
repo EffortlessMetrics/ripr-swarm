@@ -280,6 +280,21 @@ can only hint that a caller "may lead here" without changing anything.
   take this only when every observed hop is a local-macro argument hop
   (RIPR-SPEC-0117 example 7), whose unexpanded body is not checked for
   data carrying; a plain fn hop above it keeps the target-passing rule.
+- Exact oracle behind a data-carrying hop (#11248): for a return-value
+  probe, an exact value at the entry pins the owner's value through
+  a hop when the owner and every observed hop caller declare a std string
+  or scalar return type that no workspace type or import shadows, and the
+  caller is one tail expression the weak-oracle rule above accepts as
+  carrying its callee as data. Only an injective carry counts: every
+  string literal in the caller uses plain `{}` placeholders, so a width,
+  precision, radix or `{:?}` spec (which can drop or re-render the value),
+  a positional or named argument and a user `Display`/`From` impl keep the
+  abstention. The free-call chain identity rule and the owner-call entry
+  pin still apply, and an owner whose value is built by a macro
+  (`concat!("ri", "pr")`) is refused because its expansion is not seen.
+  Corpus: `spec0117-external-std-macro` credits;
+  `format-forward-precision-hides-value` and
+  `old-title-through-format-macro` keep abstaining.
 - Effect propagation (#6780): a `side_effect` or `call_deletion` probe
   acts on state rather than on a returned value, so it is not judged by
   result forwarding. Under the same chain-only reach and the same

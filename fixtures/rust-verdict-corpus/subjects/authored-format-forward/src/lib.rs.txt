@@ -1,0 +1,21 @@
+//! A caller that hands a callee's value through `format!` forwards it only
+//! when the placeholder keeps the whole value: a precision spec drops digits,
+//! so an exact assertion on the formatted text pins nothing about the callee.
+
+pub fn rate() -> f64 {
+    0.14
+}
+
+pub fn rate_label() -> String {
+    format!("{:.1}", rate())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_label_rounds_to_one_digit() {
+        assert_eq!(rate_label(), "0.1");
+    }
+}

@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-format-forward",
+  "origin": "authored",
+  "version_label": "authored 2026-10-30 for the plain-placeholder format! forwarding rule (a precision spec hides the callee's value)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "29aa62361b7875ff91d83835edb7d5f95c4938ba9227cd4d4da4bc83354d833f"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "25cdee6cea1a1cbd7a830be13b603455c930bb2b62a72716d96f3ddaf5248847"
+    }
+  ]
+}
