@@ -757,23 +757,76 @@ mod tests {
 
     #[test]
     fn prose_groups_equal_detail_routes_without_hiding_state() -> Result<(), String> {
-        use crate::domain::{RepairCardDetailFamily as Family, RepairCardDetailRef, RepairCardDetailState as State, RepairCardOmissionClass as Omission};
-        let reference = |family, state, route: Option<&str>, reason: Option<&str>| RepairCardDetailRef {
-            family, state, route: route.map(str::to_string), unavailable_reason: reason.map(str::to_string),
-            detail_digest: String::new(), omitted_bytes: 0, ordinal: 0,
-            omission_class: if route.is_some() { Omission::AuthorityOwnedDetail } else { Omission::Unavailable },
+        use crate::domain::{
+            RepairCardDetailFamily as Family, RepairCardDetailRef, RepairCardDetailState as State,
+            RepairCardOmissionClass as Omission,
         };
+        let reference =
+            |family, state, route: Option<&str>, reason: Option<&str>| RepairCardDetailRef {
+                family,
+                state,
+                route: route.map(str::to_string),
+                unavailable_reason: reason.map(str::to_string),
+                detail_digest: String::new(),
+                omitted_bytes: 0,
+                ordinal: 0,
+                omission_class: if route.is_some() {
+                    Omission::AuthorityOwnedDetail
+                } else {
+                    Omission::Unavailable
+                },
+            };
         let mut card = prose_test_card();
         card.detail_references = vec![
-            reference(Family::CanonicalPacket, State::Current, Some("packet"), None),
-            reference(Family::RelatedTestCandidates, State::Current, Some("packet"), None),
+            reference(
+                Family::CanonicalPacket,
+                State::Current,
+                Some("packet"),
+                None,
+            ),
+            reference(
+                Family::RelatedTestCandidates,
+                State::Current,
+                Some("packet"),
+                None,
+            ),
             reference(Family::StaticMovement, State::Stale, Some("packet"), None),
-            reference(Family::RepairAttemptStatus, State::Malformed, Some("attempt"), None),
-            reference(Family::WitnessStageEvidence, State::WrongRoot, Some("witness"), None),
-            reference(Family::FocusedProofReceipt, State::Missing, Some("receipt"), None),
-            reference(Family::FixInstruction, State::Unavailable, None, Some("unknown witness")),
-            reference(Family::LimitationDetail, State::Unavailable, None, Some("other reason")),
-            reference(Family::MutationCalibration, State::Unavailable, None, Some("unknown witness")),
+            reference(
+                Family::RepairAttemptStatus,
+                State::Malformed,
+                Some("attempt"),
+                None,
+            ),
+            reference(
+                Family::WitnessStageEvidence,
+                State::WrongRoot,
+                Some("witness"),
+                None,
+            ),
+            reference(
+                Family::FocusedProofReceipt,
+                State::Missing,
+                Some("receipt"),
+                None,
+            ),
+            reference(
+                Family::FixInstruction,
+                State::Unavailable,
+                None,
+                Some("unknown witness"),
+            ),
+            reference(
+                Family::LimitationDetail,
+                State::Unavailable,
+                None,
+                Some("other reason"),
+            ),
+            reference(
+                Family::MutationCalibration,
+                State::Unavailable,
+                None,
+                Some("unknown witness"),
+            ),
         ];
         let all = card.detail_references.clone();
         // Empty and partial inventories must not invent families; a bounded
@@ -782,31 +835,68 @@ mod tests {
             card.detail_references = all[..count].to_vec();
             let mut actual = std::collections::BTreeMap::new();
             for line in agent_card_prose_lines(&card, "full", None) {
-                let Some(detail) = line.strip_prefix("  detail [") else { continue };
-                let (families, rest) = detail.split_once("] (").ok_or_else(|| format!("bad detail: {detail}"))?;
-                let (state, destination) = rest.split_once("): ").ok_or_else(|| format!("bad state: {rest}"))?;
+                let Some(detail) = line.strip_prefix("  detail [") else {
+                    continue;
+                };
+                let (families, rest) = detail
+                    .split_once("] (")
+                    .ok_or_else(|| format!("bad detail: {detail}"))?;
+                let (state, destination) = rest
+                    .split_once("): ")
+                    .ok_or_else(|| format!("bad state: {rest}"))?;
                 for family in families.split(", ") {
-                    if actual.insert(family.to_string(), (state.to_string(), destination.to_string())).is_some() {
+                    if actual
+                        .insert(
+                            family.to_string(),
+                            (state.to_string(), destination.to_string()),
+                        )
+                        .is_some()
+                    {
                         return Err(format!("duplicate family {family}"));
                     }
                 }
             }
-            let expected: std::collections::BTreeMap<_, _> = card.detail_references.iter().map(|r| {
-                let destination = r.route.clone().unwrap_or_else(|| format!("unavailable ({})", r.unavailable_reason.as_deref().unwrap_or("no reason recorded")));
-                (wire_name(&r.family), (wire_name(&r.state), destination))
-            }).collect();
-            if actual != expected { return Err(format!("detail mappings differ: {actual:?} != {expected:?}")); }
+            let expected: std::collections::BTreeMap<_, _> = card
+                .detail_references
+                .iter()
+                .map(|r| {
+                    let destination = r.route.clone().unwrap_or_else(|| {
+                        format!(
+                            "unavailable ({})",
+                            r.unavailable_reason
+                                .as_deref()
+                                .unwrap_or("no reason recorded")
+                        )
+                    });
+                    (wire_name(&r.family), (wire_name(&r.state), destination))
+                })
+                .collect();
+            if actual != expected {
+                return Err(format!(
+                    "detail mappings differ: {actual:?} != {expected:?}"
+                ));
+            }
         }
         let text = agent_card_prose_lines(&card, "full", None).join("\n");
         if !text.contains("detail [canonical_packet, related_test_candidates] (current): packet")
-            || !text.contains("detail [static_movement] (stale): packet") {
-            return Err(format!("equal routes grouped across different states or not grouped: {text}"));
+            || !text.contains("detail [static_movement] (stale): packet")
+        {
+            return Err(format!(
+                "equal routes grouped across different states or not grouped: {text}"
+            ));
         }
         // Malformed input with no reason must retain an explicit unknown,
         // rather than inventing a cause or dropping the family.
-        card.detail_references = vec![reference(Family::FixInstruction, State::Unavailable, None, None)];
+        card.detail_references = vec![reference(
+            Family::FixInstruction,
+            State::Unavailable,
+            None,
+            None,
+        )];
         let text = agent_card_prose_lines(&card, "full", None).join("\n");
-        if !text.contains("(unavailable): unavailable (no reason recorded)") { return Err(text); }
+        if !text.contains("(unavailable): unavailable (no reason recorded)") {
+            return Err(text);
+        }
         Ok(())
     }
 
