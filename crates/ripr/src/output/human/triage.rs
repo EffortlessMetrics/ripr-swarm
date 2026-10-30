@@ -1967,6 +1967,7 @@ mod tests {
             base_ref: "master".to_string(),
             base_commit: Some("abc".to_string()),
             merge_base_commit: None,
+            loaded_diff_origin: None,
             head_commit: Some("abc".to_string()),
             working_tree: false,
         });

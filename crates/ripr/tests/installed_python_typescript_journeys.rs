@@ -102,9 +102,18 @@ fn materialize(
 }
 
 fn ripr_output(launch: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    ripr_output_env(launch, args, &[])
+}
+
+fn ripr_output_env(
+    launch: &Path,
+    args: &[&str],
+    env: &[(&str, std::ffi::OsString)],
+) -> Result<std::process::Output, String> {
     Command::new(env!("CARGO_BIN_EXE_ripr"))
         .current_dir(launch)
         .args(args)
+        .envs(env.iter().map(|(key, value)| (*key, value)))
         .output()
         .map_err(|error| format!("spawn ripr {args:?}: {error}"))
 }
@@ -228,6 +237,284 @@ fn attempt_id_of(manifest: &serde_json::Value) -> Result<String, String> {
         .as_str()
         .map(str::to_string)
         .ok_or_else(|| "manifest has no repair_attempt_id".to_string())
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn committed_python_dirty_file_requires_fresh_check() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_python",
+        "head",
+        "py-committed-base",
+        None,
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    std::fs::write(root.join("notes.md"), "initial\n").map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "notes.md"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "notes"])?;
+    std::fs::write(root.join("notes.md"), "changed\n").map_err(|e| e.to_string())?;
+    let (ok, check) = ripr(
+        &decoy,
+        &["check", "--root", &root_arg, "--base", &base, "--committed"],
+    )?;
+    expect_exit(ok, true, "committed dirty check")?;
+    need(
+        &check,
+        "committed-only check excluded dirty tracked files",
+        "dirty files withheld",
+    )?;
+    if gap_start_tokens(&check).is_some() {
+        return Err(format!("dirty committed check offered a start: {check}"));
+    }
+    let production = root.join("pricing/core.py");
+    let source = std::fs::read_to_string(&production).map_err(|e| e.to_string())?;
+    std::fs::write(&production, format!("{source}\n# excluded dirty source\n"))
+        .map_err(|e| e.to_string())?;
+    let (dirty_ok, dirty) = ripr(
+        &decoy,
+        &["check", "--root", &root_arg, "--base", &base, "--committed"],
+    )?;
+    expect_exit(dirty_ok, true, "committed check with excluded source")?;
+    need(
+        &dirty,
+        "uncommitted source and test changes were not analyzed",
+        "excluded source disclosure",
+    )?;
+    if gap_start_tokens(&dirty).is_some() {
+        return Err(format!("excluded source offered a start: {dirty}"));
+    }
+    std::fs::write(&production, source).map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "notes.md"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "notes change"])?;
+    let (clean_ok, clean) = ripr(
+        &decoy,
+        &["check", "--root", &root_arg, "--base", &base, "--committed"],
+    )?;
+    expect_exit(clean_ok, true, "fresh committed check")?;
+    let (gap, printed_base) =
+        gap_start_tokens(&clean).ok_or_else(|| format!("fresh check missing start: {clean}"))?;
+    if printed_base != base {
+        return Err(format!("wrong base: {printed_base}"));
+    }
+    let (ok, result) = ripr(
+        &decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            &gap,
+            "--base",
+            &printed_base,
+            "--root",
+            &root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "committed route after commit")?;
+    need(&result, "Repair prepared", "prepared attempt")?;
+    Ok(())
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn dirty_python_repair_start_keeps_original_diff_after_commit() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_python",
+        "head",
+        "py-base-pin",
+        None,
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let expected = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?;
+    let expected = expected.trim().to_string();
+    let path = root.join("pricing/core.py");
+    let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    std::fs::write(&path, format!("{source}\n# dirty production\n")).map_err(|e| e.to_string())?;
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "dirty check")?;
+    need(
+        &check,
+        "Commit your production change first",
+        "commit prerequisite",
+    )?;
+    let (gap, base) = gap_start_tokens(&check).ok_or_else(|| format!("missing start: {check}"))?;
+    if base != expected {
+        return Err(format!("expected original base {expected}, got {base}"));
+    }
+    fixture_git_ok(&root, &["add", "pricing/core.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "production"])?;
+    let (wrong_ok, wrong) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", "HEAD", "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(wrong_ok, false, "moving base negative control")?;
+    need(&wrong, "names no current Python gap", "moving base refusal")?;
+    let (ok, result) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "printed base after commit")?;
+    need(&result, "Repair prepared", "prepared attempt")?;
+    Ok(())
+}
+
+#[cfg(all(feature = "lang-python", unix))]
+#[test]
+fn dirty_python_check_withholds_start_when_git_inspection_fails() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let (guard, root, decoy) = materialize(
+        "blind_journey_installed_python",
+        "head",
+        "py-git-failure",
+        None,
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let path = root.join("pricing/core.py");
+    let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    std::fs::write(&path, format!("{source}\n# dirty production\n")).map_err(|e| e.to_string())?;
+    let args = ["check", "--root", &root_arg, "--base", "HEAD~1"];
+    let (ok, normal) = ripr(&decoy, &args)?;
+    expect_exit(ok, true, "normal check")?;
+    gap_start_tokens(&normal).ok_or_else(|| format!("normal check had no start: {normal}"))?;
+    let bin = guard.0.join("git-wrapper");
+    std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
+    let wrapper = bin.join("git");
+    std::fs::write(&wrapper, "#!/bin/sh\ncase \" $* \" in *\" rev-parse --show-prefix \"*) exit 1;; esac\nexec \"$RIPR_TEST_REAL_GIT\" \"$@\"\n").map_err(|e| e.to_string())?;
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| e.to_string())?;
+    let inherited_path = std::env::var_os("PATH").ok_or("PATH missing")?;
+    let git = std::env::split_paths(&inherited_path)
+        .map(|dir| {
+            if dir.is_absolute() {
+                dir
+            } else {
+                decoy.join(dir)
+            }
+            .join("git")
+        })
+        .find(|path| {
+            path.metadata()
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        })
+        .ok_or("git missing from PATH")?
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let path =
+        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&inherited_path)))
+            .map_err(|e| e.to_string())?;
+    let output = ripr_output_env(
+        &decoy,
+        &args,
+        &[
+            ("PATH", path.clone()),
+            ("RIPR_TEST_REAL_GIT", git.clone().into_os_string()),
+        ],
+    )?;
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    expect_exit(
+        output.status.success(),
+        true,
+        "check with failed inspection",
+    )?;
+    need(
+        &text,
+        "could not validate the prerequisites for the repair start",
+        "honest refusal",
+    )?;
+    if gap_start_tokens(&text).is_some() {
+        return Err(format!("failed inspection offered a start: {text}"));
+    }
+    // Status's routed-pilot consumer must preserve the same uncertainty.
+    fixture_git_ok(&root, &["update-ref", "refs/remotes/origin/main", "HEAD~1"])?;
+    let pilot = root.join("target/ripr/pilot/pilot-summary.json");
+    std::fs::create_dir_all(pilot.parent().ok_or("pilot parent missing")?)
+        .map_err(|e| e.to_string())?;
+    std::fs::write(&pilot, r#"{"status":"complete","top_actionable_seams":[],"python_first_use":null,"language_routes":{"state":"required","routes":[{"language":"python","enabled":true,"command":"ripr check --root ."}]},"next":{"repair_command":null}}"#).map_err(|e| e.to_string())?;
+    let (status_ok, normal_status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+    expect_exit(status_ok, true, "normal status")?;
+    need(
+        &normal_status,
+        "prints the gap-bound start",
+        "normal status route",
+    )?;
+    let status = ripr_output_env(
+        &decoy,
+        &["agent", "status", "--root", &root_arg],
+        &[("PATH", path), ("RIPR_TEST_REAL_GIT", git.into_os_string())],
+    )?;
+    let status_text = String::from_utf8_lossy(&status.stdout);
+    expect_exit(
+        status.status.success(),
+        true,
+        "status with failed inspection",
+    )?;
+    need(
+        &status_text,
+        "status could not confirm a gap-bound start",
+        "status uncertainty",
+    )?;
+    if status_text.contains("prints the gap-bound start") {
+        return Err(format!(
+            "failed inspection also advertised a start: {status_text}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn dirty_typescript_start_uses_diverged_merge_base() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "ts-base-pin",
+        None,
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let original_base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "other", "HEAD~1"])?;
+    std::fs::write(root.join("unrelated.txt"), "other branch\n").map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "unrelated.txt"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "other"])?;
+    fixture_git_ok(&root, &["checkout", "-q", "main"])?;
+    let path = root.join("src/pricing.ts");
+    let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    std::fs::write(&path, format!("{source}\n// dirty production\n")).map_err(|e| e.to_string())?;
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "other"])?;
+    expect_exit(ok, true, "diverged dirty check")?;
+    need(
+        &check,
+        "Commit your production change first",
+        "commit prerequisite",
+    )?;
+    let (gap, base) = gap_start_tokens(&check).ok_or_else(|| format!("missing start: {check}"))?;
+    if base != original_base {
+        return Err(format!("expected merge base {original_base}, got {base}"));
+    }
+    fixture_git_ok(&root, &["add", "src/pricing.ts"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "production"])?;
+    let (ok, result) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "diverged printed base after commit")?;
+    need(&result, "Repair prepared", "prepared attempt")?;
+    Ok(())
 }
 
 #[cfg(feature = "lang-python")]
@@ -1123,10 +1410,11 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
 
 #[cfg(feature = "lang-typescript")]
 #[test]
-fn typescript_status_warning_keeps_the_no_start_claim_for_refused_variants() -> Result<(), String> {
+fn typescript_status_warning_reports_unconfirmed_start_for_refused_variants() -> Result<(), String>
+{
     // #10001 negative control: the status warning is derived from the same
-    // admission as `ripr check`, so a finding check refuses keeps the claim
-    // that check offers no `ripr agent repair` start.
+    // admission as `ripr check`. For a refused finding it does not invent a
+    // start or claim certainty about why one is unavailable.
     let toml = "[languages]\nenabled = [\"typescript\"]\n";
     for variant in [
         "variant-let-binding",
@@ -1161,10 +1449,13 @@ fn typescript_status_warning_keeps_the_no_start_claim_for_refused_variants() -> 
         need(&status, "pilot_routed_to_check_no_repair_target", variant)?;
         need(
             &status,
-            "offers no `ripr agent repair` start",
+            "status could not confirm a gap-bound start",
             "a refused variant keeps the warning",
         )?;
-        if status.contains("prints the gap-bound start") || gap_start_tokens(&status).is_some() {
+        if status.contains("prints the gap-bound start")
+            || status.contains("offers no `ripr agent repair` start")
+            || gap_start_tokens(&status).is_some()
+        {
             return Err(format!("{variant}: status names a start:\n{status}"));
         }
         decoy_untouched(&decoy)?;
