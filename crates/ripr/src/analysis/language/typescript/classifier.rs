@@ -1937,6 +1937,27 @@ pub(crate) fn ts_predicate_boundary_row_activation(
 /// RIPR-SPEC-0243 decision 18: whether some strong, pinned, exact-value assertion
 /// of an oracle relation reads the updated field from an instance the test
 /// called the owner method on.
+/// A zero or empty expected value matches a field's initial state: a scalar
+/// zero/empty/false/null/undefined, or an array holding only such values
+/// (`[]`, `[0, 0]`, `[[], '']`).
+pub(crate) fn ts_expected_is_zero_like(expected: &str) -> bool {
+    let compact: String = expected.split_whitespace().collect();
+    if matches!(
+        compact.as_str(),
+        "0" | "\"\"" | "''" | "``" | "false" | "null" | "undefined"
+    ) {
+        return true;
+    }
+    if !(compact.starts_with('[') && compact.ends_with(']')) {
+        return false;
+    }
+    let mut rest = compact;
+    for token in ["\"\"", "''", "``", "false", "null", "undefined", "0"] {
+        rest = rest.replace(token, "");
+    }
+    rest.chars().all(|ch| matches!(ch, '[' | ']' | ','))
+}
+
 pub(crate) fn ts_field_update_witnessed(
     change: &FieldUpdateChange,
     owner: &TypeScriptOwner,
@@ -1981,12 +2002,7 @@ pub(crate) fn ts_field_update_witnessed(
             if assertion
                 .expected_value_or_variant
                 .as_deref()
-                .is_some_and(|expected| {
-                    matches!(
-                        expected.trim(),
-                        "0" | "\"\"" | "''" | "``" | "false" | "null" | "undefined"
-                    )
-                })
+                .is_some_and(ts_expected_is_zero_like)
             {
                 return false;
             }
