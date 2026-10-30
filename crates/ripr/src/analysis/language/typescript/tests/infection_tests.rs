@@ -73,6 +73,9 @@ fn an_arm_no_test_input_enters_reads_infection_no_and_is_not_weakly_exposed() ->
     let finding = arm_change("infect-arm-untaken", "price(2)")?;
     assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
     assert_eq!(finding.ripr.infect.state, StageState::No);
+    // `reachable_unrevealed` does not require a stop reason: the finding is a
+    // concrete gap (the arm is never entered), not an unknown.
+    assert!(finding.stop_reasons.is_empty());
     assert!(
         finding.ripr.infect.summary.contains("coupon === 'HALF'"),
         "{}",
@@ -197,5 +200,35 @@ fn an_unmodeled_shape_in_an_untaken_arm_reads_the_stronger_no_fact() -> Result<(
         &entered,
         "typescript_infection: unknown (literal_return)"
     ));
+    Ok(())
+}
+
+#[test]
+fn a_dropped_semicolon_before_a_comment_is_never_a_neutral_comment_edit() -> Result<(), String> {
+    // Production path: `return f // note` followed by `(1);` returns `f(1)`.
+    let source = "export function price(n: number): number {\n  const f = (x: number) => x + n;\n  return f // note\n  (1);\n}\n";
+    let finding = finding_for(
+        "infect-asi",
+        source,
+        3,
+        "  return f;",
+        "  return f // note",
+        &weak_test("price(2)"),
+    )?;
+    assert!(
+        !has_evidence(&finding, "typescript_infection: unknown (comment_only)"),
+        "{:?}",
+        finding.evidence
+    );
+    // Control: the same edit with the semicolon kept is a comment-only edit.
+    let kept = finding_for(
+        "infect-comment-kept",
+        "export function price(n: number): number {\n  const f = (x: number) => x + n;\n  return f; // note\n}\n",
+        3,
+        "  return f;",
+        "  return f; // note",
+        &weak_test("price(2)"),
+    )?;
+    assert_eq!(kept.class, ExposureClass::InfectionUnknown);
     Ok(())
 }

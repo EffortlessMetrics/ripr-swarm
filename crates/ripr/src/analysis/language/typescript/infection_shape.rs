@@ -43,7 +43,11 @@ pub(crate) fn ts_unmodeled_infection(
         return None;
     }
     let (old_code, new_code) = (code_of(old), code_of(new));
-    if old_code == new_code && !new_code.is_empty() {
+    // Comment-only needs identical executable syntax *including* the
+    // semicolon: dropping `;` before a comment can let ASI join the next line
+    // (`return f // c` then `(1);` returns `f(1)`).
+    let (old_exec, new_exec) = (without_comment(old), without_comment(new));
+    if old_exec == new_exec && !new_exec.is_empty() {
         return Some(UnmodeledInfection {
             shape: "comment_only",
             reason: "the edit changes only a comment, so no input changes the executed code; no infection exists to establish",
@@ -83,7 +87,7 @@ pub(crate) fn ts_unmodeled_infection(
 
 /// The line with a trailing `//` comment and a trailing `;` removed. Quotes
 /// are tracked so a `//` inside a string literal is kept.
-fn code_of(line: &str) -> String {
+fn without_comment(line: &str) -> &str {
     let mut quote: Option<char> = None;
     let mut escaped = false;
     let mut cut = line.len();
@@ -107,16 +111,19 @@ fn code_of(line: &str) -> String {
         }
         previous = Some(ch);
     }
-    let code = line[..cut].trim();
+    line[..cut].trim()
+}
+
+/// The line without a trailing comment and without a trailing `;`, for the
+/// shape comparisons that explicitly permit semicolon normalization.
+fn code_of(line: &str) -> String {
+    let code = without_comment(line);
     code.strip_suffix(';')
         .unwrap_or(code)
         .trim_end()
         .to_string()
 }
 
-/// Lines whose code/comment split cannot be read reliably: an unterminated
-/// quote (the middle of a multi-line template literal), a JSX or generic
-/// `<tag`, or a regex literal.
 fn is_undecidable_line(line: &str) -> bool {
     let mut quote: Option<char> = None;
     let mut escaped = false;
@@ -337,19 +344,65 @@ fn literal_return_changed(old: &str, new: &str) -> bool {
     }
 }
 
-/// A function or method declaration (`function f(`, `(a = 1) =>`,
-/// `method(a = 1) {`), not a call such as `f(a = 1)`.
+/// A function or method declaration head, not a call such as `f(a = 1)` or
+/// `myfunctionCall(a = 1) {`. Accepted: `[export|default|async|...] function
+/// [*] [name](`, an arrow whose parameter list is followed by `=>`, and a
+/// method `[modifiers] name(...)` whose line then opens a block with `{`.
 fn is_declaration_head(head: &str, from_open: &str) -> bool {
     let head = head.trim_end();
-    if head.contains("function") {
-        return true;
-    }
     let tail = from_open
         .find(')')
         .map_or("", |close| from_open[close + 1..].trim());
-    if tail.starts_with("=>") || tail.starts_with(": ") && tail.contains("=>") {
+    if let Some(at) = whole_word_offset(head, "function") {
+        let after = head[at + "function".len()..]
+            .trim()
+            .trim_start_matches('*')
+            .trim();
+        return after.is_empty() || is_identifier(after);
+    }
+    if tail.starts_with("=>") || (tail.starts_with(':') && tail.contains("=>")) {
         return true;
     }
-    let control = ["if", "while", "for", "switch", "catch", "with"];
-    tail.ends_with('{') && !control.iter().any(|keyword| head.ends_with(keyword))
+    const MODIFIERS: [&str; 9] = [
+        "export",
+        "default",
+        "async",
+        "static",
+        "public",
+        "private",
+        "protected",
+        "get",
+        "set",
+    ];
+    const CONTROL: [&str; 6] = ["if", "while", "for", "switch", "catch", "with"];
+    let mut words = head.split_whitespace().collect::<Vec<_>>();
+    let Some(name) = words.pop() else {
+        return false;
+    };
+    is_identifier(name)
+        && !CONTROL.contains(&name)
+        && words.iter().all(|word| MODIFIERS.contains(word))
+        && (tail == "{" || (tail.starts_with(':') && tail.ends_with('{')))
+}
+
+fn is_identifier(text: &str) -> bool {
+    !text.is_empty()
+        && !text.starts_with(|c: char| c.is_ascii_digit())
+        && text
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '$'))
+}
+
+/// Byte offset of the last occurrence of `word` bounded by non-identifier
+/// characters.
+fn whole_word_offset(text: &str, word: &str) -> Option<usize> {
+    text.match_indices(word)
+        .filter(|(at, _)| {
+            let before = text[..*at].chars().next_back();
+            let after = text[*at + word.len()..].chars().next();
+            !before.is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$'))
+                && !after.is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$'))
+        })
+        .map(|(at, _)| at)
+        .last()
 }

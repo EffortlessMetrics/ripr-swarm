@@ -158,3 +158,45 @@ fn a_call_argument_assignment_is_not_a_default_parameter() {
         Some("default_parameter")
     );
 }
+
+#[test]
+fn dropping_a_semicolon_before_a_comment_is_not_comment_only() {
+    // Negative: `return f;` then `(1);` -- without `;` the next line joins the
+    // return, so the edit changes behavior.
+    assert_eq!(shape("  return f;", "  return f // note"), None);
+    // Positive control: the semicolon is kept.
+    assert_eq!(
+        shape("  return f;", "  return f; // note"),
+        Some("comment_only")
+    );
+}
+
+#[test]
+fn only_a_real_declaration_head_makes_a_default_parameter_edit() {
+    // Negative: a substring match on `function`, and a call that ends in `{`.
+    assert_eq!(
+        shape("myfunctionCall(a = 1) {", "myfunctionCall(a = 2) {"),
+        None
+    );
+    assert_eq!(shape("  wrap.call(a = 1) {", "  wrap.call(a = 2) {"), None);
+    assert_eq!(shape("if (a = 1) {", "if (a = 2) {"), None);
+    // Positive: a function declaration, an anonymous function, an async
+    // generator and a typed arrow.
+    for (old, new) in [
+        ("export function f(a = 1) {", "export function f(a = 2) {"),
+        (
+            "const g = function (a = 1) {",
+            "const g = function (a = 2) {",
+        ),
+        (
+            "export async function* h(a = 1) {",
+            "export async function* h(a = 2) {",
+        ),
+        (
+            "const k = (a = 1): number => a;",
+            "const k = (a = 2): number => a;",
+        ),
+    ] {
+        assert_eq!(shape(old, new), Some("default_parameter"), "{old}");
+    }
+}

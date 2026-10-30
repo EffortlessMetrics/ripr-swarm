@@ -3528,7 +3528,22 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::spec_0027_string_literal_predicate_requires_literal_argument",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::spec_0027_guard_without_comparison_is_not_exposed",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::spec_0027_ambiguous_fallback_is_never_exposed_and_punctuation_is_ignored",
-  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::spec_0027_boundary_witness_leaves_return_value_family_exposed"
+  "crates/ripr/src/analysis/language/typescript/tests.rs::tests::spec_0027_boundary_witness_leaves_return_value_family_exposed",
+  "crates/ripr/src/analysis/language/typescript/infection_shape_tests.rs::names_each_unmodeled_shape",
+  "crates/ripr/src/analysis/language/typescript/infection_shape_tests.rs::behavior_neutral_only_for_comment_and_identity_edits",
+  "crates/ripr/src/analysis/language/typescript/infection_shape_tests.rs::modeled_or_ambiguous_edits_stay_unnamed",
+  "crates/ripr/src/analysis/language/typescript/infection_shape_tests.rs::a_fallback_literal_stops_where_its_quote_closes",
+  "crates/ripr/src/analysis/language/typescript/infection_shape_tests.rs::operators_and_parens_inside_strings_are_not_structure",
+  "crates/ripr/src/analysis/language/typescript/infection_shape_tests.rs::an_escaped_quote_does_not_end_a_string_literal",
+  "crates/ripr/src/analysis/language/typescript/infection_shape_tests.rs::a_double_slash_that_is_not_a_comment_is_not_comment_only",
+  "crates/ripr/src/analysis/language/typescript/infection_shape_tests.rs::a_predicate_seam_has_no_fallback_shape",
+  "crates/ripr/src/analysis/language/typescript/infection_shape_tests.rs::a_call_argument_assignment_is_not_a_default_parameter",
+  "crates/ripr/src/analysis/language/typescript/infection_shape_tests.rs::dropping_a_semicolon_before_a_comment_is_not_comment_only",
+  "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::an_arm_no_test_input_enters_reads_infection_no_and_is_not_weakly_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::an_arm_some_test_input_enters_stays_weakly_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::unmodeled_shapes_read_infection_unknown_and_never_a_packet",
+  "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::an_unmodeled_shape_in_an_untaken_arm_reads_the_stronger_no_fact",
+  "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::a_dropped_semicolon_before_a_comment_is_never_a_neutral_comment_edit"
 ]
 fixtures = [
   "fixtures/typescript_empty_each",
