@@ -31514,6 +31514,23 @@ fn check_rejects_invalid_check_timeout_flag_and_env() -> Result<(), String> {
         ));
     }
 
+    // Precedence wiring stays observable on every feature set: an explicit
+    // `--timeout` must win without consulting the environment, so the env
+    // refusal stays absent even though the plain root is refused on its own.
+    let precedence = run_ripr_with_env(
+        &["check", "--root", root, "--timeout", "5"],
+        &[("RIPR_CHECK_TIMEOUT", "abc")],
+    );
+    let stderr = String::from_utf8_lossy(&precedence.stderr);
+    if precedence.status.code() != Some(2)
+        || stderr.contains("RIPR_CHECK_TIMEOUT requires a non-negative integer")
+    {
+        return Err(format!(
+            "--timeout must win over a bad RIPR_CHECK_TIMEOUT without reading it, got {:?}; stderr: {stderr}",
+            precedence.status.code()
+        ));
+    }
+
     #[cfg(feature = "lang-rust")]
     {
         // A real nonempty diff makes precedence observable: reaching a different

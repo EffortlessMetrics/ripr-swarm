@@ -156,7 +156,7 @@ fn committed_refuses_each_conflicting_diff_source() -> Result<(), String> {
 }
 
 #[test]
-fn committed_refuses_repo_scoped_formats_and_gap_ledger_after_config_load() -> Result<(), String> {
+fn committed_refuses_repo_scoped_formats_and_gap_ledger() -> Result<(), String> {
     let root = TempRoot::new("committed-repo-scope")?;
     let ledger_arg = root.0.join("ledger.json").to_string_lossy().into_owned();
     let error = refusal(&root, &["--committed", "--gap-ledger", &ledger_arg])?;

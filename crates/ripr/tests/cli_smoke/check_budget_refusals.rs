@@ -32,7 +32,10 @@ fn check_budget_flag_and_environment_reach_analysis_timeout() -> Result<(), Stri
     let shim = shim_dir.join("git");
     // Metadata calls must succeed before the budget starts. Delay only the
     // actual diff, then delegate to the same real producer in every control.
-    std::fs::write(&shim, "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = diff ]; then\n    printf 'entered\\n' > \"$RIPR_TEST_DIFF_MARKER\"\n    sleep 4\n    break\n  fi\ndone\nexec \"$RIPR_TEST_REAL_GIT\" \"$@\"\n")
+    // The budget kill is SIGKILL on the shim itself (uncatchable), so the
+    // delay is chunked: an in-flight chunk orphans for at most one 0.1 s
+    // sleep instead of a 4 s one.
+    std::fs::write(&shim, "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = diff ]; then\n    printf 'entered\\n' > \"$RIPR_TEST_DIFF_MARKER\"\n    n=0\n    while [ \"$n\" -lt 40 ]; do\n      sleep 0.1\n      n=$((n + 1))\n    done\n    break\n  fi\ndone\nexec \"$RIPR_TEST_REAL_GIT\" \"$@\"\n")
         .map_err(|err| err.to_string())?;
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
