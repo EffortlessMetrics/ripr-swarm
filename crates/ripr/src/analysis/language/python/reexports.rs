@@ -33,7 +33,7 @@ use super::{PythonImport, PythonOwner};
 use crate::domain::OwnerKind;
 use rayon::prelude::*;
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Maximum number of package `__init__.py` hops followed from the owner module.
@@ -89,9 +89,12 @@ fn package_exporters<'o, 's>(
 ///
 /// `source_of` returns the source text of a workspace file; it is used only to
 /// honor a declared `__all__` on a star re-export.
+/// `star_facts_of` supplies a file's persisted [`PrimedStarFacts`], when the
+/// source-fact pass computed them.
 pub(super) fn apply_package_reexports<'s>(
     owners: &mut [PythonOwner],
     source_of: impl Fn(&Path) -> Option<&'s str>,
+    star_facts_of: &(dyn Fn(&Path) -> Option<&'s PrimedStarFacts> + Sync),
 ) {
     let init_owners: Vec<PythonOwner> = owners
         .iter()
@@ -99,7 +102,7 @@ pub(super) fn apply_package_reexports<'s>(
         .cloned()
         .collect();
     let definitions = TopLevelDefinitions::from_owners(owners.iter());
-    apply_with(owners, &init_owners, &definitions, source_of);
+    apply_with(owners, &init_owners, &definitions, source_of, star_facts_of);
 }
 
 /// Sets `reexport_modules` on `owners` from separately loaded package
@@ -115,7 +118,7 @@ pub(super) fn apply_package_reexports_from<'s>(
 ) {
     let definitions =
         TopLevelDefinitions::from_owners(owners.iter().chain(init_owners).chain(definition_owners));
-    apply_with(owners, init_owners, &definitions, source_of);
+    apply_with(owners, init_owners, &definitions, source_of, &|_| None);
 }
 
 fn apply_with<'s>(
@@ -123,6 +126,7 @@ fn apply_with<'s>(
     init_owners: &[PythonOwner],
     definitions: &TopLevelDefinitions,
     source_of: impl Fn(&Path) -> Option<&'s str>,
+    star_facts_of: &(dyn Fn(&Path) -> Option<&'s PrimedStarFacts> + Sync),
 ) {
     let exporters = package_exporters(init_owners, &source_of);
     let mut star_exports = StarExports {
@@ -136,6 +140,7 @@ fn apply_with<'s>(
             .iter()
             .filter(|owner| !owner.name.starts_with('_') && !owner.is_module_owner())
             .map(|owner| (owner.file.as_path(), owner.name.as_str())),
+        star_facts_of,
     );
     // Only an exporter importing `name` itself or `*` can re-export `name`
     // (`imports_name`), so each owner visits those exporters alone, in their
@@ -303,8 +308,8 @@ fn imports_name<'s, F: Fn(&Path) -> Option<&'s str>>(
 }
 
 /// What a module's `__all__` says about its star export.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum AllDeclaration {
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) enum AllDeclaration {
     /// No top-level `__all__` binding: every public name is exported.
     Absent,
     /// A literal list/tuple of string names (including `+=` extensions).
@@ -325,11 +330,32 @@ struct StarExports<'s, F: Fn(&Path) -> Option<&'s str>> {
     primed: HashMap<PathBuf, PrimedStarFacts>,
 }
 
-/// One module's star-export answers for the names its owners define.
-struct PrimedStarFacts {
+/// One module's star-export answers for the names its owners define. A pure
+/// function of the file, so the source-fact pass computes it from its own
+/// parse and the fact store persists it (#10914).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct PrimedStarFacts {
     declaration: AllDeclaration,
     /// `binds_once` for each name asked of this file.
-    binds_once: HashMap<String, bool>,
+    binds_once: BTreeMap<String, bool>,
+}
+
+impl PrimedStarFacts {
+    /// The answers restricted to `names`, or None when one of them that the
+    /// declaration admits was not answered.
+    fn for_names(&self, names: &HashSet<&str>) -> Option<Self> {
+        let mut binds_once = BTreeMap::new();
+        for name in names {
+            if !declares(&self.declaration, name) {
+                continue;
+            }
+            binds_once.insert((*name).to_string(), *self.binds_once.get(*name)?);
+        }
+        Some(Self {
+            declaration: self.declaration.clone(),
+            binds_once,
+        })
+    }
 }
 
 impl<'s, F: Fn(&Path) -> Option<&'s str>> StarExports<'s, F> {
@@ -337,7 +363,11 @@ impl<'s, F: Fn(&Path) -> Option<&'s str>> StarExports<'s, F> {
     /// loop asks about, parsing each file once on the rayon workers instead
     /// of twice on the caller (`__all__` and the body were separate parses,
     /// and the dynamic-namespace scan ran once per owner).
-    fn prime<'o>(&mut self, asked: impl Iterator<Item = (&'o Path, &'o str)>) {
+    fn prime<'o, 'p>(
+        &mut self,
+        asked: impl Iterator<Item = (&'o Path, &'o str)>,
+        supplied: &(dyn Fn(&Path) -> Option<&'p PrimedStarFacts> + Sync),
+    ) {
         let mut names_by_file: HashMap<&Path, HashSet<&str>> = HashMap::new();
         for (file, name) in asked {
             names_by_file.entry(file).or_default().insert(name);
@@ -351,7 +381,19 @@ impl<'s, F: Fn(&Path) -> Option<&'s str>> StarExports<'s, F> {
             .par_iter()
             .map(|(file, source, names)| {
                 crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
-                    (file.to_path_buf(), primed_star_facts(file, source, names))
+                    let facts = match supplied(file).and_then(|facts| facts.for_names(names)) {
+                        Some(facts) => {
+                            debug_assert_eq!(
+                                facts,
+                                primed_star_facts(file, source, names),
+                                "{}: supplied star-export facts differ from the source's",
+                                file.display()
+                            );
+                            facts
+                        }
+                        None => primed_star_facts(file, source, names),
+                    };
+                    (file.to_path_buf(), facts)
                 })
             })
             .collect();
@@ -428,17 +470,28 @@ fn all_declaration(file: &Path, source: &str) -> AllDeclaration {
 /// [`StarExports::exports`] and [`StarExports::binds_once`] for `names` of
 /// one readable module, from a single parse: the same answers the lazy path
 /// gives from its two.
-fn primed_star_facts(file: &Path, source: &str, names: &HashSet<&str>) -> PrimedStarFacts {
+pub(super) fn primed_star_facts(
+    file: &Path,
+    source: &str,
+    names: &HashSet<&str>,
+) -> PrimedStarFacts {
     let body = match parse_module_result(file, source) {
         Ok(Mod::Module(module)) => Some(module.body),
         _ => None,
     };
-    let declaration = body
-        .as_deref()
-        .map_or(AllDeclaration::Unresolved, all_declaration_of);
+    primed_star_facts_of(source, body.as_deref(), names)
+}
+
+/// [`primed_star_facts`] over an existing parse: `body` is None when the
+/// source does not parse.
+pub(super) fn primed_star_facts_of(
+    source: &str,
+    body: Option<&[Stmt]>,
+    names: &HashSet<&str>,
+) -> PrimedStarFacts {
+    let declaration = body.map_or(AllDeclaration::Unresolved, all_declaration_of);
     // Neither condition depends on the name, so each is checked once.
     let static_body = body
-        .as_deref()
         .filter(|body| !writes_namespace_dynamically(source) && !body.iter().any(is_star_import));
     // The caller asks `binds_once` only for a name `exports` admits, so a
     // name `__all__` excludes is not scanned here; one asked anyway still
@@ -460,6 +513,16 @@ fn primed_star_facts(file: &Path, source: &str, names: &HashSet<&str>) -> Primed
         declaration,
         binds_once,
     }
+}
+
+/// The names [`apply_package_reexports`] asks a file's star-export facts
+/// about: its public non-module owners.
+pub(super) fn star_export_names(owners: &[PythonOwner]) -> HashSet<&str> {
+    owners
+        .iter()
+        .filter(|owner| !owner.name.starts_with('_') && !owner.is_module_owner())
+        .map(|owner| owner.name.as_str())
+        .collect()
 }
 
 fn all_declaration_of(body: &[Stmt]) -> AllDeclaration {
@@ -725,7 +788,10 @@ mod primed_tests {
         };
         let mut lazy = fresh();
         let mut primed = fresh();
-        primed.prime(asked.iter().map(|(file, name)| (file.as_path(), *name)));
+        primed.prime(
+            asked.iter().map(|(file, name)| (file.as_path(), *name)),
+            &|_| None,
+        );
         assert_eq!(
             primed.primed.len(),
             sources.len(),

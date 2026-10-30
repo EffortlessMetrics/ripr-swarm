@@ -170,6 +170,7 @@ fn known_equality_candidate(
             callee,
             left: operand(&subject.args[0]),
             right: operand(&call.args[0]),
+            established: None,
         });
     }
     let callee = plain_dotted_name(call.func.as_ref())?;
@@ -192,6 +193,7 @@ fn known_equality_candidate(
         callee,
         left: operand(&call.args[0]),
         right: operand(&call.args[1]),
+        established: None,
     })
 }
 

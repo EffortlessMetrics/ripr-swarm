@@ -572,6 +572,10 @@ struct PythonKnownEqualityHelper {
     /// The two compared operands, parenthesized where `==` would regroup.
     left: String,
     right: String,
+    /// Whether the test file's imports prove the helper, answered by the
+    /// workspace source-fact parse so the credit pass does not parse the file
+    /// again (#10914); None until a pass answers it.
+    established: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1101,6 +1105,7 @@ impl PythonAdapter {
             BTreeMap::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
+        let mut star_facts_by_file: BTreeMap<PathBuf, reexports::PrimedStarFacts> = BTreeMap::new();
         let mut foreign_prior_by_file: BTreeMap<PathBuf, module_value::PriorFileFacts> =
             BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
@@ -1161,6 +1166,9 @@ impl PythonAdapter {
                     && let Some(limitation) = source_fact_parse_error_limitation(relative, &facts)?
                 {
                     limitations.push(limitation);
+                }
+                if let Some(star) = &facts.star_facts {
+                    star_facts_by_file.insert(relative.clone(), star.clone());
                 }
                 foreign_prior_by_file.insert(
                     relative.clone(),
@@ -1233,9 +1241,11 @@ impl PythonAdapter {
         fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
             options.root.join(path).exists()
         });
-        reexports::apply_package_reexports(&mut all_owners, |file| {
-            workspace_read.sources.get(file).map(String::as_str)
-        });
+        reexports::apply_package_reexports(
+            &mut all_owners,
+            |file| workspace_read.sources.get(file).map(String::as_str),
+            &|file| star_facts_by_file.get(file),
+        );
         bool_oracle::credit_bare_bool_asserts(&mut all_tests, &all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
