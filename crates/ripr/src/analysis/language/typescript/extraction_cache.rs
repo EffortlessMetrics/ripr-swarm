@@ -726,15 +726,17 @@ mod tests {
         source: &str,
         line: usize,
     ) -> Option<super::super::probe_shape::TypeScriptProbeShape> {
-        let facts = file_facts_cached(Path::new("src/a.ts"), source, Path::new("."), None)
-            .expect("fixture must parse");
+        let facts = file_facts_cached(Path::new("src/a.ts"), source, Path::new("."), None).ok()?;
         facts.phase_two.probe_shape_for_line(line).cloned()
     }
 
     #[test]
     fn ast_shape_string_ternary_return_is_return_value() {
         let source = "export function f(): string {\n  return \"a ? b : c\";\n}\n";
-        let shape = ast_shape_at(source, 2).expect("return line must have an AST shape");
+        let Some(shape) = ast_shape_at(source, 2) else {
+            assert!(false, "return line must have an AST shape");
+            return;
+        };
         assert_eq!(shape.family, ProbeFamily::ReturnValue);
         assert!(shape.specific);
     }
@@ -742,9 +744,15 @@ mod tests {
     #[test]
     fn ast_shape_statement_inside_switch_arm_takes_own_family() {
         let source = "export function f(x: number): number {\n  switch (x) {\n    case 1: throw new Error(\"one\");\n    default: return x;\n  }\n}\n";
-        let thrown = ast_shape_at(source, 3).expect("throw line must have an AST shape");
+        let Some(thrown) = ast_shape_at(source, 3) else {
+            assert!(false, "throw line must have an AST shape");
+            return;
+        };
         assert_eq!(thrown.family, ProbeFamily::ErrorPath);
-        let returned = ast_shape_at(source, 4).expect("return line must have an AST shape");
+        let Some(returned) = ast_shape_at(source, 4) else {
+            assert!(false, "return line must have an AST shape");
+            return;
+        };
         assert_eq!(returned.family, ProbeFamily::ReturnValue);
     }
 
@@ -752,9 +760,15 @@ mod tests {
     fn ast_shape_multiline_return_ternary_continuation_is_return_value() {
         let source =
             "export function f(n: number): number {\n  return n > 100\n    ? n - 20\n    : n;\n}\n";
-        let test_line = ast_shape_at(source, 2).expect("return line must have an AST shape");
+        let Some(test_line) = ast_shape_at(source, 2) else {
+            assert!(false, "return line must have an AST shape");
+            return;
+        };
         assert_eq!(test_line.family, ProbeFamily::Predicate);
-        let continuation = ast_shape_at(source, 3).expect("continuation must have an AST shape");
+        let Some(continuation) = ast_shape_at(source, 3) else {
+            assert!(false, "continuation must have an AST shape");
+            return;
+        };
         assert_eq!(continuation.family, ProbeFamily::ReturnValue);
         assert!(continuation.specific);
     }
