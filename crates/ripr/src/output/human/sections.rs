@@ -13,7 +13,9 @@ use crate::output::perl_preview_card::{PerlPreviewCard, PerlRawEvidenceRef, perl
 use crate::output::preview_actionability::{
     PreviewActionability, PreviewRawEvidenceRef, preview_actionability_for,
 };
-use crate::output::python_repair_card::{PythonRepairCard, python_repair_card};
+use crate::output::python_repair_card::{
+    PythonRepairCard, python_repair_card, rooted_pytest_action,
+};
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use crate::output::typescript_preview_card::{
     TypeScriptPreviewCard, bun_cross_language_advisory_packet, stable_byte_proof_mode,
@@ -262,10 +264,22 @@ pub(crate) fn render_finding_digest_with_config(
         if let Some(node_id) = placement.test_node_id {
             out.push_str(&format!("  Test node: {node_id}\n"));
         }
-        out.push_str(&format!(
-            "  Verify command: {} ({})\n",
-            placement.verify_command, placement.verify_confidence
-        ));
+        if let Some(action) = rooted_pytest_action(finding, root) {
+            out.push_str(&format!(
+                "  Verify command (Bash): {action} ({})\n",
+                placement.verify_confidence
+            ));
+        } else if finding.language == Some(LanguageId::Python) {
+            out.push_str(&format!(
+                "  Verify from the selected root: {} ({})\n",
+                placement.verify_command, placement.verify_confidence
+            ));
+        } else {
+            out.push_str(&format!(
+                "  Verify command: {} ({})\n",
+                placement.verify_command, placement.verify_confidence
+            ));
+        }
     }
     if finding.recommended_next_step.is_some() {
         // #4323: wrap, never truncate. The guidance leads with context and
@@ -708,7 +722,7 @@ pub(super) fn render_finding_with_shared_sections(
     }
 
     if let Some(card) = python_repair_card(finding) {
-        push_python_repair_card(&mut out, &card);
+        push_python_repair_card(&mut out, &card, finding, root);
     } else if let Some(card) = typescript_preview_card(finding) {
         push_typescript_preview_card(&mut out, &card);
         // §PR8 (RIPR-SPEC-0088): surface the full work-packet field-note when
@@ -891,7 +905,12 @@ fn push_raw_ref(out: &mut String, raw_ref: &PreviewRawEvidenceRef) {
     }
 }
 
-fn push_python_repair_card(out: &mut String, card: &PythonRepairCard) {
+fn push_python_repair_card(
+    out: &mut String,
+    card: &PythonRepairCard,
+    finding: &Finding,
+    root: &Path,
+) {
     out.push_str("\nPython repair card (preview/advisory)\n");
     out.push_str(&format!("  card version: {}\n", card.card_version));
     out.push_str(&format!("  canonical gap: {}\n", card.canonical_gap_id));
@@ -923,10 +942,17 @@ fn push_python_repair_card(out: &mut String, card: &PythonRepairCard) {
     if let Some(node_id) = &card.suggested_test_node_id {
         out.push_str(&format!("  pytest node: {node_id}\n"));
     }
-    out.push_str(&format!(
-        "  verify: {} ({})\n",
-        card.verify_command, card.verify_command_confidence
-    ));
+    if let Some(action) = rooted_pytest_action(finding, root) {
+        out.push_str(&format!(
+            "  verify (Bash): {action} ({})\n",
+            card.verify_command_confidence
+        ));
+    } else {
+        out.push_str(&format!(
+            "  verify from the selected root: {} ({})\n",
+            card.verify_command, card.verify_command_confidence
+        ));
+    }
     if let Some(command) = &card.receipt_command {
         out.push_str(&format!("  receipt command: {command}\n"));
     } else {

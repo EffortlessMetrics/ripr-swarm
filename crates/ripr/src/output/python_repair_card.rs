@@ -1,6 +1,79 @@
 use crate::domain::language_capability::{CapabilityFamily, family_established_for_any_framework};
 use crate::domain::{ExposureClass, Finding, LanguageId, ProbeFamily, RelatedTest};
 use serde_json::{Map, Value, json};
+use std::path::{Component, Path};
+
+struct NativePytestRoute<'a> {
+    program: &'static str,
+    args: [&'a str; 3],
+    cwd: &'static str,
+}
+
+/// Build only from the producer's declared file and pytest node, never by
+/// parsing an arbitrary user-authored shell command.
+fn native_pytest_route(finding: &Finding) -> Option<NativePytestRoute<'_>> {
+    if finding.language != Some(LanguageId::Python) {
+        return None;
+    }
+    let unique = |prefix: &str| {
+        let mut values = finding
+            .evidence
+            .iter()
+            .filter_map(|s| s.strip_prefix(prefix));
+        let value = values.next()?;
+        (values.next().is_none() && !value.is_empty()).then_some(value)
+    };
+    let file = unique("suggested_test_file: ")?;
+    let node = unique("suggested_test_node_id: ")?;
+    let raw = unique("suggested_verify_command: ")?;
+    if !raw.starts_with("python -m pytest ")
+        || !node.strip_prefix(file)?.starts_with("::")
+        || node == format!("{file}::")
+        || file.chars().chain(node.chars()).any(char::is_control)
+        || Path::new(file)
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+    {
+        return None;
+    }
+    Some(NativePytestRoute {
+        program: "python",
+        args: ["-m", "pytest", node],
+        cwd: ".",
+    })
+}
+
+/// Render the producer's pytest selector as a Bash action at the selected root.
+/// The compatibility command remains unchanged for framework/ledger consumers.
+pub(crate) fn rooted_pytest_action(finding: &Finding, root: &Path) -> Option<String> {
+    if cfg!(windows) {
+        return None;
+    }
+    let route = native_pytest_route(finding)?;
+    let root = if root.is_absolute() {
+        root.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(root)
+    };
+    let root = if route.cwd == "." {
+        root
+    } else {
+        root.join(route.cwd)
+    };
+    let root = root.to_str()?;
+    if root.chars().any(char::is_control) {
+        return None;
+    }
+    let quote = |s: &str| crate::agent::loop_commands::shell_arg_for(s, false);
+    Some(format!(
+        "(cd -- {} && {} {} {} {})",
+        quote(root),
+        quote(route.program),
+        quote(route.args[0]),
+        quote(route.args[1]),
+        quote(route.args[2])
+    ))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PythonRepairCard {
