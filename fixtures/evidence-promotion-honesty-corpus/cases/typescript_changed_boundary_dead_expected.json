@@ -3,7 +3,7 @@
   "language": "typescript",
   "tier": "pure",
   "source_fixture": "fixtures/typescript_changed_boundary_dead_expected",
-  "vector": "selected_comparison_preserves_source_identity_for_dead_expected_refusal",
+  "vector": "selected_comparison_preserves_dead_expected_side_refusal",
   "probe_family": "predicate",
   "assertions": [
     {
