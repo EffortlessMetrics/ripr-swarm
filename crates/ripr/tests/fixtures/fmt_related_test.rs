@@ -62,3 +62,22 @@ pub fn direct_gate(x: u64) -> bool { x < 10 }
 #[cfg(test)]
 #[test]
 fn direct_gate_test() { assert!(!direct_gate(10)); }
+
+mod trait_shadow {
+    use std::fmt;
+    trait Display { fn fmt(&self) -> bool; }
+    struct Thing(u64);
+    impl Display for Thing {
+        fn fmt(&self) -> bool {
+            let value = self.0;
+            if value < 10 { true } else { false }
+        }
+    }
+    impl fmt::Display for Thing {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "thing") }
+    }
+    #[test]
+    fn trait_shadow_only_formats_std() {
+        assert_eq!(format!("{}", Thing(10)), "thing");
+    }
+}

@@ -139,6 +139,34 @@ fn unbound_formatting_guidance_checks_reach_but_direct_calls_stay_direct()
         root.0.join("src/lib.rs"),
         source.replace("if bytes < threshold {", "if bytes <= threshold {"),
     )?;
+    fs::write(
+        root.0.join("src/lib.rs"),
+        source.replace("if value < 10", "if value <= 10"),
+    )?;
+    let shadow_json = run("json")?;
+    assert!(shadow_json.status.success());
+    let shadow_output: serde_json::Value = serde_json::from_slice(&shadow_json.stdout)?;
+    let shadow = shadow_output["findings"]
+        .as_array()
+        .ok_or("missing shadow findings")?
+        .iter()
+        .find(|f| f["probe"]["expression"] == "value <= 10")
+        .ok_or("missing shadow finding")?;
+    let shadow_rows = shadow["related_tests"]
+        .as_array()
+        .ok_or("missing shadow rows")?;
+    let shadow_test = shadow_rows
+        .iter()
+        .find(|r| r["name"] == "trait_shadow_only_formats_std")
+        .ok_or("missing shadow test row")?;
+    assert_ne!(
+        shadow_test["relation_reason"], "direct_owner_call",
+        "{shadow_test}"
+    );
+    fs::write(
+        root.0.join("src/lib.rs"),
+        source.replace("if bytes < threshold {", "if bytes <= threshold {"),
+    )?;
     let human = run("human")?;
     assert!(
         human.status.success(),
