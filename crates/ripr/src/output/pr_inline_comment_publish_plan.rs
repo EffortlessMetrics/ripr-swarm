@@ -1801,6 +1801,22 @@ mod tests {
         Ok(())
     }
 
+    /// #11146: the empty-string arm names the empty value and the way to
+    /// publish nothing, apart from the unknown-value arm.
+    #[test]
+    fn comment_mode_parse_names_an_empty_value_apart_from_an_unknown_one() {
+        let empty = CommentMode::parse("").err().unwrap_or_default();
+        assert!(empty.contains("is empty"), "{empty}");
+        assert!(empty.contains("pass `off`"), "{empty}");
+        assert!(!empty.contains("unknown"), "{empty}");
+        let unknown = CommentMode::parse("post").err().unwrap_or_default();
+        assert!(
+            unknown.contains("unknown pr-comments plan mode"),
+            "{unknown}"
+        );
+        assert!(!unknown.contains("is empty"), "{unknown}");
+    }
+
     #[test]
     fn inline_comment_publish_plan_covers_disabled_mode_and_default_timestamp() -> Result<(), String>
     {

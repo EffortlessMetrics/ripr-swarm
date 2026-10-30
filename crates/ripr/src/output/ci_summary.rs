@@ -14,6 +14,17 @@
 
 pub(crate) mod annotations;
 mod jq;
+
+/// The inline-comment mode a raw `RIPR_COMMENT_MODE` value means: surrounding
+/// whitespace is ignored and empty means `off` (#11146). The summary and the
+/// packet's plan stage both read the value through this, so they cannot
+/// disagree about whether comments are planned or what mode is planned.
+pub(crate) fn effective_comment_mode(raw: &str) -> &str {
+    match raw.trim() {
+        "" => "off",
+        mode => mode,
+    }
+}
 #[cfg(test)]
 mod tests;
 
@@ -1498,11 +1509,7 @@ impl Summary {
 
     fn inline_comments(&mut self, comment_mode: &str) {
         self.line("### PR inline comments");
-        let mode = if comment_mode.is_empty() {
-            "off"
-        } else {
-            comment_mode
-        };
+        let mode = effective_comment_mode(comment_mode);
         self.line(&format!("- Mode: `{}`", inline(mode)));
         if let Some(doc) = self.doc("target/ripr/review/comment-publish-plan.json") {
             let count = |path: &str| inline(&doc.field(&[path], "0", "0"));

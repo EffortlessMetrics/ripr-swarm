@@ -36,6 +36,7 @@ use crate::agent::loop_commands::{
 };
 use crate::cli::suggest::unknown_argument;
 use crate::output::ci_summary::annotations::render_workflow_annotations;
+use crate::output::ci_summary::effective_comment_mode;
 use crate::process_owner::OwnedProcess;
 use serde::Serialize;
 use serde_json::Value;
@@ -535,7 +536,7 @@ impl PacketRun {
             Role::Advisory,
             // An empty mode means `off`, as `--comment-mode` documents and
             // `ci-summary` reads it (#11146); only a named mode is planned.
-            pr && !matches!(self.settings.comment_mode.trim(), "" | "off")
+            pr && effective_comment_mode(&self.settings.comment_mode) != "off"
                 && self.exists(COMMENTS_JSON),
             Self::plan_inline_comments,
         );
@@ -1320,7 +1321,7 @@ impl PacketRun {
             "--pr-guidance",
             COMMENTS_JSON,
             "--mode",
-            &settings.comment_mode,
+            effective_comment_mode(&settings.comment_mode),
             "--event-name",
             &settings.event_name,
             "--pull-request",
@@ -2111,6 +2112,20 @@ mod tests {
         assert!(!planned("off")?, "off must not plan");
         assert!(!planned("")?, "empty must not plan");
         assert!(!planned("  ")?, "blank must not plan");
+        // A padded value plans, and plans the trimmed mode (the summary reads
+        // it the same way), never `--mode " inline"`.
+        let (padded, _) = recorded_packet_with(CiSettings {
+            comment_mode: " inline ".to_string(),
+            ..full_packet_settings()
+        })?;
+        let plan_line = padded
+            .lines()
+            .find(|line| line.starts_with("ripr pr-comments plan "))
+            .unwrap_or_default();
+        assert!(
+            plan_line.contains(" --mode inline --event-name "),
+            "{plan_line}"
+        );
         Ok(())
     }
 
