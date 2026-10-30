@@ -1,0 +1,10 @@
+diff --git a/src/logical.ts b/src/logical.ts
+--- a/src/logical.ts
++++ b/src/logical.ts
+@@ -1,5 +1,5 @@
+ export function canShip(paid: boolean, inStock: boolean): boolean {
+-  return paid && inStock;
++  return inStock && paid;
+ }
+ 
+ export function needsReview(flagged: boolean, large: boolean): boolean {

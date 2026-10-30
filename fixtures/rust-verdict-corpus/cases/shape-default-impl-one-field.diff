@@ -1,0 +1,12 @@
+diff --git a/src/ops.rs b/src/ops.rs
+--- a/src/ops.rs
++++ b/src/ops.rs
+@@ -83,7 +83,7 @@
+ 
+ impl Default for Settings {
+     fn default() -> Settings {
+-        Settings { retries: 3, verbose: false }
++        Settings { verbose: false, retries: 3 }
+     }
+ }
+ 

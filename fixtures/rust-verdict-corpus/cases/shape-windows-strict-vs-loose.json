@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-windows-strict-vs-loose",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-windows-strict-vs-loose.diff",
+  "anchor": {
+    "file": "src/flow.rs",
+    "line": 61
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "windows_filter_count_no_equal_pair",
+  "hard_case": "The input has no equal neighbours, so strict and non-strict comparisons agree.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "xs.windows(2).filter(|w| w[1] >= w[0]).count()",
+        "mutated_line": "xs.windows(2).filter(|w| w[1] >= w[0]).count()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `xs.windows(2).filter(|w| w[0] < w[1]).count()` becomes `xs.windows(2).filter(|w| w[1] >= w[0]).count()`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "xs.windows(2).filter(|w| w[1] < w[0]).count()",
+        "mutated_line": "xs.windows(2).filter(|w| w[1] < w[0]).count()",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::rising_pairs",
+        "equivalence_review": "not equivalent: `xs.windows(2).filter(|w| w[0] < w[1]).count()` becomes `xs.windows(2).filter(|w| w[1] < w[0]).count()`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "rising_pairs counts the rises in [1, 3, 2, 4] as 2; `>=` also counts 2 because no pair is equal. Shape: `windows` with a filter.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "propagation_unknown",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

@@ -32,7 +32,8 @@ source module, so the analyzer could not tell the two `validate`s apart.
 
 ## Then
 
-ripr does **not** classify the change `exposed`. For a free-function owner, the
+ripr does **not** classify the change `exposed`; the test is not even a related
+test of `src.handler.validate` (#8759), so the finding reads `no_static_path`. For a free-function owner, the
 bare function-name token credits `direct` (or an import alias credits `alias`)
 only when a strong observing test imports the function **from the owner's
 module** (`from src.handler import validate`). Here the import source module is

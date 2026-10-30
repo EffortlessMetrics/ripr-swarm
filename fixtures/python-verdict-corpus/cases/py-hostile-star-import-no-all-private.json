@@ -1,0 +1,44 @@
+{
+  "case_id": "py-hostile-star-import-no-all-private",
+  "subject_id": "authored-py-pytest-hostile",
+  "diff": "cases/py-hostile-star-import-no-all-private.diff",
+  "anchor": {
+    "file": "hostile/stars_no_all.py",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "pytest_star_import_underscore_name_without_all",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.12.14, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return a + b",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the product becomes a sum"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Without __all__, the leading underscore excludes _private_star_total from `from hostile.stars_no_all import *`. The test asserts the name is absent from its namespace, so changing the unimported function does not affect the tests.",
+  "labeling_observation": {
+    "ripr_commit": "ad83c6b9f519b002023cb3775980095422987e60",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

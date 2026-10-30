@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testmore-cart-dynamic-dispatch.json",
-    "sha256": "6091e47ba545fe62464b6b50f93cfe3e4eae5c3f19bbcb7b856735398cb6825b",
+    "sha256": "5dc9f254cf78e3ac01256136f7dcb1937cbb85ab3b0869a9afb567222cef0cc7",
     "provenance": "producer"
   }
 }

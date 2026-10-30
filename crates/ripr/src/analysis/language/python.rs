@@ -23,10 +23,17 @@ use super::super::{
     AnalysisOptions, diff::ChangedFile, fingerprint_probe_id, normalize_expression,
 };
 use super::read_limit_disclosure::bounded_read_limit_limitations;
-use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
+use super::{
+    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PreviewFactCacheStats,
+    route,
+};
 mod admission;
 mod assertion_selection;
 mod bounded_read;
+mod fact_serde;
+mod fact_store;
+pub(crate) use fact_store::PythonFileFactStore;
+mod workspace_reach;
 use crate::analysis::workspace::{
     changed_source_files_absent_from_worktree, limitations_for_absent_changed_files,
 };
@@ -47,37 +54,71 @@ use crate::domain::{
     ProbeFamily, StaticLimitKind, StopReason, SymbolId,
 };
 use bounded_read::{
-    PYTHON_MAX_WORKSPACE_FILES_ENV, PythonDiffWalkLimits, read_workspace_sources_capped,
-    truncate_workspace_files,
+    PYTHON_MAX_WORKSPACE_FILES_ENV, PythonDiffWalkLimits, WorkspaceFileSelection,
+    read_workspace_sources_capped,
 };
+use rayon::prelude::*;
 use rustpython_parser::ast::Expr;
 use std::{
     collections::{BTreeMap, BTreeSet},
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
+
+/// Workspace files whose facts are extracted per parallel batch before the
+/// batch is folded, bounding how many unfolded fact sets are alive at once.
+const FACT_EXTRACTION_BATCH_FILES: usize = 256;
+
+mod approx_band;
+mod arm_activation;
+mod bool_oracle;
 mod boundary;
+mod caplog_text;
 mod classify;
+mod conditional_defs;
+mod dataclass_default;
 mod deleted_lines;
+mod doctest_eval;
+mod doctest_tests;
+mod dunder_truthiness;
 mod guard_activation;
-use classify::{PythonNoBehaviorContext, classify_change_with_context};
+mod guard_credit;
+mod helper_inline;
+mod imported_call_operator;
+mod known_equality_helpers;
+mod message_pin;
+mod module_value;
+mod type_guard;
+mod wrapped_call;
+use classify::{PythonNoBehaviorContext, classify_change_with_value_origins};
 #[cfg(test)]
-use classify::{classify_change, classify_change_with_old};
+use classify::{
+    classify_change, classify_change_with_context, classify_change_with_old,
+    classify_change_with_source,
+};
 mod discriminators;
 mod effect_alignment;
+#[cfg(test)]
+mod effect_order_tests;
 mod hypothesis;
 mod module_constants;
 mod no_behavior;
 mod oracles;
 mod owners_tests;
+mod param_fixtures;
 mod parametrize;
 mod parse_budget;
 mod probe_shape;
 mod reexports;
 mod related_tests;
 mod repo;
+mod route_client;
+mod row_miss;
+mod row_reach;
+mod setup_receivers;
 mod sink_alignment;
 mod source_facts;
+mod table_reads;
 mod table_rows;
 #[cfg(test)]
 use discriminators::{
@@ -107,17 +148,17 @@ use no_behavior::{
 use oracles::collect_assertions_from_statements;
 #[cfg(test)]
 use probe_shape::{
-    canonical_python_gap_for, classify_probe_shape, contains_mock_initializer,
-    looks_like_call_expression,
+    canonical_python_gap_for, classify_probe_shape, classify_probe_shape_with_old,
+    contains_mock_initializer, looks_like_call_expression,
 };
 #[cfg(test)]
 use related_tests::{
     PythonRelatedCandidate, PythonRelationKind, binding_target_for_construction, body_calls_owner,
     construct_result_is_called, contains_any_attribute_call, find_related_tests,
     has_unclosed_quote, imported_module_matches_owner, local_binding_calls_owner,
-    normalize_similarity_key, normalize_test_stem, owner_similarity_keys, python_repair_placement,
-    related_test_candidates, related_test_relation, same_stem_related, similarity_key_contains,
-    verify_command_for_test,
+    normalize_similarity_key, normalize_test_stem, owner_similarity_keys,
+    python_repair_placement_on, related_test_candidates, related_test_relation, same_stem_related,
+    similarity_key_contains, verify_command_for_test_on,
 };
 use related_tests::{
     assertion_calls_method_only_on_foreign_receiver, first_parenthesized_string_argument,
@@ -135,10 +176,15 @@ use sink_alignment::{
 #[cfg(test)]
 use source_facts::parse_module;
 pub(crate) use source_facts::{detect_python_test_framework, detect_python_test_frameworks};
-use source_facts::{extract_source_facts, source_fact_snapshot_observation};
+use source_facts::{
+    extract_source_facts, extract_workspace_source_facts, source_fact_snapshot_observation,
+};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
 mod fixtures;
+mod forwarding_decorator;
+mod helper_assertions;
+mod literal_patch;
 mod module_callees;
 mod same_class_callees;
 mod static_limits;
@@ -159,9 +205,9 @@ use static_limits::{
 
 mod workspace;
 use crate::analysis::diff::reconstruct_old_source;
-use workspace::{
-    collect_workspace_python_files_with_handwritten, line_is_in_ranges, owner_for_changed_line,
-};
+#[cfg(test)]
+use workspace::collect_workspace_python_files_with_handwritten;
+use workspace::{line_is_in_ranges, owner_for_changed_line, visit_workspace_with_handwritten};
 
 /// Python preview adapter.
 ///
@@ -180,7 +226,40 @@ fn mentions_python_name(text: &str, name: &str) -> bool {
         })
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Whether `line` is a decorator in a run of added decorator lines that ends
+/// at an added `def` or `class` line: the decorators of a newly added
+/// definition. A decorator added above an existing definition, or beside
+/// unrelated added lines, is an edit of that definition and keeps its probe.
+fn opens_added_definition(
+    added_lines: &[crate::analysis::diff::ChangedLine],
+    line: &crate::analysis::diff::ChangedLine,
+) -> bool {
+    let is_decorator = |text: &str| {
+        text.trim_start()
+            .strip_prefix('@')
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(|ch| ch == '_' || ch.is_alphabetic())
+    };
+    if !is_decorator(&line.text) {
+        return false;
+    }
+    let mut next = line.line;
+    loop {
+        next += 1;
+        let Some(following) = added_lines.iter().find(|added| added.line == next) else {
+            return false;
+        };
+        let text = following.text.trim_start();
+        if is_decorator(text) {
+            continue;
+        }
+        return text.starts_with("def ")
+            || text.starts_with("async def ")
+            || text.starts_with("class ");
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonOwner {
     name: String,
     qualified_name: String,
@@ -192,7 +271,24 @@ struct PythonOwner {
     imports: Vec<PythonImport>,
     cli_receiver_names: Vec<String>,
     route_paths: Vec<String>,
+    /// Lowercase HTTP verbs each `route_paths` entry accepts, index-aligned;
+    /// an empty entry means the verb is not statically known.
+    route_methods: Vec<Vec<String>>,
+    /// Receiver of each route decorator (`app` in `@app.get`), index-aligned
+    /// with `route_paths`.
+    route_receivers: Vec<String>,
     dynamic_route_decorators: Vec<String>,
+    /// Decorator names whose binding is not the plain name they spell: a
+    /// decorator written as a call (`@final(wrapper)`) or one whose first
+    /// segment is redefined at module level. Transparent-decorator rules must
+    /// not trust the import for these.
+    unplain_decorators: Vec<String>,
+    /// First and last source line of a function owner's decorator list. The
+    /// `def` line starts the owner, so a changed decorator argument
+    /// (`@retry(3)`) would otherwise fall to the module owner and never see
+    /// the owner's decorator-indirection limit. `None` without decorators and
+    /// for class and module owners.
+    decorator_lines: Option<(usize, usize)>,
     /// Declared parameters of a function/method owner, in declaration order.
     /// Empty for class and module owners. Used only to bind literal test-call
     /// arguments to predicate boundary operands (`boundary.rs`).
@@ -200,10 +296,21 @@ struct PythonOwner {
     /// Dotted package paths whose `__init__.py` re-exports this owner under
     /// its own name (`reexports.rs`). Empty until the workspace pass fills it.
     reexport_modules: Vec<String>,
+    /// Whether a `from <owner module> import *` binds this owner: the name is
+    /// public and the module's `__all__` is absent or lists it. `false` until
+    /// the workspace pass fills it, and when the module source is unavailable
+    /// or its `__all__` is unresolved (`reexports.rs`).
+    star_exported: bool,
     /// Src-layout short module names of this owner's file that another
     /// workspace source file also produces (`related_tests.rs`, #4566).
     /// Empty until the workspace pass fills it.
     ambiguous_src_modules: Vec<related_tests::AmbiguousSrcModule>,
+    /// Dotted module paths of other workspace source files that define a
+    /// free function with this owner's name (`related_tests.rs`, #8759). A
+    /// test that imports the name from one of them (and from no module that
+    /// may be this owner's) exercises that definition instead. Empty until
+    /// the workspace pass fills it.
+    rival_definition_modules: Vec<String>,
     /// Module-scope literal constants visible in a function/method owner
     /// (not shadowed locally). Empty for class and module owners. Used only
     /// to resolve named predicate boundary operands (`boundary.rs`, #4227).
@@ -225,10 +332,20 @@ struct PythonOwner {
     /// guarded-return shape as a callee, and whether its parameters hold
     /// their call-site values as a caller (`term_activation.rs`, #6733).
     term_facts: term_activation::PythonTermFacts,
+    /// Facts about the owner's class that a dunder-protocol binding needs
+    /// (`related_tests.rs`, #9421). Empty until the workspace pass fills it,
+    /// which keeps every consumer fail-closed.
+    class_facts: related_tests::PythonClassFacts,
+    /// Writes to module attributes found in the workspace's other Python
+    /// files; only filled for the module owner of a changed file
+    /// (`module_value.rs`, #9423).
+    foreign_writes: module_value::ForeignWrites,
+    /// Owner admitted through a decided interpreter-version condition.
+    version_conditional: bool,
 }
 
 /// One declared parameter of a Python function owner.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonParameter {
     name: String,
     /// Source text of the default value, when one is declared.
@@ -283,7 +400,28 @@ impl PythonOwner {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Closed set of Python test frameworks the adapter classifies tests under.
+///
+/// Every consumer matches this exhaustively, so adding a variant is a compile
+/// error until each verify-command, placement and activation site decides it.
+/// `capability_disposition_tests` additionally binds each variant to its
+/// `python/<framework>/diff/repair_routing` capability cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum PythonFramework {
+    Pytest,
+    Unittest,
+}
+
+impl PythonFramework {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pytest => "pytest",
+            Self::Unittest => "unittest",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonTest {
     name: String,
     qualified_name: String,
@@ -295,39 +433,87 @@ struct PythonTest {
     /// Recognized test controls resolved before test-body imports can shadow aliases.
     activation_controls: Vec<test_activation::PythonActivationControl>,
     fixtures: Vec<String>,
+    /// Receivers the test's class builds once in a setup hook (`self.stock =
+    /// Stock(5)`); empty outside an unambiguous class (#9417).
+    setup_receivers: Vec<setup_receivers::SetupReceiver>,
     /// Definitions the `fixtures` parameters resolve to, in the test's module
     /// or a `conftest.py` up its directory chain. Filled by the workspace
     /// pass (`fixtures.rs`); empty until then.
     fixture_defs: Vec<PythonFixtureDef>,
     parametrized: bool,
+    /// The original single parametrization is a plain two-argument literal call.
+    simple_literal_parametrize: bool,
     /// Argnames a pytest parametrize decorator supplies directly (not routed
     /// to a fixture by `indirect=`); never resolved as fixtures (#4563).
     direct_parametrized: Vec<String>,
+    /// The `direct_parametrized` names whose `indirect=` value the read
+    /// cannot settle: not resolved as fixtures, but still counted toward the
+    /// fixture limit (#10685).
+    unsettled_indirect: Vec<String>,
+    /// Every argname the test's and its classes' pytest parametrize marks
+    /// name, repeats kept: a repeat is a collection error (#10867).
+    parametrize_argnames: Vec<String>,
     /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).
     parametrize: Option<parametrize::PythonParametrizeCases>,
     /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.
     generated_inputs: Vec<String>,
-    framework: &'static str,
+    framework: PythonFramework,
     assertions: Vec<PythonAssertion>,
     /// Whether RIPR can say this test has no assertion, or only that it
     /// recognized none (#5571).
     assertion_admission: admission::PythonAssertionAdmission,
+    /// Modules this test imports by a bare name that resolve to a file or
+    /// directory beside the test file (`from runner import run_case` with
+    /// `tests/runner.py`): pytest's rootdir insertion makes them importable
+    /// and they are test support the single-file scan cannot read. Filled by
+    /// the workspace pass (`fixtures.rs`, #5491); empty until then.
+    bare_sibling_modules: Vec<PathBuf>,
     /// How the test and its module can rebind names and attributes; guards
     /// module-constant boundary resolution (`boundary.rs`, #4227).
     constant_rebinding: module_constants::PythonTestRebinding,
 }
 
+impl PythonTest {
+    /// Whether pytest certainly passes `name`'s parametrize value to the
+    /// test itself: a direct argname whose `indirect=` the read settled.
+    /// Such a parameter runs no fixture code (#10685).
+    fn takes_parametrize_value(&self, name: &str) -> bool {
+        self.direct_parametrized.iter().any(|direct| direct == name)
+            && !self
+                .unsettled_indirect
+                .iter()
+                .any(|unsettled| unsettled == name)
+    }
+}
+
 /// A module-level `@pytest.fixture` function: its body is read with the same
 /// relation rules as a test body when a test names it as a parameter (#4563).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonFixtureDef {
+    /// The public name a test requests; differs from `binding` when the
+    /// decorator renames the fixture (`name=`).
     name: String,
+    /// The module attribute the def binds, which a later def of the same name
+    /// replaces.
+    binding: String,
     file: PathBuf,
     body_text: String,
     imports: Vec<PythonImport>,
+    /// The class the fixture returns a fresh literal-built instance of
+    /// (`return Account(100)`), when that is its whole shape (#9619).
+    literal_construction: Option<String>,
+    /// The literal `params=` rows a fixture returning `request.param` hands
+    /// the test, one run per row (#9619, `param_fixtures.rs`).
+    literal_params: Option<Vec<param_fixtures::FixtureParamRow>>,
+    /// Set when attached: no other fixture or hook visible to the test names
+    /// this fixture, so the test receives the instance exactly as built.
+    isolated: bool,
+    /// Set when attached: the `from` imports of the test's module and its
+    /// conftest chain, by importing file; each must be the owner's module.
+    scope_imports: Vec<(PathBuf, PythonImport)>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonImport {
     imported: String,
     alias: String,
@@ -338,7 +524,7 @@ struct PythonImport {
     source_module: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonAssertion {
     text: String,
     /// The text every alignment gate reads (RIPR-SPEC-0238 rule 4): an
@@ -350,13 +536,66 @@ struct PythonAssertion {
     /// (`assertRaisesRegex(E, 'm', check, 20, n=3)` calls `check(20, n=3)`;
     /// RIPR-SPEC-0238 rule 13), with every argument it passes on.
     callable_call: Option<String>,
+    /// The existing helper-resolution pass supplied this assertion. Its
+    /// comparison alone does not establish a deferred owner's execution.
+    helper_derived: bool,
+    /// Native assertion/call span, relative to the containing test body.
+    #[serde(with = "fact_serde::option_range")]
+    source_range: Option<rustpython_parser::text_size::TextRange>,
+    /// Only the native operands retained by the oracle gate, never its message.
+    #[serde(with = "fact_serde::named_ranges")]
+    observed_operands: Vec<(String, rustpython_parser::text_size::TextRange)>,
     line: usize,
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,
     oracle_shape: PythonOracleShape,
+    /// Set for a bare `assert f(lit, ..)` / `assert not f(lit, ..)`: an
+    /// assertion on a call whose arguments are all literals. Extraction reads
+    /// it as a smoke truthiness check; `bool_oracle` re-reads it as an exact
+    /// boolean pin once the callee is known to return `bool`.
+    bare_bool_call: Option<PythonBareBoolCall>,
+    /// Set for a call shaped like a numpy.testing or assertpy equality
+    /// helper (#10936). Extraction cannot tell whether the name is the
+    /// library's; `known_equality_helpers` re-reads the assertion as
+    /// `assert left == right` once the file's imports prove it.
+    known_equality_helper: Option<PythonKnownEqualityHelper>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+/// The call under a candidate numpy.testing or assertpy equality helper
+/// (`known_equality_helpers.rs`).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct PythonKnownEqualityHelper {
+    library: KnownEqualityLibrary,
+    /// The callable as written: `np.testing.assert_array_equal`, or for
+    /// assertpy the `assert_that` it chains from.
+    callee: String,
+    /// The two compared operands, parenthesized where `==` would regroup.
+    left: String,
+    right: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum KnownEqualityLibrary {
+    NumpyTesting,
+    Assertpy,
+}
+
+/// The call under a bare boolean assertion (`bool_oracle.rs`).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct PythonBareBoolCall {
+    /// The bare callee name; dotted callees are never resolved.
+    callee: String,
+    /// The call's source text, without the `not`.
+    call_text: String,
+    /// `Some(b)` for a `True`/`False` literal argument, `None` for any other
+    /// literal, by position.
+    bool_arguments: Vec<Option<bool>>,
+    negated: bool,
+}
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 enum PythonOracleShape {
     ExactAssertion,
     BoundaryAssertion,
@@ -444,14 +683,61 @@ fn python_family_assertion_target(probe_family: &ProbeFamily) -> &'static str {
     }
 }
 
+fn python_unlinked_owner_next_step(
+    owner: &PythonOwner,
+    probe_family: &ProbeFamily,
+) -> Option<String> {
+    // #10708: a directly resolvable owner with no static link is a plain
+    // function owner; class-shaped, module, decorated, routed, or otherwise
+    // indirected owners stay silent instead of inventing a direct call
+    // target. NoStaticPath establishes no statically linked test call, not
+    // the universal absence of a test, so the wording names the honest
+    // ordered route: add a relevant test/assertion, run the project's native
+    // verifier, then refresh. No exact test file or verify command is named:
+    // neither is evidenced for an owner with no static link. A text-only
+    // mention (an unrelated test that merely names the owner) is not a
+    // related test and keeps this generic guidance rather than a credited
+    // target.
+    if owner.is_module_owner() || owner.owner_kind != Some(OwnerKind::Function) {
+        return None;
+    }
+    // Command-registered functions stay silent: a Typer `@app.command()` (or
+    // any decorator) makes the owner a CLI entry, not a directly callable
+    // helper under test. A plain helper that merely shares a module with a
+    // Typer app keeps guidance — the file-wide receiver list is not evidence
+    // the helper itself is registered.
+    if !owner.decorators.is_empty()
+        || !owner.route_paths.is_empty()
+        || !owner.dynamic_route_decorators.is_empty()
+    {
+        return None;
+    }
+    let action = match probe_family {
+        ProbeFamily::Predicate => "a focused boundary assertion",
+        ProbeFamily::ReturnValue => "an exact return-value assertion",
+        ProbeFamily::ErrorPath => "an exception assertion",
+        ProbeFamily::FieldConstruction => "a field/object assertion",
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
+            "an output/log/call-effect assertion"
+        }
+        ProbeFamily::MatchArm | ProbeFamily::StaticUnknown => "a focused assertion",
+    };
+    Some(format!(
+        "Python preview: no statically linked test calls `{}(`; add a test that calls the changed owner with {action}, run the project's native Python test command, then rerun `ripr check` to refresh the finding.",
+        owner.name
+    ))
+}
+
 fn python_recommended_next_step(
     class: &ExposureClass,
+    owner: &PythonOwner,
     probe_family: &ProbeFamily,
     has_oracle_eligible_relation: bool,
     missing_discriminators: &[MissingDiscriminatorFact],
 ) -> Option<String> {
     match class {
-        ExposureClass::StaticUnknown | ExposureClass::NoStaticPath => None,
+        ExposureClass::StaticUnknown => None,
+        ExposureClass::NoStaticPath => python_unlinked_owner_next_step(owner, probe_family),
         ExposureClass::Exposed => {
             Some("Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.".to_string())
         }
@@ -520,6 +806,86 @@ fn push_identifier(out: &mut Vec<String>, current: &mut String, stop: &[&str]) {
         out.push(current.clone());
     }
     current.clear();
+}
+
+/// How one file's facts were obtained, for the `-v` fact-cache counters.
+enum FactLookup {
+    /// The store was not consulted (unusable base or a lossy path).
+    Skipped,
+    Hit,
+    Miss {
+        stored: Result<bool, String>,
+    },
+    Corrupt {
+        stored: Result<bool, String>,
+    },
+}
+
+impl FactLookup {
+    fn count(&self, stats: &mut PreviewFactCacheStats) {
+        let stored = match self {
+            Self::Skipped => return,
+            Self::Hit => {
+                stats.hits += 1;
+                return;
+            }
+            Self::Miss { stored } => stored,
+            Self::Corrupt { stored } => {
+                stats.corrupt_ignored += 1;
+                stored
+            }
+        };
+        stats.misses += 1;
+        match stored {
+            Ok(true) => stats.stores += 1,
+            Ok(false) => {}
+            Err(_) => stats.store_errors += 1,
+        }
+    }
+}
+
+/// `relative`'s facts from the store when a content-keyed envelope admits
+/// them, else a fresh extraction that is then persisted (#10914).
+fn stored_or_extracted_facts(
+    store: Option<&PythonFileFactStore>,
+    root: &Path,
+    relative: &Path,
+    source: &str,
+) -> (source_facts::PythonSourceFacts, FactLookup) {
+    // An envelope is named by the normalized path; a Unix filename holding a
+    // literal backslash (or a non-UTF-8 name) would share one with its folded
+    // twin, so such a file is neither read nor persisted (as in #10725).
+    let lossless = relative
+        .to_str()
+        .is_some_and(|path| cfg!(windows) || !path.contains('\\'));
+    let Some(store) = store.filter(|_| lossless) else {
+        return (
+            extract_workspace_source_facts(relative, source),
+            FactLookup::Skipped,
+        );
+    };
+    let key = fact_store::PythonFileFactKey::new(relative, source, root);
+    let corrupt = match store.load(&key) {
+        crate::analysis::seam_cache::CacheLoad::Hit(facts) => {
+            debug_assert_eq!(
+                facts,
+                fact_store::served_view(extract_workspace_source_facts(relative, source)),
+                "a stored envelope served facts a fresh extraction of {} does not produce",
+                relative.display()
+            );
+            return (facts, FactLookup::Hit);
+        }
+        crate::analysis::seam_cache::CacheLoad::Miss => false,
+        crate::analysis::seam_cache::CacheLoad::CorruptIgnored { .. } => true,
+    };
+    let facts = extract_workspace_source_facts(relative, source);
+    let stored = store.store(&key, &facts);
+    let lookup = if corrupt {
+        FactLookup::Corrupt { stored }
+    } else {
+        FactLookup::Miss { stored }
+    };
+    (facts, lookup)
 }
 
 fn parse_budget_limitation(
@@ -674,10 +1040,49 @@ impl PythonAdapter {
         walk_limits: PythonDiffWalkLimits,
         handwritten: &[String],
     ) -> Result<LanguageDiffResult, String> {
-        let discovered =
-            collect_workspace_python_files_with_handwritten(&options.root, handwritten);
-        let (workspace_files, refused_files) =
-            truncate_workspace_files(discovered, walk_limits.max_workspace_files);
+        // Changed files are the subject of the diff, so the cap only ever
+        // refuses context around them (#10461). The walk streams into a
+        // bounded selection so discovery memory stays at the cap rather
+        // than the workspace size (#10594).
+        let changed_walk_paths: BTreeSet<String> = changed_files
+            .iter()
+            .map(|changed| normalized_path(&changed.path))
+            .collect();
+        let mut selection =
+            WorkspaceFileSelection::new(walk_limits.max_workspace_files, |file: &Path| {
+                changed_walk_paths.contains(&normalized_path(file))
+            });
+        visit_workspace_with_handwritten(&options.root, &options.root, handwritten, &mut |file| {
+            selection.push(file)
+        });
+        let (mut workspace_files, mut refused_files) = selection.finish();
+        // Past the cap, spend it on the files whose text can reach the diff
+        // instead of the earliest paths (#10785). The second walk holds every
+        // path, so it runs only below the scan's own file bound.
+        let mut reach = None;
+        if refused_files > 0
+            && workspace_files.len() + refused_files <= workspace_reach::MAX_SCANNED_FILES
+        {
+            let mut discovered = Vec::new();
+            visit_workspace_with_handwritten(
+                &options.root,
+                &options.root,
+                handwritten,
+                &mut |file| discovered.push(file),
+            );
+            reach = workspace_reach::admit_by_reach(
+                &options.root,
+                discovered,
+                changed_files,
+                &changed_walk_paths,
+                walk_limits.max_workspace_files,
+                walk_limits.max_file_read_bytes,
+            );
+            if let Some(admission) = &reach {
+                workspace_files = admission.kept.clone();
+                refused_files = admission.discovered.len() - admission.kept.len();
+            }
+        }
         let workspace_read = read_workspace_sources_capped(
             &options.root,
             &workspace_files,
@@ -687,7 +1092,16 @@ impl PythonAdapter {
         let mut all_owners: Vec<PythonOwner> = Vec::new();
         let mut all_tests: Vec<PythonTest> = Vec::new();
         let mut fixture_defs_by_file: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
+        let mut fixture_side_by_file: BTreeMap<PathBuf, fixtures::FixtureSideEffects> =
+            BTreeMap::new();
+        // Conftests that install implicit setup around tests (#6657).
+        let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut helper_modules_by_file: BTreeMap<PathBuf, helper_assertions::PythonHelperModule> =
+            BTreeMap::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
+            BTreeMap::new();
+        let mut foreign_prior_by_file: BTreeMap<PathBuf, module_value::PriorFileFacts> =
             BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
@@ -699,51 +1113,169 @@ impl PythonAdapter {
             .iter()
             .map(|changed| normalized_path(&changed.path))
             .collect();
-        for relative in &workspace_files {
-            let Some(source) = workspace_read.sources.get(relative) else {
-                continue;
-            };
-            let facts = extract_source_facts(relative, source);
-            debug_assert!(source_fact_snapshot_observation(&facts) > 0);
-            if let Some(limitation) = parse_budget_limitation(relative, &facts)? {
-                limitations.push(limitation);
-            }
-            // #6824: a syntax error in a changed file must surface as a
-            // named producer failure, never as a silent complete zero. An
-            // unchanged file's parse failure stays out of the diff-scoped
-            // limitation set (its context loss matches the Rust twin's
-            // unchanged-file behavior).
-            if changed_paths
-                .iter()
-                .any(|changed| changed == &normalized_path(relative))
-                && let Some(limitation) = source_fact_parse_error_limitation(relative, &facts)?
-            {
-                limitations.push(limitation);
-            }
-            docstring_ranges_by_file.insert(relative.clone(), facts.docstring_line_ranges.clone());
-            import_ranges_by_file.insert(relative.clone(), facts.import_line_ranges.clone());
-            if !facts.fixtures.is_empty() {
-                fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
-            }
-            if is_test_file(relative) {
-                all_tests.extend(facts.tests);
-            } else {
-                all_owners.extend(facts.owners);
+        // Fact extraction is per-file and pure, so each bounded batch runs on
+        // the rayon workers (#10441: most of a large workspace's run) and is
+        // then folded sequentially before the next starts. Indexed collection
+        // keeps workspace order, so the fold sees exactly the sequential
+        // order, and at most one batch of unfolded facts is held at a time.
+        let token = crate::analysis::cancellation::current_token();
+        // #10914: persistent per-file fact store. A content-keyed hit serves
+        // the file's facts without parsing it; a miss or a corrupt entry
+        // extracts and persists. An unusable base is reported once and
+        // nothing is read or stored.
+        let fact_store = PythonFileFactStore::at(&options.root);
+        let mut fact_cache_stats = PreviewFactCacheStats::zero_work();
+        fact_cache_stats.unusable_base = fact_store.unusable_base_reason().map(str::to_owned);
+        let fact_store_usable = fact_cache_stats.unusable_base.is_none();
+        for batch in workspace_files.chunks(FACT_EXTRACTION_BATCH_FILES) {
+            let extracted: Vec<(&PathBuf, _, FactLookup)> = batch
+                .par_iter()
+                .filter_map(|relative| {
+                    let source = workspace_read.sources.get(relative)?;
+                    let (facts, lookup) =
+                        crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                            stored_or_extracted_facts(
+                                fact_store_usable.then_some(&fact_store),
+                                &options.root,
+                                relative,
+                                source,
+                            )
+                        });
+                    Some((relative, facts, lookup))
+                })
+                .collect();
+            for (relative, facts, lookup) in extracted {
+                lookup.count(&mut fact_cache_stats);
+                debug_assert!(source_fact_snapshot_observation(&facts) > 0);
+                if let Some(limitation) = parse_budget_limitation(relative, &facts)? {
+                    limitations.push(limitation);
+                }
+                // #6824: a syntax error in a changed file must surface as a
+                // named producer failure, never as a silent complete zero. An
+                // unchanged file's parse failure stays out of the diff-scoped
+                // limitation set (its context loss matches the Rust twin's
+                // unchanged-file behavior).
+                if changed_paths
+                    .iter()
+                    .any(|changed| changed == &normalized_path(relative))
+                    && let Some(limitation) = source_fact_parse_error_limitation(relative, &facts)?
+                {
+                    limitations.push(limitation);
+                }
+                foreign_prior_by_file.insert(
+                    relative.clone(),
+                    module_value::PriorFileFacts {
+                        assigned: facts.assigned_attributes.clone(),
+                        lexes: facts.foreign_lexes.clone(),
+                    },
+                );
+                docstring_ranges_by_file
+                    .insert(relative.clone(), facts.docstring_line_ranges.clone());
+                import_ranges_by_file.insert(relative.clone(), facts.import_line_ranges.clone());
+                if !facts.fixtures.is_empty() {
+                    fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
+                }
+                let side = fixtures::side_effects_of(&facts);
+                if side != fixtures::FixtureSideEffects::default() {
+                    fixture_side_by_file.insert(relative.clone(), side);
+                }
+                helper_modules_by_file.insert(relative.clone(), facts.helper_module.clone());
+                // A conftest with implicit setup, or one that only partly parsed,
+                // may assert around every test below it.
+                if facts.conftest_implicit_setup
+                    || (relative.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
+                        && !facts.limitations.is_empty())
+                {
+                    implicit_conftests.insert(relative.clone());
+                }
+                if facts.conftest_declares_fixture_or_hook
+                    || (relative.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
+                        && !facts.limitations.is_empty())
+                {
+                    reach_conftests.insert(relative.clone());
+                }
+                if is_test_file(relative) {
+                    all_tests.extend(facts.tests);
+                } else {
+                    all_owners.extend(facts.owners);
+                }
             }
         }
         fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
+        helper_assertions::apply_helper_assertions(&mut all_tests, &helper_modules_by_file);
+        // A chain conftest that exists but was never read (capped, excluded or
+        // unreadable) cannot be ruled out.
+        let unreadable_conftest = |conftest: &Path| {
+            !workspace_read.sources.contains_key(conftest) && options.root.join(conftest).is_file()
+        };
+        fixtures::mark_isolated_fixture_defs(
+            &mut all_tests,
+            &fixture_defs_by_file,
+            &fixture_side_by_file,
+            unreadable_conftest,
+        );
+        param_fixtures::apply_literal_param_fixtures(&mut all_tests);
+        fixtures::taint_admission_by_conftest(
+            &mut all_tests,
+            &implicit_conftests,
+            unreadable_conftest,
+        );
+        fixtures::mark_implicit_reach_by_conftest(
+            &mut all_tests,
+            &reach_conftests,
+            unreadable_conftest,
+        );
+        fixtures::taint_admission_by_conftest_declarations(
+            &mut all_tests,
+            &reach_conftests,
+            unreadable_conftest,
+        );
+        fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
+            options.root.join(path).exists()
+        });
         reexports::apply_package_reexports(&mut all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
+        bool_oracle::credit_bare_bool_asserts(&mut all_tests, &all_owners, |file| {
+            workspace_read.sources.get(file).map(String::as_str)
+        });
+        known_equality_helpers::credit_known_equality_helpers(&mut all_tests, |file| {
+            workspace_read.sources.get(file).map(String::as_str)
+        });
+        // Rival src-layout modules are found by path, so an over-cap run still
+        // sees every discovered module, read or not.
         related_tests::apply_src_module_ambiguity(
             &mut all_owners,
-            workspace_files.iter().filter(|file| !is_test_file(file)),
+            reach
+                .as_ref()
+                .map_or(&workspace_files, |admission| &admission.discovered)
+                .iter()
+                .filter(|file| !is_test_file(file)),
         );
+        related_tests::apply_rival_definition_modules(&mut all_owners);
+        related_tests::apply_class_facts(&mut all_owners);
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
         // `DiffScopeOversized` truncated-scan disclosure.
-        if refused_files > 0 {
+        // With a reach admission, only refused files that may reach the diff
+        // leave it partial; the rest name nothing the diff changes.
+        let refused_may_reach = reach
+            .as_ref()
+            .map_or(refused_files, |admission| admission.refused_reaching);
+        if refused_may_reach > 0 {
+            let detail = match &reach {
+                None => format!(
+                    "python workspace walk reached the {}-file cap ({PYTHON_MAX_WORKSPACE_FILES_ENV}); {refused_files} discovered .py file(s) were not analyzed; changed .py files are kept past this cap.",
+                    walk_limits.max_workspace_files,
+                ),
+                Some(admission) => format!(
+                    "python workspace walk reached the {}-file cap ({PYTHON_MAX_WORKSPACE_FILES_ENV}); {refused_may_reach} of the {} discovered .py file(s) that may reach the diff (naming what it changes, imported by a test or changed file that does, a conftest.py, or a package __init__.py above a changed file) were not analyzed, and {} that name nothing it changes were skipped; changed .py files are kept past this cap.",
+                    walk_limits.max_workspace_files,
+                    admission.reaching,
+                    admission.refused_unreached,
+                ),
+            };
             limitations.push(
                 AnalysisLimitation::new(
                     AnalysisLimitationKind::DiffScopeOversized,
@@ -754,13 +1286,10 @@ impl PythonAdapter {
                     )?,
                 )
                 .with_affected_items(
-                    u64::try_from(refused_files)
+                    u64::try_from(refused_may_reach)
                         .map_err(|err| format!("refused file count overflows u64: {err}"))?,
                 )?
-                .with_detail(format!(
-                    "python workspace walk stopped at the {}-file cap ({PYTHON_MAX_WORKSPACE_FILES_ENV}); {refused_files} discovered .py file(s) were not analyzed.",
-                    walk_limits.max_workspace_files,
-                ))?,
+                .with_detail(detail)?,
             );
         }
 
@@ -840,13 +1369,89 @@ impl PythonAdapter {
             .map(|path| normalized_path(path))
             .collect::<BTreeSet<_>>();
 
+        // Module-value reads (#9423) need what the rest of the workspace can
+        // do to a changed module's attributes, and which tests the diff also
+        // edits. Both are filled once per changed file, before classification.
+        let workspace_incomplete = refused_files > 0
+            || !workspace_read.limits.is_empty()
+            || !workspace_read.io_failures.is_empty();
+        // This physical-only capability cannot establish the complete HEAD
+        // import environment for committed-history or materialized subjects.
+        // Explicit diff input is the pipeline's live-source view.
+        if options.diff_file.is_some()
+            && all_owners.iter().any(|owner| {
+                owner.name == "__bool__"
+                    && python_changed_files
+                        .iter()
+                        .any(|changed| changed.path == owner.file)
+            })
+        {
+            dunder_truthiness::bind_workspace_observer(
+                &options.root,
+                &mut all_owners,
+                &workspace_read.sources,
+                workspace_incomplete,
+            );
+        }
+        let foreign_index = module_value::ForeignIndex::build_with_prior(
+            workspace_read
+                .sources
+                .iter()
+                .map(|(file, source)| (file.as_path(), source.as_str())),
+            workspace_incomplete,
+            &foreign_prior_by_file,
+        );
+        for changed in &python_changed_files {
+            let foreign = foreign_index.excluding(&changed.path);
+            conditional_defs::retain_workspace_certain(&mut all_owners, &changed.path, &foreign);
+            for owner in all_owners
+                .iter_mut()
+                .filter(|owner| owner.is_module_owner() && owner.file == changed.path)
+            {
+                owner.foreign_writes = foreign.clone();
+            }
+        }
+        // Doctest examples (RIPR-SPEC-0238 rule 26) are tests that live in a
+        // changed owner file; they need the file's old source to prove the
+        // example held before the edit.
+        for changed in &python_changed_files {
+            if is_test_file(&changed.path)
+                || absent_changed_paths.contains(&normalized_path(&changed.path))
+            {
+                continue;
+            }
+            let Some(new_source) = workspace_read.sources.get(&changed.path) else {
+                continue;
+            };
+            let Some(old_source) = reconstruct_old_source(new_source, changed) else {
+                continue;
+            };
+            all_tests.extend(doctest_tests::doctest_tests(
+                &changed.path,
+                new_source,
+                &old_source,
+                &options.root,
+            ));
+        }
+        for test in &mut all_tests {
+            if python_changed_files
+                .iter()
+                .any(|changed| changed.path == test.file)
+            {
+                test.constant_rebinding.edited_in_diff = true;
+            }
+        }
+
         let mut findings: Vec<Finding> = Vec::new();
+        let mut value_origins = crate::value_origins::ValueOrigins::default();
+        let mut related_memo = related_tests::RelatedCandidateMemo::default();
         let mut changed_count: usize = 0;
         for changed in python_changed_files {
             if absent_changed_paths.contains(&normalized_path(&changed.path)) {
                 continue;
             }
             changed_count += 1;
+            let file_start = findings.len();
             if is_test_file(&changed.path) {
                 continue;
             }
@@ -901,6 +1506,12 @@ impl PythonAdapter {
                     || is_added_import(added)
                     || is_python_no_behavior_line(&added.text)
                     || is_python_structural_line(&added.text)
+                    // A decorator that opens a newly added function is part of
+                    // its definition; the function's own lines carry the change.
+                    // A decorator that replaces an old line is an edit and keeps
+                    // its probe (#9756).
+                    || (!counterparts.contains_key(&added.line)
+                        && opens_added_definition(&changed.added_lines, added))
             });
             // Header span per owner, computed once per changed file.
             let mut header_spans: BTreeMap<usize, Option<(usize, usize)>> = BTreeMap::new();
@@ -967,8 +1578,14 @@ impl PythonAdapter {
                     structural_def_header_line: in_multi_line_def_header
                         && is_structural_def_header_text(&added.text),
                     multi_line_def_header_line: in_multi_line_def_header,
+                    // Removed lines carry the new-side line where the removal
+                    // sits, so a replacement in place has equal coordinates.
+                    sole_line_replacement: matches!(
+                        (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
+                        ([added_line], [removed_line]) if added_line.line == removed_line.line
+                    ),
                 };
-                if let Some(finding) = classify_change_with_context(
+                if let Some(finding) = classify_change_with_value_origins(
                     &changed.path,
                     added.line,
                     &added.text,
@@ -980,14 +1597,17 @@ impl PythonAdapter {
                         .sources
                         .get(&changed.path)
                         .map(String::as_str),
+                    &mut value_origins,
+                    Some(&mut related_memo),
                 ) {
                     findings.push(finding);
                 }
             }
+            classify::number_colliding_candidates(&mut findings[file_start..], &mut value_origins);
             // A deleted behavior line no added line pairs with is kept as
             // base-side evidence on its owner, as the Rust adapter keeps it
             // (#7587, RIPR-SPEC-0156).
-            let deleted = deleted_lines::deleted_line_findings(
+            let deleted = deleted_lines::deleted_line_findings_with_value_origins(
                 changed,
                 &counterparts,
                 &deleted_lines::OldSideRanges {
@@ -1002,10 +1622,13 @@ impl PythonAdapter {
                 &all_owners,
                 &all_tests,
                 &findings,
+                &mut value_origins,
+                &mut related_memo,
             );
             findings.extend(deleted);
         }
         Ok(LanguageDiffResult {
+            value_origins,
             findings,
             harness_projections: Vec::new(),
             changed_files: changed_count,
@@ -1016,6 +1639,7 @@ impl PythonAdapter {
             limitations,
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
+            preview_fact_cache: fact_cache_stats,
         })
     }
 
@@ -1041,6 +1665,7 @@ impl PythonAdapter {
         let production_files = input.production_files.len();
         let skipped_files = evidence.counts.skipped;
         Ok(LanguageRepoResult {
+            value_origins: evidence.value_origins,
             findings: evidence.findings,
             // No test-harness registry registrations exist in repo mode
             // (#3532): the projection is empty.
@@ -1048,6 +1673,7 @@ impl PythonAdapter {
             production_files,
             skipped_files,
             partial_reason,
+            file_accounting: repo::file_accounting(&input),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         })
@@ -1055,7 +1681,27 @@ impl PythonAdapter {
 }
 
 #[cfg(test)]
+mod property_assertion_tests;
+
+#[cfg(test)]
+mod unreachable_assertion_tests;
+
+#[cfg(test)]
+mod arm_activation_tests;
+
+#[cfg(test)]
 mod assertion_selection_tests;
+
+#[cfg(test)]
+mod bool_oracle_tests;
+#[cfg(test)]
+mod known_equality_helpers_tests;
+
+#[cfg(test)]
+mod conftest_admission_tests;
+
+#[cfg(test)]
+mod source_facts_tests;
 
 #[cfg(test)]
 mod deleted_lines_tests;
@@ -1064,8 +1710,37 @@ mod deleted_lines_tests;
 mod fixtures_tests;
 
 #[cfg(test)]
+mod literal_fixture_tests;
+
+#[cfg(test)]
+mod param_fixture_tests;
+
+#[cfg(test)]
+mod dunder_entry_tests;
+#[cfg(test)]
+mod dunder_truthiness_tests;
+
+#[cfg(test)]
+mod module_field_tests;
+
+#[cfg(test)]
+mod helper_assertions_tests;
+
+#[cfg(test)]
+mod capability_disposition_tests;
+
+#[cfg(test)]
+mod helper_inline_tests;
+#[cfg(test)]
+mod literal_patch_tests;
+
+#[cfg(test)]
 mod helper_owner_call_tests;
 
+#[cfg(test)]
+mod imported_call_operator_tests;
+#[cfg(test)]
+mod module_value_tests;
 #[cfg(test)]
 mod new_declaration_tests;
 
@@ -1079,7 +1754,16 @@ mod reexport_tests;
 mod replaced_block_tests;
 
 #[cfg(test)]
+mod route_identity_tests;
+
+#[cfg(test)]
+mod row_miss_tests;
+
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]
 mod verdict_corpus_tests;
+
+#[cfg(test)]
+mod doctest_gate_tests;

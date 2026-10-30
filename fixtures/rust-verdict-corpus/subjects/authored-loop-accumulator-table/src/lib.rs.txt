@@ -1,0 +1,22 @@
+//! A loop accumulator pinned by a table of input and total rows.
+
+pub fn tally(parts: &[u32]) -> u32 {
+    let mut total = 0;
+    for p in parts {
+        total = total + p;
+    }
+    total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tallies_match_the_table() {
+        let cases: [(&[u32], u32); 3] = [(&[], 0), (&[3, 4], 7), (&[10], 10)];
+        for (parts, want) in cases {
+            assert_eq!(tally(parts), want);
+        }
+    }
+}

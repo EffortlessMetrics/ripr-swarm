@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0228-7976-ordinary-assertion",
+  "subject_id": "authored-7976-ordinary-assertion",
+  "origin": "authored",
+  "anchor": "src/lib.rs:5",
+  "behavior_family": "side_effect_push",
+  "test_shape": "unit_test_argument_free_getter_ordinary_assertion",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

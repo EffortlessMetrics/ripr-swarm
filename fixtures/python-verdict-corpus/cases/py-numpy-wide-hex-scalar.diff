@@ -1,0 +1,12 @@
+diff --git a/src/extra.py b/src/extra.py
+--- a/src/extra.py
++++ b/src/extra.py
+@@ -31,7 +31,7 @@ def signed(text):
+ 
+ 
+ def wide(text):
+-    return int(text) + 0x100000000000000000000000000000000
++    return [int(text) + 0x100000000000000000000000000000000] * 2
+ 
+ 
+ def spaced(text):

@@ -13,6 +13,9 @@ use super::text::{
 };
 use crate::analysis::sync_memo::SyncMemo;
 use crate::domain::*;
+use crate::value_origins::{
+    LocatedActivationEvidence as ActivationEvidence, LocatedValueFact as ValueFact,
+};
 
 #[cfg(test)]
 pub(in crate::analysis) fn activation_evidence(
@@ -73,6 +76,8 @@ pub(in crate::analysis) fn activation_evidence_with_value_facts(
 pub(in crate::analysis) struct ActivationWithBoundaryInput {
     pub(in crate::analysis) activation: ActivationEvidence,
     pub(in crate::analysis) unresolved_boundary: Option<String>,
+    pub(in crate::analysis) literal_length_boundary:
+        Option<super::literal_length_boundary::LiteralLengthBoundary>,
 }
 
 /// `activation_evidence_with_value_facts` that also returns the
@@ -95,7 +100,11 @@ pub(in crate::analysis) fn activation_and_boundary_input(
         .iter()
         .flat_map(|test| match value_facts {
             Some(memo) => memo.facts_for(index, test, owner_fn),
-            None => value_facts_for_test(test, owner_fn),
+            None => value_facts_for_test(
+                test,
+                owner_fn,
+                super::argument_fold::FoldScope::of_test(test, index),
+            ),
         })
         .collect::<Vec<_>>();
     observed_values.extend(observed_discriminator_values(
@@ -140,6 +149,7 @@ pub(in crate::analysis) fn activation_and_boundary_input(
             missing_discriminators,
         },
         unresolved_boundary,
+        literal_length_boundary: None,
     }
 }
 
@@ -149,6 +159,9 @@ struct ParameterValue {
     value: String,
     line: usize,
     text: String,
+    /// The test file whose call produced the row, so a fact built from it
+    /// can be matched back to that test alone.
+    file: Option<std::path::PathBuf>,
 }
 
 /// `value_facts_for_test` per (related test, owner), computed at most once
@@ -180,13 +193,14 @@ impl TestValueFacts {
         test: &TestSummary,
         owner_fn: Option<&FunctionSummary>,
     ) -> Vec<ValueFact> {
+        let scope = super::argument_fold::FoldScope::of_test(test, index);
         let Some(key) = self.slot_key(index, test, owner_fn) else {
-            return value_facts_for_test(test, owner_fn);
+            return value_facts_for_test(test, owner_fn, scope);
         };
         if let Some(facts) = self.by_slot.borrow().get(&key) {
             return facts.clone();
         }
-        let facts = value_facts_for_test(test, owner_fn);
+        let facts = value_facts_for_test(test, owner_fn, scope);
         self.by_slot.borrow_mut().insert(key, facts.clone());
         facts
     }
@@ -245,7 +259,11 @@ fn path_value_context(path: &str) -> ValueContext {
     }
 }
 
-fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) -> Vec<ValueFact> {
+fn value_facts_for_test(
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+    scope: super::argument_fold::FoldScope<'_>,
+) -> Vec<ValueFact> {
     let owner_name = owner_fn.map(|owner| owner.name.as_str()).unwrap_or("");
     let parameters = owner_fn.map(function_parameters).unwrap_or_default();
     let mut facts = Vec::new();
@@ -261,12 +279,13 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             continue;
         };
         for (idx, argument) in arguments.iter().enumerate() {
-            for value in owner_argument_values(test, argument) {
+            for value in owner_row_argument_values(test, argument, false, scope) {
                 let value = parameters
                     .get(idx)
                     .map(|parameter| format!("{parameter} = {value}"))
                     .unwrap_or(value);
                 facts.push(ValueFact {
+                    file: None,
                     line: call.line,
                     text: call.text.to_string(),
                     value,
@@ -275,6 +294,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             }
             for value in enum_variant_values(argument) {
                 facts.push(ValueFact {
+                    file: None,
                     line: call.line,
                     text: call.text.to_string(),
                     context: path_value_context(&value),
@@ -292,6 +312,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             }
             for value in scalar_values(&argument) {
                 facts.push(ValueFact {
+                    file: None,
                     line: assertion.line,
                     text: assertion.text.clone(),
                     value,
@@ -301,6 +322,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         }
         for value in enum_variant_values(&assertion.text) {
             facts.push(ValueFact {
+                file: None,
                 line: assertion.line,
                 text: assertion.text.clone(),
                 context: path_value_context(&value),
@@ -315,6 +337,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         if looks_like_table_row(trimmed) {
             for value in spelled_scalar_values(trimmed) {
                 facts.push(ValueFact {
+                    file: None,
                     line: line_number,
                     text: trimmed.to_string(),
                     value,
@@ -325,6 +348,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         if looks_like_builder_method(trimmed) {
             for value in spelled_scalar_values(trimmed) {
                 facts.push(ValueFact {
+                    file: None,
                     line: line_number,
                     text: trimmed.to_string(),
                     value,
@@ -334,6 +358,11 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         }
     }
 
+    // #8389: the run-wide value list merges facts from every related test, so
+    // each fact records its own test file; a bare line number is ambiguous.
+    for fact in &mut facts {
+        fact.file = Some(test.file.clone());
+    }
     sort_value_facts(&mut facts);
     facts
 }
@@ -374,31 +403,84 @@ fn observed_discriminator_values(
     ) {
         return element_boundary_observations(owner, &view, index);
     }
-    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
-    let left_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &left);
-    let right_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &right);
-    // #3295: the operands resolve once per probe (initializer or
-    // parameter); only the input row changes per call.
-    let left_resolved = resolve_boundary_operand(
+    let text_cells = emptiness_guard_operand(probe, &left, &right).is_some();
+    let call_values = call_values_for_owner(
         owner,
-        &left,
-        probe.location.line,
         &parameters,
+        related_tests,
+        helper_chain,
         index,
-        workspace_complete,
+        text_cells,
     );
-    let right_resolved = resolve_boundary_operand(
+    let closed_form = admits_closed_form(
         owner,
+        probe,
+        &left,
+        &right,
+        related_tests,
+        &call_values,
+        index,
+    );
+    let left_parameter =
+        boundary_operand_parameter(owner, owner_source, &parameters, &left, probe.location.line);
+    let right_parameter = boundary_operand_parameter(
+        owner,
+        owner_source,
+        &parameters,
         &right,
         probe.location.line,
+    );
+    let left_credit = credited_parameter(
+        owner,
         &parameters,
-        index,
-        workspace_complete,
+        &left,
+        &left_parameter,
+        probe.location.line,
+    );
+    let right_credit = credited_parameter(
+        owner,
+        &parameters,
+        &right,
+        &right_parameter,
+        probe.location.line,
+    );
+    // #3295: the operands resolve once per probe (initializer or
+    // parameter); only the input row changes per call.
+    let left_resolved = credited_resolution(
+        owner,
+        &parameters,
+        &left,
+        resolve_boundary_operand(
+            owner,
+            &left,
+            probe.location.line,
+            &parameters,
+            index,
+            workspace_complete,
+            closed_form,
+        ),
+        probe.location.line,
+    );
+    let right_resolved = credited_resolution(
+        owner,
+        &parameters,
+        &right,
+        resolve_boundary_operand(
+            owner,
+            &right,
+            probe.location.line,
+            &parameters,
+            index,
+            workspace_complete,
+            closed_form,
+        ),
+        probe.location.line,
     );
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
         .flatten();
     let mut facts = Vec::new();
+    let replaced = replaced_equality_constant(probe);
 
     for row in call_values {
         let inputs: super::value_transfer::ExactInputs = row
@@ -413,11 +495,31 @@ fn observed_discriminator_values(
             .and_then(|resolved| {
                 exact_operand_for_row(resolved, &row, &inputs, index, workspace_complete)
             })
-            .or_else(|| visible_operand(&right, right_constant.as_ref()));
+            .or_else(|| visible_operand(&right, right_constant.as_ref()))
+            .or_else(|| scanner_state_path_operand(&right, left_exact.as_slice()));
         if let (Some(left_value), Some(right_value)) = (&left_exact, &right_exact)
-            && left_value.value == right_value.value
+            && exact_values_equal(&left_value.value, &right_value.value)
         {
+            let (value, _) = equality_value(
+                &EqualitySide::new(
+                    &left,
+                    &left_value.value,
+                    left_parameter.as_deref(),
+                    left_resolved.as_ref(),
+                ),
+                &EqualitySide::new(
+                    &right,
+                    &right_value.value,
+                    right_parameter.as_deref(),
+                    right_resolved.as_ref(),
+                ),
+            );
             facts.push(ValueFact {
+                // Every equality fact carries its test file: human evidence
+                // names it, and same-test pairing matches a fact by line and
+                // call text, so a second file's call on the same line must not
+                // satisfy it.
+                file: row.first().and_then(|cell| cell.file.clone()),
                 line: row.first().map(|cell| cell.line).unwrap_or_default(),
                 text: format!(
                     "{} | {}; {}",
@@ -427,18 +529,37 @@ fn observed_discriminator_values(
                     left_value.provenance,
                     right_value.provenance,
                 ),
-                value: format!("{left} == {right}"),
+                value,
                 context: ValueContext::FunctionArgument,
             });
             continue;
         }
-        let Some(left_parameter) = left_parameter.as_deref() else {
+        if let (Some(left_value), Some(old)) = (&left_exact, &replaced)
+            && exact_values_equal(&old.value, &left_value.value)
+        {
+            facts.push(ValueFact {
+                file: row.first().and_then(|cell| cell.file.clone()),
+                line: row.first().map(|cell| cell.line).unwrap_or_default(),
+                text: format!(
+                    "{} | {}; replaced constant {}",
+                    row.first()
+                        .map(|cell| cell.text.clone())
+                        .unwrap_or_default(),
+                    left_value.provenance,
+                    old.text,
+                ),
+                value: format!("{left} == {}", old.text),
+                context: ValueContext::FunctionArgument,
+            });
+            continue;
+        }
+        let Some(left_credit) = left_credit.as_deref() else {
             continue;
         };
-        let Some(left_value) = parameter_value(&row, left_parameter) else {
+        let Some(left_value) = parameter_value(&row, left_credit) else {
             continue;
         };
-        let right_value = right_parameter
+        let right_value = right_credit
             .as_deref()
             .and_then(|parameter| parameter_value(&row, parameter))
             .map(|value| value.value)
@@ -450,23 +571,37 @@ fn observed_discriminator_values(
             .is_some_and(|value| comparable_value(value) == comparable_value(&left_value.value))
         {
             facts.push(ValueFact {
+                file: left_value.file.clone(),
                 line: left_value.line,
                 text: left_value.text.clone(),
                 value: format!("{left} == {right}"),
                 context: ValueContext::FunctionArgument,
             });
+        } else if let Some(old) = &replaced
+            && same_literal_value(&old.value, &left_value.value)
+        {
+            // The row sits on the constant the edit replaced; it flips the
+            // same way a row on the new constant does (#10680).
+            facts.push(ValueFact {
+                file: left_value.file.clone(),
+                line: left_value.line,
+                text: format!("{} | replaced constant {}", left_value.text, old.text),
+                value: format!("{left} == {}", old.text),
+                context: ValueContext::FunctionArgument,
+            });
         }
     }
-    if let (Some(constant), Some(left_parameter)) = (&right_constant, left_parameter.as_deref()) {
-        for (line, text) in owner_calls_passing_constant(
+    if let (Some(constant), Some(left_credit)) = (&right_constant, left_credit.as_deref()) {
+        for (file, line, text) in owner_calls_passing_constant(
             related_tests,
             owner,
             &parameters,
-            left_parameter,
+            left_credit,
             constant,
             index,
         ) {
             facts.push(ValueFact {
+                file: Some(file),
                 line,
                 text: format!("{text} | argument names constant {right}"),
                 value: format!("{left} == {right}"),
@@ -476,6 +611,63 @@ fn observed_discriminator_values(
     }
 
     facts
+}
+
+/// The `left == right` text of an equality fact. A parameter compared with a
+/// local that the row's inputs evaluated (`bytes == unit`, `unit` being
+/// `if si { KIB } else { KB }`, on either side of the comparison) names the
+/// local's value instead of the local, so the fact reads like the literal
+/// comparison it is: same-test pairing matches `parameter == literal` terms
+/// against the literals the call feeds, and a local's name carries nothing to
+/// match.
+fn equality_value(left: &EqualitySide<'_>, right: &EqualitySide<'_>) -> (String, bool) {
+    match (left.kind, right.kind) {
+        (SideKind::Parameter, SideKind::Local) => {
+            (format!("{} == {}", left.text, right.value), true)
+        }
+        (SideKind::Local, SideKind::Parameter) => {
+            (format!("{} == {}", right.text, left.value), true)
+        }
+        _ => (format!("{} == {}", left.text, right.text), false),
+    }
+}
+
+fn is_plain_integer(value: &str) -> bool {
+    let digits = value.strip_prefix('-').unwrap_or(value);
+    !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit())
+}
+
+/// One operand of an equality fact: its source text, its exact value in the
+/// row, and whether it is a plain owner parameter or a resolved local.
+struct EqualitySide<'a> {
+    text: &'a str,
+    value: &'a str,
+    kind: SideKind,
+}
+
+#[derive(Clone, Copy)]
+enum SideKind {
+    Parameter,
+    Local,
+    Other,
+}
+
+impl<'a> EqualitySide<'a> {
+    fn new(
+        text: &'a str,
+        value: &'a str,
+        parameter: Option<&str>,
+        resolved: Option<&ResolvedOperand>,
+    ) -> Self {
+        let kind = match resolved {
+            // Only an integer, the boundary a literal comparison would name;
+            // a boolean or text local keeps its own name.
+            Some(ResolvedOperand::Local(..)) if is_plain_integer(value) => SideKind::Local,
+            _ if parameter == Some(text.trim()) => SideKind::Parameter,
+            _ => SideKind::Other,
+        };
+        EqualitySide { text, value, kind }
+    }
 }
 
 /// The exact value of one comparison operand under one related-test
@@ -488,7 +680,11 @@ fn observed_discriminator_values(
 /// parameter.
 pub(crate) enum ResolvedOperand {
     Parameter(String),
-    Local(String, String),
+    /// A local binding's initializer plus the same-file constants it names
+    /// (`let unit = if si { KIB } else { KB };`), each declared once with
+    /// a plain decimal value. They join the row's exact inputs so the
+    /// bounded evaluator reads them like any other named value.
+    Local(String, String, Vec<(String, String)>),
     /// A direct call to a unique helper (`is_word_start(input, 0)`)
     /// whose return value is evaluated over the row's bound inputs
     /// (#3296 boolean-predicate helper family).
@@ -496,6 +692,242 @@ pub(crate) enum ResolvedOperand {
         callee: Box<crate::analysis::facts::FunctionSummary>,
         arguments: Vec<String>,
     },
+    /// A closed-form operand written in the predicate itself (`s.len()`,
+    /// `data.len() % 2`, `2 + 2`) whose every identifier is an owner
+    /// parameter or a same-file constant, so each related-test row either
+    /// evaluates it exactly or leaves it unknown (#9637).
+    Expression(String, Vec<(String, String)>),
+}
+
+/// Integer scalar type names an expression operand may read.
+const WIDE_INTEGER_TYPES: [&str; 8] =
+    ["u32", "u64", "u128", "usize", "i32", "i64", "i128", "isize"];
+
+/// The declared type of a parameter when it is a plain integer or a plain
+/// text reference/owner (`&str`, `String`, `&String`). Generic owners,
+/// patterns, `mut`/`ref` bindings and every other type answer `None`, so a
+/// `.len()` is read only on the intrinsic string method.
+fn exact_scalar_parameter(owner: &FunctionSummary, name: &str) -> bool {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasGenericParams, HasName},
+    };
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&owner.body) else {
+        return false;
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    if function.generic_param_list().is_some()
+        || function.async_token().is_some()
+        || function
+            .param_list()
+            .is_none_or(|params| params.self_param().is_some())
+    {
+        return false;
+    }
+    let Some(params) = function.param_list() else {
+        return false;
+    };
+    params.params().any(|param| {
+        let Some(ast::Pat::IdentPat(pattern)) = param.pat() else {
+            return false;
+        };
+        if pattern.name().is_none_or(|bound| bound.text() != name)
+            || pattern.mut_token().is_some()
+            || pattern.ref_token().is_some()
+            || pattern.at_token().is_some()
+        {
+            return false;
+        }
+        let Some(ty) = param.ty() else {
+            return false;
+        };
+        let text: String = ty
+            .syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect();
+        // Only types wide enough to hold every bounded arithmetic result:
+        // `u8`/`i8`/`u16`/`i16` could overflow where the evaluator is exact.
+        WIDE_INTEGER_TYPES.contains(&text.as_str())
+            || matches!(text.as_str(), "&str" | "String" | "&String")
+    })
+}
+
+/// A comparison operand that is neither a parameter, a local, nor a direct
+/// call but a closed-form expression of parameters, same-file constants and
+/// literals (`s.len()`, `data.len() % 2`, `2 + 2`). Anything else (a call,
+/// a field read, a cast, a rebound or non-scalar parameter) is `None` and
+/// keeps the unknown reading.
+fn closed_form_operand(
+    owner: &FunctionSummary,
+    operand: &str,
+    parameters: &[String],
+    predicate_line: usize,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<ResolvedOperand> {
+    let text = closed_form_text(owner, operand, parameters, predicate_line)?;
+    let constants = initializer_constants(owner, text, parameters, index);
+    Some(ResolvedOperand::Expression(text.to_string(), constants))
+}
+
+/// Whether every method the text calls is one the value evaluator models
+/// for the closed-form operand shapes (`.len()`,
+/// `.split_whitespace()`, `.chars()`, `.count()`), so an unmodelled method
+/// (`count_ones`, `abs`) never renames a pre-existing unknown operand.
+fn methods_are_evaluated(text: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+    let mut rest = masked.as_str();
+    while let Some(dot) = rest.find('.') {
+        let after = &rest[dot + 1..];
+        let name: String = after
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+            .collect();
+        if name.is_empty() && after.starts_with(|ch: char| ch.is_ascii_digit()) {
+            // A decimal point, not a method call.
+            return false;
+        }
+        if !matches!(
+            name.as_str(),
+            "len" | "split_whitespace" | "chars" | "count"
+        ) {
+            return false;
+        }
+        rest = &after[name.len()..];
+    }
+    true
+}
+
+/// The trimmed operand text when it is an admitted closed-form expression.
+fn closed_form_text<'a>(
+    owner: &FunctionSummary,
+    operand: &'a str,
+    parameters: &[String],
+    predicate_line: usize,
+) -> Option<&'a str> {
+    let text = operand.trim();
+    if text.is_empty()
+        || text.len() > 96
+        || is_plain_identifier(text)
+        || literal_operand_value(text).is_some()
+        || !(text.contains(".len()") || text.contains(['+', '-', '*', '/', '%']))
+        // A constant (offset) boundary keeps its own named-constant route.
+        || crate::analysis::value_resolution::constant_offset_operand(text).is_some()
+        || !methods_are_evaluated(text)
+    {
+        return None;
+    }
+    let names = free_identifiers(text);
+    let parameters_read: Vec<&String> = names
+        .iter()
+        .filter(|name| parameters.contains(*name))
+        .collect();
+    let foreign = |name: &String| {
+        !parameters.contains(name)
+            && (!is_constant_like(name) || matches!(name.as_str(), "true" | "false"))
+    };
+    if names.iter().any(foreign)
+        || parameters_read.iter().any(|name| {
+            parameter_may_be_rebound(owner, name, predicate_line)
+                || !exact_scalar_parameter(owner, name)
+        })
+    {
+        return None;
+    }
+    Some(text)
+}
+
+/// Whether a local's initializer evaluates, under some related-call row,
+/// through an operation family that may only credit (#9637).
+fn uses_credit_only_family(
+    resolved: &ResolvedOperand,
+    call_values: &[Vec<ParameterValue>],
+) -> bool {
+    let ResolvedOperand::Local(_, initializer, constants) = resolved else {
+        return false;
+    };
+    call_values.iter().any(|row| {
+        let mut inputs: super::value_transfer::ExactInputs = row
+            .iter()
+            .map(|cell| (cell.parameter.clone(), cell.value.clone()))
+            .collect();
+        for (constant, value) in constants {
+            inputs
+                .entry(constant.clone())
+                .or_insert_with(|| value.clone());
+        }
+        matches!(
+            super::value_transfer::evaluate_initializer(initializer, &inputs),
+            super::value_transfer::EvalOutcome::Exact { provenance, .. }
+                if provenance.iter().any(|step| {
+                    super::value_transfer::CREDIT_ONLY_OPERATIONS.contains(&step.operation.as_str())
+                })
+        )
+    })
+}
+
+/// Whether `operand` is an admitted closed-form expression that reads at
+/// least one owner parameter, so it is the tested input and not the boundary.
+fn is_parameter_expression(
+    owner: &FunctionSummary,
+    operand: &str,
+    parameters: &[String],
+    predicate_line: usize,
+) -> bool {
+    closed_form_text(owner, operand, parameters, predicate_line).is_some_and(|text| {
+        free_identifiers(text)
+            .iter()
+            .any(|name| parameters.contains(name))
+    })
+}
+
+/// The parameter whose observed rows may be credited as `operand`'s value
+/// (#9197). A name that matches a parameter but that the owner rebinds or
+/// mutates on or before the compared line is no longer the value the test
+/// passed in, so the observed rows must not satisfy the boundary. The operand
+/// stays a known parameter for the unresolved-input reading; only the credit
+/// is withheld.
+fn credited_parameter(
+    owner: &FunctionSummary,
+    parameters: &[String],
+    operand: &str,
+    found: &Option<String>,
+    predicate_line: usize,
+) -> Option<String> {
+    found.clone().filter(|_| {
+        !(parameters.iter().any(|parameter| parameter == operand)
+            && owner_rebinds_operand(owner, operand, predicate_line))
+    })
+}
+
+/// `resolved`, except a parameter operand the owner rebinds or mutates
+/// resolves to no exact row value (#9197).
+fn credited_resolution(
+    owner: &FunctionSummary,
+    parameters: &[String],
+    operand: &str,
+    resolved: Option<ResolvedOperand>,
+    predicate_line: usize,
+) -> Option<ResolvedOperand> {
+    match resolved {
+        Some(ResolvedOperand::Parameter(_))
+            if credited_parameter(
+                owner,
+                parameters,
+                operand,
+                &Some(operand.to_string()),
+                predicate_line,
+            )
+            .is_none() =>
+        {
+            None
+        }
+        other => other,
+    }
 }
 
 fn resolve_boundary_operand(
@@ -505,6 +937,7 @@ fn resolve_boundary_operand(
     parameters: &[String],
     index: &crate::analysis::rust_index::RustIndex,
     workspace_complete: bool,
+    allow_closed_form: bool,
 ) -> Option<ResolvedOperand> {
     if let Some(initializer) = live_local_initializer(owner, operand, predicate_line) {
         // #3296 scanner/helper remainder: a local whose initializer is
@@ -515,7 +948,43 @@ fn resolve_boundary_operand(
         if let Some(call) = resolve_direct_call(&initializer, index, workspace_complete) {
             return Some(call);
         }
-        return Some(ResolvedOperand::Local(operand.to_string(), initializer));
+        // A flag-selected initializer reads its flag from the caller's row
+        // and its arms from the file's constants, so neither may be rebound
+        // in the owner (`let si = !si;`, a local `KB`).
+        if initializer.trim_start().starts_with("if ")
+            && free_identifiers(&initializer)
+                .iter()
+                .filter(|name| !matches!(name.as_str(), "if" | "else" | "true" | "false"))
+                .any(|name| {
+                    name_rebound_in_owner(owner, name)
+                        || (!is_constant_like(name) && name_seen_before(owner, name, &initializer))
+                })
+        {
+            return None;
+        }
+        // The evaluator binds a parameter name in any initializer to the
+        // test row's literal; an owner that rebinds the parameter first
+        // (`let x = x + 10;`, `let s = s.trim();`) reads a different value.
+        // The local's own declaration may shadow the parameter it reads
+        // (`let input = input.strip_prefix(..)`); only an earlier rebinding
+        // changes what the initializer's parameter name means.
+        let declared_line = owner.start_line
+            + owner
+                .body
+                .rfind(initializer.trim())
+                .map_or(0, |at| owner.body[..at].matches('\n').count());
+        if free_identifiers(&initializer).iter().any(|name| {
+            parameters.contains(name)
+                && parameter_rebound_before(owner, name, declared_line, &initializer)
+        }) {
+            return None;
+        }
+        let constants = initializer_constants(owner, &initializer, parameters, index);
+        return Some(ResolvedOperand::Local(
+            operand.to_string(),
+            initializer,
+            constants,
+        ));
     }
     if let Some(parameter) = parameters
         .iter()
@@ -523,7 +992,197 @@ fn resolve_boundary_operand(
     {
         return Some(ResolvedOperand::Parameter(parameter.clone()));
     }
-    resolve_direct_call(operand, index, workspace_complete)
+    resolve_direct_call(operand, index, workspace_complete).or_else(|| {
+        allow_closed_form
+            .then(|| closed_form_operand(owner, operand, parameters, predicate_line, index))
+            .flatten()
+    })
+}
+
+/// Whether the predicate compares with `<`, `<=`, `>` or `>=`. A closed-form
+/// operand (`text.len()`) credits only an ordering boundary: an `==` or `!=`
+/// guard has neighbours (`len() < 2` survives an `== 0` test) that one
+/// on-boundary row does not discriminate.
+fn ordering_predicate(expression: &str) -> bool {
+    let expression = expression.replace("->", " ").replace("=>", " ");
+    let expression = expression.as_str();
+    for operator in [">=", "<=", "==", "!=", ">", "<"] {
+        if expression.contains(operator) {
+            return !matches!(operator, "==" | "!=");
+        }
+    }
+    false
+}
+
+/// The length operand of an emptiness guard: the changed condition is the one
+/// comparison `text.len() == 0` or `text.len() != 0` (either orientation) and
+/// nothing else. A compound condition, a literal other than `0` or an ordering
+/// operator is not one.
+fn emptiness_guard_operand<'a>(probe: &Probe, left: &'a str, right: &'a str) -> Option<&'a str> {
+    let expression = probe.expression.as_str();
+    let equality_operators = expression.matches("==").count() + expression.matches("!=").count();
+    if equality_operators != 1
+        || ["&&", "||", "<", ">"]
+            .iter()
+            .any(|operator| expression.contains(operator))
+    {
+        return None;
+    }
+    match (left.trim(), right.trim()) {
+        (length, "0") | ("0", length) if length.ends_with(".len()") => Some(length),
+        _ => None,
+    }
+}
+
+/// Whether a closed-form operand (`text.len()`) may stand for the boundary.
+/// An ordering predicate always admits it. An emptiness guard, `text.len() ==
+/// 0` or `!= 0`, admits it only when the related calls give the operand both
+/// an empty and a non-empty value: the empty row separates the guard from
+/// `!=`, `== 1` and a constant `false`, the non-empty row from a constant
+/// `true`. A neighbour such as `len() < 2` is not separated by these rows
+/// and is not claimed: the credit covers the one-step negation and constant
+/// mutants of the guard. Every related test that calls the owner must also
+/// hold only strong assertions, a conservative proxy that keeps a weakly
+/// asserted call (`idiom-result-empty-guard`) from being read as pinning the
+/// guard. Rows on one side only, other literals and any unreadable row keep
+/// the unknown reading. Rows reach this through the same call-value reader as
+/// every other boundary input, so a literal table loop counts row by row.
+fn admits_closed_form(
+    owner: &FunctionSummary,
+    probe: &Probe,
+    left: &str,
+    right: &str,
+    related_tests: &[&TestSummary],
+    call_values: &[Vec<ParameterValue>],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    if ordering_predicate(&probe.expression) {
+        return true;
+    }
+    let Some(length) = emptiness_guard_operand(probe, left, right) else {
+        return false;
+    };
+    let Some(resolved @ ResolvedOperand::Expression(..)) = resolve_boundary_operand(
+        owner,
+        length,
+        probe.location.line,
+        &function_parameters(owner),
+        index,
+        true,
+        true,
+    ) else {
+        return false;
+    };
+    let every_call_pinned = related_tests
+        .iter()
+        .filter(|test| test.body_calls().any(|call| call.name == owner.name))
+        .all(|test| {
+            !test.assertions.is_empty()
+                && test
+                    .assertions
+                    .iter()
+                    .all(|assertion| matches!(assertion.strength, OracleStrength::Strong))
+        });
+    if !every_call_pinned {
+        return false;
+    }
+    // A call whose argument ripr cannot read yields no row, and may be the
+    // input that sits on a neighbour of the guard. Per test, either its one
+    // owner call supplies the rows (a table loop supplies one per row) or
+    // every direct call supplies exactly one; a table beside an unread call
+    // cannot hide it behind the table's extra rows.
+    for test in related_tests {
+        let calls = test
+            .body_calls()
+            .filter(|call| call.name == owner.name)
+            .count();
+        if calls == 0 {
+            continue;
+        }
+        let rows = call_values_for_owner(owner, &[], &[*test], None, index, true).len();
+        if rows == 0 {
+            return false;
+        }
+        // Several owner calls in one test: counting rows against calls cannot
+        // tell an unreadable direct call beside a two-row table (two rows, two
+        // calls) from two readable ones, so each call must read a row itself.
+        if calls > 1 && !every_owner_call_reads_a_row(owner, test, index) {
+            return false;
+        }
+        // The cell reader takes a literal it finds inside a call chain as the
+        // argument (#10484), so a call that runs one is no row even when it
+        // is the test's only owner call.
+        if !every_owner_call_argument_is_plain(owner, test) {
+            return false;
+        }
+    }
+    // Every row must sit on a line that carries a strong assertion, so an
+    // unasserted call (`let _ = initial("")`) is not an input row.
+    let asserted = |row: &[ParameterValue]| {
+        row.iter().all(|cell| {
+            related_tests.iter().any(|test| {
+                cell.file.as_deref().is_none_or(|file| test.file == file)
+                    && test.assertions.iter().any(|assertion| {
+                        assertion.line == cell.line
+                            && matches!(assertion.strength, OracleStrength::Strong)
+                    })
+            })
+        })
+    };
+    if !call_values.iter().all(|row| asserted(row)) {
+        return false;
+    }
+    let (mut empty, mut non_empty) = (false, false);
+    for row in call_values {
+        let inputs: super::value_transfer::ExactInputs = row
+            .iter()
+            .map(|cell| (cell.parameter.clone(), cell.value.clone()))
+            .collect();
+        // One unreadable row may be the input that sits on a neighbour of the
+        // guard, so it withholds the credit rather than being skipped.
+        let Some(exact) = exact_operand_for_row(&resolved, row, &inputs, index, true) else {
+            return false;
+        };
+        match exact.value.trim().parse::<u64>() {
+            Ok(0) => empty = true,
+            Ok(_) => non_empty = true,
+            Err(_) => return false,
+        }
+    }
+    empty && non_empty
+}
+
+/// The same-file constants a local's initializer names, as name and plain
+/// decimal value. A constant declared twice, imported, or with a value
+/// ripr cannot read as one decimal literal is left out, so the evaluator
+/// fails closed on that name instead of guessing.
+pub(super) fn initializer_constants(
+    owner: &FunctionSummary,
+    initializer: &str,
+    parameters: &[String],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Vec<(String, String)> {
+    let Some(facts) = index.files().get(&owner.file) else {
+        return Vec::new();
+    };
+    free_identifiers(initializer)
+        .into_iter()
+        .filter(|name| {
+            is_constant_like(name)
+                && !matches!(name.as_str(), "true" | "false")
+                && !parameters.contains(name)
+                && !name_rebound_in_owner(owner, name)
+                && !name_imported_in_file(&facts.source, name)
+        })
+        .filter_map(|name| {
+            let constant = crate::analysis::value_resolution::named_constant(&facts.source, &name);
+            if !constant.is_declared_once() {
+                return None;
+            }
+            let value = constant.value()?.to_string();
+            Some((name, value))
+        })
+        .collect()
 }
 
 /// Decompose a direct-call text (`is_word_start(input, 0)`) into the
@@ -572,11 +1231,39 @@ fn exact_operand_for_row(
     workspace_complete: bool,
 ) -> Option<ExactOperand> {
     match resolved {
-        ResolvedOperand::Local(name, initializer) => {
-            match super::value_transfer::evaluate_initializer(initializer, inputs) {
+        ResolvedOperand::Local(name, initializer, constants) => {
+            let mut with_constants = inputs.clone();
+            for (constant, value) in constants {
+                with_constants
+                    .entry(constant.clone())
+                    .or_insert_with(|| value.clone());
+            }
+            match super::value_transfer::evaluate_initializer(initializer, &with_constants) {
                 super::value_transfer::EvalOutcome::Exact { value, provenance } => Some(
-                    exact_operand_from_evaluation(name, &value, &provenance, inputs),
+                    exact_operand_from_evaluation(name, &value, &provenance, &with_constants),
                 ),
+                _ => None,
+            }
+        }
+        ResolvedOperand::Expression(expression, constants) => {
+            let mut with_constants = inputs.clone();
+            for (constant, value) in constants {
+                with_constants
+                    .entry(constant.clone())
+                    .or_insert_with(|| value.clone());
+            }
+            match super::value_transfer::evaluate_initializer(expression, &with_constants) {
+                // Only an integer is a comparison boundary here; text, char
+                // and option results keep the unknown reading.
+                super::value_transfer::EvalOutcome::Exact {
+                    value: value @ super::value_transfer::TypedValue::Index(_),
+                    provenance,
+                } => Some(exact_operand_from_evaluation(
+                    expression,
+                    &value,
+                    &provenance,
+                    &with_constants,
+                )),
                 _ => None,
             }
         }
@@ -629,6 +1316,43 @@ fn exact_operand_for_row(
             })
         }
     }
+}
+
+/// Whether the parameter a local is compared against holds a value the
+/// local can meet in this row. A local that folds to a plain integer meets
+/// only a plain integer cell: a string cell is the literal inside a call
+/// argument (`to_string(parse("128.000 GiB"), true)`), not the compared
+/// number, so such a row says nothing about the boundary. No counterpart
+/// parameter, or no cell for it, leaves the row as it was.
+fn counterpart_is_comparable(
+    row: &[ParameterValue],
+    counterpart: Option<&str>,
+    local_value: &str,
+) -> bool {
+    fn plain_decimal(text: &str) -> bool {
+        let digits = text.trim().replace('_', "");
+        !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit())
+    }
+    let Some(cell) = counterpart.and_then(|parameter| parameter_value(row, parameter)) else {
+        return true;
+    };
+    !plain_decimal(local_value) || plain_decimal(&cell.value)
+}
+
+/// Whether two exact operand renderings are the same value. Equal text is
+/// equal; two plain decimal integers are equal when their digits are, so a
+/// test's `1_024` meets the evaluator's `1024`. A suffixed, signed, or
+/// non-decimal literal is compared as text only, never parsed from a guess.
+fn exact_values_equal(left: &str, right: &str) -> bool {
+    fn plain_decimal(text: &str) -> Option<String> {
+        let digits = text.trim().replace('_', "");
+        (!digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit()))
+            .then(|| digits.trim_start_matches('0').to_string())
+    }
+    left == right
+        || plain_decimal(left)
+            .zip(plain_decimal(right))
+            .is_some_and(|(left, right)| left == right)
 }
 
 /// The parameter names implied by a row's cells, in binding order.
@@ -751,6 +1475,260 @@ fn owner_declares_local(owner: &FunctionSummary, operand: &str, predicate_line: 
         })
 }
 
+/// Whether the owner may rebind or mutate the identifier `operand` on or before
+/// the predicate line, so a name match against an owner parameter no longer
+/// proves the compared value is what the test passed in (#9197). Fail-closed:
+/// any `let`/`mut`/`ref` binding, assignment or compound assignment, `for` or
+/// `let` pattern, closure parameter list, match-arm pattern or `matches!`
+/// line that mentions the name counts, without proving it is the same scope.
+/// Comments and strings are masked, the signature is skipped (a `mut x`
+/// parameter alone is not a rebinding), and a field access (`self.x`) or path
+/// segment (`m::x`) is a different name.
+fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line: usize) -> bool {
+    if owner_declares_local(owner, operand, predicate_line) {
+        return true;
+    }
+    let is_identifier = operand
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && operand
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    if !is_identifier {
+        return false;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let through_predicate = masked
+        .lines()
+        .enumerate()
+        .take_while(|(offset, _)| owner.start_line + offset <= predicate_line)
+        .map(|(_, line)| line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let Some((signature, body)) = through_predicate.split_once('{') else {
+        return false;
+    };
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    // Only a `mut` parameter can be changed in place by a receiver call
+    // (`x.add_assign(5)`); an immutable one cannot, so `x.abs()` stays a read.
+    let mut_parameter = signature.match_indices("mut").any(|(start, _)| {
+        !signature[..start].ends_with(is_word)
+            && signature[start + 3..]
+                .trim_start()
+                .strip_prefix(operand)
+                .is_some_and(|rest| rest.trim_start().starts_with(':'))
+    });
+    body.match_indices(operand).any(|(start, _)| {
+        let before = &body[..start];
+        let after = &body[start + operand.len()..];
+        if before.chars().next_back().is_some_and(is_word)
+            || after.chars().next().is_some_and(is_word)
+            || before.ends_with('.')
+            || before.ends_with("::")
+        {
+            return false;
+        }
+        let before_trimmed = before.trim_end();
+        let after_trimmed = after.trim_start();
+        let line_before = before.rsplit('\n').next().unwrap_or(before);
+        let last_word = before_trimmed
+            .rsplit(|ch: char| !is_word(ch))
+            .next()
+            .unwrap_or("");
+        let assigned = (after_trimmed.starts_with('=')
+            && !after_trimmed.starts_with("==")
+            && !after_trimmed.starts_with("=>"))
+            || ["+=", "-=", "*=", "/=", "%=", "^=", "&=", "|=", "<<=", ">>="]
+                .iter()
+                .any(|assignment| after_trimmed.starts_with(assignment));
+        let binding_keyword = matches!(last_word, "let" | "mut" | "ref");
+        // `x.add_assign(5)` on a `mut` parameter: a receiver call (whitespace
+        // tolerant) may mutate it in place, so it no longer holds the input.
+        let receiver_call = mut_parameter
+            && after_trimmed.strip_prefix('.').is_some_and(|rest| {
+                let rest = rest.trim_start();
+                let name_len = rest.chars().take_while(|ch| is_word(*ch)).count();
+                name_len > 0 && rest[name_len..].trim_start().starts_with(['(', ':'])
+            });
+        // A pattern name sits before the arm's own `=>`: a guard use
+        // (`n if 0 > n =>`), the scrutinee of a one-line match, or a use in an
+        // earlier arm's result (`Some(v) => x, None =>`) is not a binding. An
+        // arm that re-binds the scrutinee's own name is declined too (no
+        // attempt to tie it to its match).
+        // The one exemption is a bare first-arm binder of the scrutinee's own
+        // name (`match n { n if 0 > n => .. }`): it binds the same value the
+        // match reads, so it is not a different `n`. Any other arm pattern
+        // naming it, or a scrutinee that is more than the bare name, is declined.
+        let binds_scrutinee_itself = {
+            let opening = before_trimmed.strip_suffix('{').map(str::trim_end);
+            opening
+                .and_then(|head| head.strip_suffix(operand))
+                .is_some_and(|head| {
+                    let head = head.trim_end();
+                    head.strip_suffix("match")
+                        .is_some_and(|rest| !rest.ends_with(is_word))
+                })
+                && (after_trimmed.starts_with("if ")
+                    || after_trimmed.starts_with("=>")
+                    || after_trimmed.starts_with(','))
+        };
+        let match_arm_pattern = !binds_scrutinee_itself && in_match_arm_pattern(before);
+        // A destructuring assignment `(x, y) = (y, x);` or `[x, ..] = ..;`:
+        // the bracket group holding the name is followed by a bare `=`.
+        let destructuring_assignment = {
+            let mut depth = 0usize;
+            let mut closed_at = None;
+            for (offset, ch) in after.char_indices() {
+                match ch {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' if depth == 0 => {
+                        closed_at = Some(offset + 1);
+                        break;
+                    }
+                    ')' | ']' | '}' => depth -= 1,
+                    _ => {}
+                }
+            }
+            closed_at.is_some_and(|at| {
+                let rest = after[at..].trim_start();
+                rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>")
+            })
+        };
+        let for_pattern = before
+            .rfind("for ")
+            .filter(|at| at == &0 || !before[..*at].ends_with(is_word))
+            .is_some_and(|at| !contains_word(&before[at..], "in"));
+        let let_pattern = before
+            .rfind("let ")
+            .filter(|at| at == &0 || !before[..*at].ends_with(is_word))
+            .is_some_and(|at| !before[at..].contains(['=', ';']));
+        let single_pipes = line_before
+            .replace("||", "")
+            .replace("|=", "")
+            .matches('|')
+            .count();
+        assigned
+            || receiver_call
+            || destructuring_assignment
+            || binding_keyword
+            || match_arm_pattern
+            || for_pattern
+            || let_pattern
+            || single_pipes % 2 == 1
+            || line_before.contains("matches!")
+    })
+}
+
+/// Whether the name just after `before` sits in a `match` arm pattern (before
+/// that arm's `=>`), judged by a backward token scan from the name to the arm's
+/// start: pattern text (identifiers, paths, `@`, `|`, `..`/`..=`, `:`, `&`,
+/// tuple, array and struct groups) up to either the match block's own `{` or
+/// the previous arm's `=>` followed by a separating comma or block. A guard
+/// (`if`), the scrutinee (`match`), a statement (`;`), an arm's result (after
+/// its `=>` with no separator) or any other operator ends it as not a pattern,
+/// so guard operators (`==`, `>=`), `1..=5` ranges and struct braces after the
+/// name never hide the binding (#9197).
+fn in_match_arm_pattern(before: &str) -> bool {
+    let chars: Vec<char> = before.chars().collect();
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mut i = chars.len();
+    // After a `,` or a skipped `{}` block at this level the text read back is
+    // the previous arm's result (or a tuple's earlier elements), which may be
+    // any expression: it is skipped without classification, and the name is a
+    // pattern if that read reaches the previous arm's `=>` or the match
+    // block's `{` without leaving the level through an unmatched `(` or `[`
+    // (a tuple or call comma, which resumes the strict read).
+    let mut tolerant = false;
+    while i > 0 {
+        i -= 1;
+        let ch = chars[i];
+        if ch.is_whitespace() {
+            continue;
+        }
+        if matches!(ch, ')' | ']' | '}') {
+            let mut depth = 1usize;
+            while i > 0 && depth > 0 {
+                i -= 1;
+                match chars[i] {
+                    ')' | ']' | '}' => depth += 1,
+                    '(' | '[' | '{' => depth -= 1,
+                    _ => {}
+                }
+            }
+            if depth > 0 {
+                return false;
+            }
+            if ch == '}' {
+                tolerant = true;
+            }
+            continue;
+        }
+        if tolerant {
+            match ch {
+                '(' | '[' => tolerant = false,
+                '{' => {
+                    let head: String = chars[..i].iter().collect();
+                    let boundary = head.rfind([';', '{', '}']).map_or(0, |at| at + 1);
+                    if contains_word(&head[boundary..], "match") {
+                        return true;
+                    }
+                    tolerant = false;
+                }
+                ';' => return false,
+                '>' if i > 0 && chars[i - 1] == '=' => return true,
+                _ => {}
+            }
+            continue;
+        }
+        match ch {
+            '(' | '[' => {}
+            '{' => {
+                let head: String = chars[..i].iter().collect();
+                let boundary = head.rfind([';', '{', '}']).map_or(0, |at| at + 1);
+                if contains_word(&head[boundary..], "match") {
+                    return true;
+                }
+            }
+            ',' => tolerant = true,
+            '|' | '&' | ':' | '@' => {}
+            '.' => {
+                if i == 0 || chars[i - 1] != '.' {
+                    return false;
+                }
+            }
+            '=' => {
+                if !(i > 0 && chars[i - 1] == '.') {
+                    return false;
+                }
+            }
+            c if is_word(c) => {
+                let mut start = i;
+                while start > 0 && is_word(chars[start - 1]) {
+                    start -= 1;
+                }
+                let word: String = chars[start..=i].iter().collect();
+                if matches!(
+                    word.as_str(),
+                    "if" | "match" | "while" | "let" | "for" | "in" | "return" | "else"
+                ) {
+                    return false;
+                }
+                i = start;
+            }
+            // `=>` directly before the name is a body use; any other
+            // operator ends the pattern.
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn contains_word(text: &str, word: &str) -> bool {
+    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .any(|token| token == word)
+}
+
 /// The initializer of a local binding whose live span (per the #3294
 /// binding relation) covers the predicate line: the predicate must be
 /// one of the binding's direct uses, so the initializer provably feeds
@@ -834,6 +1812,28 @@ fn missing_discriminator_facts(
     {
         missing.push(fact);
     }
+    // A returned bare comparison reads the same boundary, but only a
+    // resolved gap counts: a boundary the lens cannot read leaves the
+    // return-value reading as it was and sets no unresolved reason.
+    let mut returned_unresolved = None;
+    if let Some(view) = returned_comparison_view(probe)
+        && let Some(fact) = missing_boundary_discriminator(
+            &view,
+            owner_fn,
+            related_tests,
+            flow_sinks,
+            helper_chain,
+            index,
+            workspace_complete,
+            &mut returned_unresolved,
+        )
+        && returned_unresolved.is_none()
+        && !owner_fn.is_some_and(|owner| {
+            observed_input_separates_threshold_move(&view, owner, related_tests)
+        })
+    {
+        missing.push(fact);
+    }
     if (matches!(probe.family, ProbeFamily::ErrorPath)
         || flow_sinks
             .iter()
@@ -883,6 +1883,450 @@ fn missing_discriminator_facts(
     missing
 }
 
+/// Whether the owner may compare something other than the caller's value for
+/// `name`. Coarse and fail-closed: true when `name` occurs as a token in the
+/// body before the probe line at all (any `let`, `for`, `if let`, `while let`,
+/// match-arm or closure binding, or any use that could feed a rebinding), when
+/// the probe line itself carries a binding form beside it, or when `name` is
+/// ever assigned or bound `mut`. A true result only declines the
+/// intermediate-input reading and keeps the gap (#9147).
+fn parameter_may_be_rebound(owner: &FunctionSummary, name: &str, predicate_line: usize) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let tokens = |text: &str| {
+        text.match_indices(name)
+            .filter(|(start, _)| {
+                !text[..*start].chars().next_back().is_some_and(is_word)
+                    && !text[start + name.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_word)
+            })
+            .map(|(start, _)| start)
+            .collect::<Vec<_>>()
+    };
+    let lines: Vec<&str> = masked.lines().collect();
+    let probe_index = predicate_line.saturating_sub(owner.start_line);
+    // The signature is everything up to the body's opening brace.
+    let body_start = masked.find('{').map_or(0, |at| at + 1);
+    let before_probe = lines
+        .iter()
+        .take(probe_index)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    if before_probe.len() > body_start && !tokens(&before_probe[body_start..]).is_empty() {
+        return true;
+    }
+    let probe_text = if probe_index == 0 {
+        lines
+            .first()
+            .map_or("", |line| &line[body_start.min(line.len())..])
+    } else {
+        lines.get(probe_index).copied().unwrap_or("")
+    };
+    if !tokens(probe_text).is_empty()
+        && ["let ", "|", "=>", " in ", "match "]
+            .iter()
+            .any(|form| probe_text.contains(form))
+    {
+        return true;
+    }
+    tokens(&masked)
+        .into_iter()
+        .any(|start| name_assigned_or_mut(&masked, name, start))
+}
+
+/// Whether the `name` token at `start` in the masked body is assigned or
+/// bound `mut`.
+fn name_assigned_or_mut(masked: &str, name: &str, start: usize) -> bool {
+    let after = masked[start + name.len()..].trim_start();
+    let assigned = after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
+        || ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="]
+            .iter()
+            .any(|operator| after.starts_with(operator));
+    assigned || masked[..start].trim_end().ends_with("mut")
+}
+
+/// Whether parameter `name` may hold something other than the caller's value
+/// where the local declared on `declared_line` reads it: an earlier `let`, any
+/// assignment or `mut` binding, or a `for`/`if let`/`while let`/`match`/
+/// closure binding on or before that line. The declaration's own shadow
+/// (`let input = input.trim();`) is not an earlier rebinding.
+fn parameter_rebound_before(
+    owner: &FunctionSummary,
+    name: &str,
+    declared_line: usize,
+    initializer: &str,
+) -> bool {
+    if owner_declares_local(owner, name, declared_line.saturating_sub(1)) {
+        return true;
+    }
+    // Char literals are blanked first so `';'` / `'{'` do not end a pattern
+    // region early and `'"'` does not open a string (#10228).
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(
+        &crate::analysis::language::mask_rust_char_literals(&owner.body),
+    );
+    if pattern_position_binds_before(owner, &masked, name, initializer) {
+        return true;
+    }
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_token = |text: &str, start: usize| {
+        !text[..start].chars().next_back().is_some_and(is_word)
+            && !text[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    };
+    if masked.match_indices(name).any(|(start, _)| {
+        let before = masked[..start].trim_end();
+        is_token(&masked, start)
+                // A `let` declaration is an earlier-`let` question, answered
+                // above; only assignments and `mut` parameters count here.
+                && !(before.ends_with("let") || before.ends_with("let mut"))
+                && name_assigned_or_mut(&masked, name, start)
+    }) {
+        return true;
+    }
+    masked
+        .lines()
+        .enumerate()
+        .take_while(|(offset, _)| owner.start_line + offset <= declared_line)
+        .any(|(_, line)| {
+            line.match_indices(name)
+                .any(|(start, _)| is_token(line, start))
+                && (["for ", "if let ", "while let ", "match ", "=>"]
+                    .iter()
+                    .any(|form| line.contains(form))
+                    || [
+                        format!("|{name}|"),
+                        format!("|{name},"),
+                        format!(", {name}|"),
+                        format!("|{name}:"),
+                    ]
+                    .iter()
+                    .any(|closure| line.contains(closure.as_str())))
+        })
+}
+
+/// Whether `text` holds `name` as a whole identifier token.
+fn has_name_token(text: &str, name: &str) -> bool {
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    text.match_indices(name).any(|(start, _)| {
+        !text[..start].chars().next_back().is_some_and(is_word)
+            && !text[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    })
+}
+
+/// Where a `let` pattern ends: the first `;` or the `=` that starts the
+/// initializer. The `=` of a range pattern (`0..=9`), `==`, `<=`, `>=`, `!=`
+/// and `=>` belongs to the pattern or an expression, not the initializer.
+fn let_pattern_end(rest: &str) -> usize {
+    let bytes = rest.as_bytes();
+    for (at, byte) in bytes.iter().enumerate() {
+        match byte {
+            b';' => return at,
+            b'=' => {
+                let prev = at.checked_sub(1).map(|prior| bytes[prior]);
+                let next = bytes.get(at + 1).copied();
+                if matches!(prev, Some(b'.' | b'=' | b'!' | b'<' | b'>')) || next == Some(b'=') {
+                    continue;
+                }
+                return at;
+            }
+            _ => {}
+        }
+    }
+    rest.len()
+}
+
+/// Whether the text between two adjacent pipes may hold closure parameters:
+/// it has no `;` outside brackets. Brackets are not required to balance: a
+/// parenthesized or-pattern (`|(A(n) | B(n))|`) puts an internal pipe between
+/// the real ones, so each fragment is unbalanced yet still holds a binding.
+/// A destructured parameter (`|Foo { n }|`, `|(a, n): (u8, [u8; 2])|`) is
+/// kept. Over-declining on a stray fragment is accepted.
+fn closure_region_may_bind(region: &str) -> bool {
+    let mut depth = 0usize;
+    for ch in region.chars() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ';' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
+/// Token-level, fail-closed scan of the masked body before the declaration
+/// that reads `name` (#9774): the name appearing in any pattern position it
+/// cannot rule out counts as a rebinding. Covered positions: the pattern of
+/// any `let` (plain, destructuring, `let-else`, `if let`, `while let`, also
+/// on the same line as the declaration), a `for` pattern, a closure parameter
+/// list (`|..|`) and a `match` arm pattern region (before any `=>`, even when
+/// the `=>` sits on another line). Over-declining a use that merely looks
+/// like a pattern is accepted: abstention beats a wrong credited boundary.
+/// The declaration's own `let <pattern> =` is excluded so
+/// `let input = input.trim();` is not an earlier rebinding.
+fn pattern_position_binds_before(
+    owner: &FunctionSummary,
+    masked: &str,
+    name: &str,
+    initializer: &str,
+) -> bool {
+    let Some(at) = owner.body.rfind(initializer.trim()) else {
+        return true;
+    };
+    if masked.len() != owner.body.len() || !masked.is_char_boundary(at) {
+        return true;
+    }
+    let mut prefix = &masked[..at];
+    if let Some(declaration) = prefix.rfind("let ") {
+        prefix = &prefix[..declaration];
+    }
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let keyword_at = |keyword: &str| {
+        prefix
+            .match_indices(keyword)
+            .filter(|(start, _)| {
+                !prefix[..*start].chars().next_back().is_some_and(is_word)
+                    && !prefix[start + keyword.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_word)
+            })
+            .map(|(start, _)| start + keyword.len())
+            .collect::<Vec<_>>()
+    };
+    // `let <pattern> =` / `let <pattern>;`, including `if let` and `while let`.
+    let let_binds = keyword_at("let").into_iter().any(|after| {
+        let rest = &prefix[after..];
+        has_name_token(&rest[..let_pattern_end(rest)], name)
+    });
+    // `for <pattern> in`.
+    let for_binds = keyword_at("for").into_iter().any(|after| {
+        let rest = &prefix[after..];
+        let end = rest.find(" in ").unwrap_or(rest.len());
+        has_name_token(&rest[..end], name)
+    });
+    // Closure parameter lists: the text between any two adjacent pipes.
+    let pipes = prefix
+        .match_indices('|')
+        .map(|(start, _)| start)
+        .collect::<Vec<_>>();
+    let closure_binds = pipes.windows(2).any(|pair| {
+        let region = &prefix[pair[0] + 1..pair[1]];
+        closure_region_may_bind(region) && has_name_token(region, name)
+    });
+    // Match arm pattern regions: back from each `=>` to the match's own `{`,
+    // a `;` or the previous arm's `=>`. Braces are balanced on the way back so
+    // a struct pattern (`Foo { n, .. }`) stays inside the region; an earlier
+    // arm's block body is crossed as well, which over-declines but never
+    // misses a binding.
+    let arm_binds = prefix.match_indices("=>").any(|(arrow, _)| {
+        let head = &prefix[..arrow];
+        let mut depth = 0usize;
+        let mut start = 0;
+        for (at, ch) in head.char_indices().rev() {
+            match ch {
+                '}' => depth += 1,
+                '{' if depth == 0 => {
+                    start = at + 1;
+                    break;
+                }
+                '{' => depth -= 1,
+                ';' if depth == 0 => {
+                    start = at + 1;
+                    break;
+                }
+                '>' if depth == 0 && head[..at].ends_with('=') => {
+                    start = at + 1;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        has_name_token(&head[start..], name)
+    });
+    let_binds || for_binds || closure_binds || arm_binds
+}
+
+/// Whether the owner's body mentions `name` anywhere before the line that
+/// holds `initializer`. A flag the initializer reads must still be the
+/// caller's parameter there; any earlier mention (a `for si in ..`, an
+/// `if let Some(si)`, a closure or match-arm binding, or a use that feeds
+/// a rebinding) declines the read, as the scope is not tracked.
+fn name_seen_before(owner: &FunctionSummary, name: &str, initializer: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let Some(open) = masked.find('{') else {
+        return true;
+    };
+    // The last occurrence, so a duplicate of the initializer text earlier in
+    // the body (which itself mentions the flag) can never hide a rebinding.
+    let Some(at) = owner.body.rfind(initializer.trim()) else {
+        return true;
+    };
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let before = &masked[open + 1..at.max(open + 1)];
+    before.match_indices(name).any(|(start, _)| {
+        !before[..start].chars().next_back().is_some_and(is_word)
+            && !before[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    })
+}
+
+/// Whether the file brings `name` in with a `use` line, so a constant of
+/// that name declared elsewhere in the file is not the one the owner reads.
+pub(super) fn name_imported_in_file(source: &str, name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    masked
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("use ") || line.starts_with("pub use "))
+        .any(|line| {
+            line.match_indices(name).any(|(start, _)| {
+                !line[..start].chars().next_back().is_some_and(is_word)
+                    && !line[start + name.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_word)
+            })
+        })
+}
+
+/// Whether the owner rebinds `name` anywhere in its body: a `let`, or an
+/// assignment or `mut` binding of it. A flag or constant a local's
+/// initializer names must be the caller's value or the file's constant, so
+/// any rebinding declines the read (the verdict stays unresolved).
+fn name_rebound_in_owner(owner: &FunctionSummary, name: &str) -> bool {
+    if owner_declares_local(owner, name, usize::MAX) {
+        return true;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_token = |text: &str, start: usize| {
+        !text[..start].chars().next_back().is_some_and(is_word)
+            && !text[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    };
+    // A destructuring `let (si, _) = ...;`, `let Some(si) = ... else`, or a
+    // local `const`/`static` binds the name in the pattern left of `=`.
+    let binds_in_pattern = masked.split([';', '\n']).any(|statement| {
+        let statement = statement.trim_start();
+        ["let ", "const ", "static "]
+            .iter()
+            .any(|keyword| statement.starts_with(keyword))
+            && statement.split('=').next().is_some_and(|pattern| {
+                pattern
+                    .match_indices(name)
+                    .any(|(at, _)| is_token(pattern, at))
+            })
+    });
+    if binds_in_pattern {
+        return true;
+    }
+    masked.match_indices(name).any(|(start, _)| {
+        !masked[..start].chars().next_back().is_some_and(is_word)
+            && !masked[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+            && name_assigned_or_mut(&masked, name, start)
+    })
+}
+
+/// Whether an observed exact input of the compared parameter separates the old
+/// and new returned comparison when only its integer-literal threshold moved
+/// (`x > 100` to `x > 102`: `thr(101)` is true before and false after). Such an
+/// input is a discriminator even though it equals neither threshold, so the
+/// equality-boundary gap must not be borrowed (#9147). Fail-closed: any shape
+/// this cannot read exactly (a different operand, a non-parameter or reversed
+/// left side, a suffixed or computed literal, a non-integer input) declines
+/// and leaves the gap in place.
+fn observed_input_separates_threshold_move(
+    view: &Probe,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+) -> bool {
+    fn parts(expression: &str) -> Option<(&'static str, String, i128)> {
+        for operator in [">=", "<=", "==", "!=", ">", "<"] {
+            if let Some((left, right)) = expression.split_once(operator) {
+                let (left, right) = (clean_operand(left), clean_operand(right));
+                if left.is_empty() {
+                    return None;
+                }
+                return Some((operator, left, plain_integer(&right)?));
+            }
+        }
+        None
+    }
+    fn plain_integer(text: &str) -> Option<i128> {
+        let digits = text.trim().replace('_', "");
+        let unsigned = digits.strip_prefix('-').unwrap_or(&digits);
+        if unsigned.is_empty() || !unsigned.chars().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
+        digits.parse().ok()
+    }
+    fn holds(operator: &str, value: i128, threshold: i128) -> bool {
+        match operator {
+            ">=" => value >= threshold,
+            "<=" => value <= threshold,
+            "==" => value == threshold,
+            "!=" => value != threshold,
+            ">" => value > threshold,
+            _ => value < threshold,
+        }
+    }
+    let Some(before) = view.before.as_deref() else {
+        return false;
+    };
+    let (Some((old_op, old_left, old_threshold)), Some((new_op, new_left, new_threshold))) =
+        (parts(before), parts(&view.expression))
+    else {
+        return false;
+    };
+    let parameters = function_parameters(owner);
+    if old_left != new_left
+        || !parameters.contains(&new_left)
+        || parameter_may_be_rebound(owner, &new_left, view.location.line)
+    {
+        return false;
+    }
+    // Only unqualified owner calls count: `rival::thr(101)` or `x.thr(101)`
+    // may be another function, so a qualified call is never a separating
+    // input. Helper-transferred rows are not read.
+    let call_pattern = format!("{}(", owner.name);
+    owner_call_parameter_values_where(
+        related_tests,
+        &owner.name,
+        is_free(owner),
+        &parameters,
+        |_, call| {
+            call.text.match_indices(&call_pattern).all(|(start, _)| {
+                !call.text[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| ch == ':' || ch == '.')
+            })
+        },
+        &ReceiverParameters::none(),
+    )
+    .iter()
+    .filter_map(|row| parameter_value(row, &new_left))
+    .filter_map(|cell| plain_integer(&cell.value))
+    .any(|value| holds(old_op, value, old_threshold) != holds(new_op, value, new_threshold))
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "the shared evidence inputs plus the unresolved-boundary reason computed on the same pass"
@@ -921,7 +2365,15 @@ fn missing_boundary_discriminator(
     ) {
         return element_boundary_discriminator(owner, &view, flow_sinks, index, unresolved);
     }
-    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
+    let text_cells = emptiness_guard_operand(probe, &left, &right).is_some();
+    let call_values = call_values_for_owner(
+        owner,
+        &parameters,
+        related_tests,
+        helper_chain,
+        index,
+        text_cells,
+    );
     if call_values.is_empty() {
         // Every related call passes only computed arguments (#6672): the
         // inputs exist but none is readable, so the boundary is
@@ -929,8 +2381,20 @@ fn missing_boundary_discriminator(
         // Only a compared parameter is in scope; an unrelated computed
         // argument (an output buffer `&mut [0; 4]`) says nothing here.
         let compared = [
-            boundary_operand_parameter(owner, owner_source, &parameters, &left),
-            boundary_operand_parameter(owner, owner_source, &parameters, &right),
+            boundary_operand_parameter(
+                owner,
+                owner_source,
+                &parameters,
+                &left,
+                probe.location.line,
+            ),
+            boundary_operand_parameter(
+                owner,
+                owner_source,
+                &parameters,
+                &right,
+                probe.location.line,
+            ),
         ];
         *unresolved = computed_input_parameters(owner, &parameters, related_tests, helper_chain)
             .into_iter()
@@ -945,8 +2409,14 @@ fn missing_boundary_discriminator(
                 let unknown_operands = [&left, &right]
                     .into_iter()
                     .filter(|operand| {
-                        boundary_operand_parameter(owner, owner_source, &parameters, operand)
-                            .is_none()
+                        boundary_operand_parameter(
+                            owner,
+                            owner_source,
+                            &parameters,
+                            operand,
+                            probe.location.line,
+                        )
+                        .is_none()
                             && literal_operand_value(operand).is_none()
                             && crate::analysis::value_resolution::constant_operand_name(operand)
                                 .is_none()
@@ -970,33 +2440,84 @@ fn missing_boundary_discriminator(
                 .flatten()
             })
             .or_else(|| {
-                call_built_input_reason(owner, &parameters, related_tests, compared, &call_values)
+                call_built_input_reason(
+                    owner,
+                    &parameters,
+                    related_tests,
+                    compared,
+                    &call_values,
+                    index,
+                )
             })
             .or_else(|| unreadable_spelled_line_reason(owner, related_tests, helper_chain));
         return None;
     }
-    let left_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &left);
-    let right_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &right);
+    let left_parameter =
+        boundary_operand_parameter(owner, owner_source, &parameters, &left, probe.location.line);
+    let right_parameter = boundary_operand_parameter(
+        owner,
+        owner_source,
+        &parameters,
+        &right,
+        probe.location.line,
+    );
+    let left_credit = credited_parameter(
+        owner,
+        &parameters,
+        &left,
+        &left_parameter,
+        probe.location.line,
+    );
+    let right_credit = credited_parameter(
+        owner,
+        &parameters,
+        &right,
+        &right_parameter,
+        probe.location.line,
+    );
 
+    let closed_form = admits_closed_form(
+        owner,
+        probe,
+        &left,
+        &right,
+        related_tests,
+        &call_values,
+        index,
+    );
     // #3295 exact path: when either operand is a computed local, the
     // bounded evaluator resolves its value from the row's exact
     // inputs; the boundary is observed when both sides compare equal
     // under any row.
-    let left_resolved = resolve_boundary_operand(
+    let left_resolved = credited_resolution(
         owner,
+        &parameters,
         &left,
+        resolve_boundary_operand(
+            owner,
+            &left,
+            probe.location.line,
+            &parameters,
+            index,
+            workspace_complete,
+            closed_form,
+        ),
         probe.location.line,
-        &parameters,
-        index,
-        workspace_complete,
     );
-    let right_resolved = resolve_boundary_operand(
+    let right_resolved = credited_resolution(
         owner,
-        &right,
-        probe.location.line,
         &parameters,
-        index,
-        workspace_complete,
+        &right,
+        resolve_boundary_operand(
+            owner,
+            &right,
+            probe.location.line,
+            &parameters,
+            index,
+            workspace_complete,
+            closed_form,
+        ),
+        probe.location.line,
     );
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
@@ -1021,6 +2542,7 @@ fn missing_boundary_discriminator(
                     exact_operand_for_row(resolved, row, &inputs, index, workspace_complete)
                 })
                 .or_else(|| visible_operand(&right, right_constant.as_ref()))
+                .or_else(|| scanner_state_path_operand(&right, &lefts))
                 .into_iter()
                 .collect::<Vec<_>>();
             (lefts, rights)
@@ -1033,18 +2555,17 @@ fn missing_boundary_discriminator(
         lefts.iter().any(|left_value| {
             rights
                 .iter()
-                .any(|right_value| right_value.value == left_value.value)
+                .any(|right_value| exact_values_equal(&right_value.value, &left_value.value))
         })
     });
 
-    let equality_observed = exact_equality_observed
-        || left_parameter.as_deref().is_some_and(|left_parameter| {
+    let parameter_equality = |left_name: Option<&str>, right_name: Option<&str>| {
+        left_name.is_some_and(|left_name| {
             call_values.iter().any(|row| {
-                let Some(left_value) = parameter_value(row, left_parameter) else {
+                let Some(left_value) = parameter_value(row, left_name) else {
                     return false;
                 };
-                let right_value = right_parameter
-                    .as_deref()
+                let right_value = right_name
                     .and_then(|parameter| parameter_value(row, parameter))
                     .map(|value| value.value)
                     .or_else(|| {
@@ -1055,22 +2576,60 @@ fn missing_boundary_discriminator(
                     comparable_value(value) == comparable_value(&left_value.value)
                 })
             })
-        });
-    let constant_named = right_constant
-        .as_ref()
-        .zip(left_parameter.as_deref())
-        .is_some_and(|(constant, left_parameter)| {
-            !owner_calls_passing_constant(
-                related_tests,
-                owner,
-                &parameters,
-                left_parameter,
-                constant,
-                index,
-            )
-            .is_empty()
-        });
+        })
+    };
+    let constant_passed = |left_name: Option<&str>| {
+        right_constant
+            .as_ref()
+            .zip(left_name)
+            .is_some_and(|(constant, left_name)| {
+                !owner_calls_passing_constant(
+                    related_tests,
+                    owner,
+                    &parameters,
+                    left_name,
+                    constant,
+                    index,
+                )
+                .is_empty()
+            })
+    };
+    // RIPR-SPEC-0164 (#10304): a changed equality constant (`label == "alpha"`
+    // to `label == "beta"`) flips every row that sits on either constant, so
+    // a row on the replaced constant discriminates the swap as a row on the
+    // new one does. Only a bare `left == literal` / `left != literal` line
+    // on both sides of the edit qualifies; a compound predicate, a changed
+    // operand or a non-literal constant keeps the missing equality.
+    let replaced_constant = replaced_equality_constant(probe);
+    let replaced_row_observed = replaced_constant.as_ref().is_some_and(|old| {
+        exact_rows.iter().any(|(lefts, _)| {
+            lefts
+                .iter()
+                .any(|left_value| exact_values_equal(&old.value, &left_value.value))
+        }) || left_credit.as_deref().is_some_and(|name| {
+            call_values.iter().any(|row| {
+                parameter_value(row, name)
+                    .is_some_and(|cell| same_literal_value(&cell.value, &old.value))
+            })
+        })
+    });
+    let equality_observed = exact_equality_observed
+        || replaced_row_observed
+        || parameter_equality(left_credit.as_deref(), right_credit.as_deref());
+    let constant_named = constant_passed(left_credit.as_deref());
     if equality_observed || constant_named {
+        return None;
+    }
+    // #9197: the owner rebinds or mutates a compared parameter name, and the
+    // test input would have satisfied the boundary only by that name. No input
+    // can satisfy a repair for a value ripr cannot see, so the boundary is
+    // unresolved rather than a named missing equality.
+    if parameter_equality(left_parameter.as_deref(), right_parameter.as_deref())
+        || constant_passed(left_parameter.as_deref())
+    {
+        *unresolved = Some(format!(
+            "boundary operand `{left}` or `{right}` is rebound or mutated by the owner before the compared line, so a related test's input is not its value and ripr cannot tell which side of the boundary a test reaches"
+        ));
         return None;
     }
     // A deep table or builder line that may feed the owner hides its
@@ -1087,21 +2646,49 @@ fn missing_boundary_discriminator(
     // argument (#6672), no row says which side of the boundary a test
     // sits on, so naming a missing equality value would ask for a test
     // that may already exist. The boundary stays unresolved instead.
-    let operand_evaluates = |resolved: Option<&ResolvedOperand>| {
+    let operand_evaluates = |resolved: Option<&ResolvedOperand>, counterpart: Option<&str>| {
         resolved.is_some_and(|resolved| {
-            call_values.iter().any(|row| {
+            let row_evaluates = |row: &Vec<ParameterValue>| {
                 let inputs: super::value_transfer::ExactInputs = row
                     .iter()
                     .map(|cell| (cell.parameter.clone(), cell.value.clone()))
                     .collect();
-                exact_operand_for_row(resolved, row, &inputs, index, workspace_complete).is_some()
-            })
+                exact_operand_for_row(resolved, row, &inputs, index, workspace_complete)
+                    .is_some_and(|exact| {
+                        !matches!(resolved, ResolvedOperand::Local(..))
+                            || counterpart_is_comparable(row, counterpart, &exact.value)
+                    })
+            };
+            // A closed-form expression operand is known only when every
+            // related call row evaluates it: one computed-argument row
+            // may sit on the other side of the boundary (#9637).
+            if matches!(resolved, ResolvedOperand::Expression(..)) {
+                call_values.iter().all(row_evaluates)
+            } else {
+                // A local some row evaluates is still unresolved when
+                // another row's chain is refused outright (an absent `rfind`
+                // whose `map_or` default is a computed local): that row may
+                // sit on the boundary, so the evaluated rows cannot support
+                // "no test uses it" (RIPR-SPEC-0158).
+                call_values.iter().any(row_evaluates)
+                    && call_values.iter().all(|row| {
+                        let inputs: super::value_transfer::ExactInputs = row
+                            .iter()
+                            .map(|cell| (cell.parameter.clone(), cell.value.clone()))
+                            .collect();
+                        exact_operand_for_row(resolved, row, &inputs, index, workspace_complete)
+                            .is_some()
+                    })
+            }
         })
     };
     // A constant-shaped operand keeps its own named-constant route.
-    let unknown = |operand: &str, parameter: Option<&str>, resolved: Option<&ResolvedOperand>| {
+    let unknown = |operand: &str,
+                   parameter: Option<&str>,
+                   resolved: Option<&ResolvedOperand>,
+                   counterpart: Option<&str>| {
         parameter.is_none()
-            && !operand_evaluates(resolved)
+            && !operand_evaluates(resolved, counterpart)
             && literal_operand_value(operand).is_none()
             && crate::analysis::value_resolution::constant_operand_name(operand).is_none()
             && crate::analysis::value_resolution::constant_offset_operand(operand).is_none()
@@ -1110,12 +2697,24 @@ fn missing_boundary_discriminator(
     // row says which side of the boundary a test reaches either, so both
     // operands are named and the boundary stays unresolved.
     let unknown_operands = [
-        (&left, left_parameter.as_deref(), left_resolved.as_ref()),
-        (&right, right_parameter.as_deref(), right_resolved.as_ref()),
+        (
+            &left,
+            left_parameter.as_deref(),
+            left_resolved.as_ref(),
+            right_parameter.as_deref(),
+        ),
+        (
+            &right,
+            right_parameter.as_deref(),
+            right_resolved.as_ref(),
+            left_parameter.as_deref(),
+        ),
     ]
     .into_iter()
-    .filter(|(operand, parameter, resolved)| unknown(operand, *parameter, *resolved))
-    .map(|(operand, _, _)| operand.as_str())
+    .filter(|(operand, parameter, resolved, counterpart)| {
+        unknown(operand, *parameter, *resolved, *counterpart)
+    })
+    .map(|(operand, _, _, _)| operand.as_str())
     .collect::<Vec<_>>();
     if let Some(reason) = unresolved_boundary_input(
         owner,
@@ -1128,6 +2727,26 @@ fn missing_boundary_discriminator(
         *unresolved = Some(reason);
         return None;
     }
+    // #9637 credit-or-unknown: a closed-form expression operand only ever
+    // credits through an observed equality row (returned above). When no row
+    // lands on the boundary, or a related call passes a computed argument for
+    // a parameter it reads, ripr cannot name the missing input as a gap, so
+    // the boundary stays unresolved.
+    if let Some(expression) = [(&left, &left_resolved), (&right, &right_resolved)]
+        .into_iter()
+        .find_map(|(operand, resolved)| {
+            (matches!(resolved, Some(ResolvedOperand::Expression(..)))
+                || resolved
+                    .as_ref()
+                    .is_some_and(|resolved| uses_credit_only_family(resolved, &call_values)))
+            .then_some(operand)
+        })
+    {
+        *unresolved = Some(format!(
+            "boundary operand `{expression}` is computed from literal inputs, but no related test row lands on the boundary value, so ripr cannot tell which side of the boundary a test reaches"
+        ));
+        return None;
+    }
     // RIPR-SPEC-0032 (#6615): a compared parameter no row gives a value,
     // fed by a call ripr does not evaluate (`surcharge(big_order())`),
     // may sit on the boundary. A visible one-sided input keeps its gap.
@@ -1137,6 +2756,7 @@ fn missing_boundary_discriminator(
         related_tests,
         [left_parameter.clone(), right_parameter.clone()],
         &call_values,
+        index,
     ) {
         *unresolved = Some(reason);
         return None;
@@ -1182,7 +2802,7 @@ fn missing_boundary_discriminator(
         return None;
     }
 
-    let mut left_values = left_parameter
+    let mut left_values = left_credit
         .as_deref()
         .map(|parameter| observed_parameter_values(&call_values, parameter))
         .unwrap_or_default();
@@ -1196,7 +2816,7 @@ fn missing_boundary_discriminator(
     left_values.extend(exact_lefts);
     left_values.sort();
     left_values.dedup();
-    let right_parameter_values = right_parameter
+    let right_parameter_values = right_credit
         .as_deref()
         .and_then(|parameter| parameter_value_set(&call_values, parameter));
     let right_literal =
@@ -1254,6 +2874,7 @@ struct ElementView {
 /// The elements one run of one related call passes the iterated
 /// parameter, in order.
 struct ElementRun {
+    file: std::path::PathBuf,
     line: usize,
     text: String,
     elements: Vec<String>,
@@ -1375,6 +2996,7 @@ fn sequence_runs(
                 test, None, argument, &call.text,
             )? {
                 runs.push(ElementRun {
+                    file: test.file.clone(),
                     line: call.line,
                     text: call.text.to_string(),
                     elements,
@@ -1416,6 +3038,7 @@ fn element_boundary_observations(
         .iter()
         .filter(|run| view.tail.run_reaches_boundary(&run.elements, &boundary))
         .map(|run| ValueFact {
+            file: Some(run.file.clone()),
             line: run.line,
             text: format!(
                 "{} | element {} = {boundary} of {}",
@@ -1569,6 +3192,7 @@ fn call_built_input_reason(
     related_tests: &[&TestSummary],
     compared: [Option<String>; 2],
     call_values: &[Vec<ParameterValue>],
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<String> {
     let free_owner = is_free(owner);
     compared.into_iter().flatten().find_map(|parameter| {
@@ -1589,7 +3213,14 @@ fn call_built_input_reason(
                     let arguments =
                         crate::analysis::syntax::fn_signature::call_argument_facts(&contents)?;
                     let argument = arguments.get(position)?;
-                    (argument.built_by_call && owner_argument_values(test, &argument.text).is_empty())
+                    (argument.built_by_call
+                        && owner_row_argument_values(
+                            test,
+                            &argument.text,
+                            false,
+                            super::argument_fold::FoldScope::of_test(test, index),
+                        )
+                        .is_empty())
                         .then(|| {
                             format!(
                                 "a related test passes `{parameter}` the result of a call (`{}`), whose value ripr does not evaluate statically, so it cannot tell which side of the boundary that call reaches",
@@ -2003,18 +3634,28 @@ const READ_MACROS: &[&str] = &[
 /// macro binding scan the trusted-assertion reading uses; an out-of-line
 /// module counts as unresolved, which only withholds the guard reading.
 fn read_macro_name_rebound(index: &crate::analysis::rust_index::RustIndex) -> bool {
+    macro_names_rebound(index, READ_MACROS)
+}
+
+/// [`read_macro_name_rebound`] for an arbitrary set of macro names, so a
+/// reader that trusts only the assertion macros by name asks the same
+/// parser-backed question about just those.
+pub(in crate::analysis) fn macro_names_rebound(
+    index: &crate::analysis::rust_index::RustIndex,
+    names: &[&str],
+) -> bool {
     index.files().iter().any(|(path, file)| {
         if file
             .macro_candidates
             .as_deref()
-            .is_some_and(|candidates| READ_MACROS.iter().all(|name| !candidates.may_bind(name)))
+            .is_some_and(|candidates| names.iter().all(|name| !candidates.may_bind(name)))
         {
             return false;
         }
         !crate::analysis::syntax::trusted_macro_binding_sites(
             &file.source,
             index.macro_scope_crates(),
-            READ_MACROS,
+            names,
             &|_, _| false,
             &|krate| index.drop_in_manifests.verified_root(path, krate),
         )
@@ -2110,23 +3751,8 @@ fn missing_field_value_discriminator(
     // { sku, .. })`) is observed whole by an `assert_eq!` on that whole
     // collection, read after the owner call directly or through a getter
     // whose body returns the field (RIPR-SPEC-0228 Decision 2).
-    let pushed_into = owner_fn.and_then(|owner| {
-        let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
-            .and_then(|call| call.impl_type());
-        super::propagation_witness::pushed_literal_collection_path(
-            owner.body.as_str(),
-            owner.start_line,
-            probe.location.line,
-            &probe.expression,
-            &|method| {
-                impl_type.and_then(|impl_type| {
-                    super::builder_override::inherent_method_body(index, impl_type, method)
-                        .map(str::to_string)
-                })
-            },
-        )
-        .map(|path| (owner, path))
-    });
+    let pushed_into = owner_fn
+        .and_then(|owner| pushed_literal_path(owner, probe, index).map(|path| (owner, path)));
     let pushed_literal_observed = |test: &TestSummary, assertion: &OracleFact| {
         pushed_into.as_ref().is_some_and(|(owner, path)| {
             pushed_collection_compared_whole(owner, path, test, assertion, index)
@@ -2278,6 +3904,34 @@ pub(in crate::analysis) fn assigned_field_of(
     )
 }
 
+/// #7131: the field collection path (`lines` for `self.lines.push(Line {
+/// sku: .. })`) the owner pushes the probe's literal onto, if the placement
+/// is one `pushed_literal_collection_path` accepts.
+pub(in crate::analysis) fn pushed_literal_path(
+    owner: &FunctionSummary,
+    probe: &Probe,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
+        .and_then(|call| call.impl_type());
+    let site = super::propagation_witness::pushed_literal_site(
+        owner.body.as_str(),
+        owner.start_line,
+        probe.location.line,
+        &probe.expression,
+        &|method| {
+            impl_type.and_then(|impl_type| {
+                super::builder_override::inherent_method_body(index, impl_type, method)
+                    .map(str::to_string)
+            })
+        },
+    )?;
+    // A hand-written `PartialEq` may ignore the pushed field, so the whole
+    // collection equality that confirms it is not evidence for it.
+    (!super::custom_eq::pushed_element_may_compare_leniently(&site.literal, index))
+        .then_some(site.path)
+}
+
 /// #7131: whether `assertion` compares the whole field collection `path`
 /// that `owner` pushes onto, read from the binding the test called `owner`
 /// on, after that call and with nothing between that may write through the
@@ -2287,7 +3941,7 @@ pub(in crate::analysis) fn assigned_field_of(
 /// (`binding_untouched_after_owner_call`), since another value built through
 /// the owner, or a snapshot, may carry the same changed value into the other
 /// operand.
-fn pushed_collection_compared_whole(
+pub(in crate::analysis) fn pushed_collection_compared_whole(
     owner: &FunctionSummary,
     path: &str,
     test: &TestSummary,
@@ -2342,6 +3996,12 @@ fn constructed_field_name(expression: &str) -> Option<&str> {
     (starts_ident && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')).then_some(name)
 }
 
+/// Whether `ch` continues a Rust identifier: Unicode `XID_Continue` (which
+/// includes combining marks, so decomposed `a\u{301}r` is one name) plus `_`.
+fn is_ident_char(ch: char) -> bool {
+    ch == '_' || unicode_ident::is_xid_continue(ch)
+}
+
 /// Whether `assertion` reads `read` (`.field`) on a value the test got from
 /// calling `owner`: a direct `owner(..).field` chain, or a receiver the test
 /// body binds with `let [mut] recv = ..owner(..)..;`.
@@ -2354,7 +4014,7 @@ fn constructed_field_name(expression: &str) -> Option<&str> {
 /// an `assert_eq!`/`assert_ne!` operand whose other operand is the whole
 /// result (`assert_eq!(c, Config::new(c.retries))`).
 fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str) -> bool {
-    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_ident = is_ident_char;
     let owner_call = format!("{owner}(");
     let masked = crate::analysis::extract::mask_comments_and_strings(assertion);
     assertion.match_indices(read).any(|(start, matched)| {
@@ -2375,9 +4035,14 @@ fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str
         if before.ends_with(')') {
             return call_before_is_owner(before, owner);
         }
+        // Step past the whole non-identifier character: `index + 1` lands
+        // inside a multi-byte one (a CJK path in a preceding string) and
+        // panics the slice.
         let receiver_start = before
-            .rfind(|ch: char| !is_ident(ch))
-            .map_or(0, |index| index + 1);
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !is_ident(*ch))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
         let receiver = &before[receiver_start..];
         !receiver.is_empty()
             && binds_from_owner_call(body, receiver, &owner_call)
@@ -2446,7 +4111,7 @@ fn field_overwritten_before(
 /// `t = q.total;`, `let base = bundle(3);`): a value built from them may be
 /// the owner's own field value.
 fn receiver_derived_bindings(body: &str, receiver: &str, owner_call: &str) -> Vec<String> {
-    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_ident = is_ident_char;
     fn binding(statement: &str) -> Option<(&str, &str)> {
         let statement = statement.trim();
         let statement = statement.strip_prefix("let ").unwrap_or(statement);
@@ -2513,7 +4178,7 @@ fn visible_at(prefix: &str, start: usize) -> bool {
 }
 
 fn mentions_ident(text: &str, name: &str) -> bool {
-    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_ident = is_ident_char;
     text.match_indices(name).any(|(start, matched)| {
         !text[..start].chars().next_back().is_some_and(is_ident)
             && !text[start + matched.len()..].starts_with(is_ident)
@@ -2542,7 +4207,7 @@ fn statement_semicolon(text: &str) -> usize {
 /// The `let [mut] receiver [: Type] = initializer;` statements in `body`, in
 /// order, as (statement start, initializer).
 fn receiver_lets<'a>(body: &'a str, receiver: &str) -> Vec<(usize, &'a str)> {
-    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let is_ident = is_ident_char;
     body.match_indices("let ")
         .filter(|(start, _)| !body[..*start].chars().next_back().is_some_and(is_ident))
         .filter_map(|(start, _)| {
@@ -2598,9 +4263,7 @@ fn struct_literal_fields(initializer: &str) -> Option<StructLiteral<'_>> {
     let type_name = path.rsplit("::").next().unwrap_or_default();
     if path.is_empty()
         || !type_name.starts_with(|ch: char| ch.is_ascii_uppercase())
-        || !path
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':')
+        || !path.chars().all(|ch| is_ident_char(ch) || ch == ':')
     {
         return None;
     }
@@ -2649,9 +4312,9 @@ fn field_assigned(
             let before_ok = !prefix[..start]
                 .chars()
                 .next_back()
-                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.');
+                .is_some_and(|ch| is_ident_char(ch) || ch == '.');
             let rest = &prefix[start + matched.len()..];
-            if rest.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
+            if rest.starts_with(is_ident_char) {
                 return false;
             }
             let rest = rest.trim_start();
@@ -2735,9 +4398,7 @@ fn read_feeds_whole_result_comparison(
         return call_before_is_owner(other, owner);
     }
     !other.is_empty()
-        && other
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && other.chars().all(is_ident_char)
         && binds_from_owner_call(body, other, &format!("{owner}("))
 }
 
@@ -2793,23 +4454,16 @@ fn call_before_is_owner(before: &str, owner: &str) -> bool {
     let Some(callee) = open.map(|index| &before[..index]) else {
         return false;
     };
-    callee.strip_suffix(owner).is_some_and(|prefix| {
-        !prefix
-            .chars()
-            .next_back()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-    })
+    callee
+        .strip_suffix(owner)
+        .is_some_and(|prefix| !prefix.chars().next_back().is_some_and(is_ident_char))
 }
 
 /// Whether `body` has `let [mut] receiver = ...;` whose initializer calls
 /// the owner.
 fn binds_from_owner_call(body: &str, receiver: &str, owner_call: &str) -> bool {
     body.match_indices("let ").any(|(start, _)| {
-        if body[..start]
-            .chars()
-            .next_back()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-        {
+        if body[..start].chars().next_back().is_some_and(is_ident_char) {
             return false;
         }
         let statement = body[start + 4..].split(';').next().unwrap_or_default();
@@ -2829,9 +4483,74 @@ fn owner_call_parameter_values(
     free_owner: bool,
     parameters: &[String],
 ) -> Vec<Vec<ParameterValue>> {
-    owner_call_parameter_values_where(related_tests, owner_name, free_owner, parameters, |_, _| {
-        true
-    })
+    owner_call_parameter_values_where(
+        related_tests,
+        owner_name,
+        free_owner,
+        parameters,
+        |_, _| true,
+        &ReceiverParameters::none(),
+    )
+}
+
+/// The entry parameters a method hop calls a method on (#9329), with the one
+/// reader of their argument text. A receiver parameter's cell is the
+/// canonical constructed string of its argument, or absent; it never takes
+/// the scalar a compound argument would otherwise lend it.
+struct ReceiverParameters<'a> {
+    names: Vec<String>,
+    value: Option<&'a ReceiverReader<'a>>,
+    /// Read a string or char literal table cell as an exact input.
+    text_cells: bool,
+    /// Where each test's file is read from for a `const` operand or a
+    /// nullary helper argument (RIPR-SPEC-0158); without it only the test's
+    /// own bindings fold.
+    index: Option<&'a crate::analysis::rust_index::RustIndex>,
+}
+
+type ReceiverReader<'a> = dyn Fn(&str) -> Option<String> + 'a;
+
+impl<'a> ReceiverParameters<'a> {
+    fn none() -> Self {
+        Self {
+            names: Vec::new(),
+            value: None,
+            text_cells: false,
+            index: None,
+        }
+    }
+
+    fn reading_files_of(self, index: &'a crate::analysis::rust_index::RustIndex) -> Self {
+        Self {
+            index: Some(index),
+            ..self
+        }
+    }
+
+    fn fold_scope(&self, test: &TestSummary) -> super::argument_fold::FoldScope<'a> {
+        self.index.map_or_else(Default::default, |index| {
+            super::argument_fold::FoldScope::of_test(test, index)
+        })
+    }
+
+    fn reading_text_cells(text_cells: bool) -> Self {
+        Self {
+            text_cells,
+            ..Self::none()
+        }
+    }
+
+    fn cell(&self, parameter: &str, argument: &str) -> Option<Vec<String>> {
+        if !self.names.iter().any(|name| name == parameter) {
+            return None;
+        }
+        Some(
+            self.value
+                .and_then(|read| read(argument))
+                .into_iter()
+                .collect(),
+        )
+    }
 }
 
 /// `owner_call_parameter_values` over only the calls `keep` admits.
@@ -2841,6 +4560,7 @@ fn owner_call_parameter_values_where(
     free_owner: bool,
     parameters: &[String],
     keep: impl Fn(&TestSummary, &crate::analysis::facts::CallFact) -> bool,
+    receivers: &ReceiverParameters<'_>,
 ) -> Vec<Vec<ParameterValue>> {
     let mut rows = Vec::new();
     if owner_name.is_empty() || parameters.is_empty() {
@@ -2867,14 +4587,23 @@ fn owner_call_parameter_values_where(
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, argument)| {
-                    let values = owner_argument_values(test, argument);
+                    let parameter = parameters.get(idx)?;
+                    if let Some(values) = receivers.cell(parameter, argument) {
+                        return Some((parameter, values, argument.trim(), false));
+                    }
+                    let values = owner_row_argument_values(
+                        test,
+                        argument,
+                        receivers.text_cells,
+                        receivers.fold_scope(test),
+                    );
                     let table_column = !values.is_empty()
                         && crate::analysis::syntax::constant_table_column(
                             &test.body,
                             argument.trim(),
                         )
                         .is_some();
-                    Some((parameters.get(idx)?, values, argument.trim(), table_column))
+                    Some((parameter, values, argument.trim(), table_column))
                 })
                 .filter(|(_, values, _, _)| !values.is_empty())
                 .collect::<Vec<_>>();
@@ -2910,6 +4639,7 @@ fn owner_call_parameter_values_where(
                             value: value.clone(),
                             line: call.line,
                             text: call.text.to_string(),
+                            file: Some(test.file.clone()),
                         })
                     })
                     .collect::<Vec<_>>();
@@ -2920,6 +4650,79 @@ fn owner_call_parameter_values_where(
         }
     }
     rows
+}
+
+/// True when the owner call's argument text runs no call of its own beyond
+/// the plain conversions (`.to_string()`, `.to_owned()`, `.into()`,
+/// `String::from(..)`). The cell reader takes a literal it finds inside a call
+/// chain as the argument (`std::env::var("WHO")` reads as `"WHO"`, #10484), so
+/// where several calls share one test this gate declines such a call instead of
+/// counting the invented row.
+fn argument_text_calls_nothing(call_text: &str, owner_name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(call_text);
+    let Some(start) = masked.find(owner_name) else {
+        return false;
+    };
+    // Rust allows whitespace before a call's parenthesis (`var ("WHO")`), so
+    // judge the text with it removed.
+    let mut arguments: String = masked[start + owner_name.len()..]
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    arguments = arguments.replace("String::from(", "(");
+    for conversion in [".to_string()", ".to_owned()", ".into()"] {
+        arguments = arguments.replace(conversion, "");
+    }
+    // The owner's own opening parenthesis follows the name directly; any later
+    // parenthesis that follows an identifier, `]`, a closing `)` (grouped
+    // callee), `>` (turbofish) or `!` (macro) is a call.
+    let chars: Vec<char> = arguments.chars().collect();
+    !chars.iter().enumerate().skip(1).any(|(idx, ch)| {
+        *ch == '('
+            && chars.get(idx - 1).is_some_and(|prev| {
+                prev.is_alphanumeric() || matches!(prev, '_' | ']' | ')' | '>' | '!')
+            })
+    })
+}
+
+/// True when no owner call in `test` has an argument that runs a call of its
+/// own (see [`argument_text_calls_nothing`]).
+fn every_owner_call_argument_is_plain(owner: &FunctionSummary, test: &TestSummary) -> bool {
+    test.body_calls()
+        .filter(|call| call.name == owner.name)
+        .all(|call| argument_text_calls_nothing(&call.text, &owner.name))
+}
+
+/// True when each owner call in `test` yields at least one input row on its
+/// own, so a call whose argument ripr cannot read is never hidden behind the
+/// extra rows another call's table supplies.
+fn every_owner_call_reads_a_row(
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    let parameters = function_parameters(owner);
+    test.body_calls()
+        .filter(|call| call.name == owner.name)
+        .all(|target| {
+            !owner_call_parameter_values_where(
+                &[test],
+                &owner.name,
+                is_free(owner),
+                &parameters,
+                |candidate_test, call| {
+                    std::ptr::eq(call, target)
+                        && super::call_identity::qualified_owner_calls_resolve(
+                            index,
+                            owner,
+                            candidate_test,
+                            &call.text,
+                        )
+                },
+                &ReceiverParameters::reading_text_cells(true).reading_files_of(index),
+            )
+            .is_empty()
+        })
 }
 
 /// #3296: the owner's exact input rows. Direct test-call rows first
@@ -2934,14 +4737,25 @@ fn call_values_for_owner(
     related_tests: &[&TestSummary],
     helper_chain: Option<&super::helper_transfer::HelperChain>,
     index: &crate::analysis::rust_index::RustIndex,
+    text_cells: bool,
 ) -> Vec<Vec<ParameterValue>> {
     let parameters = if parameters.is_empty() {
         function_parameters(owner)
     } else {
         parameters.to_vec()
     };
-    let direct =
-        owner_call_parameter_values(related_tests, &owner.name, is_free(owner), &parameters);
+    // #9218: a module-qualified call that does not resolve to the owner's
+    // module (`rival::thr(101)`) supplies no owner input row.
+    let direct = owner_call_parameter_values_where(
+        related_tests,
+        &owner.name,
+        is_free(owner),
+        &parameters,
+        |test, call| {
+            super::call_identity::qualified_owner_calls_resolve(index, owner, test, &call.text)
+        },
+        &ReceiverParameters::reading_text_cells(text_cells).reading_files_of(index),
+    );
     if !direct.is_empty() {
         return direct;
     }
@@ -2968,7 +4782,7 @@ fn deterministic_computed_argument(argument: &str, is_exact: impl Fn(&str) -> bo
             .all(|name| is_constant_like(name) || is_exact(name))
 }
 
-fn is_constant_like(name: &str) -> bool {
+pub(super) fn is_constant_like(name: &str) -> bool {
     matches!(name, "true" | "false")
         || (name.chars().any(|ch| ch.is_ascii_uppercase())
             && name
@@ -2980,9 +4794,12 @@ fn is_constant_like(name: &str) -> bool {
 /// macro name, a method or field after `.`, a path segment beside `::`, a
 /// type after `as`, a numeric literal or its suffix, or a char/byte
 /// literal's contents. Strings and comments are masked first.
-fn free_identifiers(text: &str) -> Vec<String> {
+pub(super) fn free_identifiers(text: &str) -> Vec<String> {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
     let chars: Vec<char> = masked.chars().collect();
+    // Byte offset of each masked char: the mask blanks a char literal, so a
+    // byte-literal prefix is recognised against the original text.
+    let offsets: Vec<usize> = masked.char_indices().map(|(offset, _)| offset).collect();
     let mut names = Vec::new();
     let mut previous: Option<char> = None;
     let mut after_as = false;
@@ -3016,7 +4833,11 @@ fn free_identifiers(text: &str) -> Vec<String> {
             let name: String = chars[start..idx].iter().collect();
             let next = chars[idx..].iter().find(|ch| !ch.is_whitespace()).copied();
             let path_next = chars.get(idx) == Some(&':') && chars.get(idx + 1) == Some(&':');
-            let byte_literal = name == "b" && chars.get(idx) == Some(&'\'');
+            let byte_literal = name == "b"
+                && offsets
+                    .get(idx)
+                    .and_then(|offset| text.as_bytes().get(*offset))
+                    == Some(&b'\'');
             let skip = after_as
                 || byte_literal
                 || name == "as"
@@ -3135,6 +4956,21 @@ pub(in crate::analysis) fn computed_input_parameters(
     computed
 }
 
+/// Capitalized identifiers in call text that are applied or path-qualified
+/// (`Size(..)`, `Size::new(..)`): the names a receiver argument may construct.
+fn constructor_names(text: &str) -> impl Iterator<Item = &str> {
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    text.match_indices(|ch: char| ch.is_ascii_uppercase())
+        .filter(move |(at, _)| !text[..*at].chars().next_back().is_some_and(is_word))
+        .filter_map(move |(at, _)| {
+            let end = text[at..]
+                .find(|ch: char| !is_word(ch))
+                .map_or(text.len(), |n| at + n);
+            let after = &text[end..];
+            (after.starts_with('(') || after.starts_with("::")).then(|| &text[at..end])
+        })
+}
+
 /// Bind the entry function's direct test rows down the resolved chain
 /// to the owner's parameters. Each hop's call-site arguments bind
 /// positionally: a literal binds directly, the caller's own parameter
@@ -3149,27 +4985,7 @@ fn helper_transferred_rows(
     if chain.hops.iter().any(|hop| hop.through_macro) {
         return Vec::new();
     }
-    let Some(entry) = chain.hops.last() else {
-        return Vec::new();
-    };
-    let entry_parameters = function_parameters(&entry.caller);
-    // #6780 Devin review: an entry call shadowed by a test-local closure or
-    // nested fn never reaches the helper, so it binds no row (the same
-    // shadow authority that denies its `helper_owner_call` relation).
-    let mut rows = owner_call_parameter_values_where(
-        related_tests,
-        &entry.caller.name,
-        is_free(&entry.caller),
-        &entry_parameters,
-        |test, call| {
-            !super::helper_transfer::test_call_is_shadowed(
-                index,
-                test,
-                &entry.caller.name,
-                call.line,
-            )
-        },
-    );
+    let mut rows = chain_entry_rows(chain, related_tests, index);
     if rows.is_empty() {
         return Vec::new();
     }
@@ -3217,6 +5033,24 @@ fn helper_transferred_rows(
                         .first()
                         .map(|cell| cell.text.clone())
                         .unwrap_or_default(),
+                    file: row.first().and_then(|cell| cell.file.clone()),
+                });
+            }
+            // #9329: a method hop hands its callee the receiver's value as
+            // the pseudo-parameter `self`, readable only as `self.<index>`.
+            // The owner (step 0) has no lower hop to read it, so no `self`
+            // cell ever lands in an owner row.
+            if step > 0
+                && let Some(receiver) = &hop.receiver
+                && let Some(cell) = row.iter().find(|cell| cell.parameter == *receiver)
+                && super::helper_transfer::is_receiver_cell(&cell.value)
+            {
+                bound.push(ParameterValue {
+                    parameter: RECEIVER_PSEUDO_PARAMETER.to_string(),
+                    value: cell.value.clone(),
+                    line: cell.line,
+                    text: cell.text.clone(),
+                    file: cell.file.clone(),
                 });
             }
             bound_rows.push(bound);
@@ -3224,6 +5058,105 @@ fn helper_transferred_rows(
         rows = bound_rows;
     }
     rows
+}
+
+/// #9889: the first chain-edge argument that stops row transfer, when the
+/// tests call the chain's entry with exact rows yet no row reaches the owner.
+/// A hop argument that is neither a strict literal, the caller's own
+/// parameter, nor a receiver projection (`input.trim()`, a local, a
+/// constant) cannot be bound to a value, so what the owner receives is
+/// unreadable: observation through the chain can be neither confirmed nor
+/// refuted. A macro hop, a rebound parameter and an entry with no exact rows
+/// stop elsewhere and are not named here.
+pub(in crate::analysis) fn chain_row_transfer_stop(
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    chain: &super::helper_transfer::HelperChain,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    if chain.hops.iter().any(|hop| hop.through_macro)
+        || chain_entry_rows(chain, related_tests, index).is_empty()
+        || !helper_transferred_rows(&function_parameters(owner), chain, related_tests, index)
+            .is_empty()
+    {
+        return None;
+    }
+    chain.hops.iter().rev().find_map(|hop| {
+        let caller_parameters = function_parameters(&hop.caller);
+        // Ask the binder itself, with a row that holds a value for every
+        // caller parameter, so bindability is never re-derived here. Only
+        // `self.<tuple index>` reads a receiver cell the synthetic row
+        // cannot carry; the binder admits exactly that shape.
+        let row = caller_parameters
+            .iter()
+            .map(|parameter| ParameterValue {
+                parameter: parameter.clone(),
+                value: "0".to_string(),
+                line: 0,
+                text: String::new(),
+                file: None,
+            })
+            .collect::<Vec<_>>();
+        hop.arguments.iter().find_map(|argument| {
+            let trimmed = argument.trim();
+            let receiver_index = trimmed.strip_prefix("self.").is_some_and(|field| {
+                !field.is_empty() && field.chars().all(|ch| ch.is_ascii_digit())
+            });
+            let bindable = receiver_index
+                || bind_helper_argument(argument, &caller_parameters, &row).is_some();
+            (!bindable).then(|| trimmed.to_string())
+        })
+    })
+}
+
+/// The entry function's exact rows from the tests' direct calls, before any
+/// hop binds them down the chain.
+fn chain_entry_rows(
+    chain: &super::helper_transfer::HelperChain,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Vec<Vec<ParameterValue>> {
+    let Some(entry) = chain.hops.last() else {
+        return Vec::new();
+    };
+    let entry_parameters = function_parameters(&entry.caller);
+    // #6780 Devin review: an entry call shadowed by a test-local closure or
+    // nested fn never reaches the helper, so it binds no row (the same
+    // shadow authority that denies its `helper_owner_call` relation).
+    // #9329: the entry hop's method receiver (`b` of `b.to_string_as(si)`)
+    // is the one parameter whose cell is a constructed receiver string.
+    let receiver_reader =
+        |argument: &str| super::helper_transfer::receiver_cell_value(argument, index);
+    let receivers = ReceiverParameters {
+        names: entry.receiver.iter().cloned().collect(),
+        value: Some(&receiver_reader),
+        text_cells: false,
+        index: Some(index),
+    };
+    owner_call_parameter_values_where(
+        related_tests,
+        &entry.caller.name,
+        is_free(&entry.caller),
+        &entry_parameters,
+        |test, call| {
+            !super::helper_transfer::test_call_is_shadowed(
+                index,
+                test,
+                &entry.caller.name,
+                call.line,
+            ) && !constructor_names(&call.text).any(|name| {
+                // #9329 Devin review: a test-local `let Size = |n| ..` makes
+                // `Size(1024)` something other than the tuple constructor.
+                super::helper_transfer::test_body_shadows_name(index, test, name, call.line)
+            }) && super::call_identity::qualified_owner_calls_resolve(
+                index,
+                &entry.caller,
+                test,
+                &call.text,
+            )
+        },
+        &receivers,
+    )
 }
 
 /// One bound argument: a literal, or the caller's own parameter
@@ -3241,15 +5174,29 @@ fn bind_helper_argument(
         return Some(literal);
     }
     let trimmed = argument.trim();
+    // #9329: exactly `self.<tuple index>`, read from the pseudo-parameter
+    // cell a method hop above handed down. Nothing else names `self`.
+    if let Some(field) = trimmed.strip_prefix("self.") {
+        return row
+            .iter()
+            .find(|cell| cell.parameter == RECEIVER_PSEUDO_PARAMETER)
+            .and_then(|cell| super::helper_transfer::project_receiver_field(&cell.value, field));
+    }
     caller_parameters
         .iter()
         .find(|parameter| parameter.as_str() == trimmed)
         .and_then(|parameter| {
             row.iter()
                 .find(|cell| cell.parameter == *parameter)
+                // A constructed receiver string is read only through
+                // `self.<index>`; it never binds as a parameter value.
+                .filter(|cell| !super::helper_transfer::is_receiver_cell(&cell.value))
                 .map(|cell| cell.value.clone())
         })
 }
+
+/// The pseudo-parameter a method hop hands its callee for the receiver.
+const RECEIVER_PSEUDO_PARAMETER: &str = "self";
 
 fn parameter_value(row: &[ParameterValue], parameter: &str) -> Option<ParameterValue> {
     row.iter()
@@ -3287,10 +5234,7 @@ fn observed_parameter_values(rows: &[Vec<ParameterValue>], parameter: &str) -> V
 /// text before the parameter's first `:`, so a destructuring pattern is not
 /// widened into its field names (unlike `signature_parameters`).
 pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     parameters_in_arguments(&arguments)
@@ -3305,10 +5249,7 @@ pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
 /// binds. Field names in a pattern are kept too, which only widens the
 /// owner-scoped set (#6970 review).
 pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     split_top_level_args(&arguments)
@@ -3322,10 +5263,7 @@ pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
 /// `i`. A parameter whose pattern binds more or fewer than one name
 /// (`(a, b): (u8, u8)`, `_: u8`) is an empty name.
 pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     split_top_level_args(&arguments)
@@ -3344,6 +5282,22 @@ pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
             })
         })
         .collect()
+}
+
+/// The contents of `function`'s parameter list with comments and strings
+/// masked, so a trailing comment such as `// lo: a, b: c` on a wrapped
+/// signature cannot add, split or shift parameter names (#7840).
+/// The top-level parameter texts of `function`'s whole signature, including a
+/// `self` receiver (`&self`, `b: ByteSize`), in order.
+pub(super) fn signature_parameter_texts(function: &FunctionSummary) -> Vec<String> {
+    signature_arguments(function)
+        .map(|arguments| split_top_level_args(&arguments))
+        .unwrap_or_default()
+}
+
+fn signature_arguments(function: &FunctionSummary) -> Option<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(&function.body);
+    parameter_list_open(&masked).and_then(|open| delimited_contents_at(&masked, open))
 }
 
 /// The `(` opening the parameter list: the first one after `fn` that sits
@@ -3417,12 +5371,35 @@ fn boundary_operand_parameter(
     owner_source: Option<&str>,
     parameters: &[String],
     operand: &str,
+    at_line: usize,
 ) -> Option<String> {
     parameters
         .iter()
         .find(|parameter| parameter.as_str() == operand)
         .cloned()
+        .or_else(|| mut_boundary_parameter(function, parameters, operand, at_line))
         .or_else(|| boundary_local_operand_parameter(function, owner_source, parameters, operand))
+}
+
+/// A `mut n` parameter as the operand `n` (#10306): the signature keeps the
+/// pattern text, so the plain-name lookup misses it. It maps only while the
+/// caller's value is what the comparison at `at_line` reads (see
+/// [`crate::analysis::syntax::mut_parameter_unwritten_at`]), and it keeps
+/// its `mut` spelling so the test-call rows keyed by it still match.
+fn mut_boundary_parameter(
+    function: &FunctionSummary,
+    parameters: &[String],
+    operand: &str,
+    at_line: usize,
+) -> Option<String> {
+    let spelled = format!("mut {operand}");
+    let parameter = parameters.iter().find(|parameter| **parameter == spelled)?;
+    crate::analysis::syntax::mut_parameter_unwritten_at(
+        &function.body,
+        operand,
+        at_line.checked_sub(function.start_line)?,
+    )
+    .then(|| parameter.clone())
 }
 
 fn boundary_local_operand_parameter(
@@ -3625,6 +5602,232 @@ fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) 
     })
 }
 
+/// A `return_value` probe's changed expression is one bare relational
+/// comparison (`x > 101`), so the returned bool is the changed predicate and
+/// its boundary is the boundary a `predicate` probe on the same line reads.
+/// When the predicate lens resolves a missing boundary discriminator for it,
+/// the probe reads that gap too: reaching the owner with inputs that never
+/// separate the old and new threshold is not an activated change. A compound (`&&`/`||`)
+/// or non-comparison expression keeps the return-value reading.
+///
+/// The probe re-read as the bare comparison it returns, when it is one. An
+/// explicit `return x > 101;` is the same returned comparison as the implicit
+/// tail `x > 101`, so a leading `return ` and trailing `;` are dropped from the
+/// changed and prior text before boundary extraction (#9116). Only the
+/// comparison itself is exposed: a comparison nested in a call, index,
+/// turbofish or compound value never normalises to one and keeps the
+/// return-value reading.
+pub(in crate::analysis) fn returned_comparison_view(probe: &Probe) -> Option<Probe> {
+    if !matches!(probe.family, ProbeFamily::ReturnValue) {
+        return None;
+    }
+    let (expression, explicit) = strip_explicit_return(&probe.expression);
+    if explicit && !is_top_level_comparison(&expression) {
+        return None;
+    }
+    let before = probe.before.as_deref().map(|before| {
+        let (before, before_explicit) = strip_explicit_return(before);
+        (before, before_explicit)
+    });
+    if let Some((before, true)) = &before
+        && !is_top_level_comparison(before)
+    {
+        return None;
+    }
+    if expression.contains("&&")
+        || expression.contains("||")
+        || comparison_operands(&expression).is_none()
+        || !before
+            .as_ref()
+            .is_some_and(|(before, _)| same_comparison_shape(before, &expression))
+    {
+        return None;
+    }
+    let mut view = probe.clone();
+    view.expression = expression;
+    view.before = before.map(|(before, _)| before);
+    Some(view)
+}
+
+/// `return x > 1;` -> (`x > 1`, true); a text without a leading `return`
+/// keyword comes back unchanged and `false`. The keyword must be followed by
+/// whitespace (space, tab, newline), so `returnx > 1`, `return_x > 1` and
+/// `returned > 1` stay identifiers.
+fn strip_explicit_return(text: &str) -> (String, bool) {
+    let trimmed = text.trim();
+    match trimmed.strip_prefix("return") {
+        Some(rest) if rest.starts_with(char::is_whitespace) => {
+            (rest.trim().trim_end_matches(';').trim().to_string(), true)
+        }
+        _ => (text.to_string(), false),
+    }
+}
+
+/// One relational comparison whose operator sits outside every bracket, with
+/// no turbofish: `x > 101` and `(a + 1) > 5` qualify; `f(a > 1)`,
+/// `v[a > 1]` and `x.parse::<i32>() > 5` do not.
+fn is_top_level_comparison(expression: &str) -> bool {
+    if expression.contains("::<") {
+        return false;
+    }
+    let chars: Vec<char> = expression.chars().collect();
+    let mut depth = 0i32;
+    let mut top_level = 0usize;
+    let mut index = 0usize;
+    while index < chars.len() {
+        let ch = chars.get(index).copied().unwrap_or(' ');
+        index += 1;
+        match ch {
+            '"' => {
+                // A raw string has no escapes; its end cannot be found by this
+                // scan, so it is not a recognised comparison.
+                if matches!(
+                    index.checked_sub(2).and_then(|i| chars.get(i)),
+                    Some('r' | '#')
+                ) {
+                    return false;
+                }
+                loop {
+                    match chars.get(index) {
+                        None => return false,
+                        Some('\\') => index += 2,
+                        Some('"') => {
+                            index += 1;
+                            break;
+                        }
+                        Some(_) => index += 1,
+                    }
+                }
+            }
+            '\'' => {
+                // Only a `'x'` or `'\...'` shape is a char literal; anything
+                // else (`'a` lifetimes, labels) keeps the plain scan.
+                if chars.get(index) == Some(&'\\') {
+                    // Skip the backslash and the escaped char, then find the
+                    // closing quote (`'\n'`, `'\''`, `'\x41'`, `'\u{41}'`).
+                    match chars
+                        .get(index + 2..)
+                        .and_then(|rest| rest.iter().position(|c| *c == '\''))
+                    {
+                        Some(offset) => index += 2 + offset + 1,
+                        None => return false,
+                    }
+                } else if chars.get(index + 1) == Some(&'\'') {
+                    index += 2;
+                }
+            }
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            '<' | '>' | '=' | '!' if depth == 0 => top_level += 1,
+            '<' | '>' => return false,
+            _ => {}
+        }
+    }
+    depth == 0 && top_level > 0
+}
+
+/// Whether `before` and `after` are bare comparisons in the same operator
+/// family (`>`/`>=`, `<`/`<=`, `==`, `!=`) on the same left operand, so only
+/// the boundary differs. An operator change across families (`x == 100` to
+/// `x > 101`) can separate the versions at an off-boundary input, so it keeps
+/// the return-value reading.
+fn same_comparison_shape(before: &str, after: &str) -> bool {
+    fn operator_and_left(expression: &str) -> Option<(&'static str, String)> {
+        for (operator, family) in [
+            (">=", ">"),
+            ("<=", "<"),
+            ("==", "=="),
+            ("!=", "!="),
+            (">", ">"),
+            ("<", "<"),
+        ] {
+            if let Some((left, right)) = expression.split_once(operator) {
+                let left = clean_operand(left);
+                if !left.is_empty() && !clean_operand(right).is_empty() {
+                    return Some((family, left));
+                }
+            }
+        }
+        None
+    }
+    match (operator_and_left(before), operator_and_left(after)) {
+        (Some(before), Some(after)) => before == after,
+        _ => false,
+    }
+}
+
+/// The literal a changed bare equality line replaced: `before` and
+/// `probe.expression` are both exactly `left == literal` (or `!=`, after
+/// an optional leading `if` and trailing `{`) with the same left operand and
+/// operator, and two different single literals (a string, a char or a plain
+/// integer). `None` for anything else, so a compound predicate, a changed
+/// left operand and a computed or named constant never qualify.
+struct ReplacedConstant {
+    /// The literal as it was spelled before the edit (`"alpha"`).
+    text: String,
+    /// Its value in the shared operand rendering.
+    value: String,
+}
+
+fn replaced_equality_constant(probe: &Probe) -> Option<ReplacedConstant> {
+    fn bare_equality(text: &str) -> Option<(String, &'static str, String)> {
+        let text = text.trim();
+        let text = text.strip_prefix("if ").unwrap_or(text);
+        let text = text.strip_suffix('{').unwrap_or(text).trim();
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+        if masked.len() != text.len()
+            || ["&&", "||", ">=", "<=", "<", ">", "?", ";", "=>", "|"]
+                .iter()
+                .any(|token| masked.contains(token))
+        {
+            return None;
+        }
+        let operator = match (masked.matches("==").count(), masked.matches("!=").count()) {
+            (1, 0) => "==",
+            (0, 1) => "!=",
+            _ => return None,
+        };
+        let at = masked.find(operator)?;
+        let left = text.get(..at)?;
+        let right = text.get(at + operator.len()..)?.trim();
+        let literal = !right.is_empty()
+            && if right.starts_with('"') || right.starts_with('\'') {
+                super::match_transfer::is_single_literal(right)
+            } else {
+                right.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+            };
+        (literal && !left.trim().is_empty()).then(|| {
+            (
+                left.split_whitespace().collect::<String>(),
+                operator,
+                right.to_string(),
+            )
+        })
+    }
+    let (before_left, before_operator, before_literal) = bare_equality(probe.before.as_deref()?)?;
+    let (after_left, after_operator, after_literal) = bare_equality(&probe.expression)?;
+    if before_left != after_left
+        || before_operator != after_operator
+        || before_literal == after_literal
+    {
+        return None;
+    }
+    let value = literal_operand_value(&before_literal)?;
+    // `5` to `05` or `"a"` to `"\u{61}"` is the same value: nothing flips.
+    if same_literal_value(&value, &literal_operand_value(&after_literal)?) {
+        return None;
+    }
+    Some(ReplacedConstant {
+        text: before_literal,
+        value,
+    })
+}
+
 pub(in crate::analysis) fn comparison_operands(expression: &str) -> Option<(String, String)> {
     for operator in [">=", "<=", "==", "!=", ">", "<"] {
         if let Some((left, right)) = expression.split_once(operator) {
@@ -3653,11 +5856,12 @@ fn oriented_comparison_operands(
 ) -> Option<(String, String)> {
     let (left, right) = comparison_operands(expression)?;
     let owner_bound = |operand: &str| {
-        boundary_operand_parameter(owner, owner_source, parameters, operand).is_some()
+        boundary_operand_parameter(owner, owner_source, parameters, operand, predicate_line).is_some()
             || live_local_initializer(owner, operand, predicate_line).is_some()
             // Any declared local keeps the left side, as before #4228:
             // the swap exists for literals, not to reinterpret locals.
             || owner_declares_local(owner, operand, usize::MAX)
+            || is_parameter_expression(owner, operand, parameters, predicate_line)
     };
     if !owner_bound(&left) && owner_bound(&right) {
         return Some((right, left));
@@ -3749,6 +5953,56 @@ fn visible_operand(operand: &str, constant: Option<&BoundaryConstant>) -> Option
     })
 }
 
+/// RIPR-SPEC-0163 example 2 (#10108): a path-qualified scanner state such as
+/// `Scan::Word` is compared as a normalized text token, so the right operand
+/// `Scan::Word` of `final_state == Scan::Word` reads as that token when the
+/// left side evaluated to one. The token form is the left value's own
+/// (`"Scan::Word"`), never a guess from the operand's spelling alone: a left
+/// that is not a quoted path token (an integer, a plain string state, an
+/// unresolved side) leaves the operand unresolved as before, and a
+/// SCREAMING_CASE tail stays a constant, not a state.
+fn scanner_state_path_operand(operand: &str, lefts: &[ExactOperand]) -> Option<ExactOperand> {
+    let identifier = |segment: &str| {
+        let mut chars = segment.chars();
+        chars
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+            && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    };
+    let is_path = |text: &str| {
+        let mut segments = text.split("::");
+        let first = segments.next().is_some_and(&identifier);
+        let second = segments.next().is_some_and(&identifier);
+        first && second && segments.all(&identifier)
+    };
+    let token = operand.trim();
+    // A `crate::`, `self::` or `super::` prefix is a spelling the scanner
+    // never returns, so it could only miss; leave such an operand unresolved.
+    if !is_path(token)
+        || token.starts_with("crate::")
+        || token.starts_with("self::")
+        || token.starts_with("super::")
+        || super::text::path_value_is_constant(token)
+    {
+        return None;
+    }
+    // Only a value a helper returned can be a scanner state: a quoted call
+    // argument or a literal that merely looks like a path is not (#10308).
+    lefts
+        .iter()
+        .filter(|left| left.provenance.contains(" via helper return of "))
+        .any(|left| {
+            left.value
+                .strip_prefix('"')
+                .and_then(|rest| rest.strip_suffix('"'))
+                .is_some_and(is_path)
+        })
+        .then(|| ExactOperand {
+            provenance: format!("scanner state path {token}"),
+            value: format!("\"{token}\""),
+        })
+}
+
 /// Direct owner calls in related tests whose argument for the compared
 /// parameter names the boundary constant itself (`discounted_total(
 /// DISCOUNT_THRESHOLD)`): that argument is the boundary value by
@@ -3762,7 +6016,7 @@ fn owner_calls_passing_constant(
     left_parameter: &str,
     constant: &BoundaryConstant,
     index: &crate::analysis::rust_index::RustIndex,
-) -> Vec<(usize, String)> {
+) -> Vec<(std::path::PathBuf, usize, String)> {
     let Some(position) = parameters
         .iter()
         .position(|parameter| parameter == left_parameter)
@@ -3785,16 +6039,16 @@ fn owner_calls_passing_constant(
                 &constant.name,
             )
         })
-        .flat_map(|test| test.calls.iter())
-        .filter(|call| call.name == owner.name)
-        .filter_map(|call| {
+        .flat_map(|test| test.calls.iter().map(move |call| (test, call)))
+        .filter(|(_, call)| call.name == owner.name)
+        .filter_map(|(test, call)| {
             // A free owner's arguments come from its own call site, never a
             // same-line `Type::name(..)` (#6713).
             let text = owner_name_call_text(&call.text, &owner.name, is_free(owner))?;
             let arguments = call_arguments(text, &call.name)?;
             let argument = arguments.get(position)?;
             crate::analysis::value_resolution::argument_names_constant(argument, &constant.name)
-                .then(|| (call.line, call.text.to_string()))
+                .then(|| (test.file.clone(), call.line, call.text.to_string()))
         })
         .collect()
 }
@@ -3898,6 +6152,14 @@ fn is_float_exponent_sign(chars: &[char], sign: usize) -> bool {
             .all(|ch| ch.is_ascii_digit() || matches!(ch, '_' | '.'))
 }
 
+/// Two literal values are the same constant: equal text or the same plain
+/// decimal, never merely equal once underscores are erased (`"a_b"` is not
+/// `"ab"`), which `comparable_value` would claim.
+fn same_literal_value(left: &str, right: &str) -> bool {
+    let bare = |value: &'_ str| value.trim().trim_matches('"').to_string();
+    exact_values_equal(left, right) || bare(left) == bare(right)
+}
+
 fn comparable_value(value: &str) -> String {
     value
         .trim()
@@ -3965,6 +6227,43 @@ pub(in crate::analysis) fn owner_argument_values(
     test: &TestSummary,
     argument: &str,
 ) -> Vec<String> {
+    owner_argument_values_in(test, argument, false)
+}
+
+/// The values an owner call's argument contributes to an input ROW. Unlike
+/// [`owner_argument_values`], which also feeds the visible-literal reading of
+/// a boundary gap (a literal-carrying call such as `score(order(5000))` stays
+/// a visible `5000` there), a row asserts what the call received, so a
+/// literal inside a call chain is that call's operand, not the argument:
+/// `std::env::var("WHO").unwrap_or_default()` passes no `"WHO"` (#10484).
+/// The argument is the literal only when nothing computes around it.
+fn owner_row_argument_values(
+    test: &TestSummary,
+    argument: &str,
+    text_cells: bool,
+    scope: super::argument_fold::FoldScope<'_>,
+) -> Vec<String> {
+    let values = owner_argument_values_in(test, argument, text_cells);
+    if values.is_empty() {
+        // RIPR-SPEC-0158: arithmetic over the test's own literal bindings
+        // is the number it computes (`score(base + 1)` after `let base = 9`).
+        return super::argument_fold::folded_argument(&test.body, argument, scope)
+            .into_iter()
+            .collect();
+    }
+    if passes_literals_through(strip_literal_wrappers(argument), 0) {
+        values
+    } else {
+        Vec::new()
+    }
+}
+
+/// [`owner_argument_values`], optionally reading a whole string or char
+/// literal in a constant-row table column as the exact input it is. Only an
+/// emptiness guard asks for it (see [`admits_closed_form`]): a text cell
+/// settles whether the input is empty, but an equality between two text
+/// parameters needs rows on both sides that this reader does not check.
+fn owner_argument_values_in(test: &TestSummary, argument: &str, text_cells: bool) -> Vec<String> {
     // `order_discount(base + 1)` passes neither `1` nor `base`: a
     // computed argument is not an exact input value (RIPR-SPEC-0001,
     // #6672), so it yields nothing rather than one of its operands.
@@ -3996,10 +6295,18 @@ pub(in crate::analysis) fn owner_argument_values(
             .iter()
             .map(|cell| {
                 // The cell must be one whole scalar, as an rstest case is:
-                // `Some(1)` or `"1"` is not the value `1`.
+                // `Some(1)` or `"1"` is not the value `1`. With `text_cells`
+                // a whole string literal is the same exact input a
+                // direct call argument gives (`initial("")`) and stays
+                // quoted. A char cell is no text input, a raw or byte string
+                // is no whole scalar, and an escape the scalar reader would
+                // respell is not the same value; each yields nothing.
                 let cell = cell.trim();
-                (!cell.starts_with(['"', '\''])
-                    && scalar_values(cell).as_slice() == [cell.to_string()])
+                ((if text_cells {
+                    !cell.starts_with('\'')
+                } else {
+                    !cell.starts_with(['"', '\''])
+                }) && scalar_values(cell).as_slice() == [cell.to_string()])
                 .then(|| cell.to_string())
             })
             .collect();
@@ -4011,6 +6318,90 @@ pub(in crate::analysis) fn owner_argument_values(
         .filter(|value| !value.starts_with(['"', '\'']))
         .filter(|value| scalar_values(value).as_slice() == std::slice::from_ref(value))
         .collect()
+}
+
+/// The argument with the wrappers that keep a literal's value stripped: a
+/// reference (`&"Bob"`), `.to_string()`, `.to_owned()`, `.into()` and
+/// `String::from(..)`. Anything else around a literal is left in place for
+/// [`passes_literals_through`] to judge.
+fn strip_literal_wrappers(argument: &str) -> &str {
+    let mut text = argument.trim();
+    loop {
+        let before = text;
+        text = text.strip_prefix('&').map_or(text, str::trim_start);
+        for method in ["to_string", "to_owned", "into"] {
+            text = strip_empty_method_call(text, method);
+        }
+        text = strip_string_from(text);
+        if text == before {
+            return text;
+        }
+    }
+}
+
+/// `receiver.method()` with Rust's permitted whitespace around the dot, the
+/// name and the empty parentheses, reduced to `receiver`.
+fn strip_empty_method_call<'a>(text: &'a str, method: &str) -> &'a str {
+    let Some(rest) = text.trim_end().strip_suffix(')') else {
+        return text;
+    };
+    let Some(rest) = rest.trim_end().strip_suffix('(') else {
+        return text;
+    };
+    let Some(rest) = rest.trim_end().strip_suffix(method) else {
+        return text;
+    };
+    rest.trim_end()
+        .strip_suffix('.')
+        .map_or(text, str::trim_end)
+}
+
+/// `String::from(inner)` with whitespace allowed between its tokens, reduced
+/// to `inner`.
+fn strip_string_from(text: &str) -> &str {
+    let rest = text.trim_start();
+    let Some(rest) = rest.strip_prefix("String").map(str::trim_start) else {
+        return text;
+    };
+    let Some(rest) = rest.strip_prefix("::").map(str::trim_start) else {
+        return text;
+    };
+    let Some(rest) = rest.strip_prefix("from").map(str::trim_start) else {
+        return text;
+    };
+    rest.strip_prefix('(')
+        .and_then(|inner| inner.trim_end().strip_suffix(')'))
+        .map_or(text, str::trim)
+}
+
+/// Whether every group in `text` passes its contents through as values: a
+/// bare tuple or array, a constructor or variant (`Some(10)`), `vec![..]`,
+/// at every depth. A call, method call or macro that merely holds a literal
+/// computes its value instead (the same rule [`collect_spelled_values`] applies
+/// below the line).
+fn passes_literals_through(text: &str, depth: usize) -> bool {
+    if depth > MAX_SPELLED_DEPTH {
+        return false;
+    }
+    let structure = structural_bytes(text);
+    top_level_comma_ranges(&structure)
+        .into_iter()
+        .all(|(start, end)| {
+            let (Some(argument), Some(argument_structure)) =
+                (text.get(start..end), structure.get(start..end))
+            else {
+                return true;
+            };
+            if argument.trim().is_empty() {
+                return true;
+            }
+            let shape = argument_shape(argument, argument_structure);
+            shape.all_groups_transparent
+                && shape
+                    .groups
+                    .iter()
+                    .all(|group| passes_literals_through(group, depth + 1))
+        })
 }
 
 fn is_plain_identifier(text: &str) -> bool {
@@ -4028,16 +6419,20 @@ pub(in crate::analysis) fn has_observed_boundary_equality(activation: &Activatio
         .any(|fact| fact.value.contains(" == "))
 }
 
-pub(super) fn sort_value_facts(facts: &mut Vec<ValueFact>) {
+pub(in crate::analysis) fn sort_value_facts(facts: &mut Vec<ValueFact>) {
     facts.sort_by(|left, right| {
         left.line
             .cmp(&right.line)
             .then(left.context.as_str().cmp(right.context.as_str()))
             .then(left.value.cmp(&right.value))
             .then(left.text.cmp(&right.text))
+            // A file is part of the source location, even though machine
+            // output omits it. Break otherwise equal ties deterministically.
+            .then(left.file.cmp(&right.file))
     });
     facts.dedup_by(|left, right| {
-        left.line == right.line
+        left.file == right.file
+            && left.line == right.line
             && left.text == right.text
             && left.value == right.value
             && left.context == right.context
@@ -4476,6 +6871,19 @@ fn scalar_values(text: &str) -> Vec<String> {
         {
             let mut end = byte_idx + ch.len_utf8();
             let mut cursor = idx + 1;
+            // A radix-prefixed integer (`0xFF`, `0b1010`, `0o17`) is one
+            // literal, kept as spelled. Reading its leading `0` alone made
+            // every such literal the value `0`, so a test input far from a
+            // hex boundary compared equal to it (#9164).
+            if let Some(radix_end) = radix_literal_end(&chars, idx) {
+                if let Some((end_byte, end_ch)) = chars.get(radix_end - 1)
+                    && let Some(value) = text.get(byte_idx..end_byte + end_ch.len_utf8())
+                {
+                    values.push(value.to_string());
+                }
+                idx = radix_end;
+                continue;
+            }
             let mut seen_fraction = false;
             while cursor < chars.len() {
                 let (next_byte, next_ch) = chars[cursor];
@@ -4508,6 +6916,38 @@ fn scalar_values(text: &str) -> Vec<String> {
     values
 }
 
+/// The index one past a radix-prefixed integer literal (`0x1F`, `-0b101`,
+/// `0o17`, with `_` separators) that starts at `start` (a digit or a leading
+/// `-`), or `None` when the text there is not one. A type suffix (`u8`) is
+/// left for the caller's identifier-digit guard.
+fn radix_literal_end(chars: &[(usize, char)], start: usize) -> Option<usize> {
+    let zero = if chars.get(start).is_some_and(|(_, ch)| *ch == '-') {
+        start + 1
+    } else {
+        start
+    };
+    if chars.get(zero).map(|(_, ch)| *ch) != Some('0') {
+        return None;
+    }
+    let radix = match chars.get(zero + 1).map(|(_, ch)| *ch)? {
+        'x' | 'X' => 16,
+        'b' | 'B' => 2,
+        'o' | 'O' => 8,
+        _ => return None,
+    };
+    let mut cursor = zero + 2;
+    let mut digits = 0usize;
+    while let Some((_, ch)) = chars.get(cursor) {
+        if ch.is_digit(radix) {
+            digits += 1;
+        } else if *ch != '_' {
+            break;
+        }
+        cursor += 1;
+    }
+    (digits > 0).then_some(cursor)
+}
+
 fn looks_like_table_row(line: &str) -> bool {
     (line.starts_with('(') || line.starts_with('[') || line.contains("[(")) && line.contains(',')
 }
@@ -4523,7 +6963,123 @@ fn looks_like_builder_method(line: &str) -> bool {
 }
 
 #[cfg(test)]
+mod method_hop_rows;
+
+#[cfg(test)]
 mod tests {
+    #[test]
+    fn a_constant_the_file_imports_is_not_read_from_a_same_named_declaration() {
+        let source = "mod a { pub const KB: u64 = 1000; }\nmod b {\n    use external::KB;\n}\n";
+        assert!(name_imported_in_file(source, "KB"));
+        assert!(name_imported_in_file("pub use other::{KB, KIB};", "KIB"));
+        assert!(!name_imported_in_file(source, "KIB"));
+        // A longer name that merely contains it, and a comment, are not imports.
+        assert!(!name_imported_in_file("use external::KBPS;\n", "KB"));
+        assert!(!name_imported_in_file("// use external::KB;\n", "KB"));
+    }
+
+    #[test]
+    fn an_equality_fact_names_the_integer_a_local_evaluated_to() {
+        let local =
+            ResolvedOperand::Local("unit".into(), "if si { KIB } else { KB }".into(), vec![]);
+        let side =
+            |text, value, parameter, resolved| EqualitySide::new(text, value, parameter, resolved);
+        // A parameter against an evaluated local reads like the literal
+        // comparison, whichever side the local sits on.
+        assert_eq!(
+            equality_value(
+                &side("bytes", "1024", Some("bytes"), None),
+                &side("unit", "1024", None, Some(&local)),
+            ),
+            ("bytes == 1024".to_string(), true)
+        );
+        assert_eq!(
+            equality_value(
+                &side("unit", "1024", None, Some(&local)),
+                &side("bytes", "1024", Some("bytes"), None),
+            ),
+            ("bytes == 1024".to_string(), true)
+        );
+        // A boolean local, or two non-parameter operands, keep their text.
+        let open = ResolvedOperand::Local("open".into(), "label.starts_with(\"p\")".into(), vec![]);
+        assert_eq!(
+            equality_value(
+                &side("open", "true", None, Some(&open)),
+                &side("want", "true", Some("want"), None),
+            ),
+            ("open == want".to_string(), false)
+        );
+        assert_eq!(
+            equality_value(
+                &side("a", "1", None, Some(&local)),
+                &side("b", "1", None, Some(&local)),
+            ),
+            ("a == b".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn a_duplicate_of_the_initializer_text_cannot_hide_a_flag_rebinding() {
+        let init = "if si { KIB } else { KB }";
+        let body =
+            format!("{{\n let _u0 = {init};\n for si in [false] {{\n let unit = {init};\n }}\n}}");
+        let owner = function(&body);
+        assert!(name_seen_before(&owner, "si", init));
+        let single = function(&format!("{{\n let unit = {init};\n}}"));
+        assert!(!name_seen_before(&single, "si", init));
+    }
+
+    #[test]
+    fn exact_values_compare_plain_decimals_by_digits_only() {
+        assert!(exact_values_equal("1024", "1_024"));
+        assert!(exact_values_equal("1_000", "1000"));
+        assert!(exact_values_equal("\"a\"", "\"a\""));
+        // A suffixed, hex, signed or different value is never parsed into
+        // equality.
+        assert!(!exact_values_equal("1024", "1024u64"));
+        assert!(!exact_values_equal("1024", "0x400"));
+        assert!(!exact_values_equal("1024", "-1024"));
+        assert!(!exact_values_equal("1024", "1_025"));
+        assert!(!exact_values_equal("\"1024\"", "1024"));
+    }
+
+    #[test]
+    fn an_integer_local_meets_only_an_integer_counterpart_cell() {
+        let row = |value: &str| {
+            vec![ParameterValue {
+                parameter: "bytes".to_string(),
+                value: value.to_string(),
+                line: 1,
+                text: String::new(),
+                file: None,
+            }]
+        };
+        assert!(counterpart_is_comparable(
+            &row("1_024"),
+            Some("bytes"),
+            "1024"
+        ));
+        // The literal inside `to_string(parse("128.000 GiB"), true)` is not
+        // the compared number.
+        assert!(!counterpart_is_comparable(
+            &row("\"128.000 GiB\""),
+            Some("bytes"),
+            "1024"
+        ));
+        // Nothing to compare against leaves the row as it was.
+        assert!(counterpart_is_comparable(&row("\"x\""), None, "1024"));
+        assert!(counterpart_is_comparable(
+            &row("\"x\""),
+            Some("other"),
+            "1024"
+        ));
+        assert!(counterpart_is_comparable(
+            &row("\"x\""),
+            Some("bytes"),
+            "\"y\""
+        ));
+    }
+
     #[test]
     fn constructed_field_name_reads_plain_and_shorthand_initializers() {
         assert_eq!(constructed_field_name("retries: 1,"), Some("retries"));
@@ -4709,6 +7265,124 @@ mod tests {
         }));
     }
 
+    /// #8389: each equality fact names the test file that holds its call line.
+    #[test]
+    fn equality_facts_name_the_test_file_holding_their_call() {
+        let owner = function(
+            "pub fn score(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}",
+        );
+        let in_file = |file: &str, line: usize, call: &str| {
+            let mut test = test_with_call("score_uses_boundary", call);
+            test.file = PathBuf::from(file);
+            test.start_line = line - 1;
+            test.end_line = line + 1;
+            test.calls[0].line = line;
+            test
+        };
+        let a = in_file("tests/a.rs", 11, "score(100, 100);");
+        let b = in_file("tests/b.rs", 31, "score(100, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&b, &a],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+        let equality = |line: usize| {
+            activation
+                .observed_values
+                .iter()
+                .find(|fact| fact.line == line && fact.value == "amount == threshold")
+                .and_then(|fact| fact.file.clone())
+        };
+        assert_eq!(equality(11), Some(PathBuf::from("tests/a.rs")));
+        assert_eq!(equality(31), Some(PathBuf::from("tests/b.rs")));
+    }
+
+    /// The equality / helper / constant rows are pushed before the shared
+    /// `sort_value_facts` in `activation_evidence`, so they follow the same
+    /// identity rule as every other value fact: file is part of the source
+    /// location. Two test files calling the owner at the same line with the
+    /// same arguments keep two distinct facts (one per file, deterministic
+    /// path order, either input order); only exact same-file duplicates
+    /// collapse.
+    #[test]
+    fn same_line_equality_from_two_files_keeps_one_fact_per_file_through_activation_evidence() {
+        let owner = function(
+            "pub fn score(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}",
+        );
+        let in_file = |file: &str| {
+            let mut test = test_with_call("score_uses_boundary", "score(100, 100);");
+            test.file = PathBuf::from(file);
+            test.start_line = 10;
+            test.end_line = 12;
+            test.calls[0].line = 11;
+            test
+        };
+        let a = in_file("tests/a.rs");
+        let b = in_file("tests/b.rs");
+        let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
+        for order in [[&a, &b], [&b, &a]] {
+            let activation = activation_evidence(
+                &probe,
+                Some(&owner),
+                &order,
+                &[],
+                None,
+                &crate::analysis::rust_index::RustIndex::default(),
+                false,
+            );
+            let equalities = activation
+                .observed_values
+                .iter()
+                .filter(|fact| fact.value == "amount == threshold")
+                .collect::<Vec<_>>();
+            let files = equalities
+                .iter()
+                .map(|fact| fact.file.as_deref())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                files,
+                vec![
+                    Some(std::path::Path::new("tests/a.rs")),
+                    Some(std::path::Path::new("tests/b.rs")),
+                ],
+                "{equalities:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sort_value_facts_preserves_files_and_collapses_only_exact_duplicates() {
+        let fact = |file: &str| ValueFact {
+            file: Some(PathBuf::from(file)),
+            ..value_fact(4, "score(1)", "1", ValueContext::FunctionArgument)
+        };
+        for order in [["tests/b.rs", "tests/a.rs"], ["tests/a.rs", "tests/b.rs"]] {
+            let mut facts = order.iter().map(|file| fact(file)).collect::<Vec<_>>();
+            facts.extend(facts.clone());
+            sort_value_facts(&mut facts);
+            assert_eq!(facts, vec![fact("tests/a.rs"), fact("tests/b.rs")]);
+        }
+    }
+
+    #[test]
+    fn sort_value_facts_breaks_same_location_value_ties_by_text() {
+        let fact = |text: &str| ValueFact {
+            file: Some(PathBuf::from("tests/a.rs")),
+            ..value_fact(4, text, "1", ValueContext::FunctionArgument)
+        };
+        for order in [["zeta", "alpha"], ["alpha", "zeta"]] {
+            let mut facts = order.iter().map(|text| fact(text)).collect::<Vec<_>>();
+            sort_value_facts(&mut facts);
+            assert_eq!(facts, vec![fact("alpha"), fact("zeta")]);
+        }
+    }
+
     #[test]
     fn activation_evidence_resolves_direct_local_boundary_operand_alias() {
         let owner = function(
@@ -4867,6 +7541,7 @@ mod tests {
         assert!(activation.observed_values.iter().any(|fact| {
             fact.context == ValueContext::FunctionArgument && fact.value == "end == start"
         }));
+        assert_equality_facts_name_file(&activation, "tests/split.rs");
     }
 
     #[test]
@@ -4907,6 +7582,18 @@ mod tests {
         );
         let no_params = function("pub fn zero() -> u8 {\n    f(1)\n}");
         assert!(function_parameters(&no_params).is_empty());
+    }
+
+    #[test]
+    fn signature_comments_do_not_shift_parameter_names() {
+        // #7840: a trailing comment holding a comma and a colon is not a
+        // parameter, for all three signature readers.
+        let commented = function(
+            "pub fn tier(\n    lo: u8, // lo: a, b: c\n    hi: u8, /* x: y, z: w */\n) -> u8 {\n    0\n}",
+        );
+        assert_eq!(function_parameters(&commented), vec!["lo", "hi"]);
+        assert_eq!(signature_parameters(&commented), vec!["lo", "hi"]);
+        assert_eq!(call_parameter_names(&commented), vec!["lo", "hi"]);
     }
 
     #[test]
@@ -5048,6 +7735,107 @@ mod tests {
         );
     }
 
+    fn expression_boundary_input(
+        signature: &str,
+        predicate: &str,
+        call: &str,
+    ) -> ActivationWithBoundaryInput {
+        let owner = function(&format!(
+            "{signature} {{\n    if {predicate} {{\n        return 0;\n    }}\n    1\n}}"
+        ));
+        let test = test_with_call("pins_length", call);
+        let probe = probe(ProbeFamily::Predicate, predicate);
+        boundary_input(&owner, &probe, &[&test])
+    }
+
+    #[test]
+    fn literal_text_length_on_the_boundary_is_an_observed_equality() {
+        // `"abcd".len()` is 4 = `2 + 2`: every operand comes from literals.
+        let gathered = expression_boundary_input(
+            "pub fn score(s: &str) -> u32",
+            "s.len() < 2 + 2",
+            "score(\"abcd\");",
+        );
+
+        assert!(has_observed_boundary_equality(&gathered.activation));
+        assert_eq!(gathered.unresolved_boundary, None);
+    }
+
+    #[test]
+    fn literal_text_length_modulo_equality_guard_is_not_credited() {
+        // An `==` guard over a closed form is never credited (one row does
+        // not discriminate its neighbours).
+        let gathered = expression_boundary_input(
+            "pub fn score(s: &str) -> u32",
+            "s.len() % 2 == 1",
+            "score(\"abc\");",
+        );
+
+        assert!(!has_observed_boundary_equality(&gathered.activation));
+    }
+
+    #[test]
+    fn literal_text_length_on_the_wrong_side_is_unresolved_not_credited_or_missing() {
+        // Wrong-side negative: `"ab".len()` is 2, never the boundary 4, so no
+        // equality is observed, no gap is named, and the stage stays unknown.
+        let gathered = expression_boundary_input(
+            "pub fn score(s: &str) -> u32",
+            "s.len() < 2 + 2",
+            "score(\"ab\");",
+        );
+
+        assert!(!has_observed_boundary_equality(&gathered.activation));
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        let reason = gathered.unresolved_boundary.unwrap_or_default();
+        assert!(reason.contains("`s.len()"), "{reason:?}");
+    }
+
+    #[test]
+    fn a_computed_argument_never_resolves_a_length_expression() {
+        for call in ["score(&build());", "score(&format!(\"{}\", 1));"] {
+            let gathered =
+                expression_boundary_input("pub fn score(s: &str) -> u32", "s.len() < 2 + 2", call);
+            assert!(
+                !has_observed_boundary_equality(&gathered.activation),
+                "{call}"
+            );
+            assert!(
+                gathered.activation.missing_discriminators.is_empty(),
+                "{call}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_length_expression_on_a_non_text_parameter_stays_unresolved() {
+        // `.len()` on a generic or slice parameter is not the intrinsic str
+        // method the evaluator models.
+        for signature in [
+            "pub fn score<T: AsRef<[u8]>>(s: T) -> u32",
+            "pub fn score(s: &[u8]) -> u32",
+        ] {
+            let gathered =
+                expression_boundary_input(signature, "s.len() < 2 + 2", "score(\"abcd\");");
+            assert!(
+                !has_observed_boundary_equality(&gathered.activation),
+                "{signature}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rebound_text_parameter_never_resolves_a_length_expression() {
+        let owner = function(
+            "pub fn score(s: &str) -> u32 {\n    let s = s.trim();\n    if s.len() < 2 + 2 {\n        return 0;\n    }\n    1\n}",
+        );
+        let test = test_with_call("pins_length", "score(\"abcd\");");
+        let probe = probe(ProbeFamily::Predicate, "s.len() < 2 + 2");
+
+        let gathered = boundary_input(&owner, &probe, &[&test]);
+
+        assert!(!has_observed_boundary_equality(&gathered.activation));
+    }
+
     #[test]
     fn an_opaque_macro_reaches_the_owner_however_its_bang_is_spaced() {
         let unread = |body: &str| {
@@ -5127,6 +7915,7 @@ mod tests {
         assert!(has_observed_boundary_equality(&activation));
         assert!(activation.missing_discriminators.is_empty());
         assert_eq!(owner_input_values(&activation), vec!["10"]);
+        assert_equality_facts_name_file(&activation, "tests/score.rs");
     }
 
     #[test]
@@ -5313,6 +8102,31 @@ mod tests {
         );
     }
 
+    // RIPR-SPEC-0158 case 5: a row the evaluator refuses may sit on the
+    // boundary, so the rows it does evaluate cannot claim "no test uses it".
+    #[test]
+    fn activation_evidence_keeps_a_partially_evaluated_local_operand_unresolved() {
+        let owner = function(
+            "pub fn hit(input: &str, delim: char) -> bool {\n    let floor = input.len().min(1);\n    let end = input.rfind(delim).map_or(floor, |idx| idx);\n    let start = delim.len_utf8();\n    end >= start\n}",
+        );
+        let present = test_with_call("present_row", "hit(\"xab\", 'x');");
+        let absent = test_with_call("absent_row", "hit(\"ab\", 'x');");
+        let probe = probe(ProbeFamily::Predicate, "end >= start");
+
+        let gathered = boundary_input(&owner, &probe, &[&present, &absent]);
+
+        assert!(
+            gathered.activation.missing_discriminators.is_empty(),
+            "an unevaluated row is not a missing input; got {:?}",
+            gathered.activation.missing_discriminators
+        );
+        let reason = gathered.unresolved_boundary.unwrap_or_default();
+        assert!(
+            reason.contains("`end`"),
+            "the partially evaluated operand must stay unresolved; got {reason:?}"
+        );
+    }
+
     fn constant_boundary_activation(
         constant_source: &str,
         calls: &[&str],
@@ -5325,7 +8139,21 @@ mod tests {
         test_file_source: &str,
         calls: &[&str],
     ) -> (ActivationEvidence, Vec<TestSummary>) {
-        let owner = function("pub fn score(amount: i32) -> bool {\n    amount > LIMIT\n}");
+        constant_boundary_activation_for_owner(
+            "pub fn score(amount: i32) -> bool {\n    amount > LIMIT\n}",
+            constant_source,
+            test_file_source,
+            calls,
+        )
+    }
+
+    fn constant_boundary_activation_for_owner(
+        owner_body: &str,
+        constant_source: &str,
+        test_file_source: &str,
+        calls: &[&str],
+    ) -> (ActivationEvidence, Vec<TestSummary>) {
+        let owner = function(owner_body);
         let mut index = crate::analysis::rust_index::RustIndex::default();
         index.insert_file_only(
             PathBuf::from("src/lib.rs"),
@@ -5450,6 +8278,15 @@ mod tests {
         );
         assert!(has_observed_boundary_equality(&activation));
         assert!(activation.missing_discriminators.is_empty());
+        // The `argument names constant` witness names its test file (#8389).
+        assert!(
+            activation.observed_values.iter().any(|fact| {
+                fact.text.contains("argument names constant LIMIT")
+                    && fact.file.as_deref() == Some(std::path::Path::new("tests/score.rs"))
+            }),
+            "{:?}",
+            activation.observed_values
+        );
 
         // Opaque value and no argument naming it: the missing boundary is
         // honest about what ripr cannot see.
@@ -5464,6 +8301,45 @@ mod tests {
             "{:?}",
             opaque.missing_discriminators
         );
+    }
+
+    #[test]
+    fn a_rebound_parameter_does_not_make_a_constant_argument_the_boundary() {
+        // #9197 with #10199's file provenance: `score(LIMIT)` names the
+        // constant, but the owner rebinds `amount` before the comparison, so
+        // the argument is not the compared value and no "argument names
+        // constant" fact (with its test file) is listed. The unrebound owner
+        // is the positive control and keeps the fact.
+        let calls = ["score(5);", "score(crate::LIMIT);"];
+        let names_constant = |owner: &str| {
+            let (activation, _) = constant_boundary_activation_for_owner(
+                owner,
+                "const LIMIT: i32 = 5 * 2;",
+                "use app::score;",
+                &calls,
+            );
+            activation.observed_values.iter().any(|fact| {
+                fact.text.contains("argument names constant LIMIT")
+                    && fact.file.as_deref() == Some(std::path::Path::new("tests/score.rs"))
+            })
+        };
+        assert!(names_constant(
+            "pub fn score(amount: i32) -> bool {\n    amount > LIMIT\n}"
+        ));
+        assert!(names_constant(
+            "pub fn score(amount: i32) -> bool {\n    let other = 1; amount > LIMIT\n}"
+        ));
+        for rebinding in [
+            "let amount = amount + 1;",
+            "let mut amount = amount; amount += 1;",
+        ] {
+            assert!(
+                !names_constant(&format!(
+                    "pub fn score(amount: i32) -> bool {{\n    {rebinding} amount > LIMIT\n}}"
+                )),
+                "{rebinding}"
+            );
+        }
     }
 
     #[test]
@@ -5632,7 +8508,11 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
         };
 
-        let facts = value_facts_for_test(&test, None);
+        let facts = value_facts_for_test(
+            &test,
+            None,
+            crate::analysis::classify::argument_fold::FoldScope::default(),
+        );
 
         assert!(
             facts
@@ -5676,7 +8556,11 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
         };
 
-        let facts = value_facts_for_test(&test, None);
+        let facts = value_facts_for_test(
+            &test,
+            None,
+            crate::analysis::classify::argument_fold::FoldScope::default(),
+        );
         let context_of = |value: &str| {
             facts
                 .iter()
@@ -5687,6 +8571,43 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(context_of("crate::KIB"), Some(ValueContext::Constant));
         assert_eq!(context_of("u64::MAX"), Some(ValueContext::Constant));
         assert_eq!(context_of("Mode::Fast"), Some(ValueContext::EnumVariant));
+    }
+
+    /// #8999: a call through a local alias reads the alias call's own
+    /// arguments, never a target-looking quoted substring on the same line.
+    #[test]
+    fn value_facts_for_test_reads_alias_call_arguments_not_quoted_owner_text() {
+        let owner = function("pub fn score(limit: u32) -> bool {\n    limit > 5\n}");
+        let body = "let f = crate::gate::score;\nassert_eq!(f(7), \"score(100)\");";
+        let test = TestSummary {
+            name: "alias_call".to_string(),
+            file: PathBuf::from("tests/value.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: body.into(),
+            calls: crate::analysis::extract::extract_call_facts(body, 1),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        };
+
+        let facts = value_facts_for_test(
+            &test,
+            Some(&owner),
+            crate::analysis::classify::argument_fold::FoldScope::default(),
+        );
+        let values: Vec<&str> = facts.iter().map(|fact| fact.value.as_str()).collect();
+
+        assert!(
+            values.iter().any(|value| value.ends_with("7")),
+            "{values:?}"
+        );
+        assert!(
+            !values.iter().any(|value| value.contains("100")),
+            "{values:?}"
+        );
     }
 
     #[test]
@@ -5724,7 +8645,11 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
         };
 
-        let facts = value_facts_for_test(&test, Some(&owner));
+        let facts = value_facts_for_test(
+            &test,
+            Some(&owner),
+            crate::analysis::classify::argument_fold::FoldScope::default(),
+        );
 
         assert!(
             facts
@@ -5794,7 +8719,11 @@ assert_eq!(input.amount, 100);"#
                 for owner in owners {
                     assert_eq!(
                         memo.facts_for(&index, test, owner),
-                        value_facts_for_test(test, owner),
+                        value_facts_for_test(
+                            test,
+                            owner,
+                            crate::analysis::classify::argument_fold::FoldScope::default()
+                        ),
                         "round {round}: {} / {:?}",
                         test.name,
                         owner.map(|owner| owner.body.as_str())
@@ -5813,12 +8742,20 @@ assert_eq!(input.amount, 100);"#
         let detached = index.tests()[0].clone();
         assert_eq!(
             memo.facts_for(&index, &detached, owners[1]),
-            value_facts_for_test(&detached, owners[1])
+            value_facts_for_test(
+                &detached,
+                owners[1],
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            )
         );
         let other_index = index.clone();
         assert_eq!(
             memo.facts_for(&other_index, other_index.tests().at(0), None),
-            value_facts_for_test(other_index.tests().at(0), None)
+            value_facts_for_test(
+                other_index.tests().at(0),
+                None,
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            )
         );
         assert_eq!(memo.by_slot.borrow().len(), cached);
 
@@ -5835,7 +8772,11 @@ assert_eq!(input.amount, 100);"#
             for owner in reordered.functions() {
                 assert_eq!(
                     memo.facts_for(&reordered, test, Some(owner)),
-                    value_facts_for_test(test, Some(owner))
+                    value_facts_for_test(
+                        test,
+                        Some(owner),
+                        crate::analysis::classify::argument_fold::FoldScope::default()
+                    )
                 );
             }
         }
@@ -5993,11 +8934,21 @@ assert_eq!(input.amount, 100);"#
                 "score(100);",
                 Expect::NoRepair,
             ),
+            // #9637: a local folded from the literal input by exact integer
+            // arithmetic closes only through an observed equality row
+            // (`100 / 2 + 50` is 100); off the boundary it never names a gap.
             (
                 "    let limit = amount / 2 + 50;\n    amount > limit",
                 "amount > limit",
                 3,
                 "score(100);",
+                Expect::Closed,
+            ),
+            (
+                "    let limit = amount / 2 + 50;\n    amount > limit",
+                "amount > limit",
+                3,
+                "score(70);",
                 Expect::NoRepair,
             ),
         ];
@@ -6241,6 +9192,80 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(facts.len(), 2);
     }
 
+    #[test]
+    fn scalar_values_read_a_radix_prefixed_integer_as_one_literal() {
+        // #9164: `0xFF` was read as `0` (the leading digit), so `is_big(0x10)`
+        // against a `0xFF` boundary compared equal and read as the boundary.
+        assert_eq!(scalar_values("is_big(0xFF)"), vec!["0xFF".to_string()]);
+        assert_eq!(scalar_values("f(0b1010)"), vec!["0b1010".to_string()]);
+        assert_eq!(scalar_values("f(0o17)"), vec!["0o17".to_string()]);
+        assert_eq!(scalar_values("f(-0x10)"), vec!["-0x10".to_string()]);
+        assert_eq!(scalar_values("f(0xE000_u32)"), vec!["0xE000_".to_string()]);
+        assert_eq!(
+            scalar_values("f(0xE000, 0xD7FF)"),
+            vec!["0xD7FF".to_string(), "0xE000".to_string()]
+        );
+        for spelled in ["f(0xFF)", "f(0b1010)", "f(0o17)", "f(-0x10)"] {
+            assert!(
+                !scalar_values(spelled).contains(&"0".to_string()),
+                "{spelled} must not read as the value 0"
+            );
+        }
+        // Two different hex inputs stay different values.
+        assert_ne!(scalar_values("f(0x10)"), scalar_values("f(0xFF)"));
+        assert_eq!(literal_operand_value("0xFF"), Some("0xFF".to_string()));
+    }
+
+    #[test]
+    fn scalar_values_leave_non_radix_zero_prefixed_text_alone() {
+        // Negative controls: a plain zero, a range, a float and an
+        // identifier that merely contains `0b`/`0x` keep their old reading.
+        assert_eq!(scalar_values("f(0)"), vec!["0".to_string()]);
+        assert_eq!(scalar_values("f(0.5)"), vec!["0.5".to_string()]);
+        assert!(scalar_values("f(x0b1, y0x1F)").is_empty());
+        assert_eq!(
+            scalar_values("f(0..5)"),
+            vec!["0".to_string(), "5".to_string()]
+        );
+        // A radix marker with no digits after it is not a radix literal.
+        assert_eq!(scalar_values("f(0x)"), vec!["0".to_string()]);
+    }
+
+    #[test]
+    fn scalar_values_radix_literal_spellings_never_collapse_to_zero() {
+        // #9164 adversarial spellings: suffixes, separators, case, sign.
+        let cases = [
+            ("f(0xFFu8)", "0xFF"),
+            ("f(0b1010_1010)", "0b1010_1010"),
+            ("f(0o77)", "0o77"),
+            ("f(0XFF)", "0XFF"),
+            ("f(0B101)", "0B101"),
+            ("f(0O17)", "0O17"),
+            ("f(0xdead_beef)", "0xdead_beef"),
+            ("f(-0b11)", "-0b11"),
+            ("f(0b1010u8)", "0b1010"),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(scalar_values(text), vec![expected.to_string()], "{text}");
+        }
+        // The suffix digits are not a separate value that could read as a boundary.
+        assert!(!scalar_values("f(0xFFu8)").contains(&"8".to_string()));
+        // Distinct spellings stay distinct.
+        assert_ne!(scalar_values("f(0b1010)"), scalar_values("f(0b1011)"));
+        // Decimal, float and exponent reading is unchanged.
+        assert_eq!(scalar_values("f(100)"), vec!["100".to_string()]);
+        assert_eq!(scalar_values("f(1_000)"), vec!["1_000".to_string()]);
+        assert_eq!(scalar_values("f(-5)"), vec!["-5".to_string()]);
+        assert_eq!(scalar_values("f(0.5f32)"), vec!["0.5".to_string()]);
+        assert_eq!(scalar_values("f(1e5)"), vec!["1".to_string()]);
+        assert_eq!(scalar_values("f(99u32)"), vec!["99".to_string()]);
+        assert!(scalar_values("f(a0, b1x, c0o7)").is_empty());
+        // Non-radix letter after a zero is not a radix literal.
+        assert_eq!(scalar_values("f(0xg)"), vec!["0".to_string()]);
+        assert_eq!(scalar_values("f(0b2)"), vec!["0".to_string()]);
+        assert_eq!(scalar_values("f(0o8)"), vec!["0".to_string()]);
+    }
+
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
             id: ProbeId("probe:src/lib.rs:2:score".to_string()),
@@ -6254,6 +9279,131 @@ assert_eq!(input.amount, 100);"#
             expected_sinks: Vec::new(),
             required_oracles: Vec::new(),
         }
+    }
+
+    /// #10304: only a bare `left == literal` line on both sides of the edit
+    /// names the constant the edit replaced.
+    #[test]
+    fn replaced_equality_constant_needs_a_bare_literal_swap() {
+        let replaced = |before: &str, after: &str| {
+            let mut p = probe(ProbeFamily::Predicate, after);
+            p.before = Some(before.to_string());
+            replaced_equality_constant(&p).map(|c| c.text)
+        };
+        assert_eq!(
+            replaced("if label == \"alpha\" {", "if label == \"beta\" {"),
+            Some("\"alpha\"".to_string())
+        );
+        assert_eq!(
+            replaced("if n == 5 {", "if n == 6 {"),
+            Some("5".to_string())
+        );
+        assert_eq!(
+            replaced("if label != \"alpha\" {", "if label != \"beta\" {"),
+            Some("\"alpha\"".to_string())
+        );
+        // The same value spelled twice is no swap.
+        assert_eq!(replaced("if n == 5 {", "if n == 05 {"), None);
+        assert_eq!(
+            replaced("if n == 5 {", "if n == 5_0 {"),
+            Some("5".to_string())
+        );
+        assert!(same_literal_value("\"a\"", "a"));
+        assert!(!same_literal_value("\"a_b\"", "\"ab\""));
+        // A compound predicate, a changed operand or operator, a named or
+        // computed constant, an unchanged literal and a missing `before`
+        // all keep the missing equality.
+        for (before, after) in [
+            ("label == \"alpha\" && on", "label == \"beta\" && on"),
+            ("a == \"x\"", "b == \"x\""),
+            ("a == \"x\"", "a != \"y\""),
+            ("n == LIMIT", "n == OTHER"),
+            ("n == 5", "n == 5 + 1"),
+            ("a == \"x\"", "a == \"x\""),
+            ("n >= 5", "n >= 6"),
+            ("a == \"x == y\"", "a == \"x == z\" || b"),
+        ] {
+            assert_eq!(replaced(before, after), None, "{before} -> {after}");
+        }
+        let mut no_before = probe(ProbeFamily::Predicate, "n == 6");
+        no_before.before = None;
+        assert!(replaced_equality_constant(&no_before).is_none());
+    }
+
+    /// #9116: an explicit `return` normalises only to a top-level comparison.
+    #[test]
+    fn explicit_return_normalises_only_a_top_level_comparison() {
+        let view = |before: &str, after: &str| {
+            let mut p = probe(ProbeFamily::ReturnValue, after);
+            p.before = Some(before.to_string());
+            returned_comparison_view(&p).map(|v| (v.expression, v.before))
+        };
+        assert_eq!(
+            view("return x > 100", "return x > 101;"),
+            Some(("x > 101".to_string(), Some("x > 100".to_string())))
+        );
+        assert_eq!(
+            view("x > 100", "x > 101").map(|v| v.0),
+            Some("x > 101".to_string())
+        );
+        assert_eq!(view("return f(x > 100)", "return f(x > 101)"), None);
+        assert_eq!(view("return v[x > 1]", "return v[x > 2]"), None);
+        assert_eq!(
+            view("return x.parse::<i32>() > 5", "return x.parse::<i32>() > 6"),
+            None
+        );
+        assert_eq!(view("return x > 1 && y", "return x > 2 && y"), None);
+        assert_eq!(view("return x == 100", "return x > 101"), None);
+    }
+
+    /// #9145 keyword boundary: `return` is stripped before any whitespace, never
+    /// inside an identifier.
+    #[test]
+    fn explicit_return_keyword_needs_a_whitespace_boundary() {
+        let strip = |text: &str| strip_explicit_return(text);
+        assert_eq!(strip("return x > 1;"), ("x > 1".to_string(), true));
+        assert_eq!(strip("return\tx > 1;"), ("x > 1".to_string(), true));
+        assert_eq!(strip("return\nx > 1;"), ("x > 1".to_string(), true));
+        for identifier in ["returnx > 1", "return_x > 1", "returned > 1", "return"] {
+            assert_eq!(strip(identifier), (identifier.to_string(), false));
+        }
+        let view = |before: &str, after: &str| {
+            let mut p = probe(ProbeFamily::ReturnValue, after);
+            p.before = Some(before.to_string());
+            returned_comparison_view(&p).map(|v| v.expression)
+        };
+        assert_eq!(
+            view("return\tx > 100", "return\tx > 101;"),
+            Some("x > 101".to_string())
+        );
+        assert_eq!(
+            view("returned > 100", "returned > 101"),
+            Some("returned > 101".to_string())
+        );
+    }
+
+    /// #9145 literals: brackets and operators inside string or char literals do
+    /// not change depth or count as the comparison; lifetimes are not literals.
+    #[test]
+    fn top_level_comparison_skips_string_and_char_literals() {
+        assert!(is_top_level_comparison(r#"s == ")""#));
+        assert!(is_top_level_comparison(r#"s == "(""#));
+        assert!(is_top_level_comparison(r#"s == "a\"(" "#.trim()));
+        assert!(is_top_level_comparison("c == ')'"));
+        assert!(is_top_level_comparison("c == '('"));
+        assert!(is_top_level_comparison("c == '\\''"));
+        assert!(is_top_level_comparison("c == '\\n'"));
+        // Operators inside a literal are not the comparison.
+        assert!(!is_top_level_comparison(r#""a<b""#));
+        assert!(!is_top_level_comparison(r#"f("x", y > 1)"#));
+        // A bracket in a literal does not hide a real nested comparison.
+        assert!(!is_top_level_comparison(r#"f(")", a > 1)"#));
+        // Unterminated strings and raw strings fail closed.
+        assert!(!is_top_level_comparison(r#"s == "abc"#));
+        assert!(!is_top_level_comparison(r##"s == r#"a"#"##));
+        // Lifetimes keep the plain scan.
+        assert!(is_top_level_comparison("p(&'a x) > 1"));
+        assert!(!is_top_level_comparison("f(&'a str, a > 1)"));
     }
 
     /// RIPR-SPEC-0228 keyed reads: argument `i` of a method call is call
@@ -6294,6 +9444,101 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
             item: Default::default(),
             impl_context: Default::default(),
+        }
+    }
+
+    /// #8389: every observed equality fact (the boundary witnesses) names the
+    /// test file its call was read from, so human evidence can point at it.
+    fn assert_equality_facts_name_file(activation: &ActivationEvidence, file: &str) {
+        let files = activation
+            .observed_values
+            .iter()
+            .filter(|fact| fact.value.contains(" == "))
+            .map(|fact| fact.file.clone())
+            .collect::<Vec<_>>();
+        assert!(
+            !files.is_empty()
+                && files
+                    .iter()
+                    .all(|found| found.as_deref() == Some(std::path::Path::new(file))),
+            "{file}: {files:?}"
+        );
+    }
+
+    fn scanner_left(value: &str) -> ExactOperand {
+        ExactOperand {
+            value: value.to_string(),
+            provenance: format!(
+                "scan = {value} via helper return of `scan` over bound inputs (1 hop)"
+            ),
+        }
+    }
+
+    // RIPR-SPEC-0163 example 2 (#10108): the variant operand reads as the
+    // quoted token the scanner returns, and only beside such a token.
+    #[test]
+    fn scanner_state_path_operand_reads_a_variant_beside_a_path_state() {
+        let lefts = [scanner_left("\"Scan::Word\"")];
+        let operand = scanner_state_path_operand(" Scan::Word ", &lefts);
+        assert_eq!(
+            operand.map(|operand| operand.value),
+            Some("\"Scan::Word\"".to_string())
+        );
+        // A prefixed spelling can never equal the scanner's token.
+        assert!(scanner_state_path_operand("crate::Scan::Word", &lefts).is_none());
+    }
+
+    #[test]
+    fn scanner_state_path_operand_stays_unresolved_without_a_path_state_left() {
+        // No left, an integer, a plain string state and an unquoted path
+        // are not scanner path states: the operand keeps its old reading.
+        for left in ["", "7", "\"word\"", "Scan::Word", "\"error: a::b\""] {
+            let lefts = if left.is_empty() {
+                Vec::new()
+            } else {
+                vec![scanner_left(left)]
+            };
+            assert!(
+                scanner_state_path_operand("Scan::Word", &lefts).is_none(),
+                "left {left:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scanner_state_path_operand_needs_a_helper_returned_left() {
+        // #10308: a quoted call argument or literal that looks like a path is
+        // not a scanner state, whatever the right operand spells.
+        for provenance in [
+            "exact input input = \"Scan::Word\"",
+            "state = \"Scan::Word\" (exact literal)",
+        ] {
+            let lefts = [ExactOperand {
+                value: "\"Scan::Word\"".to_string(),
+                provenance: provenance.to_string(),
+            }];
+            assert!(
+                scanner_state_path_operand("Scan::Word", &lefts).is_none(),
+                "{provenance}"
+            );
+        }
+    }
+
+    #[test]
+    fn scanner_state_path_operand_refuses_constants_and_non_paths() {
+        let lefts = [scanner_left("\"Scan::Word\"")];
+        for operand in [
+            "Word",
+            "u64::MAX",
+            "limits::MAX",
+            "Scan::Word()",
+            "a + Scan::Word",
+            "Scan::",
+        ] {
+            assert!(
+                scanner_state_path_operand(operand, &lefts).is_none(),
+                "operand {operand:?}"
+            );
         }
     }
 
@@ -6346,6 +9591,7 @@ assert_eq!(input.amount, 100);"#
 
     fn value_fact(line: usize, text: &str, value: &str, context: ValueContext) -> ValueFact {
         ValueFact {
+            file: None,
             line,
             text: text.to_string(),
             value: value.to_string(),
@@ -6561,10 +9807,74 @@ assert_eq!(input.amount, 100);"#
     }
 
     #[test]
+    fn a_literal_inside_a_call_chain_is_not_the_argument() {
+        // #10484: `std::env::var("WHO").unwrap_or_default()` passes whatever
+        // the variable holds, not `"WHO"`.
+        let test = test_with_body_calls("", &[]);
+        for chain in [
+            r#"&std::env::var("WHO").unwrap_or_default()"#,
+            r#"&std::env::var ("WHO").unwrap_or_default ()"#,
+            r#"&make_name("Bob")"#,
+            r#"&make_name::<u8>("Bob")"#,
+            r#"&(make_name)("Bob")"#,
+            r#"&format!("{}", "Bob")"#,
+            r#"name_for("Bob").as_str()"#,
+            r#"Some(load("Bob"))"#,
+            r#"&"Bob".repeat(3)"#,
+            r#"7.max(load(2))"#,
+        ] {
+            assert!(
+                owner_row_argument_values(
+                    &test,
+                    chain,
+                    false,
+                    crate::analysis::classify::argument_fold::FoldScope::default()
+                )
+                .is_empty(),
+                "`{chain}` holds a literal inside a call and passes none"
+            );
+        }
+    }
+
+    #[test]
+    fn a_literal_behind_a_value_preserving_wrapper_is_still_the_argument() {
+        let test = test_with_body_calls("", &[]);
+        for (spelled, expected) in [
+            ("\"Bob\"", "\"Bob\""),
+            ("&\"Bob\"", "\"Bob\""),
+            ("\"Bob\".to_string()", "\"Bob\""),
+            ("\"Bob\".to_owned()", "\"Bob\""),
+            ("\"Bob\".into()", "\"Bob\""),
+            ("String::from(\"Bob\")", "\"Bob\""),
+            ("String :: from (\"Bob\")", "\"Bob\""),
+            ("\"Bob\".to_string ()", "\"Bob\""),
+            ("\"Bob\" . into ( )", "\"Bob\""),
+            ("&String::from(\"Bob\")", "\"Bob\""),
+            ("Some(10)", "10"),
+            ("Some(\"Bob\")", "\"Bob\""),
+            ("(10, true)", "10"),
+            ("-5", "-5"),
+        ] {
+            assert_eq!(
+                owner_row_argument_values(
+                    &test,
+                    spelled,
+                    false,
+                    crate::analysis::classify::argument_fold::FoldScope::default()
+                )
+                .first()
+                .map(String::as_str),
+                Some(expected),
+                "`{spelled}` is the literal it spells"
+            );
+        }
+    }
+
+    #[test]
     fn given_computed_argument_for_compared_parameter_then_boundary_is_unresolved_not_missing() {
         // #6672: `score(base + 1)` with `let base = 9` is 10, the boundary.
-        // ripr cannot read it, so it must not report `amount == 10` as
-        // missing from the remaining `score(base)` row.
+        // Arithmetic over the test's own literal bindings is read (RIPR-SPEC-0158
+        // example 21), so both rows are definite inputs and nothing is missing.
         let owner = function("pub fn score(amount: u32) -> bool {\n    10 <= amount\n}");
         let test = test_with_body_calls(
             "let base = 9;\nassert!(score(base + 1));\nassert!(!score(base));",
@@ -6577,6 +9887,26 @@ assert_eq!(input.amount, 100);"#
             &owner,
             &probe(ProbeFamily::Predicate, "10 <= amount"),
             &[&test],
+        );
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        assert_eq!(gathered.unresolved_boundary, None);
+        let mut values = owner_input_values(&gathered.activation);
+        values.sort();
+        assert_eq!(values, vec!["10", "9"]);
+
+        // An operand the fold cannot read keeps the argument computed: the
+        // bare `score(base)` row stays, the boundary is unresolved, not missing.
+        let unread = test_with_body_calls(
+            "let base = 9;\nassert!(score(base + 1u32));\nassert!(!score(base));",
+            &[
+                (11, "assert!(score(base + 1u32));"),
+                (12, "assert!(!score(base));"),
+            ],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "10 <= amount"),
+            &[&unread],
         );
 
         assert!(gathered.activation.missing_discriminators.is_empty());
@@ -6667,6 +9997,22 @@ assert_eq!(input.amount, 100);"#
         let gathered = boundary_input(&two, &predicate, &[&compared]);
         assert!(gathered.activation.missing_discriminators.is_empty());
         assert!(gathered.unresolved_boundary.is_some());
+
+        // Control: with the literal row alone the same boundary names its
+        // missing input, so the guard (not a failed parse) holds it back.
+        let literal_only = test_with_body_calls(
+            "assert!(score(\"123\"));",
+            &[(11, "assert!(score(\"123\"));")],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "s.len() < 4"),
+            &[&literal_only],
+        );
+        assert!(
+            gathered.unresolved_boundary.is_some()
+                || !gathered.activation.missing_discriminators.is_empty()
+        );
     }
 
     #[test]
@@ -6697,14 +10043,22 @@ assert_eq!(input.amount, 100);"#
             ),
             (None, missing.clone())
         );
-        // A literal-carrying call is a visible literal (existing reading).
-        assert_eq!(
-            gap(
-                "assert_eq!(score(order(5000)), 25);",
-                &[(10, "assert_eq!(score(order(5000)), 25);")]
-            ),
-            (None, missing.clone())
+        // A literal inside a call is that call's operand, not the input the
+        // owner received (#10484): `order(5000)` may return 999, so no
+        // `amount == 999` gap is claimed from it; the boundary is unresolved
+        // as for any call-built input. The reading used to take `5000` as a
+        // visible literal.
+        let (unresolved, missing_for_call) = gap(
+            "assert_eq!(score(order(5000)), 25);",
+            &[(10, "assert_eq!(score(order(5000)), 25);")],
         );
+        assert!(
+            unresolved
+                .as_deref()
+                .is_some_and(|reason| reason.contains("result of a call (`order(5000)`)")),
+            "{unresolved:?}"
+        );
+        assert!(missing_for_call.is_empty(), "{missing_for_call:?}");
         // A visible one-sided literal beside a call-built input keeps the
         // missing equality: the visible row already names the boundary.
         assert_eq!(
@@ -7019,13 +10373,21 @@ assert_eq!(input.amount, 100);"#
                     caller: inner.clone(),
                     call_text: format!("score({owner_argument})"),
                     arguments: vec![owner_argument.to_string()],
+                    receiver: None,
                     through_macro: false,
+                    module_qualified: false,
+                    transparent_macros_rebound: false,
+                    diverging_handlers: Vec::new(),
                 },
                 super::super::helper_transfer::HelperHop {
                     caller: entry.clone(),
                     call_text: "inner(x)".to_string(),
                     arguments: vec!["x".to_string()],
+                    receiver: None,
                     through_macro: false,
+                    module_qualified: false,
+                    transparent_macros_rebound: false,
+                    diverging_handlers: Vec::new(),
                 },
             ],
             stop_above: None,
@@ -7232,11 +10594,14 @@ assert_eq!(input.amount, 100);"#
     }
 
     #[test]
-    fn given_length_of_string_input_boundary_then_boundary_is_unresolved_not_missing() {
-        // #6693: `s.len() < 4` with inputs "1234" and "123" sits on both
-        // sides; ripr does not fold `.len()`, so it abstains.
+    fn given_length_of_string_input_boundary_then_boundary_is_observed_only_when_a_row_lands_on_it()
+    {
+        // #6693 abstained on `s.len() < 4`; #9637 folds the length of a
+        // literal text argument. "1234" is exactly 4 long, so the boundary
+        // equality is observed; with only "123" and "12" no row lands on it
+        // and the boundary stays unresolved (never a named gap).
         let owner = function("pub fn score(s: &str) -> bool {\n    s.len() < 4\n}");
-        let test = test_with_body_calls(
+        let on_boundary = test_with_body_calls(
             "assert!(!score(\"1234\"));\nassert!(score(\"123\"));",
             &[
                 (10, "assert!(!score(\"1234\"));"),
@@ -7246,9 +10611,24 @@ assert_eq!(input.amount, 100);"#
         let gathered = boundary_input(
             &owner,
             &probe(ProbeFamily::Predicate, "s.len() < 4"),
-            &[&test],
+            &[&on_boundary],
         );
+        assert!(has_observed_boundary_equality(&gathered.activation));
+        assert!(gathered.activation.missing_discriminators.is_empty());
 
+        let wrong_side = test_with_body_calls(
+            "assert!(score(\"12\"));\nassert!(score(\"123\"));",
+            &[
+                (10, "assert!(score(\"12\"));"),
+                (11, "assert!(score(\"123\"));"),
+            ],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "s.len() < 4"),
+            &[&wrong_side],
+        );
+        assert!(!has_observed_boundary_equality(&gathered.activation));
         assert!(gathered.activation.missing_discriminators.is_empty());
         let reason = gathered.unresolved_boundary.unwrap_or_default();
         assert!(
@@ -7258,12 +10638,377 @@ assert_eq!(input.amount, 100);"#
     }
 
     #[test]
+    fn given_narrow_integer_parameter_arithmetic_then_boundary_stays_unresolved() {
+        // `n * 1000` with n = 200 is exact 200000 here but overflows u8 at
+        // runtime, so a narrow parameter never resolves a closed form.
+        // The u32 control proves the same source and call do credit, so the
+        // u8 negatives are not vacuous.
+        for (ty, expr, bound, arg, credited) in [
+            ("u8", "n * 1000", "5", "200", false),
+            ("u8", "n + 100", "300", "200", false),
+            ("u32", "n + 100", "300", "200", true),
+        ] {
+            let source = format!("pub fn score(n: {ty}) -> bool {{\n    {expr} < {bound}\n}}");
+            let owner = function(&source);
+            let call = format!("assert!(score({arg}));");
+            let t = test_with_body_calls(&call, &[(10, &call)]);
+            let gathered = boundary_input(
+                &owner,
+                &probe(ProbeFamily::Predicate, &format!("{expr} < {bound}")),
+                &[&t],
+            );
+            assert_eq!(
+                has_observed_boundary_equality(&gathered.activation),
+                credited,
+                "{source}"
+            );
+            assert!(gathered.activation.missing_discriminators.is_empty());
+        }
+    }
+
+    #[test]
+    fn given_rebound_parameter_in_local_initializer_then_boundary_is_not_credited() {
+        for (source, predicate, call, line, credited) in [
+            // Controls: the same shapes without the earlier rebinding credit.
+            (
+                "pub fn score(x: usize) -> u32 {\n    let y = x * 2;\n    if y == 40 {\n        return 0;\n    }\n    1\n}",
+                "y == 40",
+                "score(20)",
+                3,
+                true,
+            ),
+            (
+                "pub fn score(s: &str) -> u32 {\n    let n = s.chars().count();\n    if n == 5 {\n        return 0;\n    }\n    1\n}",
+                "n == 5",
+                "score(\"abcde\")",
+                3,
+                true,
+            ),
+            (
+                "pub fn score(mut x: usize) -> u32 {\n    x += 5;\n    let y = x * 2;\n    if y == 12 {\n        return 0;\n    }\n    1\n}",
+                "y == 12",
+                "score(1)",
+                4,
+                false,
+            ),
+            (
+                "pub fn score(mut x: usize) -> u32 {\n    x = 10;\n    let y = x * 2;\n    if y == 4 {\n        return 0;\n    }\n    1\n}",
+                "y == 4",
+                "score(2)",
+                4,
+                false,
+            ),
+            (
+                "pub fn score(x: usize) -> u32 {\n    let mut t = 0;\n    for x in 0..3 {\n        t += x;\n    }\n    let y = x * 2;\n    if y == 4 {\n        return 0;\n    }\n    1\n}",
+                "y == 4",
+                "score(2)",
+                7,
+                false,
+            ),
+            (
+                "pub fn score(x: usize) -> u32 {\n    let x = x + 10;\n    let y = x * 2;\n    if y == 40 {\n        return 0;\n    }\n    1\n}",
+                "y == 40",
+                "score(20)",
+                4,
+                false,
+            ),
+            (
+                "pub fn score(s: &str) -> u32 {\n    let s = s.replace(\" \", \"\");\n    let n = s.chars().count();\n    if n == 5 {\n        return 0;\n    }\n    1\n}",
+                "n == 5",
+                "score(\"a b c d e\")",
+                4,
+                false,
+            ),
+            (
+                "pub fn score(s: &str) -> u32 {\n    let s = s.trim();\n    let n = s.len();\n    if n == 3 {\n        return 0;\n    }\n    1\n}",
+                "n == 3",
+                "score(\"  abc \")",
+                4,
+                false,
+            ),
+        ] {
+            let mut owner = function(source);
+            owner.end_line = 12;
+            let mut predicate = probe(ProbeFamily::Predicate, predicate);
+            predicate.location.line = line;
+            let body = format!("assert_eq!({call}, 0);");
+            let test = test_with_body_calls(&body, &[(10, &body)]);
+            let gathered = boundary_input(&owner, &predicate, &[&test]);
+            assert_eq!(
+                has_observed_boundary_equality(&gathered.activation),
+                credited,
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn given_identical_initializer_text_with_rebinding_between_then_boundary_is_not_credited() {
+        // Both `let y = x * 2;` statements share text. The second reads the
+        // rebound `x` (real y = 6 for score(2)), so `y == 4` must not credit
+        // whichever statement the text lookup lands on.
+        let mut owner = function(
+            "pub fn score(x: usize) -> u32 {\n    let y = x * 2;\n    if y == 9 {\n        return 0;\n    }\n    let x = x + 1;\n    let y = x * 2;\n    if y == 4 {\n        return 1;\n    }\n    2\n}",
+        );
+        owner.end_line = 12;
+        let mut predicate = probe(ProbeFamily::Predicate, "y == 4");
+        predicate.location.line = 8;
+        let body = "assert_eq!(score(2), 1);".to_string();
+        let test = test_with_body_calls(&body, &[(10, &body)]);
+        let gathered = boundary_input(&owner, &predicate, &[&test]);
+        assert!(!has_observed_boundary_equality(&gathered.activation));
+    }
+
+    /// Whether a boundary row is credited for `score(20)` against `m == 40`
+    /// when `prefix` is spliced before `let m = n * 2;` (#9774).
+    fn rebind_shape_credits(prefix: &str) -> Result<bool, String> {
+        let source = format!(
+            "pub fn score(n: usize) -> u32 {{\n    {prefix}let m = n * 2;\n    if m == 40 {{\n        return 0;\n    }}\n    1\n}}"
+        );
+        let mut owner = function(&source);
+        owner.end_line = 12;
+        let line = 1 + source
+            .find("if m == 40")
+            .map_or(0, |at| source[..at].matches('\n').count());
+        let mut predicate = probe(ProbeFamily::Predicate, "m == 40");
+        predicate.location.line = line;
+        let body = "assert_eq!(score(20), 0);".to_string();
+        let test = test_with_body_calls(&body, &[(10, &body)]);
+        // Subject first: the parsed owner holds the prefix and the declaration.
+        if !owner.body.contains("let m = n * 2;") || !owner.body.contains(prefix.trim()) {
+            return Err(format!("owner did not parse the subject: {source}"));
+        }
+        let gathered = boundary_input(&owner, &predicate, &[&test]);
+        Ok(has_observed_boundary_equality(&gathered.activation))
+    }
+
+    #[test]
+    fn given_pattern_position_rebinding_of_parameter_then_boundary_is_not_credited()
+    -> Result<(), String> {
+        // Each pair shares one shape: the rebinding names `n`, the control
+        // names an unrelated `a`. The control must credit (so the subject is
+        // parsed and the credit path is live) and the rebinding must not.
+        assert!(rebind_shape_credits("")?, "empty prefix");
+        // Same line as the declaration: the end-to-end resolver does not read a
+        // second `let` on one line at all (abstains), so the guard is pinned
+        // directly with a positive control of the same shape.
+        for (prefix, rebound) in [("let n = 1; ", true), ("let a = 1; ", false)] {
+            let source =
+                format!("pub fn score(n: usize) -> u32 {{\n    {prefix}let m = n * 2;\n    m\n}}");
+            let owner = function(&source);
+            assert!(owner.body.contains(&format!("{prefix}let m = n * 2;")));
+            assert_eq!(
+                parameter_rebound_before(&owner, "n", 2, "n * 2"),
+                rebound,
+                "{source}"
+            );
+        }
+        for (rebinding, control) in [
+            ("let (n, _) = (7, 0);\n    ", "let (a, _) = (7, 0);\n    "),
+            (
+                "let Some(n) = Some(7) else {\n        return 0;\n    };\n    ",
+                "let Some(a) = Some(7) else {\n        return 0;\n    };\n    ",
+            ),
+            (
+                "let Foo { n, .. } = foo;\n    ",
+                "let Foo { a, .. } = foo;\n    ",
+            ),
+            ("let &n = &7;\n    ", "let &a = &7;\n    "),
+            (
+                "if let (0..=9, n) = t {\n        drop(n);\n    }\n    ",
+                "if let (0..=9, a) = t {\n        drop(a);\n    }\n    ",
+            ),
+            (
+                "let Some((1..=5, n)) = opt else {\n        return 0;\n    };\n    ",
+                "let Some((1..=5, a)) = opt else {\n        return 0;\n    };\n    ",
+            ),
+            (
+                "let f = |(n, m)| n + m;\n    ",
+                "let f = |(a, b)| a + b;\n    ",
+            ),
+            ("let f = |&n| n;\n    ", "let f = |&a| a;\n    "),
+            (
+                "let f = |(Either::Left(n) | Either::Right(n))| n;\n    ",
+                "let f = |(Either::Left(a) | Either::Right(a))| a;\n    ",
+            ),
+            (
+                "let f = |Foo { n }| { n };\n    ",
+                "let f = |Foo { a }| { a };\n    ",
+            ),
+            (
+                "let f = |(b, n): (u8, [u8; 2])| b;\n    ",
+                "let f = |(b, a): (u8, [u8; 2])| b;\n    ",
+            ),
+            ("let f = |n| n + 1;\n    ", "let f = |a| a + 1;\n    "),
+            (
+                "match k {\n        Some(n)\n            => 1,\n        None => 2,\n    };\n    ",
+                "match k {\n        Some(a)\n            => 1,\n        None => 2,\n    };\n    ",
+            ),
+            (
+                "match k {\n        Some(Foo { n, .. })\n            => 1,\n        None => 2,\n    };\n    ",
+                "match k {\n        Some(Foo { a, .. })\n            => 1,\n        None => 2,\n    };\n    ",
+            ),
+            (
+                "match k {\n        Some(Foo {\n            n,\n            ..\n        })\n            => 1,\n        None => 2,\n    };\n    ",
+                "match k {\n        Some(Foo {\n            a,\n            ..\n        })\n            => 1,\n        None => 2,\n    };\n    ",
+            ),
+            (
+                "match k {\n        None => { drop(1); }\n        Some(Foo { n, .. })\n            => 1,\n    };\n    ",
+                "match k {\n        None => { drop(1); }\n        Some(Foo { a, .. })\n            => 1,\n    };\n    ",
+            ),
+            (
+                "match (x, c) {\n        Some(n)\n            if c == ';' => 1,\n        _ => 2,\n    };\n    ",
+                "match (x, c) {\n        Some(a)\n            if c == ';' => 1,\n        _ => 2,\n    };\n    ",
+            ),
+            (
+                "if let ('=', n) = pair {\n        drop(n);\n    }\n    ",
+                "if let ('=', a) = pair {\n        drop(a);\n    }\n    ",
+            ),
+            (
+                "match k { Some(n) => 1, None => 2 };\n    ",
+                "match k { Some(a) => 1, None => 2 };\n    ",
+            ),
+            (
+                "if let Some(n) = Some(7) {\n        drop(n);\n    }\n    ",
+                "if let Some(a) = Some(7) {\n        drop(a);\n    }\n    ",
+            ),
+            (
+                "while let Some(n) = it.next() {\n        drop(n);\n    }\n    ",
+                "while let Some(a) = it.next() {\n        drop(a);\n    }\n    ",
+            ),
+            (
+                "for (n, _) in v {\n        drop(n);\n    }\n    ",
+                "for (a, _) in v {\n        drop(a);\n    }\n    ",
+            ),
+            (
+                "{\n        let n = 7;\n        drop(n);\n    }\n    ",
+                "{\n        let a = 7;\n        drop(a);\n    }\n    ",
+            ),
+        ] {
+            assert!(
+                rebind_shape_credits(control)?,
+                "control must credit: {control:?}"
+            );
+            assert!(
+                !rebind_shape_credits(rebinding)?,
+                "rebinding must not credit: {rebinding:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn given_identical_initializer_text_without_rebinding_then_boundary_is_credited() {
+        // Positive control for the duplicate-text negative: the same two
+        // `let y = x * 2;` statements with no rebinding between them.
+        let mut owner = function(
+            "pub fn score(x: usize) -> u32 {\n    let y = x * 2;\n    if y == 9 {\n        return 0;\n    }\n    let y = x * 2;\n    if y == 4 {\n        return 1;\n    }\n    2\n}",
+        );
+        owner.end_line = 12;
+        let mut predicate = probe(ProbeFamily::Predicate, "y == 4");
+        predicate.location.line = 7;
+        let body = "assert_eq!(score(2), 1);".to_string();
+        let test = test_with_body_calls(&body, &[(10, &body)]);
+        let gathered = boundary_input(&owner, &predicate, &[&test]);
+        assert!(has_observed_boundary_equality(&gathered.activation));
+    }
+
+    #[test]
+    fn given_literal_row_and_computed_row_then_expression_boundary_is_not_credited() {
+        // The `all` guard: one on-boundary literal row plus one computed
+        // argument row must stay unresolved (the computed row may sit on
+        // the other side).
+        let owner = function("pub fn score(s: &str) -> bool {\n    s.len() < 4\n}");
+        let test = test_with_body_calls(
+            "let word = make();\nassert!(score(\"123\"));\nassert!(score(&word));",
+            &[
+                (11, "assert!(score(\"123\"));"),
+                (12, "assert!(score(&word));"),
+            ],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "s.len() < 4"),
+            &[&test],
+        );
+        // The literal row is off the boundary; the computed row may sit on
+        // it, so no missing input is named and the boundary stays unresolved.
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        assert!(gathered.unresolved_boundary.is_some());
+    }
+
+    #[test]
+    fn given_equality_guard_on_expression_operand_then_boundary_is_not_credited() {
+        // `text.len() == 0` tested only with "": the `< 2` neighbour survives
+        // (idiom-result-empty-guard), so an equality guard never credits.
+        let owner = function("pub fn score(s: &str) -> bool {\n    s.len() == 0\n}");
+        let test = test_with_body_calls("assert!(score(\"\"));", &[(10, "assert!(score(\"\"));")]);
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "s.len() == 0"),
+            &[&test],
+        );
+        assert!(!has_observed_boundary_equality(&gathered.activation));
+
+        // Control: the ordering form of the same guard does credit.
+        let ordering = function("pub fn score(s: &str) -> bool {\n    s.len() < 1\n}");
+        let one = test_with_body_calls("assert!(score(\"a\"));", &[(10, "assert!(score(\"a\"));")]);
+        let gathered = boundary_input(
+            &ordering,
+            &probe(ProbeFamily::Predicate, "s.len() < 1"),
+            &[&one],
+        );
+        assert!(has_observed_boundary_equality(&gathered.activation));
+    }
+
+    #[test]
+    fn given_reversed_expression_operands_then_boundary_is_credited() {
+        let owner = function("pub fn score(s: &str) -> bool {\n    2 + 2 > s.len()\n}");
+        let test = test_with_body_calls(
+            "assert!(!score(\"1234\"));\nassert!(score(\"123\"));",
+            &[
+                (10, "assert!(!score(\"1234\"));"),
+                (11, "assert!(score(\"123\"));"),
+            ],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "2 + 2 > s.len()"),
+            &[&test],
+        );
+        assert!(has_observed_boundary_equality(&gathered.activation));
+    }
+
+    #[test]
+    fn given_empty_input_for_counted_local_then_zero_boundary_is_observed() {
+        let mut owner = function(
+            "pub fn initials(name: &str) -> String {\n    let letters = name.split_whitespace().count();\n    if letters == 0 {\n        return String::new();\n    }\n    name.to_string()\n}",
+        );
+        owner.end_line = 7;
+        owner.name = "initials".to_string();
+        let mut predicate = probe(ProbeFamily::Predicate, "letters == 0");
+        predicate.location.line = 3;
+        let mut test = test_with_body_calls(
+            "assert_eq!(initials(\"\"), \"\");\nassert_eq!(initials(\"Ada Lovelace\"), \"AL\");",
+            &[
+                (10, "assert_eq!(initials(\"\"), \"\");"),
+                (11, "assert_eq!(initials(\"Ada Lovelace\"), \"AL\");"),
+            ],
+        );
+        for call in &mut test.calls {
+            call.name = "initials".to_string();
+        }
+        let gathered = boundary_input(&owner, &predicate, &[&test]);
+        assert!(has_observed_boundary_equality(&gathered.activation));
+    }
+
+    #[test]
     fn given_counted_local_boundary_then_boundary_is_unresolved_not_missing() {
-        // #6693's counted-local shape: `letters` counts the input's words,
-        // and the tests pass "" and "Ada Lovelace" (both sides). ripr does
-        // not fold the count, so it abstains instead of naming a missing
-        // `letters == 0` input. Only this abstain fallback is delivered;
-        // folding the count into a witness is not.
+        // #6693's counted-local shape: `letters` counts the input's words.
+        // Tests that pass "Ada Lovelace" and "Grace Hopper" never count zero
+        // words, so no row lands on `letters == 0`: ripr abstains instead of
+        // naming a missing `letters == 0` input. (A test passing "" would now
+        // observe that equality, #9637.)
         let mut owner = function(
             "pub fn initials(name: &str) -> String {\n    let letters = name.split_whitespace().count();\n    if letters == 0 {\n        return String::new();\n    }\n    name.to_string()\n}",
         );
@@ -7271,9 +11016,9 @@ assert_eq!(input.amount, 100);"#
         let mut predicate = probe(ProbeFamily::Predicate, "letters == 0");
         predicate.location.line = 3;
         let test = test_with_body_calls(
-            "assert_eq!(initials(\"\"), \"\");\nassert_eq!(initials(\"Ada Lovelace\"), \"AL\");",
+            "assert_eq!(initials(\"Grace Hopper\"), \"GH\");\nassert_eq!(initials(\"Ada Lovelace\"), \"AL\");",
             &[
-                (10, "assert_eq!(initials(\"\"), \"\");"),
+                (10, "assert_eq!(initials(\"Grace Hopper\"), \"GH\");"),
                 (11, "assert_eq!(initials(\"Ada Lovelace\"), \"AL\");"),
             ],
         );
@@ -7408,6 +11153,35 @@ assert_eq!(input.amount, 100);"#
             .collect()
     }
 
+    /// #8389: each element-run fact names the test file of its own run.
+    #[test]
+    fn element_run_facts_name_the_file_of_their_run() {
+        let mut owner = function(
+            "pub fn score(xs: &[i64]) -> usize {\n    xs.iter().filter(|&&x| x > 0).count()\n}",
+        );
+        owner.item.has_body = true;
+        let in_file = |file: &str, line: usize, call: &str| {
+            let mut test = test_with_body_calls(call, &[(line, call)]);
+            test.file = PathBuf::from(file);
+            test.start_line = line - 1;
+            test.end_line = line + 1;
+            test
+        };
+        let a = in_file("tests/a.rs", 11, "assert_eq!(score(&[-1, 0, 3]), 1);");
+        let b = in_file("tests/b.rs", 41, "assert_eq!(score(&[0, 7]), 1);");
+        let gathered = boundary_input(&owner, &probe(ProbeFamily::Predicate, "x > 0"), &[&b, &a]);
+        let file_at = |line: usize| {
+            gathered
+                .activation
+                .observed_values
+                .iter()
+                .find(|fact| fact.line == line && fact.value == "x == 0")
+                .and_then(|fact| fact.file.clone())
+        };
+        assert_eq!(file_at(11), Some(PathBuf::from("tests/a.rs")));
+        assert_eq!(file_at(41), Some(PathBuf::from("tests/b.rs")));
+    }
+
     /// A boundary that is not one whole plain decimal literal (`0x10`,
     /// `1e3`, `10u8`) and not a same-file constant stays unresolved: its
     /// leading digits (`0`, `1`, `10`) are not its value.
@@ -7459,6 +11233,7 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(gathered.unresolved_boundary, None);
         assert!(missing_values(&gathered).is_empty());
         assert!(has_observed_boundary_equality(&gathered.activation));
+        assert_equality_facts_name_file(&gathered.activation, "tests/score.rs");
         // `**x` under `|x|` is the same element.
         let deref = adaptor_boundary(
             "xs.iter().filter(|x| **x > 0).count()",
@@ -7549,6 +11324,43 @@ assert_eq!(input.amount, 100);"#
     }
 
     #[test]
+    fn owner_result_field_read_after_a_multibyte_character_does_not_panic() {
+        let assertion = "assert_eq!(\n    \"before with spaces/前\".len() , r.total)";
+        // The read follows a multi-byte character; it must classify, not panic.
+        let _ = reads_owner_result_field(assertion, assertion, ".total", "price");
+        let tight = "assert_eq!(前.total, 1)";
+        let _ = reads_owner_result_field(tight, tight, ".total", "price");
+    }
+
+    #[test]
+    fn unicode_identifier_boundaries_on_the_owner_result_read_path() {
+        let reads = |body: &str, assertion: &str| {
+            reads_owner_result_field(body, assertion, ".total", "price")
+        };
+        // A Unicode-prefixed name is one identifier: `前r` is not `r`.
+        let unrelated = "let r = price();
+ let 前r = Quote { total: 7 };
+ let _ = r;";
+        assert!(!reads(unrelated, "assert_eq!(前r.total, 7);"));
+        assert!(!reads(unrelated, "assert_eq!(r前.total, 7);"));
+        // The same shape in ASCII is the control.
+        let ascii = "let r = price();
+ let q = Quote { total: 7 };
+ let _ = r;";
+        assert!(!reads(ascii, "assert_eq!(q.total, 7);"));
+        // A Unicode-named receiver bound from the owner credits like ASCII.
+        let bound = "let 前r = price();";
+        assert!(reads(bound, "assert_eq!(前r.total, 101);"));
+        assert!(reads("let r = price();", "assert_eq!(r.total, 101);"));
+        // `let` boundary and mention checks use the same identifier rule.
+        assert!(!reads("let 前r = price();", "assert_eq!(r.total, 101);"));
+        assert!(!reads("let r前 = price();", "assert_eq!(r.total, 101);"));
+        // CJK adjacent text does not panic.
+        let cjk = "assert_eq!(\"前\".len() + 後.total, 1)";
+        let _ = reads(cjk, cjk);
+    }
+
+    #[test]
     fn every_mention_but_a_header_or_plain_use_path_is_unread() {
         for (source, count) in [
             ("use crate::add as push_big;", 1),
@@ -7572,5 +11384,150 @@ assert_eq!(input.amount, 100);"#
         ] {
             assert_eq!(unread_mentions(source, "add"), count, "{source}");
         }
+    }
+
+    #[test]
+    fn a_receiver_call_mutates_only_a_mut_parameter() {
+        // #9197: `x.add_assign(5)` changes a `mut` parameter in place, so the
+        // name no longer holds the test's input; on an immutable parameter the
+        // same shape (`x.abs()`, `x.min(3)`) is a read and keeps the credit.
+        // This is the pin for the `receiver_call` guard: it fails with the guard
+        // disabled. (Publicly a `mut x` parameter is already unmapped, so the
+        // guard is defense-in-depth should `mut` parameters become mappable.)
+        let credited = |signature: &str, prelude: &str| {
+            let owner = function(&format!(
+                "pub fn thr({signature}) -> bool {{\n{prelude}\n    x > 102\n}}"
+            ));
+            let parameters = vec!["x".to_string()];
+            let line = 2 + prelude.lines().count();
+            credited_parameter(&owner, &parameters, "x", &Some("x".to_string()), line).is_some()
+        };
+        for prelude in [
+            "    x.add_assign(5);",
+            "    x .add_assign (5);",
+            "    x\n        .add_assign(5);",
+            "    x.saturating_add_assign::<i32>(5);",
+        ] {
+            assert!(!credited("mut x: i32", prelude), "{prelude}");
+            assert!(!credited("mut  x : i32", prelude), "{prelude}");
+            // Not mutable: the call cannot change the parameter.
+            assert!(credited("x: i32", prelude), "{prelude}");
+        }
+        for prelude in [
+            "    let _ = x.abs();",
+            "    let _ = x.min(3);",
+            "    let _ = self.x.add(1);",
+        ] {
+            assert!(credited("x: i32", prelude), "{prelude}");
+        }
+        // A `mut` parameter read by a method that cannot be a mutation is
+        // still declined (fail-closed: the scan does not know the method).
+        assert!(!credited("mut x: i32", "    let _ = x.abs();"));
+        // A different `mut` parameter does not make `x` mutable.
+        assert!(credited("mut y: i32, x: i32", "    x.add_assign(5);"));
+    }
+
+    #[test]
+    fn a_rebound_or_mutated_parameter_is_not_the_compared_value() {
+        // #9197: the operand name matches the parameter, but the owner
+        // rebinds or mutates it before line 3, so no input row is its value.
+        let rebound = |prelude: &str| {
+            let owner = function(&format!(
+                "pub fn thr(x: i32) -> bool {{\n{prelude}\n    x > 102\n}}"
+            ));
+            let parameters = function_parameters(&owner);
+            let line = 2 + prelude.lines().count();
+            credited_parameter(&owner, &parameters, "x", &Some("x".to_string()), line)
+        };
+        for prelude in [
+            "    let x = x * 2;",
+            "    let mut x = x;",
+            "    x += 5;",
+            "    x = x + 5;",
+            "    for x in 0..3 { let _ = x; }",
+            "    let (x, _) = (x + 5, 0);",
+            "    if let Some(x) = Some(1) { let _ = x; }",
+            "    let _ = Some(1).map(|x| x + 5);",
+            "    let _ = match Some(1) { Some(x) => x, None => 0 };",
+            "    let _ = matches!(Some(1), Some(x) if x > 0);",
+            "    let _ = foo(&mut x);",
+            "    let _ = match Some(1) { Some(x) if x > 0 => x, _ => 0 };",
+            "    (x, y) = (y, x);",
+            "    match y {\n        0 => a + 1,\n        x => 1,\n    };",
+            "    match y {\n        0 => -1,\n        x => 1,\n    };",
+            "    match y {\n        0 => a * b,\n        x => 1,\n    };",
+            "    match y {\n        0 => !a,\n        x => 1,\n    };",
+            "    match y {\n        0 => a < b,\n        x => 1,\n    };",
+            "    match y {\n        0 => a == b,\n        x => 1,\n    };",
+            "    match y {\n        0 => f(a)?,\n        x => 1,\n    };",
+            "    match y {\n        0 => a.b,\n        x => 1,\n    };",
+            "    match y {\n        0 => 1.5,\n        x => 1,\n    };",
+            "    match y {\n        0 => 1_u8..2,\n        x => 1,\n    };",
+            "    match y {\n        0 => vec![1],\n        x => 1,\n    };",
+            "    match y {\n        0 => return,\n        x => 1,\n    };",
+            "    match y {\n        0 => if a { 1 } else { 2 },\n        x => 1,\n    };",
+            "    match y {\n        0 => 5 - 1,\n        x => 1,\n    };",
+            "    match y {\n        0 => match z {\n            Z => 1,\n            _ => 2,\n        },\n        x => 1,\n    };",
+            "    match y {\n        0 => match z { Z => 1, _ => 2 },\n        x => 1,\n    };",
+            "    match y {\n        0 => a + 1\n        ,\n        x => 1,\n    };",
+            "    match y {\n        Some(x) if x == 3 =>",
+            "    match y {\n        Some(x) if x >= 3 =>",
+            "    match y {\n        Some(\n            x\n        ) if y != 3 =>",
+            "    match y {\n        (a, x) if a == 1 =>",
+            "    match y {\n        Some(x)\n            if a == 1 =>",
+            "    match y {\n        x @ 1..=5 =>",
+            "    match y {\n        Some(x @ 1..=5) =>",
+            "    match y {\n        S { f: x } =>",
+            "    match y {\n        S { x } =>",
+            "    match y {\n        S { x, .. } =>",
+            "    match y {\n        Foo::Bar { x: 1, y: x } =>",
+            "    match y {\n        Or(x)\n            if x == 3 =>",
+            "    match y {\n        A => 1,\n        Some(x) if foo(x, 1) =>",
+            "    match y {\n        A => { 1 }\n        x =>",
+            "    let _ = x;\n    match (y, 0) {\n        (\n            x,\n            _\n        )\n        => {",
+            "    let _ = x;\n    match [y, 0] {\n        [\n            x,\n            _\n        ]\n        => {",
+            "    let _q = b'\"';\n    let mut x = x;\n    x += 5;",
+            "    let _ = match y {\n        x\n        => {\n            x > 101\n        }\n    };",
+            "    let _q = '\"';\n    let x = x + 5;",
+            "    [x, ..] = [1, 2];",
+            "    let _ = match x { 0 => 1, _ => 2 };\n    let _ = match o {\n        x => x > 101,\n    };",
+        ] {
+            assert_eq!(rebound(prelude), None, "{prelude}");
+        }
+        // Controls: unrelated names, fields, comparisons and a path segment
+        // do not decline the parameter.
+        for prelude in [
+            // A bare first-arm binder of the scrutinee's own name binds the same value.
+            "    let _ = match x {\n        x if 0 > x => -1,\n        _ => 1,\n    };",
+            "    let y = 7;",
+            "    let point = (1, 2);\n    let _ = point.0 <= 3 && x <= 3;",
+            "    let _ = self.x;",
+            "    let _ = m::x();",
+            "    let _ = x == 3;",
+            "    let _ = Foo { x: x };",
+            "    let _ = x >= y;",
+            "    match y {\n        _ => x + 1,\n    };",
+            "    match y {\n        0 => a + 1,\n        _ => x * 2,\n    };",
+            "    match y {\n        0 => a,\n        _ => foo(a, x),\n    };",
+            "    match y {\n        Some(v) if v > x =>",
+            "    match y {\n        Some(v) if foo(x, 1) =>",
+            "    match y {\n        A => x,\n        B =>",
+            "    match y {\n        A => foo(x, 1),\n        B =>",
+            "    match y {\n        A => {\n            x\n        }\n        B if y =>",
+            "    let _ = match o {\n        Some(v) => x\n            + v,\n        None => 0,\n    };",
+            "    let _s = \"let x = 1;\"; // let x = 2",
+            "    let _ = match x { 0 => 1, _ => 2 };",
+            "    let _ = match o { Some(v) => x, None => 0 };",
+            "    let _ = match o {\n        Some(v) => x + v,\n        None => x,\n    };",
+        ] {
+            assert_eq!(rebound(prelude), Some("x".to_string()), "{prelude}");
+        }
+        // A rebinding after the compared line is not before it.
+        let later = function("pub fn thr(x: i32) -> bool {\n    x > 102\n    let x = 1;\n}");
+        let parameters = function_parameters(&later);
+        assert_eq!(
+            credited_parameter(&later, &parameters, "x", &Some("x".to_string()), 2),
+            Some("x".to_string())
+        );
     }
 }

@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..1111111 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,4 +9,4 @@ impl Step for Inc {
+         match x.checked_add(1) {
+             Some(v) => Ok(v),
+-            None => Err("ovf".to_string()),
++            None => Err("overflow".to_string()),
+         }

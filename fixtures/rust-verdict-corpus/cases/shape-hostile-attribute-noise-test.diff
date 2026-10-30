@@ -1,0 +1,12 @@
+diff --git a/src/hostile.rs b/src/hostile.rs
+--- a/src/hostile.rs
++++ b/src/hostile.rs
+@@ -34,7 +34,7 @@
+ def_add!(add_five, 5);
+ 
+ pub fn attribute_noise(x: u32) -> u32 {
+-    x + 7
++    7 + x
+ }
+ 
+ pub fn commented_tail(x: u32) -> u32 {

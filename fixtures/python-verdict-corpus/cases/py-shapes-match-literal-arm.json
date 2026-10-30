@@ -1,0 +1,45 @@
+{
+  "case_id": "py-shapes-match-literal-arm",
+  "subject_id": "authored-py-pytest-shapes",
+  "diff": "cases/py-shapes-match-literal-arm.diff",
+  "anchor": {
+    "file": "shapes/matching.py",
+    "line": 7
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "value_return",
+  "test_shape": "pytest_match_statement_arm_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return \"nil\"",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_matching.py::test_zero_and_int",
+        "equivalence_review": "not equivalent: zero is labeled nil"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "kind(0) takes the literal arm and the test compares the string.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -3,6 +3,21 @@
 ## Pending
 
 Reason:
+#1964 (audit B1-F1): a fallback-only baseline join is refused when the baseline
+entry carries a canonical gap id that differs from the candidate's, matching
+`ripr baseline diff`. The `fallback-only-new-canonical` scenario now blocks and
+`two-gaps-one-line-same-class` blocks its colliding gap; their JSON and
+Markdown change (status, decision, no `baseline_match_kind`, no fallback
+warning). The other three scenarios are unchanged.
+
+Command:
+`RIPR_UPDATE_FIXTURES=1 cargo test -p ripr --lib -- baseline_fallback_disclosure_fixture_matrix_matches_checked_outputs`
+
+Updated:
+- `expected/gate-baseline/fallback-only-new-canonical/gate-decision.{json,md}`
+- `expected/gate-baseline/two-gaps-one-line-same-class/gate-decision.{json,md}`
+
+Reason:
 PR review round 1: the gate `subject` block now covers every CLI-supplied
 decision-changing input, so the baseline scenario goldens gain a `baseline`
 content-hash entry beside `pr_guidance`. Decisions, warnings, and Markdown
@@ -144,6 +159,18 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: default human output speaks plain language (#8165)
+
+Command:
+`cargo xtask goldens bless gate_baseline_fallback_disclosure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — gate_baseline_fallback_disclosure (7)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
 
 Command:
 `cargo xtask goldens bless gate_baseline_fallback_disclosure --reason "..."`

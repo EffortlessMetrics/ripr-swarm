@@ -1,0 +1,45 @@
+{
+  "case_id": "deco-audited-passthrough-value",
+  "subject_id": "authored-ts-jest-decorators",
+  "diff": "cases/deco-audited-passthrough-value.diff",
+  "anchor": {
+    "file": "src/audited.ts",
+    "line": 7
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_decorator_passthrough_tobe",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "Node.js v22.22.0, jest 30.5.2, ts-jest 29.4.14, typescript 5.9, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "return original.apply(this, args) + 1;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "the decorated method still adds",
+        "equivalence_review": "the edit itself: The decorator returns the wrapped method's result, which the test pins exactly."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The decorator returns the wrapped method's result, which the test pins exactly. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

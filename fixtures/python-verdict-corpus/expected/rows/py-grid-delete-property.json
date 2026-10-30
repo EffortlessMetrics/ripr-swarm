@@ -1,0 +1,22 @@
+{
+  "case_id": "py-grid-delete-property",
+  "subject_id": "authored-py-grid-delete",
+  "origin": "authored",
+  "anchor": "grid_delete/core.py:22",
+  "behavior_family": "side_effect_field_write",
+  "test_shape": "pytest_property_invariant_loop",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

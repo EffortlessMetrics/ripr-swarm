@@ -1,0 +1,12 @@
+diff --git a/src/seeded.rs b/src/seeded.rs
+--- a/src/seeded.rs
++++ b/src/seeded.rs
+@@ -11,7 +11,7 @@
+ }
+ 
+ pub fn clamp_to_budget(x: u64) -> u64 {
+-    if x > 500 { 500 } else { x }
++    x.min(500)
+ }
+ 
+ #[cfg(test)]

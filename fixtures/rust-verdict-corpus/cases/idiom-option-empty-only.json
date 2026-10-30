@@ -1,0 +1,54 @@
+{
+  "case_id": "idiom-option-empty-only",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-option-empty-only.diff",
+  "anchor": {
+    "file": "src/unwinding.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "option_none_and_is_some_only",
+  "hard_case": "The tests pin `None` for an empty slice and `is_some()` for one word; the maximum itself is never read.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "words.iter().map(|w| w.len()).min()",
+        "mutated_line": "words.iter().map(|w| w.len()).min()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `words.iter().map(|word| word.len()).max()` becomes `words.iter().map(|w| w.len()).min()`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "words.iter().map(|w| w.len()).max().or(Some(0))",
+        "mutated_line": "words.iter().map(|w| w.len()).max().or(Some(0))",
+        "outcome": "tests_failed",
+        "failing_test": "unwinding::tests::longest_of_nothing",
+        "equivalence_review": "not equivalent: `words.iter().map(|word| word.len()).max()` becomes `words.iter().map(|w| w.len()).max().or(Some(0))`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`min()` is the same for one word and survives; defaulting to Some(0) turns the empty case into Some and fails. Shape: Option pinned at the empty edge and by presence only.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

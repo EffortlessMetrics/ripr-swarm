@@ -1,0 +1,12 @@
+diff --git a/shapes/comps.py b/shapes/comps.py
+--- a/shapes/comps.py
++++ b/shapes/comps.py
+@@ -14,7 +14,7 @@
+ 
+ 
+ def distinct_pairs(a, b):
+-    return [(x, y) for x in a for y in b if x != y]
++    return [(x, y) for x in a for y in b if x <= y]
+ 
+ 
+ def countdown(start):

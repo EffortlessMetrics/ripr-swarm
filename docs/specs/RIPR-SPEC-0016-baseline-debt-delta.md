@@ -150,6 +150,14 @@ created, review-after, and source metadata fields; refuses to overwrite without
 a historical-debt ledger and does not suppress or silence current findings by
 itself.
 
+An overwrite refusal prints a complete retry retaining the supplied `--from`
+and effective `--out` as shell-quoted path arguments, with explicit `--force`.
+It does not write anything before the operator chooses that retry. On Windows,
+the error also directs paths containing `$`, backticks, or `%`, and commands
+using `printf` escape fragments, to Git Bash rather than WSL or Command Prompt.
+This disclosure retains the shared formatter's expansion-safety restrictions;
+it does not add shell compatibility.
+
 The review metadata object is additive. Campaign 17 baseline files that only
 contain `reviewed` and `reason`, or omit `review` entirely, remain valid. The
 diff report must preserve any present metadata into baseline-derived delta
@@ -260,7 +268,28 @@ bucket:
   visible in the report.
 - `stale_baseline_entry` - a baseline record can be parsed but no longer joins
   cleanly because its identity is ambiguous, obsolete, or incompatible,
-  including analyzer-version identity discontinuity across an upgrade.
+  including analyzer-version identity discontinuity across an upgrade. A
+  baseline entry absent from current evidence whose path is not covered by the
+  current decision's disclosed `diff_scoped_changed_files` `analysis_scope`
+  (`changed_production_files` only: `changed_files` also names non-Rust files the
+  seam analysis never read), or whose current decision
+  discloses no, a malformed, or an unrecognized scope, skipped seams
+  (`unevaluated_seams`), brief-cap-omitted or policy-omitted seams (`cap_omitted_seams`,
+  `omitted_by_policy`; a missing key means an older producer), lists the path in
+  `parser_declined_files` (a file whose parse was declined extracts no seams, so
+  `changed_production_files` excludes it), or
+  lists the path in `absent_changed_files`, is also `stale_baseline_entry` and
+  carries `"evaluation": "not_evaluated"` plus `not_evaluated_reason`
+  (issue #9301). It is never `resolved`, and `baseline update
+  --remove-resolved` keeps it through the shared
+  `absence_not_evaluated_reason` predicate. A `gap_ledger_artifact` scope lists
+  only the surviving ledger records' anchor files, not the files analyzed, so it
+  always yields `not_evaluated` until the ledger path discloses real analyzed
+  files (limitation tracked in #9599).
+  Coverage is file-level by construction: the seam selector matches every seam in
+  a working-set file (changed line, changed owner, related test, else same-file),
+  so a seam in a covered file is either present in the decisions or counted in
+  `unevaluated_seams`, `cap_omitted_seams` or `omitted_by_policy`.
 - `invalid_baseline_entry` - a baseline record is malformed or missing required
   identity fields.
 - `missing_current_input` - the report cannot classify current movement because

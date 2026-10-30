@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,7 +9,7 @@
+ }
+ 
+ pub fn commission(sale: u64) -> u64 {
+-    sale * 3 / 100
++    3 * sale / 100
+ }
+ 
+ pub fn handling(weight: u64) -> u64 {

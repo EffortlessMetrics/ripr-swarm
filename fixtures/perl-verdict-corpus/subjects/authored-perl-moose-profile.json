@@ -1,0 +1,25 @@
+{
+  "subject_id": "authored-perl-moose-profile",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "lib/Counter.pm",
+      "sha256": "ea873886d870a07f8adfe103f8085e65fbbb440c29221166d0a017309a0ac660"
+    },
+    {
+      "path": "lib/Profile.pm",
+      "sha256": "a56df4b1401b059a00effe3a65a3ed83341e8ca82591b00bf11e05b3c51e5ae1"
+    },
+    {
+      "path": "t/counter.t",
+      "sha256": "8ed5ef6c654427789a974cd4ea1700798b8de0a78ba0f57a3cecbe5e44558fe3"
+    },
+    {
+      "path": "t/profile.t",
+      "sha256": "99f5ca76f29e7897c655beab47c8e40204f354942dcffdc6c8b0f999e2ecec37"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- On Windows, `/`-separated paths in check JSON (`root`, `config_path`), outcome, agent, gate, rerun and verification output no longer print a canonical root as `//?/<drive>:/…`. They print the plain `<drive>:/…` spelling that the repo-exposure root and human output already use, so a producer root and a consumer that rebuilds it still match. The Python and Perl repair cards' current-test evidence now uses `/` separators like the rest of the card (#9660).

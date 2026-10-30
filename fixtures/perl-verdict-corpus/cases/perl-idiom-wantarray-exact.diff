@@ -1,0 +1,13 @@
+diff --git a/lib/Toolkit.pm b/lib/Toolkit.pm
+index 7f429bd..3adca85 100644
+--- a/lib/Toolkit.pm
++++ b/lib/Toolkit.pm
+@@ -11,7 +11,7 @@ sub make_counter {
+ 
+ sub ctx_value {
+     my @r = (1, 2, 3);
+-    return wantarray ? @r : scalar(@r);
++    return wantarray ? @r : scalar @r;
+ }
+ 
+ sub ctx_count {

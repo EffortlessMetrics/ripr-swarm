@@ -1,0 +1,12 @@
+diff --git a/shapes/comps.py b/shapes/comps.py
+--- a/shapes/comps.py
++++ b/shapes/comps.py
+@@ -2,7 +2,7 @@
+ 
+ 
+ def squares_of_evens(nums):
+-    return [n * n for n in nums if n % 2 == 0]
++    return [n * n for n in nums if n % 2 == 1]
+ 
+ 
+ def index_by_name(rows):

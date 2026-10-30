@@ -1,0 +1,13 @@
+diff --git a/src/retry.ts b/src/retry.ts
+index 0000000..1111111 100644
+--- a/src/retry.ts
++++ b/src/retry.ts
+@@ -2,7 +2,7 @@
+   let lastError: unknown;
+   for (let i = 0; i < attempts; i++) {
+     try {
+-      return await fn();
++      return undefined as T;
+     } catch (error) {
+       lastError = error;
+     }

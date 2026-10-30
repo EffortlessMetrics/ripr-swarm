@@ -1,0 +1,73 @@
+{
+  "subject_id": "authored-py-pytest-unnum",
+  "origin": "authored",
+  "version_label": "authored@5fc9de08",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "7a87dbba3e5b3417211aa3164b6ed83355bc85044a1ba1c4806bbe7d7e021a52"
+    },
+    {
+      "path": "tests/test_century.py",
+      "sha256": "f672cf98c60ded5e3fd500258590ab8e449672cb875925792d0166894492b739"
+    },
+    {
+      "path": "tests/test_checkout_route.py",
+      "sha256": "07934e23880e5eb970d9e26086bca1ba86706066445eb4bdeaecece149117571"
+    },
+    {
+      "path": "tests/test_child_rate.py",
+      "sha256": "148e210c605115301316f2831ef0e28e5d65826a3c44fc2c3e90cfc35744aa30"
+    },
+    {
+      "path": "tests/test_discount.py",
+      "sha256": "08d9b30a699c8f3b55b3a4f431030a4485602cbab58e7457419a5ab46bd1f87f"
+    },
+    {
+      "path": "tests/test_negative.py",
+      "sha256": "4d753b9e6a1671869a5a4d7925b5945eb548a38a21e88e646ef57c452e62bb12"
+    },
+    {
+      "path": "tests/test_retrying.py",
+      "sha256": "e21e088fa87030d23e54806c164b4b3d58dd5bff69b3604bc3b094e1415b2857"
+    },
+    {
+      "path": "tests/test_year_format.py",
+      "sha256": "89921e252a2eb0ce2a9848d830a9ea6f1aff216c8fa249b6d564d1054176e0eb"
+    },
+    {
+      "path": "unnum/__init__.py",
+      "sha256": "12e380ffb8db6e52cd25945a3459d7dcfcd54b5c6f4ab85a55a0224caa7a7cb9"
+    },
+    {
+      "path": "unnum/century.py",
+      "sha256": "909e6b0e325801b2bdf5b67c6313fa3e21103dc37c82d18fe41f15bd46a2aa17"
+    },
+    {
+      "path": "unnum/checkout_route.py",
+      "sha256": "dc252f6180cb5a56b36a8dfe397be8d8cbe9762fa26a70f186caf0a6a19f3cdb"
+    },
+    {
+      "path": "unnum/child_rate.py",
+      "sha256": "04560b8ae32a8307c702a8dcffb89d95b69ecf1835d93a7256d0a0f3444a3981"
+    },
+    {
+      "path": "unnum/discount.py",
+      "sha256": "81c0527c13b3ce8b847a8c35baf7ca1ff2b66d9160ad5440a828ac160b66216f"
+    },
+    {
+      "path": "unnum/negative.py",
+      "sha256": "e19326161e37c55f93618bdff5a21947edaafd078212877b0210ae42764c7d2d"
+    },
+    {
+      "path": "unnum/retrying.py",
+      "sha256": "75f30dd352905f6fc6313b9c2124a608abc1a09661a31f4364f11fd49f2b3480"
+    },
+    {
+      "path": "unnum/year_format.py",
+      "sha256": "32427ef7cd0f28c227a74c8eba5236b108585cc98bc9b60d56445a42dfeb7a74"
+    }
+  ]
+}

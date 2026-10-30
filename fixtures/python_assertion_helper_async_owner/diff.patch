@@ -1,0 +1,9 @@
+diff --git a/src/stats.py b/src/stats.py
+--- a/src/stats.py
++++ b/src/stats.py
+@@ -4,4 +4,4 @@
+         self.hits = 0
+ 
+     async def record_write(self):
+-        self.writes = self.writes + 1
++        self.writes += 1

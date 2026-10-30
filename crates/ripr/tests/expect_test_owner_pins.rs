@@ -175,8 +175,13 @@ fn other_expect_test_and_snapshot_shapes_keep_their_medium_grade() -> Result<(),
         let finding = render_finding(OLD, NEW, dev, imports, attributes, test)?;
         // The nested comparison sits under a deciding `||`, so it earns
         // no snapshot grade at all.
+        // An inline `assert_debug_eq` literal is a framework oracle ripr does
+        // not compare with the changed value: withheld, never credited
+        // (RIPR-SPEC-0240).
         let expected = if test.starts_with("let _ok") {
             "reachable_unrevealed"
+        } else if test.starts_with("expect![") && test.contains(".assert_debug_eq(") {
+            "static_unknown"
         } else {
             "weakly_exposed"
         };

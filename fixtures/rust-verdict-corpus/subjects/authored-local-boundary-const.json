@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-local-boundary-const",
+  "origin": "authored",
+  "version_label": "authored 2026-10-21; local boundary operand chosen by a flag (#9276)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "8797042c9c76604d986f21e0fdfb1c71c3ab9fcf2f3b070e1a28ebf862e2eff4"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "e32e2a4b059173352980f3e7b5270b6d7ccad7bc71e0cbe16c11c6172d2464fb"
+    }
+  ]
+}

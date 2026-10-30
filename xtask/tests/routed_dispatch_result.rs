@@ -7,6 +7,10 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+const LIVE_PR: &str = r#"{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"EffortlessMetrics/ripr-swarm"}},"base":{"ref":"main","repo":{"full_name":"EffortlessMetrics/ripr-swarm"}},"labels":[{"name":"merge-ready"}]}"#;
+
+const LIVE_GRAPHQL: &str = r#"{"data":{"repository":{"pullRequest":{"headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reviewDecision":"APPROVED","mergeQueueEntry":{"id":"entry-10"},"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#;
+
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 fn root() -> PathBuf {
@@ -101,6 +105,16 @@ fn run_result(
         ("ADMISSION_REASON", "fixture"),
         ("TARGET", "github"),
         ("DOCS_ONLY", "false"),
+        ("LABEL_NAME", "merge-ready"),
+        ("REPOSITORY", "EffortlessMetrics/ripr-swarm"),
+        ("PR_NUMBER", "10"),
+        ("EXPECTED_HEAD", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ("EXPECTED_REQUEST", "100-1"),
+        ("GITHUB_RUN_ID", "100"),
+        ("GITHUB_RUN_ATTEMPT", "1"),
+        ("EXPECTED_QUEUE_ENTRY", "entry-10"),
+        ("MOCK_PR", LIVE_PR),
+        ("MOCK_GRAPHQL", LIVE_GRAPHQL),
     ]
     .into_iter()
     .chain(overrides.iter().copied())
@@ -108,18 +122,87 @@ fn run_result(
         env.insert(name.to_string(), value.to_string());
     }
     let summary = scratch.0.join("summary");
-    let output = Command::new("bash")
-        .args(["-e", "-c", &result_shell(step)?])
-        .env_clear()
-        .envs(env)
-        .env("PATH", std::env::var_os("PATH").ok_or("PATH unavailable")?)
-        .env("GITHUB_STEP_SUMMARY", &summary)
-        .output()
-        .map_err(|e| e.to_string())?;
+    // Passed as a file, not `-c <script>`: Windows argv quoting mangles a
+    // multi-line script before bash sees it (#9272).
+    let script = scratch.0.join("result.sh");
+    fs::write(&script, result_shell(step)?).map_err(|e| e.to_string())?;
+    let gh = scratch.0.join("gh");
+    fs::write(
+        &gh,
+        r#"#!/bin/sh
+case "$2" in
+  graphql)
+    case "$*" in
+      *cursor=next*) printf '%s\n' "${MOCK_GRAPHQL_NEXT:-$MOCK_GRAPHQL}" ;;
+      *) printf '%s\n' "$MOCK_GRAPHQL" ;;
+    esac ;;
+  repos/*/pulls/10)
+    if [ -f "$MOCK_CALLS" ]; then printf '%s\n' "${MOCK_PR_AFTER:-$MOCK_PR}"
+    else : > "$MOCK_CALLS"; printf '%s\n' "$MOCK_PR"; fi ;;
+  *) exit 97 ;;
+esac
+"#,
+    )
+    .map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+    }
+    let paths = std::iter::once(scratch.0.clone())
+        .chain(std::env::split_paths(
+            &std::env::var_os("PATH").ok_or("PATH unavailable")?,
+        ))
+        .collect::<Vec<_>>();
+    env.insert(
+        "MOCK_CALLS".to_string(),
+        scratch.0.join("calls").to_string_lossy().into_owned(),
+    );
+    let run_shell = |script: &PathBuf, bindings: &BTreeMap<String, String>| {
+        Command::new("bash")
+            .arg("-e")
+            .arg(script)
+            .env_clear()
+            .envs(bindings)
+            .env(
+                "PATH",
+                std::env::join_paths(&paths).map_err(|e| e.to_string())?,
+            )
+            .env("GITHUB_STEP_SUMMARY", &summary)
+            .output()
+            .map_err(|e| e.to_string())
+    };
+    let mut eligibility = true;
+    let mut eligibility_outcome = "skipped";
+    if admission == "success"
+        && status == "admitted"
+        && (event == "merge_group"
+            || (event == "pull_request"
+                && env
+                    .get("LABEL_NAME")
+                    .is_some_and(|label| label == "merge-ready")))
+    {
+        let (_, job) = source
+            .split_once("      - name: Recheck initially admitted eligibility\n")
+            .ok_or("missing actual eligibility step")?;
+        let (step, _) = job
+            .split_once("      - name: Summarize routed result\n")
+            .ok_or("missing summary after eligibility")?;
+        let eligibility_script = scratch.0.join("eligibility.sh");
+        fs::write(&eligibility_script, result_shell(step)?).map_err(|e| e.to_string())?;
+        let output = run_shell(&eligibility_script, &env)?;
+        eligibility = output.status.success();
+        eligibility_outcome = if eligibility { "success" } else { "failure" };
+    }
+    env.insert(
+        "ELIGIBILITY_RESULT".to_string(),
+        eligibility_outcome.to_string(),
+    );
+    let output = run_shell(&script, &env)?;
     let report =
         fs::read_to_string(summary).map_err(|e| format!("missing summary: {e}; {output:?}"))?;
     assert!(report.contains("### Ripr Rust Small Result"));
-    Ok((output.status.success(), report))
+    Ok((eligibility && output.status.success(), report))
 }
 
 #[test]
@@ -149,6 +232,11 @@ fn branch_dispatch_cannot_qualify_even_when_every_child_succeeds() -> Result<(),
 fn ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), String> {
     for (event, reference, status) in [
         ("pull_request", "refs/pull/10/merge", "admitted"),
+        (
+            "merge_group",
+            "refs/heads/gh-readonly-queue/main/pr-10-aaaa",
+            "admitted",
+        ),
         ("workflow_dispatch", "refs/heads/main", "not_applicable"),
         ("workflow_dispatch", "refs/heads/master", "not_applicable"),
         ("push", "refs/heads/main", "not_applicable"),
@@ -209,6 +297,59 @@ fn ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), Stri
 }
 
 #[test]
+fn refused_admission_summary_names_the_concrete_detail() -> Result<(), String> {
+    let detail = "missing or placeholder PR body line(s): Governing issue or accepted claim:, Acceptance delta (one sentence):";
+    let (success, report) = run_result(
+        &workflow()?,
+        "pull_request",
+        "refs/pull/10/merge",
+        "failure",
+        "refused",
+        &[
+            ("ADMISSION_REASON", "claim_identity_missing"),
+            ("ADMISSION_DETAIL", detail),
+        ],
+    )?;
+    assert!(!success, "refused admission must fail the result: {report}");
+    assert!(
+        report.contains("claim_identity_missing") && report.contains(detail),
+        "result summary must name the single concrete refusal reason, got: {report}"
+    );
+    Ok(())
+}
+
+#[test]
+fn hard_cut_refusal_of_admitted_candidate_names_the_cut_reason() -> Result<(), String> {
+    let cut_detail = "the active hard-cut freeze refuses ordinary qualification";
+    let (success, report) = run_result(
+        &workflow()?,
+        "pull_request",
+        "refs/pull/10/merge",
+        "failure",
+        "admitted",
+        &[
+            ("ADMISSION_REASON", "candidate_current_unique_bounded"),
+            ("ADMISSION_DETAIL", ""),
+            ("ADMISSION_CUT_STATUS", "refused"),
+            ("ADMISSION_CUT_REASON", "cut_frozen"),
+            ("ADMISSION_CUT_DETAIL", cut_detail),
+        ],
+    )?;
+    assert!(!success, "hard-cut refusal must fail the result: {report}");
+    assert!(
+        report.contains("hard-cut admission refused: cut_frozen")
+            && report.contains(cut_detail)
+            && report.contains("- admission cut reason: `cut_frozen`"),
+        "result must carry the hard-cut refusal reason, got: {report}"
+    );
+    assert!(
+        !report.contains("candidate_current_unique_bounded —"),
+        "result must not pair the success reason with the cut detail, got: {report}"
+    );
+    Ok(())
+}
+
+#[test]
 fn manual_admission_producer_does_not_supply_pr_qualification() -> Result<(), String> {
     let scratch = Scratch::new()?;
     let action = root().join(".github/actions/pr-candidate-admission");
@@ -222,8 +363,11 @@ fn manual_admission_producer_does_not_supply_pr_qualification() -> Result<(), St
         .collect::<Vec<_>>()
         .join("\n");
     let outputs = scratch.0.join("outputs");
+    let script = scratch.0.join("action.sh");
+    fs::write(&script, &shell).map_err(|e| e.to_string())?;
     let output = Command::new("bash")
-        .args(["-e", "-c", &shell])
+        .arg("-e")
+        .arg(&script)
         .env_clear()
         .env("PATH", std::env::var_os("PATH").ok_or("PATH unavailable")?)
         .env("GITHUB_ACTION_PATH", action)
@@ -274,5 +418,210 @@ fn event_identity_is_wired_from_github_not_candidate_inputs() -> Result<(), Stri
     assert!(step.contains("          EVENT_NAME: ${{ github.event_name }}\n"));
     assert!(step.contains("          WORKFLOW_REF: ${{ github.ref }}\n"));
     assert!(!source.contains("    continue-on-error: true"));
+    Ok(())
+}
+
+#[test]
+fn hosted_result_requires_the_sharded_tests_and_self_hosted_does_not() -> Result<(), String> {
+    let result = |overrides: &[(&str, &str)]| {
+        run_result(
+            &workflow()?,
+            "pull_request",
+            "refs/pull/10/merge",
+            "success",
+            "admitted",
+            overrides,
+        )
+    };
+    // Hosted route: green gates job alone is not a green result (#10507).
+    assert!(result(&[("TARGET", "github")])?.0);
+    for tests in ["failure", "cancelled", "skipped", ""] {
+        let (success, report) = result(&[("TARGET", "github"), ("GITHUB_TESTS_RESULT", tests)])?;
+        assert!(
+            !success,
+            "hosted tests `{tests}` must fail the result: {report}"
+        );
+        assert!(report.contains("sharded tests result"), "{report}");
+    }
+    // Self-hosted route ran its own nextest step; the skipped hosted shards do not matter.
+    assert!(
+        result(&[
+            ("TARGET", "cx43"),
+            ("CX43_RESULT", "success"),
+            ("GITHUB_RESULT", "skipped"),
+            ("GITHUB_TESTS_RESULT", "skipped"),
+        ])?
+        .0
+    );
+    // A tempfailed self-hosted job falls back to the hosted route, shards included.
+    for (tests, expected) in [("success", true), ("failure", false), ("skipped", false)] {
+        assert_eq!(
+            result(&[
+                ("TARGET", "cx43"),
+                ("CX43_RESULT", "failure"),
+                ("CX43_SCRATCH_STATUS", "tempfail"),
+                ("GITHUB_RESULT", "success"),
+                ("GITHUB_TESTS_RESULT", tests),
+            ])?
+            .0,
+            expected,
+            "fallback with sharded tests `{tests}`"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn terminal_result_rejects_late_eligibility_changes_and_old_attempts() -> Result<(), String> {
+    let source = workflow()?;
+    let bad_prs = [
+        LIVE_PR.replace("\"open\"", "\"closed\""),
+        LIVE_PR.replace("\"draft\":false", "\"draft\":true"),
+        LIVE_PR.replace(&"a".repeat(40), &"b".repeat(40)),
+        LIVE_PR.replace("\"main\"", "\"other\""),
+    ];
+    let bad_frames = [
+        "{}".to_string(),
+        r#"{"errors":[{"message":"refused"}]}"#.to_string(),
+        LIVE_GRAPHQL.replace("APPROVED", "CHANGES_REQUESTED"),
+        LIVE_GRAPHQL.replace(r#""reviewDecision":"APPROVED","#, ""),
+        LIVE_GRAPHQL.replace("\"nodes\":[]", "\"nodes\":[{\"isResolved\":false}]"),
+        LIVE_GRAPHQL.replace("\"hasNextPage\":false", "\"hasNextPage\":null"),
+    ];
+    for event in ["pull_request", "merge_group"] {
+        for (name, value) in bad_prs
+            .iter()
+            .map(|v| ("MOCK_PR", v.as_str()))
+            .chain(bad_frames.iter().map(|v| ("MOCK_GRAPHQL", v.as_str())))
+            .chain([
+                ("EXPECTED_HEAD", ""),
+                ("EXPECTED_REQUEST", "100-0"),
+                ("GITHUB_RUN_ATTEMPT", "2"),
+            ])
+        {
+            let (success, report) = run_result(
+                &source,
+                event,
+                "refs/pull/10/merge",
+                "success",
+                "admitted",
+                &[(name, value)],
+            )?;
+            assert!(
+                !success,
+                "late {name}={value} must refuse {event}: {report}"
+            );
+        }
+        let changed = LIVE_PR.replace(&"a".repeat(40), &"b".repeat(40));
+        assert!(
+            !run_result(
+                &source,
+                event,
+                "refs/pull/10/merge",
+                "success",
+                "admitted",
+                &[("MOCK_PR_AFTER", &changed)]
+            )?
+            .0,
+            "a head change during final review must refuse"
+        );
+    }
+    let no_required_review = LIVE_GRAPHQL.replace("\"APPROVED\"", "null");
+    assert!(
+        run_result(
+            &source,
+            "pull_request",
+            "pr",
+            "success",
+            "admitted",
+            &[("MOCK_GRAPHQL", &no_required_review)]
+        )?
+        .0,
+        "a present nullable decision remains valid"
+    );
+    let withdrawn = LIVE_PR.replace(r#"[{"name":"merge-ready"}]"#, "[]");
+    assert!(
+        !run_result(
+            &source,
+            "pull_request",
+            "refs/pull/10/merge",
+            "success",
+            "admitted",
+            &[("MOCK_PR", &withdrawn)]
+        )?
+        .0
+    );
+    for frame in [
+        LIVE_GRAPHQL.replace("entry-10", "entry-11"),
+        LIVE_GRAPHQL.replace(r#"{"id":"entry-10"}"#, "null"),
+    ] {
+        assert!(
+            !run_result(
+                &source,
+                "merge_group",
+                "queue",
+                "success",
+                "admitted",
+                &[("MOCK_GRAPHQL", &frame)]
+            )?
+            .0,
+            "withdrawn/replaced queue entry must refuse"
+        );
+    }
+    let page = LIVE_GRAPHQL.replace(
+        r#""hasNextPage":false,"endCursor":null"#,
+        r#""hasNextPage":true,"endCursor":"next""#,
+    );
+    let blocked = LIVE_GRAPHQL.replace(r#""nodes":[]"#, r#""nodes":[{"isResolved":false}]"#);
+    assert!(
+        run_result(
+            &source,
+            "pull_request",
+            "pr",
+            "success",
+            "admitted",
+            &[("MOCK_GRAPHQL", &page), ("MOCK_GRAPHQL_NEXT", LIVE_GRAPHQL)]
+        )?
+        .0
+    );
+    assert!(
+        !run_result(
+            &source,
+            "pull_request",
+            "pr",
+            "success",
+            "admitted",
+            &[("MOCK_GRAPHQL", &page), ("MOCK_GRAPHQL_NEXT", &blocked)]
+        )?
+        .0
+    );
+    Ok(())
+}
+
+#[test]
+fn removed_terminal_guard_exposes_the_same_closed_pr_false_green() -> Result<(), String> {
+    let source = workflow()?;
+    let guard = "          current_eligibility\n";
+    assert_eq!(source.matches(guard).count(), 1);
+    let removed = source.replace(guard, "          true\n");
+    let closed = LIVE_PR.replace("\"open\"", "\"closed\"");
+    assert!(
+        run_result(
+            &removed,
+            "pull_request",
+            "pr",
+            "success",
+            "admitted",
+            &[("MOCK_PR", &closed)]
+        )?
+        .0,
+        "removing the actual guard must expose the unchanged negative"
+    );
+    assert!(source.contains("ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}"));
+    for output in ["pr", "head", "queue_entry", "request"] {
+        assert!(source.contains(&format!(
+            "{output}: ${{{{ steps.entry.outputs.{output} }}}}"
+        )));
+    }
     Ok(())
 }

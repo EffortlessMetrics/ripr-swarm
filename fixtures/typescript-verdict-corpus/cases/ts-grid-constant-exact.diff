@@ -1,0 +1,10 @@
+diff --git a/src/constant.ts b/src/constant.ts
+--- a/src/constant.ts
++++ b/src/constant.ts
+@@ -1,5 +1,5 @@
+ export function salesTax(subtotal: number): number {
+-  return Math.floor((subtotal * 8) / 100);
++  return Math.floor((subtotal * 9) / 100);
+ }
+ 
+ export function lateFee(days: number): number {

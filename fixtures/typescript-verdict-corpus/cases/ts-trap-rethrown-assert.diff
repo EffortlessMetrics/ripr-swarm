@@ -1,0 +1,12 @@
+diff --git a/src/core.ts b/src/core.ts
+--- a/src/core.ts
++++ b/src/core.ts
+@@ -47,7 +47,7 @@
+ }
+ 
+ export function rethrownAssert(a: number, b: number): number {
+-  return a * b;
++  return b * a;
+ }
+ 
+ export function tautology(a: number, b: number): number {

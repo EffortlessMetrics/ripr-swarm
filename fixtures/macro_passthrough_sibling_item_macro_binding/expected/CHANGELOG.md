@@ -1,0 +1,76 @@
+# Golden Output Changes
+
+## Pending — macro_passthrough_sibling_item_macro_binding (1)
+
+Reason:
+RIPR-SPEC-0117: identity item macro with a sibling binding macro never promotes the wrapped test (#8999 item 5)
+
+Command:
+`cargo xtask goldens bless macro_passthrough_sibling_item_macro_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — macro_passthrough_sibling_item_macro_binding (2)
+
+Reason:
+RIPR-SPEC-0122 RIPR-SPEC-0117: re-bless the sibling-binding fixture against the merged renderer legend; wrapped test stays no_static_path, not promoted
+
+Command:
+`cargo xtask goldens bless macro_passthrough_sibling_item_macro_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — macro_passthrough_sibling_item_macro_binding (3)
+
+Reason:
+RIPR-SPEC-0122 RIPR-SPEC-0117: re-bless against the current renderer legend; wrapped test stays no_static_path, not promoted
+
+Command:
+`cargo xtask goldens bless macro_passthrough_sibling_item_macro_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — macro_passthrough_sibling_item_macro_binding (4)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless macro_passthrough_sibling_item_macro_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — macro_passthrough_sibling_item_macro_binding (4)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless macro_passthrough_sibling_item_macro_binding --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — macro_passthrough_sibling_item_macro_binding (5)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless macro_passthrough_sibling_item_macro_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

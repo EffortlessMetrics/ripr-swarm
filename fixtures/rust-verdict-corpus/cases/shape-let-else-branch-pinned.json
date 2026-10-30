@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-let-else-branch-pinned",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-let-else-branch-pinned.diff",
+  "anchor": {
+    "file": "src/flow.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "early_return_guard",
+  "test_shape": "let_else_diverging_branch_pinned",
+  "hard_case": "The same `let ... else` branch, entered by a blank-string test that pins the 0.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return 1;",
+        "mutated_line": "return 1;",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::word_len_of_blank_text",
+        "equivalence_review": "not equivalent: `return 0usize;` becomes `return 1;`"
+      },
+      {
+        "replacement": "return usize::MAX;",
+        "mutated_line": "return usize::MAX;",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::word_len_of_blank_text",
+        "equivalence_review": "not equivalent: `return 0usize;` becomes `return usize::MAX;`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "word_len_of_blank_text passes \"   \" and expects 0, so both replacement returns fail. Twin of shape-let-else-branch-unreached.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

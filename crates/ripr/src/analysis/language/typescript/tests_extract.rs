@@ -26,6 +26,16 @@ impl TestDeclarationRoot {
 /// (`it(name, { timeout }, fn)`); otherwise the callback is argument 1, which
 /// keeps `test(name, fn, timeout)` working (#4548).
 pub(super) fn declaration_callback_index(call: &oxc_ast::ast::CallExpression<'_>) -> usize {
+    callback_index(call, false)
+}
+
+/// [`declaration_callback_index`] for a root bound to AVA's `test`
+/// (`ava_macro`), where a named macro may precede the callback
+/// (`test(title, macro, async (t) => {})`, #10964). Without that provenance a
+/// named second argument is not a macro: `node:test` and Vitest accept an
+/// options object by name, and treating its callback as running would credit a
+/// skipped test.
+fn callback_index(call: &oxc_ast::ast::CallExpression<'_>, ava_macro: bool) -> usize {
     let is_function = |argument: Option<&oxc_ast::ast::Argument<'_>>| {
         matches!(
             argument,
@@ -39,6 +49,10 @@ pub(super) fn declaration_callback_index(call: &oxc_ast::ast::CallExpression<'_>
         Some(oxc_ast::ast::Argument::ObjectExpression(_)) if is_function(call.arguments.get(2)) => {
             2
         }
+        Some(
+            oxc_ast::ast::Argument::Identifier(_)
+            | oxc_ast::ast::Argument::StaticMemberExpression(_),
+        ) if ava_macro && is_function(call.arguments.get(2)) => 2,
         _ => 1,
     }
 }
@@ -83,13 +97,127 @@ pub(crate) fn extract_tests_and_conditional_credit_gap(
     file: &Path,
     source: &str,
 ) -> (Vec<TypeScriptTest>, Option<TypeScriptConditionalCreditGap>) {
+    let (tests, gap, _) = extract_tests_with_expansion(file, source);
+    (tests, gap)
+}
+
+/// [`extract_tests_and_conditional_credit_gap`] plus the suite-factory
+/// expansion the tests came from (`None` when nothing expanded). The
+/// whole-file passes that read the original source (committed-snapshot
+/// promotion, the partial-extraction disclosure) need it: the tests'
+/// `body_text` is cut from the expanded source, not the file.
+pub(crate) fn extract_tests_with_expansion(
+    file: &Path,
+    source: &str,
+) -> (
+    Vec<TypeScriptTest>,
+    Option<TypeScriptConditionalCreditGap>,
+    Option<super::suite_factory::SuiteFactoryExpansion>,
+) {
+    try_extract_tests_with_expansion(file, source).unwrap_or((Vec::new(), None, None))
+}
+
+/// [`extract_tests_with_expansion`], but a parse-worker failure (the thread
+/// could not spawn, or it panicked) is an `Err` instead of an empty result.
+/// Those depend on the environment, not on `(file, source)`, so the
+/// content-keyed cache must not store them (#10017). The deterministic
+/// nesting-budget refusal stays an empty `Ok`.
+pub(crate) fn try_extract_tests_with_expansion(
+    file: &Path,
+    source: &str,
+) -> Result<Extraction, String> {
+    // RIPR-SPEC-0243 decision 19: a same-file assertion helper's call is
+    // replaced by its assertion, on the same line, before extraction. One pass
+    // only, so self-referential or mutually recursive helpers cannot loop.
+    // A wrapper that only rethrows its callback's failure is unwrapped the
+    // same way (decision 20), first, so a helper call inside the callback is
+    // still seen by the helper pass.
+    let prepass = if source.contains("function ") {
+        Some(parse_on_worker(
+            file,
+            source,
+            move |file, source, allocator| {
+                let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+                if !ret.errors.is_empty() {
+                    return None;
+                }
+                let unwrapped =
+                    super::rethrow_wrapper::expand_rethrow_wrappers(&ret.program.body, source);
+                let Some(unwrapped) = unwrapped else {
+                    return super::assertion_helper::expand_assertion_helpers(
+                        &ret.program.body,
+                        source,
+                    );
+                };
+                let reparsed = Parser::new(allocator, &unwrapped, source_type_for(file)).parse();
+                if !reparsed.errors.is_empty() {
+                    return Some(unwrapped);
+                }
+                Some(
+                    super::assertion_helper::expand_assertion_helpers(
+                        &reparsed.program.body,
+                        &unwrapped,
+                    )
+                    .unwrap_or(unwrapped),
+                )
+            },
+        ))
+    } else {
+        None
+    };
+    match prepass {
+        Some(Err(reason)) if super::parse::is_worker_failure(&reason) => return Err(reason),
+        Some(Ok(Some(expanded))) if expanded != source => {
+            let extraction = extract_tests_expanding_suite_factories(file, &expanded, true)?;
+            if !extraction.0.is_empty() {
+                return Ok(extraction);
+            }
+        }
+        _ => {}
+    }
+    extract_tests_expanding_suite_factories(file, source, true)
+}
+
+pub(crate) type Extraction = (
+    Vec<TypeScriptTest>,
+    Option<TypeScriptConditionalCreditGap>,
+    Option<super::suite_factory::SuiteFactoryExpansion>,
+);
+
+/// `expand` is off for the rerun on an already-expanded source, whose
+/// factory calls are still present.
+fn extract_tests_expanding_suite_factories(
+    file: &Path,
+    source: &str,
+    expand: bool,
+) -> Result<Extraction, String> {
     // Same guard as owner extraction (#4101): a file under the nesting
     // budget can still overflow the caller stack, so the parse must
     // not run on the main thread.
-    let Ok(out) = parse_on_worker(file, source, |file, source, allocator| {
+    let parsed = parse_on_worker(file, source, move |file, source, allocator| {
         let ret = Parser::new(allocator, source, source_type_for(file)).parse();
         if !ret.errors.is_empty() {
-            return (Vec::new(), None);
+            return (Vec::new(), None, None);
+        }
+        if expand
+            && let Some(expansion) =
+                super::suite_factory::expand_suite_factories(&ret.program.body, source)
+        {
+            return (Vec::new(), None, Some(expansion));
+        }
+        // A top-level test's call to a same-file assertion helper reads as
+        // the helper's assertions (#9636); rerun on the rewritten source.
+        if expand
+            && let Some(inlined) =
+                super::helper_inline::inline_test_helpers(&ret.program.body, source)
+            // Defence in depth: a rewrite that fails to parse degrades to the
+            // original source (unknown), never to a file with no tests.
+            && Parser::new(allocator, &inlined.source, source_type_for(file))
+                .parse()
+                .errors
+                .is_empty()
+        {
+            return (Vec::new(), None, Some(inlined));
         }
         let imports = extract_imports_for_test_file(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
@@ -100,16 +228,23 @@ pub(crate) fn extract_tests_and_conditional_credit_gap(
                 &imports,
             )
             .with_strict_matchers(strict_equality_matchers(&ret.program.body, source)),
-            admission: TypeScriptAdmissionContext::of_program(&ret.program.body, &imports, file),
+            admission: TypeScriptAdmissionContext::of_program(&ret.program, &imports, file),
             ..TestScope::default()
         };
+        scope.fixtures = super::fixture_receivers::PlaywrightFixtures::of_program(
+            &ret.program.body,
+            source,
+            &imports,
+        );
+        if let Some(fixtures) = &scope.fixtures {
+            scope.sites.extend(fixtures.sites.iter().copied());
+        }
         // One line index per source; every test and assertion line is a
         // binary search against it rather than a rescan from byte 0.
         collect_tests_from_statements(
             &ret.program.body,
             file,
             &SourceText::new(source),
-            &mocks,
             &imports,
             &mut scope,
             &mut tests,
@@ -128,17 +263,63 @@ pub(crate) fn extract_tests_and_conditional_credit_gap(
             .chain(scope.names.iter().cloned())
             .collect();
         withhold_rebound_scope_receivers(source, &masked, &scope.sites, &mut tests);
+        // File-wide lists are held once and shared by every test of the file.
+        let shared_mocks: Shared<String> = mocks.into();
+        let shared_imports: Shared<TypeScriptImport> = imports.clone().into();
+        for test in &mut tests {
+            test.mocks_in_file = shared_mocks.clone();
+            test.imports_in_file = shared_imports.clone();
+        }
         let code = blank_ranges(source, &masked);
+        let enum_code = enum_member_guard::enum_member_use_code(&ret.program.body, source);
+        let unstable_member_roots: Vec<String> = imports
+            .iter()
+            .filter(|import| {
+                !enum_member_guard::enum_member_root_is_read_only(
+                    &enum_code,
+                    &import.local,
+                    import.namespace,
+                )
+            })
+            .map(|import| import.local.clone())
+            .collect();
+        let unstable_member_roots: Shared<String> = unstable_member_roots.into();
+        for test in &mut tests {
+            test.unstable_member_roots_in_file = unstable_member_roots.clone();
+        }
         let helpers = identity_helpers(&ret.program.body, &code);
         if !helpers.is_empty() {
+            let helpers: Shared<_> = helpers.into();
             for test in &mut tests {
                 test.identity_helpers_in_file = helpers.clone();
             }
         }
+        let member_only = default_member_only_locals(&imports, &code);
+        if !member_only.is_empty() {
+            let member_only: Shared<_> = member_only.into();
+            for test in &mut tests {
+                test.default_member_only_locals_in_file = member_only.clone();
+            }
+        }
+        let rewritten = rewritten_identifier_names(&code);
+        if !rewritten.is_empty() {
+            let rewritten: Shared<_> = rewritten.into();
+            for test in &mut tests {
+                test.written_locals_in_file = rewritten.clone();
+            }
+        }
         let factories = mock_factories(&ret.program.body, &code);
         if !factories.is_empty() {
+            let factories: Shared<_> = factories.into();
             for test in &mut tests {
                 test.mock_factories_in_file = factories.clone();
+            }
+        }
+        let spread_sources = mock_spread_sources(&ret.program.body, &code);
+        if !spread_sources.is_empty() {
+            let spread_sources: Shared<_> = spread_sources.into();
+            for test in &mut tests {
+                test.mock_spread_sources_in_file = spread_sources.clone();
             }
         }
         // Same silence conditions as `detect_conditional_assertion_credit`:
@@ -155,11 +336,44 @@ pub(crate) fn extract_tests_and_conditional_credit_gap(
         } else {
             None
         };
-        (tests, conditional_credit_gap)
-    }) else {
-        return (Vec::new(), None);
+        (tests, conditional_credit_gap, None)
+    });
+    let out = match parsed {
+        Ok(out) => out,
+        Err(reason) if super::parse::is_worker_failure(&reason) => return Err(reason),
+        Err(_) => return Ok((Vec::new(), None, None)),
     };
-    out
+    let (tests, gap, expansion) = out;
+    let Some(expansion) = expansion else {
+        return Ok((tests, gap, None));
+    };
+    // Rerun on the source with the factory calls expanded; a test found in
+    // an appended expansion reports its call's line.
+    let (mut tests, mut gap, _) =
+        extract_tests_expanding_suite_factories(file, &expansion.source, false)?;
+    // A substitution that lands inside a string can leave the expanded source
+    // unparsable, which would drop every test the file yielded before
+    // expansion; fall back to the unexpanded extraction then.
+    if tests.is_empty() {
+        return extract_tests_expanding_suite_factories(file, source, false);
+    }
+    for test in &mut tests {
+        // Assertion lines stay offsets from the test line: the classifier
+        // indexes `body_text` by `assertion.line - test.line`. A rendered
+        // pointer reads the call line instead (`evidence_line`).
+        let expanded_start = test.line;
+        let reported_start = expansion.reported_line(expanded_start);
+        test.factory_call_line = expansion.call_line_of(expanded_start);
+        test.line = reported_start;
+        for assertion in &mut test.assertions {
+            assertion.line = reported_start + assertion.line.saturating_sub(expanded_start);
+        }
+    }
+    // The disclosure was found on an appended line the file does not have.
+    if let Some(gap) = &mut gap {
+        gap.sample_line = expansion.reported_line(gap.sample_line);
+    }
+    Ok((tests, gap, Some(expansion)))
 }
 
 /// Walk a list of statements and collect every syntactic owner-module mock
@@ -658,15 +872,23 @@ fn string_value(expression: &Expression<'_>) -> Option<String> {
     }
 }
 
-pub(crate) fn collect_tests_from_statements(
-    statements: &[Statement<'_>],
+pub(crate) fn collect_tests_from_statements<'s, 'a>(
+    statements: &'s [Statement<'a>],
     file: &Path,
     source: &SourceText<'_>,
-    mocks: &[String],
     imports: &[TypeScriptImport],
     scope: &mut TestScope,
     tests: &mut Vec<TypeScriptTest>,
 ) {
+    // Zero-parameter function declarations a `test(title, name)` registration
+    // in this same statement list can reference by name (RIPR-SPEC-0243).
+    // Hoisted, so a declaration after the registration counts. An enclosing
+    // scope's function is not resolved: the test's scope bindings come from
+    // the registration's scope, not from where the body was written.
+    let functions: Vec<_> = statements
+        .iter()
+        .filter_map(declared_callback_function)
+        .collect();
     // Bindings that hold for every test in this scope: variable, function and
     // class declarations and `beforeEach`/`beforeAll` assignments at this
     // level. Collected before any test so a hook written after a test still
@@ -675,12 +897,20 @@ pub(crate) fn collect_tests_from_statements(
     let mut sites = Vec::new();
     let mut iterables = Vec::new();
     let mut returned = false;
+    let mut shared_bindings: Option<ScopeBindings> = None;
+    let mut registration_scope: Option<(TypeScriptAdmissionContext, RegistrationNames)> = None;
     for stmt in statements {
         if !returned {
             collect_const_iterables(stmt, &mut iterables);
         }
         let start = level.len();
-        collect_scope_bindings(stmt, source, &mut level, &mut sites);
+        collect_scope_bindings(
+            stmt,
+            source,
+            &mut level,
+            &mut sites,
+            scope.admission.block_functions_are_lexical,
+        );
         // After a possible early `return`, a binding may never run.
         if returned {
             level[start..]
@@ -695,7 +925,11 @@ pub(crate) fn collect_tests_from_statements(
     // `let undefined` cannot erase an ordinary registration outside it. Do not
     // enter unrelated function bodies or count test callback parameters here.
     let mut declared_names = Vec::new();
-    collect_registration_scope_names(statements, &mut declared_names);
+    collect_registration_scope_names(
+        statements,
+        &mut declared_names,
+        scope.admission.block_functions_are_lexical,
+    );
     if declared_names.iter().any(|name| name == "undefined")
         && !level.iter().any(|(name, _, _)| name == "undefined")
     {
@@ -735,6 +969,15 @@ pub(crate) fn collect_tests_from_statements(
         }
     }
     scope.levels.push(level);
+    scope.hook_levels.push(collect_mocha_setup_hooks(
+        statements, source, imports, scope,
+    ));
+    scope.registration_levels.push(
+        declared_names
+            .into_iter()
+            .map(|name| (name, scope.levels.len() == 1))
+            .collect(),
+    );
     scope.iterables.push(iterables);
     let unshadowed_undefined = !scope
         .levels
@@ -745,32 +988,49 @@ pub(crate) fn collect_tests_from_statements(
         if let Some(span) = name_literal_span(stmt) {
             scope.names.push(span);
         }
-        // Await must not turn a local helper's unused callback into test
-        // evidence. Admit its registration root before assertion extraction
-        // can take the recognized-assertion shortcut. Bare roots retain their
-        // existing behavior; registration API expansion is a separate claim.
-        if let Statement::ExpressionStatement(statement) = stmt
-            && matches!(statement.expression, Expression::AwaitExpression(_))
-            && let Some(call) = statement_call(stmt)
-            && !scope.admission.registration_is_known(
-                call,
-                call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
-                    || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe),
-                scope
-                    .levels
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(depth, level)| {
-                        level.iter().map(move |(name, _, phase)| {
-                            (name.clone(), depth == 0 && *phase == Phase::Declaration)
-                        })
-                    })
-                    .chain(
-                        declared_names
-                            .iter()
-                            .map(|name| (name.clone(), scope.levels.len() == 1)),
-                    ),
-            )
+        // Both bare and awaited roots need runner provenance before an
+        // assertion can receive credit. Restrict this check to registration
+        // shapes so supported registration loops (including forEach) survive.
+        // Keep known writes to registration globals refused as well; local
+        // callback/block writes are filtered by the scope collector.
+        if let Some(call) = statement_call(stmt)
+            && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
+                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+                || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
+                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+                || conditional_describe_factory(call).is_some())
+            && !{
+                // The context and the visible bindings are the same for every
+                // registration in this statement list, so they are built once
+                // (#10017).
+                let (context, names) = registration_scope.get_or_insert_with(|| {
+                    (
+                        scope.admission.registration_context(),
+                        RegistrationNames::new(
+                            scope
+                                .levels
+                                .iter()
+                                .enumerate()
+                                .flat_map(|(depth, level)| {
+                                    level.iter().map(move |(name, _, phase)| {
+                                        (name.clone(), depth == 0 && *phase == Phase::Declaration)
+                                    })
+                                })
+                                .chain(scope.registration_levels.iter().flatten().cloned()),
+                        ),
+                    )
+                });
+                context.registration_is_known_in(
+                    call,
+                    call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
+                        || call_callee_is_active_each_declaration(
+                            call,
+                            TestDeclarationRoot::Describe,
+                        )
+                        || conditional_describe_factory(call).is_some(),
+                    names,
+                )
+            }
         {
             continue;
         }
@@ -782,12 +1042,25 @@ pub(crate) fn collect_tests_from_statements(
             && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
-                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe))
+                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+                || conditional_describe_factory(call).is_some())
             && !declaration_options_are_active_with_undefined(call, false)
         {
             continue;
         }
-        if let Some((describe_name, body)) = describe_body_from_statement(stmt, source) {
+        if let Some((describe_name, body, guard)) = describe_body_from_statement(stmt, source)
+            .map(|(name, body)| (name, body, None))
+            .or_else(|| {
+                conditional_describe_body(stmt, source)
+                    .map(|(name, body, guard)| (name, body, Some(guard)))
+            })
+        {
+            // #10629: a `describe.skipIf(cond)` / `describe.runIf(cond)` suite
+            // is indexed under its factory call as the guard, like an `if`.
+            let guarded = guard.is_some();
+            if let Some(guard) = guard {
+                scope.guards.push(guard);
+            }
             // `describe.each(...)('x', (cart) => ...)` binds its parameters
             // for every test inside.
             scope.levels.push(
@@ -798,10 +1071,83 @@ pub(crate) fn collect_tests_from_statements(
             );
             scope.iterables.push(Vec::new());
             scope.describe_names.push(describe_name);
-            collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
+            let inherited_strict = scope.admission.block_functions_are_lexical;
+            scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
+            collect_tests_from_statements(body, file, source, imports, scope, tests);
+            scope.admission.block_functions_are_lexical = inherited_strict;
             scope.describe_names.pop();
             scope.iterables.pop();
             scope.levels.pop();
+            if guarded {
+                scope.guards.pop();
+            }
+            continue;
+        }
+        if let Statement::IfStatement(if_stmt) = stmt
+            && constant_condition_value(&if_stmt.test).is_none()
+        {
+            // #10438: a registration under a platform or environment guard
+            // is indexed so it reaches its owner, marked conditional so its
+            // assertions earn no credit. The condition is the guard for the
+            // consequent; the alternate runs under its negation.
+            let condition = snippet_for_span(
+                source.text(),
+                if_stmt.test.span().start as usize,
+                if_stmt.test.span().end as usize,
+            );
+            for (branch, guard) in std::iter::once((&if_stmt.consequent, condition.clone())).chain(
+                if_stmt
+                    .alternate
+                    .iter()
+                    .map(|alternate| (alternate, format!("!({condition})"))),
+            ) {
+                scope.guards.push(guard);
+                match branch {
+                    Statement::BlockStatement(block) => collect_tests_from_statements(
+                        &block.body,
+                        file,
+                        source,
+                        imports,
+                        scope,
+                        tests,
+                    ),
+                    other => collect_tests_from_statements(
+                        std::slice::from_ref(other),
+                        file,
+                        source,
+                        imports,
+                        scope,
+                        tests,
+                    ),
+                }
+                scope.guards.pop();
+            }
+            continue;
+        }
+        // #10501: a loop over data static analysis cannot enumerate may run
+        // zero or many times, so its registrations are indexed for reach under
+        // the loop head as their guard and earn no assertion credit.
+        let unprovable_loop = if loop_body_from_statement(stmt, scope).is_none() {
+            unprovable_loop_body(stmt, source)
+        } else {
+            None
+        };
+        if let Some((guard, loop_bindings, body)) = unprovable_loop {
+            scope.guards.push(guard);
+            scope.levels.push(
+                loop_bindings
+                    .into_iter()
+                    .map(|name| (name, ScopeValue::Other, Phase::Declaration))
+                    .collect(),
+            );
+            scope.iterables.push(Vec::new());
+            let inherited_strict = scope.admission.block_functions_are_lexical;
+            scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
+            collect_tests_from_statements(body, file, source, imports, scope, tests);
+            scope.admission.block_functions_are_lexical = inherited_strict;
+            scope.iterables.pop();
+            scope.levels.pop();
+            scope.guards.pop();
             continue;
         }
         if let Some((loop_bindings, body)) = loop_body_from_statement(stmt, scope) {
@@ -815,7 +1161,10 @@ pub(crate) fn collect_tests_from_statements(
                     .collect(),
             );
             scope.iterables.push(Vec::new());
-            collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
+            let inherited_strict = scope.admission.block_functions_are_lexical;
+            scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
+            collect_tests_from_statements(body, file, source, imports, scope, tests);
+            scope.admission.block_functions_are_lexical = inherited_strict;
             scope.iterables.pop();
             scope.levels.pop();
             continue;
@@ -838,24 +1187,185 @@ pub(crate) fn collect_tests_from_statements(
             source,
             &scope.describe_names,
             &assertion_bindings,
+            &functions,
         ) {
-            test.mocks_in_file = mocks.to_vec();
-            test.imports_in_file = imports.to_vec();
             if let Some(call) = statement_call(stmt) {
                 test.assertion_admission = scope.admission.admission_of(call, &test.assertions);
             }
             // Test callback parameters (`it.each` rows, Vitest fixtures)
             // shadow every enclosing binding of the same name.
-            let parameters = statement_callback_parameter_names(stmt)
+            let mut parameters: Vec<ScopeEntry> = statement_callback_parameter_names(stmt)
                 .into_iter()
                 .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                 .collect();
-            test.scope_bindings = scope.resolve_with(parameters);
+            // A destructured Playwright fixture that constructs a class binds
+            // its local name to that class (SPEC-0243 rule 23).
+            let mut provided_names: Vec<String> = Vec::new();
+            let mut parameter_end = None;
+            if let (Some(fixtures), Some(call)) = (&scope.fixtures, statement_call(stmt))
+                && let Some(provided) = fixtures.parameters_of(call)
+            {
+                for (name, class) in provided.bindings {
+                    if let Some(entry) = parameters.iter_mut().find(|entry| entry.0 == name) {
+                        entry.1 = ScopeValue::Constructed(class);
+                        provided_names.push(name);
+                    }
+                }
+                parameter_end = Some(provided.parameter_end - call.span.start as usize);
+                scope.sites.extend(provided.sites);
+            }
+            // Tests with no parameters of their own see the same scope, so
+            // they share one resolved list (#10017).
+            test.scope_bindings = if parameters.is_empty() {
+                shared_bindings
+                    .get_or_insert_with(|| scope.resolve_with(Vec::new()).into())
+                    .clone()
+            } else {
+                let mut resolved = scope.resolve_with(parameters);
+                for binding in &mut resolved {
+                    if provided_names.contains(&binding.name) {
+                        binding.parameter_end = parameter_end;
+                    }
+                }
+                resolved.into()
+            };
+            test.setup_hook_bodies = scope.hook_levels.iter().flatten().cloned().collect();
+            if !scope.guards.is_empty() {
+                // Fail-closed cap: the test still reaches its owner, but a
+                // registration that may not happen cannot credit an oracle.
+                test.conditional_registration = Some(scope.guards.join(" && "));
+                test.assertions.clear();
+                test.assertion_admission = TypeScriptAssertionAdmission::Unresolved;
+            }
             tests.push(test);
         }
     }
     scope.iterables.pop();
+    scope.registration_levels.pop();
+    scope.hook_levels.pop();
     scope.levels.pop();
+}
+
+/// RIPR-SPEC-0246 rule 7: the body source of each synchronous mocha setup
+/// hook (`before`, `beforeEach`, `beforeAll`) registered directly in this
+/// statement list, in source order. Mocha has no import for its globals, so
+/// provenance is explicit: the file imports `mocha` or a mocha-style
+/// assertion library (`chai`) and carries no jest/vitest/ava signal, and the
+/// hook identifier is not declared in scope or imported from elsewhere.
+/// A hook that is `async`, a generator, takes a parameter (`done`), has an
+/// expression body or contains `return` is not recorded: its work may finish
+/// after the test starts.
+fn collect_mocha_setup_hooks(
+    statements: &[Statement<'_>],
+    source: &str,
+    imports: &[TypeScriptImport],
+    scope: &TestScope,
+) -> Vec<String> {
+    if !file_has_mocha_provenance(imports, source) {
+        return Vec::new();
+    }
+    let mut bodies = Vec::new();
+    for stmt in statements {
+        let Statement::ExpressionStatement(statement) = stmt else {
+            continue;
+        };
+        let Expression::CallExpression(call) = &statement.expression else {
+            continue;
+        };
+        let Expression::Identifier(callee) = &call.callee else {
+            continue;
+        };
+        let hook = callee.name.as_str();
+        if !matches!(hook, "before" | "beforeEach" | "beforeAll") {
+            continue;
+        }
+        let declared = scope
+            .levels
+            .iter()
+            .flatten()
+            .any(|(name, _, phase)| name == hook && *phase == Phase::Declaration);
+        let imported_elsewhere = imports.iter().any(|import| {
+            import.local == hook
+                && !(import.source == "mocha" && import.imported.as_deref() == Some(hook))
+        });
+        if declared || imported_elsewhere {
+            continue;
+        }
+        let Some(argument) = call.arguments.last() else {
+            continue;
+        };
+        let body = match argument {
+            oxc_ast::ast::Argument::ArrowFunctionExpression(arrow)
+                if !arrow.r#async
+                    && !arrow.expression
+                    && arrow.params.items.is_empty()
+                    && arrow.params.rest.is_none() =>
+            {
+                &arrow.body.statements
+            }
+            oxc_ast::ast::Argument::FunctionExpression(function)
+                if !function.r#async
+                    && !function.generator
+                    && function.params.items.is_empty()
+                    && function.params.rest.is_none() =>
+            {
+                let Some(body) = function.body.as_ref() else {
+                    continue;
+                };
+                &body.statements
+            }
+            _ => continue,
+        };
+        let (Some(first), Some(last)) = (body.first(), body.last()) else {
+            continue;
+        };
+        let text = source
+            .get(first.span().start as usize..last.span().end as usize)
+            .unwrap_or_default();
+        if text.is_empty() || identifier_in_text(text, "return") {
+            continue;
+        }
+        bodies.push(text.to_string());
+    }
+    bodies
+}
+
+/// Whether the file reads as a mocha file: it imports `mocha` or `chai`
+/// (mocha's usual assertion library) and shows no jest, vitest, bun, ava or
+/// `node:test` signal, whether by import or by a `jest.` / `vi.` global use.
+fn file_has_mocha_provenance(imports: &[TypeScriptImport], source: &str) -> bool {
+    let mocha_hint = imports.iter().any(|import| {
+        import.source == "mocha" || import.source == "chai" || import.source.starts_with("chai-")
+    });
+    let other_runner = imports.iter().any(|import| {
+        TEST_RUNNER_MODULES.contains(&import.source.as_str())
+            || matches!(import.source.as_str(), "jest" | "ava")
+            || import.source.starts_with("@jest/")
+            || import.source.starts_with("@vitest/")
+    }) || ["jest", "vi"]
+        .iter()
+        .any(|global| member_use_in_text(source, global));
+    mocha_hint && !other_runner
+}
+
+/// Whether `word` appears in `text` as a whole identifier.
+fn identifier_in_text(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(idx, _)| {
+        let before = text[..idx].chars().next_back();
+        let after = text[idx + word.len()..].chars().next();
+        !before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$')
+            && !after.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$')
+    })
+}
+
+/// Whether `name.` appears in `text` as a whole identifier followed by a
+/// member access (`jest.fn`, `vi.mock`), comments and strings included.
+fn member_use_in_text(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(idx, _)| {
+        let before = text[..idx].chars().next_back();
+        text[idx + name.len()..].starts_with('.')
+            && !before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.')
+    })
 }
 
 /// Modules whose `beforeEach`/`beforeAll` run before every test in scope.
@@ -868,6 +1378,14 @@ pub(crate) struct TestScope {
     describe_names: Vec<String>,
     /// Name bindings of the file and each enclosing describe, outermost first.
     levels: Vec<Vec<ScopeEntry>>,
+    /// Per statement list being walked (the file and each enclosing
+    /// describe), outermost first: the bodies of its mocha setup hooks
+    /// (RIPR-SPEC-0246 rule 7).
+    hook_levels: Vec<Vec<String>>,
+    /// Lexical registration declarations, including hoisted block `var`
+    /// names, retained while descending into suites. The flag identifies
+    /// file declarations eligible for the immutable import exemption.
+    registration_levels: Vec<Vec<(String, bool)>>,
     /// Per entry of `levels`: the `const` names that level binds to a
     /// non-empty array or object literal, so a loop over one of them is
     /// known to register its tests at least once.
@@ -882,6 +1400,11 @@ pub(crate) struct TestScope {
     assertion_bindings: TypeScriptAssertionBindings,
     /// File-wide facts for each test's assertion admission (#5524).
     admission: TypeScriptAdmissionContext,
+    /// The unevaluated `if` conditions the statements being walked sit
+    /// under, outermost first (#10438).
+    guards: Vec<String>,
+    /// The fixtures a Playwright `base.extend` constructs (SPEC-0243 rule 23).
+    fixtures: Option<super::fixture_receivers::PlaywrightFixtures>,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -923,27 +1446,41 @@ impl TestScope {
         let levels: Vec<&Vec<ScopeEntry>> = std::iter::once(&innermost)
             .chain(self.levels.iter().rev())
             .collect();
-        for (depth, level) in levels.iter().enumerate() {
-            let mut names: Vec<&str> = level.iter().map(|(name, _, _)| name.as_str()).collect();
-            names.sort_unstable();
-            names.dedup();
-            for name in names {
-                if resolved.iter().any(|binding| binding.name == name) {
+        // Each level grouped by name once, in source order within a name, so a
+        // file with thousands of top-level bindings is not rescanned per name
+        // (#10017). The map is ordered, which keeps the output order that the
+        // sorted, deduplicated name list gave before.
+        let grouped: Vec<std::collections::BTreeMap<&str, Vec<(&ScopeValue, Phase)>>> = levels
+            .iter()
+            .map(|level| {
+                let mut by_name: std::collections::BTreeMap<&str, Vec<(&ScopeValue, Phase)>> =
+                    std::collections::BTreeMap::new();
+                for (name, value, phase) in level.iter() {
+                    by_name
+                        .entry(name.as_str())
+                        .or_default()
+                        .push((value, *phase));
+                }
+                by_name
+            })
+            .collect();
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for (depth, by_name) in grouped.iter().enumerate() {
+            for (&name, found) in by_name {
+                if !seen.insert(name) {
                     continue;
                 }
-                let mut writes: Vec<(&ScopeValue, Phase)> = level
-                    .iter()
-                    .filter(|(bound, _, _)| bound == name)
-                    .map(|(_, value, phase)| (value, *phase))
-                    .collect();
+                let mut writes = found.clone();
                 // Stable: source order is kept within a phase.
                 writes.sort_by_key(|(_, phase)| *phase);
                 let constructed_by = match writes.last() {
                     // An enclosing `beforeEach` runs after this `beforeAll`.
                     Some((_, Phase::BeforeAll))
-                        if levels[depth + 1..].iter().any(|outer| {
-                            outer.iter().any(|(bound, _, phase)| {
-                                bound == name && *phase == Phase::BeforeEach
+                        if grouped[depth + 1..].iter().any(|outer| {
+                            outer.get(name).is_some_and(|outer_writes| {
+                                outer_writes
+                                    .iter()
+                                    .any(|(_, phase)| *phase == Phase::BeforeEach)
                             })
                         }) =>
                     {
@@ -971,6 +1508,7 @@ impl TestScope {
                     // `levels` is the test's own parameters, then the
                     // enclosing levels innermost first; the last is the file.
                     file_level: depth > 0 && depth == levels.len() - 1,
+                    parameter_end: None,
                 });
             }
         }
@@ -990,6 +1528,7 @@ fn collect_scope_bindings(
     source: &str,
     out: &mut Vec<ScopeEntry>,
     sites: &mut Vec<usize>,
+    block_functions_are_lexical: bool,
 ) {
     match stmt {
         // `declare` forms are erased before the test runs: no runtime binding.
@@ -1047,6 +1586,8 @@ fn collect_scope_bindings(
                 let Some(body) = function_body_statements_from_argument(argument) else {
                     continue;
                 };
+                let block_functions_are_lexical =
+                    block_functions_are_lexical || argument_has_use_strict(argument);
                 // A generator hook's body does not run when the hook is
                 // called (Vitest awaits the returned generator object).
                 let phase = match argument {
@@ -1062,9 +1603,26 @@ fn collect_scope_bindings(
                     .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                     .collect();
                 for inner in body {
-                    collect_scope_bindings(inner, source, &mut locals, &mut Vec::new());
+                    collect_scope_bindings(
+                        inner,
+                        source,
+                        &mut locals,
+                        &mut Vec::new(),
+                        block_functions_are_lexical,
+                    );
                 }
                 locals.retain(|(_, _, phase)| *phase == Phase::Declaration);
+                let mut declared_names = Vec::new();
+                collect_registration_scope_names(
+                    body,
+                    &mut declared_names,
+                    block_functions_are_lexical,
+                );
+                locals.extend(
+                    declared_names
+                        .into_iter()
+                        .map(|name| (name, ScopeValue::Other, Phase::Declaration)),
+                );
                 let mut writes = Vec::new();
                 let mut returned = false;
                 for inner in body {
@@ -1128,6 +1686,24 @@ fn collect_hook_assignment(
     sites: &mut Vec<usize>,
 ) {
     match stmt {
+        Statement::BlockStatement(block) => {
+            let mut locals = Vec::new();
+            // Every direct declaration belongs to this block; nested `var`
+            // declarations also belong to the surrounding callback.
+            collect_registration_scope_names(&block.body, &mut locals, true);
+            let mut writes = Vec::new();
+            for inner in &block.body {
+                collect_hook_assignment(inner, source, &mut writes, &mut Vec::new());
+            }
+            out.extend(
+                writes
+                    .into_iter()
+                    .filter(|(name, _)| !locals.contains(name))
+                    .map(|(name, _)| (name, ScopeValue::Other)),
+            );
+            return;
+        }
+
         // A hook's own declarations are local to the hook, but an
         // initializer may still write an outer name (`const r = (cart = x)`
         // or a closure that assigns it).
@@ -1137,11 +1713,9 @@ fn collect_hook_assignment(
                 .iter()
                 .filter_map(|declarator| declarator.init.as_ref())
             {
-                let span = init.span();
-                let text = source
-                    .get(span.start as usize..span.end as usize)
-                    .unwrap_or_default();
-                for name in assigned_identifier_names(text) {
+                let mut strings = StringLiteralSpans::default();
+                oxc_ast_visit::Visit::visit_expression(&mut strings, init);
+                for name in assigned_names_outside_strings(source, init.span(), &strings) {
                     out.push((name, ScopeValue::Other));
                 }
             }
@@ -1164,13 +1738,53 @@ fn collect_hook_assignment(
         }
         _ => {}
     }
-    let span = stmt.span();
-    let text = source
-        .get(span.start as usize..span.end as usize)
-        .unwrap_or_default();
-    for name in assigned_identifier_names(text) {
+    let mut strings = StringLiteralSpans::default();
+    oxc_ast_visit::Visit::visit_statement(&mut strings, stmt);
+    for name in assigned_names_outside_strings(source, stmt.span(), &strings) {
         out.push((name, ScopeValue::Other));
     }
+}
+
+/// Spans of plain string literals. Their text is data, never code, so a
+/// write-shaped substring inside one (`"?test=1"`) is not a write. Template
+/// literals are left out: a `${...}` expression inside one can write.
+#[derive(Default)]
+struct StringLiteralSpans(Vec<std::ops::Range<usize>>);
+
+impl<'a> oxc_ast_visit::Visit<'a> for StringLiteralSpans {
+    fn visit_string_literal(&mut self, literal: &oxc_ast::ast::StringLiteral<'a>) {
+        self.0
+            .push(literal.span.start as usize..literal.span.end as usize);
+    }
+}
+
+/// [`assigned_identifier_names`] over the source slice `span`, with the
+/// contents of `strings` blanked (#10820): a quoted `"test=1"` argument made
+/// the hook-write scan read the runner `test` as reassigned and withheld
+/// every registration in the file.
+fn assigned_names_outside_strings(
+    source: &str,
+    span: oxc_span::Span,
+    strings: &StringLiteralSpans,
+) -> Vec<String> {
+    let (start, end) = (span.start as usize, span.end as usize);
+    let Some(text) = source.get(start..end) else {
+        return Vec::new();
+    };
+    // A string handed to `eval` or `Function` is code, so a write inside it
+    // must stay visible (fail closed).
+    if identifier_occurrences(text, "eval").next().is_some()
+        || identifier_occurrences(text, "Function").next().is_some()
+    {
+        return assigned_identifier_names(text);
+    }
+    let relative: Vec<std::ops::Range<usize>> = strings
+        .0
+        .iter()
+        .filter(|range| range.start >= start && range.end <= end)
+        .map(|range| range.start - start..range.end - start)
+        .collect();
+    assigned_identifier_names(&blank_ranges(text, &relative))
 }
 
 /// `true` when `stmt` may leave the enclosing callback early: a `return`
@@ -1228,35 +1842,65 @@ fn withhold_rebound_scope_receivers(
 ) {
     let code = blank_ranges(source, masked);
     let opaque = identifier_occurrences(&code, "eval").next().is_some() || code.contains("\\u");
-    let rebound: Vec<String> = identifier_writes(&code)
+    let rebound: std::collections::HashSet<String> = identifier_writes(&code)
         .into_iter()
         .map(|(name, _)| name)
         .chain(declared_names(&code))
         .collect();
+    let sites: std::collections::HashSet<usize> = sites.iter().copied().collect();
+    // Both verdicts depend on the file and the name alone, not on the test,
+    // so each is computed once. A file-level binding is listed on every test,
+    // and rescanning the file for it per test was cubic (#10017).
+    let mut constructor_verdicts: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
+    let mut name_verdicts: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
+    // Tests that see the same scope share one list; withhold each distinct
+    // list once and hand every test the result (#10017).
+    let mut withheld: std::collections::HashMap<*const Vec<TypeScriptScopeBinding>, ScopeBindings> =
+        std::collections::HashMap::new();
     for test in tests {
-        for binding in &mut test.scope_bindings {
+        let identity = test.scope_bindings.identity();
+        if let Some(done) = withheld.get(&identity) {
+            test.scope_bindings = done.clone();
+            continue;
+        }
+        let mut bindings = test.scope_bindings.to_vec();
+        for binding in &mut bindings {
             let Some(constructor) = &binding.constructed_by else {
                 continue;
             };
             let root = constructor.split('.').next().unwrap_or(constructor);
             // `Cart.prototype` anywhere (a spy or method assignment in a
             // hook) may replace the method the test calls.
-            let constructor_rebound = rebound.iter().any(|name| name == root)
-                || identifier_occurrences(&code, root).any(|at| {
-                    code[at + root.len()..]
-                        .trim_start()
-                        .strip_prefix('.')
-                        .is_some_and(|rest| rest.trim_start().starts_with("prototype"))
-                })
-                || (constructor.contains('.') && member_assigned(&code, constructor));
+            let constructor_rebound = *constructor_verdicts
+                .entry(constructor.clone())
+                .or_insert_with(|| {
+                    rebound.contains(root)
+                        || identifier_occurrences(&code, root).any(|at| {
+                            code[at + root.len()..]
+                                .trim_start()
+                                .strip_prefix('.')
+                                .is_some_and(|rest| rest.trim_start().starts_with("prototype"))
+                        })
+                        || (constructor.contains('.') && member_assigned(&code, constructor))
+                });
             if opaque
                 || constructor_rebound
-                || identifier_occurrences(&code, &binding.name)
-                    .any(|at| !sites.contains(&at) && !is_plain_read(&code, at, &binding.name))
+                || *name_verdicts
+                    .entry(binding.name.clone())
+                    .or_insert_with(|| {
+                        identifier_occurrences(&code, &binding.name).any(|at| {
+                            !sites.contains(&at) && !is_plain_read(&code, at, &binding.name)
+                        })
+                    })
             {
                 binding.constructed_by = None;
             }
         }
+        let rewritten = ScopeBindings::from(bindings);
+        withheld.insert(identity, rewritten.clone());
+        test.scope_bindings = rewritten;
     }
 }
 
@@ -1291,6 +1935,60 @@ fn identity_helpers(statements: &[Statement<'_>], code: &str) -> Vec<String> {
         .collect()
 }
 
+/// `(local, member)` for each default import whose local is used, across the
+/// whole file, only as its own `import local` binding and as calls
+/// `local.member(` of one member. Any other use (assignment, `spyOn`,
+/// alias, argument) withholds the pair, wherever it sits in the file.
+fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(String, String)> {
+    if file_is_opaque(code) {
+        return Vec::new();
+    }
+    let ident = |ch: char| ch == '_' || ch == '$' || ch.is_alphanumeric();
+    let mut pairs = Vec::new();
+    for import in imports
+        .iter()
+        .filter(|import| !import.namespace && import.imported.as_deref() == Some("default"))
+    {
+        let mut member: Option<String> = None;
+        let mut clean = true;
+        for at in word_occurrences(code, &import.local) {
+            let before = code[..at].trim_end();
+            if before.ends_with("import") {
+                continue;
+            }
+            let rest = &code[at + import.local.len()..];
+            let after = ["?.", "!.", "."]
+                .iter()
+                .find_map(|dot| rest.strip_prefix(dot));
+            let name = after.map(|after| {
+                after
+                    .chars()
+                    .take_while(|ch| ident(*ch))
+                    .collect::<String>()
+            });
+            let called = after.zip(name.as_ref()).is_some_and(|(after, name)| {
+                !name.is_empty() && after[name.len()..].starts_with('(')
+            });
+            if before.ends_with('.') || !called {
+                clean = false;
+                break;
+            }
+            match (&member, name) {
+                (None, Some(name)) => member = Some(name),
+                (Some(seen), Some(name)) if *seen == name => {}
+                _ => {
+                    clean = false;
+                    break;
+                }
+            }
+        }
+        if let (true, Some(member)) = (clean, member) {
+            pairs.push((import.local.clone(), member));
+        }
+    }
+    pairs
+}
+
 /// Top-level mock factories (`function f() { return { ... }; }` or
 /// `const f = () => ({ ... });`) whose name the file uses only as a direct
 /// call `f(`, each with the source of its returned object literal. A file
@@ -1309,6 +2007,94 @@ fn mock_factories(statements: &[Statement<'_>], code: &str) -> Vec<(String, Stri
         })
         .map(|(name, _, literal)| (name, literal))
         .collect()
+}
+
+/// Top-level `const name = { ... };` object literals the file mentions only
+/// in the declaration and after a `...` spread, each with its literal
+/// source. A plain `const` object nobody else names cannot change before a
+/// spread copies it (RIPR-SPEC-0247 rule 1, amended 2026-10-18).
+fn mock_spread_sources(statements: &[Statement<'_>], code: &str) -> Vec<(String, String)> {
+    // The masker shrinks multi-byte characters inside strings and comments,
+    // so each is first widened to one `_` per byte (a word character, which
+    // the masker blanks inside literals and which cannot start or end a
+    // spread elsewhere); offsets into `code` then index `masked`. Should the
+    // lengths still disagree, nothing is recorded.
+    let widened: String = code
+        .chars()
+        .flat_map(|c| std::iter::repeat_n(if c.is_ascii() { c } else { '_' }, c.len_utf8()))
+        .collect();
+    let masked = ts_mask_literals_and_comments(&widened);
+    if file_is_opaque(code) || masked.len() != code.len() {
+        return Vec::new();
+    }
+    statements
+        .iter()
+        .filter_map(|stmt| {
+            let Statement::VariableDeclaration(declaration) = stmt else {
+                return None;
+            };
+            if declaration.declare
+                || declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+                || declaration.declarations.len() != 1
+            {
+                return None;
+            }
+            let declarator = declaration.declarations.first()?;
+            let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                return None;
+            };
+            let object = object_expression(declarator.init.as_ref()?)?;
+            let literal = code
+                .get(object.span.start as usize..object.span.end as usize)?
+                .to_string();
+            Some((id.name.to_string(), id.span.start as usize, literal))
+        })
+        .filter(|(name, declared_at, _)| {
+            word_occurrences(code, name).all(|at| {
+                at == *declared_at
+                    || (masked
+                        .get(at + name.len()..)
+                        .is_some_and(|after| after.trim_start().starts_with([',', '}']))
+                        && masked.get(..at).is_some_and(|before| {
+                            before.trim_end().strip_suffix("...").is_some_and(|before| {
+                                !before.ends_with('.') && inside_expression_literal(before)
+                            })
+                        }))
+            })
+        })
+        .map(|(name, _, literal)| (name, literal))
+        .collect()
+}
+
+/// `true` when the `...` that ends `before` sits in an object literal that
+/// is the right side of an `=` (`const db = { m: jest.fn(), ...name }`), not
+/// a rest binding in a destructuring pattern or parameter list
+/// (`const { a, ...name } = cfg()`), which would shadow the name.
+fn inside_expression_literal(before: &str) -> bool {
+    let mut depth = 0usize;
+    for (at, c) in before.char_indices().rev() {
+        match c {
+            '}' | ')' | ']' => depth += 1,
+            '(' | '[' => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+            }
+            '{' => {
+                if depth > 0 {
+                    depth -= 1;
+                    continue;
+                }
+                let head = before[..at].trim_end();
+                return head
+                    .strip_suffix('=')
+                    .is_some_and(|rest| !rest.ends_with(['=', '!', '<', '>']));
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// The name, name offset and returned literal source of one top-level
@@ -1404,7 +2190,7 @@ fn object_expression<'b, 'a>(
 
 /// `true` when the file can reach a name without spelling it: `eval`, a
 /// `with` statement, or a `\u` escape.
-fn file_is_opaque(code: &str) -> bool {
+pub(super) fn file_is_opaque(code: &str) -> bool {
     identifier_occurrences(code, "eval").next().is_some()
         || identifier_occurrences(code, "with")
             .any(|at| code[at + "with".len()..].trim_start().starts_with('('))
@@ -1495,7 +2281,10 @@ fn returns_only(
 }
 
 /// Byte offsets of `identifier` as a whole word, member names included.
-fn word_occurrences<'a>(code: &'a str, identifier: &'a str) -> impl Iterator<Item = usize> + 'a {
+pub(super) fn word_occurrences<'a>(
+    code: &'a str,
+    identifier: &'a str,
+) -> impl Iterator<Item = usize> + 'a {
     let word =
         |ch: Option<char>| ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric());
     code.match_indices(identifier).filter_map(move |(at, _)| {
@@ -1517,7 +2306,7 @@ fn is_direct_call(code: &str, at: usize, name: &str) -> bool {
 }
 
 /// Byte offsets of `identifier` as a whole word, not a member name.
-fn identifier_occurrences<'a>(
+pub(super) fn identifier_occurrences<'a>(
     code: &'a str,
     identifier: &'a str,
 ) -> impl Iterator<Item = usize> + 'a {
@@ -1602,7 +2391,7 @@ fn declared_names(code: &str) -> Vec<String> {
 
 /// `source` with the ASCII bytes of `ranges` replaced by spaces, byte
 /// offsets unchanged.
-fn blank_ranges(source: &str, ranges: &[std::ops::Range<usize>]) -> String {
+pub(super) fn blank_ranges(source: &str, ranges: &[std::ops::Range<usize>]) -> String {
     let mut bytes = source.as_bytes().to_vec();
     for range in ranges {
         for byte in bytes.get_mut(range.clone()).into_iter().flatten() {
@@ -1617,11 +2406,170 @@ fn blank_ranges(source: &str, ranges: &[std::ops::Range<usize>]) -> String {
 
 /// Identifiers written as an assignment target anywhere in `text`, each
 /// named once.
-fn assigned_identifier_names(text: &str) -> Vec<String> {
+pub(super) fn assigned_identifier_names(text: &str) -> Vec<String> {
+    // A set answers membership; `Vec::contains` rescans every earlier name per
+    // write, which is quadratic on a minified file with thousands of writes.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut names: Vec<String> = Vec::new();
     for (name, _) in identifier_writes(text) {
-        if !names.contains(&name) {
+        if seen.insert(name.clone()) {
             names.push(name);
+        }
+    }
+    names
+}
+
+/// Names `text` writes at least twice: a declaration initializer counts as
+/// one write, so a second one is a reassignment, update or loop target.
+pub(super) fn rewritten_identifier_names(text: &str) -> Vec<String> {
+    let writes = strict_identifier_writes(text);
+    // One counting pass; the earlier per-name rescan of every write was
+    // quadratic in the number of writes. Order stays first-write order.
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (name, _) in &writes {
+        *counts.entry(name.as_str()).or_insert(0) += 1;
+    }
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut names: Vec<String> = Vec::new();
+    for (name, _) in &writes {
+        if counts[name.as_str()] > 1 && seen.insert(name.as_str()) {
+            names.push(name.clone());
+        }
+    }
+    names
+}
+
+/// `true` when `before` (text ending in `.`) is a global-object receiver
+/// (`globalThis.`, `this.`, `window.`, `global.`, `self.`): a write through it
+/// can rebind a sloppy-mode `var` of the same name, so the strict scan reads
+/// it like a bare identifier (fail-closed).
+fn global_object_member(before: &str) -> bool {
+    let receiver = before[..before.len() - 1].trim_end();
+    ["globalThis", "this", "window", "global", "self"]
+        .iter()
+        .any(|name| {
+            receiver.strip_suffix(name).is_some_and(|head| {
+                !head.ends_with(|ch: char| {
+                    ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.'
+                })
+            })
+        })
+}
+
+/// `true` when the identifier ending just before `rest` is written through
+/// grouping or a TypeScript wrapper: `(name) = x`, `(name)++`, `++(name)`,
+/// `name! = x`, `(name as T) = x`, `(name satisfies T) = x` and
+/// `for ((name) of xs)`. Fail-closed: the identifier counts as written when
+/// closing parentheses, a non-null `!` or an `as`/`satisfies` clause (its own
+/// parentheses balanced) stand between it and an assignment operator, update
+/// or loop keyword.
+fn wrapped_write(before: &str, rest: &str) -> bool {
+    if before.ends_with('(') {
+        let lead = before.trim_end_matches(|ch: char| ch == '(' || ch.is_whitespace());
+        if lead.ends_with("++") || lead.ends_with("--") {
+            return true;
+        }
+    }
+    let mut rest = rest;
+    let mut wrapped = false;
+    loop {
+        let trimmed = rest.trim_start();
+        if let Some(after) = trimmed.strip_prefix(')') {
+            rest = after;
+        } else if trimmed.starts_with('!') && !trimmed.starts_with("!=") {
+            rest = &trimmed[1..];
+        } else if ["as", "satisfies"].iter().any(|keyword| {
+            trimmed
+                .strip_prefix(keyword)
+                .is_some_and(|tail| tail.starts_with(|ch: char| ch.is_whitespace() || ch == '('))
+        }) {
+            let mut depth = 0usize;
+            let mut close = None;
+            for (offset, ch) in trimmed.char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' if depth == 0 => {
+                        close = Some(offset);
+                        break;
+                    }
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+            }
+            match close {
+                Some(close) => rest = &trimmed[close..],
+                None => return false,
+            }
+        } else {
+            break;
+        }
+        wrapped = true;
+    }
+    if !wrapped {
+        return false;
+    }
+    let rest = rest.trim_start();
+    if rest.starts_with("++") || rest.starts_with("--") {
+        return true;
+    }
+    let operator_end = rest
+        .find(|ch: char| {
+            !matches!(
+                ch,
+                '+' | '-' | '*' | '/' | '%' | '&' | '|' | '^' | '?' | '<' | '>'
+            )
+        })
+        .unwrap_or(rest.len());
+    let after_operator = &rest[operator_end..];
+    if after_operator.starts_with('=')
+        && !after_operator[1..].starts_with(['=', '>'])
+        && !matches!(&rest[..operator_end], "<" | ">" | "!")
+    {
+        return true;
+    }
+    ["of", "in"].iter().any(|keyword| {
+        rest.strip_prefix(keyword).is_some_and(|tail| {
+            !tail.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_' || ch == '$')
+        })
+    })
+}
+
+/// `text` with U+FEFF (JavaScript whitespace that Rust does not trim) blanked
+/// to three spaces, so byte offsets are unchanged.
+fn blank_byte_order_marks(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains('\u{feff}') {
+        std::borrow::Cow::Owned(text.replace('\u{feff}', "   "))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
+/// Every function declaration or expression name `text` introduces, with its
+/// byte offset (`function name`, `function* name`). A declaration nested in a
+/// block re-binds a sloppy-mode `var` of the same name (Annex B.3.3), so
+/// callers treat it as a write to that name.
+pub(crate) fn function_declaration_names(text: &str) -> Vec<(String, usize)> {
+    let text = blank_byte_order_marks(text);
+    let text = text.as_ref();
+    let mut names = Vec::new();
+    let mut from = 0;
+    while let Some(found) = text[from..].find("function") {
+        let start = from + found;
+        from = start + "function".len();
+        let boundary_before = text[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.'));
+        if !boundary_before {
+            continue;
+        }
+        let rest = text[from..].trim_start_matches(|ch: char| ch.is_whitespace() || ch == '*');
+        let name_start = text.len() - rest.len();
+        let length = rest
+            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '$'))
+            .unwrap_or(rest.len());
+        if length > 0 && name_start > from {
+            names.push((rest[..length].to_string(), name_start));
         }
     }
     names
@@ -1634,32 +2582,58 @@ pub(crate) fn identifier_written_in(text: &str, identifier: &str) -> bool {
         .any(|(name, _)| name == identifier)
 }
 
+/// `true` when the strict scan ([`strict_identifier_writes`]) may write
+/// `identifier`.
+pub(crate) fn identifier_written_strictly(text: &str, identifier: &str) -> bool {
+    strict_identifier_writes(text)
+        .iter()
+        .any(|(name, _)| name == identifier)
+}
+
 /// Every identifier `text` may write, with its byte offset: an assignment
 /// target (`name =`, `name +=`, `name ??=`, not `==` or `=>`), `++`/`--`, a
 /// `for (name of ...)` target, and any identifier inside a bracketed group
-/// that is itself assigned (`[name] = ...`, `({ name } = ...)`). Member
-/// targets (`this.name =`) are not writes. Comments and strings are not
-/// skipped: a false entry only withholds a relation.
-fn identifier_writes(text: &str) -> Vec<(String, usize)> {
-    let bytes = text.as_bytes();
+/// that is itself assigned or looped over (`[name] = ...`, `({ name } = ...)`,
+/// `for ([name] of ...)`). Member targets (`this.name =`) are not writes.
+/// Identifiers are Unicode-aware. Comments and strings are not skipped: a
+/// false entry only withholds a relation.
+pub(crate) fn identifier_writes(text: &str) -> Vec<(String, usize)> {
+    scan_writes(text, false)
+}
+
+/// [`identifier_writes`] plus the spellings only a binding that must stay
+/// provably unwritten needs (the `var`/`let` runner and CommonJS export
+/// gates): grouped and TypeScript-wrapped targets (`(name) = x`, `name! = x`,
+/// `(name as T) = x`) and global-object members (`globalThis.name = x`,
+/// `this.name = x`).
+pub(crate) fn strict_identifier_writes(text: &str) -> Vec<(String, usize)> {
+    scan_writes(text, true)
+}
+
+fn scan_writes(text: &str, strict: bool) -> Vec<(String, usize)> {
+    let text = blank_byte_order_marks(text);
+    let text = text.as_ref();
     let destructured = destructuring_ranges(text);
     let mut writes = Vec::new();
     let mut index = 0;
-    while index < bytes.len() {
-        let ch = bytes[index] as char;
-        if !(ch == '_' || ch == '$' || ch.is_ascii_alphabetic()) {
-            index += 1;
+    while index < text.len() {
+        let Some(ch) = text[index..].chars().next() else {
+            break;
+        };
+        if !(ch == '_' || ch == '$' || ch.is_alphabetic()) {
+            index += ch.len_utf8();
             continue;
         }
         let start = index;
-        while index < bytes.len() && {
-            let ch = bytes[index] as char;
-            ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
-        } {
-            index += 1;
+        while let Some(ch) = text[index..].chars().next() {
+            if !(ch == '_' || ch == '$' || ch.is_alphanumeric()) {
+                break;
+            }
+            index += ch.len_utf8();
         }
         let before = text[..start].trim_end();
-        if before.ends_with('.') && !before.ends_with("...") {
+        let global = strict && before.ends_with('.') && global_object_member(before);
+        if before.ends_with('.') && !before.ends_with("...") && !global {
             continue;
         }
         let rest = text[index..].trim_start();
@@ -1690,7 +2664,8 @@ fn identifier_writes(text: &str) -> Vec<(String, usize)> {
                 prefix.ends_with("for") || prefix.ends_with("await")
             });
         let in_target = destructured.iter().any(|range| range.contains(&start));
-        if assigns || steps || loop_target || in_target {
+        let wrapped = strict && wrapped_write(before, rest);
+        if assigns || steps || loop_target || in_target || wrapped {
             writes.push((text[start..index].to_string(), start));
         }
     }
@@ -1698,7 +2673,7 @@ fn identifier_writes(text: &str) -> Vec<(String, usize)> {
 }
 
 /// Byte ranges of `[...]` and `{...}` groups directly followed by an
-/// assignment `=`: destructuring targets.
+/// assignment `=` or a `for` head's `of`/`in`: destructuring targets.
 fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
     let bytes = text.as_bytes();
     let mut ranges = Vec::new();
@@ -1709,7 +2684,14 @@ fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
             _ => continue,
         };
         let rest = text[close + 1..].trim_start();
-        if !rest.starts_with('=') || rest[1..].starts_with(['=', '>']) {
+        let assigned = rest.starts_with('=') && !rest[1..].starts_with(['=', '>']);
+        // `for ([name] of ...)` / `for ({ name } in ...)` write their targets.
+        let loop_bound = ["of", "in"].iter().any(|keyword| {
+            rest.strip_prefix(keyword).is_some_and(|tail| {
+                tail.starts_with(|c: char| c.is_whitespace() || "([{'\"`".contains(c))
+            })
+        });
+        if !assigned && !loop_bound {
             continue;
         }
         let mut depth = 0usize;
@@ -1730,13 +2712,14 @@ fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
 
 /// Parameter names of the registration callback in a statement's call
 /// (`describe.each(...)('x', (row) => ...)`, `it('x', ({ fixture }) => ...)`,
-/// `it('x', { timeout }, (t) => ...)`).
+/// `it('x', { timeout }, (t) => ...)`). An untitled conditional suite's
+/// callback is the first argument, so its parameters are read there too.
 fn statement_callback_parameter_names(stmt: &Statement<'_>) -> Vec<String> {
     let Some(call) = statement_call(stmt) else {
         return Vec::new();
     };
     call.arguments
-        .get(declaration_callback_index(call))
+        .get(registration_callback_index(call))
         .map(argument_parameter_names)
         .unwrap_or_default()
 }
@@ -1771,7 +2754,7 @@ fn name_literal_span(stmt: &Statement<'_>) -> Option<std::ops::Range<usize>> {
 /// guard only sees a declaration that starts its line, so a destructured or
 /// inline declaration would otherwise leave an assertion binding credited
 /// while shadowed (#4638 review). Over-collecting only withholds credit.
-fn collect_block_declared_names(statements: &[Statement<'_>], out: &mut Vec<String>) {
+pub(crate) fn collect_block_declared_names(statements: &[Statement<'_>], out: &mut Vec<String>) {
     for statement in statements {
         collect_statement_declared_names(statement, out);
     }
@@ -1971,8 +2954,33 @@ fn first_parameter_destructures_expect(argument: &oxc_ast::ast::Argument<'_>) ->
 pub(super) fn collect_registration_scope_names(
     statements: &[Statement<'_>],
     out: &mut Vec<String>,
+    block_functions_are_lexical: bool,
 ) {
     for statement in statements {
+        let declaration = match statement {
+            Statement::ExportNamedDeclaration(export) => export.declaration.as_ref(),
+            other => other.as_declaration(),
+        };
+        match declaration {
+            Some(oxc_ast::ast::Declaration::TSImportEqualsDeclaration(declaration))
+                if declaration.import_kind == ImportOrExportKind::Value =>
+            {
+                out.push(declaration.id.name.to_string());
+            }
+            Some(oxc_ast::ast::Declaration::TSEnumDeclaration(declaration))
+                if !declaration.declare =>
+            {
+                out.push(declaration.id.name.to_string());
+            }
+            Some(oxc_ast::ast::Declaration::TSModuleDeclaration(declaration))
+                if !declaration.declare =>
+            {
+                if let oxc_ast::ast::TSModuleDeclarationName::Identifier(id) = &declaration.id {
+                    out.push(id.name.to_string());
+                }
+            }
+            _ => {}
+        }
         match statement {
             Statement::BlockStatement(_)
             | Statement::IfStatement(_)
@@ -1983,13 +2991,19 @@ pub(super) fn collect_registration_scope_names(
             | Statement::DoWhileStatement(_)
             | Statement::LabeledStatement(_)
             | Statement::TryStatement(_)
-            | Statement::SwitchStatement(_) => collect_hoisted_names(statement, out),
+            | Statement::SwitchStatement(_) => {
+                collect_hoisted_names(statement, out, block_functions_are_lexical)
+            }
             _ => collect_statement_declared_names(statement, out),
         }
     }
 }
 
-fn collect_hoisted_names(statement: &Statement<'_>, out: &mut Vec<String>) {
+fn collect_hoisted_names(
+    statement: &Statement<'_>,
+    out: &mut Vec<String>,
+    block_functions_are_lexical: bool,
+) {
     let var_names = |declaration: &oxc_ast::ast::VariableDeclaration<'_>, out: &mut Vec<String>| {
         if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var && !declaration.declare {
             out.extend(declaration_binding_names(declaration));
@@ -1997,23 +3011,25 @@ fn collect_hoisted_names(statement: &Statement<'_>, out: &mut Vec<String>) {
     };
     let each = |statements: &[Statement<'_>], out: &mut Vec<String>| {
         for statement in statements {
-            collect_hoisted_names(statement, out);
+            collect_hoisted_names(statement, out, block_functions_are_lexical);
         }
     };
     match statement {
         Statement::VariableDeclaration(declaration) => var_names(declaration, out),
-        // Sloppy-mode Annex B hoisting can expose a block function's name, so
-        // keep it; over-collection only withholds credit.
-        Statement::FunctionDeclaration(function) if !function.declare => {
+        // Sloppy-mode Annex B hoisting can expose a block function's name.
+        // Modules and strict scripts keep that binding inside the block.
+        Statement::FunctionDeclaration(function)
+            if !function.declare && !block_functions_are_lexical =>
+        {
             if let Some(identifier) = &function.id {
                 out.push(identifier.name.to_string());
             }
         }
         Statement::BlockStatement(block) => each(&block.body, out),
         Statement::IfStatement(if_stmt) => {
-            collect_hoisted_names(&if_stmt.consequent, out);
+            collect_hoisted_names(&if_stmt.consequent, out, block_functions_are_lexical);
             if let Some(alternate) = &if_stmt.alternate {
-                collect_hoisted_names(alternate, out);
+                collect_hoisted_names(alternate, out, block_functions_are_lexical);
             }
         }
         Statement::ForStatement(for_stmt) => {
@@ -2022,23 +3038,29 @@ fn collect_hoisted_names(statement: &Statement<'_>, out: &mut Vec<String>) {
             {
                 var_names(declaration, out);
             }
-            collect_hoisted_names(&for_stmt.body, out);
+            collect_hoisted_names(&for_stmt.body, out, block_functions_are_lexical);
         }
         Statement::ForOfStatement(for_of) => {
             if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &for_of.left {
                 var_names(declaration, out);
             }
-            collect_hoisted_names(&for_of.body, out);
+            collect_hoisted_names(&for_of.body, out, block_functions_are_lexical);
         }
         Statement::ForInStatement(for_in) => {
             if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &for_in.left {
                 var_names(declaration, out);
             }
-            collect_hoisted_names(&for_in.body, out);
+            collect_hoisted_names(&for_in.body, out, block_functions_are_lexical);
         }
-        Statement::WhileStatement(while_stmt) => collect_hoisted_names(&while_stmt.body, out),
-        Statement::DoWhileStatement(do_while) => collect_hoisted_names(&do_while.body, out),
-        Statement::LabeledStatement(labeled) => collect_hoisted_names(&labeled.body, out),
+        Statement::WhileStatement(while_stmt) => {
+            collect_hoisted_names(&while_stmt.body, out, block_functions_are_lexical)
+        }
+        Statement::DoWhileStatement(do_while) => {
+            collect_hoisted_names(&do_while.body, out, block_functions_are_lexical)
+        }
+        Statement::LabeledStatement(labeled) => {
+            collect_hoisted_names(&labeled.body, out, block_functions_are_lexical)
+        }
         Statement::TryStatement(try_stmt) => {
             each(&try_stmt.block.body, out);
             if let Some(handler) = &try_stmt.handler {
@@ -2057,7 +3079,7 @@ fn collect_hoisted_names(statement: &Statement<'_>, out: &mut Vec<String>) {
     }
 }
 
-fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String> {
+pub(crate) fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String> {
     let params = match argument {
         oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
         oxc_ast::ast::Argument::FunctionExpression(function) => &function.params,
@@ -2103,38 +3125,498 @@ pub(crate) fn describe_body_from_statement<'a>(
     Some((name, body))
 }
 
-pub(crate) fn test_from_statement(
+/// The `describe.skipIf(cond)` / `describe.runIf(cond)` factory call a
+/// registration call is made through, when its root is an active `describe`.
+fn conditional_describe_factory<'s, 'a>(
+    call: &'s oxc_ast::ast::CallExpression<'a>,
+) -> Option<&'s oxc_ast::ast::CallExpression<'a>> {
+    let Expression::CallExpression(factory) = &call.callee else {
+        return None;
+    };
+    let Expression::StaticMemberExpression(member) = &factory.callee else {
+        return None;
+    };
+    (matches!(member.property.name.as_str(), "skipIf" | "runIf")
+        && expression_is_active_declaration(&member.object, TestDeclarationRoot::Describe))
+    .then_some(&**factory)
+}
+
+/// Whether the registration call is the untitled callback-only conditional
+/// suite: `describe.skipIf(cond)(() => { ... })` / `describe.runIf(...)` with
+/// its callback in the title position (#10982).
+fn untitled_conditional_describe(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    conditional_describe_factory(call).is_some()
+        && matches!(
+            call.arguments.first(),
+            Some(
+                oxc_ast::ast::Argument::ArrowFunctionExpression(_)
+                    | oxc_ast::ast::Argument::FunctionExpression(_)
+            )
+        )
+}
+
+/// The callback argument of a registration statement, shared by the body,
+/// parameter and strict-mode readers so all three see the same callback: an
+/// untitled conditional suite carries its callback in the title position.
+fn registration_callback_index(call: &oxc_ast::ast::CallExpression<'_>) -> usize {
+    if untitled_conditional_describe(call) {
+        0
+    } else {
+        declaration_callback_index(call)
+    }
+}
+
+/// `describe.skipIf(cond)('name', () => { ... })` and the `runIf` twin: the
+/// suite name, its body and the factory call's source as the guard. The
+/// condition is a runtime value static analysis does not evaluate, so the
+/// suite's tests are indexed for reach but earn no assertion credit. The
+/// untitled callback-only form (`describe.runIf(cond)(() => { ... })`)
+/// holds its callback in the title position: the suite is named like any
+/// non-literal title and the body is the first argument.
+fn conditional_describe_body<'a>(
+    stmt: &'a Statement<'a>,
+    source: &SourceText<'_>,
+) -> Option<(String, &'a oxc_allocator::Vec<'a, Statement<'a>>, String)> {
+    let call = statement_call(stmt)?;
+    let factory = conditional_describe_factory(call)?;
+    if !declaration_options_are_active(call) {
+        return None;
+    }
+    let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
+    let body = function_body_statements_from_argument(
+        call.arguments.get(registration_callback_index(call))?,
+    )?;
+    let guard = snippet_for_span(
+        source.text(),
+        factory.span.start as usize,
+        factory.span.end as usize,
+    );
+    Some((name, body, guard))
+}
+
+/// A top-level `function name() { ... }` a registration can name as its
+/// callback: `(name, declaration)`.
+pub(crate) type DeclaredFunction<'s, 'a> = (&'s str, &'s oxc_ast::ast::Function<'a>);
+
+/// The declared function of `stmt` when it has a name, a body, no parameters
+/// and is not a generator: the only shape whose body is exactly what the
+/// runner executes when `test(title, name)` calls it.
+fn declared_callback_function<'s, 'a>(stmt: &'s Statement<'a>) -> Option<DeclaredFunction<'s, 'a>> {
+    let Statement::FunctionDeclaration(function) = stmt else {
+        return None;
+    };
+    let name = function.id.as_ref()?.name.as_str();
+    (function.body.is_some()
+        && !function.generator
+        && function.params.items.is_empty()
+        && function.params.rest.is_none())
+    .then_some((name, &**function))
+}
+
+/// The function a plain `test(title, name)` registration runs, when `name`
+/// is declared once, with no parameters, and the file uses it nowhere else
+/// than as the callback of a titled `test` / `it` call. Any other mention (a
+/// reassignment, a parameter or variable of the same name, a call, an export,
+/// a second declaration) leaves the reference unresolved.
+fn referenced_callback_function<'s, 'a>(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    functions: &[DeclaredFunction<'s, 'a>],
+    source: &SourceText<'_>,
+) -> Option<&'s oxc_ast::ast::Function<'a>> {
+    if call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test) {
+        return None;
+    }
+    let oxc_ast::ast::Argument::Identifier(identifier) =
+        call.arguments.get(declaration_callback_index(call))?
+    else {
+        return None;
+    };
+    let name = identifier.name.as_str();
+    let (_, function) = functions.iter().find(|(declared, _)| *declared == name)?;
+    function_used_only_as_test_callback(source, name).then_some(*function)
+}
+
+fn function_used_only_as_test_callback(source: &str, name: &str) -> bool {
+    // A unicode-escaped identifier (`\u0063hecks = ...`) spells a mention the
+    // word scan below cannot see, so any escape leaves the reference
+    // unresolved.
+    if source.contains("\\u") {
+        return false;
+    }
+    let word = |ch: char| ch == '_' || ch == '$' || ch.is_alphanumeric();
+    let mut declarations = 0;
+    for at in word_occurrences(source, name) {
+        let before = source[..at].trim_end();
+        if before
+            .strip_suffix("function")
+            .is_some_and(|rest| !rest.ends_with(word))
+        {
+            declarations += 1;
+            continue;
+        }
+        let callback_position = source[at + name.len()..]
+            .trim_start()
+            .starts_with([')', ',']);
+        if !callback_position || !follows_test_title(before) {
+            return false;
+        }
+    }
+    declarations == 1
+}
+
+/// Whether `before` ends with `test('title',` / `it("title",` (optionally
+/// `.only`, `.concurrent`, `.sequential`), the position of a registration
+/// callback. A title with an escape or a template substitution is not read.
+fn follows_test_title(before: &str) -> bool {
+    let word = |ch: char| ch == '_' || ch == '$' || ch.is_alphanumeric();
+    let trailing_word = |text: &str| -> (usize, bool) {
+        let start = text
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !word(*ch))
+            .map_or(0, |(at, ch)| at + ch.len_utf8());
+        (start, start > 0 && text[..start].ends_with('.'))
+    };
+    let Some(rest) = before.strip_suffix(',').map(str::trim_end) else {
+        return false;
+    };
+    let Some(quote) = rest
+        .chars()
+        .next_back()
+        .filter(|ch| matches!(ch, '"' | '\'' | '`'))
+    else {
+        return false;
+    };
+    let title = &rest[..rest.len() - 1];
+    let Some(open) = title.rfind(quote) else {
+        return false;
+    };
+    if title[open..].contains('\\') || (quote == '`' && title[open..].contains("${")) {
+        return false;
+    }
+    let Some(head) = title[..open]
+        .trim_end()
+        .strip_suffix('(')
+        .map(str::trim_end)
+    else {
+        return false;
+    };
+    let (start, member) = trailing_word(head);
+    let mut root = &head[start..];
+    let mut head = &head[..start];
+    if member {
+        if !matches!(root, "only" | "concurrent" | "sequential") {
+            return false;
+        }
+        head = &head[..head.len() - 1];
+        let (start, member) = trailing_word(head);
+        if member {
+            return false;
+        }
+        root = &head[start..];
+    }
+    matches!(root, "test" | "it")
+}
+
+pub(crate) fn test_from_statement<'s, 'a>(
     stmt: &Statement<'_>,
     file: &Path,
     source: &SourceText<'_>,
     describe_stack: &[String],
     bindings: &TypeScriptAssertionBindings,
+    functions: &[DeclaredFunction<'s, 'a>],
 ) -> Option<TypeScriptTest> {
     let call = statement_call(stmt)?;
-    let (name, assertions) = test_name_and_assertions_from_call(call, source, bindings)?;
+    let referenced = referenced_callback_function(call, functions, source);
+    let (name, assertions) =
+        test_name_and_assertions_from_registration(call, referenced, source, bindings)?;
     Some(TypeScriptTest {
         name: qualified_test_name(describe_stack, &name),
         local_name: name,
         describe_names: describe_stack.to_vec(),
         file: file.to_path_buf(),
         line: source.line_for_offset(call.span.start as usize),
-        body_text: source[call.span.start as usize..call.span.end as usize].to_string(),
+        // The referenced function's text joins the call's, so the relation
+        // gates see the owner call the runner actually executes.
+        body_text: match referenced {
+            Some(function) => format!(
+                "{}\n{}",
+                &source[call.span.start as usize..call.span.end as usize],
+                &source[function.span.start as usize..function.span.end as usize]
+            ),
+            None => source[call.span.start as usize..call.span.end as usize].to_string(),
+        },
+        reach_body_text: unused_function_reach_body(
+            call,
+            referenced,
+            source,
+            source_type_for(file),
+        ),
         assertions,
         // Populated by `extract_tests` (the only public extractor) once
         // per file before the test is returned to the caller.
-        mocks_in_file: Vec::new(),
-        imports_in_file: Vec::new(),
-        scope_bindings: Vec::new(),
-        identity_helpers_in_file: Vec::new(),
-        mock_factories_in_file: Vec::new(),
+        mocks_in_file: Default::default(),
+        imports_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
         // Replaced by `collect_tests_from_statements`, which has the file's
         // admission context; fail-closed until then.
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
+        conditional_registration: None,
     })
 }
 
+/// The shared masker preserves characters, but not byte widths of masked
+/// Unicode literals. Expand only its spaces back to the original byte widths
+/// before comparing identifier offsets with parser spans.
+pub(super) fn byte_preserving_code_mask(source: &str) -> Option<String> {
+    let masked = super::classifier::ts_mask_literals_and_comments(source);
+    preserve_mask_byte_width(source, &masked)
+}
+
+pub(super) fn byte_preserving_code_mask_for_source_type(
+    source: &str,
+    source_type: SourceType,
+) -> Option<String> {
+    let masked =
+        super::classifier::ts_mask_literals_and_comments_for_source_type(source, source_type);
+    preserve_mask_byte_width(source, &masked)
+}
+
+/// [`byte_preserving_code_mask`] over the division-only mask.
+pub(super) fn byte_preserving_division_mask(source: &str) -> Option<String> {
+    let masked = super::classifier::ts_mask_literals_and_comments_division_only(source);
+    preserve_mask_byte_width(source, &masked)
+}
+
+fn preserve_mask_byte_width(source: &str, masked: &str) -> Option<String> {
+    if source.chars().count() != masked.chars().count() {
+        return None;
+    }
+    let mut code = String::with_capacity(source.len());
+    for (original, masked) in source.chars().zip(masked.chars()) {
+        if original == masked {
+            code.push(original);
+        } else if masked == ' ' {
+            code.extend(std::iter::repeat_n(' ', original.len_utf8()));
+        } else {
+            return None;
+        }
+    }
+    Some(code)
+}
+
+/// A reach-only view; the original test source remains the evidence surface.
+/// Creating a function value does not execute its body. Refuse only plain
+/// const-bound function values with no reference outside their declaration;
+/// called, aliased, returned or passed values retain the existing relation rules.
+fn unused_function_reach_body(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    referenced: Option<&oxc_ast::ast::Function<'_>>,
+    source: &SourceText<'_>,
+    source_type: SourceType,
+) -> Option<String> {
+    let call_text = &source[call.span.start as usize..call.span.end as usize];
+    let (start, body, statements) = if let Some(function) = referenced {
+        (
+            function.span.start as usize,
+            &source[function.span.start as usize..function.span.end as usize],
+            function.body.as_ref()?.statements.as_slice(),
+        )
+    } else {
+        (
+            call.span.start as usize,
+            call_text,
+            function_body_statements_from_argument(
+                call.arguments.get(declaration_callback_index(call))?,
+            )?
+            .as_slice(),
+        )
+    };
+    let code = byte_preserving_code_mask_for_source_type(body, source_type)?;
+    if file_is_opaque(&code) {
+        return None;
+    }
+    let mut ranges = Vec::new();
+    collect_unused_function_ranges(statements, &code, start, &mut ranges);
+    if ranges.is_empty() {
+        return None;
+    }
+    let mut bytes = body.as_bytes().to_vec();
+    for range in ranges {
+        // AST spans end on UTF-8 boundaries. Replacing every byte (including
+        // multibyte identifiers) preserves offsets and cannot leave a false
+        // Unicode owner reference behind in a dead function body.
+        for byte in bytes.get_mut(range).into_iter().flatten() {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    let filtered = String::from_utf8(bytes).ok()?;
+    Some(if referenced.is_some() {
+        format!("{call_text}\n{filtered}")
+    } else {
+        filtered
+    })
+}
+
+fn collect_unused_function_declaration(
+    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+    code: &str,
+    offset: usize,
+    ranges: &mut Vec<std::ops::Range<usize>>,
+) {
+    if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const || declaration.declare {
+        return;
+    }
+    for declarator in &declaration.declarations {
+        let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+            continue;
+        };
+        let Some(initializer) = &declarator.init else {
+            continue;
+        };
+        if !matches!(
+            initializer.get_inner_expression(),
+            Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
+        ) {
+            continue;
+        }
+        let declaration_range =
+            (declarator.span.start as usize - offset)..(declarator.span.end as usize - offset);
+        if identifier_occurrences(code, id.name.as_str()).any(|at| !declaration_range.contains(&at))
+        {
+            continue;
+        }
+        let span = initializer.span();
+        ranges.push((span.start as usize - offset)..(span.end as usize - offset));
+    }
+}
+
+fn collect_unused_function_ranges(
+    statements: &[Statement<'_>],
+    code: &str,
+    offset: usize,
+    ranges: &mut Vec<std::ops::Range<usize>>,
+) {
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclaration(declaration) => {
+                collect_unused_function_declaration(declaration, code, offset, ranges);
+            }
+            Statement::ForStatement(loop_) => {
+                if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) =
+                    &loop_.init
+                {
+                    collect_unused_function_declaration(declaration, code, offset, ranges);
+                }
+                collect_unused_function_ranges(
+                    std::slice::from_ref(&loop_.body),
+                    code,
+                    offset,
+                    ranges,
+                );
+            }
+            Statement::ForOfStatement(loop_) => {
+                collect_unused_function_ranges(
+                    std::slice::from_ref(&loop_.body),
+                    code,
+                    offset,
+                    ranges,
+                );
+            }
+            Statement::ForInStatement(loop_) => {
+                collect_unused_function_ranges(
+                    std::slice::from_ref(&loop_.body),
+                    code,
+                    offset,
+                    ranges,
+                );
+            }
+            Statement::WhileStatement(loop_) => {
+                collect_unused_function_ranges(
+                    std::slice::from_ref(&loop_.body),
+                    code,
+                    offset,
+                    ranges,
+                );
+            }
+            Statement::DoWhileStatement(loop_) => {
+                collect_unused_function_ranges(
+                    std::slice::from_ref(&loop_.body),
+                    code,
+                    offset,
+                    ranges,
+                );
+            }
+            Statement::LabeledStatement(label) => {
+                collect_unused_function_ranges(
+                    std::slice::from_ref(&label.body),
+                    code,
+                    offset,
+                    ranges,
+                );
+            }
+            Statement::SwitchStatement(switch) => {
+                for case in &switch.cases {
+                    collect_unused_function_ranges(&case.consequent, code, offset, ranges);
+                }
+            }
+            Statement::BlockStatement(block) => {
+                collect_unused_function_ranges(&block.body, code, offset, ranges);
+            }
+            Statement::IfStatement(branch) => {
+                collect_unused_function_ranges(
+                    std::slice::from_ref(&branch.consequent),
+                    code,
+                    offset,
+                    ranges,
+                );
+                if let Some(alternate) = &branch.alternate {
+                    collect_unused_function_ranges(
+                        std::slice::from_ref(alternate),
+                        code,
+                        offset,
+                        ranges,
+                    );
+                }
+            }
+            Statement::TryStatement(attempt) => {
+                collect_unused_function_ranges(&attempt.block.body, code, offset, ranges);
+                if let Some(handler) = &attempt.handler {
+                    collect_unused_function_ranges(&handler.body.body, code, offset, ranges);
+                }
+                if let Some(finalizer) = &attempt.finalizer {
+                    collect_unused_function_ranges(&finalizer.body, code, offset, ranges);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn test_name_and_assertions_from_call(
     call: &oxc_ast::ast::CallExpression<'_>,
+    source: &SourceText<'_>,
+    bindings: &TypeScriptAssertionBindings,
+) -> Option<(String, Vec<TypeScriptAssertion>)> {
+    test_name_and_assertions_from_registration(call, None, source, bindings)
+}
+
+/// `referenced` is the same-file function a `test(title, name)` registration
+/// runs; its body stands in for the inline callback.
+fn test_name_and_assertions_from_registration(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    referenced: Option<&oxc_ast::ast::Function<'_>>,
     source: &SourceText<'_>,
     bindings: &TypeScriptAssertionBindings,
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
@@ -2145,7 +3627,24 @@ pub(crate) fn test_name_and_assertions_from_call(
     }
 
     let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
-    let callback = call.arguments.get(declaration_callback_index(call))?;
+    let ava_macro = bindings.registration_is_ava(callee_root_name(&call.callee));
+    let callback = call.arguments.get(callback_index(call, ava_macro))?;
+    // `node:test` / AVA-style contexts end a running test as skipped or todo
+    // when the body calls `t.skip()` / `t.todo()` (RIPR-SPEC-0243 rule 17):
+    // the run passes however the later assertions would have gone, so the
+    // test registers no discriminator. Textual and fail-closed: any call of
+    // those methods on the callback's first parameter withdraws the test,
+    // exactly like a `.skip` registration.
+    if let Some(context) = test_callback_receiver_name(callback)
+        && body_calls_context_skip(
+            source
+                .get(call.span.start as usize..call.span.end as usize)
+                .unwrap_or_default(),
+            &context,
+        )
+    {
+        return None;
+    }
     // A first parameter named like an imported assertion binding
     // (`const assert = require('node:assert')` + `it('x', function (assert)
     // {...})`) is ambiguous: mocha passes `done` there, AVA / tape an
@@ -2159,7 +3658,15 @@ pub(crate) fn test_name_and_assertions_from_call(
     let call_text = source
         .get(call.span.start as usize..call.span.end as usize)
         .unwrap_or_default();
-    let body_declarations = function_body_statements_from_argument(callback)
+    let function_text = referenced
+        .and_then(|function| source.get(function.span.start as usize..function.span.end as usize))
+        .unwrap_or_default();
+    let call_text = &format!("{call_text}\n{function_text}");
+    let callback_statements = referenced
+        .and_then(|function| function.body.as_ref())
+        .map(|body| &body.statements)
+        .or_else(|| function_body_statements_from_argument(callback));
+    let body_declarations = callback_statements
         .map(|statements| {
             let mut names = Vec::new();
             collect_block_declared_names(statements, &mut names);
@@ -2201,7 +3708,7 @@ pub(crate) fn test_name_and_assertions_from_call(
     {
         return Some((name, assertions));
     }
-    let assertions = function_body_statements_from_argument(callback)
+    let assertions = callback_statements
         .map(|statements| {
             collect_assertions_in_statements_with_bindings(
                 statements,
@@ -2223,6 +3730,194 @@ fn callee_root_name<'a>(callee: &'a Expression<'_>) -> Option<&'a str> {
         Expression::CallExpression(call) => callee_root_name(&call.callee),
         _ => None,
     }
+}
+
+/// Whether `text` calls `<context>.skip(` or `<context>.todo(` (a whole
+/// identifier before the dot, optional whitespace before the paren) on the
+/// test's own context. Comments and string literals are masked first, and a
+/// call inside a nested callback that rebinds the same name (a subtest
+/// `t.test("sub", (t) => { t.skip(); })`) belongs to that subtest, not here.
+fn body_calls_context_skip(text: &str, context: &str) -> bool {
+    let masked = mask_comments_and_strings_text(text);
+    let shadowed = nested_rebinding_bodies(&masked, context);
+    ["skip", "todo"].into_iter().any(|method| {
+        let needle = format!("{context}.{method}");
+        masked.match_indices(&needle).any(|(at, _)| {
+            let before_ok = masked
+                .get(..at)
+                .and_then(|head| head.chars().next_back())
+                .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.'));
+            let after = masked.get(at + needle.len()..).unwrap_or_default();
+            before_ok
+                && after.trim_start().starts_with('(')
+                && !shadowed.iter().any(|range| range.contains(&at))
+        })
+    })
+}
+
+/// Replace comments and string / template literal contents with spaces,
+/// keeping byte offsets and newlines.
+pub(super) fn mask_comments_and_strings_text(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = bytes.to_vec();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    out[i] = b' ';
+                    i += 1;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                while i < bytes.len() && !(bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/')) {
+                    if bytes[i] != b'\n' {
+                        out[i] = b' ';
+                    }
+                    i += 1;
+                }
+                for k in [i, i + 1] {
+                    if k < out.len() {
+                        out[k] = b' ';
+                    }
+                }
+                i += 2;
+            }
+            quote @ (b'"' | b'\'' | b'`') => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                        out[i] = b' ';
+                        i += 1;
+                    }
+                    if bytes[i] != b'\n' {
+                        out[i] = b' ';
+                    }
+                    i += 1;
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
+/// Byte ranges of function bodies, other than the test's own callback, whose
+/// parameter list rebinds `context`.
+fn nested_rebinding_bodies(masked: &str, context: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = masked.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+    let mut ranges = Vec::new();
+    let mut first = true;
+    for (at, _) in masked.match_indices(context) {
+        if at > 0 && is_ident(bytes[at - 1])
+            || bytes.get(at + context.len()).is_some_and(|b| is_ident(*b))
+        {
+            continue;
+        }
+        let mut end = at + context.len();
+        while bytes.get(end).is_some_and(|b| b.is_ascii_whitespace()) {
+            end += 1;
+        }
+        let mut head = at;
+        while head > 0 && bytes[head - 1].is_ascii_whitespace() {
+            head -= 1;
+        }
+        // A bare single parameter may follow `async` (`async t => {...}`).
+        if masked[..head].ends_with("async")
+            && !masked[..head - 5]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$')
+        {
+            head -= 5;
+            while head > 0 && bytes[head - 1].is_ascii_whitespace() {
+                head -= 1;
+            }
+        }
+        let prev = if head > 0 { bytes[head - 1] } else { 0 };
+        let body_from = if masked[end..].starts_with("=>") && (prev == b'(' || prev == b',') {
+            // `t => { ... }` (bare single parameter)
+            end + 2
+        } else if prev == b'(' || prev == b',' {
+            // Walk back to the list's `(` and forward to its `)`.
+            let mut depth = 0i32;
+            let mut open = None;
+            for k in (0..at).rev() {
+                match bytes[k] {
+                    b')' => depth += 1,
+                    b'(' if depth == 0 => {
+                        open = Some(k);
+                        break;
+                    }
+                    b'(' => depth -= 1,
+                    _ => {}
+                }
+            }
+            let Some(open) = open else { continue };
+            let word_end = masked[..open].trim_end().len();
+            let word_start = masked[..word_end]
+                .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                .map_or(0, |k| k + 1);
+            if matches!(
+                &masked[word_start..word_end],
+                "if" | "while" | "for" | "switch" | "with"
+            ) {
+                continue;
+            }
+            let mut depth = 0i32;
+            let mut close = None;
+            for (k, b) in bytes.iter().enumerate().skip(open) {
+                match b {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = Some(k);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(close) = close else { continue };
+            let rest = masked[close + 1..].trim_start();
+            let skipped = masked.len() - rest.len();
+            if rest.starts_with("=>") {
+                skipped + 2
+            } else if rest.starts_with('{') {
+                skipped
+            } else {
+                continue;
+            }
+        } else {
+            continue;
+        };
+        if first {
+            // The test's own callback parameter.
+            first = false;
+            continue;
+        }
+        let Some(open) = masked[body_from..].find('{').map(|k| body_from + k) else {
+            continue;
+        };
+        let mut depth = 0i32;
+        for (k, b) in bytes.iter().enumerate().skip(open) {
+            match b {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        ranges.push(open..k);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    ranges
 }
 
 /// Extract the name bound to the test callback's first parameter.
@@ -2362,9 +4057,82 @@ fn expression_is_active_declaration(
         Expression::StaticMemberExpression(member) => {
             is_active_declaration_modifier(member.property.name.as_str())
                 && expression_is_active_declaration(&member.object, root)
+                || is_playwright_describe_member(member, root)
         }
         _ => false,
     }
+}
+
+/// Playwright Test registers a suite as `test.describe(...)`, with the
+/// `serial` / `parallel` / `only` modifiers (`test.describe.serial(...)`).
+/// Jest, Vitest and mocha have no `test.describe`, so the spelling is not a
+/// suite there. `.skip` / `.fixme` stay inactive like every other skip.
+fn is_playwright_describe_member(
+    member: &oxc_ast::ast::StaticMemberExpression<'_>,
+    root: TestDeclarationRoot,
+) -> bool {
+    if !matches!(root, TestDeclarationRoot::Describe) {
+        return false;
+    }
+    match (member.property.name.as_str(), &member.object) {
+        ("describe", Expression::Identifier(object)) => {
+            TestDeclarationRoot::Test.matches_identifier(object.name.as_str())
+        }
+        ("serial" | "parallel", Expression::StaticMemberExpression(object)) => {
+            is_playwright_describe_member(object, root)
+        }
+        _ => false,
+    }
+}
+
+/// A `describe`-root call the runner skips: a `.skip` / `.fixme`
+/// modifier on the root (alone or after active modifiers), or an options
+/// object that turns the suite off.
+fn callee_is_skipped_describe(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    fn skipped_modifier_on_describe(expression: &Expression<'_>) -> bool {
+        match expression {
+            Expression::StaticMemberExpression(member) => {
+                (matches!(member.property.name.as_str(), "skip" | "fixme")
+                    && expression_is_active_declaration(
+                        &member.object,
+                        TestDeclarationRoot::Describe,
+                    ))
+                    || (is_active_declaration_modifier(member.property.name.as_str())
+                        && skipped_modifier_on_describe(&member.object))
+            }
+            _ => false,
+        }
+    }
+    // Only a literal `skip: true` turns the suite off; a
+    // dynamic value, a spread or any other key (`fails`) leaves it active.
+    let literally_off = |call: &oxc_ast::ast::CallExpression<'_>| {
+        call.arguments.iter().take(3).any(|argument| {
+            let oxc_ast::ast::Argument::ObjectExpression(options) = argument else {
+                return false;
+            };
+            // A later spread or computed key may override `skip`, so the
+            // literal counts only when nothing after it can.
+            let mut off = false;
+            for property in &options.properties {
+                let oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property) = property else {
+                    off = false;
+                    continue;
+                };
+                if property.computed {
+                    off = false;
+                } else if property.key.static_name().as_deref() == Some("skip") {
+                    off = matches!(
+                        &property.value,
+                        Expression::BooleanLiteral(literal) if literal.value
+                    );
+                }
+            }
+            off
+        })
+    };
+    skipped_modifier_on_describe(&call.callee)
+        || (expression_is_active_declaration(&call.callee, TestDeclarationRoot::Describe)
+            && literally_off(call))
 }
 
 fn is_active_declaration_modifier(name: &str) -> bool {
@@ -2465,6 +4233,79 @@ fn loop_body_from_statement<'a>(
         single => std::slice::from_ref(single),
     };
     Some((bindings, body))
+}
+
+/// `[]` or `{}` written directly as the iterable: the loop never runs, so no
+/// registration exists to index.
+fn is_empty_literal(expression: &Expression<'_>) -> bool {
+    match runtime_expression(expression) {
+        Expression::ArrayExpression(array) => array.elements.is_empty(),
+        Expression::ObjectExpression(object) => object.properties.is_empty(),
+        _ => false,
+    }
+}
+
+/// A `for...of`, `for...in` or `.forEach` over data that
+/// [`loop_body_from_statement`] cannot prove non-empty (a call result, a
+/// parameter, a file listing). Returns the loop head as the registration guard,
+/// the loop bindings and the body. `None` for any other statement, and for a
+/// loop whose bindings would shadow a registration API.
+fn unprovable_loop_body<'a>(
+    stmt: &'a Statement<'a>,
+    source: &SourceText<'_>,
+) -> Option<(String, Vec<String>, &'a [Statement<'a>])> {
+    let head = |start: u32, end: u32| snippet_for_span(source.text(), start as usize, end as usize);
+    let (guard, bindings, body) = match stmt {
+        Statement::ForOfStatement(for_of) if is_empty_literal(&for_of.right) => return None,
+        Statement::ForInStatement(for_in) if is_empty_literal(&for_in.right) => return None,
+        Statement::ForOfStatement(for_of) => (
+            format!(
+                "for (... of {})",
+                head(for_of.right.span().start, for_of.right.span().end)
+            ),
+            for_left_bindings(&for_of.left)?,
+            &for_of.body,
+        ),
+        Statement::ForInStatement(for_in) => (
+            format!(
+                "for (... in {})",
+                head(for_in.right.span().start, for_in.right.span().end)
+            ),
+            for_left_bindings(&for_in.left)?,
+            &for_in.body,
+        ),
+        Statement::ExpressionStatement(expr_stmt) => {
+            let Expression::CallExpression(call) = &expr_stmt.expression else {
+                return None;
+            };
+            let Expression::StaticMemberExpression(member) = &call.callee else {
+                return None;
+            };
+            if member.property.name.as_str() != "forEach" || is_empty_literal(&member.object) {
+                return None;
+            }
+            let callback = call.arguments.first()?;
+            let body = function_body_statements_from_argument(callback)?;
+            let bindings = argument_parameter_names(callback);
+            if binds_registration_api(&bindings) {
+                return None;
+            }
+            let guard = format!(
+                "{}.forEach(...)",
+                head(member.object.span().start, member.object.span().end)
+            );
+            return Some((guard, bindings, body.as_slice()));
+        }
+        _ => return None,
+    };
+    if binds_registration_api(&bindings) {
+        return None;
+    }
+    let body = match body {
+        Statement::BlockStatement(block) => block.body.as_slice(),
+        single => std::slice::from_ref(single),
+    };
+    Some((guard, bindings, body))
 }
 
 /// A loop variable or callback parameter named `test`, `it` or `describe`
@@ -2658,6 +4499,34 @@ fn counted_loop_runs(
     }
 }
 
+fn argument_has_use_strict(argument: &oxc_ast::ast::Argument<'_>) -> bool {
+    match argument {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(function) => {
+            function.has_use_strict_directive()
+        }
+        oxc_ast::ast::Argument::FunctionExpression(function) => function.has_use_strict_directive(),
+        _ => false,
+    }
+}
+
+fn statement_callback_is_strict(statement: &Statement<'_>) -> bool {
+    let Some(call) = statement_call(statement) else {
+        return false;
+    };
+    let index = if call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
+        || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+        || conditional_describe_factory(call).is_some()
+    {
+        registration_callback_index(call)
+    } else {
+        // The other supported callback traversal is Array#forEach.
+        0
+    };
+    call.arguments
+        .get(index)
+        .is_some_and(argument_has_use_strict)
+}
+
 pub(crate) fn function_body_statements_from_argument<'a>(
     arg: &'a oxc_ast::ast::Argument<'a>,
 ) -> Option<&'a oxc_allocator::Vec<'a, Statement<'a>>> {
@@ -2707,14 +4576,40 @@ pub(crate) fn qualified_test_name(describe_stack: &[String], name: &str) -> Stri
 /// Returns `None` for a fully extracted file (the negative control contract):
 /// every test-shaped call at a position the extractor visits carries a string
 /// literal title and therefore already appears in `extracted`.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "unit-test surface for files without suite factories; the analysis path calls detect_partial_test_extraction_expanded"
+    )
+)]
 pub(crate) fn detect_partial_test_extraction(
     file: &Path,
     source: &str,
     extracted: &[TypeScriptTest],
 ) -> Option<TypeScriptTestExtractionGap> {
+    detect_partial_test_extraction_expanded(file, source, extracted, None)
+}
+
+/// [`detect_partial_test_extraction`] for tests extracted with suite-factory
+/// expansion (RIPR-SPEC-0243 rule 13). Their `body_text` is cut from the
+/// expanded source, so the walk runs there: a covered factory's own
+/// registrations are skipped (the appended copies stand for them), a copy
+/// the extractor still dropped is disclosed, and its sample line is the
+/// call's.
+pub(crate) fn detect_partial_test_extraction_expanded(
+    file: &Path,
+    source: &str,
+    extracted: &[TypeScriptTest],
+    expansion: Option<&super::suite_factory::SuiteFactoryExpansion>,
+) -> Option<TypeScriptTestExtractionGap> {
+    let source = expansion.map_or(source, |expansion| expansion.source.as_str());
+    let covered = expansion.map(|expansion| expansion.covered.clone());
+    let call_lines = expansion.map(|expansion| expansion.call_lines.clone());
     // Span starts are pure string search. Compute them before the worker:
     // the parse closure is `'static` and cannot borrow `extracted`.
-    let extracted_starts = extracted_span_starts(source, extracted);
+    let extracted_starts =
+        extracted_span_starts(source, extracted, covered.as_deref().unwrap_or_default());
     let Ok(gap) = parse_on_worker(file, source, move |file, source, allocator| {
         let ret = Parser::new(allocator, source, source_type_for(file)).parse();
         if !ret.errors.is_empty() {
@@ -2722,19 +4617,24 @@ pub(crate) fn detect_partial_test_extraction(
             return None;
         }
         let imports = extract_imports_from_statements(&ret.program.body);
-        let admission = TypeScriptAdmissionContext::of_program(&ret.program.body, &imports, file);
+        let admission = TypeScriptAdmissionContext::of_program(&ret.program, &imports, file);
         let source = SourceText::new(source);
         let mut finder = UnextractedTestFinder {
             source: &source,
             extracted_starts: &extracted_starts,
+            covered: covered.as_deref().unwrap_or_default(),
             admission,
+            shadowed: Vec::new(),
             gap: None,
         };
         finder.visit_statements(&ret.program.body);
         finder.gap.map(
             |(sample_line, shape, snippet)| TypeScriptTestExtractionGap {
                 file: file.to_path_buf(),
-                sample_line,
+                sample_line: call_lines
+                    .as_deref()
+                    .and_then(|lines| super::suite_factory::call_line_in(lines, sample_line))
+                    .unwrap_or(sample_line),
                 shape,
                 snippet,
             },
@@ -2751,16 +4651,34 @@ pub(crate) fn detect_partial_test_extraction(
 /// threading span state through the public extractor signature. Extraction
 /// visits registrations in source order, so a forward watermark disambiguates
 /// identical bodies on the same line.
-fn extracted_span_starts(source: &str, extracted: &[TypeScriptTest]) -> Vec<usize> {
+fn extracted_span_starts(
+    source: &str,
+    extracted: &[TypeScriptTest],
+    covered: &[std::ops::Range<usize>],
+) -> std::collections::HashSet<usize> {
     let mut watermark = 0usize;
-    let mut starts = Vec::new();
+    // A set, not a Vec: the finder asks about every statement-position call, so
+    // a linear `contains` made this disclosure quadratic in the test count.
+    let mut starts = std::collections::HashSet::with_capacity(extracted.len());
     for test in extracted {
-        if let Some(pos) = source
-            .get(watermark..)
-            .and_then(|rest| rest.find(test.body_text.as_str()))
-        {
+        // A covered factory's own registration is never what a test was
+        // extracted from, but an expanded copy can read identically to it
+        // (only the suite title is a parameter): search past it.
+        let found = loop {
+            let Some(pos) = source
+                .get(watermark..)
+                .and_then(|rest| rest.find(test.body_text.as_str()))
+            else {
+                break None;
+            };
             let start = watermark + pos;
-            starts.push(start);
+            match covered.iter().find(|range| range.contains(&start)) {
+                Some(range) => watermark = range.end,
+                None => break Some(start),
+            }
+        };
+        if let Some(start) = found {
+            starts.insert(start);
             // The next extracted test starts strictly after this one.
             watermark = start + 1;
         }
@@ -2775,18 +4693,64 @@ fn extracted_span_starts(source: &str, extracted: &[TypeScriptTest]) -> Vec<usiz
 /// object-property subtrees are out of scope for this disclosure slice.
 struct UnextractedTestFinder<'a> {
     source: &'a SourceText<'a>,
-    extracted_starts: &'a [usize],
+    extracted_starts: &'a std::collections::HashSet<usize>,
+    /// Suite-factory declarations whose registrations the appended
+    /// expansions already stand for.
+    covered: &'a [std::ops::Range<usize>],
     admission: TypeScriptAdmissionContext,
+    /// Parameter names of the enclosing functions. A call through one is the
+    /// parameter's value, not a runner registration (`async function run({
+    /// test }) { await test(); }`).
+    shadowed: Vec<String>,
     gap: Option<(usize, &'static str, String)>,
 }
 
 impl UnextractedTestFinder<'_> {
+    fn callee_is_parameter(&self, callee: &Expression<'_>) -> bool {
+        callee_root_name(callee).is_some_and(|name| self.shadowed.iter().any(|s| s == name))
+    }
+
+    fn with_parameters(
+        &mut self,
+        params: &oxc_ast::ast::FormalParameters<'_>,
+        visit: impl FnOnce(&mut Self),
+    ) {
+        let depth = self.shadowed.len();
+        let rest = params
+            .rest
+            .iter()
+            .flat_map(|rest| rest.rest.argument.get_binding_identifiers());
+        self.shadowed.extend(
+            params
+                .items
+                .iter()
+                .flat_map(|param| param.pattern.get_binding_identifiers())
+                .chain(rest)
+                .map(|identifier| identifier.name.to_string()),
+        );
+        visit(self);
+        self.shadowed.truncate(depth);
+    }
+
     fn visit_statements(&mut self, statements: &[Statement<'_>]) {
+        // A declaration in this block can rebind a parameter's name to
+        // something else (`const test = runner`). Fail closed: the name no
+        // longer counts as a parameter inside this block.
+        let mut rebound = Vec::new();
+        collect_block_declared_names(statements, &mut rebound);
+        let outer = (!rebound.is_empty()).then(|| {
+            let outer = self.shadowed.clone();
+            self.shadowed.retain(|name| !rebound.contains(name));
+            outer
+        });
         for stmt in statements {
             if self.gap.is_some() {
-                return;
+                break;
             }
             self.visit_statement(stmt);
+        }
+        if let Some(outer) = outer {
+            self.shadowed = outer;
         }
     }
 
@@ -2827,6 +4791,7 @@ impl UnextractedTestFinder<'_> {
             Statement::TryStatement(try_stmt) => {
                 self.visit_statements(&try_stmt.block.body);
                 if self.gap.is_none()
+                    && !super::oracle::try_catch_is_unreachable(try_stmt)
                     && let Some(handler) = &try_stmt.handler
                 {
                     self.visit_statements(&handler.body.body);
@@ -2848,7 +4813,12 @@ impl UnextractedTestFinder<'_> {
                     }
                 }
             }
-            Statement::FunctionDeclaration(func) => self.visit_function(func),
+            Statement::FunctionDeclaration(func) => {
+                let span = func.span.start as usize..func.span.end as usize;
+                if !self.covered.contains(&span) {
+                    self.visit_function(func);
+                }
+            }
             Statement::ClassDeclaration(class) => self.visit_class(class),
             Statement::ExportDefaultDeclaration(export_default) => {
                 match &export_default.declaration {
@@ -2874,7 +4844,9 @@ impl UnextractedTestFinder<'_> {
 
     fn visit_function(&mut self, func: &Function<'_>) {
         if let Some(body) = &func.body {
-            self.visit_statements(&body.statements);
+            self.with_parameters(&func.params, |finder| {
+                finder.visit_statements(&body.statements);
+            });
         }
     }
 
@@ -2899,7 +4871,9 @@ impl UnextractedTestFinder<'_> {
                 self.visit_tagged_template(tagged, statement_position);
             }
             Expression::ArrowFunctionExpression(arrow) => {
-                self.visit_statements(&arrow.body.statements);
+                self.with_parameters(&arrow.params, |finder| {
+                    finder.visit_statements(&arrow.body.statements);
+                });
             }
             Expression::FunctionExpression(func) => self.visit_function(func),
             Expression::ClassExpression(class) => self.visit_class(class),
@@ -2910,6 +4884,7 @@ impl UnextractedTestFinder<'_> {
                 // with no nested test-shaped call for `visit_call` to find.
                 if statement_position
                     && let Expression::CallExpression(call) = &await_expr.argument
+                    && !self.callee_is_parameter(&call.callee)
                     && ((call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                         || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test))
                         && self
@@ -3022,7 +4997,13 @@ impl UnextractedTestFinder<'_> {
             }
             return;
         }
-        if statement_position && self.gap.is_none() {
+        // A skipped suite (`describe.skip(...)`, `describe('x', { skip: true },
+        // ...)`) registers nothing and its callback never runs, so a
+        // registration inside it is not one the extractor dropped.
+        if callee_is_skipped_describe(call) {
+            return;
+        }
+        if statement_position && self.gap.is_none() && !self.callee_is_parameter(&call.callee) {
             // Tagged-template `.each`: `` test.each`table`('name', fn) `` — the
             // tagged template sits in CALLEE position, so the call's callee is
             // not an identifier/member the extractor recognizes at all; the
@@ -3154,7 +5135,9 @@ impl UnextractedTestFinder<'_> {
                 self.visit_tagged_template(tagged, false);
             }
             Argument::ArrowFunctionExpression(arrow) => {
-                self.visit_statements(&arrow.body.statements);
+                self.with_parameters(&arrow.params, |finder| {
+                    finder.visit_statements(&arrow.body.statements);
+                });
             }
             Argument::FunctionExpression(func) => self.visit_function(func),
             Argument::ClassExpression(class) => self.visit_class(class),
@@ -3334,6 +5317,13 @@ fn find_conditional_assertion_credit(
     if sample.is_some() {
         return;
     }
+    // Statements after an unconditional exit are dead; the collector withholds
+    // their assertions, so no live conditional credit can sit there.
+    let live_len = statements
+        .iter()
+        .position(super::oracle::statement_completes_abruptly)
+        .map_or(statements.len(), |index| index + 1);
+    let statements = &statements[..live_len];
     for stmt in statements {
         match stmt {
             Statement::BlockStatement(block) => {

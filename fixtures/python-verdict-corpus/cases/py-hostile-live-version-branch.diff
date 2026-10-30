@@ -1,0 +1,12 @@
+diff --git a/hostile/versioned.py b/hostile/versioned.py
+--- a/hostile/versioned.py
++++ b/hostile/versioned.py
+@@ -3,7 +3,7 @@
+ if sys.version_info >= (3, 0):
+ 
+     def versioned():
+-        return "new"
++        return "newer"
+ 
+ else:
+ 

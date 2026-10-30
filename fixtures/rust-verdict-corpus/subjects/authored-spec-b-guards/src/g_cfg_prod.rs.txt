@@ -1,0 +1,28 @@
+//! A cfg(test) panic-guard helper sits beside a production predicate that a
+//! direct assertion pins; only the production predicate is a probe site.
+
+pub fn weight_class(n: u32) -> &'static str {
+    if n > 10 {
+        "heavy"
+    } else {
+        "light"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expect_weight(result: &str, expected: &str) {
+        if result != expected {
+            panic!("expected {expected}, got {result}");
+        }
+    }
+
+    #[test]
+    fn the_boundary_is_eleven_g_cfg_prod() {
+        expect_weight("light", "light");
+        assert_eq!(weight_class(11), "heavy");
+        assert_eq!(weight_class(10), "light");
+    }
+}

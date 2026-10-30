@@ -1,0 +1,48 @@
+{
+  "case_id": "unnum-0028-ex6-route-decorator",
+  "subject_id": "authored-py-pytest-unnum",
+  "diff": "cases/unnum-0028-ex6-route-decorator.diff",
+  "anchor": {
+    "file": "unnum/checkout_route.py",
+    "line": 18
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "side_effect_field_write",
+  "test_shape": "pytest_assert_eq_response_status_after_route_call",
+  "hard_case": "the owner is registered by a route decorator and its effect is a field write on a module-level response",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "response.status_code = 400",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_checkout_route.py::test_checkout_sets_unprocessable_status",
+        "equivalence_review": "not equivalent: the edit changes the owner's observable behavior"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`checkout` is registered with `@api.post(\"/checkout\")` (a stand-in that returns the function) and sets `response.status_code = 422`. The test calls it and pins `response.status_code == 422`; `400` fails it. RIPR-SPEC-0028 example 6: the route decorator is owner context, not arbitrary indirection, and the field write is the discriminator.",
+  "labeling_observation": {
+    "ripr_commit": "5fc9de08",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0028#6"
+  ]
+}

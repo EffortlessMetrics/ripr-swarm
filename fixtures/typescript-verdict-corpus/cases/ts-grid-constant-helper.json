@@ -1,0 +1,45 @@
+{
+  "case_id": "ts-grid-constant-helper",
+  "subject_id": "authored-ts-grid-constant",
+  "diff": "cases/ts-grid-constant-helper.diff",
+  "anchor": {
+    "file": "src/constant.ts",
+    "line": 14
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "nodetest_helper_wrapped_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "node 22.22.0 (--experimental-strip-types); node:test (built in); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return weight * 13;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "handling",
+        "equivalence_review": "not equivalent: weight 2 costs 26 instead of 24"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: constant x helper-wrapped assert. checkHandling pins 24 at weight 2.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

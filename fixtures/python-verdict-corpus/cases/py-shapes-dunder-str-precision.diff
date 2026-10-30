@@ -1,0 +1,12 @@
+diff --git a/shapes/money.py b/shapes/money.py
+--- a/shapes/money.py
++++ b/shapes/money.py
+@@ -18,7 +18,7 @@
+         return f"Money({self.cents})"
+ 
+     def __str__(self):
+-        return f"${self.cents / 100:.2f}"
++        return f"${self.cents / 100:.1f}"
+ 
+     def __bool__(self):
+         return self.cents != 0

@@ -684,10 +684,7 @@ fn outcome_from_check(
         .and_then(|value| value.as_str())
         .unwrap_or("unreported")
         .to_string();
-    let complete = check
-        .get("analysis_outcome")
-        .and_then(|outcome| outcome.get("analysis_complete"))
-        .and_then(|value| value.as_bool());
+    let complete = crate::check_document_analysis_complete(check);
     let limitations = analysis_child(check, "limitations")
         .and_then(|value| value.as_array())
         .map(|items| {
@@ -1651,30 +1648,7 @@ mod tests {
         Ok((summary, records_dir))
     }
 
-    /// The absolute worktree debug binary: tests run with cwd set to the
-    /// package directory, so the cwd-relative fixture resolution would
-    /// escape to the wrong target tree (see AGENTS.md verification bias).
-    fn worktree_binary() -> Result<String, String> {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .ok_or("xtask manifest has no repository parent")?;
-        let binary = root
-            .join("target")
-            .join("debug")
-            .join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
-        if !binary.is_file() {
-            // FIX fxVIt: resolve-only, mirroring the repo's binary-consuming
-            // test mechanism — a nested `cargo build` would contend on the
-            // build lock the outer `cargo test` holds.
-            return Err(format!(
-                "the worktree ripr debug binary is missing at `{}`; run `cargo build -p ripr` first (replay tests resolve the binary and never spawn a nested build)",
-                binary.display()
-            ));
-        }
-        std::path::absolute(&binary)
-            .map(|path| path.to_string_lossy().into_owned())
-            .map_err(|error| format!("resolve worktree ripr binary: {error}"))
-    }
+    use crate::tests::ripr_worktree_binary as worktree_binary;
 
     fn read_record(records_dir: &Path, case_id: &str) -> Result<Value, String> {
         let path = records_dir.join(format!("{}.json", stable_case_slug(case_id)));
@@ -2458,6 +2432,25 @@ mod tests {
                 }
             }
             _ => return Err("a valid complete run must claim its comparison".to_string()),
+        }
+
+        // #9010: a findings-bounded document never claims a complete comparison.
+        let mut bounded = valid_no_candidates.clone();
+        bounded["analysis_outcome"]["document_complete"] = json!(false);
+        if matches!(
+            super::outcome_from_check(&bounded, &subject),
+            super::ReplayOutcome::Complete { .. }
+        ) {
+            return Err("a bounded check document must not read as Complete".to_string());
+        }
+
+        let mut legacy_bounded = valid_no_candidates.clone();
+        legacy_bounded["run_limitations"] = json!([{"category": "limited_findings_bound"}]);
+        if matches!(
+            super::outcome_from_check(&legacy_bounded, &subject),
+            super::ReplayOutcome::Complete { .. }
+        ) {
+            return Err("a legacy bounded check document must not read as Complete".to_string());
         }
 
         let failed_analysis = json!({

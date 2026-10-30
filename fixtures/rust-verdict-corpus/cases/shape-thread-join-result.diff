@@ -1,0 +1,12 @@
+diff --git a/src/flow.rs b/src/flow.rs
+--- a/src/flow.rs
++++ b/src/flow.rs
+@@ -80,7 +80,7 @@
+ }
+ 
+ pub fn doubled_on_thread(x: u32) -> u32 {
+-    std::thread::spawn(move || x * 2).join().unwrap()
++    std::thread::spawn(move || 2 * x).join().unwrap()
+ }
+ 
+ pub fn make_adder(n: i32) -> impl Fn(i32) -> i32 {

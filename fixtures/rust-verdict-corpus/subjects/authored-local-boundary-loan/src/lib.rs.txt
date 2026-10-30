@@ -1,0 +1,54 @@
+//! Flag-selected local boundaries reached through a test helper that forwards its parameters.
+
+pub const KB: u64 = 1_000;
+pub const KIB: u64 = 1_024;
+
+pub fn tier_loan_hit(bytes: u64, si: bool) -> &'static str {
+    let unit = if si { KIB } else { KB };
+    if bytes >= unit { "unit" } else { "byte" }
+}
+
+pub fn tier_loan_blind(bytes: u64, si: bool) -> &'static str {
+    let unit = if si { KIB } else { KB };
+    if bytes >= unit { "unit" } else { "byte" }
+}
+
+pub fn tier_loan_bumped(bytes: u64, si: bool) -> &'static str {
+    let unit = if si { KIB } else { KB };
+    if bytes >= unit { "unit" } else { "byte" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expect_tier(want: &str, bytes: u64, si: bool) {
+        assert_eq!(want, tier_loan_hit(bytes, si));
+    }
+
+    fn expect_some_tier(bytes: u64, si: bool) {
+        assert!(!tier_loan_blind(bytes, si).is_empty());
+    }
+
+    fn expect_next_tier(want: &str, bytes: u64, si: bool) {
+        assert_eq!(want, tier_loan_bumped(bytes + 1, si));
+    }
+
+    #[test]
+    fn the_binary_unit_starts_at_1024() {
+        expect_tier("unit", 1_024, true);
+        expect_tier("byte", 1_023, true);
+    }
+
+    #[test]
+    fn every_input_gets_a_tier() {
+        expect_some_tier(1_024, true);
+        expect_some_tier(1_023, true);
+    }
+
+    #[test]
+    fn the_helper_adds_one_before_the_call() {
+        expect_next_tier("unit", 2_000, true);
+        expect_next_tier("byte", 100, true);
+    }
+}

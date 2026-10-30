@@ -1,0 +1,9 @@
+diff --git a/rates/table.py b/rates/table.py
+--- a/rates/table.py
++++ b/rates/table.py
+@@ -1,4 +1,4 @@
+-RATES = 5
++RATES = 6
+ 
+ def price(tier):
+     return RATES

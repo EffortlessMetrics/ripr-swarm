@@ -512,57 +512,57 @@ the #13162 `expect_response` comparison shape.
 
 ## Acceptance Examples
 
-- Accept: the `expect_response` shape above credits `exposed` for an
-  error-path/return-value seam of `expect_response` when reach, infection,
-  and propagation hold.
-- Accept: the guarded-routing form — `Err(error) if error.kind() ==
-  io::ErrorKind::InvalidData => {}` routed by `result => bail!(..)` with
-  no `Ok` arm — credits through the guard's equality pin for an
-  error-path seam (and for a return-value seam on an exact Err
-  construction, whose pin names the changed variant).
-- Accept: a return-value probe whose changed value is the success
-  payload confirms only when the Ok arm observes the unwrapped value
-  (`Ok(v) => assert_eq!(v, 3)`); a routing form with no Ok arm, or a
-  payload-ignoring `Ok(_) => {}` arm, never confirms it — the finding
-  keeps its `observation_unverified` weakness.
-- Accept: a downcast-only Err guard credits observation and names the type
-  pin, but the seam stays below `exposed`.
-- Reject: the same match naming a different callee; a `let`-bound result
-  scrutinee; a local `fn expect_response` shadow; an `Err(_)` arm; an arm
-  that only logs; a silent catch-all routing target; a diagnostic string
-  mentioning the variant; a guarded match pinning a sibling variant of
-  the changed error; a qualified scrutinee sharing the owner's bare name;
-  an Err arm whose panic fires only under an unrelated condition; an Err
-  arm whose only failure action is an unrelated `.unwrap()`; an Err arm
-  that ends in a bare `return`, `return Ok(())`, or `exit(0)`; an Err arm
-  whose only pin is a computed-but-unconsumed `let` pin; a body-predicate
-  if-form whose branches contain a successful return; a guard
-  whose downcast pin is discarded or observed only through another
-  value's `.is_ok()` or a `.map_err` conversion; a related test file that
-  imports the owner's bare name from a foreign crate; a related test
-  whose own package defines the owner callee's bare name while the owner
-  lives in another package; a guarded match whose Ok arm ignores the
-  payload (or has no Ok arm at all) offered as the discriminator for a
-  changed success value.
+1. Accept: the `expect_response` shape above credits `exposed` for an
+   error-path/return-value seam of `expect_response` when reach, infection,
+   and propagation hold.
+2. Accept: the guarded-routing form — `Err(error) if error.kind() ==
+   io::ErrorKind::InvalidData => {}` routed by `result => bail!(..)` with
+   no `Ok` arm — credits through the guard's equality pin for an
+   error-path seam (and for a return-value seam on an exact Err
+   construction, whose pin names the changed variant).
+3. Accept: a return-value probe whose changed value is the success
+   payload confirms only when the Ok arm observes the unwrapped value
+   (`Ok(v) => assert_eq!(v, 3)`); a routing form with no Ok arm, or a
+   payload-ignoring `Ok(_) => {}` arm, never confirms it — the finding
+   keeps its `observation_unverified` weakness.
+4. Accept: a downcast-only Err guard credits observation and names the type
+   pin, but the seam stays below `exposed`.
+5. Reject: the same match naming a different callee; a `let`-bound result
+   scrutinee; a local `fn expect_response` shadow; an `Err(_)` arm; an arm
+   that only logs; a silent catch-all routing target; a diagnostic string
+   mentioning the variant; a guarded match pinning a sibling variant of
+   the changed error; a qualified scrutinee sharing the owner's bare name;
+   an Err arm whose panic fires only under an unrelated condition; an Err
+   arm whose only failure action is an unrelated `.unwrap()`; an Err arm
+   that ends in a bare `return`, `return Ok(())`, or `exit(0)`; an Err arm
+   whose only pin is a computed-but-unconsumed `let` pin; a body-predicate
+   if-form whose branches contain a successful return; a guard
+   whose downcast pin is discarded or observed only through another
+   value's `.is_ok()` or a `.map_err` conversion; a related test file that
+   imports the owner's bare name from a foreign crate; a related test
+   whose own package defines the owner callee's bare name while the owner
+   lives in another package; a guarded match whose Ok arm ignores the
+   payload (or has no Ok arm at all) offered as the discriminator for a
+   changed success value.
 
-- Accept (#6673): `match withdraw(10, 20) { Ok(left) => panic!(..),
-  Err(e) => assert_eq!(e, PayError::Insufficient) }` credits the changed
-  `return Err(PayError::Insufficient)` line.
-- Reject (#6673): the same match with `Ok(_) => {}`, with a third
-  `_ => {}` arm, or with `Err(_) => {}` beside an asserting Ok arm.
-- Accept (accepted-Err form): `match withdraw(&mut wallet, 20) {
-  Ok(_) => panic!(..), Err(PayError::Insufficient) => {}, Err(other) =>
-  panic!(..) }` credits the changed `return Err(PayError::Insufficient)`
-  line.
-- Reject (accepted-Err form): the same match with a quiet Ok arm, a second
-  quiet `Err(PayError::Limit) => {}` arm, a quiet catch-all, a guarded or
-  payload accept arm, a conditional `panic!` in the `Err(other)` arm, a
-  pinned-predicate `if` in any other arm, or a conditional early `return`
-  before another arm's `panic!`. The same match whose quiet arm pins
-  the sibling `Err(PayError::Frozen)` does not credit the changed
-  `Insufficient` line: its fact text has the same shape as every other
-  guarded-match pin, so the sibling refusal that
-  `fixtures/guarded_result_match_sibling_variant` pins applies unchanged.
+6. Accept (#6673): `match withdraw(10, 20) { Ok(left) => panic!(..),
+   Err(e) => assert_eq!(e, PayError::Insufficient) }` credits the changed
+   `return Err(PayError::Insufficient)` line.
+7. Reject (#6673): the same match with `Ok(_) => {}`, with a third
+   `_ => {}` arm, or with `Err(_) => {}` beside an asserting Ok arm.
+8. Accept (accepted-Err form): `match withdraw(&mut wallet, 20) {
+   Ok(_) => panic!(..), Err(PayError::Insufficient) => {}, Err(other) =>
+   panic!(..) }` credits the changed `return Err(PayError::Insufficient)`
+   line.
+9. Reject (accepted-Err form): the same match with a quiet Ok arm, a second
+   quiet `Err(PayError::Limit) => {}` arm, a quiet catch-all, a guarded or
+   payload accept arm, a conditional `panic!` in the `Err(other)` arm, a
+   pinned-predicate `if` in any other arm, or a conditional early `return`
+   before another arm's `panic!`. The same match whose quiet arm pins
+   the sibling `Err(PayError::Frozen)` does not credit the changed
+   `Insufficient` line: its fact text has the same shape as every other
+   guarded-match pin, so the sibling refusal that
+   `fixtures/guarded_result_match_sibling_variant` pins applies unchanged.
 
 ## Test Mapping
 

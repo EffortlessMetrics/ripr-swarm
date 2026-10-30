@@ -1,7 +1,7 @@
 //! Shared flow-sink evidence row used by the human explain surface and the
 //! machine JSON evidence path.
 
-use crate::domain::FlowSinkFact;
+use crate::domain::{FlowSinkFact, FlowSinkKind};
 
 /// Evidence-row line for one flow sink, e.g. `local flow reaches returned
 /// value: amount - 10 (line 3)`.
@@ -18,6 +18,23 @@ pub(crate) fn flow_sink_evidence_line(sink: &FlowSinkFact) -> String {
             "local flow reaches {label}: {} (line {})",
             sink.text, sink.line
         )
+    }
+}
+
+/// Plain-meaning gloss for a sink kind whose label is producer vocabulary,
+/// the same way `stop_reason_meaning` glosses stop reasons (#8744). Only
+/// `Unknown` needs one: every classified kind renders as plain words
+/// ("returned value", "constructed field", "state write"), while `unknown
+/// sink` names the producer's failure to classify, not a property of the
+/// code. Human surfaces append this; the JSON evidence strings stay raw so
+/// the machine shape does not absorb prose.
+pub(crate) fn flow_sink_kind_meaning(kind: &FlowSinkKind) -> Option<&'static str> {
+    match kind {
+        FlowSinkKind::Unknown => Some(
+            "ripr could not classify where the changed value ends up; \
+             propagation confidence is limited",
+        ),
+        _ => None,
     }
 }
 
@@ -49,5 +66,19 @@ mod tests {
         let line = flow_sink_evidence_line(&sink(FlowSinkKind::Unknown, "unknown sink"));
         assert_eq!(line, "local flow reaches unknown sink (line 3)");
         assert!(!line.contains("unknown sink: unknown sink"));
+    }
+
+    #[test]
+    fn unknown_kind_carries_a_meaning_gloss() {
+        // #8744: the label names the producer's failure to classify, not a
+        // property of the code; the human surfaces append this meaning.
+        assert_eq!(
+            flow_sink_kind_meaning(&FlowSinkKind::Unknown),
+            Some(
+                "ripr could not classify where the changed value ends up; \
+                 propagation confidence is limited"
+            )
+        );
+        assert_eq!(flow_sink_kind_meaning(&FlowSinkKind::ReturnValue), None);
     }
 }

@@ -1,0 +1,55 @@
+{
+  "case_id": "idiom-helper-assert-fn",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-helper-assert-fn.diff",
+  "anchor": {
+    "file": "src/helpers.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_helper_fn_track_caller",
+  "hard_case": "The pin lives in a test-local `check` helper that wraps `assert_eq!`, not in the test body.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "price - price * percent / 10",
+        "mutated_line": "price - price * percent / 10",
+        "outcome": "tests_failed",
+        "failing_test": "helpers::tests::helper_pins_ten_percent",
+        "equivalence_review": "not equivalent: `price - (price * percent) / 100` becomes `price - price * percent / 10`"
+      },
+      {
+        "replacement": "price + price * percent / 100",
+        "mutated_line": "price + price * percent / 100",
+        "outcome": "tests_failed",
+        "failing_test": "helpers::tests::helper_pins_ten_percent",
+        "equivalence_review": "not equivalent: `price - (price * percent) / 100` becomes `price + price * percent / 100`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "helper_pins_ten_percent calls check(200, 10, 180); a tenfold discount gives 0 and adding the discount gives 220. Shape: `#[track_caller]` assertion helper.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

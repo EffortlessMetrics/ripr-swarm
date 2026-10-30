@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- `ripr doctor` now names the work its total covers beyond checks and runtime probes: language detection and the environment probe's unanalyzed-source scan, cache status, test-surface detection, and Perl preview each carry a typed segment timing, emitted as an additive optional `segments` array in `doctor --json` and eligible to win the final screen line's `slowest:` attribution. No check, status, exit behavior, or schema version changed (#8540).

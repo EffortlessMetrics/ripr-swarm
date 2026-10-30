@@ -121,8 +121,8 @@
       "stop_reasons": [],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",
-      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
-      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "recommended_next_step": "A related test already reaches the boundary input, but ripr grades its assertion as a weak check; write it as an exact-value assertion ripr can credit, for example assert_eq!(result, expected), so the old and changed behavior differ.",
+      "suggested_next_action": "A related test already reaches the boundary input, but ripr grades its assertion as a weak check; write it as an exact-value assertion ripr can credit, for example assert_eq!(result, expected), so the old and changed behavior differ.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -158,7 +158,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach discounted_total: boundary_matches_expected", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 3)", "related test tests/pricing.rs:4 boundary_matches_expected uses unknown relational check oracle: assert!(actual == expected, \"actual={actual:?}\");", "source function argument value amount = 100 at line 5", "source function argument value discount_threshold = 100 at line 5", "source assertion argument value \"actual={actual:?}\" at line 7"],
+      "evidence_path": ["reach yes: Related tests appear to reach discounted_total: boundary_matches_expected", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 3)", "related test tests/pricing.rs:4 boundary_matches_expected uses relational check oracle, not graded against this probe: assert!(actual == expected, \"actual={actual:?}\");", "source function argument value amount = 100 at line 5", "source function argument value discount_threshold = 100 at line 5", "source assertion argument value \"actual={actual:?}\" at line 7"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":3}
       ],
@@ -261,7 +261,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach discounted_total: boundary_matches_expected", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 5)", "related test tests/pricing.rs:4 boundary_matches_expected uses unknown relational check oracle: assert!(actual == expected, \"actual={actual:?}\");", "source function argument value amount = 100 at line 5", "source function argument value discount_threshold = 100 at line 5", "source assertion argument value \"actual={actual:?}\" at line 7"],
+      "evidence_path": ["reach yes: Related tests appear to reach discounted_total: boundary_matches_expected", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 5)", "related test tests/pricing.rs:4 boundary_matches_expected uses relational check oracle, not graded against this probe: assert!(actual == expected, \"actual={actual:?}\");", "source function argument value amount = 100 at line 5", "source function argument value discount_threshold = 100 at line 5", "source assertion argument value \"actual={actual:?}\" at line 7"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":5}
       ],

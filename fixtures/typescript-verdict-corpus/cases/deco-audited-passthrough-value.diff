@@ -1,0 +1,13 @@
+diff --git a/src/audited.ts b/src/audited.ts
+index 0000000..1111111 100644
+--- a/src/audited.ts
++++ b/src/audited.ts
+@@ -4,7 +4,7 @@
+   const original = descriptor.value as (...args: number[]) => number;
+   descriptor.value = function (this: unknown, ...args: number[]): number {
+     calls.push(key);
+-    return original.apply(this, args);
++    return original.apply(this, args) + 1;
+   };
+ }
+ 

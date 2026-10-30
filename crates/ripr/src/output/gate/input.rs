@@ -378,7 +378,7 @@ pub(super) fn read_baseline_impl(
                 ));
                 return BaselineIndex::default();
             }
-            if let Some(defect) = baseline_document_defect(&value) {
+            if let Some(defect) = baseline_document_defect(&value, &display_path(&input.root)) {
                 config_errors.push(format!(
                     "baseline {} is not a recognized gate baseline: {defect}",
                     display_path(path),
@@ -457,6 +457,34 @@ fn is_runtime_gap_outcome(outcome: &str) -> bool {
 /// Kind marker `ripr baseline create` writes on a gate baseline ledger.
 const GATE_BASELINE_KIND: &str = "gate_baseline";
 
+/// True only when `recorded` is positively identifiable as another
+/// repository: both it and the gate root are absolute (after normalization)
+/// and differ, or it is a non-string, non-null value. JSON null, blank and
+/// relative spellings are "unknown" and accepted: relative and absolute forms
+/// of one checkout are not comparable, and a hard failure needs positive
+/// evidence (`baseline create` writes `"root": null` for rootless decisions).
+fn foreign_absolute_root(recorded: &Value, current_root: &str) -> bool {
+    use crate::output::baseline_delta::normalize_root_for_comparison as normalize;
+    match recorded {
+        Value::Null => false,
+        Value::String(text) => {
+            let recorded = normalize(text);
+            let current = normalize(current_root);
+            is_absolute_spelling(&recorded) && is_absolute_spelling(&current) && recorded != current
+        }
+        _ => true,
+    }
+}
+
+fn is_absolute_spelling(normalized: &str) -> bool {
+    let bytes = normalized.as_bytes();
+    normalized.starts_with('/')
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] == b'/')
+}
+
 /// Identity-bearing arrays the gate indexes from a baseline file. `entries`
 /// is the `ripr baseline create` ledger shape; `decisions`, `comments`,
 /// `summary_only`, and `suppressed` are the documented compatibility shapes
@@ -476,10 +504,35 @@ const BASELINE_IDENTITY_ARRAYS: [&str; 5] = [
 /// empty baseline (every finding new) or as an unrelated document whose ids
 /// happen to be harvested. `schema_version` is not required because the
 /// documented hand-built compatibility baselines may omit it.
-fn baseline_document_defect(value: &Value) -> Option<String> {
+fn baseline_document_defect(value: &Value, current_root: &str) -> Option<String> {
     let Some(object) = value.as_object() else {
         return Some("expected a JSON object".to_string());
     };
+    // #9301: a recorded `schema_version` must be the supported one (the same
+    // refusal `ripr baseline diff` applies; unlike diff, an absent value stays
+    // accepted for hand-built compatibility baselines). The root refusal is a
+    // gate-only contract: see `foreign_absolute_root`.
+    if let Some(version) = object.get("schema_version")
+        && version.as_str() != Some(crate::output::baseline_delta::BASELINE_SCHEMA_VERSION)
+    {
+        return Some(format!(
+            "unsupported schema_version {version}; expected \"{}\"",
+            crate::output::baseline_delta::BASELINE_SCHEMA_VERSION
+        ));
+    }
+    // Every array the gate indexes is checked, not only `entries`.
+    let item_roots = BASELINE_IDENTITY_ARRAYS
+        .iter()
+        .filter_map(|field| object.get(*field).and_then(Value::as_array))
+        .flatten()
+        .filter_map(|item| item.get("root"));
+    for root in object.get("root").into_iter().chain(item_roots) {
+        if foreign_absolute_root(root, current_root) {
+            return Some(format!(
+                "baseline root {root} names a different repository than the gate root \"{current_root}\""
+            ));
+        }
+    }
     match object.get("kind") {
         Some(Value::String(kind)) if kind == GATE_BASELINE_KIND => {
             return if object.get("entries").is_some_and(Value::is_array) {
@@ -531,7 +584,25 @@ pub(super) fn baseline_index_from_value(value: &Value) -> BaselineIndex {
         collect_identity(&mut index.identities, item.pointer("/identity/source_id"));
         collect_identity(&mut index.identities, item.pointer("/identity/id"));
         collect_identity(&mut index.identities, item.pointer("/identity/dedupe_key"));
-        collect_identity(&mut index.identities, item.pointer("/identity/fallback"));
+        // Same lookup and precedence as `ripr baseline diff` (issue #1964).
+        let entry_canonical = crate::output::baseline_delta::canonical_gap_id_from_value(item);
+        match (
+            item.pointer("/identity/fallback")
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty()),
+            entry_canonical.as_deref(),
+        ) {
+            // Canonical-bearing entry: the fallback is compatibility
+            // evidence only and cannot join on its own (issue #1964).
+            (Some(fallback), Some(canonical)) => {
+                index
+                    .fallback_canonical
+                    .entry(fallback.to_string())
+                    .or_default()
+                    .insert(canonical.to_string());
+            }
+            _ => collect_identity(&mut index.identities, item.pointer("/identity/fallback")),
+        }
         collect_identity(
             &mut index.identities,
             item.pointer("/evidence_record/canonical_gap_id"),

@@ -229,6 +229,13 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         .analysis_outcome
         .as_ref()
         .filter(|outcome| !outcome.kind.is_complete());
+    // #4952: a complete outcome can still carry advisory limitations
+    // (EolOnlyChurn). Human, JSON, and SARIF disclose them; without this
+    // notice the GitHub stream would be the one surface that stays silent.
+    let complete_with_limitations = output
+        .analysis_outcome
+        .as_ref()
+        .filter(|outcome| outcome.kind.is_complete() && !outcome.limitations.is_empty());
     // #5011: an empty stream is only "clean" when nothing was left
     // unanalyzed. Run states the human and JSON surfaces disclose as NOT
     // clean (uncommitted working-tree edits, missing analysis scope,
@@ -242,8 +249,14 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             outcome,
             output.findings.is_empty(),
         ));
-    } else if output.findings.is_empty() && state_warnings.is_empty() {
-        out.push_str("::notice title=ripr::No static exposure findings found\n");
+    } else {
+        if let Some(outcome) = complete_with_limitations {
+            *per_level.entry("notice").or_default() += 1;
+            out.push_str(&complete_outcome_limitation_notice(outcome));
+        }
+        if output.findings.is_empty() && state_warnings.is_empty() {
+            out.push_str("::notice title=ripr::No static exposure findings found\n");
+        }
     }
     for warning in &state_warnings {
         *per_level.entry("warning").or_default() += 1;
@@ -275,6 +288,31 @@ pub(crate) fn render_refusal(notice: &crate::core_error::RefusalNotice) -> Strin
         notice.identity, notice.repair_route, notice.message
     );
     format!("::error title=ripr refusal::{}\n", escape_data(&text))
+}
+
+/// A complete analysis can still carry advisory limitations (EolOnlyChurn,
+/// #4952). They are disclosures, not scope reductions, so they render as a
+/// notice — and must render at all: every other surface shows them, and a
+/// GitHub stream that omits the only limitation a reviewer would see on the
+/// human report is a silent divergence.
+fn complete_outcome_limitation_notice(
+    outcome: &crate::analysis_outcome::AnalysisOutcome,
+) -> String {
+    let mut message = format!(
+        "Analysis outcome: {} (analysis complete; advisory limitation(s) follow).",
+        outcome.kind.as_str()
+    );
+    for limitation in &outcome.limitations {
+        message.push_str(&format!(
+            " Limitation: {}: {}",
+            limitation.kind.as_str(),
+            limitation.recovery.detail
+        ));
+    }
+    format!(
+        "::notice title=ripr analysis limitations::{}\n",
+        escape_data(&message)
+    )
 }
 
 /// An incomplete analysis must not read as a clean one in a PR check: the
@@ -421,11 +459,11 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
             && crate::output::analyzed_revisions::is_working_tree_read(output)
         {
             format!(
-                "The working tree has no changed tracked files against `{base}` (diff from the merge base of `{base}` and HEAD to the working tree), so there was nothing to analyze. An empty result means no tracked behavior changed against it — it does NOT mean your changes are covered."
+                "The working tree has no analyzable changed files against `{base}` (diff from the merge base of `{base}` and HEAD to the working tree), so there was nothing to analyze. Deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed and does NOT mean your changes are covered."
             )
         } else if let Some(base) = output.base.as_deref() {
             format!(
-                "`{base}...HEAD` contains no changed files, so there was nothing to analyze; the compared base was `{base}`. An empty result means no behavior changed against it — it does NOT mean your changes are covered."
+                "`{base}...HEAD` has no analyzable changed files, so there was nothing to analyze; the compared base was `{base}`. Deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed and does NOT mean your changes are covered."
             )
         } else {
             format!(
@@ -646,6 +684,7 @@ mod tests {
     #[test]
     fn render_reports_empty_findings_as_notice() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -731,7 +770,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "::warning title=ripr no analysis scope::The working tree has no changed tracked files against `origin/main`"
+                "::warning title=ripr no analysis scope::The working tree has no analyzable changed files against `origin/main`"
             ),
             "{rendered}"
         );
@@ -743,7 +782,7 @@ mod tests {
             "{committed}"
         );
         assert!(
-            committed.contains("`origin/main...HEAD` contains no changed files"),
+            committed.contains("`origin/main...HEAD` has no analyzable changed files"),
             "{committed}"
         );
     }
@@ -799,6 +838,101 @@ mod tests {
             rendered.contains(
                 "Limitation: language_scope_unsupported: Not analyzed (Go: 1): pkg/calc.go."
             ),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    /// #10520: a complete outcome can carry advisory limitations (EolOnlyChurn,
+    /// #4952). Human, JSON, and SARIF disclose them; the GitHub stream must
+    /// not be the one surface that stays silent — but as a notice, since the
+    /// limitation is advisory and the scope was fully analyzed.
+    #[test]
+    fn render_discloses_complete_outcome_advisory_limitations() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteWithFindings,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 2,
+                finding_count: 1,
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::EolOnlyChurn,
+                AnalysisStage::DiffLoad,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::Retry,
+                    "Re-run the analysis with the complete diff stream.",
+                )?,
+            )],
+        )?;
+        let mut output = output_with_unknown_finding();
+        output.analysis_outcome = Some(outcome);
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("::notice title=ripr analysis limitations::"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("eol_only_churn"), "{rendered}");
+        // Advisory, not scope-reducing: the incomplete warning must not fire.
+        assert!(
+            !rendered.contains("title=ripr analysis incomplete"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    /// #10534 review follow-up: an EOL-only run with no findings still emits
+    /// the limitation notice — the empty complete branch must not silently
+    /// drop the advisory either.
+    #[test]
+    fn render_discloses_empty_complete_outcome_advisory_limitations() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteNoFindings,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 2,
+                candidate_line_count: 2,
+                finding_count: 0,
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::EolOnlyChurn,
+                AnalysisStage::DiffLoad,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::Retry,
+                    "Re-run the analysis with the complete diff stream.",
+                )?,
+            )],
+        )?;
+        let mut output = output_with_unknown_finding();
+        output.findings = Vec::new();
+        output.analysis_outcome = Some(outcome);
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("::notice title=ripr analysis limitations::"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("eol_only_churn"), "{rendered}");
+        // Advisory, not scope-reducing: the incomplete warning must not fire.
+        assert!(
+            !rendered.contains("title=ripr analysis incomplete"),
             "{rendered}"
         );
         Ok(())
@@ -1077,6 +1211,7 @@ mod tests {
     #[test]
     fn render_uses_notice_for_exposed_and_default_message_without_stop_reason() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1085,6 +1220,7 @@ mod tests {
             base: None,
             summary: Summary::default(),
             findings: vec![Finding {
+                analysis_scope: crate::domain::AnalysisScope::Diff,
                 id: "probe:src_lib_rs:21:error_path".to_string(),
                 canonical_gap: None,
                 probe: Probe {
@@ -1154,6 +1290,7 @@ mod tests {
     #[test]
     fn render_uses_warning_annotation_for_warning_severity_findings() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1162,6 +1299,7 @@ mod tests {
             base: None,
             summary: Summary::default(),
             findings: vec![Finding {
+                analysis_scope: crate::domain::AnalysisScope::Diff,
                 id: "probe:src_lib_rs:34:weak_signal".to_string(),
                 canonical_gap: None,
                 probe: Probe {
@@ -1415,7 +1553,7 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("`main...HEAD` contains no changed files"),
+            rendered.contains("`main...HEAD` has no analyzable changed files"),
             "{rendered}"
         );
         assert!(rendered.contains("compared base was `main`"), "{rendered}");
@@ -1885,6 +2023,7 @@ mod tests {
 
     fn output_with_unknown_finding() -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1893,6 +2032,7 @@ mod tests {
             base: None,
             summary: Summary::default(),
             findings: vec![Finding {
+                analysis_scope: crate::domain::AnalysisScope::Diff,
                 id: "probe:src_lib_rs:13:static_unknown".to_string(),
                 canonical_gap: None,
                 probe: Probe {
@@ -2006,6 +2146,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
         }
         finding
@@ -2062,6 +2204,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
         finding.language = Some(LanguageId::Python);
         finding.language_status = Some(LanguageStatus::Preview);
@@ -2148,6 +2292,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
         finding.language = Some(LanguageId::Perl);
         finding.language_status = Some(LanguageStatus::Preview);
@@ -2235,6 +2381,7 @@ mod tests {
     #[test]
     fn render_normalizes_backslash_location_path_to_forward_slash() {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2243,6 +2390,7 @@ mod tests {
             base: None,
             summary: Summary::default(),
             findings: vec![Finding {
+                analysis_scope: crate::domain::AnalysisScope::Diff,
                 id: "probe:src_pricing_ts:5:predicate".to_string(),
                 canonical_gap: None,
                 probe: Probe {

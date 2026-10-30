@@ -1,0 +1,45 @@
+{
+  "case_id": "py-idioms-caplog-level",
+  "subject_id": "authored-py-pytest-idioms",
+  "diff": "cases/py-idioms-caplog-level.diff",
+  "anchor": {
+    "file": "idioms/audit.py",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "call_target",
+  "test_shape": "pytest_caplog_level_filter_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "log.info(\"low balance: %s\", balance)",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_audit.py::test_low_balance_logs_a_warning",
+        "equivalence_review": "not equivalent: the record drops below the captured level"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "caplog.at_level(WARNING) drops the info record, so the text assertion fails.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

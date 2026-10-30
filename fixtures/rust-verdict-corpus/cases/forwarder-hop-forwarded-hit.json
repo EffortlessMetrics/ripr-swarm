@@ -1,0 +1,48 @@
+{
+  "case_id": "forwarder-hop-forwarded-hit",
+  "subject_id": "authored-forwarder-hop",
+  "diff": "cases/forwarder-hop-forwarded-hit.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 17
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "exact_pin_assert",
+  "hard_case": "The integration test calls the forwarder `grow` with a receiver; the owner `try_grow` is a different method of the same impl and the only thing `grow` calls.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "wanted >= 4",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "grow_keeps_four_inline_and_spills_five",
+        "equivalence_review": "the edit itself: four now spills, so `pool.grow(4)` returns Ok(true) instead of Ok(false)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`Pool::grow` hands `self.try_grow(wanted)` back unchanged, and the test pins `pool.grow(4)` to `Ok(false)`, the boundary row. 1 of 1 listed mutants fails cargo test; the extra mutant `wanted < 4`, run by hand, fails it too. Spec cells: RIPR-SPEC-0159, RIPR-SPEC-0114.",
+  "labeling_observation": {
+    "ripr_commit": "4228803",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0159#10"
+  ]
+}

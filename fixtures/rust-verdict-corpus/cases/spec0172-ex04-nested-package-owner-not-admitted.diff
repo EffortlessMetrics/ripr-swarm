@@ -1,0 +1,8 @@
+diff --git a/crates/outer/inner/src/lib.rs b/crates/outer/inner/src/lib.rs
+--- a/crates/outer/inner/src/lib.rs
++++ b/crates/outer/inner/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn score(input: u32) -> u32 {
+-    input + input + input
++    3 * input
+ }

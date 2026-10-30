@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0186-ex05-named-local-edge",
+  "subject_id": "authored-spec0186-5",
+  "origin": "authored",
+  "anchor": "src/lib.rs:3",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "edge_value_through_named_local",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

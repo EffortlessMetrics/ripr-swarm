@@ -183,6 +183,7 @@ pub(crate) enum CommandDispatch {
     Explain,
     Context,
     Doctor,
+    Capabilities,
     Lsp,
     PrSummary,
     Annotations,
@@ -715,6 +716,11 @@ const CATALOG: &[CommandCatalogEntry] = &[
     public_top("cmd:explain", "explain", CommandDispatch::Explain),
     public_top("cmd:context", "context", CommandDispatch::Context),
     public_top("cmd:doctor", "doctor", CommandDispatch::Doctor),
+    public_top(
+        "cmd:capabilities",
+        "capabilities",
+        CommandDispatch::Capabilities,
+    ),
     public_top("cmd:lsp", "lsp", CommandDispatch::Lsp),
     public_top("cmd:cache", "cache", CommandDispatch::Cache),
     nested(

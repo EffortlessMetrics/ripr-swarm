@@ -114,6 +114,10 @@ pub(crate) struct PilotLanguageRoutes {
     /// exclusion changed the result meaning (files present but disabled);
     /// `None` renders nothing anywhere.
     pub(crate) rust_excluded_file_count: Option<usize>,
+    /// Rust files a parse limit declined (#9308). Pilot read them lexically,
+    /// so their seams are under-credited and the run is not a complete
+    /// result. Empty renders nothing anywhere.
+    pub(crate) declined_rust_files: Vec<crate::analysis::DeclinedRustFile>,
     rust_seams_present: bool,
 }
 
@@ -153,6 +157,7 @@ impl PilotLanguageRoutes {
             routes,
             unanalyzed: Vec::new(),
             rust_excluded_file_count: None,
+            declined_rust_files: Vec::new(),
             rust_seams_present,
         }
     }
@@ -183,6 +188,15 @@ impl PilotLanguageRoutes {
     /// (Rust enabled, or no Rust files) renders nothing anywhere.
     pub(crate) fn with_rust_exclusion(mut self, excluded_file_count: Option<usize>) -> Self {
         self.rust_excluded_file_count = excluded_file_count;
+        self
+    }
+
+    /// Record Rust files a parse limit declined (#9308).
+    pub(crate) fn with_declined_rust_files(
+        mut self,
+        declined: Vec<crate::analysis::DeclinedRustFile>,
+    ) -> Self {
+        self.declined_rust_files = declined;
         self
     }
 

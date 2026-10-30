@@ -98,12 +98,15 @@ receipt strength, and currentness as separate facts:
   receipt the attempt actually retained:
   - `finished_current` / `finished_historical` require a digest-bound
     attempt-local receipt whose reading shows the gap closed, split by
-    whether HEAD is still the head the after phase recorded. A moved HEAD
+    whether HEAD is still the head the after phase recorded and the
+    worktree still matches the after phase's edit-cage delta binding (the
+    binding `agent receipt` enforces). A moved HEAD or a drifted worktree
     downgrades to `finished_historical`; historical validity and current
     applicability are reported separately and the retained result is never
     presented as current proof.
   - `limited` covers a receipt that does not show the gap closed, a
-    finished attempt whose currentness cannot be read, and an awaiting
+    finished attempt whose currentness cannot be read (including an
+    unreadable or tampered delta baseline), and an awaiting
     attempt whose HEAD cannot be related to its prepared head.
   - `corrupt_or_unavailable` covers declared-but-missing, tampered, or
     unbound attempt-local terminal evidence. Status never falls back to
@@ -112,7 +115,9 @@ receipt strength, and currentness as separate facts:
     `terminal_artifacts`: any reading travels only through the one-slot
     compatibility projection, which is exactly the strength it earned.
 - `currentness` is `current`, `historical`, or `unknown`, derived from
-  HEAD alone and reported separately from the class.
+  HEAD and, for finished attempts, the worktree delta binding (not the
+  trusted-head-surface or packet-binding checks `agent receipt` also runs),
+  and reported separately from the class.
 - `next_action` is one exact next or recovery command: the after phase's
   retained command for `awaiting_edit`; a typed restart or head-recovery
   command for `stale`, `incomparable`, `failed`, `prepared`, gap-open
@@ -124,9 +129,52 @@ receipt strength, and currentness as separate facts:
   manifest's own limitations/non-claims, and the store resolver's
   non-claims.
 
-The command remains read-only end to end: it runs no analysis, executes
-nothing a returned route names, writes no file, and introduces no
-execution or mutation authority.
+- A restart or fresh-start route is named only when the shared repair
+  eligibility gate admits the seam (#8766): `repair_refusal_reason` (the gate
+  `ripr repair` applies), the recommended-test edit-target predicate and the
+  held-inline-target check (the checks the before phase applies to the
+  packet). The before phase's dirty-premise check over the rest of the
+  tracked tree is state-dependent and is not re-derived; the start itself
+  still re-checks it. This covers `next_action`, the canonical decision, the
+  per-attempt `repair_attempts[].command` (`null` while withheld), the
+  multi-seam list, the legacy seam start and the recorded pilot start. When it
+  refuses the seam, for example `repair route not ready` after the input is
+  covered but the producer-owned discriminator fact is missing, `next_action`
+  carries no restart (it is absent, except that an attempt whose prepared head
+  moved keeps its recovery `next_action`: step `repair_attempt_after`, reset
+  the head, then rerun the after phase), the canonical decision does not
+  recommend a restart, and the
+  claim boundary (selected attempt) or a `repair_start_withheld` warning
+  (inventory) states that the remaining work is strengthening the oracle of
+  the named related test by hand. `ripr continue` applies the same gate to
+  its start-fresh tails. When the gate cannot decide (unreadable config, an
+  inventory that cannot be built, a seam no longer in the inventory because
+  seam ids move with the code, or any seam while the inventory is truncated,
+  because a start from a truncated inventory is refused) the gate fails
+  closed: the start is withheld, never printed, and the same warning kind or
+  claim-boundary line says the seam could not be verified and names `ripr
+  check` to re-read the seams. When several seams are open and the gate
+  refuses all but one, that one is selected with the normal restart command
+  and the others keep their own withheld warnings.
+
+Text that already embeds a new-attempt recipe is also kept free of it while
+the gate refuses the seam: a recorded after-phase refusal reason and a
+receipt's recommended action in status output (only the `--phase before`
+clause is replaced by "a new attempt is not offered"; undo guidance, later
+sentences and every `--phase after` rerun stay), `diverged_recovery.restart`
+(`null` in the attempt-status JSON; `reset` is kept), and the after phase's own
+narration, which `ripr continue` runs in process. Non-goal: the final error
+`ripr agent repair --phase after` gives for an attempt that already ended
+names its own restart and is not gated. `start_withheld` on a status attempt is
+an internal marker and not part of the JSON output.
+
+The command remains read-only end to end: it executes nothing a returned
+route names, writes no workflow or attempt file, and introduces no execution
+or mutation authority. Its only analysis is the seam-eligibility re-check
+above, run solely before a restart route would be named. That check loads
+the seam inventory once per read, which may refresh the repo-seam-facts cache
+under `target/`; it never writes under `target/ripr/workflow/` or the attempt
+store.
 
 ## Required Evidence
 
@@ -198,6 +246,8 @@ execution or mutation authority.
 - `crates/ripr/tests/cli_smoke.rs::agent_status_attempt_never_reconstructs_a_tampered_result`
 - `crates/ripr/tests/cli_smoke.rs::agent_status_attempt_reports_legacy_manifest_at_compatibility_strength`
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_status_help_names_the_selected_store_and_exact_attempt_selection`
+- `crates/ripr/tests/task_first_facade.rs::status_and_continue_do_not_offer_a_start_the_repair_gate_refuses`
+- `crates/ripr/tests/task_first_facade.rs::status_keeps_the_restart_when_the_repair_gate_admits_the_seam`
 
 ## Implementation Mapping
 

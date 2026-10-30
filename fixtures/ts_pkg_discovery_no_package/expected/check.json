@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_utils.ts:typescript_preview:a1ef3b36",
+      "canonical_gap_id": "gap:typescript:typescript_preview:a1ef3b36",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -68,7 +69,9 @@
           "oracle_kind": "exact_value",
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -150,6 +153,7 @@
     },
     {
       "id": "probe:src_utils.ts:typescript_preview:ec94efc4",
+      "canonical_gap_id": "gap:typescript:typescript_preview:ec94efc4",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -206,7 +210,9 @@
           "oracle_kind": "exact_value",
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {

@@ -34,6 +34,12 @@ impl std::fmt::Display for InputState {
 // They use plain Rust types (no serde derives) because xtask does not
 // take a serde dep; rendering to JSON is done via serde_json::json! in json.rs.
 
+/// Rendered/total finding counts of a findings-bounded check document.
+pub(super) struct FindingsBoundDisclosure {
+    pub(super) rendered: Option<u64>,
+    pub(super) total: Option<u64>,
+}
+
 /// Top-level in-memory representation of the PR evidence summary.
 pub struct PrEvidenceSummaryJson {
     /// `"complete"`, `"incomplete"`, `"seam_limit_applied"`,
@@ -42,6 +48,11 @@ pub struct PrEvidenceSummaryJson {
     /// Typed producer outcome, when the diff report supplied one.
     pub(super) analysis_complete: Option<bool>,
     pub(super) analysis_outcome: Option<Value>,
+    /// Findings-bounded check document disclosure (#9010), from either the
+    /// `analysis_outcome.document_complete` flag or the legacy
+    /// `run_limitations[]` bound. Counts are `None` when the document did not
+    /// carry them; they are never rendered as zero.
+    pub(super) findings_bound: Option<FindingsBoundDisclosure>,
     pub(super) changed_surfaces: U64OrNotAvailable,
     pub(super) gaps: GapCounts,
     pub(super) limitations: LimitationsOrNotAvailable,

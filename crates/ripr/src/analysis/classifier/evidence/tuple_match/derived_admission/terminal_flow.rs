@@ -474,4 +474,551 @@ mod tests {
             Some(vec!["request".to_string()])
         );
     }
+
+    const MATCH: &str = r#"match (request_identity_matches, task_identity_matches) {
+                (true, false) => "request",
+                (false, true) => "task",
+                _ => "both",
+            }"#;
+
+    const HEADER: &str = "fn terminalize_proof(task_id: &str, plan_status: &str, receipts: &[ProofReceipt], proof_request_ids: &BTreeMap<String, Vec<String>>, receipt_request_ids: &BTreeMap<String, Vec<String>>) -> Result<(String, String, Vec<String>, Vec<String>)>";
+
+    fn owner_body() -> String {
+        TERMINAL_BODY.replace("__tuple_relation", MATCH)
+    }
+
+    fn owner_source(prelude: &str, header: &str, body: &str) -> String {
+        format!("{prelude}\n{header} {body}\n")
+    }
+
+    /// Outer `None` means the source did not parse to one named owner function.
+    fn owner_outcome(source: &str) -> Option<Option<String>> {
+        let root = parsed(source)?;
+        let function = named_function(&root, "terminalize_proof")?;
+        Some(owner_match(&function).map(|found| found.syntax().text().to_string()))
+    }
+
+    fn owner_admitted(source: &str) -> bool {
+        matches!(owner_outcome(source), Some(Some(_)))
+    }
+
+    fn owner_refused(source: &str) -> bool {
+        matches!(owner_outcome(source), Some(None))
+    }
+
+    fn replaced(source: &str, from: &str, to: &str) -> String {
+        assert!(source.contains(from), "fixture must contain {from:?}");
+        assert_ne!(from, to);
+        source.replacen(from, to, 1)
+    }
+
+    #[test]
+    fn owner_match_admits_canonical_body_and_returns_the_single_match() {
+        let source = owner_source("use std::collections::BTreeSet;", HEADER, &owner_body());
+        let outcome = owner_outcome(&source);
+        assert!(outcome.is_some(), "fixture must parse");
+        assert_eq!(
+            outcome.flatten().as_deref(),
+            Some(MATCH),
+            "the selected match is exactly the masked hole"
+        );
+        // Trivia-only respelling still admits.
+        let respelled = replaced(
+            &source,
+            "request_ids.sort();",
+            "request_ids /* note */ . sort ( ) ;",
+        );
+        assert!(owner_admitted(&respelled));
+        // `use crate::*;` is the one admitted glob import.
+        let glob = owner_source("use crate::*;", HEADER, &owner_body());
+        assert!(owner_admitted(&glob));
+    }
+
+    #[test]
+    fn owner_match_refuses_replacement_items_and_imports() {
+        let control = owner_source("", HEADER, &owner_body());
+        assert!(owner_admitted(&control), "positive control");
+        for prelude in [
+            "macro_rules! m { () => {}; }",
+            "extern crate alloc;",
+            "fn Some(value: u8) -> u8 { value }",
+            "fn Ok(value: u8) -> u8 { value }",
+            "use std::fmt::format;",
+            "use other::Some;",
+            "use other::Ok;",
+            "use other::*;",
+            "use other::{a, *};",
+        ] {
+            let source = owner_source(prelude, HEADER, &owner_body());
+            assert!(owner_refused(&source), "{prelude}");
+        }
+        for prelude in ["use std::collections::BTreeSet;", "fn helper() {}"] {
+            let source = owner_source(prelude, HEADER, &owner_body());
+            assert!(owner_admitted(&source), "{prelude}");
+        }
+    }
+
+    #[test]
+    fn owner_match_refuses_changed_signatures() {
+        let body = owner_body();
+        assert!(owner_admitted(&owner_source("", HEADER, &body)));
+        let variants = [
+            replaced(
+                HEADER,
+                "fn terminalize_proof",
+                "#[inline] fn terminalize_proof",
+            ),
+            replaced(HEADER, "fn terminalize_proof", "async fn terminalize_proof"),
+            replaced(
+                HEADER,
+                ", receipt_request_ids: &BTreeMap<String, Vec<String>>",
+                "",
+            ),
+            replaced(HEADER, "plan_status: &str", "plan_status: &String"),
+            replaced(HEADER, "task_id: &str", "mut task_id: &str"),
+            replaced(
+                HEADER,
+                "receipts: &[ProofReceipt]",
+                "rcpts: &[ProofReceipt]",
+            ),
+            replaced(
+                HEADER,
+                "receipts: &[ProofReceipt]",
+                "receipts: Vec<ProofReceipt>",
+            ),
+            replaced(
+                HEADER,
+                "receipt_request_ids: &BTreeMap<String, Vec<String>>",
+                "receipt_request_ids: &BTreeMap<String, Vec<u8>>",
+            ),
+            replaced(
+                HEADER,
+                "task_id: &str, plan_status: &str",
+                "plan_status: &str, task_id: &str",
+            ),
+        ];
+        for header in variants {
+            let source = owner_source("", &header, &body);
+            assert!(owner_refused(&source), "{header}");
+        }
+    }
+
+    #[test]
+    fn owner_match_refuses_changed_bodies() {
+        let body = owner_body();
+        assert!(owner_admitted(&owner_source("", HEADER, &body)));
+        let variants = [
+            replaced(
+                &body,
+                "request_ids.sort();",
+                "request_ids.sort();\n    request_ids.clear();",
+            ),
+            replaced(&body, "request_ids.dedup();", ""),
+            replaced(&body, "let mut matching", "let matching"),
+            replaced(&body, "\"planned\"", "\"queued\""),
+            replaced(&body, "receipt.id == task_id", "receipt.id != task_id"),
+            replaced(
+                &body,
+                "Some((receipt, relation))",
+                "Some((receipt, \"fixed\"))",
+            ),
+            replaced(
+                &body,
+                "Ok((status, reason, request_ids, receipt_ids))\n}",
+                "Ok((status, reason, receipt_ids, request_ids))\n}",
+            ),
+            replaced(&body, "join={relation}", "join={}"),
+            // A second match makes the selected hole ambiguous.
+            replaced(
+                &body,
+                "let status = if results.len() == 1",
+                "let _extra = match results.len() { _ => 0 };\n    let status = if results.len() == 1",
+            ),
+            // No match leaves nothing to select.
+            replaced(&body, MATCH, "\"request\""),
+        ];
+        for variant in variants {
+            let source = owner_source("", HEADER, &variant);
+            assert!(owner_refused(&source), "{variant}");
+        }
+    }
+
+    const ORACLE: &str = r#"use std::collections::BTreeMap;
+#[test]
+fn oracle() {
+    let receipts = vec![ProofReceipt { id: "r1".to_string(), result: "head_passed".to_string() }];
+    let proof_request_ids = BTreeMap::from([("t1".to_string(), vec!["q2".to_string(), "q1".to_string(), "q1".to_string()])]);
+    let receipt_request_ids = BTreeMap::from([("r1".to_string(), vec!["q1".to_string()])]);
+    let terminal = terminalize_proof("t1", "planned", &receipts, &proof_request_ids, &receipt_request_ids).unwrap();
+    assert_eq!(terminal.0, "head_passed");
+    assert_eq!(terminal.1, "r1=head_passed join=request");
+    assert_eq!(terminal.2, vec!["q1".to_string(), "q2".to_string()]);
+    assert_eq!(terminal.3, vec!["r1".to_string()]);
+}
+"#;
+
+    const LINE0: &str = "    assert_eq!(terminal.0, \"head_passed\");\n";
+    const LINE1: &str = "    assert_eq!(terminal.1, \"r1=head_passed join=request\");\n";
+    const LINE2: &str =
+        "    assert_eq!(terminal.2, vec![\"q1\".to_string(), \"q2\".to_string()]);\n";
+    const LINE3: &str = "    assert_eq!(terminal.3, vec![\"r1\".to_string()]);\n";
+
+    /// Outer `None` means the source did not parse to one named oracle function.
+    fn observed(source: &str, result: &str, selected: Option<[bool; 2]>) -> Option<Option<bool>> {
+        let root = parsed(source)?;
+        let function = named_function(&root, "oracle")?;
+        Some(projection_observes(
+            &function,
+            "terminalize_proof",
+            result,
+            selected,
+        ))
+    }
+
+    const REQUEST: Option<[bool; 2]> = Some([true, false]);
+
+    #[test]
+    fn projection_observes_admits_exact_request_oracle_with_sorted_requests() {
+        assert_eq!(observed(ORACLE, "request", REQUEST), Some(Some(true)));
+        assert_eq!(observed(ORACLE, "request", None), Some(Some(true)));
+        // Operand order of each equality is irrelevant.
+        let flipped = replaced(
+            ORACLE,
+            "assert_eq!(terminal.0, \"head_passed\");",
+            "assert_eq!(\"head_passed\", terminal.0);",
+        );
+        assert_eq!(observed(&flipped, "request", REQUEST), Some(Some(true)));
+        // Statement order of the four assertions is irrelevant.
+        let reordered = replaced(
+            &replaced(ORACLE, LINE0, ""),
+            LINE3,
+            &format!("{LINE3}{LINE0}"),
+        );
+        assert_eq!(observed(&reordered, "request", REQUEST), Some(Some(true)));
+    }
+
+    #[test]
+    fn projection_observes_refuses_wrong_selected_arm_and_wrong_join_label() {
+        assert_eq!(observed(ORACLE, "request", REQUEST), Some(Some(true)));
+        // The oracle's inputs select the request arm, not another arm.
+        for selected in [[false, true], [true, true], [false, false]] {
+            assert_eq!(
+                observed(ORACLE, "request", Some(selected)),
+                Some(Some(false)),
+                "{selected:?}"
+            );
+        }
+        // A claimed join label the oracle does not literally pin is unobserved.
+        assert_eq!(observed(ORACLE, "task", REQUEST), Some(Some(false)));
+        assert_eq!(observed(ORACLE, "", REQUEST), Some(Some(false)));
+    }
+
+    #[test]
+    fn projection_observes_task_identity_arm_and_unjoined_input() {
+        let task = replaced(
+            ORACLE,
+            "terminalize_proof(\"t1\"",
+            "terminalize_proof(\"r1\"",
+        );
+        let task = replaced(
+            &task,
+            "(\"t1\".to_string(), vec![",
+            "(\"r1\".to_string(), vec![",
+        );
+        let task = replaced(
+            &task,
+            "(\"r1\".to_string(), vec![\"q1\".to_string()])]);\n    let terminal",
+            "(\"r1\".to_string(), vec![\"q9\".to_string()])]);\n    let terminal",
+        );
+        let task = replaced(&task, "join=request", "join=task");
+        assert_eq!(
+            observed(&task, "task", Some([false, true])),
+            Some(Some(true))
+        );
+        assert_eq!(observed(&task, "task", REQUEST), Some(Some(false)));
+        assert_eq!(
+            observed(&task, "request", Some([false, true])),
+            Some(Some(false))
+        );
+
+        // Neither identity joins the receipt: nothing may be claimed.
+        let unjoined = replaced(
+            ORACLE,
+            "(\"r1\".to_string(), vec![\"q1\".to_string()])",
+            "(\"r1\".to_string(), vec![\"q9\".to_string()])",
+        );
+        assert_eq!(observed(&unjoined, "request", None), Some(Some(false)));
+        assert_eq!(observed(&unjoined, "none", None), Some(Some(false)));
+    }
+
+    #[test]
+    fn projection_observes_requires_every_field_exactly_once() {
+        assert_eq!(observed(ORACLE, "request", REQUEST), Some(Some(true)));
+        for (line, other) in [
+            (LINE0, LINE1),
+            (LINE1, LINE2),
+            (LINE2, LINE3),
+            (LINE3, LINE0),
+        ] {
+            // Dropping an assertion leaves the fixed eight-statement shape.
+            let dropped = replaced(ORACLE, line, "");
+            assert_eq!(observed(&dropped, "request", REQUEST), Some(None), "{line}");
+            // Duplicating another field leaves this field unobserved and the
+            // duplicate is refused rather than double counted.
+            let duplicated = replaced(ORACLE, line, other);
+            assert_eq!(
+                observed(&duplicated, "request", REQUEST),
+                Some(Some(false)),
+                "{line}"
+            );
+        }
+        // An assertion on a wrong literal, a non-literal, or another field
+        // pins nothing.
+        for (line, wrong) in [
+            (LINE0, "    assert_eq!(terminal.0, \"head_failed\");\n"),
+            (
+                LINE1,
+                "    assert_eq!(terminal.1, \"r1=head_passed join=task\");\n",
+            ),
+            (
+                LINE2,
+                "    assert_eq!(terminal.2, vec![\"q2\".to_string(), \"q1\".to_string()]);\n",
+            ),
+            (
+                LINE2,
+                "    assert_eq!(terminal.2, vec![\"q1\".to_string()]);\n",
+            ),
+            (
+                LINE3,
+                "    assert_eq!(terminal.3, vec![\"r2\".to_string()]);\n",
+            ),
+            (LINE3, "    assert_eq!(terminal.3, ids);\n"),
+            (LINE0, "    assert_eq!(terminal.4, \"head_passed\");\n"),
+            (LINE0, "    assert_eq!(terminal.0, terminal.0);\n"),
+        ] {
+            let source = replaced(ORACLE, line, wrong);
+            assert_eq!(
+                observed(&source, "request", REQUEST),
+                Some(Some(false)),
+                "{wrong}"
+            );
+        }
+    }
+
+    #[test]
+    fn projection_observes_refuses_unsupported_oracle_shapes() {
+        assert_eq!(observed(ORACLE, "request", REQUEST), Some(Some(true)));
+        let variants = [
+            (
+                "no map import",
+                replaced(ORACLE, "use std::collections::BTreeMap;\n", ""),
+            ),
+            (
+                "other import",
+                replaced(ORACLE, "std::collections::BTreeMap", "other::BTreeMap"),
+            ),
+            ("no test attr", replaced(ORACLE, "#[test]\n", "")),
+            (
+                "ignored test",
+                replaced(ORACLE, "#[test]\n", "#[test]\n#[ignore]\n"),
+            ),
+            ("async", replaced(ORACLE, "fn oracle", "async fn oracle")),
+            ("param", replaced(ORACLE, "fn oracle()", "fn oracle(x: u8)")),
+            (
+                "tail expr",
+                replaced(ORACLE, LINE3, &format!("{LINE3}    terminal.0\n")),
+            ),
+            (
+                "extra statement",
+                replaced(ORACLE, LINE3, &format!("{LINE3}    let _ = 1;\n")),
+            ),
+            (
+                "wrong owner",
+                replaced(ORACLE, "= terminalize_proof(", "= other_owner("),
+            ),
+            (
+                "qualified owner",
+                replaced(
+                    ORACLE,
+                    "= terminalize_proof(",
+                    "= crate::terminalize_proof(",
+                ),
+            ),
+            (
+                "not unwrap",
+                replaced(ORACLE, ".unwrap();", ".unwrap_or_default();"),
+            ),
+            ("expect", replaced(ORACLE, ".unwrap();", ".expect(\"x\");")),
+            (
+                "non-terminal result",
+                replaced(
+                    ORACLE,
+                    "head_passed\".to_string() }",
+                    "head_failed\".to_string() }",
+                ),
+            ),
+            (
+                "plan status",
+                replaced(ORACLE, "\"planned\"", "\"executed\""),
+            ),
+            (
+                "cloned receipts",
+                replaced(ORACLE, "&receipts,", "&receipts.clone(),"),
+            ),
+            (
+                "swapped maps",
+                replaced(
+                    ORACLE,
+                    "&proof_request_ids, &receipt_request_ids",
+                    "&receipt_request_ids, &proof_request_ids",
+                ),
+            ),
+            (
+                "four args",
+                replaced(ORACLE, ", &receipt_request_ids).unwrap", ").unwrap"),
+            ),
+            (
+                "terminal shadows input",
+                replaced(ORACLE, "let terminal =", "let receipts ="),
+            ),
+            (
+                "mutable binding",
+                replaced(ORACLE, "let receipts =", "let mut receipts ="),
+            ),
+            (
+                "wrong input binding",
+                replaced(ORACLE, "let receipts =", "let rcpts ="),
+            ),
+            (
+                "assert_ne",
+                replaced(ORACLE, "assert_eq!(terminal.0", "assert_ne!(terminal.0"),
+            ),
+            (
+                "non-macro statement",
+                replaced(ORACLE, LINE0, "    terminal.0;\n"),
+            ),
+            (
+                "attribute in body",
+                replaced(ORACLE, LINE0, &format!("    #[allow(unused)]\n{LINE0}")),
+            ),
+        ];
+        for (name, source) in variants {
+            assert_eq!(observed(&source, "request", REQUEST), Some(None), "{name}");
+        }
+    }
+
+    #[test]
+    fn projection_observes_refuses_unsupported_literals() {
+        assert_eq!(observed(ORACLE, "request", REQUEST), Some(Some(true)));
+        let receipt_literal =
+            "ProofReceipt { id: \"r1\".to_string(), result: \"head_passed\".to_string() }";
+        let variants = [
+            (
+                "two receipts",
+                replaced(
+                    ORACLE,
+                    receipt_literal,
+                    &format!("{receipt_literal}, {receipt_literal}"),
+                ),
+            ),
+            (
+                "extra field",
+                replaced(
+                    ORACLE,
+                    "result: \"head_passed\"",
+                    "other: \"x\".to_string(), result: \"head_passed\"",
+                ),
+            ),
+            (
+                "duplicate field",
+                replaced(
+                    ORACLE,
+                    "result: \"head_passed\".to_string()",
+                    "id: \"r2\".to_string(), result: \"head_passed\".to_string()",
+                ),
+            ),
+            (
+                "spread",
+                replaced(
+                    ORACLE,
+                    "result: \"head_passed\".to_string()",
+                    "result: \"head_passed\".to_string(), ..base",
+                ),
+            ),
+            (
+                "other type",
+                replaced(ORACLE, "ProofReceipt {", "OtherReceipt {"),
+            ),
+            (
+                "escaped id",
+                replaced(ORACLE, "id: \"r1\"", "id: \"r\\\"1\""),
+            ),
+            (
+                "non-literal key",
+                replaced(
+                    ORACLE,
+                    "(\"t1\".to_string(), vec![",
+                    "(task.to_string(), vec![",
+                ),
+            ),
+            (
+                "duplicate keys",
+                replaced(
+                    ORACLE,
+                    "BTreeMap::from([(\"r1\".to_string(), vec![\"q1\".to_string()])])",
+                    "BTreeMap::from([(\"r1\".to_string(), vec![]), (\"r1\".to_string(), vec![\"q1\".to_string()])])",
+                ),
+            ),
+            (
+                "other map",
+                replaced(ORACLE, "BTreeMap::from([(\"r1\"", "HashMap::from([(\"r1\""),
+            ),
+            (
+                "vec not macro",
+                replaced(ORACLE, "vec![\"q1\".to_string()])])", "Vec::new())])"),
+            ),
+        ];
+        for (name, source) in variants {
+            assert_eq!(observed(&source, "request", REQUEST), Some(None), "{name}");
+        }
+        // Unquotable identity values cannot be re-spelled as expectations.
+        assert_eq!(quoted("plain value"), Some("\"plain value\"".to_string()));
+        for value in ["a\"b", "a\\b", "a\nb", "a\rb"] {
+            assert_eq!(quoted(value), None, "{value:?}");
+        }
+        assert_eq!(
+            string_vector(&["a".to_string(), "b".to_string()]),
+            Some("vec![\"a\".to_string(),\"b\".to_string()]".to_string())
+        );
+        assert_eq!(string_vector(&[]), Some("vec![]".to_string()));
+        assert_eq!(string_vector(&["a\"b".to_string()]), None);
+    }
+
+    #[test]
+    fn literal_helpers_refuse_non_literal_shapes() {
+        for (source, strings_ok) in [
+            (r#"vec!["a".to_string(), "b".to_string()]"#, true),
+            (r#"vec![]"#, true),
+            (r#"vec!["a".to_string(); 2]"#, false),
+            (r#"vec!["a"]"#, false),
+            (r#"vec![name.to_string()]"#, false),
+            (r#"vec!["a".to_string(1)]"#, false),
+            (r#"vec!["a\"b".to_string()]"#, false),
+            (r#"vec!("a".to_string())"#, false),
+            (r#"["a".to_string()]"#, false),
+        ] {
+            assert!(expression(source).is_some(), "control must parse: {source}");
+            let found = expression(source).and_then(|value| strings(&value));
+            assert_eq!(found.is_some(), strings_ok, "{source}");
+        }
+        assert_eq!(
+            expression(r#"vec!["a".to_string(), "b".to_string()]"#)
+                .and_then(|value| strings(&value)),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
+        let same_tokens = expression("a . b").and_then(|value| same(&value, "a.b"));
+        assert_eq!(same_tokens, Some(true));
+        let other = expression("a.b").and_then(|value| same(&value, "a.c"));
+        assert_eq!(other, Some(false));
+    }
 }

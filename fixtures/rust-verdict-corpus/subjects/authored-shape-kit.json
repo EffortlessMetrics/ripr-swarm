@@ -1,0 +1,37 @@
+{
+  "subject_id": "authored-shape-kit",
+  "origin": "authored",
+  "version_label": "authored 2026-10-22 for language shapes (operators, traits, generics, control flow, async) and hostile source forms",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "f7aeac4e9aae80d51266a9da171222b16e34f02dba2408f299a260d7120e0fa4"
+    },
+    {
+      "path": "src/asyncs.rs",
+      "sha256": "eba6a8c8483d9960af7209aecc897cc55c0cab87e0f947f408c37942b5345475"
+    },
+    {
+      "path": "src/flow.rs",
+      "sha256": "d12999f872a7824be0f5711aec101f5f47353e4ad8fe885d05e98987a6df140c"
+    },
+    {
+      "path": "src/hostile.rs",
+      "sha256": "1956303eaa669346d7dd85b18ca0d129d6630e7c5c7f1adcfdd43b4e43e91e5e"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "3b8c4e59cb26d106e25327a2f083425acca9a2b56e81b1f7bb0215dc6937f536"
+    },
+    {
+      "path": "src/ops.rs",
+      "sha256": "38c532e462d00716c72f098e383e10b93d6777c6f49e2793966d1721adcb5272"
+    },
+    {
+      "path": "src/traits.rs",
+      "sha256": "f5c967d70d616e33f199a88366d3ca10e822194e32466cc78a9461ce8c398d24"
+    }
+  ]
+}

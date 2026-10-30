@@ -1,0 +1,20 @@
+pub struct Order { log: Vec<u32> }
+impl Order {
+    pub fn new() -> Self { Self { log: Vec::new() } }
+    pub fn add(&mut self, qty: u32) {
+        self.log.push(qty);
+    }
+    pub fn reset_to(&mut self, values: &[u32]) { self.log = values.to_vec(); }
+    pub fn entries(&self) -> &[u32] { &self.log }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    #[should_panic]
+    fn observes_entries() {
+        let mut o = Order::new();
+        o.add(3);
+        assert_eq!(o.entries(), &[99]);
+    }
+}

@@ -1,0 +1,12 @@
+diff --git a/src/hostile.rs b/src/hostile.rs
+--- a/src/hostile.rs
++++ b/src/hostile.rs
+@@ -4,7 +4,7 @@
+ }
+ 
+ pub fn quoted_only(x: u32) -> u32 {
+-    x + 2
++    2 + x
+ }
+ 
+ pub fn r#match(x: u32) -> u32 {

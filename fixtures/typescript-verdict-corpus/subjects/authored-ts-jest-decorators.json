@@ -1,0 +1,57 @@
+{
+  "subject_id": "authored-ts-jest-decorators",
+  "origin": "authored",
+  "version_label": "authored@2026-10-22",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "jest.config.js",
+      "sha256": "06ffef8b53b4cb850f7bf2691d6fe2f3ad3bce674d2aa636ad1e29dcd22152a5"
+    },
+    {
+      "path": "package.json",
+      "sha256": "e66a900a5d95f3bf67bca3dfd2b1a4bbe76d79ba3efcec20e94e07decc2bb8d6"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/audited.ts",
+      "sha256": "d9b173f54e2ef8bfac8809af35fdd5b5e92f30e5e5c56bf22623be28813e0c21"
+    },
+    {
+      "path": "src/memoize.ts",
+      "sha256": "e2e583cd26881b6be3333cc277e00378b80ffe1e1414ec5fd1f3ca328485768e"
+    },
+    {
+      "path": "src/minimum.ts",
+      "sha256": "5cce077b67be235e7d1715605f9105b3d9ff4ba9454c8292c18f9434195731b0"
+    },
+    {
+      "path": "src/sealed.ts",
+      "sha256": "9dcf8c4547740d3ea6577bf07770b751616f99535cabb22166bf8e46c61745ad"
+    },
+    {
+      "path": "test/audited.test.ts",
+      "sha256": "7473bcb926da5b35b2c00a59b397c96820bc80ab308b8c2f333836bcf482ab7b"
+    },
+    {
+      "path": "test/memoize.test.ts",
+      "sha256": "83f46b82c9a9fdd0bb0e39ed392e2a7963eb6ff5c989e3908ed9f5678b7393b5"
+    },
+    {
+      "path": "test/minimum.test.ts",
+      "sha256": "7c5b6192b8624183c0ff50bb179a192c1a4533bf212c7bfd8f0966539ca59252"
+    },
+    {
+      "path": "test/sealed.test.ts",
+      "sha256": "f175dec9b6c4ae5b3572c11faafce2ef1d5e012a24b198a1bbd9121bd23cc7f3"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "e5ac4b33bda3524f07e8fe33af71cb49ea828b17996348b3b6959ae2a4614b79"
+    }
+  ]
+}

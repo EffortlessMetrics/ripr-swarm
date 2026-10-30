@@ -20,8 +20,8 @@ fn write_policy_report_files(
 ) -> Result<(), String> {
     write_text_file(out, rendered_json)?;
     write_text_file(out_md, rendered_md)?;
-    println!("Wrote {}", out.display());
-    println!("Wrote {}", out_md.display());
+    println!("Wrote {}", output::path::human_path(out));
+    println!("Wrote {}", output::path::human_path(out_md));
     Ok(())
 }
 

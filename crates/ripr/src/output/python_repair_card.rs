@@ -1,3 +1,4 @@
+use crate::domain::language_capability::{CapabilityFamily, family_established_for_any_framework};
 use crate::domain::{ExposureClass, Finding, LanguageId, ProbeFamily, RelatedTest};
 use serde_json::{Map, Value, json};
 
@@ -31,6 +32,18 @@ pub(crate) struct PythonRepairCard {
 pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> {
     if finding.language != Some(LanguageId::Python) || finding.class != ExposureClass::WeaklyExposed
     {
+        return None;
+    }
+    // Capability gate (#5531): repo-mode Python findings are shaped like
+    // diff-mode ones, but the capability table registers Python
+    // `repair_routing` for diff mode only (absent repo cell = `not_proven`),
+    // so a repo-scoped finding never becomes a repair card.
+    let mode = finding.analysis_mode()?;
+    if !family_established_for_any_framework(
+        LanguageId::Python,
+        mode,
+        CapabilityFamily::RepairRouting,
+    ) {
         return None;
     }
     // A deleted or moved line is base-side evidence, never a repair target
@@ -153,7 +166,7 @@ fn changed_behavior(finding: &Finding, behavior_kind: &str) -> String {
         .trim();
     format!(
         "{behavior_kind} changed at {}:{}: `{expression}`",
-        finding.probe.location.file.display(),
+        crate::output::path::display_path(&finding.probe.location.file),
         finding.probe.location.line
     )
 }
@@ -166,7 +179,7 @@ fn current_test_evidence(test: &RelatedTest) -> String {
         .unwrap_or_default();
     format!(
         "{}:{} {} currently has oracle_strength={}, oracle_kind={}{}",
-        test.file.display(),
+        crate::output::path::display_path(&test.file),
         test.line,
         test.name,
         test.oracle_strength.as_str(),

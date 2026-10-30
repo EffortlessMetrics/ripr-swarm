@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-7976-ordinary-assertion",
+  "origin": "authored",
+  "version_label": "authored 2026-10-19; paired guard evidence for #7976 / #8866",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "d3fd5adfc2824dfcd32c187003817570ea86e2f3b8b30780aa9ab678909221f1"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "f8ed7f1c798c807d4d4ad0477c6c0359fe307209cd025d9d68cbe0dbdbd10cb0"
+    }
+  ]
+}

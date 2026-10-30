@@ -27,6 +27,16 @@ counts would be accidental.
 
 ## Behavior
 
+Actual Rust match arms carry parser-owned geometry from the pattern start
+through the complete arm body and optional trailing comma (#5905). The
+`=>` token remains the identity and internal display anchor; the `match`
+keyword shape remains span-less. Macro token-tree arrows and unavailable
+parser geometry never receive fabricated spans. Repo-seams schema 0.3 and
+repo-exposure schema 0.5 emit `line` as the span start line when a span is
+available, so multiline patterns have coherent coordinates. Span-less
+entries retain their display line. Existing source-line change ranking and
+unique-innermost/ambiguous finding ownership remain separate consumers.
+
 `ripr` should be able to inventory a repository and emit a seam catalog where
 each seam carries:
 
@@ -71,6 +81,24 @@ except that a bare local accumulator update (`count += f(x);`) is not one
 The seam inventory should be deterministic: two runs over the same source tree
 with the same analyzer version and configuration must produce the same seam IDs
 in the same order.
+
+When competing methods need receiver identity, a compact impl type name does
+not establish the module of a qualified initializer or type annotation
+(#8782). `foreign::Type { .. }`, `foreign::Type(..)`,
+`foreign::Type::new(..)` and `let x: foreign::Type = ..` remain unresolved
+in that matcher. Rust lexical whitespace, including non-ASCII line separators
+and direction marks, and raw identifiers cannot erase the qualifier.
+Bare type heads and enum variants retain their existing bounded handling;
+an independent supported local call can still establish the relation.
+Bare generic annotations retain function-pointer, associated-type and
+const-expression arguments; punctuation inside those arguments cannot truncate
+the type or hide a qualified trailing path.
+Owner-aware direct call paths keep their existing authority. Only the
+conventional constructors `Type::new(..)`, `Type::default()` and
+`Type::from(..)` read as that type; `new_*`, `from_*` and `with_*` spellings
+are a naming convention, not a return type, and stay unresolved (#8782). This
+rule adds no general type resolution, factory-return inference, unique-name
+receiver proof or borrowed-helper context expansion.
 
 When the analyzed root is the repository root, repo automation and fixture data
 are outside the product seam surface. The walker excludes `xtask/` and the
@@ -123,6 +151,49 @@ cannot make the private owner strongly gripped. General type resolution,
 parameter/field flow and cross-file helper receiver inference remain outside
 this bounded admission. The five retained corpus accuracy losses keep their
 runtime truth and false-actionable accounting.
+
+### Bounded Rust module motion
+
+Moving a free function from its parent module to an ordinary inline child or
+file-backed child must preserve the semantic evidence of an accessible direct
+observer (#4680). A same-named sibling must not become that owner. An explicit
+import with an incompatible asserted return value must retain the existing
+semantic contradiction. This contract does not make location-bearing seam or
+symbol IDs invariant: their file, owner path and coordinates deliberately change.
+A source snapshot identity changes with source motion, but identical source trees
+under different absolute roots must produce the same portable identity.
+
+A current indexed observer in a manifest-certified default `src/lib.rs` or
+`src/main.rs` remains `InlineUnit` when its owner moves to another file. Discovery
+uses the observer's target kind: `autobins = false` does not disable a default
+library, and `autolib = false` does not disable a default binary. A disabled
+corresponding target, malformed discovery flag, moved/custom target or arbitrary
+`src/*.rs` file does not gain this default-root authority. Existing cross-file
+fallback classification remains unchanged outside the certified roots. Repair
+target selection and rendered repair cards consume that indexed target identity.
+
+Ordinary private-child visibility can disprove a direct observer relation: a
+parent observer cannot call its child's private function. Descendant observers
+and accessible `pub(super)`/`pub(crate)` functions retain their existing evidence.
+The cross-file veto requires a certified default root, one ordinary module edge
+and an exact declaration. Unknown attributes, `#[path]`, includes and unresolved
+placement do not gain a new visibility verdict. An independent, already-admitted
+helper witness survives the direct-relation veto; fallback affinity alone must
+not restore the disproven relation.
+
+Full evidence carries the indexed test target. Compact evidence intentionally
+omits target details and preserves the five stage states and contradiction count.
+Classified full and compact cache generations change with these semantics.
+Persisted entries also bind the producing analyzer's source identity and compiled
+language feature set. Equal numeric generations do not authorize reuse between
+different repair builds or language configurations. Admission checks that identity
+inside file-fact envelopes, classified envelopes, shard manifests and individual
+shards, even if old bytes are copied into a current key's location. A matching
+current entry remains reusable; old schema generations still invalidate
+independently of analyzer identity.
+Local binding/shadowing and duplicate-import residuals remain separate open work
+on #4680; these controls do not establish general extraction invariance or the
+closure of follow-on #4681 through #4683.
 
 ### Stable Seam ID Rules
 
@@ -187,6 +258,31 @@ value), weak discriminate evidence or a missing-discriminator hint does not
 produce `weakly_gripped`; the seam classifies `activation_unknown` and keeps
 its missing-discriminator guidance. A seam with established activation and
 the same evidence stays `weakly_gripped`.
+
+Repository activation and equality pairing read a whole decimal integer
+argument with a primitive integer suffix (`100i32`, `-100i64`, `1_00u32`)
+through the same literal-value reader used by diff boundaries. The source
+argument keeps its explicit type; only the observed value is normalized.
+This admission requires a complete digit/underscore token with a recognized
+suffix, with unary minus allowed only for signed types. It does not scan a
+numeric prefix from a cast, method, range, exponent or computed expression.
+Ordinary typed assertions and the admitted proptest singleton property use
+the same repository evidence path. Newly admitted typed ordinary rows must
+also pass the existing free-owner binding authority, including raw-name,
+module, type, import and competing-definition checks, before observed-value
+emission and equality pairing (including identical-text arguments).
+Ordinary associated/receiver owners retain their prior identical-argument-text
+equality pairing after the existing call-kind projection. That compatibility
+does not admit new typed scalar values for nonfree owners: different argument
+text still requires the free-owner authority before using the added reader.
+Every receipt-backed property candidate passes that authority before any
+evidence stage, including value-insensitive direct-call activation. An unused
+`Just` parameter cannot bypass it through literal-only call arguments.
+The older unsuffixed ordinary rows and general resolver are unchanged. An
+off-boundary value, opaque input or shadowed library name cannot borrow the exact
+boundary's strong grade.
+Full, sharded and compact classified cache generations change with this
+reader; old classifications cannot satisfy a warm read (#10839).
 
 ### Static-Language Boundaries
 
@@ -324,6 +420,12 @@ discriminator remains missing, and which assertion upgrade would improve the
 seam when the current shape is broad, smoke-only, or unknown. These semantics
 do not change `oracle_kind`, `oracle_strength`, relation confidence, or static
 classification; they make the existing oracle facts actionable.
+
+A standard-crate glob that is a direct item of an inline module is resolved
+against that module's own items only, so `mod core { pub use core::*; }` does
+not shadow the real root and no longer makes every assertion macro ambiguous
+workspace-wide; a binding of the root name in that module, or an item-position
+macro call that may emit one, keeps the whole-file refusal.
 
 ### Constructor-field observation linkage
 

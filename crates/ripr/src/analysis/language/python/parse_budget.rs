@@ -278,6 +278,11 @@ fn scan_bytes(
     let mut index = 0usize;
     let mut mode = ScanMode::Code;
     let mut depth = 0usize;
+    // Bracket depth when the open string began. Brackets inside a string
+    // literal are counted while it is open (so a deep literal still declines),
+    // but a literal cannot leave a bracket open for the code after it, so the
+    // depth returns here when the string closes.
+    let mut string_base = 0usize;
     let mut tree = TreeEstimate::new();
     if field_nesting > 0 {
         tree.line_start = false;
@@ -350,6 +355,7 @@ fn scan_bytes(
                         {
                             return Some(Exceeded::Tree);
                         }
+                        depth = string_base;
                         mode = ScanMode::Code;
                         index += closing;
                         continue;
@@ -415,6 +421,7 @@ fn scan_bytes(
                         && bytes[index + 1] == byte
                         && bytes[index + 2] == byte;
                     let (raw, format) = string_prefix(bytes, index);
+                    string_base = depth;
                     mode = ScanMode::String {
                         quote: byte,
                         triple,
@@ -891,6 +898,27 @@ mod tests {
         raw.push_str(&nested(MAX_PYTHON_PARSE_NESTING_DEPTH + 1));
         if nesting_budget_reason(&raw).is_none() {
             return Err("a raw string must not swallow the following call".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unbalanced_brackets_in_separate_strings_do_not_accumulate() -> Result<(), String> {
+        let rows = "    (\"\\x1b[1mx\", \"\\x1b[0m\"),\n".repeat(MAX_PYTHON_PARSE_NESTING_DEPTH);
+        let table = format!("TABLE = [\n{rows}]\n");
+        if let Some(reason) = nesting_budget_reason(&table) {
+            return Err(format!(
+                "string literals must not leave brackets open for the file: {reason}"
+            ));
+        }
+        let tripled = format!("TABLE = [\n{}]\n", "    \"\"\"[[[\"\"\",\n".repeat(200));
+        if let Some(reason) = nesting_budget_reason(&tripled) {
+            return Err(format!("triple-quoted brackets accumulated: {reason}"));
+        }
+        let mut real = format!("TABLE = [\n{rows}]\nx = ");
+        real.push_str(&nested(MAX_PYTHON_PARSE_NESTING_DEPTH + 1));
+        if nesting_budget_reason(&real).is_none() {
+            return Err("real nesting after string literals must still decline".to_string());
         }
         Ok(())
     }

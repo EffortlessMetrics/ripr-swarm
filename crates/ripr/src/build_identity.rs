@@ -42,16 +42,38 @@ const SOURCE_DIGEST: &str = env!("RIPR_BUILD_SOURCE_DIGEST");
 /// commit that describes its code, so it is identified by the digest
 /// `build.rs` takes of its sources. Without that digest the identity is
 /// unique to this process and nothing persisted is reused.
+/// Compiled language features are a separate semantic input: two binaries
+/// built from identical sources can expose different analysis producers.
+/// They must not share persisted facts even when every schema version agrees.
 pub(crate) fn cache_identity() -> &'static str {
     static IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     IDENTITY.get_or_init(|| {
-        render_cache_identity(
+        let source_identity = render_cache_identity(
             env!("CARGO_PKG_VERSION"),
             commit(),
             commit_dirty(),
             (!SOURCE_DIGEST.is_empty()).then_some(SOURCE_DIGEST),
+        );
+        with_analysis_features(
+            source_identity,
+            [
+                cfg!(feature = "lang-rust"),
+                cfg!(feature = "lang-typescript"),
+                cfg!(feature = "lang-python"),
+                cfg!(feature = "lang-perl"),
+            ],
         )
     })
+}
+
+fn with_analysis_features(identity: String, [rust, typescript, python, perl]: [bool; 4]) -> String {
+    format!(
+        "{identity}+languages:rust={},typescript={},python={},perl={}",
+        u8::from(rust),
+        u8::from(typescript),
+        u8::from(python),
+        u8::from(perl),
+    )
 }
 
 fn render_cache_identity(
@@ -159,6 +181,62 @@ mod tests {
                 SOURCE_DIGEST.len() == 16
                     && SOURCE_DIGEST.bytes().all(|byte| byte.is_ascii_hexdigit()),
                 "malformed source digest {SOURCE_DIGEST:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_analysis_feature_set_has_a_distinct_cache_identity() {
+        // Keep the source and schema identities fixed while challenging all
+        // feature sets, including default versus default + lang-perl.
+        for source in [
+            render_cache_identity("0.11.0", Some(SHA), false, None),
+            render_cache_identity("0.11.0", Some(SHA), true, Some("00000000000000aa")),
+            render_cache_identity("0.11.0", None, false, Some("00000000000000aa")),
+        ] {
+            let mut identities = std::collections::BTreeSet::new();
+            for bits in 0u8..16 {
+                let identity = with_analysis_features(
+                    source.clone(),
+                    [bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0],
+                );
+                assert_ne!(
+                    identity, source,
+                    "pre-feature identities must cold-recompute"
+                );
+                assert!(
+                    identities.insert(identity),
+                    "feature set {bits} aliases another"
+                );
+            }
+            assert_eq!(identities.len(), 16);
+        }
+        assert_eq!(
+            with_analysis_features("same-source".to_owned(), [true, true, true, false]),
+            "same-source+languages:rust=1,typescript=1,python=1,perl=0"
+        );
+        assert_eq!(
+            with_analysis_features("same-source".to_owned(), [true, true, true, true]),
+            "same-source+languages:rust=1,typescript=1,python=1,perl=1"
+        );
+    }
+
+    #[test]
+    fn live_cache_identity_records_the_compiled_analysis_features() {
+        let identity = cache_identity();
+        for (enabled, present, absent) in [
+            (cfg!(feature = "lang-rust"), "rust=1", "rust=0"),
+            (
+                cfg!(feature = "lang-typescript"),
+                "typescript=1",
+                "typescript=0",
+            ),
+            (cfg!(feature = "lang-python"), "python=1", "python=0"),
+            (cfg!(feature = "lang-perl"), "perl=1", "perl=0"),
+        ] {
+            assert!(
+                identity.contains(if enabled { present } else { absent }),
+                "{identity}"
             );
         }
     }

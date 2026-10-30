@@ -1,0 +1,22 @@
+{
+  "case_id": "py-conjuncts-and-exact-owner",
+  "subject_id": "authored-py-pytest-conjuncts",
+  "origin": "authored",
+  "anchor": "rates/core.py:2",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_and_exact_owner_conjunct",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

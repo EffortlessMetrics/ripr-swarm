@@ -1,0 +1,9 @@
+diff --git a/shapes/ctx.py b/shapes/ctx.py
+--- a/shapes/ctx.py
++++ b/shapes/ctx.py
+@@ -11,4 +11,4 @@
+ 
+     def __exit__(self, *exc):
+         self.events.append("exit")
+-        return False
++        return True

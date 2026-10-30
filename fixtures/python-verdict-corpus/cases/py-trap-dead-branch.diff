@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -2,7 +2,7 @@
+ 
+ 
+ def dead_branch(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def live_branch(a, b):

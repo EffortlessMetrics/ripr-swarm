@@ -39,6 +39,27 @@ Amendment (#3027): the pair token originally collapsed every mixed pair into
 `crates/ripr/src/agent/artifact.rs`; `dirty_worktree` stays reserved for
 per-artifact evidence.
 
+Amendment (#9103): diff-scoped check findings are a second verify subject.
+`ripr check --format check-findings-json` renders the unbounded `check
+--format json` document with the same `artifact` envelope (`kind:
+"check_findings"`, `analysis.format: "check-findings-json"`, matching
+`analysis.command`). `agent verify` and `agent receipt` select the validator
+from the declared kind, and both kinds run the one identity, commitment and
+Git-provenance validator, so the findings kind is not a weaker twin: a
+hand-edited, unenveloped, foreign-root, incomparable, or reversed snapshot is
+rejected exactly as a repo-exposure snapshot is. The findings kind adds two
+fail-closed requirements, because a gap's absence is what reads as "closed":
+`analysis_outcome.analysis_complete` must be `true`, and the findings array
+must not be budget-bounded (`document_complete` must not be `false`; the
+producer never bounds this format), and the run must not be a partitioned
+diff (`analysis_scope`) or carry run limitations. The identity pins mode and
+base, not the diff, so absence of a gap is never closure evidence by itself;
+gap-bound consumers must require the gap present and `exposed`. Gaps are keyed by canonical gap id (the
+producer-stated `canonical_gap_id`, or the TypeScript identity derived from
+the content-addressed finding id), which is how movement is compared. The
+analysis format is part of the input identity, so a findings artifact and a
+repo-exposure artifact are never comparable to each other.
+
 This is an integrity/currentness boundary, not a signature system and not
 runtime mutation proof. Signature, command execution, and receipt issuance
 remain separate follow-up contracts under #1941.

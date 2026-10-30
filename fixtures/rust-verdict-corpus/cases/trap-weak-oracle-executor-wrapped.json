@@ -1,0 +1,58 @@
+{
+  "case_id": "trap-weak-oracle-executor-wrapped",
+  "subject_id": "authored-weak-oracle-kit",
+  "diff": "cases/trap-weak-oracle-executor-wrapped.diff",
+  "anchor": {
+    "file": "src/executors.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "executor_wrapped_call_weak_assertion",
+  "hard_case": "The owner is an async fn driven by a block_on helper, and the only assertion is `v > 0`, which holds for every mutant. A withheld gap (static_unknown) here would hide a real weak test.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 3",
+        "mutated_line": "x * 3",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `2 * x` with `x * 3`, which changes the result, but the only assertion, `v > 0` on `block_on(scale(2))`, still holds"
+      },
+      {
+        "replacement": "x + 2",
+        "mutated_line": "x + 2",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `2 * x` with `x + 2`, which changes the result, but the only assertion, `v > 0` on `block_on(scale(2))`, still holds"
+      },
+      {
+        "replacement": "x / 2",
+        "mutated_line": "x / 2",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `2 * x` with `x / 2`, which changes the result, but the only assertion, `v > 0` on `block_on(scale(2))`, still holds"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "scaled_value_is_positive polls scale(2) to completion and asserts only v > 0; x * 3, x + 2 and x / 2 all give a positive value. The executor wrap is not a reason to withhold the gap because the assertion could not notice the change however the owner is reached.",
+  "labeling_observation": {
+    "ripr_commit": "50042a2",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

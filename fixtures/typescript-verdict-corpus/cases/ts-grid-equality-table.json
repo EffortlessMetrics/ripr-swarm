@@ -1,0 +1,59 @@
+{
+  "case_id": "ts-grid-equality-table",
+  "subject_id": "authored-ts-grid-equality",
+  "diff": "cases/ts-grid-equality-table.diff",
+  "anchor": {
+    "file": "src/equality.ts",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_equality",
+  "test_shape": "nodetest_table_loop",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "node 22.22.0 (--experimental-strip-types); node:test (built in); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return 6 !== day % 7;",
+        "mutated_line": "return 6 !== day % 7;",
+        "outcome": "tests_failed",
+        "failing_test": "saturday table",
+        "equivalence_review": "not equivalent: flips or fixes the equality result"
+      },
+      {
+        "replacement": "return true;",
+        "mutated_line": "return true;",
+        "outcome": "tests_failed",
+        "failing_test": "saturday table",
+        "equivalence_review": "not equivalent: flips or fixes the equality result"
+      },
+      {
+        "replacement": "return false;",
+        "mutated_line": "return false;",
+        "outcome": "tests_failed",
+        "failing_test": "saturday table",
+        "equivalence_review": "not equivalent: flips or fixes the equality result"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: equality x table loop with rows on both sides of day 6 mod 7.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

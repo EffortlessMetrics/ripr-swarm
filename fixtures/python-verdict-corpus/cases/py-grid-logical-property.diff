@@ -1,0 +1,12 @@
+diff --git a/grid_logical/core.py b/grid_logical/core.py
+--- a/grid_logical/core.py
++++ b/grid_logical/core.py
+@@ -10,7 +10,7 @@
+ 
+ 
+ def can_enter(has_ticket, banned):
+-    return has_ticket and not banned
++    return not banned and has_ticket
+ 
+ 
+ def is_visible(hidden):

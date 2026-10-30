@@ -1,0 +1,48 @@
+{
+  "case_id": "forwarder-hop-std-named-owner-type",
+  "subject_id": "authored-forwarder-hop",
+  "diff": "cases/forwarder-hop-std-named-owner-type.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 145
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "exact_pin_assert",
+  "hard_case": "The forwarder is named `insert`, like `HashSet::insert`, but the test builds a `Gate` and calls its own `insert` at the boundary rows.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "wanted >= 4",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "gate_insert_pins_the_boundary",
+        "equivalence_review": "the edit itself: four now shuts, so `gate.insert(4)` returns Ok(true) instead of Ok(false)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`Gate::insert` hands `self.try_shut(wanted)` back unchanged and the test builds a `Gate` with `Gate::default()`, so the receiver is the owner's own type despite the std-like name. 1 of 1 listed mutants fails cargo test; the extra mutant `wanted < 4`, run by hand, fails it too. Spec cells: RIPR-SPEC-0159.",
+  "labeling_observation": {
+    "ripr_commit": "4228803",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0159#10"
+  ]
+}

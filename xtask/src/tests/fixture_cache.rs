@@ -114,11 +114,12 @@ impl Case {
             &format!("root: {relative}/input"),
             1,
         )?;
-        // The #8729 refusal advisory embeds the root once more through the
-        // same repair-command owner (`run \`ripr repair <item> --root
-        // <cwd>/fixtures/.../input\`...`), so the input binding occurs three
-        // times in the authored human.txt; the patch binding is untouched.
-        for (suffix, count) in [("input", 3), ("diff.patch", 2)] {
+        // The authored human.txt binds the input root twice (the explain and
+        // context drill-ins). Its not-ready refusal advisory names the missing
+        // evidence and the rerun instead of embedding a `ripr repair --root`
+        // command (#9244), so it adds no third binding; the patch binding is
+        // untouched.
+        for (suffix, count) in [("input", 2), ("diff.patch", 2)] {
             case.rebind(
                 repo,
                 "expected/human.txt",
@@ -295,9 +296,11 @@ fn fixture_cache_process_child() -> Result<(), String> {
         .ok_or("child fixture needs name")?;
     let cache = crate::fixture_cache_dir(name)?;
     let run = crate::run_fixture(&fixture)?;
+    let violations = run.comparison_violations_for_tests();
     assert!(
-        run.comparisons_all_match(),
-        "owned fixture must retain its authored goldens"
+        violations.is_empty(),
+        "owned fixture must retain its authored goldens:\n{}",
+        violations.join("\n")
     );
     assert!(
         !snapshot(&cache)?.is_empty(),

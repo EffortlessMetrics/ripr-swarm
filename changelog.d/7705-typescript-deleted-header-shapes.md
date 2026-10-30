@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- TypeScript and JavaScript: three rarer deleted-line owner headers are now recognised, so a type-only header edit keeps the deleted body line as base-side evidence on the live owner instead of dropping it: a typed binding whose type is a generic function with a type-parameter default (`const f: <T = string>(a: T) => void = …`), an anonymous default export (`export default function (`, `export default (x) => {`), and a class field named `get` or `set` (`get = (id) => {`). Base-side records stay out of counts, gates, cards and diagnostics (#7705).

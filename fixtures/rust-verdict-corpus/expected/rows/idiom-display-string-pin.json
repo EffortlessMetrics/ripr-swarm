@@ -1,0 +1,22 @@
+{
+  "case_id": "idiom-display-string-pin",
+  "subject_id": "authored-idiom-kit",
+  "origin": "authored",
+  "anchor": "src/display.rs:7",
+  "behavior_family": "side_effect",
+  "test_shape": "display_to_string_exact",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

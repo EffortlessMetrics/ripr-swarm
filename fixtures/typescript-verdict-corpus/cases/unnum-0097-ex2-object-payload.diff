@@ -1,0 +1,11 @@
+diff --git a/src/parserCode.ts b/src/parserCode.ts
+--- a/src/parserCode.ts
++++ b/src/parserCode.ts
+@@ -1,6 +1,6 @@
+ export function parseUserCode(input: string): string {
+   if (input === "") {
+-    throw { code: "EMPTY_INPUT" };
++    throw { code: "EMPTY" };
+   }
+   return input;
+ }

@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_receipt.ts:typescript_preview:eb6f83d9",
+      "canonical_gap_id": "gap:typescript:typescript_preview:eb6f83d9",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -69,7 +70,9 @@
           "oracle_kind": "exact_value",
           "oracle": "assert.strictEqual(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {

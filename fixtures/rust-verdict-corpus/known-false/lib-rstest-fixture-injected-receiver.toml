@@ -1,0 +1,3 @@
+case = "lib-rstest-fixture-injected-receiver"
+issue = 8782
+reason = "The bounded inherent-receiver rule cannot establish an rstest-injected receiver, so a discriminating test is reported as a gap (#7415, #8782)."

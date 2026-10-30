@@ -23,7 +23,7 @@
 
 use crate::core_error::CoreError;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,6 +45,7 @@ pub(crate) struct CommittedSourceOverlay {
     /// Root-relative, `/`-separated path → `HEAD` bytes, or `None` when the
     /// path is not a regular file at `HEAD` (absent, symlink, or gitlink).
     entries: BTreeMap<String, Option<Vec<u8>>>,
+    unsupported_head: BTreeSet<String>,
     /// Git-ignored paths an adapter routes, and git-ignored directories.
     /// Neither exists at `HEAD`, but discovery walks the disk without
     /// `.gitignore`, so both read as absent unless tracked.
@@ -121,10 +122,24 @@ impl CommittedSourceOverlay {
     /// output layer names them instead of letting a result read as covering
     /// them; the exclusion itself is unchanged.
     pub(crate) fn ignored_source_paths(&self) -> Vec<String> {
-        let mut out: BTreeSet<String> = self.ignored.files.iter().cloned().collect();
+        let mut out: BTreeSet<String> = self
+            .ignored
+            .files
+            .iter()
+            .filter(|path| super::language::route(Path::new(path)).is_some())
+            .filter(|path| !is_cargo_build_output(&self.root, path))
+            .cloned()
+            .collect();
+        let directories: Vec<String> = self
+            .ignored
+            .directories
+            .iter()
+            .filter(|path| !is_cargo_build_output(&self.root, path))
+            .cloned()
+            .collect();
         out.extend(expand_ignored_directories(
             &self.root,
-            &self.ignored.directories,
+            &directories,
             &self.ignored.tracked_within,
         ));
         out.into_iter().collect()
@@ -136,6 +151,19 @@ impl CommittedSourceOverlay {
     pub(crate) fn committed_paths_missing_on_disk(&self) -> Vec<String> {
         self.entries
             .iter()
+            .filter(|(path, _)| super::language::route(Path::new(path)).is_some())
+            .filter(|(_, bytes)| bytes.is_some())
+            .filter(|(path, _)| !self.root.join(path.as_str()).exists())
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+
+    /// Missing HEAD inputs needed to make the Rust workspace listing complete.
+    /// Cargo manifests are authority inputs, but are not source-disclosure paths.
+    fn committed_workspace_paths_missing_on_disk(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter(|(path, _)| path.ends_with(".rs") || path.ends_with("Cargo.toml"))
             .filter(|(_, bytes)| bytes.is_some())
             .filter(|(path, _)| !self.root.join(path.as_str()).exists())
             .map(|(path, _)| path.clone())
@@ -166,6 +194,7 @@ impl CommittedSourceOverlay {
             ignored: IgnoredPaths::default(),
             untracked: BTreeSet::new(),
             snapshot_inputs: BTreeSet::new(),
+            unsupported_head: BTreeSet::new(),
             entries: entries
                 .into_iter()
                 .map(|(path, bytes)| (path.to_string(), bytes.map(<[u8]>::to_vec)))
@@ -275,17 +304,16 @@ pub(crate) fn current_overlay() -> Option<Arc<CommittedSourceOverlay>> {
     CURRENT_OVERLAY.with(|slot| slot.borrow().clone())
 }
 
-/// Root-relative paths the installed overlay serves from `HEAD` although the
-/// working tree lacks them; empty without an overlay for `root`. A caller
-/// that lists the working tree adds these to see the committed file set.
-pub(crate) fn committed_paths_missing_on_disk(root: &Path) -> Vec<String> {
+/// Missing committed Rust files and manifests that make a working-tree
+/// workspace listing incomplete; empty without an overlay for `root`.
+pub(crate) fn committed_workspace_paths_missing_on_disk(root: &Path) -> Vec<String> {
     CURRENT_OVERLAY.with(|slot| {
         slot.borrow()
             .as_ref()
             .filter(|overlay| {
                 overlay.root == root || overlay.canonical_root.as_deref() == Some(root)
             })
-            .map(|overlay| overlay.committed_paths_missing_on_disk())
+            .map(|overlay| overlay.committed_workspace_paths_missing_on_disk())
             .unwrap_or_default()
     })
 }
@@ -302,6 +330,26 @@ pub(crate) fn lookup(root: &Path, relative: &Path) -> CommittedSourceRead {
     })
 }
 
+/// An ignored directory alone does not establish that an absent authority
+/// file changed. Explicit overlay entries (including unsupported HEAD object
+/// types) and filesystem errors remain unknown, not absence.
+pub(crate) fn ignored_authority_file_is_absent(root: &Path, relative: &Path) -> bool {
+    CURRENT_OVERLAY.with(|slot| {
+        let borrowed = slot.borrow();
+        let Some(overlay) = borrowed.as_ref() else {
+            return false;
+        };
+        let Some(key) = normalized_key(relative) else {
+            return false;
+        };
+        overlay.serves(root)
+            && !overlay.entries.contains_key(&key)
+            && overlay.ignored.contains(&key)
+            && std::fs::symlink_metadata(root.join(relative))
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    })
+}
+
 /// `true` when the installed overlay for `root` records a snapshot input
 /// (RIPR-SPEC-0258) in `directory` that differs from `HEAD`, or `directory`
 /// sits in an ignored directory. Without an overlay the working tree matches
@@ -314,6 +362,62 @@ pub(crate) fn snapshot_inputs_differ_in(root: &Path, directory: &Path) -> bool {
     })
 }
 
+/// Root-relative `/`-separated paths of every tracked `*.snap` file under
+/// `root`, from one `ls-files` call, or `None` when the repository cannot
+/// answer (no repository, the tool unavailable, over the output limit). A
+/// `--worktree` run installs no overlay, so a `.snap` file the working tree
+/// holds but the repository does not track (untracked or ignored) is a local
+/// file CI never sees (#7708); this list lets the snapshot reader tell.
+/// `None` means "unknown", and the caller keeps the working-tree read it
+/// always did.
+pub(crate) fn tracked_snapshot_files(root: &Path) -> Option<HashSet<String>> {
+    // An inherited repository selector would make `ls-files` answer for
+    // another repository, and a `.git` entry that git does not accept as this
+    // directory's own (a stub, a damaged one) would make it answer for a
+    // parent. Either is "unknown", never "untracked".
+    if [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+    ]
+    .iter()
+    .any(|name| std::env::var_os(name).is_some())
+    {
+        return None;
+    }
+    let canonical = root.canonicalize().ok()?;
+    // The nearest `.git` entry on the path must be the work tree git itself
+    // found; otherwise git skipped a stub and answered for an outer one.
+    let nearest = canonical
+        .ancestors()
+        .find(|directory| directory.join(".git").exists())?;
+    if crate::git::discovered_work_tree_toplevel(&canonical, Duration::from_secs(30)).as_deref()
+        != Some(nearest)
+    {
+        return None;
+    }
+    let listing = git_bytes(root, &["ls-files", "-z", "--", "."], None).ok()?;
+    let tracked: Vec<&str> = listing
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .filter_map(|path| std::str::from_utf8(path).ok())
+        .collect();
+    // A repository that tracks nothing under `root` (a scratch copy inside an
+    // ignored directory, a repository with nothing staged yet) cannot say
+    // which files CI would see: unknown, not "untracked".
+    if tracked.is_empty() {
+        return None;
+    }
+    Some(
+        tracked
+            .into_iter()
+            .filter(|path| path.ends_with(".snap"))
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
 /// Read `root.join(relative)` as source bytes: committed bytes for a dirty
 /// path, `Ok(None)` for a dirty path with no content at `HEAD`, and the
 /// working-tree bytes otherwise.
@@ -324,6 +428,40 @@ pub(crate) fn read_source_bytes(root: &Path, relative: &Path) -> std::io::Result
         CommittedSourceRead::Committed(bytes) => Ok(Some(bytes)),
         CommittedSourceRead::AbsentAtHead => Ok(None),
     }
+}
+
+/// Cargo authority must be a regular file at the selected snapshot. Symlinks
+/// can otherwise read mutable bytes outside the snapshot's tracked inputs.
+pub(crate) fn read_cargo_manifest(
+    root: &Path,
+    relative: &Path,
+) -> std::io::Result<Option<Vec<u8>>> {
+    if unsupported_head_object(root, relative) {
+        return Err(std::io::Error::other(
+            "unsupported committed manifest object",
+        ));
+    }
+    if matches!(lookup(root, relative), CommittedSourceRead::Worktree) {
+        match std::fs::symlink_metadata(root.join(relative)) {
+            Ok(meta) if !meta.is_file() => {
+                return Err(std::io::Error::other("manifest is not a regular file"));
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    read_source_bytes(root, relative)
+}
+
+pub(crate) fn unsupported_head_object(root: &Path, relative: &Path) -> bool {
+    CURRENT_OVERLAY.with(|slot| {
+        let borrowed = slot.borrow();
+        borrowed.as_ref().is_some_and(|overlay| {
+            overlay.serves(root)
+                && normalized_key(relative)
+                    .is_some_and(|key| overlay.unsupported_head.contains(&key))
+        })
+    })
 }
 
 /// Probe `root` for paths that differ from `HEAD` (tracked edits and
@@ -423,6 +561,11 @@ pub(crate) fn probe(
         }
     }
     let mut entries = BTreeMap::new();
+    let unsupported_head = head_blobs
+        .iter()
+        .filter(|(_, entry)| !is_regular_file_mode(&entry.mode))
+        .map(|(path, _)| path.clone())
+        .collect();
     for path in dirty {
         let content =
             match head_blobs.get(&path) {
@@ -437,6 +580,7 @@ pub(crate) fn probe(
         root: root.to_path_buf(),
         canonical_root: root.canonicalize().ok(),
         entries,
+        unsupported_head,
         ignored,
         untracked,
         snapshot_inputs,
@@ -497,12 +641,17 @@ pub(crate) fn untracked_and_ignored_routed_paths(
             .collect::<BTreeSet<_>>()
     };
     let untracked = below_root(records.untracked).into_iter().collect();
-    let mut ignored: BTreeSet<String> = below_root(records.ignored_files);
+    let mut ignored: BTreeSet<String> = below_root(records.ignored_files)
+        .into_iter()
+        .filter(|path| super::language::route(Path::new(path)).is_some())
+        .filter(|path| !is_cargo_build_output(root, path))
+        .collect();
     // Tracked force-added files inside ignored directories keep their
     // working-tree reads; resolve them the same way [`probe`] does so they
     // stay out of the disclosed set.
     let directories = below_root(records.ignored_directories)
         .into_iter()
+        .filter(|path| !is_cargo_build_output(root, path))
         .collect::<Vec<_>>();
     let mut tracked_within = BTreeSet::new();
     for chunk in directories.chunks(LS_TREE_CHUNK) {
@@ -520,6 +669,18 @@ pub(crate) fn untracked_and_ignored_routed_paths(
         &tracked_within,
     ));
     Ok((untracked, ignored.into_iter().collect()))
+}
+
+/// Cargo's root-level `target/` build directory. Generated build output there
+/// (for example `target/release/build/*/out/lib.rs`) is never a source file a
+/// developer could stage, so the gitignored-files disclosure leaves it out
+/// rather than naming paths the suggested `git add -f` repair should not apply
+/// to. Cargo marks the directory it generates with `CACHEDIR.TAG`; a `target/`
+/// without that marker is authored content and stays disclosed, as do genuine
+/// ignored sources elsewhere, including a nested `target/` inside a crate.
+fn is_cargo_build_output(root: &Path, path: &str) -> bool {
+    (path == "target" || path.starts_with("target/"))
+        && root.join("target").join("CACHEDIR.TAG").is_file()
 }
 
 const MAX_IGNORED_WALK_ENTRIES: usize = 200_000;
@@ -601,10 +762,8 @@ fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<V
     Ok(output.stdout)
 }
 
-/// Repo-relative paths from `git status --porcelain -z`, limited to files a
-/// language adapter routes: nothing else is read through the overlay, so an
-/// unrelated binary, README or non-UTF-8 name never costs a blob load or
-/// fails the probe.
+/// Repo-relative paths from `git status --porcelain -z`, limited to routed
+/// source and Cargo authority inputs read through the overlay.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct StatusRecords {
     /// Tracked paths that differ from `HEAD`, and untracked routed files.
@@ -625,6 +784,22 @@ struct StatusRecords {
 
 fn routed(path: &[u8]) -> bool {
     super::language::route(Path::new(String::from_utf8_lossy(path).as_ref())).is_some()
+}
+
+fn cargo_authority_input(path: &[u8]) -> bool {
+    let Ok(path) = std::str::from_utf8(path) else {
+        return false;
+    };
+    let path = Path::new(path);
+    path.file_name()
+        .is_some_and(|name| name == "Cargo.toml" || name == ".cargo")
+        || (path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == ".cargo")
+            && path
+                .file_name()
+                .is_some_and(|name| name == "config" || name == "config.toml"))
 }
 
 /// A file the TypeScript committed-snapshot reading reads (a `.ts` or `.js`
@@ -657,7 +832,7 @@ fn parse_porcelain_z(bytes: &[u8]) -> Result<StatusRecords, String> {
                     out.ignored_directories.push(directory);
                 }
             } else {
-                if routed(path) {
+                if routed(path) || cargo_authority_input(path) {
                     out.ignored_files.push(utf8_path(path)?);
                 }
                 if snapshot_input(path) {
@@ -669,17 +844,17 @@ fn parse_porcelain_z(bytes: &[u8]) -> Result<StatusRecords, String> {
         if snapshot_input(path) {
             out.snapshot_inputs.push(utf8_path(path)?);
         }
-        if routed(path) {
+        if routed(path) || cargo_authority_input(path) {
             let named = utf8_path(path)?;
             // #5258: `??` marks an untracked path — no adapter-routed read
             // of it can be covered by either diff mode.
-            if *index_status == b'?' {
+            if *index_status == b'?' && routed(path) {
                 out.untracked.push(named.clone());
             }
             out.dirty.push(named);
         }
         if let Some(original) = original {
-            if routed(original) {
+            if routed(original) || cargo_authority_input(original) {
                 out.dirty.push(utf8_path(original)?);
             }
             if snapshot_input(original) {

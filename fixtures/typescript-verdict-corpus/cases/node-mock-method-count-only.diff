@@ -1,0 +1,13 @@
+diff --git a/src/audit.ts b/src/audit.ts
+index 0000000..1111111 100644
+--- a/src/audit.ts
++++ b/src/audit.ts
+@@ -5,7 +5,7 @@
+ };
+ 
+ export function record(event: string): string {
+-  const line = `event:${event}`;
++  const line = `event=${event}`;
+   sink.write(line);
+   return line;
+ }

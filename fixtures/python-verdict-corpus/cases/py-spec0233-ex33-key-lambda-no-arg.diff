@@ -1,0 +1,9 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -177,4 +177,4 @@
+ 
+ 
+ def label_key_lambda(x):
+-    return sorted(x, key=lambda: 0) + [1]
++    return sorted(x, key=lambda: 0) + [2]

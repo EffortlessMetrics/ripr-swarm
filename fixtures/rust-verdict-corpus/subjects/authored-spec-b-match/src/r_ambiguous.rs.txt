@@ -1,0 +1,43 @@
+//! The nested callee's name is defined twice.
+
+fn resolve(_kind: &str) -> &'static str {
+    "alpha"
+}
+
+pub mod alt {
+    pub fn resolve(_kind: &str) -> &'static str {
+        "beta"
+    }
+
+    pub fn alt_label() -> &'static str {
+        resolve("x")
+    }
+}
+
+pub fn label_amb(kind: &str) -> &'static str {
+    match kind {
+        "word" => resolve("x"),
+        _ => "other",
+    }
+}
+
+pub fn classify_ambiguous(input: &str) -> &'static str {
+    let final_label = label_amb(input);
+    if final_label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_root_resolver_is_alpha_r_ambiguous() {
+        assert_eq!(classify_ambiguous("word"), "word");
+        assert_eq!(classify_ambiguous("zz"), "blank");
+        assert_eq!(alt::alt_label(), "beta");
+    }
+}

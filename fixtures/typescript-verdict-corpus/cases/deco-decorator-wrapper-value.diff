@@ -1,0 +1,13 @@
+diff --git a/src/memoize.ts b/src/memoize.ts
+index 0000000..1111111 100644
+--- a/src/memoize.ts
++++ b/src/memoize.ts
+@@ -3,7 +3,7 @@
+   const cache = new Map<number, number>();
+   descriptor.value = function (this: unknown, n: number): number {
+     if (!cache.has(n)) {
+-      cache.set(n, original.call(this, n));
++      cache.set(n, original.call(this, n) + 1);
+     }
+     return cache.get(n) as number;
+   };

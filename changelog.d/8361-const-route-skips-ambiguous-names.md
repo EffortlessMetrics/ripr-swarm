@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- The changed-constant route in `ripr check` no longer prints a stub for a function that does not read the constant: it ignores the name inside char and raw string literals, field accesses and foreign-module paths, and prints nothing when the same constant name is declared twice in the file (an associated const, a const generic, a local `const`). Test functions are recognised by attribute (`#[tokio::test]`, `#[rstest]`, `#[test_case]`) and no longer count against the six-function limit (#8361).
