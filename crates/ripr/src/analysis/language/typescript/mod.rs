@@ -765,7 +765,21 @@ impl TypeScriptAdapter {
                 // is served from the content-keyed cache; the clone below is
                 // what snapshot promotion mutates, so promotion still reads
                 // the filesystem on every run.
-                let extraction = extraction_cache::test_extraction_cached(relative, source);
+                let (extraction, extraction_failure) =
+                    extraction_cache::test_extraction_cached_disclosing(relative, source);
+                // #11132: a parse-worker failure during test extraction
+                // serves an empty extraction. That must not read as "this
+                // file registers no tests" (a false `no_static_path`), so it
+                // is disclosed through the same typed partial-extraction
+                // limitation as an unindexed registration shape.
+                if let Some(reason) = extraction_failure {
+                    extraction_gaps.push(TypeScriptTestExtractionGap {
+                        file: relative.clone(),
+                        sample_line: 1,
+                        shape: "test extraction unavailable (parse worker failed)",
+                        snippet: reason,
+                    });
+                }
                 // A worker failure serves an empty extraction it never caches;
                 // only a cached extraction is a function of the bytes.
                 if recomputed_facts
