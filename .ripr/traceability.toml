@@ -6792,7 +6792,11 @@ tests = [
   "xtask/src/verification_contracts.rs::tests::integer_type_follows_json_schema_numeric_semantics",
   "xtask/src/verification_contracts.rs::tests::exact_integer_and_bounds_controls",
   "xtask/src/verification_contracts.rs::tests::integer_schema_rejects_decimal_rounded_to_integer",
-  "xtask/src/verification_contracts.rs::tests::unsupported_numbers_cannot_be_inverted_by_schema_combinators"
+  "xtask/src/verification_contracts.rs::tests::unsupported_numbers_cannot_be_inverted_by_schema_combinators",
+  "xtask/src/verification_contracts.rs::tests::file_validator_checks_original_decimal_bytes",
+  "xtask/src/schema_producer_sweep.rs::tests::sweep_validates_original_decimal_bytes",
+  "xtask/src/schema_producer_sweep.rs::tests::sweep_selects_exact_nested_producer_and_artifact_values",
+  "xtask/src/exact_schema_json.rs::tests::exact_parser_preserves_numbers_and_objects"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",

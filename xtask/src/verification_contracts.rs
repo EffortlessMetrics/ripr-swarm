@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::exact_schema_json::Value as ExactValue;
 use serde_json::Value;
 
 use crate::schema_pattern::SchemaPattern;
@@ -592,9 +593,10 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         let schema = read_json(root.join(contract.schema_path))?;
         validate_schema_document(contract.schema_path, &schema, &mut violations);
 
+        let exact_schema = read_exact_json(root.join(contract.schema_path))?;
         let subschema = match contract.schema_pointer {
-            None => Some(&schema),
-            Some(pointer) => match schema.pointer(pointer) {
+            None => Some(&exact_schema),
+            Some(pointer) => match exact_schema.pointer(pointer) {
                 Some(value) => Some(value),
                 None => {
                     violations.push(format!(
@@ -606,9 +608,9 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
             },
         };
 
-        let fixture = read_json(root.join(contract.fixture_path))?;
+        let fixture = read_exact_json(root.join(contract.fixture_path))?;
         if let Some(subschema) = subschema {
-            let subjects = contract.subjects(&fixture, &mut violations);
+            let subjects = contract.exact_subjects(&fixture, &mut violations);
             // A contract that resolves no subject is a gate that did not run.
             if subjects.is_empty() {
                 violations.push(format!(
@@ -618,7 +620,13 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
             }
             for (location, value) in subjects {
                 subjects_checked += 1;
-                validate_value_against_schema(value, subschema, &schema, location, &mut violations);
+                validate_exact_value_against_schema(
+                    value,
+                    subschema,
+                    &exact_schema,
+                    location,
+                    &mut violations,
+                );
             }
         }
 
@@ -783,6 +791,7 @@ fn version_mismatch(
 impl VerificationContract {
     /// Resolve the fixture values this contract validates, reporting a
     /// violation for any registered pointer that does not resolve.
+    #[cfg(test)]
     fn subjects<'a>(
         &self,
         fixture: &'a Value,
@@ -821,6 +830,69 @@ impl VerificationContract {
                         // never calls. The advertised negative was therefore
                         // never exercised while the count implied it was.
                         if is_advertised_negative(entry) {
+                            return None;
+                        }
+                        let value = match item {
+                            None => Some(entry),
+                            Some(item) => entry.pointer(item),
+                        };
+                        // An entry that does not expose the registered member
+                        // is not a subject of this contract; the corpus keeps
+                        // patch-shaped negative cases alongside whole records.
+                        value.map(|value| {
+                            (
+                                format!(
+                                    "{}{array}/{index}{}",
+                                    self.fixture_path,
+                                    item.unwrap_or_default()
+                                ),
+                                value,
+                            )
+                        })
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    fn exact_subjects<'a>(
+        &self,
+        fixture: &'a ExactValue,
+        violations: &mut Vec<String>,
+    ) -> Vec<(String, &'a ExactValue)> {
+        match self.subject {
+            ContractSubject::Document => vec![(self.fixture_path.to_string(), fixture)],
+            ContractSubject::Pointer(pointer) => match fixture.pointer(pointer) {
+                Some(value) => vec![(format!("{}{pointer}", self.fixture_path), value)],
+                None => {
+                    violations.push(format!(
+                        "{} does not contain the registered subject `{pointer}`",
+                        self.fixture_path
+                    ));
+                    Vec::new()
+                }
+            },
+            ContractSubject::EachItem { array, item } => {
+                let Some(entries) = fixture.pointer(array).and_then(ExactValue::as_array) else {
+                    violations.push(format!(
+                        "{} does not contain the registered subject array `{array}`",
+                        self.fixture_path
+                    ));
+                    return Vec::new();
+                };
+                entries
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, entry)| {
+                        // A case the corpus advertises as invalid is a negative,
+                        // not a positive subject. Feeding it here reported it as
+                        // a passing subject and inflated the denominator: the
+                        // record is schema-valid, because its invalidity is
+                        // semantic (root identity, producer-bound command
+                        // digest) and enforced by a narrower authority this path
+                        // never calls. The advertised negative was therefore
+                        // never exercised while the count implied it was.
+                        if is_advertised_negative_exact(entry) {
                             return None;
                         }
                         let value = match item {
@@ -948,10 +1020,10 @@ pub(crate) fn validate_json_file_against_schema(
     value_path: &str,
     schema_path: &str,
 ) -> Result<(), String> {
-    let schema = read_json(root.join(schema_path))?;
-    let value = read_json(root.join(value_path))?;
+    let schema = read_exact_json(root.join(schema_path))?;
+    let value = read_exact_json(root.join(value_path))?;
     let mut violations = Vec::new();
-    validate_value_against_schema(
+    validate_exact_value_against_schema(
         &value,
         &schema,
         &schema,
@@ -1021,16 +1093,16 @@ fn validate_schema_document(path: &str, schema: &Value, violations: &mut Vec<Str
 // Unsupported numeric input must not be turned into a match by `not`, `if`,
 // or another combinator. Check the entire input and all numeric bounds before
 // entering the boolean schema evaluation.
-fn supported_numeric_input(value: &Value) -> bool {
+fn supported_numeric_input(value: &ExactValue) -> bool {
     match value {
-        Value::Number(_) => exact_schema_number(value).is_some(),
-        Value::Array(values) => values.iter().all(supported_numeric_input),
-        Value::Object(values) => values.values().all(supported_numeric_input),
+        ExactValue::Number(_) => exact_schema_number(value).is_some(),
+        ExactValue::Array(values) => values.iter().all(supported_numeric_input),
+        ExactValue::Object(values) => values.values().all(supported_numeric_input),
         _ => true,
     }
 }
 
-fn supported_numeric_bounds(schema: &Value) -> bool {
+fn supported_numeric_bounds(schema: &ExactValue) -> bool {
     let Some(object) = schema.as_object() else {
         return true;
     };
@@ -1066,21 +1138,21 @@ enum SchemaValueKey {
     Object(Vec<(String, SchemaValueKey)>),
 }
 
-fn schema_value_key(value: &Value) -> Option<SchemaValueKey> {
+fn schema_value_key(value: &ExactValue) -> Option<SchemaValueKey> {
     Some(match value {
-        Value::Null => SchemaValueKey::Null,
-        Value::Bool(b) => SchemaValueKey::Boolean(*b),
-        Value::Number(_) => {
+        ExactValue::Null => SchemaValueKey::Null,
+        ExactValue::Bool(b) => SchemaValueKey::Boolean(*b),
+        ExactValue::Number(_) => {
             let (coefficient, scale) = exact_schema_number(value)?
                 .normalized()
                 .as_bigint_and_exponent();
             SchemaValueKey::Number(coefficient, scale)
         }
-        Value::String(s) => SchemaValueKey::String(s.clone()),
-        Value::Array(values) => {
+        ExactValue::String(s) => SchemaValueKey::String(s.clone()),
+        ExactValue::Array(values) => {
             SchemaValueKey::Array(values.iter().map(schema_value_key).collect::<Option<_>>()?)
         }
-        Value::Object(values) => {
+        ExactValue::Object(values) => {
             let mut keys: Vec<_> = values
                 .iter()
                 .map(|(key, value)| Some((key.clone(), schema_value_key(value)?)))
@@ -1091,17 +1163,17 @@ fn schema_value_key(value: &Value) -> Option<SchemaValueKey> {
     })
 }
 
-fn schema_values_equal(left: &Value, right: &Value) -> bool {
+fn schema_values_equal(left: &ExactValue, right: &ExactValue) -> bool {
     match (schema_value_key(left), schema_value_key(right)) {
         (Some(a), Some(b)) => a == b,
         _ => false,
     }
 }
 
-pub(crate) fn validate_value_against_schema(
-    value: &Value,
-    schema: &Value,
-    root_schema: &Value,
+pub(crate) fn validate_exact_value_against_schema(
+    value: &ExactValue,
+    schema: &ExactValue,
+    root_schema: &ExactValue,
     location: String,
     violations: &mut Vec<String>,
 ) {
@@ -1116,9 +1188,9 @@ pub(crate) fn validate_value_against_schema(
 }
 
 fn validate_value_against_schema_inner(
-    value: &Value,
-    schema: &Value,
-    root_schema: &Value,
+    value: &ExactValue,
+    schema: &ExactValue,
+    root_schema: &ExactValue,
     location: String,
     violations: &mut Vec<String>,
 ) {
@@ -1128,7 +1200,7 @@ fn validate_value_against_schema_inner(
     // path never reached the array checks. Validate the referenced schema, then
     // fall through so the sibling keywords on this schema object are evaluated
     // too.
-    if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
+    if let Some(reference) = schema.get("$ref").and_then(ExactValue::as_str) {
         match resolve_ref(root_schema, reference) {
             Some(resolved) => validate_value_against_schema_inner(
                 value,
@@ -1143,7 +1215,7 @@ fn validate_value_against_schema_inner(
         }
     }
 
-    if let Some(all_of) = schema.get("allOf").and_then(Value::as_array) {
+    if let Some(all_of) = schema.get("allOf").and_then(ExactValue::as_array) {
         for (index, subschema) in all_of.iter().enumerate() {
             validate_value_against_schema_inner(
                 value,
@@ -1155,7 +1227,7 @@ fn validate_value_against_schema_inner(
         }
     }
 
-    if let Some(any_of) = schema.get("anyOf").and_then(Value::as_array) {
+    if let Some(any_of) = schema.get("anyOf").and_then(ExactValue::as_array) {
         let mut matched = false;
         let mut messages = Vec::new();
         for subschema in any_of {
@@ -1181,7 +1253,7 @@ fn validate_value_against_schema_inner(
         }
     }
 
-    if let Some(one_of) = schema.get("oneOf").and_then(Value::as_array) {
+    if let Some(one_of) = schema.get("oneOf").and_then(ExactValue::as_array) {
         let mut messages = Vec::new();
         let matches = one_of
             .iter()
@@ -1255,19 +1327,19 @@ fn validate_value_against_schema_inner(
     {
         violations.push(format!(
             "{location}: expected const {}, got {}",
-            compact_json(expected),
-            compact_json(value)
+            compact_exact_json(expected),
+            compact_exact_json(value)
         ));
     }
 
-    if let Some(allowed) = schema.get("enum").and_then(Value::as_array)
+    if let Some(allowed) = schema.get("enum").and_then(ExactValue::as_array)
         && !allowed
             .iter()
             .any(|candidate| schema_values_equal(candidate, value))
     {
         violations.push(format!(
             "{location}: value {} is not in enum",
-            compact_json(value)
+            compact_exact_json(value)
         ));
     }
 
@@ -1289,28 +1361,10 @@ fn validate_value_against_schema_inner(
     }
 }
 
-/// A corpus case the fixture advertises as invalid is a negative, never a
-/// positive contract subject. Shared by the subject selector and its test so
-/// the test asserts the retained selection rule rather than restating it.
-/// Fail closed on type drift. Matching `as_bool == Some(true)` would let
-/// `"invalid": "true"` or `"invalid": 1` fall through as a positive subject —
-/// the advertised negative would silently re-enter the passing count, which is
-/// the defect this predicate exists to prevent. Any present `invalid` that is
-/// not literally `false` is treated as a negative; `assurance_corpus_marks_invalid_with_a_boolean`
-/// rejects the non-boolean shape outright so the corpus cannot drift there
-/// unnoticed.
-fn is_advertised_negative(entry: &Value) -> bool {
-    match entry.get("invalid") {
-        None => false,
-        Some(Value::Bool(flag)) => *flag,
-        Some(_) => true,
-    }
-}
-
 fn validate_object(
-    value: &Value,
-    schema: &Value,
-    root_schema: &Value,
+    value: &ExactValue,
+    schema: &ExactValue,
+    root_schema: &ExactValue,
     location: &str,
     violations: &mut Vec<String>,
 ) {
@@ -1323,17 +1377,21 @@ fn validate_object(
     // `properties` at all, and returning early on a missing `properties` made
     // every such branch unenforceable — the malformed value was accepted with
     // zero violations.
-    for field in string_array(schema.get("required")) {
+    for field in exact_string_array(schema.get("required")) {
         if !object.contains_key(&field) {
             violations.push(format!("{location}: missing required field `{field}`"));
         }
     }
 
-    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+    let Some(properties) = schema.get("properties").and_then(ExactValue::as_object) else {
         return;
     };
 
-    if schema.get("additionalProperties").and_then(Value::as_bool) == Some(false) {
+    if schema
+        .get("additionalProperties")
+        .and_then(ExactValue::as_bool)
+        == Some(false)
+    {
         for field in object.keys() {
             if !properties.contains_key(field) {
                 violations.push(format!("{location}: unexpected field `{field}`"));
@@ -1355,9 +1413,9 @@ fn validate_object(
 }
 
 fn validate_array(
-    value: &Value,
-    schema: &Value,
-    root_schema: &Value,
+    value: &ExactValue,
+    schema: &ExactValue,
+    root_schema: &ExactValue,
     location: &str,
     violations: &mut Vec<String>,
 ) {
@@ -1365,21 +1423,21 @@ fn validate_array(
         return;
     };
 
-    if let Some(min_items) = schema.get("minItems").and_then(Value::as_u64)
+    if let Some(min_items) = schema.get("minItems").and_then(ExactValue::as_u64)
         && (items.len() as u64) < min_items
     {
         violations.push(format!(
             "{location}: array shorter than minItems {min_items}"
         ));
     }
-    if let Some(max_items) = schema.get("maxItems").and_then(Value::as_u64)
+    if let Some(max_items) = schema.get("maxItems").and_then(ExactValue::as_u64)
         && (items.len() as u64) > max_items
     {
         violations.push(format!(
             "{location}: array longer than maxItems {max_items}"
         ));
     }
-    if schema.get("uniqueItems").and_then(Value::as_bool) == Some(true) {
+    if schema.get("uniqueItems").and_then(ExactValue::as_bool) == Some(true) {
         let mut seen = BTreeSet::new();
         for item in items {
             let Some(key) = schema_value_key(item) else {
@@ -1389,7 +1447,7 @@ fn validate_array(
             if !seen.insert(key) {
                 violations.push(format!(
                     "{location}: uniqueItems violated by duplicate {}",
-                    compact_json(item)
+                    compact_exact_json(item)
                 ));
             }
         }
@@ -1409,15 +1467,15 @@ fn validate_array(
     }
 }
 
-fn validate_string(text: &str, schema: &Value, location: &str, violations: &mut Vec<String>) {
-    if let Some(min_length) = schema.get("minLength").and_then(Value::as_u64)
+fn validate_string(text: &str, schema: &ExactValue, location: &str, violations: &mut Vec<String>) {
+    if let Some(min_length) = schema.get("minLength").and_then(ExactValue::as_u64)
         && text.chars().count() < min_length as usize
     {
         violations.push(format!(
             "{location}: string shorter than minLength {min_length}"
         ));
     }
-    if let Some(max_length) = schema.get("maxLength").and_then(Value::as_u64)
+    if let Some(max_length) = schema.get("maxLength").and_then(ExactValue::as_u64)
         && text.chars().count() > max_length as usize
     {
         violations.push(format!(
@@ -1427,7 +1485,7 @@ fn validate_string(text: &str, schema: &Value, location: &str, violations: &mut 
     // `pattern` carries the identity commitments — commit SHAs, `sha256:`
     // digests, relative working directories. Compilation is fail-closed, so an
     // uninterpretable pattern is reported rather than assumed satisfied.
-    if let Some(pattern) = schema.get("pattern").and_then(Value::as_str) {
+    if let Some(pattern) = schema.get("pattern").and_then(ExactValue::as_str) {
         match SchemaPattern::compile(pattern) {
             Ok(compiled) => {
                 if !compiled.is_match(text) {
@@ -1443,7 +1501,7 @@ fn validate_string(text: &str, schema: &Value, location: &str, violations: &mut 
 
 // Limit the exact decimal work performed on a single JSON number. Parsed JSON
 // outside these limits is rejected when integer or numeric bounds are checked.
-fn exact_schema_number(value: &Value) -> Option<bigdecimal::BigDecimal> {
+fn exact_schema_number(value: &ExactValue) -> Option<bigdecimal::BigDecimal> {
     let number = value.as_number()?;
     let text = number.to_string();
     if text.len() > 256 {
@@ -1457,7 +1515,12 @@ fn exact_schema_number(value: &Value) -> Option<bigdecimal::BigDecimal> {
     Some(decimal)
 }
 
-fn validate_number(value: &Value, schema: &Value, location: &str, violations: &mut Vec<String>) {
+fn validate_number(
+    value: &ExactValue,
+    schema: &ExactValue,
+    location: &str,
+    violations: &mut Vec<String>,
+) {
     for (keyword, below) in [("minimum", true), ("maximum", false)] {
         let Some(bound) = schema.get(keyword).filter(|v| v.is_number()) else {
             continue;
@@ -1476,10 +1539,15 @@ fn validate_number(value: &Value, schema: &Value, location: &str, violations: &m
     }
 }
 
-fn validate_type(value: &Value, schema_type: &Value, location: &str, violations: &mut Vec<String>) {
+fn validate_type(
+    value: &ExactValue,
+    schema_type: &ExactValue,
+    location: &str,
+    violations: &mut Vec<String>,
+) {
     let allowed = match schema_type {
-        Value::String(text) => vec![text.as_str()],
-        Value::Array(values) => values.iter().filter_map(Value::as_str).collect(),
+        ExactValue::String(text) => vec![text.as_str()],
+        ExactValue::Array(values) => values.iter().filter_map(ExactValue::as_str).collect(),
         _ => {
             violations.push(format!("{location}: schema type must be string or array"));
             return;
@@ -1498,7 +1566,7 @@ fn validate_type(value: &Value, schema_type: &Value, location: &str, violations:
     }
 }
 
-fn value_matches_type(value: &Value, expected_type: &str) -> bool {
+fn value_matches_type(value: &ExactValue, expected_type: &str) -> bool {
     match expected_type {
         "object" => value.is_object(),
         "array" => value.is_array(),
@@ -1511,28 +1579,84 @@ fn value_matches_type(value: &Value, expected_type: &str) -> bool {
     }
 }
 
-/// Check the exact decimal represented by `Value`, within the documented
+/// Check the exact decimal represented by `ExactValue`, within the documented
 /// limits. JSON input must be parsed with serde_json's arbitrary_precision
 /// feature; values constructed from f64 already carry that conversion's loss.
-fn json_number_is_integer(value: &Value) -> bool {
+fn json_number_is_integer(value: &ExactValue) -> bool {
     exact_schema_number(value)
         .is_some_and(|number| number.normalized().as_bigint_and_exponent().1 <= 0)
 }
 
-fn value_type(value: &Value) -> &'static str {
+fn value_type(value: &ExactValue) -> &'static str {
     match value {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
+        ExactValue::Null => "null",
+        ExactValue::Bool(_) => "boolean",
+        ExactValue::Number(_) => "number",
+        ExactValue::String(_) => "string",
+        ExactValue::Array(_) => "array",
+        ExactValue::Object(_) => "object",
     }
 }
 
-fn resolve_ref<'a>(root_schema: &'a Value, reference: &str) -> Option<&'a Value> {
+fn resolve_ref<'a>(root_schema: &'a ExactValue, reference: &str) -> Option<&'a ExactValue> {
     let pointer = reference.strip_prefix('#')?;
     root_schema.pointer(pointer)
+}
+
+fn exact_string_array(value: Option<&ExactValue>) -> Vec<String> {
+    value
+        .and_then(ExactValue::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(ExactValue::as_str)
+        .map(ToString::to_string)
+        .collect()
+}
+fn compact_exact_json(value: &ExactValue) -> String {
+    value.to_string()
+}
+
+// This compatibility route validates the represented Value; it cannot recover
+// source precision discarded before the caller supplied the Value.
+#[cfg(test)]
+pub(crate) fn validate_value_against_schema(
+    value: &Value,
+    schema: &Value,
+    root_schema: &Value,
+    location: String,
+    violations: &mut Vec<String>,
+) {
+    let convert = |v: &Value| -> Result<ExactValue, String> {
+        let bytes = serde_json::to_vec(v).map_err(|e| e.to_string())?;
+        crate::exact_schema_json::parse(&bytes)
+    };
+    match (convert(value), convert(schema), convert(root_schema)) {
+        (Ok(value), Ok(schema), Ok(root)) => {
+            validate_exact_value_against_schema(&value, &schema, &root, location, violations)
+        }
+        _ => violations.push(format!(
+            "{location}: could not convert JSON value for schema validation"
+        )),
+    }
+}
+
+/// A corpus case the fixture advertises as invalid is a negative, never a
+/// positive contract subject. Shared by the subject selector and its test so
+/// the test asserts the retained selection rule rather than restating it.
+/// Fail closed on type drift. Matching `as_bool == Some(true)` would let
+/// `"invalid": "true"` or `"invalid": 1` fall through as a positive subject —
+/// the advertised negative would silently re-enter the passing count, which is
+/// the defect this predicate exists to prevent. Any present `invalid` that is
+/// not literally `false` is treated as a negative; `assurance_corpus_marks_invalid_with_a_boolean`
+/// rejects the non-boolean shape outright so the corpus cannot drift there
+/// unnoticed.
+#[cfg(test)]
+fn is_advertised_negative(entry: &Value) -> bool {
+    match entry.get("invalid") {
+        None => false,
+        Some(Value::Bool(flag)) => *flag,
+        Some(_) => true,
+    }
 }
 
 fn string_array(value: Option<&Value>) -> Vec<String> {
@@ -1543,6 +1667,20 @@ fn string_array(value: Option<&Value>) -> Vec<String> {
         .filter_map(Value::as_str)
         .map(ToString::to_string)
         .collect()
+}
+
+fn is_advertised_negative_exact(entry: &ExactValue) -> bool {
+    match entry.get("invalid") {
+        None => false,
+        Some(ExactValue::Bool(flag)) => *flag,
+        Some(_) => true,
+    }
+}
+
+fn read_exact_json(path: PathBuf) -> Result<ExactValue, String> {
+    let bytes = fs::read(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    crate::exact_schema_json::parse(&bytes)
+        .map_err(|err| format!("parse {}: {err}", path.display()))
 }
 
 fn read_json(path: PathBuf) -> Result<Value, String> {
@@ -1565,6 +1703,7 @@ fn repo_root() -> Result<PathBuf, String> {
     })
 }
 
+#[cfg(test)]
 fn compact_json(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
 }
@@ -1573,14 +1712,18 @@ fn compact_json(value: &Value) -> String {
 mod tests {
     use super::*;
 
+    fn parse_exact_text(text: &str) -> Result<ExactValue, String> {
+        crate::exact_schema_json::parse(text.as_bytes())
+    }
+
     #[test]
     fn integer_schema_rejects_decimal_rounded_to_integer() -> Result<(), String> {
-        let schema: Value =
-            serde_json::from_str(r#"{"type":"integer"}"#).map_err(|e| e.to_string())?;
-        let value: Value =
-            serde_json::from_str("1.00000000000000001").map_err(|e| e.to_string())?;
+        let schema: ExactValue =
+            parse_exact_text(r#"{"type":"integer"}"#).map_err(|e| e.to_string())?;
+        let value: ExactValue =
+            parse_exact_text("1.00000000000000001").map_err(|e| e.to_string())?;
         let mut violations = Vec::new();
-        validate_value_against_schema(
+        validate_exact_value_against_schema(
             &value,
             &schema,
             &schema,
@@ -1596,16 +1739,22 @@ mod tests {
 
     #[test]
     fn exact_integer_and_bounds_controls() -> Result<(), String> {
-        let integer: Value =
-            serde_json::from_str(r#"{"type":"integer"}"#).map_err(|e| e.to_string())?;
-        let bounded: Value = serde_json::from_str(
+        let integer: ExactValue =
+            parse_exact_text(r#"{"type":"integer"}"#).map_err(|e| e.to_string())?;
+        let bounded: ExactValue = parse_exact_text(
             r#"{"type":"integer","minimum":9007199254740993,"maximum":9007199254740995}"#,
         )
         .map_err(|e| e.to_string())?;
-        let validate = |text: &str, schema: &Value| -> Result<Vec<String>, String> {
-            let value: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        let validate = |text: &str, schema: &ExactValue| -> Result<Vec<String>, String> {
+            let value: ExactValue = parse_exact_text(text).map_err(|e| e.to_string())?;
             let mut violations = Vec::new();
-            validate_value_against_schema(&value, schema, schema, "value".into(), &mut violations);
+            validate_exact_value_against_schema(
+                &value,
+                schema,
+                schema,
+                "value".into(),
+                &mut violations,
+            );
             Ok(violations)
         };
         for text in [
@@ -1645,7 +1794,7 @@ mod tests {
             r#"{"not":{"properties":{"n":{"type":"integer"}}}}"#,
             r#"{"not":{"minimum":1e300}}"#,
         ] {
-            let schema: Value = serde_json::from_str(schema_text).map_err(|e| e.to_string())?;
+            let schema: ExactValue = parse_exact_text(schema_text).map_err(|e| e.to_string())?;
             let input = if schema_text.contains("properties") {
                 r#"{"n":1e300}"#
             } else if schema_text.contains("minimum\":1e300") {
@@ -1653,9 +1802,9 @@ mod tests {
             } else {
                 "1e300"
             };
-            let value: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
+            let value: ExactValue = parse_exact_text(input).map_err(|e| e.to_string())?;
             let mut violations = Vec::new();
-            validate_value_against_schema(
+            validate_exact_value_against_schema(
                 &value,
                 &schema,
                 &schema,
@@ -1670,10 +1819,10 @@ mod tests {
     #[test]
     fn schema_numeric_equality_handles_equivalent_representations() -> Result<(), String> {
         let check = |schema_text: &str, value_text: &str| -> Result<bool, String> {
-            let schema: Value = serde_json::from_str(schema_text).map_err(|e| e.to_string())?;
-            let value: Value = serde_json::from_str(value_text).map_err(|e| e.to_string())?;
+            let schema: ExactValue = parse_exact_text(schema_text).map_err(|e| e.to_string())?;
+            let value: ExactValue = parse_exact_text(value_text).map_err(|e| e.to_string())?;
             let mut violations = Vec::new();
-            validate_value_against_schema(
+            validate_exact_value_against_schema(
                 &value,
                 &schema,
                 &schema,
@@ -1700,12 +1849,18 @@ mod tests {
 
     #[test]
     fn json_number_marker_object_is_not_a_number() -> Result<(), String> {
-        let value: Value = serde_json::from_str(r#"{"$serde_json::private::Number":"42"}"#)
+        let value: ExactValue = parse_exact_text(r#"{"$serde_json::private::Number":"42"}"#)
             .map_err(|e| e.to_string())?;
-        let schema: Value =
-            serde_json::from_str(r#"{"type":"integer"}"#).map_err(|e| e.to_string())?;
+        let schema: ExactValue =
+            parse_exact_text(r#"{"type":"integer"}"#).map_err(|e| e.to_string())?;
         let mut violations = Vec::new();
-        validate_value_against_schema(&value, &schema, &schema, "value".into(), &mut violations);
+        validate_exact_value_against_schema(
+            &value,
+            &schema,
+            &schema,
+            "value".into(),
+            &mut violations,
+        );
         assert!(value.is_object());
         assert!(!violations.is_empty());
         Ok(())
@@ -1713,21 +1868,41 @@ mod tests {
 
     #[test]
     fn example_data_is_not_treated_as_a_numeric_bound() -> Result<(), String> {
-        let value: Value = serde_json::from_str(r#""ok""#).map_err(|e| e.to_string())?;
-        let schema: Value =
-            serde_json::from_str(r#"{"type":"string","examples":[{"minimum":1e300}]}"#)
+        let value: ExactValue = parse_exact_text(r#""ok""#).map_err(|e| e.to_string())?;
+        let schema: ExactValue =
+            parse_exact_text(r#"{"type":"string","examples":[{"minimum":1e300}]}"#)
                 .map_err(|e| e.to_string())?;
         let mut violations = Vec::new();
-        validate_value_against_schema(&value, &schema, &schema, "value".into(), &mut violations);
+        validate_exact_value_against_schema(
+            &value,
+            &schema,
+            &schema,
+            "value".into(),
+            &mut violations,
+        );
         assert!(violations.is_empty(), "{violations:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn file_validator_checks_original_decimal_bytes() -> Result<(), String> {
+        let root = crate::tests::temp_dir("schema-exact-file");
+        crate::tests::write(&root.join("schema.json"), r#"{"type":"integer"}"#);
+        crate::tests::write(&root.join("value.json"), "1.0");
+        let positive = validate_json_file_against_schema(&root, "value.json", "schema.json");
+        crate::tests::write(&root.join("value.json"), "1.00000000000000001");
+        let negative = validate_json_file_against_schema(&root, "value.json", "schema.json");
+        let _ = fs::remove_dir_all(&root);
+        positive?;
+        assert!(negative.is_err(), "fractional source bytes must fail");
         Ok(())
     }
 
     #[test]
     fn integer_type_follows_json_schema_numeric_semantics() -> Result<(), String> {
         let accepts = |text: &str| -> Result<bool, String> {
-            let value: Value =
-                serde_json::from_str(text).map_err(|err| format!("parse {text}: {err}"))?;
+            let value: ExactValue =
+                parse_exact_text(text).map_err(|err| format!("parse {text}: {err}"))?;
             Ok(value_matches_type(&value, "integer"))
         };
         for accepted in [
@@ -1764,8 +1939,8 @@ mod tests {
             assert!(!accepts(rejected)?, "{rejected} is not a supported integer");
         }
         // `number` keeps accepting every numeric form.
-        let fractional: Value =
-            serde_json::from_str("1.5").map_err(|err| format!("parse 1.5: {err}"))?;
+        let fractional: ExactValue =
+            parse_exact_text("1.5").map_err(|err| format!("parse 1.5: {err}"))?;
         assert!(value_matches_type(&fractional, "number"));
         Ok(())
     }

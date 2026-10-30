@@ -490,8 +490,10 @@ disclosed and fails closed; it is never treated as a complete causal comparison.
   match; a fraction cannot become an integer through float rounding. Decimal
   representations longer than 256 bytes or with an unnormalized scale outside
   -256..=256 anywhere in the validated input or a numeric bound fail closed,
-  including inside boolean schema combinators. Values constructed from
-  `f64` before validation have already lost their original precision. The xtask
+  including inside boolean schema combinators. File and sweep validation parse
+  original bytes with a lossless tree after serde_json preflight. Inputs exceeding
+  16 MiB or serde_json's nesting and finite-number limits are rejected. An
+  already-constructed `f64` cannot recover its source precision. The xtask
   tests `integer_type_follows_json_schema_numeric_semantics` and
   `exact_integer_and_bounds_controls` pin the behavior and limits.
 

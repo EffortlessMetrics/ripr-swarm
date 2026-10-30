@@ -33,7 +33,8 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::verification_contracts::validate_value_against_schema;
+use crate::exact_schema_json::Value as ExactValue;
+use crate::verification_contracts::validate_exact_value_against_schema;
 
 const REPORT_PATH: &str = "target/ripr/reports/schema-producer-sweep.json";
 const USAGE: &str = "usage: cargo xtask schema-producer-sweep [--rev REV] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...";
@@ -414,10 +415,14 @@ fn sweep(
         malformed,
     } = committed_documents(tree, bindings);
     let mut schemas = BTreeMap::new();
+    let mut exact_schemas = BTreeMap::new();
     for schema_path in &inventory {
         let bytes = &tree.files[schema_path];
         let schema: Value = serde_json::from_slice(bytes)
             .map_err(|error| format!("parse {schema_path} at {}: {error}", tree.commit))?;
+        let exact = crate::exact_schema_json::parse(bytes)
+            .map_err(|error| format!("parse exact {schema_path} at {}: {error}", tree.commit))?;
+        exact_schemas.insert(schema_path.clone(), exact);
         schemas.insert(schema_path.clone(), (schema, sha256(bytes)));
     }
 
@@ -431,13 +436,14 @@ fn sweep(
             ));
             continue;
         };
-        let subschema = match binding.pointer {
-            None => schema,
-            Some(pointer) => match schema.pointer(pointer) {
-                Some(subschema) => subschema,
+        let exact_schema = &exact_schemas[binding.schema_path];
+        let exact_subschema = match binding.pointer {
+            None => exact_schema,
+            Some(pointer) => match exact_schema.pointer(pointer) {
+                Some(value) => value,
                 None => {
                     violations.push(format!(
-                        "{} has no subschema `{pointer}`",
+                        "{} has no exact subschema `{pointer}`",
                         binding.schema_path
                     ));
                     continue;
@@ -489,13 +495,31 @@ fn sweep(
                 ));
                 continue;
             }
-            for (location, subject) in subjects {
+            let exact_document = match crate::exact_schema_json::parse(&tree.files[path]) {
+                Ok(value) => value,
+                Err(error) => {
+                    violations.push(format!("parse exact {path}: {error}"));
+                    continue;
+                }
+            };
+            let exact_subjects = corpus_subjects_exact(&binding.corpus, path, &exact_document);
+            if exact_subjects
+                .iter()
+                .map(|(location, _)| location)
+                .ne(subjects.iter().map(|(location, _)| location))
+            {
+                violations.push(format!(
+                    "{path}: exact and ordinary subject selection disagree"
+                ));
+                continue;
+            }
+            for (location, subject) in exact_subjects {
                 counts.discovered += 1;
                 let before = violations.len();
-                validate_value_against_schema(
+                validate_exact_value_against_schema(
                     subject,
-                    subschema,
-                    schema,
+                    exact_subschema,
+                    exact_schema,
                     location,
                     &mut violations,
                 );
@@ -509,17 +533,24 @@ fn sweep(
         }
 
         for edge in binding.edge_fixtures {
-            let Some((value, digest)) = documents.get(*edge) else {
+            let Some((_value, digest)) = documents.get(*edge) else {
                 violations.push(format!(
                     "{label} names edge fixture {edge}, which does not exist"
                 ));
                 continue;
             };
+            let exact_value = match crate::exact_schema_json::parse(&tree.files[*edge]) {
+                Ok(value) => value,
+                Err(error) => {
+                    violations.push(format!("parse exact {edge}: {error}"));
+                    continue;
+                }
+            };
             let before = violations.len();
-            validate_value_against_schema(
-                value,
-                subschema,
-                schema,
+            validate_exact_value_against_schema(
+                &exact_value,
+                exact_subschema,
+                exact_schema,
                 (*edge).to_string(),
                 &mut violations,
             );
@@ -537,7 +568,7 @@ fn sweep(
         }) {
             let bytes = fs::read(&artifact.file)
                 .map_err(|error| format!("read {}: {error}", artifact.file.display()))?;
-            let value: Value = serde_json::from_slice(&bytes)
+            let value = crate::exact_schema_json::parse(&bytes)
                 .map_err(|error| format!("parse {}: {error}", artifact.file.display()))?;
             let location = format!(
                 "{}{}",
@@ -553,10 +584,10 @@ fn sweep(
                 continue;
             };
             let before = violations.len();
-            validate_value_against_schema(
+            validate_exact_value_against_schema(
                 subject,
-                subschema,
-                schema,
+                exact_subschema,
+                exact_schema,
                 location.clone(),
                 &mut violations,
             );
@@ -717,6 +748,55 @@ fn collect_command_specs<'a>(
         Value::Array(items) => {
             for (index, item) in items.iter().enumerate() {
                 collect_command_specs(item, format!("{location}/{index}"), verify, subjects);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn corpus_subjects_exact<'a>(
+    corpus: &Corpus,
+    path: &str,
+    value: &'a ExactValue,
+) -> Vec<(String, &'a ExactValue)> {
+    match corpus {
+        Corpus::FileName(name) if file_name(path) == *name => vec![(path.to_string(), value)],
+        Corpus::Paths(paths) if paths.contains(&path) => vec![(path.to_string(), value)],
+        Corpus::CommandSpecs { verify } => {
+            let mut subjects = Vec::new();
+            collect_command_specs_exact(value, path.to_string(), *verify, &mut subjects);
+            subjects
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn collect_command_specs_exact<'a>(
+    value: &'a ExactValue,
+    location: String,
+    verify: bool,
+    subjects: &mut Vec<(String, &'a ExactValue)>,
+) {
+    match value {
+        ExactValue::Object(object) => {
+            for (key, child) in object {
+                let child_location = format!("{location}/{key}");
+                if key == "command_specs"
+                    && let Some(specs) = child.as_object()
+                {
+                    for (role, spec) in specs {
+                        if (role == "verify") == verify {
+                            subjects.push((format!("{child_location}/{role}"), spec));
+                        }
+                    }
+                    continue;
+                }
+                collect_command_specs_exact(child, child_location, verify, subjects);
+            }
+        }
+        ExactValue::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                collect_command_specs_exact(item, format!("{location}/{index}"), verify, subjects);
             }
         }
         _ => {}
@@ -948,6 +1028,68 @@ mod tests {
         let report = sweep_committed(root, bindings, artifacts);
         let _ = fs::remove_dir_all(root);
         report
+    }
+
+    #[test]
+    fn sweep_validates_original_decimal_bytes() -> Result<(), String> {
+        for (number, valid) in [("1.0", true), ("1.00000000000000001", false)] {
+            let tree = CandidateTree {
+                commit: "fixture".into(),
+                files: BTreeMap::from([
+                    (EXAMPLE_SCHEMA.into(), br#"{"type":"integer"}"#.to_vec()),
+                    ("fixtures/example.json".into(), number.as_bytes().to_vec()),
+                ]),
+            };
+            let report = sweep(
+                &tree,
+                &[binding(Corpus::FileName("example.json"), &[])],
+                &[],
+            )?;
+            assert_eq!(
+                report.violations.is_empty(),
+                valid,
+                "{number}: {:?}",
+                report.violations
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sweep_selects_exact_nested_producer_and_artifact_values() -> Result<(), String> {
+        let root = temp_dir("schema-exact-artifact");
+        let artifact = root.join("live.json");
+        let tree = CandidateTree {
+            commit: "fixture".into(),
+            files: BTreeMap::from([
+                (EXAMPLE_SCHEMA.into(), br#"{"type":"integer"}"#.to_vec()),
+                (
+                    "producer.json".into(),
+                    br#"{"command_specs":{"verify":1.00000000000000001}}"#.to_vec(),
+                ),
+            ]),
+        };
+        let bindings = [binding(Corpus::CommandSpecs { verify: true }, &[])];
+        write(&artifact, r#"{"a/b":[1.00000000000000001]}"#);
+        let artifacts = [Artifact {
+            schema_path: EXAMPLE_SCHEMA.into(),
+            schema_pointer: None,
+            file: artifact,
+            subject_pointer: Some("/a~1b/0".into()),
+        }];
+        let report = sweep(&tree, &bindings, &artifacts)?;
+        let _ = fs::remove_dir_all(root);
+        assert_eq!(
+            report
+                .violations
+                .iter()
+                .filter(|item| item.contains("expected type integer"))
+                .count(),
+            2,
+            "{:?}",
+            report.violations
+        );
+        Ok(())
     }
 
     #[test]

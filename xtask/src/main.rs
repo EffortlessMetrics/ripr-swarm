@@ -87,6 +87,7 @@ mod run;
 mod rust_judged_panel;
 mod rust_region_scan;
 mod schema_producer_sweep;
+mod exact_schema_json;
 mod verification_contracts;
 mod verify_test_shards;
 mod version;
