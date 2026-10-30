@@ -20072,6 +20072,35 @@ fn inherent_helper_hop_credits_only_a_sync_helper_that_binds_the_owner_type() ->
     Ok(())
 }
 
+/// A free-helper hop resolves against the run's one shared syntax owner, so
+/// repeating it for every (seam, helper) pair never repeats the workspace
+/// trusted-macro scan: a fresh owner per call made tokio's pilot evidence
+/// stage run that scan about 250 times (318 s against 22 s).
+#[test]
+fn free_helper_hops_share_one_workspace_macro_scan() -> Result<(), String> {
+    let (index, _) = receiver_rule_parts(
+        "struct Site;\nimpl Site { fn new() -> Self { Site } fn area(&self) -> u32 { 1 } }\nfn helper() -> u32 { Site::new().area() }",
+        "assert_eq!(helper(), 1);",
+    )?;
+    let helper_fn = index
+        .functions()
+        .iter()
+        .find(|f| f.name == "helper")
+        .ok_or("helper")?;
+    let caller = index.tests().iter().find(|t| t.name == "t").ok_or("test")?;
+    for _ in 0..8 {
+        assert!(crate::analysis::classify::free_helper_call_resolves(
+            caller, helper_fn, &index
+        ));
+    }
+    let passes = index.call_identity_memos.receiver_scan_passes();
+    assert!(
+        (1..=2).contains(&passes),
+        "{passes} workspace macro scans for 8 identical hops"
+    );
+    Ok(())
+}
+
 /// #10229: file is part of a value fact's identity, so the same line, value
 /// and text from two test files stays two facts while an exact same-file
 /// duplicate still collapses.

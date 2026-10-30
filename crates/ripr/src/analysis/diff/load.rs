@@ -857,7 +857,17 @@ pub(crate) fn resolve_effective_base_core_with_commit(
         return resolve_default_base(root, git_timeout)
             .map(|resolved| (resolved, None))
             .map_err(|err| {
-                core_error_for_git_root_probe(probe_git_root(root, git_timeout), root, err)
+                let probe = probe_git_root(root, git_timeout);
+                // An unreadable ref store answers the root probe "inside a
+                // work tree", so only the HEAD probe sees the damage; type it
+                // as an unusable root, not an unresolved base, so structured
+                // consumers do not offer a base repair (#10566).
+                if matches!(probe, GitRootProbe::Unanswered)
+                    && let Some(message) = damaged_head_message(root, git_timeout)
+                {
+                    return CoreError::repository_root_unusable(message);
+                }
+                core_error_for_git_root_probe(probe, root, err)
             });
     };
 
@@ -1137,6 +1147,18 @@ fn missing_gitdir_target_message(root: &Path) -> Option<String> {
 /// corrupt `packed-refs` read as a missing remote, and a bad `.git/config` as
 /// "not inside a Git work tree" (#6908).
 fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> Option<String> {
+    unreadable_repository_message_with_ref_repair(
+        root,
+        output,
+        CORRECT_NAMED_REPOSITORY_FILE_REPAIR,
+    )
+}
+
+fn unreadable_repository_message_with_ref_repair(
+    root: &Path,
+    output: &std::process::Output,
+    ref_repair: &str,
+) -> Option<String> {
     // Disk check first: Git names a missing gitdir as "not a git repository"
     // or "invalid gitfile", which #6911 left on the work-tree message.
     if let Some(message) = missing_gitdir_target_message(root) {
@@ -1161,7 +1183,7 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
         "Repair the object store: run `git fsck`, restore the missing objects (for example \
          `git fetch`), then re-run."
     } else {
-        CORRECT_NAMED_REPOSITORY_FILE_REPAIR
+        ref_repair
     };
     Some(format!(
         "Git could not read the repository at `{}` (the analysis did not run): {reason}. \
@@ -1305,25 +1327,89 @@ fn resolve_default_base(root: &Path, git_timeout: Option<Duration>) -> Result<St
     ))
 }
 
+/// A quiet failed HEAD lookup is not enough to establish an unborn branch:
+/// loose-ref damage and inaccessible ref targets can also return silent exit 1.
+/// Git's recursive symbolic lookup distinguishes those without assuming a ref
+/// storage layout (including linked worktrees and reftable).
+pub(crate) enum HeadRefState {
+    Resolved,
+    Unborn,
+    Unreadable(String),
+    Unknown,
+}
+
+fn classify_failed_head(
+    root: &Path,
+    head: &std::process::Output,
+    git_timeout: Option<Duration>,
+) -> HeadRefState {
+    if let Some(message) = unreadable_repository_message(root, head) {
+        return HeadRefState::Unreadable(message);
+    }
+    if head.status.code() != Some(1) || !head.stdout.is_empty() || !head.stderr.is_empty() {
+        return HeadRefState::Unknown;
+    }
+    let Ok(symbolic) = crate::git::run_git_output_with_deadline(
+        root,
+        &["symbolic-ref", "--quiet", "HEAD"],
+        git_timeout,
+    ) else {
+        return HeadRefState::Unknown;
+    };
+    if symbolic.status.success()
+        && symbolic.stderr.is_empty()
+        && symbolic.stdout.starts_with(b"refs/heads/")
+        && symbolic.stdout.len() > b"refs/heads/\n".len()
+    {
+        return HeadRefState::Unborn;
+    }
+    const HEAD_REF_REPAIR: &str = "Inspect `HEAD` and the ref it names with `git symbolic-ref HEAD`; \
+        correct or restore the ref metadata and its read access, then re-run.";
+    match unreadable_repository_message_with_ref_repair(root, &symbolic, HEAD_REF_REPAIR) {
+        Some(message) => HeadRefState::Unreadable(message),
+        None => HeadRefState::Unknown,
+    }
+}
+
+/// Shared HEAD diagnosis for default-base failures and doctor. A failed or
+/// unanswered lookup cannot by itself justify the first-commit recovery.
+pub(crate) fn probe_head_ref_state(root: &Path, git_timeout: Option<Duration>) -> HeadRefState {
+    let Ok(head) = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--verify", "--quiet", "HEAD"],
+        git_timeout,
+    ) else {
+        return HeadRefState::Unknown;
+    };
+    if head.status.success() {
+        return HeadRefState::Resolved;
+    }
+    classify_failed_head(root, &head, git_timeout)
+}
+
+/// The repair message when Git establishes unreadable HEAD metadata.
+fn damaged_head_message(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    match probe_head_ref_state(root, git_timeout) {
+        HeadRefState::Unreadable(message) => Some(message),
+        HeadRefState::Resolved | HeadRefState::Unborn | HeadRefState::Unknown => None,
+    }
+}
+
 /// Repository facts that explain why no default base resolved and which
 /// `--base` would work: an unborn HEAD has nothing to diff, a shallow CI
 /// checkout never fetched its base branch, and a repository whose default
 /// branch is not `main`/`master` (`trunk`, `develop`) names its branches.
 /// Empty when none applies or Git cannot answer.
 fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> String {
-    // Only a `rev-parse` that ran and answered "no" proves an unborn HEAD;
-    // a missing or timed-out Git proves nothing, so it adds no context.
-    let Ok(head) = crate::git::run_git_output_with_deadline(
-        root,
-        &["rev-parse", "--verify", "--quiet", "HEAD"],
-        git_timeout,
-    ) else {
-        return String::new();
-    };
-    if !head.status.success() {
-        return " This repository has no commits yet; commit once, then analyze uncommitted \
-                edits with `--base HEAD --worktree`."
-            .to_string();
+    match probe_head_ref_state(root, git_timeout) {
+        HeadRefState::Unreadable(message) => return format!(" {message}"),
+        HeadRefState::Unborn => {
+            return " This repository has no commits yet; commit once, then analyze \
+                uncommitted edits with `--base HEAD --worktree`."
+                .to_string();
+        }
+        HeadRefState::Unknown => return String::new(),
+        HeadRefState::Resolved => {}
     }
     if is_shallow_repository(root, git_timeout) {
         return " This is a shallow clone that did not fetch a base branch; fetch it with \
