@@ -8878,6 +8878,8 @@ tests = [
   "crates/ripr/tests/error_path_sibling_variant.rs::sibling_variant_matches_pin_cannot_expose_the_changed_return_err",
   "crates/ripr/tests/error_path_sibling_variant.rs::sibling_variant_matches_pin_cannot_expose_the_changed_ok_or_else",
   "crates/ripr/tests/error_path_sibling_variant.rs::exact_variant_matches_pin_exposes_the_changed_return_err",
+  "crates/ripr/tests/check_repair_agree.rs::exact_err_variant_pin_grips_the_return_value_seam_for_check_and_repair",
+  "crates/ripr/tests/check_repair_agree.rs::sibling_err_variant_pin_leaves_the_return_value_seam_weak",
   "crates/ripr/tests/error_path_sibling_variant.rs::exact_variant_matches_pin_exposes_the_changed_ok_or_else",
   "crates/ripr/tests/error_path_sibling_variant.rs::issue_6673_diverging_ok_arm_and_exact_err_arm_expose_the_changed_error",
   "crates/ripr/tests/error_path_sibling_variant.rs::issue_6673_quiet_ok_arm_does_not_expose_the_changed_error",
