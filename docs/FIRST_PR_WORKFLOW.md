@@ -214,10 +214,12 @@ the input root separately from the selected root, and offers a fresh
 selected-workspace check to inspect. If that fresh check still has no repairable
 row, the limitation remains; a fresh check alone does not establish whole-corpus
 currentness. A known distinct producer root instead reports `wrong_root`. A JavaScript-flavoured TypeScript root (`package.json` and `.ts` files, no
-`tsconfig.json`) is not a wrong root: `ripr doctor` detects it, but first-pr
-only takes the TypeScript route with a `tsconfig.json` or `jsconfig.json` at the
-root or TypeScript under `src/` or `tests/`. It reports
-`typescript_project_marker_missing` and names that marker (#10713). When
+`tsconfig.json`) is not a wrong root: first-pr needs a `tsconfig.json` or
+`jsconfig.json` at the root, or TypeScript files under `src/` or `tests/`; a
+`package.json` alone is not enough. It reports
+`typescript_project_marker_missing` and tells you to add `tsconfig.json`
+(`jsconfig.json` for a JavaScript-only root) (#10713). A root that also looks
+like a Python project keeps `wrong_root`. When
 the producer root is missing, relative, or cannot be resolved, its identity is
 unknown: first-pr must not offer a regeneration command that can overwrite the
 supplied check output. This applies even when the ledger projects zero records;
