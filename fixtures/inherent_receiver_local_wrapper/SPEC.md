@@ -12,7 +12,9 @@ Analyze the changed Object arm and the complete repository; compile and run the 
 
 ## Then
 
-The genuine local receiver delegation retains helper reach; its native test rejects the owner mutant.
+The static golden links the wrapper test to the probes only by `weak_token_substring`
+relation at low confidence, and both probes are `reachable_unrevealed`. Separately,
+the native wrapper test, run as Rust, rejects the owner mutant.
 
 ## Must Not
 
@@ -24,7 +26,9 @@ The Rust files under `controls/` are complete native test subjects. Original
 subjects compile and pass. The foreign-entry and foreign-last-hop controls
 accept the private Object-arm mutant. The wrapper fixture's own test rejects that
 mutant. Other owner-identity controls (local-helper, standard-assertion,
-sibling-macro and module-shadowed owner type) belong to other slices. A test comparing full and compact evidence for these subjects is intended to be
+sibling-macro and module-shadowed owner type) belong to other slices.
+
+A test comparing full and compact evidence for these subjects is intended to be
 carried by the integration-tests slice (#11031); this fixture slice does not
 carry that test.
 

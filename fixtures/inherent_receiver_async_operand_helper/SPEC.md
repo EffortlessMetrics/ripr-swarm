@@ -15,10 +15,12 @@ original and the one-arm `None` mutant separately.
 
 ## Then
 
-Both native executions pass. The dormant operand grants neither direct nor helper
-owner credit. All four owner seams, both diff probes and the named test remain.
-Full and compact metrics agree. Adjacent outer and mixed-async calls retain genuine
-repository direct/helper credit; diff helper support remains conservative.
+Both native executions pass. The dormant operand grants no executed owner credit; the probes stay
+`weakly_exposed` (`same_test_file` relation at medium confidence, with a named
+analyzer limitation on the helper path). All four owner seams, both diff probes and the named test remain.
+Intended, not carried by this slice: full and compact metrics agree, and adjacent
+outer and mixed-async calls retain genuine repository direct/helper credit. Diff
+helper support remains conservative.
 
 The two probes stay `weakly_exposed` here, whereas the direct-owner sibling
 `inherent_receiver_async_operand` is `reachable_unrevealed`; the golden change is

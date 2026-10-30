@@ -5,7 +5,7 @@ Spec: RIPR-SPEC-0005
 ## Given
 
 A standard equality operand constructs and discards an unpolled future whose
-body mentions the private inherent owner, directly or through a same-file helper.
+body calls the private inherent owner directly.
 
 ## When
 
@@ -14,10 +14,10 @@ original and the one-arm `None` mutant separately.
 
 ## Then
 
-Both native executions pass. The dormant operand grants neither direct nor helper
-owner credit. All four owner seams, both diff probes and the named test remain.
-Full and compact metrics agree. Adjacent outer and mixed-async calls retain genuine
-repository direct/helper credit; diff helper support remains conservative.
+Both native executions pass. The dormant operand grants no direct owner credit. All four owner seams, both diff probes and the named test remain.
+Intended, not carried by this slice: full and compact metrics agree, and adjacent
+outer and mixed-async calls retain genuine repository direct/helper credit. Diff
+helper support remains conservative.
 
 ## Must Not
 
