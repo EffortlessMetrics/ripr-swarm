@@ -612,7 +612,9 @@ code; a `#` inside a string, a respelling (`0x1` to `1`, a requoted string), a
 changed token or a changed indentation is still an edit, and a line that does
 not lex alone (part of a multi-line construct) stays analyzed. A line inside a
 string literal that crosses a line break is string content, so the guard does
-not apply there; a file that cannot be lexed to rule that out gets no guard. No gap id or
+not apply there, on either the new line or its paired old line (read from the
+reconstructed old source); a file that cannot be lexed to rule that out gets no
+guard. No gap id or
 discriminator can then embed comment text.
 
 A one-line module-level dict literal of unique `str` or `int` keys and scalar

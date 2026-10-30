@@ -1562,6 +1562,12 @@ impl PythonAdapter {
                 .sources
                 .get(&changed.path)
                 .and_then(|source| no_behavior::multi_line_string_line_ranges(source));
+            // The paired old line gets the same test against the
+            // reconstructed old source, so a delimiter edit that turns old
+            // string content into code is not read as a spacing edit.
+            let old_string_line_ranges = old_source
+                .as_deref()
+                .and_then(no_behavior::multi_line_string_line_ranges);
             let import_ranges = import_ranges_by_file
                 .get(&changed.path)
                 .map(Vec::as_slice)
@@ -1637,7 +1643,12 @@ impl PythonAdapter {
                     new_line_in_docstring: line_is_in_ranges(added.line, new_docstring_ranges),
                     new_line_in_multiline_string: string_line_ranges
                         .as_deref()
-                        .is_none_or(|ranges| line_is_in_ranges(added.line, ranges)),
+                        .is_none_or(|ranges| line_is_in_ranges(added.line, ranges))
+                        || old_line.is_some_and(|removed| {
+                            old_string_line_ranges
+                                .as_deref()
+                                .is_none_or(|ranges| line_is_in_ranges(removed.line, ranges))
+                        }),
                     old_line_in_docstring: old_line.is_some_and(|removed| {
                         line_is_in_ranges(removed.line, &old_docstring_ranges)
                     }),
