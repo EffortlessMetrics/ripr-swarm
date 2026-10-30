@@ -9087,20 +9087,23 @@ fn word_after_as(rest: &str) -> &str {
 /// Every word that follows an `as` inside a renaming item of `source`,
 /// computed once per distinct source text. A pilot asks `file_renames_to`
 /// for each (seam, test, type) triple; masking and scanning the whole test
-/// file each time dominated ripgrep's evidence stage. Content-keyed, so a
+/// file each time dominated ripgrep's evidence stage. Content-keyed and verified against the stored text, so a
 /// changed file can never read a stale answer; bounded so a long-lived
 /// process cannot grow without limit. `None` if the lock is poisoned.
 fn renamed_names_memoized(source: &str) -> Option<Arc<BTreeSet<String>>> {
     use std::hash::{Hash, Hasher};
-    type Renamed = Arc<BTreeSet<String>>;
-    static MEMO: std::sync::Mutex<BTreeMap<(u64, usize), Renamed>> =
-        std::sync::Mutex::new(BTreeMap::new());
-    const MAX_ENTRIES: usize = 8192;
+    // The full text is kept beside its answer and compared on a hit, so a
+    // hash collision can only miss, never hand one file another's renames
+    // (which would drop a refusal).
+    type Entry = (Arc<str>, Arc<BTreeSet<String>>);
+    static MEMO: std::sync::Mutex<BTreeMap<u64, Entry>> = std::sync::Mutex::new(BTreeMap::new());
+    const MAX_ENTRIES: usize = 2048;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     source.hash(&mut hasher);
-    let key = (hasher.finish(), source.len());
+    let key = hasher.finish();
     if let Ok(memo) = MEMO.lock()
-        && let Some(found) = memo.get(&key)
+        && let Some((text, found)) = memo.get(&key)
+        && &**text == source
     {
         return Some(Arc::clone(found));
     }
@@ -9123,7 +9126,8 @@ fn renamed_names_memoized(source: &str) -> Option<Arc<BTreeSet<String>>> {
     if memo.len() >= MAX_ENTRIES {
         memo.clear();
     }
-    Some(Arc::clone(memo.entry(key).or_insert(renamed)))
+    memo.insert(key, (Arc::from(source), Arc::clone(&renamed)));
+    Some(renamed)
 }
 
 /// The byte spans in `masked` where an `as` may rename: every `use ..;`

@@ -13051,13 +13051,18 @@ fn memoized_file_renames_to_matches_the_direct_scan() {
         "const S: &str = \"use a::B as Widget;\";",
         "use a::B as\n    Widget;",
         "use a::B as Widget2;",
+        "use a::B as Fooé;",
+        "use a::B as ;",
+        "use a::B as r#",
     ];
     let names = [
         "Widget", "r#Widget", "r", "u32", "Clone", "Fake", "bar", "C", "E", "r#E", "Widget2",
-        "Wid", "Missing", "",
+        "Wid", "Missing", "", "Foo", "r#r",
     ];
     for source in sources {
         for name in names {
+            // Twice: the second call answers from the memo.
+            let _ = file_renames_to(source, name);
             assert_eq!(
                 file_renames_to(source, name),
                 source.contains(name) && file_renames_to_uncached(source, name),
