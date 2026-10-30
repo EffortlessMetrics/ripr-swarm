@@ -101,6 +101,9 @@ fn a_renamed_registration_alias_indexes_like_the_direct_forms() {
         format!("{head}const {{ test }} = runner;\ntest('unrenamed pick pins inc', {callback});\n");
     let renamed =
         format!("{head}const {{ test: t }} = runner;\nt('renamed pick pins inc', {callback});\n");
+    let renamed_only = format!(
+        "{head}const {{ test: t }} = runner;\nt.only('renamed only pins inc', {callback});\n"
+    );
     let renamed_import = format!(
         "import {{ test as t }} from 'node:test';\nimport {{ inc }} from '../src/calc.js';\nconst assert = require('node:assert');\nt('renamed import pins inc', {callback});\n"
     );
@@ -108,6 +111,7 @@ fn a_renamed_registration_alias_indexes_like_the_direct_forms() {
         ("member pick", &member),
         ("unrenamed pick", &unrenamed),
         ("renamed pick", &renamed),
+        ("renamed only", &renamed_only),
         ("renamed import", &renamed_import),
     ] {
         let tests = extract_tests(file, source);
@@ -177,6 +181,36 @@ fn a_renamed_alias_credits_only_the_registration_target_it_names() {
         tests.is_empty(),
         "a describe-body rebinding of the renamed spelling is not the runner: {shadowed}"
     );
+}
+
+/// #10987 review: the literal spellings refuse inactive modifiers
+/// (`t.skip(...)`, `t.todo(...)`) and empty `.each` tables before a callback
+/// can donate assertions, and an aliased `.each` would lose the table-row
+/// fences. An alias must not read as a registration those spellings refuse:
+/// it registers only bare or through an active modifier (`t(...)`,
+/// `t.only(...)`).
+#[test]
+fn a_renamed_alias_owes_the_inactive_and_each_fences() {
+    let file = Path::new("test/pick.test.ts");
+    let head = "import { inc } from '../src/calc.js';\nconst assert = require('node:assert');\nconst runner = require('node:test');\n";
+    let callback = "() => { assert.strictEqual(inc(1), 2); }";
+    for (label, registration) in [
+        ("inactive modifier", format!("const {{ test: t }} = runner;\nt.skip('ties nothing', {callback});\n")),
+        ("todo modifier", format!("const {{ test: t }} = runner;\nt.todo('ties nothing', {callback});\n")),
+        ("empty aliased table", format!("const {{ test: t }} = runner;\nt.each([])('ties nothing', {callback});\n")),
+        (
+            "aliased each table",
+            "const { test: t } = runner;\nt.each([[1, 'gold']])('ties nothing', (n, tier) => { assert.strictEqual(inc(n), 2 + tier.length); });\n"
+                .to_string(),
+        ),
+    ] {
+        let source = format!("{head}{registration}");
+        let tests = extract_tests(file, &source);
+        assert!(
+            tests.is_empty(),
+            "{label} must register nothing through an alias: {source}"
+        );
+    }
 }
 
 #[test]

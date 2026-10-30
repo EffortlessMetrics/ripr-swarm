@@ -3644,6 +3644,14 @@ fn renamed_registration_is_known(
     if root.matches_identifier(local) {
         return false;
     }
+    // The literal spellings refuse inactive modifiers (`t.skip`, `t.todo`)
+    // before a callback can donate assertions, and an aliased `.each` would
+    // lose the empty-table and table-row fences those spellings get. An alias
+    // therefore registers only bare or through an active modifier; every
+    // other member shape stays unindexed exactly as before (#11057 review).
+    if !alias_callee_chain_is_active(&call.callee) {
+        return false;
+    }
     // Only an alias of a member the direct spelling accepts enters the
     // admission decision; namespace objects and other members do not.
     resolved
@@ -3659,6 +3667,23 @@ fn renamed_registration_is_known(
             matches!(root, TestDeclarationRoot::Describe),
             &resolved.names,
         )
+}
+
+/// Whether an alias's callee chain spells an active registration: the bare
+/// alias (`t(...)`) or active modifiers over it (`t.only(...)`). An inactive
+/// modifier (`t.skip`, `t.todo`, `.fails`) and an `.each` / `.skipIf` factory
+/// are refused: the literal spellings decide those through the inactive-
+/// modifier, empty-table and table-row fences, and an alias must not read as
+/// a registration they would refuse.
+fn alias_callee_chain_is_active(callee: &Expression<'_>) -> bool {
+    match callee.get_inner_expression() {
+        Expression::Identifier(_) => true,
+        Expression::StaticMemberExpression(member) => {
+            is_active_declaration_modifier(member.property.name.as_str())
+                && alias_callee_chain_is_active(&member.object)
+        }
+        _ => false,
+    }
 }
 
 /// `referenced` is the same-file function a `test(title, name)` registration
