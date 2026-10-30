@@ -3733,6 +3733,16 @@ mod tests {
                 "boundary input where loyalty_years == 5",
             ),
             ("count < limit", "boundary input where count == limit"),
+            // Operands that are negative, fractional or method calls with no
+            // inner spaces are still one token each.
+            ("x > -5", "boundary input where x == -5"),
+            ("price > 0.5", "boundary input where price == 0.5"),
+            ("v.len() > 0", "boundary input where v.len() == 0"),
+            // Not three whitespace tokens: kept as written (the hint stays
+            // advisory and never guesses a rewrite).
+            ("x>5", "boundary input where x>5"),
+            ("Vec<u8>", "boundary input where Vec<u8>"),
+            ("foo(a, b) > 0", "boundary input where foo(a, b) > 0"),
             // Already includes or names the equality value, or is not a simple
             // strict comparison: kept as written.
             (
