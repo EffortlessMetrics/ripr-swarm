@@ -1066,7 +1066,7 @@ Seam severities affect LSP seam diagnostics. Valid values are `off`, `info`,
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `seam_diagnostics` | boolean | `true` | Default for bounded saved-workspace repo seam diagnostics. LSP `initializationOptions.seamDiagnostics` still wins. |
-| `diagnostic_profile` | enum: `actionable` \| `full` | `actionable` | `actionable` suppresses exposed, unknown, opaque, and route-less diagnostics; `full` preserves the audit/debug projection. LSP `initializationOptions.diagnosticProfile` still wins. |
+| `diagnostic_profile` | enum: `actionable` \| `full` | `actionable` | `actionable` suppresses exposed, unknown, opaque, and route-less diagnostics (route-less: no named missing discriminator or no related-test fix site; the rule is the same for every language, and the suppressed gap is named in `ripr/listActionableItems` `hidden_gaps`); `full` preserves the audit/debug projection. LSP `initializationOptions.diagnosticProfile` still wins. |
 
 ### `[reports]`
 

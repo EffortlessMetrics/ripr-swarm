@@ -5720,6 +5720,60 @@ mod diagnostic_policy_tests {
         Ok(())
     }
 
+    /// #10714: the actionable profile is one language-neutral rule. A weak
+    /// finding is published only when the shared witness names a missing
+    /// discriminator and a fix-site test; without a related test it is
+    /// route-less and hidden. Rust and Python must get the same disposition
+    /// in both shapes, so no language looks more "alive" in the editor.
+    #[test]
+    fn actionable_profile_disposition_is_language_neutral_for_weak_findings() -> Result<(), String>
+    {
+        let weak_test = || RelatedTest {
+            name: "checks_boundary".to_string(),
+            file: std::path::PathBuf::from("tests/pricing"),
+            line: 12,
+            oracle: Some("assert discount(2, 10) is not None".to_string()),
+            oracle_kind: OracleKind::SmokeOnly,
+            oracle_strength: OracleStrength::Smoke,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        };
+        let mut dispositions = Vec::new();
+        for language in [LanguageId::Rust, LanguageId::Python] {
+            for with_fix_site in [false, true] {
+                let mut finding = policy_finding();
+                finding.class = ExposureClass::WeaklyExposed;
+                finding.language = Some(language);
+                finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+                    value: "amount == threshold".to_string(),
+                    reason: "exact boundary is not observed".to_string(),
+                    flow_sink: None,
+                }];
+                if with_fix_site {
+                    finding.related_tests.push(weak_test());
+                }
+                let visible =
+                    finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, &finding);
+                if visible != with_fix_site {
+                    return Err(format!(
+                        "{language:?} (fix site: {with_fix_site}) disposition was visible={visible}"
+                    ));
+                }
+                if !finding_is_visible_in_profile(LspDiagnosticProfile::Full, &finding) {
+                    return Err(format!("full profile dropped a {language:?} finding"));
+                }
+                dispositions.push((with_fix_site, visible));
+            }
+        }
+        if dispositions[..2] != dispositions[2..] {
+            return Err(format!("languages diverged: {dispositions:?}"));
+        }
+        Ok(())
+    }
+
     #[test]
     fn actionable_profile_excludes_base_side_evidence() {
         // RIPR-SPEC-0152: the actionable profile is an obligation surface;
