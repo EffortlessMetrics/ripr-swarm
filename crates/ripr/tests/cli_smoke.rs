@@ -6762,7 +6762,7 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
             assert_eq!(card["forbidden_files"], serde_json::json!(["src/lib.rs"]));
             assert!(card["next_action"].is_null());
             assert!(before.stdout.is_empty());
-            assert!(!String::from_utf8_lossy(&before.stderr).contains("before phase complete"));
+            assert!(!String::from_utf8_lossy(&before.stderr).contains("repair started"));
             // #10712: `agent start` applies the same admission gate, so the
             // seam `repair` and `card` call not repair-ready is a typed
             // refusal (exit 3) and writes no workflow.
@@ -8842,19 +8842,14 @@ fn agent_repair_before_requires_effective_cargo_build_directory_ignore()
             ).into());
         }
         let stderr = String::from_utf8_lossy(&before.stderr);
-        for required in [
-            "target/",
-            "Git-ignored",
-            "/target/",
-            "no repair attempt was started",
-        ] {
+        for required in ["target/", "Git-ignored", "/target/", "Nothing was started."] {
             if !stderr.contains(required) {
                 return Err(
                     format!("missing actionable precondition {required:?}: {stderr}").into(),
                 );
             }
         }
-        if !before.stdout.is_empty() || stderr.contains("before phase complete") {
+        if !before.stdout.is_empty() || stderr.contains("repair started") {
             return Err(format!(
                 "refused before phase must not publish a packet or completion: {before:?}"
             )
@@ -9227,8 +9222,8 @@ fn run_repair_phase_redirected(
 #[test]
 fn agent_repair_names_output_redirected_into_the_checkout() -> Result<(), Box<dyn std::error::Error>>
 {
-    const GUIDANCE: &str = "keep this command's output out of the checkout";
-    const UNTRACKED_HINT: &str = "not tracked by Git when the before phase ran.";
+    const GUIDANCE: &str = "write this command's output outside the repo";
+    const UNTRACKED_HINT: &str = "not tracked by Git when the repair started.";
     const REDIRECT_HINT: &str = "a file you redirected ripr output into";
 
     // Natural shape: redirect files in the repository root.
@@ -9800,7 +9795,7 @@ fn agent_repair_before_inline_only_seam(ambiguous: bool) -> Result<(), Box<dyn s
         );
     }
     assert!(
-        !stderr.contains("before phase complete"),
+        !stderr.contains("repair started"),
         "a refused before phase must not claim completion:\n{stderr}"
     );
     for artifact in [
@@ -9870,7 +9865,7 @@ fn agent_repair_refuses_a_tracked_cargo_lock_change_between_the_phases()
         let stderr = String::from_utf8_lossy(&after.stderr);
         assert!(
             stderr.contains(&format!(
-                "ripr: analysis inputs changed after the before phase: {changed_input}."
+                "ripr: analysis inputs changed after the repair started: {changed_input}."
             )),
             "{scenario}: the refusal must name the changed input:\n{stderr}"
         );
@@ -10215,7 +10210,7 @@ fn agent_repair_seam_selection_names_start_command_and_found_ids()
     assert_failure(&after);
     let stderr = String::from_utf8_lossy(&after.stderr);
     let expected_start = format!(
-        "no awaiting repair attempt exists for seam `{BOUNDARY_GAP_SEAM_ID}`; start one with `ripr agent repair --root {} --seam-id {BOUNDARY_GAP_SEAM_ID} --phase before`",
+        "no repair is in progress for this gap; start one with `ripr agent repair --root {} --seam-id {BOUNDARY_GAP_SEAM_ID} --phase before`",
         // The refusal renders the root through the same display rule as the
         // sibling messages (stable separators).
         root.display().to_string().replace('\\', "/")
@@ -10253,7 +10248,7 @@ fn agent_repair_seam_selection_names_start_command_and_found_ids()
     assert_failure(&after);
     let stderr = String::from_utf8_lossy(&after.stderr);
     assert!(
-        stderr.contains("expected exactly one awaiting repair attempt for seam")
+        stderr.contains("expected exactly one repair in progress for gap")
             && stderr.contains("found 2"),
         "the ambiguity refusal must fire:\n{stderr}"
     );
@@ -24856,6 +24851,20 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
             "the untracked-only default must print the #5258 note; got:\n{untracked_only_human}"
         ));
     }
+    // #11159: the committed-history header names the count and the repair
+    // beside `head:`, not only in the end-of-report note.
+    let header_line = "untracked: 1 file not analyzed (src/new.rs); run `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH`";
+    let header_head = untracked_only_human
+        .lines()
+        .position(|line| line.starts_with("head: HEAD "));
+    let header_untracked = untracked_only_human
+        .lines()
+        .position(|line| line == header_line);
+    if header_head.map(|index| index + 1) != header_untracked {
+        return Err(format!(
+            "the untracked-only default must print the untracked header line right after head:; got:\n{untracked_only_human}"
+        ));
+    }
 
     // (c) An empty working-tree read describes the merge-base-to-working-tree
     // diff, not `main...HEAD`, never offers `--worktree`, and names the
@@ -24914,6 +24923,14 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
     {
         return Err(format!(
             "the empty working-tree read must not describe `main...HEAD` or advise `--worktree`; got:\n{empty_worktree}"
+        ));
+    }
+    if empty_worktree
+        .lines()
+        .any(|line| line.starts_with("untracked:"))
+    {
+        return Err(format!(
+            "a working-tree read must not print the committed-history untracked header line; got:\n{empty_worktree}"
         ));
     }
 
@@ -27733,7 +27750,7 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
         markdown.contains("was refused: agent verify no repository movement"),
         "{markdown}"
     );
-    assert!(markdown.contains("last after phase refused"), "{markdown}");
+    assert!(markdown.contains("last step refused"), "{markdown}");
 
     // The focused edit resolves the cause; the retry finishes and the
     // refusal no longer describes the attempt.
@@ -28654,7 +28671,7 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(
-        stderr.contains("ripr: analysis inputs changed after the before phase: Cargo.toml."),
+        stderr.contains("ripr: analysis inputs changed after the repair started: Cargo.toml."),
         "precondition: the after phase names the changed input:\n{stderr}"
     );
     let document: serde_json::Value = serde_json::from_slice(&refused.stdout)?;
@@ -28662,7 +28679,8 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
     assert!(
         json_strings(&document["narration"])
             .iter()
-            .any(|line| line.contains("analysis inputs changed after the before phase: Cargo.toml")),
+            .any(|line| line
+                .contains("analysis inputs changed after the repair started: Cargo.toml")),
         "{document:#}"
     );
 
@@ -28673,7 +28691,7 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
         .to_string();
     for needle in [
         "analysis input identities differ",
-        "Analysis inputs changed after the before phase: Cargo.toml",
+        "Analysis inputs changed after the repair started: Cargo.toml",
         "To recover: restore those files to their before-phase state",
     ] {
         assert!(recorded.contains(needle), "lacks `{needle}`: {recorded}");
@@ -28693,7 +28711,7 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
     );
     assert!(
         repair_route_markdown(&root)?
-            .contains("Analysis inputs changed after the before phase: Cargo.toml"),
+            .contains("Analysis inputs changed after the repair started: Cargo.toml"),
         "the Markdown view must carry the named cause"
     );
 

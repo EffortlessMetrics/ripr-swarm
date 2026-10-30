@@ -5589,7 +5589,10 @@ mod tests {
         // observe the owners but need operands that distinguish product order.
         // `python_factor_reorder_rebound` adds one direct-aligned weak card:
         // its rebound table operand leaves multiplication order unresolved.
-        if (direct, no_strong, orthogonal, family_selection) != (17, 27, 30, 1) {
+        // #11103: `python_len_local_boundary_repair_gap` derives its once-bound
+        // `visible = len(text)` operand, so the weak boundary finding names
+        // `visible == limit` and carries one direct-aligned card.
+        if (direct, no_strong, orthogonal, family_selection) != (18, 27, 30, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

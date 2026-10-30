@@ -392,7 +392,7 @@ from absence. The disclosure fields introduced in `0.1` (#7290) remain:
 - `warnings` — one string naming why the class carries omission prose. A
   `strongly_gripped` seam is exposed because its tests already discriminate
   it, so the warning says exactly that (`seam <id> is strongly_gripped:
-  existing tests already discriminate it, so a stub would add nothing`); the
+  existing tests already discriminate it, so this stub is an optional scaffold for the location you named, not evidence of a missing discriminator`); the
   default `Off` severity for the class is the agent-brief rendering policy,
   not user configuration, so the packet/brief "configured off" wording is not
   reused here (#8891). A class a user severity actually disables keeps the
