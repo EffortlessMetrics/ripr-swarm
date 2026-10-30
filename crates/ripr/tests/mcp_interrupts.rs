@@ -563,6 +563,18 @@ fn fixture_git_ok(root: &Path, args: &[&str]) -> Result<(), String> {
             "commit.gpgSign=false",
             "-c",
             "core.fsmonitor=false",
+            // This test is its descendant tree's only subreaper, so git must
+            // not detach background helpers (observed: one clean-exit `git`
+            // zombie per commit reparented to this process). Every helper is
+            // suppressed here so the fixture owns each git it starts.
+            "-c",
+            "gc.auto=0",
+            "-c",
+            "gc.autoDetach=false",
+            "-c",
+            "maintenance.auto=false",
+            "-c",
+            "core.commitGraph=false",
         ])
         .args(args)
         .stdin(Stdio::null())
