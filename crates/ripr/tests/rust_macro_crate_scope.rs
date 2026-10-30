@@ -147,11 +147,14 @@ fn field_assertion_rebindings_refuse_credit_and_disclose_the_site() -> Result<()
                     .as_array()
                     .ok_or("missing evidence")?
                     .iter()
-                    .any(|note| note
-                        .as_str()
-                        .is_some_and(|text| text.contains("assertion not credited")
+                    .any(|note| note.as_str().is_some_and(
+                        |text| text.contains("assertion not credited")
                             && text.contains("assert_eq!")
-                            && text.contains("tests/pin.rs"))),
+                            // The disclosure renders the site path with the
+                            // host separator; the pinned file is the same.
+                            && (text.contains("tests/pin.rs")
+                                || text.contains("tests\\pin.rs"))
+                    )),
                 "{finding}"
             );
         }
