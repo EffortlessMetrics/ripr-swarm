@@ -111,6 +111,21 @@ published, and compiles from source when it is not. Releases before 0.11.0 carry
 no binstall metadata. See [Install channels](INSTALL_CHANNELS.md) for what
 each channel serves today.
 
+Build and install timings (moved from the README): a cold `cargo build --release`
+of the workspace took about 6 minutes (366 s) on a 4-core Linux container in
+October 2026, against 17 minutes (1037 s) for the earlier fat-LTO,
+single-codegen-unit profile; `cargo install ripr` for 0.10.0 took about 2
+minutes on an earlier run. The packaged 0.11.0 crate drops that profile, so
+`cargo install ripr --locked` should build in about 4.6 minutes (275 s) once
+0.11.0 is on crates.io (measured by building the packaged crate with
+`cargo build --release`, not a download). In that walk, `doctor` and `check`
+each took under 3 seconds on small crates; `ripr pilot` takes longer on large
+repositories. The prebuilt 0.10.0 archive downloads in about a second, against
+about two minutes to compile 0.10.0 from source.
+`cargo xtask first-run --install-archive 0.10.0` replays the archive route end
+to end and times it. The [first-run scoreboard](../benchmarks/dx_scoreboard/README.md)
+tracks the install time so a rise shows.
+
 For another installation method or a pinned server, see
 [Server provisioning](SERVER_PROVISIONING.md).
 
@@ -447,6 +462,39 @@ manifest and adds a `verify` phase; see
 For lower-level control, see [Agent workflows](AGENT_WORKFLOWS.md) and
 [the LLM operator guide](LLM_OPERATOR_GUIDE.md). No LLM provider is called by
 these commands.
+
+### Agent repair details
+
+Reference details for driving ripr from a coding agent (moved from the README):
+
+- `ripr check` prints the `ripr explain` and `ripr context` commands for the top
+  finding. With `--format json` the result embeds the same bounded
+  `canonical_next_action` (class, selected item, root, diff source, and followable
+  route). `ripr doctor --json` carries the same `canonical_next_action` when setup
+  needs a precise recovery, matching the human Safe-next-action line.
+- Run the follow-up commands ripr prints (`ripr explain`, `ripr context`,
+  `ripr agent repair ...`) exactly as printed: their IDs belong to that run and
+  cannot be copied from documentation. `agent repair --seam-id` takes the seam ID
+  that `pilot` prints; the `probe:...` IDs from `check` are rejected there.
+- The compact repair card is the default bounded handoff to a coding agent:
+  `ripr agent card --root . --seam-id <seam-id> --json` projects the
+  fix-instruction summary, repair-route readiness, and canonical next action, with
+  the full packet behind the card's explicit detail route. A successful
+  `ripr repair` start prints the same card.
+- Between the repair phases, the attempt refuses any new file outside the allowed
+  test files, whether Git ignores it or not. When your tests live in an inline
+  `#[cfg(test)] mod tests` inside the source file (the `cargo new --lib` layout),
+  the repair edits that file, but only by adding new test functions inside that
+  one module; any other change to the file fails the attempt. Build output under a
+  gitignored `target/` is the exception. Before starting a repair, make sure
+  `target/` is in a committed `.gitignore`; changing `.gitignore` mid-attempt is
+  itself refused. Redirect ripr output under `target/ripr/` or outside the
+  repository.
+- Exit `0` means the command completed and `2` means it could not, which includes
+  the file refusal above; `3` means ripr declined: a gate blocked, or it refused a
+  request, such as a repair after phase refused for a named cause. See
+  [exit codes](EXIT_CODES.md). The [LLM operator guide](LLM_OPERATOR_GUIDE.md)
+  covers the full repair loop.
 
 ### Prepare a PR summary
 

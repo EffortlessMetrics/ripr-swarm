@@ -223,10 +223,15 @@ fn prebuilt_install_block_verifies_on_macos() -> Result<(), String> {
 /// command-line downloads are normally not quarantined.
 #[test]
 fn install_docs_explain_macos_gatekeeper_quarantine() -> Result<(), String> {
-    for (name, doc) in [
-        ("README.md", ROOT_README),
-        ("docs/QUICKSTART.md", QUICKSTART_DOC),
-    ] {
+    // The README stays a short first-minute page and links to the Installation
+    // section that owns the full Gatekeeper explanation.
+    assert_contains(
+        "README.md Gatekeeper pointer",
+        ROOT_README,
+        "docs/QUICKSTART.md#installation",
+    )?;
+    assert_contains("README.md Gatekeeper pointer", ROOT_README, "Gatekeeper")?;
+    for (name, doc) in [("docs/QUICKSTART.md", QUICKSTART_DOC)] {
         let flat = doc.split_whitespace().collect::<Vec<_>>().join(" ");
         for needle in [
             "not signed or notarized",
