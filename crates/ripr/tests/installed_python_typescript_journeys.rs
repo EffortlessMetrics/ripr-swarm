@@ -1406,7 +1406,7 @@ fn gap_before_stdout_discloses_test_runner_cache_limit_in_both_modes() -> Result
         };
         need(
             &guidance,
-            "run the focused test after continue",
+            "run the focused test after continue succeeds",
             "stdout cache order",
         )?;
         need(

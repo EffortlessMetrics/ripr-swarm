@@ -16316,7 +16316,7 @@ Field contract:
   clean state. `test_runner_cache_guidance`, when present, explains that a
   TypeScript gap attempt can refuse or become stale when a test runner writes
   ignored caches; it recommends recording native test results separately
-  after continuation and does not claim a test was recorded in the receipt.
+  after successful continuation and does not claim a test was recorded in the receipt.
   Without `--json`, stdout is a short prose summary whose
   final line names the same next command — or, for such an ambiguous
   baseline, the ambiguity warning and the clean-state restart route, with
