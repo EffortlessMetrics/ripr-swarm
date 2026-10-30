@@ -28,6 +28,10 @@ const DEFAULT_HEAD: &str = "HEAD";
 const START_HERE_JSON: &str = "start-here.json";
 const START_HERE_MD: &str = "start-here.md";
 const DEFAULT_REPO_EXPOSURE: &str = "target/ripr/reports/repo-exposure.json";
+/// The repo-exposure report `ripr pilot` writes (`repo-exposure-json` shape,
+/// the same producer as the default report). First-pr reads it as the gap
+/// ledger's input when the default report is absent (#3905).
+const PILOT_REPO_EXPOSURE: &str = "target/ripr/pilot/repo-exposure.json";
 const DEFAULT_REPO_EXPOSURE_LATENCY_JSON: &str = "target/ripr/reports/repo-exposure-latency.json";
 const DEFAULT_REPO_EXPOSURE_LATENCY_REPORT: &str = "target/ripr/reports/repo-exposure-latency.md";
 const DEFAULT_CHECK_OUTPUT: &str = "target/ripr/reports/check.json";
@@ -1969,8 +1973,7 @@ fn missing_gap_ledger_selection(root: &Path, options: &FirstPrOptions) -> Select
         );
     }
 
-    let repo_exposure = resolve_path(root, DEFAULT_REPO_EXPOSURE);
-    if !repo_exposure.exists() {
+    if !repo_exposure_available(root) {
         return missing_repo_exposure_selection(root, options);
     }
     missing_gap_ledger_artifact(
@@ -2807,7 +2810,27 @@ fn regenerate_gap_ledger_command(root: &Path, options: &FirstPrOptions) -> Strin
     if uses_check_output_gap_ledger(root) {
         return regenerate_check_output_gap_ledger_command(options);
     }
-    regenerate_repo_exposure_gap_ledger_command(options)
+    regenerate_repo_exposure_gap_ledger_command(options, repo_exposure_input(root))
+}
+
+/// Whether a repo-exposure report exists for the gap ledger to read: the
+/// default report or the one `ripr pilot` wrote.
+fn repo_exposure_available(root: &Path) -> bool {
+    resolve_path(root, DEFAULT_REPO_EXPOSURE).exists()
+        || resolve_path(root, PILOT_REPO_EXPOSURE).exists()
+}
+
+/// The repo-exposure path the ledger command reads: the default report when
+/// present, else the pilot's (#3905: `ripr pilot` then `ripr first-pr` must
+/// not report the pilot's own report missing), else the default.
+fn repo_exposure_input(root: &Path) -> &'static str {
+    if !resolve_path(root, DEFAULT_REPO_EXPOSURE).exists()
+        && resolve_path(root, PILOT_REPO_EXPOSURE).exists()
+    {
+        PILOT_REPO_EXPOSURE
+    } else {
+        DEFAULT_REPO_EXPOSURE
+    }
 }
 
 /// A blocked ledger could not use its input, so regenerating the ledger
@@ -2825,7 +2848,7 @@ fn regenerate_blocked_gap_ledger_command(root: &Path, options: &FirstPrOptions) 
     format!(
         "{} && {}",
         regenerate_repo_exposure_command(&options.command_root()),
-        regenerate_repo_exposure_gap_ledger_command(options)
+        regenerate_repo_exposure_gap_ledger_command(options, DEFAULT_REPO_EXPOSURE)
     )
 }
 
@@ -2837,11 +2860,14 @@ fn uses_check_output_gap_ledger(root: &Path) -> bool {
 /// `ripr reports gap-ledger` resolves `--repo-exposure`, `--out` and
 /// `--out-md` against its working directory, so each anchors at the bound
 /// root that `--root` names (#3948, #4287).
-fn regenerate_repo_exposure_gap_ledger_command(options: &FirstPrOptions) -> String {
+fn regenerate_repo_exposure_gap_ledger_command(
+    options: &FirstPrOptions,
+    repo_exposure: &str,
+) -> String {
     format!(
         "ripr reports gap-ledger --root {} --repo-exposure {} --out {} --out-md {}",
         shell_arg(&options.command_root()),
-        options.anchored_arg(DEFAULT_REPO_EXPOSURE),
+        options.anchored_arg(repo_exposure),
         options.anchored_arg(&options.gap_ledger),
         options.anchored_arg(&with_extension(&options.gap_ledger, "md"))
     )
@@ -4107,6 +4133,62 @@ mod tests {
         ));
         assert!(summary.contains("Regeneration command: `ripr reports gap-ledger"));
         check_blocked_packet_is_current(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    /// #3905: `ripr pilot` writes its own repo-exposure report, so the
+    /// `pilot` then `first-pr` route must not call that input missing. The
+    /// only missing artifact is the ledger, built from the pilot's report.
+    #[test]
+    fn pilot_repo_exposure_satisfies_first_pr_repo_exposure_input() -> Result<(), String> {
+        let repo = temp_repo("first-pr-pilot-repo-exposure")?;
+        fs::create_dir_all(repo.join("target/ripr/pilot"))
+            .map_err(|err| format!("mkdir pilot dir: {err}"))?;
+        fs::write(repo.join(PILOT_REPO_EXPOSURE), "{}")
+            .map_err(|err| format!("write pilot repo exposure: {err}"))?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "missing_artifact");
+        assert_eq!(packet["selected"]["artifact"]["id"], "gap_ledger");
+        assert!(packet["selected"].get("also_missing").is_none());
+        let command = packet["selected"]["regeneration_command"]
+            .as_str()
+            .ok_or_else(|| "regeneration command missing".to_string())?;
+        let pilot_arg = shell_arg(&anchored_redirect_target(".", PILOT_REPO_EXPOSURE));
+        assert!(
+            command.contains(&format!("--repo-exposure {pilot_arg}")),
+            "ledger command must read the pilot report: {command}"
+        );
+        assert!(
+            !command.contains("repo-exposure-json"),
+            "no repo-exposure regeneration is needed after pilot: {command}"
+        );
+        check_blocked_packet_is_current(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    /// #3905: the default report stays the preferred input when both exist,
+    /// and with neither the default report is still the named missing input.
+    #[test]
+    fn default_repo_exposure_wins_over_pilot_report() -> Result<(), String> {
+        let repo = temp_repo("first-pr-default-over-pilot")?;
+        assert_eq!(repo_exposure_input(&repo), DEFAULT_REPO_EXPOSURE);
+        assert!(!repo_exposure_available(&repo));
+        for path in [PILOT_REPO_EXPOSURE, DEFAULT_REPO_EXPOSURE] {
+            let file = repo.join(path);
+            if let Some(parent) = file.parent() {
+                fs::create_dir_all(parent).map_err(|err| format!("mkdir {path}: {err}"))?;
+            }
+            fs::write(&file, "{}").map_err(|err| format!("write {path}: {err}"))?;
+        }
+        assert_eq!(repo_exposure_input(&repo), DEFAULT_REPO_EXPOSURE);
+        let options = FirstPrOptions::default();
+        let command = regenerate_gap_ledger_command(&repo, &options);
+        assert!(
+            !command.contains("pilot/repo-exposure.json"),
+            "default report must win: {command}"
+        );
         cleanup(&repo)
     }
 
