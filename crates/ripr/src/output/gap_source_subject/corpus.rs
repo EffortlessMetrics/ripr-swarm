@@ -220,6 +220,11 @@ pub(crate) fn rust_workspace_coverage_mismatches(
     mismatched
 }
 
+fn has_drive_prefix(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
 /// Normalized portable Rust path shape, shared by membership admission and
 /// baseline consumption. Shape is necessary; only actual membership is coverage.
 pub(crate) fn rust_workspace_path_gap(raw: &str) -> Option<&'static str> {
@@ -229,12 +234,9 @@ pub(crate) fn rust_workspace_path_gap(raw: &str) -> Option<&'static str> {
     if raw.contains('\\') {
         return Some("the path is not a normalized `/`-separated path");
     }
-    if raw.starts_with('/')
-        || raw
-            .split('/')
-            .next()
-            .is_some_and(|first| first.contains(':'))
-    {
+    // Only the Windows drive form (`C:` / `C:rel`) is refused; a colon later
+    // in a component is a legal Unix filename and must not withhold the list.
+    if raw.starts_with('/') || has_drive_prefix(raw) {
         return Some("the path is absolute or carries a drive prefix");
     }
     if raw
@@ -255,6 +257,19 @@ pub(crate) fn rust_workspace_path_gap(raw: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_colon_after_the_first_character_is_a_legal_unix_filename_but_drive_forms_are_refused() {
+        assert_eq!(rust_workspace_path_gap("weird:name.rs"), None);
+        assert_eq!(rust_workspace_path_gap("src/a:b.rs"), None);
+        for drive in ["c:x.rs", "a:b.rs", "Z:"] {
+            assert_eq!(
+                rust_workspace_path_gap(drive),
+                Some("the path is absolute or carries a drive prefix"),
+                "{drive}"
+            );
+        }
+    }
 
     #[test]
     fn production_membership_is_sorted_deduplicated_and_fails_closed() {

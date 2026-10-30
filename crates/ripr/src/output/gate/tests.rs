@@ -5060,7 +5060,10 @@ fn e2e_fixed_root() -> Result<PathBuf, String> {
         .chars()
         .filter(char::is_ascii_alphanumeric)
         .collect::<String>();
-    let path = std::env::temp_dir().join(format!("ripr-gate-e2e-fixed-{tag}"));
+    // Stable within one process (the producer and gate must see the same
+    // absolute root) but unique across the per-test processes nextest runs.
+    let path =
+        std::env::temp_dir().join(format!("ripr-gate-e2e-fixed-{}-{tag}", std::process::id()));
     ignore_remove_dir_all(path.clone());
     fs::create_dir_all(&path).map_err(|err| err.to_string())?;
     Ok(path)
