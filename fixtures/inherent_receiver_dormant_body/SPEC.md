@@ -19,8 +19,8 @@ remain present; full and compact relation projections agree.
 
 ## Must Not
 
-Promote nominal type coincidence, dormant bodies, or a differently bound free
-helper into executed owner evidence. Do not rewrite runtime truth to fit advice.
+Promote dormant bodies (never-invoked, uncalled, or unpolled code) into executed
+owner evidence. Do not rewrite runtime truth to fit advice.
 
 ## Regression Controls
 

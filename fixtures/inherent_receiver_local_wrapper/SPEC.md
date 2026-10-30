@@ -21,10 +21,10 @@ Infer receiver identity from method-name coincidence or discarded macro operands
 ## Regression Controls
 
 The Rust files under `controls/` are complete native test subjects. Original
-subjects compile and pass. The local-helper, standard-assertion and sibling-macro
-positives reject the private Object-arm mutant; foreign entries, foreign last
-hops and a module-shadowed owner type accept it. The wrapper fixture's own test
-rejects that mutant. A test comparing full and compact evidence for these subjects is intended to be
+subjects compile and pass. The foreign-entry and foreign-last-hop controls
+accept the private Object-arm mutant. The wrapper fixture's own test rejects that
+mutant. Other owner-identity controls (local-helper, standard-assertion,
+sibling-macro and module-shadowed owner type) belong to other slices. A test comparing full and compact evidence for these subjects is intended to be
 carried by the integration-tests slice (#11031); this fixture slice does not
 carry that test.
 

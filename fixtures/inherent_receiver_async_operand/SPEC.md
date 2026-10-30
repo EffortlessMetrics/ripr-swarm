@@ -23,4 +23,5 @@ repository direct/helper credit; diff helper support remains conservative.
 
 Treat construction of a future as polling it, expand arbitrary macros or infer
 value flow. Dormant item/closure/async-move controls remain conservative. The shared
-34-case matrix also retains the previous22 receiver/helper/scope controls.
+owner-identity matrix (`cases.json`, fixtures slice #11029; consumer test in
+#11031) is not carried by this slice.
