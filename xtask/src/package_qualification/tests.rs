@@ -331,6 +331,27 @@ fn extra_passed_row_cannot_hide_a_missing_required_row() -> Result<(), String> {
 }
 
 #[test]
+fn duplicate_failed_row_cannot_hide_behind_a_passed_row() -> Result<(), String> {
+    let mut value = valid_receipt_value();
+    let mut failed = value["rows"][0].clone();
+    failed["status"] = json!("failed");
+    failed["subject_count"] = json!(0);
+    failed["executed_payload_hash"] = Value::Null;
+    failed["steps"] = json!([]);
+    for rows in [
+        json!([value["rows"][0], failed]),
+        json!([failed, value["rows"][0]]),
+    ] {
+        value["rows"] = rows;
+        let error = require_err(parse_value(&value), "duplicate row must be rejected")?;
+        if !error.contains("duplicate pypi/x86_64-unknown-linux-gnu") {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn not_run_required_row_fails_the_aggregate() -> Result<(), String> {
     let mut value = valid_receipt_value();
     value["rows"][0]["status"] = json!("not_run");
