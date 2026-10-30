@@ -382,9 +382,14 @@ regressions, not a regression-free acceptance: no case is unchanged across the
 two populations, and four producer cases that read ideal in the old population
 read abstained now (`perl-test2-format-entry-like`,
 `perl-testexception-close-out-dies-ok`, `perl-testmore-points-cmp-ok-positive`,
-`perl-testmore-round-cents-like`; each is `not_discriminated`). Those losses
-need an explicit source disposition. The Perl abstention row is deliberately not re-recorded: its rate
-rose from 8/27 to 40/54 because the pinned producer emits only `file_proximity`
+`perl-testmore-round-cents-like`; the first three are `not_discriminated` and
+the last is `partially_discriminated`). RIPR-SPEC-0235 rule 16 (broad oracle)
+and rule 18 (null observable) cause them deliberately, and #10897 tracks the
+producer-side fix. Those losses need an explicit source disposition. The Perl
+abstention row is deliberately not re-recorded: its rate
+rose from 8/27 to 40/54 (derivation and per-case list in
+`testdata/10809-perl-abstention-ea5229f.json`, rebuilt from the committed expected
+rows at `ea5229f`) because the pinned producer emits only `file_proximity`
 relations for files whose first package is a sibling (#10525), so recording it would
 accept that regression. It keeps failing its comparison until #10525 lands or the
 owner accepts the rise as #7325 did for Rust.
