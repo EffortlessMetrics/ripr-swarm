@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Repository workflow, agent and executable-file policy, independent of the RIPR product.
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
