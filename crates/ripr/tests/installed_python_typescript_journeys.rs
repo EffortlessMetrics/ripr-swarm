@@ -1862,6 +1862,35 @@ fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<
         Ok(())
     };
     unavailable()?;
+    let head_path = attempt.root.join(".git/HEAD");
+    let saved_head = std::fs::read(&head_path).map_err(|error| error.to_string())?;
+    std::fs::write(&head_path, b"ref: refs/heads/missing-test-head\n")
+        .map_err(|error| error.to_string())?;
+    let unreadable_head = (|| -> Result<(), String> {
+        for json in [false, true] {
+            let mut args = vec![
+                "agent",
+                "status",
+                "--root",
+                &attempt.root_arg,
+                "--attempt",
+                &attempt.attempt_id,
+            ];
+            if json {
+                args.push("--json");
+            }
+            let (ok, selected) = ripr(&attempt.decoy, &args)?;
+            expect_exit(ok, true, "selected status with unreadable HEAD")?;
+            need(
+                &selected,
+                "the current Git HEAD could not be read",
+                "unreadable HEAD explanation",
+            )?;
+        }
+        Ok(())
+    })();
+    std::fs::write(&head_path, saved_head).map_err(|error| error.to_string())?;
+    unreadable_head?;
     std::fs::remove_file(&retained_path).map_err(|error| error.to_string())?;
     unavailable()?;
     std::fs::write(&retained_path, b"forged").map_err(|error| error.to_string())?;
