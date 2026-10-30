@@ -696,7 +696,8 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
 }
 
 /// Emit a per-language changed-file breakdown only when a non-Rust language
-/// adapter counted at least one file (#2103). Pure-Rust runs emit nothing, so
+/// has at least one changed file, whether its adapter counted it or the
+/// path-routed count was recorded because no adapter did (#2103, #10719). Pure-Rust runs emit nothing, so
 /// Rust-only output stays byte-identical. `changed_rust_files` itself now
 /// carries the Rust adapter's count only; this line shows the full split.
 fn render_language_file_breakdown(out: &mut String, output: &CheckOutput) {
@@ -3710,6 +3711,24 @@ mod tests {
         assert!(
             rendered.contains("Changed file(s) by language: python = 5\n"),
             "zero-count languages are omitted; got:\n{rendered}"
+        );
+
+        // #10719: a routed-only entry (its adapter errored or was not
+        // enabled) renders exactly like an adapter-counted one.
+        python_only.summary.changed_files_by_language = vec![
+            LanguageFileCount {
+                language: "perl".to_string(),
+                files: 1,
+            },
+            LanguageFileCount {
+                language: "rust".to_string(),
+                files: 0,
+            },
+        ];
+        let rendered = render(&python_only);
+        assert!(
+            rendered.contains("Changed file(s) by language: perl = 1\n"),
+            "a routed-only count renders; got:\n{rendered}"
         );
     }
 

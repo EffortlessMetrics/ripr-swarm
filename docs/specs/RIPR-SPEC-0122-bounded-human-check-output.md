@@ -707,9 +707,10 @@ structured finding and JSON keep the machine value (#9929).
 
 For an `infection_unknown` finding whose related-test inputs ripr cannot map to
 the changed operand, the Next step text states a concrete action: open the
-related test, trace its input through the local or computed operand (including
-default and empty cases) to see which side of the changed condition it
-exercises, then name an input that would exercise the other side. It does not
+related test, check whether it reaches the changed code and inspect other
+existing tests. Trace their inputs through the local or computed operand
+(including default and empty cases) to see which side of the changed condition
+they exercise, then name an input that would exercise the other side. It does not
 restate that the classification is unknown as the instruction, and it keeps the
 existing statement that `ripr.toml` has no fixture/builder value mappings and
 the instruction to add or strengthen a test only when the inspection finds a

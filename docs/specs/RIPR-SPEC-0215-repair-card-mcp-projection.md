@@ -38,9 +38,9 @@ Policy impact:
   document is a wire payload bounded by the existing MCP byte caps. The wire
   failure vocabulary gains the six `AgentCardRefusalKind` spellings
   (`seam_not_found`, `policy_omitted`, `witness_unavailable`,
-  `identity_unnameable`, `budget_overflow`, `incomplete_inventory`); `policy_omitted` and
-  `witness_unavailable` stay named for wire stability even though this slice
-  cannot reach them.
+  `identity_unnameable`, `budget_overflow`, `incomplete_inventory`); `policy_omitted` is
+  reachable through the refresh-time configuration (#10718); `witness_unavailable`
+  stays named for wire stability even though this slice cannot reach it.
 
 ## Problem
 

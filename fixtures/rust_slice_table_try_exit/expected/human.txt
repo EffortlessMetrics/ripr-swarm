@@ -19,13 +19,13 @@ Start here:
     outside the bounded eager immutable literal table family; not every input cardinality is
     established; activation/infection is unknown
   Related test (1 of 6 matched rows): src/lib.rs:57 mean_lies_between_min_and_max (has no assertion)
-  Next step: Open the related test and trace its input through the local or computed operand
-    (including default and empty cases) to see which side of the changed condition it exercises,
-    then name an input that would exercise the other side. ripr.toml does not support
-    fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap.
-    Compare the original and changed implementations with a focused run using the project's
-    configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
-    unknown
+  Next step: Open the related test, check whether it reaches the changed code, and inspect other
+    existing tests. Trace their inputs through the local or computed operand (including default and
+    empty cases) to see which side of the changed condition they exercise, then name an input that
+    would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or
+    strengthen a test only if this inspection finds a gap. Compare the original and changed
+    implementations with a focused run using the project's configured test runner (`cargo test` for
+    ordinary Cargo tests). Static classification may remain unknown
   Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

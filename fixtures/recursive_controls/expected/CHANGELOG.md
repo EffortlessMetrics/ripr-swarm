@@ -431,3 +431,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — recursive_controls (35)
+
+Reason:
+RIPR-SPEC-0122: clarify test reach inspection before changing tests (#8387)
+
+Command:
+`cargo xtask goldens bless recursive_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -106,8 +106,9 @@ rules above:
   trait object); lexical-fallback owners never take this route;
 - `T` must be imported at file level from the edge's declared dependency
   name (`use dependency_name::...::T;`), or the call spelled through it;
-  renamed and glob imports do not count, and a declared name with `-`
-  matches its `_` spelling;
+  renamed imports do not count, and glob imports do not count except under
+  "Sole-glob admission" below; a declared name with `-` matches its `_`
+  spelling;
 - the type path is read from the comment- and string-masked call line, so
   a quoted `T::owner()` beside a real same-named call is not the call;
 - every other same-named definition that a `T::owner(` call could reach
@@ -138,6 +139,19 @@ The relation alone credits nothing. An associated function (no `self`)
 reaches `exposed` only through the RIPR-SPEC-0197 owner-return pin for
 `T::name(..)` calls, which repeats the identity checks on the test side:
 a free function of the same name never competes with that pin either.
+
+Sole-glob admission (#9619, #10479). A `T::name(..)` call also admits when the
+test file's only glob import is rooted at the owner's declared dependency
+(`use meter::*;`), nothing else in the file names or binds `T`, no competing
+definition of `T` exists and the owner crate imports nothing foreign. The
+check on the rest of the file is scope-blind: an import naming `T` or a second
+glob in a function or nested module refuses the admission too. A second
+glob, a glob of another crate, a rename (`as`) and any ambiguous spelling leave
+the call unadmitted, and a rename stays uncreditable even with reach because
+the owner pin refuses `use .. as T` rebinds (#7067). The admission adds reach
+only: observation still needs the owner-return pin or a confirming token, and a
+rewrite that is a literal-only integer expression confirms through the folded
+value (RIPR-SPEC-0158).
 
 Everything else about relation reporting — the reason/confidence tags,
 ordering, and the shared rendering surfaces — is unchanged.
@@ -259,6 +273,8 @@ call.
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_fails_closed_without_owner_identity`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_refuses_foreign_type_names_and_quoted_paths`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_admits_past_local_and_standard_globs`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_admits_the_sole_glob_of_the_owner_dependency`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_refuses_renames_and_ambiguous_glob_spellings`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_admits_on_narrowed_index_with_whole_owner_package`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_on_narrowed_index_fails_closed`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::manifests_with_unindexed_files_names_partial_packages`

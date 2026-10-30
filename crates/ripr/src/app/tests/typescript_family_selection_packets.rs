@@ -205,3 +205,59 @@ fn wrong_family_only_test_cannot_become_the_packet_target() -> Result<(), String
     }
     Ok(())
 }
+
+fn dynamic_limit_present(check: &TypeScriptCheck) -> bool {
+    check
+        .finding
+        .get("evidence")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|line| line == "typescript_limitation: typescript_dynamic_assertion_unresolved")
+}
+
+/// #10682: a dynamic assertion of the wrong oracle family (`toThrow(variable)`
+/// on a predicate seam) no longer lists the dynamic-assertion limitation. It
+/// must not expose the change on its own, and it must not become the packet
+/// target: beside a pinned literal assertion that does not reach the
+/// boundary, the finding stays weakly exposed and the packet (the same one
+/// the control above takes) targets the boundary input, not the dynamic
+/// assertion. This pins the intended effect that the wrong-family dynamic
+/// assertion no longer withholds that packet.
+#[test]
+fn wrong_family_dynamic_assertion_does_not_expose_or_change_the_packet_target() -> Result<(), String>
+{
+    let test = "import { applyDiscount } from '../src/discount';\n\ntest('applyDiscount discounts above the threshold', () => {\n    const expectedError = new TypeError('bad');\n    expect(applyDiscount(500, 100)).toBe(450);\n    expect(() => applyDiscount(Number.NaN, 1)).toThrow(expectedError);\n});\n";
+    let check = check_typescript("wrong-family-dynamic", &[("tests/discount.test.ts", test)])?;
+    if dynamic_limit_present(&check) {
+        return Err(format!(
+            "wrong-family dynamic assertion raised the limit: {}",
+            check.finding
+        ));
+    }
+    if check.class() != Some("weakly_exposed") {
+        return Err(format!(
+            "wrong-family dynamic assertion changed the class: {}",
+            check.finding
+        ));
+    }
+    let shape = check
+        .finding
+        .get("evidence")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .find(|line| line.starts_with("repair_action: "))
+        .unwrap_or_default();
+    if !shape.contains("expect(applyDiscount(100, 100)).toBe(expected)")
+        || shape.contains("toThrow")
+    {
+        return Err(format!(
+            "packet target moved off the boundary input: {}",
+            check.finding
+        ));
+    }
+    Ok(())
+}
