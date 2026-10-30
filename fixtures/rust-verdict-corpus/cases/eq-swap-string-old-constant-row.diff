@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 886dffc..0809d1c 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,7 +2,7 @@
+ //! constant moved (#10680). One owner per row shape.
+ 
+ pub fn word_class(label: &str) -> &'static str {
+-    if label == "alpha" {
++    if label == "beta" {
+         "word"
+     } else {
+         "blank"

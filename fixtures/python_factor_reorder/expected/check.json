@@ -1,0 +1,518 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_factor_reorder/input",
+  "config_path": "<cwd>/fixtures/python_factor_reorder/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":4,"findings":4,"exposed":0,"weakly_exposed":4,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:9f30041d0db2c2aa5783d2b9afc245f71c6eb9a7bb0c0ea4fb7458cf442faf7a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":8,"candidate_line_count":4,"probe_count":4,"finding_count":4},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_shop.py:python_preview:f5eb84b2",
+      "canonical_gap_id": "gap:python:src/shop.py:area:return_value:return_value:b*a",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/shop.py:area:return_value:return_value:b*a",
+        "language": "python",
+        "file": "src/shop.py",
+        "owner": "area",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "b*a"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_shop.py:python_preview:f5eb84b2",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/shop.py",
+        "line": 2,
+        "expression": "    return b * a",
+        "owner": "python:src/shop.py::area"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `area`"},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed operand, but numeric table rows agree under factor reordering."},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `area`", "infection weak: Related tests reach the changed operand, but numeric table rows agree under factor reordering.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return b * a (line 2)", "related test tests/test_shop.py:6 test_area uses strong exact value oracle: assert area(a, b) == want", "missing discriminator a table row whose operands distinguish multiplication order: numeric table rows agree under factor reordering"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return b * a","line":2}
+      ],
+      "evidence": ["owner: area", "owner_kind: function", "missing_discriminator: a table row whose operands distinguish multiplication order", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_shop.py", "suggested_test_name: test_area", "suggested_test_node_id: tests/test_shop.py::test_area", "suggested_verify_command: python -m pytest tests/test_shop.py::test_area", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_area)", "test_fixtures: a, b, want (test_area)", "test_parametrized: pytest (test_area)", "test_verify_command: python -m pytest tests/test_shop.py::test_area (test_area)", "related_test_relation: syntactic_call (test_area)", "test_oracle: exact_value strong (test_area)"],
+      "missing": ["A strong Python oracle reaches `area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a table row whose operands distinguish multiplication order."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "a table row whose operands distinguish multiplication order",
+            "reason": "numeric table rows agree under factor reordering",
+            "flow_sink": {"kind":"return_value","text":"return b * a","line":2}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "a table row whose operands distinguish multiplication order",
+          "reason": "numeric table rows agree under factor reordering",
+          "flow_sink": {"kind":"return_value","text":"return b * a","line":2}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_area",
+          "file": "tests/test_shop.py",
+          "line": 6,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert area(a, b) == want"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_shop.py",
+        "suggested_test_name": "test_area",
+        "suggested_test_node_id": "tests/test_shop.py::test_area",
+        "verify_command": "python -m pytest tests/test_shop.py::test_area",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:src/shop.py:area:return_value:return_value:b*a",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "area",
+        "changed_behavior": "return_value changed at src/shop.py:2: `return b * a`",
+        "current_test_evidence": "tests/test_shop.py:6 test_area currently has oracle_strength=strong, oracle_kind=exact_value: assert area(a, b) == want",
+        "missing_discriminator": "a table row whose operands distinguish multiplication order",
+        "recommended_test_shape": "Strengthen the existing pytest exact return-value assertion for `a table row whose operands distinguish multiplication order`.",
+        "suggested_assertion": "Assert the returned value equals the expected value for the changed inputs.",
+        "suggested_location": {
+          "test_file": "tests/test_shop.py",
+          "test_name": "test_area",
+          "pytest_node_id": "tests/test_shop.py::test_area"
+         },
+        "verify": {
+          "command": "python -m pytest tests/test_shop.py::test_area",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row whose operands distinguish multiplication order`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row whose operands distinguish multiplication order`.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "observed_sink": "assert area(a, b) == want",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_shop.py:python_preview:8bf754ea",
+      "canonical_gap_id": "gap:python:src/shop.py:float_area:return_value:return_value:b*a",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/shop.py:float_area:return_value:return_value:b*a",
+        "language": "python",
+        "file": "src/shop.py",
+        "owner": "float_area",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "b*a"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_shop.py:python_preview:8bf754ea",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/shop.py",
+        "line": 6,
+        "expression": "    return b * a",
+        "owner": "python:src/shop.py::float_area"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `float_area`"},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed operand, but numeric table rows agree under factor reordering."},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `float_area`", "infection weak: Related tests reach the changed operand, but numeric table rows agree under factor reordering.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return b * a (line 6)", "related test tests/test_shop.py:11 test_float_area uses strong exact value oracle: assert float_area(a, b) == want", "missing discriminator a table row whose operands distinguish multiplication order: numeric table rows agree under factor reordering"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return b * a","line":6}
+      ],
+      "evidence": ["owner: float_area", "owner_kind: function", "missing_discriminator: a table row whose operands distinguish multiplication order", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_shop.py", "suggested_test_name: test_float_area", "suggested_test_node_id: tests/test_shop.py::test_float_area", "suggested_verify_command: python -m pytest tests/test_shop.py::test_float_area", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_float_area)", "test_fixtures: a, b, want (test_float_area)", "test_parametrized: pytest (test_float_area)", "test_verify_command: python -m pytest tests/test_shop.py::test_float_area (test_float_area)", "related_test_relation: syntactic_call (test_float_area)", "test_oracle: exact_value strong (test_float_area)"],
+      "missing": ["A strong Python oracle reaches `float_area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a table row whose operands distinguish multiplication order."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "a table row whose operands distinguish multiplication order",
+            "reason": "numeric table rows agree under factor reordering",
+            "flow_sink": {"kind":"return_value","text":"return b * a","line":6}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "a table row whose operands distinguish multiplication order",
+          "reason": "numeric table rows agree under factor reordering",
+          "flow_sink": {"kind":"return_value","text":"return b * a","line":6}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_float_area",
+          "file": "tests/test_shop.py",
+          "line": 11,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert float_area(a, b) == want"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_shop.py",
+        "suggested_test_name": "test_float_area",
+        "suggested_test_node_id": "tests/test_shop.py::test_float_area",
+        "verify_command": "python -m pytest tests/test_shop.py::test_float_area",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:src/shop.py:float_area:return_value:return_value:b*a",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "float_area",
+        "changed_behavior": "return_value changed at src/shop.py:6: `return b * a`",
+        "current_test_evidence": "tests/test_shop.py:11 test_float_area currently has oracle_strength=strong, oracle_kind=exact_value: assert float_area(a, b) == want",
+        "missing_discriminator": "a table row whose operands distinguish multiplication order",
+        "recommended_test_shape": "Strengthen the existing pytest exact return-value assertion for `a table row whose operands distinguish multiplication order`.",
+        "suggested_assertion": "Assert the returned value equals the expected value for the changed inputs.",
+        "suggested_location": {
+          "test_file": "tests/test_shop.py",
+          "test_name": "test_float_area",
+          "pytest_node_id": "tests/test_shop.py::test_float_area"
+         },
+        "verify": {
+          "command": "python -m pytest tests/test_shop.py::test_float_area",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row whose operands distinguish multiplication order`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row whose operands distinguish multiplication order`.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "observed_sink": "assert float_area(a, b) == want",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_shop.py:python_preview:5bf163be",
+      "canonical_gap_id": "gap:python:src/shop.py:boxed_area:return_value:return_value:b*a",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/shop.py:boxed_area:return_value:return_value:b*a",
+        "language": "python",
+        "file": "src/shop.py",
+        "owner": "boxed_area",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "b*a"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_shop.py:python_preview:5bf163be",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/shop.py",
+        "line": 10,
+        "expression": "    return (b * a,)",
+        "owner": "python:src/shop.py::boxed_area"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `boxed_area`"},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed operand, but numeric table rows agree under factor reordering."},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `boxed_area`", "infection weak: Related tests reach the changed operand, but numeric table rows agree under factor reordering.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return (b * a,) (line 10)", "related test tests/test_shop.py:16 test_boxed_area uses strong exact value oracle: assert boxed_area(a, b) == want", "missing discriminator a table row whose operands distinguish multiplication order: numeric table rows agree under factor reordering"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return (b * a,)","line":10}
+      ],
+      "evidence": ["owner: boxed_area", "owner_kind: function", "missing_discriminator: a table row whose operands distinguish multiplication order", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_shop.py", "suggested_test_name: test_boxed_area", "suggested_test_node_id: tests/test_shop.py::test_boxed_area", "suggested_verify_command: python -m pytest tests/test_shop.py::test_boxed_area", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_boxed_area)", "test_fixtures: a, b, want (test_boxed_area)", "test_parametrized: pytest (test_boxed_area)", "test_verify_command: python -m pytest tests/test_shop.py::test_boxed_area (test_boxed_area)", "related_test_relation: syntactic_call (test_boxed_area)", "test_oracle: exact_value strong (test_boxed_area)"],
+      "missing": ["A strong Python oracle reaches `boxed_area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a table row whose operands distinguish multiplication order."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "a table row whose operands distinguish multiplication order",
+            "reason": "numeric table rows agree under factor reordering",
+            "flow_sink": {"kind":"return_value","text":"return (b * a,)","line":10}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "a table row whose operands distinguish multiplication order",
+          "reason": "numeric table rows agree under factor reordering",
+          "flow_sink": {"kind":"return_value","text":"return (b * a,)","line":10}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_boxed_area",
+          "file": "tests/test_shop.py",
+          "line": 16,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert boxed_area(a, b) == want"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_shop.py",
+        "suggested_test_name": "test_boxed_area",
+        "suggested_test_node_id": "tests/test_shop.py::test_boxed_area",
+        "verify_command": "python -m pytest tests/test_shop.py::test_boxed_area",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:src/shop.py:boxed_area:return_value:return_value:b*a",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "boxed_area",
+        "changed_behavior": "return_value changed at src/shop.py:10: `return (b * a,)`",
+        "current_test_evidence": "tests/test_shop.py:16 test_boxed_area currently has oracle_strength=strong, oracle_kind=exact_value: assert boxed_area(a, b) == want",
+        "missing_discriminator": "a table row whose operands distinguish multiplication order",
+        "recommended_test_shape": "Strengthen the existing pytest exact return-value assertion for `a table row whose operands distinguish multiplication order`.",
+        "suggested_assertion": "Assert the returned value equals the expected value for the changed inputs.",
+        "suggested_location": {
+          "test_file": "tests/test_shop.py",
+          "test_name": "test_boxed_area",
+          "pytest_node_id": "tests/test_shop.py::test_boxed_area"
+         },
+        "verify": {
+          "command": "python -m pytest tests/test_shop.py::test_boxed_area",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row whose operands distinguish multiplication order`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row whose operands distinguish multiplication order`.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "observed_sink": "assert boxed_area(a, b) == want",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_shop.py:python_preview:c5d74b8f",
+      "canonical_gap_id": "gap:python:src/shop.py:hashed_area:return_value:return_value:b*a",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/shop.py:hashed_area:return_value:return_value:b*a",
+        "language": "python",
+        "file": "src/shop.py",
+        "owner": "hashed_area",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "b*a"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_shop.py:python_preview:c5d74b8f",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/shop.py",
+        "line": 14,
+        "expression": "    return b * a, '#'",
+        "owner": "python:src/shop.py::hashed_area"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `hashed_area`"},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed operand, but numeric table rows agree under factor reordering."},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `hashed_area`", "infection weak: Related tests reach the changed operand, but numeric table rows agree under factor reordering.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return b * a, '#' (line 14)", "related test tests/test_shop.py:21 test_hashed_area uses strong exact value oracle: assert hashed_area(a, b) == want", "missing discriminator a table row whose operands distinguish multiplication order: numeric table rows agree under factor reordering"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return b * a, '#'","line":14}
+      ],
+      "evidence": ["owner: hashed_area", "owner_kind: function", "missing_discriminator: a table row whose operands distinguish multiplication order", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_shop.py", "suggested_test_name: test_hashed_area", "suggested_test_node_id: tests/test_shop.py::test_hashed_area", "suggested_verify_command: python -m pytest tests/test_shop.py::test_hashed_area", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_hashed_area)", "test_fixtures: a, b, want (test_hashed_area)", "test_parametrized: pytest (test_hashed_area)", "test_verify_command: python -m pytest tests/test_shop.py::test_hashed_area (test_hashed_area)", "related_test_relation: syntactic_call (test_hashed_area)", "test_oracle: exact_value strong (test_hashed_area)"],
+      "missing": ["A strong Python oracle reaches `hashed_area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a table row whose operands distinguish multiplication order."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "a table row whose operands distinguish multiplication order",
+            "reason": "numeric table rows agree under factor reordering",
+            "flow_sink": {"kind":"return_value","text":"return b * a, '#'","line":14}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "a table row whose operands distinguish multiplication order",
+          "reason": "numeric table rows agree under factor reordering",
+          "flow_sink": {"kind":"return_value","text":"return b * a, '#'","line":14}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_hashed_area",
+          "file": "tests/test_shop.py",
+          "line": 21,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert hashed_area(a, b) == want"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_shop.py",
+        "suggested_test_name": "test_hashed_area",
+        "suggested_test_node_id": "tests/test_shop.py::test_hashed_area",
+        "verify_command": "python -m pytest tests/test_shop.py::test_hashed_area",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:src/shop.py:hashed_area:return_value:return_value:b*a",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "hashed_area",
+        "changed_behavior": "return_value changed at src/shop.py:14: `return b * a, '#'`",
+        "current_test_evidence": "tests/test_shop.py:21 test_hashed_area currently has oracle_strength=strong, oracle_kind=exact_value: assert hashed_area(a, b) == want",
+        "missing_discriminator": "a table row whose operands distinguish multiplication order",
+        "recommended_test_shape": "Strengthen the existing pytest exact return-value assertion for `a table row whose operands distinguish multiplication order`.",
+        "suggested_assertion": "Assert the returned value equals the expected value for the changed inputs.",
+        "suggested_location": {
+          "test_file": "tests/test_shop.py",
+          "test_name": "test_hashed_area",
+          "pytest_node_id": "tests/test_shop.py::test_hashed_area"
+         },
+        "verify": {
+          "command": "python -m pytest tests/test_shop.py::test_hashed_area",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row whose operands distinguish multiplication order`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `a table row whose operands distinguish multiplication order`.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "observed_sink": "assert hashed_area(a, b) == want",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/shop.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/shop.py","digest":"sha256:7fa8ec3c8331d91e9f74e9b5a2d4f7cd2deed7ca75b17e0a2f986f92f953f06c"},{"path":"tests/test_shop.py","digest":"sha256:8d04ea7d92ddba3ba3735c60f17912e6f09bd9128444f35319d136aab7f4a3f0"}]}
+}

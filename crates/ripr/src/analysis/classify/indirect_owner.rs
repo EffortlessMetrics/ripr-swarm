@@ -108,6 +108,46 @@ pub(in crate::analysis) fn withhold_indirect_owner_gap(
     true
 }
 
+/// Repo-scope twin of [`withhold_indirect_owner_gap`]'s owner-side reading
+/// (#10701): whether any of the named related tests reaches the owner that
+/// encloses `line` of `owner_file` only as a function value or inside an
+/// executor helper. `check` withholds such a gap under
+/// `rust_indirect_owner_call_unresolved`, so repair must not start one either.
+/// Related tests are `(name, file, line)` identities.
+pub(in crate::analysis) fn related_tests_reach_owner_indirectly(
+    owner_file: &std::path::Path,
+    line: usize,
+    owner_name: &str,
+    related: &[(&str, &std::path::Path, usize)],
+    index: &RustIndex,
+) -> bool {
+    let owner = index
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.file == owner_file
+                && function.start_line <= line
+                && line <= function.end_line
+                && function.name == owner_name
+        })
+        .min_by_key(|function| function.end_line - function.start_line);
+    let Some(owner) = owner else {
+        return false;
+    };
+    let is_async = super::owner_pin::declares_async(owner, index);
+    index.tests().iter().any(|test| {
+        let is_related = related.iter().any(|(name, file, test_line)| {
+            *name == test.name && *file == test.file && *test_line == test.start_line
+        });
+        if !is_related || is_ignored(test) {
+            return false;
+        }
+        let code = mask_comments_and_strings(&test.body);
+        names_owner_as_value(&code, owner, test, index)
+            || (is_async && executor_wraps_owner_call(&code, &owner.name, test, index))
+    })
+}
+
 fn label(test: &TestFact) -> String {
     format!(
         "`{}` ({}:{})",

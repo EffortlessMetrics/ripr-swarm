@@ -1,0 +1,48 @@
+{
+  "case_id": "py-spec0233-ex33-key-lambda-no-arg",
+  "subject_id": "authored-py-pytest-spec0233",
+  "diff": "cases/py-spec0233-ex33-key-lambda-no-arg.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 180
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "call_argument",
+  "test_shape": "pytest_key_lambda_no_arg",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return sorted(x, key=lambda: 0) + [2]",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_subject.py::test_label_key_lambda",
+        "equivalence_review": "not equivalent: label_key_lambda([]) returns [2] instead of [1]"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 example 33 (lambda half): the edit changes the appended constant on a line that carries `key=lambda: 0`, and test_label_key_lambda asserts [1] on an empty list, so it fails. A `lambda` followed by `:` counts as syntax the preview adapter does not model, so the spec expects the finding to read limited (`unsupported_syntax`) and not credited; credited and silent stay acceptable.",
+  "labeling_observation": {
+    "ripr_commit": "c8f08a0cd2",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#33"
+  ]
+}

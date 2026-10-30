@@ -90,6 +90,14 @@ remain open for later cases without moving the count.
 Each subject carries a `ripr.toml` that enables TypeScript beside Rust, the
 way a user opts a repository in today.
 
+The three `ts-table-boundary-*` cases (#10617) apply RIPR-SPEC-0243 example 37's
+changed `>=` boundary itself rather than a rewrite of it, in new `src/table.ts`
+and `test/table.test.ts` files of `authored-ts-grid-boundary`: rows on both
+sides of the boundary (`ts-table-boundary-edit`, `credited`), rows only above
+it (`-one-sided`) and a loop that leaves before the boundary rows
+(`-break`), both `gap`. Each edit was applied by hand and the case's test
+command run on the whole package (Node 22.22.0): only the first fails.
+
 Each case is one edit under `cases/` (one changed line, except the
 `*-throw-second-replaced-line` and `*-throw-uneven-*-block` cases, which
 change a `throw` in the same block as a comment line that is reworded,

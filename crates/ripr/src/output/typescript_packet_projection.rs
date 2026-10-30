@@ -1183,6 +1183,17 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         return None;
     }
 
+    // #10704: infection the classifier did not establish (`unknown` / `no`)
+    // never yields a delegatable packet; the shared validator below stays the
+    // only flip authority.
+    if finding
+        .evidence
+        .iter()
+        .any(|line| line.starts_with("typescript_infection: "))
+    {
+        return None;
+    }
+
     // G-C: non-dynamic oracle: `typescript_oracle_expected` must be present.
     let oracle_expected = evidence_value(finding, "typescript_oracle_expected: ")?;
     if oracle_expected.is_empty() {
@@ -1486,6 +1497,7 @@ pub(crate) mod tests {
     pub(crate) fn complete_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_discount.ts:typescript_preview:a1b2c3d4".to_string(),
             canonical_gap: None,
             probe: Probe {

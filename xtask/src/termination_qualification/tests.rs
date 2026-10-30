@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use super::assess::{Observed, assess};
-use super::command::{Options, aggregate, build_packet, family_counts, packet_digest, parse_args};
+#[cfg(unix)]
+use super::command::build_packet;
+use super::command::{Options, aggregate, family_counts, packet_digest, parse_args};
 use super::corpus::{Case, Expect, Route, all_cases};
 use super::model::{
     Aggregate, Control, ControlKind, Family, Packet, Role, Row, RowResult, Subjects, render_json,

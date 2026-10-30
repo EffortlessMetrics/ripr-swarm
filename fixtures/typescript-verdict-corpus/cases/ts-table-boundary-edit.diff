@@ -1,0 +1,10 @@
+diff --git a/src/table.ts b/src/table.ts
+--- a/src/table.ts
++++ b/src/table.ts
+@@ -1,5 +1,5 @@
+ export function qualifiesForFreeShipping(cents: number): boolean {
+-  return cents >= 5000;
++  return cents > 5000;
+ }
+ 
+ export function qualifiesForFreeReturns(cents: number): boolean {
