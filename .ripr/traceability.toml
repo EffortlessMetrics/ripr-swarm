@@ -2462,6 +2462,7 @@ tests = [
   "crates/ripr/src/output/gate/tests.rs::e2e_ledger_coverage_rejects_role_only_source_changes",
   "crates/ripr/src/output/gate/tests.rs::e2e_real_ledger_symlink_file_keeps_baseline_debt",
   "crates/ripr/src/output/gate/tests.rs::e2e_real_ledger_symlink_parent_keeps_baseline_debt",
+  "crates/ripr/src/output/gate/tests.rs::e2e_aliased_path_in_forged_membership_keeps_baseline_debt",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::analysis_coverage_is_verified_against_the_exact_record_set",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::repo_exposure_coverage_requires_a_complete_run_with_a_corpus_identity",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::committed_empty_repo_exposure_refuses_non_object_corpus",
