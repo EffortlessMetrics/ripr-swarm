@@ -605,6 +605,14 @@ A workspace assignment to a function's `__code__`, `__defaults__`, `__kwdefaults
 `__closure__` can replace a reader without rebinding its name, so it withholds the module
 constant's credit for scalar and table constants alike (#10626).
 
+A changed line whose old and new text differ only in a trailing `#` comment or
+in whitespace between tokens emits no probe (#10706). Both lines are lexed and
+compared by the source spelling of each token, so the statement is the same
+code; a `#` inside a string, a respelling (`0x1` to `1`, a requoted string), a
+changed token or a changed indentation is still an edit, and a line that does
+not lex alone (part of a multi-line construct) stays analyzed. No gap id or
+discriminator can then embed comment text.
+
 A one-line module-level dict literal of unique `str` or `int` keys and scalar
 values (#9619) is a constant of the same kind, read only by a module function
 through `NAME.get(key[, default])` or `NAME[key]`; a test reading the table

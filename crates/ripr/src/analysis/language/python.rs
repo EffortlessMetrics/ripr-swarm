@@ -1823,6 +1823,8 @@ mod helper_owner_call_tests;
 mod imported_literal_tests;
 #[cfg(test)]
 mod test_body_writer_tests;
+#[cfg(test)]
+mod trailing_comment_tests;
 
 #[cfg(test)]
 mod call_chain_tests;

@@ -28,6 +28,39 @@ pub(super) fn is_python_no_behavior_line(line: &str) -> bool {
     trimmed.is_empty() || trimmed.starts_with('#') || is_bare_string_literal_statement(trimmed)
 }
 
+/// Whether `new` differs from `old` only in a trailing `#` comment or in
+/// whitespace between tokens, so the statement runs identically (#10706).
+/// Both lines are lexed and compared token by token with comments and line
+/// breaks dropped (the lexer already skips comments) and spelled as written, which keeps a `#` inside a string a real edit. Fails closed
+/// on a lex error (a line that is only part of a multi-line construct), on
+/// differing indentation (the statement moved under or out of a block), and on
+/// textually identical lines.
+pub(super) fn is_comment_or_whitespace_only_change(old: &str, new: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    if old == new || old.get(..indent(old)) != new.get(..indent(new)) {
+        return false;
+    }
+    // Compare each token's source spelling, not its value, so a respelling
+    // such as `0x1` -> `1` or a requoted string stays an edit.
+    let tokens = |text: &str| -> Option<Vec<String>> {
+        let text = text.trim();
+        lex(text, Mode::Module)
+            .filter(|result| !matches!(result, Ok((Tok::Newline, _))))
+            .map(|result| {
+                result.ok().and_then(|(_, range)| {
+                    text.get(usize::from(range.start())..usize::from(range.end()))
+                        .map(str::to_owned)
+                })
+            })
+            .collect()
+    };
+    match (tokens(old), tokens(new)) {
+        (Some(old), Some(new)) => !old.is_empty() && old == new,
+        _ => false,
+    }
+}
+
 /// A line that only opens, continues, or closes a block or bracket and holds
 /// no expression of its own: `)`, `):`, `],`, `}`, `else:`, `try:`,
 /// `finally:`. Structural is not ignorable: a lone inserted `else:` or `try:`
