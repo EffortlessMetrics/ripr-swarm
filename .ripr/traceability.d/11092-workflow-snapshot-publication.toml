@@ -10,6 +10,9 @@ tests = [
 [[extend]]
 id = "RIPR-SPEC-0011"
 tests = [
+  "crates/ripr/src/app/repair_attempt/mod.rs::tests::finished_attempt_currentness_follows_worktree_drift_like_the_receipt",
+  "crates/ripr/src/app/repair_attempt/mod.rs::tests::ignored_selected_test_uses_content_identity_for_currentness",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::finished_gap_attempt_detects_changed_bound_test_bytes",
   "crates/ripr/src/edit_cage/mod.rs::tests::owned_backup_omission_requires_exact_new_untracked_identity",
   "crates/ripr/src/edit_cage/binding_omission_tests.rs::non_owned_attempt_store_file_remains_bound",
   "crates/ripr/src/edit_cage/binding_omission_tests.rs::non_owned_explicit_store_file_remains_bound",
