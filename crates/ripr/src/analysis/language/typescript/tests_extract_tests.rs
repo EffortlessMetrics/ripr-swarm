@@ -1624,6 +1624,60 @@ fn skipped_suite_bindings_treat_ambient_global_writes_precisely() {
             "{source}: {gap:?}"
         );
     }
+    // Qualified reads: an unrelated global write keeps a qualified skipped
+    // suite dormant, while a write to the runner name itself retains the
+    // notice through the same qualified spelling.
+    for source in [
+        "globalThis.fetch = mock; globalThis.describe.skip('off', () => { it('dormant', () => {}); });",
+        "globalThis.fetch = mock; window.describe.skip('off', () => { it('dormant', () => {}); });",
+    ] {
+        let parsed_allocator = Allocator::default();
+        let parsed = Parser::new(&parsed_allocator, source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, source, &tests).is_none(),
+            "{source}"
+        );
+    }
+    for source in [
+        "globalThis.describe = custom; globalThis.describe.skip('runs', () => { it('live', () => {}); });",
+        "globalThis.describe = custom; window.describe.skip('runs', () => { it('live', () => {}); });",
+        "window.describe = custom; globalThis.describe.skip('runs', () => { it('live', () => {}); });",
+        "globalThis['describe'] = custom; globalThis.describe.skip('runs', () => { it('live', () => {}); });",
+    ] {
+        let parsed_allocator = Allocator::default();
+        let parsed = Parser::new(&parsed_allocator, source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+}
+
+/// #10169: `x`-prefixed suite spellings are dormant runner roots, so a
+/// registration nested in one produces no partial-extraction notice.
+#[test]
+fn skipped_suite_bindings_treat_x_spelled_suites_as_dormant() {
+    let file = Path::new("test/binding.test.ts");
+    for callee in ["xdescribe", "xcontext", "xsuite"] {
+        let source = format!("{callee}('off', () => {{ it('nested', () => {{}}); }});");
+        let parsed_allocator = Allocator::default();
+        let parsed = Parser::new(&parsed_allocator, &source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_none(),
+            "{source}"
+        );
+    }
 }
 
 #[test]

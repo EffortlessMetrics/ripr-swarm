@@ -192,7 +192,13 @@ impl DeclarationBindings {
         };
         for member in &path.members {
             value = match (value, member.as_str()) {
-                (Value::Namespace | Value::GlobalObject, member) => root_value(member)?,
+                (Value::Namespace, member) => root_value(member)?,
+                (Value::GlobalObject, member) => {
+                    if self.global_writes.iter().any(|written| written == member) {
+                        return None;
+                    }
+                    root_value(member)?
+                }
                 (
                     Value::Root(root, skipped),
                     "only" | "concurrent" | "sequential" | "serial" | "parallel",
