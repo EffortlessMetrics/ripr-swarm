@@ -2737,6 +2737,9 @@ mod tests {
             .evidence
             .retain(|entry| !entry.starts_with("suggested_verify_command: "));
         finding.evidence.push("suggested_test_line: 7".to_string());
+        finding.evidence.push(
+            "suggested_test_qualified_name: TestPricing.test_small_order_pays_shipping".to_string(),
+        );
         finding.evidence.push("suggested_test_node_id: tests/test_pricing.py::TestPricing::test_small_order_pays_shipping".to_string());
         finding.evidence.push("suggested_verify_command: python -m pytest tests/test_pricing.py::TestPricing::test_small_order_pays_shipping".to_string());
         let render = |f: &Finding| {
@@ -2751,6 +2754,28 @@ mod tests {
             text.contains("Suggested command (unverified; inspect and run from the selected root)"),
             "{text}"
         );
+        let mut wrong_class = finding.clone();
+        for entry in &mut wrong_class.evidence {
+            if entry.starts_with("suggested_test_node_id: ")
+                || entry.starts_with("suggested_verify_command: ")
+            {
+                *entry = entry.replace("TestPricing", "TestOther");
+            }
+        }
+        let text = render(&wrong_class);
+        assert!(
+            text.contains("no verified command") && !text.contains("python -m pytest"),
+            "{text}"
+        );
+        let mut injected = finding.clone();
+        for entry in &mut injected.evidence {
+            *entry = entry.replace("TestPricing", "$(touch /tmp/injected)");
+        }
+        let text = render(&injected);
+        assert!(
+            text.contains("no verified command") && !text.contains("python -m pytest"),
+            "{text}"
+        );
         finding.evidence.retain(|entry| {
             !entry.starts_with("suggested_test_node_id: ")
                 && !entry.starts_with("suggested_verify_command: ")
@@ -2758,6 +2783,24 @@ mod tests {
         finding.evidence.push("suggested_verify_command: python -m unittest tests.test_pricing.TestPricing.test_small_order_pays_shipping".to_string());
         let text = render(&finding);
         assert!(text.contains("Suggested command (unverified; inspect and run from the selected root): python -m unittest"), "{text}");
+        finding
+            .evidence
+            .retain(|entry| !entry.starts_with("suggested_verify_command: "));
+        finding.evidence.push("suggested_verify_command: python -m unittest wrong.module.test_small_order_pays_shipping".to_string());
+        let text = render(&finding);
+        assert!(
+            text.contains("no verified command") && !text.contains("python -m unittest"),
+            "{text}"
+        );
+        finding
+            .evidence
+            .retain(|entry| !entry.starts_with("suggested_verify_command: "));
+        finding.evidence.push("suggested_verify_command: python -m unittest wrong; touch /tmp/injected #.test_small_order_pays_shipping".to_string());
+        let text = render(&finding);
+        assert!(
+            text.contains("no verified command") && !text.contains("python -m unittest"),
+            "{text}"
+        );
     }
 
     /// #5531: the same carded finding stamped as repo-scoped gets no repair

@@ -51,7 +51,9 @@ pub use command_spec::{
     actionable_verify_source_is_supported,
     verify_command_is_unbounded_repo_exposure_snapshot_compare,
 };
-pub(crate) use command_spec::{command_tokens, python_pytest_verify_display};
+pub(crate) use command_spec::{
+    command_tokens, python_pytest_verify_display, python_unittest_verify_display,
+};
 pub use diagnostic_witness::{
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticSourceLocation, DiagnosticWitness,
     DiagnosticWitnessLimitation,

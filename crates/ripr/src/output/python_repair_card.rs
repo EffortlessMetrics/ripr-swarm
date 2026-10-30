@@ -44,7 +44,7 @@ fn native_pytest_route_parts<'a>(
     allow_qualified: bool,
 ) -> Option<NativePytestRoute<'a>> {
     let name = node.strip_prefix(file)?.strip_prefix("::")?;
-    if name.is_empty()
+    if !safe_qualified_name(&name.replace("::", "."))
         || (!allow_qualified && name.contains("::"))
         || name.rsplit("::").next()? != selected
         || crate::domain::python_pytest_verify_display(file, name, windows).as_deref() != Some(raw)
@@ -59,6 +59,14 @@ fn native_pytest_route_parts<'a>(
         program: "python",
         args: ["-m", "pytest", node],
         cwd: ".",
+    })
+}
+
+fn safe_qualified_name(name: &str) -> bool {
+    name.split('.').all(|part| {
+        let mut chars = part.chars();
+        matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
+            && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
     })
 }
 
@@ -82,12 +90,27 @@ pub(crate) fn manual_python_raw(finding: &Finding) -> Option<&str> {
     }
     if let Some(node) = unique("suggested_test_node_id: ") {
         native_pytest_route_parts(file, node, raw, &selected.name, cfg!(windows), true)?;
-    } else if !raw.starts_with("python -m unittest ")
-        || !raw
-            .trim_end_matches('"')
-            .ends_with(&format!(".{}", selected.name))
-    {
-        return None;
+        let name = node.strip_prefix(file)?.strip_prefix("::")?;
+        if name.contains("::") {
+            let qualified = unique("suggested_test_qualified_name: ")?;
+            if !safe_qualified_name(qualified) || qualified.replace('.', "::") != name {
+                return None;
+            }
+        }
+    } else {
+        let qualified = unique("suggested_test_qualified_name: ")?;
+        if !safe_qualified_name(qualified)
+            || qualified.rsplit('.').next()? != selected.name
+            || file.chars().any(char::is_control)
+            || Path::new(file)
+                .components()
+                .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+            || crate::domain::python_unittest_verify_display(file, qualified, cfg!(windows))
+                .as_deref()
+                != Some(raw)
+        {
+            return None;
+        }
     }
     Some(raw)
 }
