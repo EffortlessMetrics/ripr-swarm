@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        row: ['uri:own', 'uri:sibling']
+        row: ['controller']
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -32,27 +32,25 @@ jobs:
         working-directory: editors/vscode
         shell: pwsh
         env:
-          RIPR_TEST_GREP: Windows drive-letter spellings
-          RIPR_TEST_REQUIRE_RAN: Document selector workspace-root glob escaping Windows drive-letter spellings select the same workspace, but not a sibling
+          RIPR_TEST_GREP: Windows glob controller probe
+          RIPR_TEST_REQUIRE_RAN: Windows glob controller probe controller selects own file through the workspace URI
           RIPR_GLOB_PROBE_ROW: ${{ matrix.row }}
         run: |
           $env:RIPR_GLOB_PROBE_RESULT = Join-Path $env:RUNNER_TEMP 'selector-result.json'
-          node -e 'const path = require("path"); require("@vscode/test-electron").runTests({version:"1.91.0", extensionDevelopmentPath:process.cwd(), extensionTestsPath:path.resolve("out/test/suite/index"), launchArgs:["--disable-extensions", "--disable-workspace-trust"]}).catch(e => { console.error(e); process.exitCode=1; });'
+          $env:PROBE_ROOT = Join-Path $env:RUNNER_TEMP 'proj[1]{a,b}'
+          New-Item -ItemType Directory -Force -Path $env:PROBE_ROOT | Out-Null
+          node -e 'const path = require("path"); require("@vscode/test-electron").runTests({version:"1.91.0", extensionDevelopmentPath:process.cwd(), extensionTestsPath:path.resolve("out/test/suite/index"), launchArgs:["--disable-extensions", "--disable-workspace-trust", process.env.PROBE_ROOT]}).catch(e => { console.error(e); process.exitCode=1; });'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify host reached selector and version
         shell: pwsh
         run: |
           if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'selector-result.json'))) { throw 'selector result absent' }
           $result = Get-Content (Join-Path $env:RUNNER_TEMP 'selector-result.json') -Raw | ConvertFrom-Json
-          if ($result.version -ne '1.91.0' -or $result.scores.Count -ne 3) { throw 'unexpected VS Code version or result shape' }
+          if ($result.version -ne '1.91.0' -or ($null -eq $result.own) -or ($null -eq $result.other)) { throw 'unexpected VS Code version or result shape' }
       - name: Verify selected assertion row
         shell: pwsh
         env:
           ROW: ${{ matrix.row }}
         run: |
           $result = Get-Content (Join-Path $env:RUNNER_TEMP 'selector-result.json') -Raw | ConvertFrom-Json
-          $parts = $env:ROW.Split(':')
-          $entry = $result.scores | Where-Object spelling -eq $parts[0]
-          if ($null -eq $entry) { throw 'missing spelling' }
-          $expected = $parts[1] -eq 'own'
-          if ($entry.($parts[1]) -ne $expected) { throw 'selector row does not meet expectation' }
+          if ($result.own -ne $true -or $result.other -ne $false) { throw 'controller selector mismatch' }
