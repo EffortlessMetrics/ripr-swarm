@@ -1167,6 +1167,77 @@ mod tests {
     }
 
     #[test]
+    fn check_output_loader_names_producer_refusal_but_keeps_generic_error() -> Result<(), String> {
+        // #11161: a producer-refusal envelope carries no `analysis_outcome`
+        // at all — nothing was analyzed — so the loader must name the
+        // refusal (typed status, producer message, next step) instead of
+        // the generic missing-outcome error. A consumable envelope without
+        // an outcome keeps the generic error.
+        let dir = unique_command_test_dir("review-comments-refusal-check-output");
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let _cleanup = OwnedDeadlineFixture(dir.clone());
+        let root = dir.join("repo");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let diff_text = "diff";
+        let envelope = |refusal: bool| {
+            let mut document = serde_json::json!({
+                "schema_version": "0.2", "tool": "ripr", "mode": "draft",
+                "root": output::outcome::display_path(&root),
+                "base": "main", "summary": {}, "findings": []
+            });
+            if refusal {
+                document["analysis_scope"] = serde_json::json!({
+                    "scope": "diff",
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false,
+                    "repair_route": "analysis/diff-scope-budget"
+                });
+                document["run_limitations"] = serde_json::json!([{
+                    "category": "diff_scope_oversized",
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false,
+                    "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); analysis was not run.",
+                    "repair_route": "analysis/diff-scope-budget"
+                }]);
+            }
+            document
+        };
+        let refusal_path = dir.join("refusal.json");
+        std::fs::write(&refusal_path, envelope(true).to_string())
+            .map_err(|error| error.to_string())?;
+        let error =
+            load_review_comments_analysis_outcome(Some(&refusal_path), &root, "main", diff_text)
+                .err()
+                .ok_or_else(|| "a refusal envelope must be refused".to_string())?;
+        assert!(error.contains("producer refusal"), "{error}");
+        assert!(error.contains("diff_scope_oversized"), "{error}");
+        assert!(
+            error.contains("2878 changed Rust lines"),
+            "the producer's own message must survive: {error}"
+        );
+        assert!(
+            error.contains("analysis/diff-scope-budget"),
+            "the next step must survive: {error}"
+        );
+        assert!(
+            !error.contains("missing analysis_outcome"),
+            "the generic missing-outcome error must not hide the refusal: {error}"
+        );
+        let plain_path = dir.join("plain.json");
+        std::fs::write(&plain_path, envelope(false).to_string())
+            .map_err(|error| error.to_string())?;
+        let error =
+            load_review_comments_analysis_outcome(Some(&plain_path), &root, "main", diff_text)
+                .err()
+                .ok_or_else(|| "an envelope without an outcome must be refused".to_string())?;
+        assert!(
+            error.contains("missing analysis_outcome"),
+            "a non-refusal envelope without an outcome keeps the generic error: {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn review_comments_parses_required_revisions_and_out() {
         assert_eq!(
             parse_review_comments_options(&args(&[

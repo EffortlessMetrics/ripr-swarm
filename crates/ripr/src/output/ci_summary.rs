@@ -1557,6 +1557,15 @@ impl Summary {
             Ok(value) => value,
             Err(_) => return,
         };
+        // A bounded, partial, or incomplete document is not a refusal: those
+        // keep their own named repairs and downstream states. Only a true
+        // non-consumable refusal renders this block.
+        if crate::output::gate::discloses_limited_findings_bound(&value)
+            || crate::output::gate::discloses_limited_partial_scope(&value)
+            || crate::output::gate::discloses_incomplete_analysis_outcome(&value)
+        {
+            return;
+        }
         let Some(refusal) = crate::output::gate::producer_refusal(&value) else {
             return;
         };
@@ -1571,7 +1580,10 @@ impl Summary {
             "- This is a declined run, not a clean result: nothing was analyzed, \
              so downstream PR guidance, evidence, and gate packets carry missing or blocked states.",
         );
-        self.line(&format!("- Next step: {}", code_span(&refusal.repair_route)));
+        self.line(&format!(
+            "- Next step: {}",
+            code_span(&refusal.repair_route)
+        ));
         self.blank();
     }
 

@@ -816,3 +816,110 @@ fn preview_promotion_packets_follow_the_shell_glob() -> TestResult {
     assert!(packets.contains("<details><summary>Full report: target/ripr/reports/preview-promotion-python-a.md</summary>\n\n# A\n</details>"), "{packets}");
     Ok(())
 }
+
+/// #11161: when `target/ripr/pr/check.json` discloses a producer refusal,
+/// the summary opens First-run status with `#### PR analysis did not run`
+/// naming the typed status, the producer's own message, that nothing was
+/// analyzed, and the next step. A complete, absent, or malformed check
+/// document adds nothing; a non-refusal envelope adds nothing either.
+#[test]
+fn producer_refusal_check_document_is_named_while_others_add_nothing() -> TestResult {
+    let refusal = || {
+        json!({
+            "analysis_scope": {
+                "scope": "diff",
+                "run_status": "diff_scope_oversized",
+                "downstream_consumable": false,
+                "repair_route": "analysis/diff-scope-budget"
+            },
+            "run_limitations": [{
+                "category": "diff_scope_oversized",
+                "run_status": "diff_scope_oversized",
+                "downstream_consumable": false,
+                "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); analysis was not run.",
+                "repair_route": "analysis/diff-scope-budget"
+            }]
+        })
+    };
+    let fixture = Fixture::new("refusal-named")?;
+    fixture.json("target/ripr/pr/check.json", &refusal())?;
+    let summary = fixture.render(&[])?;
+    let first_run = block(&summary, "#### First-run status");
+    for line in [
+        "#### PR analysis did not run",
+        "- Producer run status: `diff_scope_oversized`",
+        "2878 changed Rust lines",
+        "nothing was analyzed",
+        "analysis/diff-scope-budget",
+    ] {
+        assert!(summary.contains(line), "missing {line:?}:\n{summary}");
+    }
+    assert!(
+        first_run.contains("#### PR analysis did not run"),
+        "the refusal block must open First-run status:\n{first_run}"
+    );
+    // A complete document (no refusal disclosure) adds nothing.
+    let fixture = Fixture::new("refusal-complete")?;
+    fixture.json("target/ripr/pr/check.json", &json!({"findings": []}))?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a complete check document must add no refusal block"
+    );
+    // An absent check document adds nothing.
+    let fixture = Fixture::new("refusal-absent")?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "an absent check document must add no refusal block"
+    );
+    // A malformed check document adds nothing.
+    let fixture = Fixture::new("refusal-malformed")?;
+    fixture.write("target/ripr/pr/check.json", "{not json")?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a malformed check document must add no refusal block"
+    );
+    // A non-refusal envelope (consumable, no outcome) adds nothing either.
+    let fixture = Fixture::new("refusal-non-refusal")?;
+    fixture.json(
+        "target/ripr/pr/check.json",
+        &json!({"schema_version": "0.2", "findings": []}),
+    )?;
+    assert!(
+        !fixture
+            .render(&[])?
+            .contains("#### PR analysis did not run"),
+        "a non-refusal envelope must add no refusal block"
+    );
+    // An unknown-status refusal still names the refusal with a fallback.
+    let fixture = Fixture::new("refusal-unknown-status")?;
+    let mut unknown = refusal();
+    unknown["analysis_scope"]
+        .as_object_mut()
+        .unwrap()
+        .remove("run_status");
+    unknown["run_limitations"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("run_status");
+    unknown["run_limitations"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("category");
+    fixture.json("target/ripr/pr/check.json", &unknown)?;
+    let summary = fixture.render(&[])?;
+    assert!(
+        summary.contains("#### PR analysis did not run"),
+        "an untyped refusal must still be named:\n{summary}"
+    );
+    assert!(
+        summary.contains("producer refusal"),
+        "fallback status:\n{summary}"
+    );
+    Ok(())
+}

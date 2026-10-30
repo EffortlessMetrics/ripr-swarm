@@ -1537,6 +1537,7 @@ fn partial_scope_input_error(value: &Value, path: &Path) -> Option<String> {
 /// without an outcome, yields `None` and keeps its downstream generic
 /// handling. Runs after the typed bounded/partial/incomplete checks in
 /// every consumer so those keep their own named repairs.
+#[derive(Debug, PartialEq)]
 pub(crate) struct ProducerRefusal {
     pub(crate) status: Option<String>,
     pub(crate) message: String,

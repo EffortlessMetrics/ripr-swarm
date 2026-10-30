@@ -1010,6 +1010,78 @@ fn refusal_input_error_requires_explicit_consumable_false() -> Result<(), String
 }
 
 #[test]
+fn producer_refusal_names_status_message_and_repair_route() {
+    // #11161: the shared refusal reader names the typed run status when the
+    // document carries a known one, the producer's own first limitation
+    // message, and its repair route. It fires only for an explicit
+    // non-consumable record — a complete, absent, or malformed document, or
+    // a consumable envelope without an outcome, yields `None` and keeps its
+    // downstream generic handling.
+    let refusal = json!({
+        "analysis_scope": {
+            "scope": "diff",
+            "run_status": "diff_scope_oversized",
+            "downstream_consumable": false,
+            "repair_route": "analysis/diff-scope-budget"
+        },
+        "run_limitations": [{
+            "category": "diff_scope_oversized",
+            "run_status": "diff_scope_oversized",
+            "downstream_consumable": false,
+            "message": "diff_scope_oversized: 2878 changed Rust lines across 11 Rust files exceed the limit (2000); analysis was not run.",
+            "repair_route": "analysis/diff-scope-budget"
+        }]
+    });
+    let named = producer_refusal(&refusal).expect("refusal must be named");
+    assert_eq!(named.status.as_deref(), Some("diff_scope_oversized"));
+    assert!(
+        named.message.contains("2878 changed Rust lines"),
+        "unexpected message: {}",
+        named.message
+    );
+    assert_eq!(named.repair_route, "analysis/diff-scope-budget");
+    // An untyped refusal still yields the message and route with no status.
+    let mut untyped = refusal.clone();
+    untyped["analysis_scope"]
+        .as_object_mut()
+        .unwrap()
+        .remove("run_status");
+    untyped["run_limitations"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("run_status");
+    untyped["run_limitations"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("category");
+    let untyped = producer_refusal(&untyped).expect("untyped refusal must be named");
+    assert_eq!(untyped.status, None);
+    assert!(untyped.message.contains("2878 changed Rust lines"));
+    assert_eq!(untyped.repair_route, "analysis/diff-scope-budget");
+    // Complete, consumable-without-outcome, malformed-shape, and
+    // explicitly-consumable documents all yield `None`.
+    assert_eq!(producer_refusal(&json!({"findings": []})), None);
+    assert_eq!(
+        producer_refusal(&json!({"schema_version": "0.2", "findings": []})),
+        None
+    );
+    assert_eq!(
+        producer_refusal(&json!({
+            "run_status": "diff_scope_oversized",
+            "run_limitations": [{"downstream_consumable": true}]
+        })),
+        None
+    );
+    assert_eq!(
+        producer_refusal(&json!({
+            "run_status": "diff_scope_oversized",
+            "run_limitations": [{"downstream_consumable": "false"}]
+        })),
+        None
+    );
+}
+
+#[test]
 fn gate_admits_consumable_document_with_known_refusal_status() -> Result<(), String> {
     // #10733 review repair: a document carrying a known refusal run status
     // but NO explicit `downstream_consumable: false` discloses no refusal;

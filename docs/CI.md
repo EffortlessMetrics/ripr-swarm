@@ -1607,6 +1607,34 @@ that child, so hand-run `ripr check` output keeps the ambient budget; set
 `RIPR_CHECK_FINDINGS_BYTES=0` yourself (or raise the byte value) when an
 outside-the-packet hand-off needs the full findings array.
 
+#### Large pull requests
+
+A PR whose diff exceeds a scope budget is a declined run, not a clean result:
+`ripr check` refuses before analyzing anything (exit 2) and writes a typed
+refusal envelope to `target/ripr/pr/check.json` — for example
+`analysis_scope.run_status = diff_scope_oversized` with the producer's message
+naming the measured lines and the `RIPR_MAX_DIFF_CHANGED_RUST_LINES` limit
+(currently 2000). The envelope also carries its repair route
+(`analysis_scope.repair_route` and `run_limitations[].repair_route`).
+
+Downstream packets name the refusal instead of discarding it (#11161):
+
+- The job summary (`ripr reports ci-summary`) opens First-run status with
+  `#### PR analysis did not run`, quoting the typed run status, the
+  producer's message, that nothing was analyzed, and the next step.
+- `ripr review-comments --check-output` rejects the refusal envelope with a
+  `producer refusal (run_status: …)` error carrying the same message and
+  next step, instead of the generic `missing analysis_outcome`.
+
+Under a blocking `RIPR_GATE_MODE` the refusal still fails the gate closed —
+naming the cause does not admit the PR. To get guidance on a large PR,
+either split it into smaller stacked PRs, run a narrower diff
+(`ripr check --path <glob>` and/or `--exclude <glob>` to analyze a subset;
+files left out are reported as not analyzed), or raise the limit for a single
+command on a machine with enough memory
+(`RIPR_MAX_DIFF_CHANGED_RUST_LINES=<number>`). See
+[Configuration](CONFIGURATION.md) for the budget variables.
+
 ```yaml
       - name: Run RIPR
         run: ripr reports ci-packet --root .
