@@ -1,6 +1,9 @@
 # Fixture: typescript_then_function_scoped_var_shadow
 
-Spec: RIPR-SPEC-0246 rule 2; RIPR-SPEC-0108
+Spec: RIPR-SPEC-0246
+Spec: RIPR-SPEC-0108
+
+The returned-promise and receiver-binding contract follows rule 2 of RIPR-SPEC-0246.
 
 ## Given
 
