@@ -1642,6 +1642,13 @@ activation facts and preserving its complete assertion set. An unasserted
 deciding disjunction or an assertion on another owner cannot borrow this
 credit. Static movement remains independent of focused test execution.
 
+The same owner's `return_value` seam over that whole boolean tail consumes
+the identical admission (#11111): it observes the same returned value, and
+the diff-mode return-value finding already credits the pinned assertion,
+so `ripr check` and `ripr repair` read one verdict for the change. Every
+gate above applies unchanged; a return-value seam whose owner tail is not
+the admitted comparison gains nothing.
+
 ### Lone-equality pins
 
 `assert!(owner(..) == v)` fails exactly when `assert_eq!(owner(..), v)`

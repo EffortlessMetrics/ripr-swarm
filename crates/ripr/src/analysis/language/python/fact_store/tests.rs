@@ -81,7 +81,7 @@ fn stored_facts_restore_every_interned_field() -> Result<(), String> {
             .rebinding_modules
             .values
             .iter()
-            .all(|(_, module_bound, _)| module_bound.iter().any(|name| name == "geometry")),
+            .all(|lists| lists.module_bound.iter().any(|name| name == "geometry")),
         "the shared lists keep the module's bindings"
     );
     let production = StoredFacts::from_facts(&extract_source_facts(

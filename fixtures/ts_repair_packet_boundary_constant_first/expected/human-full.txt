@@ -43,6 +43,7 @@ Preview actionability
 
 Static exposure
   weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 2 related test(s) found for owner `discountedTotal`

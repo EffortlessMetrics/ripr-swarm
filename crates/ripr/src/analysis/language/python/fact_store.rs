@@ -108,7 +108,12 @@ struct StoredFacts {
 }
 
 /// [`PythonTestRebinding`]'s module-level lists, as one interned value.
-type RebindingModuleLists = (Arc<Vec<String>>, Arc<Vec<String>>, Arc<Vec<String>>);
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+struct RebindingModuleLists {
+    module_names: Arc<Vec<String>>,
+    module_bound: Arc<Vec<String>>,
+    attributes: Arc<Vec<String>>,
+}
 
 /// Distinct values and, per item, the index of its value.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -169,11 +174,11 @@ impl StoredFacts {
         );
         let rebinding_modules = Interned::intern(facts.tests.iter_mut().map(|test| {
             let rebinding = &mut test.constant_rebinding;
-            (
-                std::mem::take(&mut rebinding.module_names),
-                std::mem::take(&mut rebinding.module_bound),
-                std::mem::take(&mut rebinding.attributes),
-            )
+            RebindingModuleLists {
+                module_names: std::mem::take(&mut rebinding.module_names),
+                module_bound: std::mem::take(&mut rebinding.module_bound),
+                attributes: std::mem::take(&mut rebinding.attributes),
+            }
         }));
         let test_rebindings = Interned::intern(
             facts
@@ -233,13 +238,18 @@ impl StoredFacts {
             owner.foreign_writes = foreign_writes;
             owner.class_facts.module_objects = module_objects;
         }
-        for (((test, imports), mut rebinding), (module_names, module_bound, attributes)) in facts
+        for (((test, imports), mut rebinding), lists) in facts
             .tests
             .iter_mut()
             .zip(test_imports)
             .zip(test_rebindings)
             .zip(rebinding_modules)
         {
+            let RebindingModuleLists {
+                module_names,
+                module_bound,
+                attributes,
+            } = lists;
             rebinding.module_names = module_names;
             rebinding.module_bound = module_bound;
             rebinding.attributes = attributes;

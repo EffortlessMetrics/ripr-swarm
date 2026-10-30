@@ -2401,8 +2401,14 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
     rendered.push_str("# RIPR Agent Status\n\n");
     rendered.push_str(&format!("Status: {}\n", report.status()));
     rendered.push_str(&format!("Root: {}\n", report.root));
+    // #10696: before any repair step has run there is no gap or artifact to
+    // report, so say that in a sentence instead of a table of `missing` rows.
+    let nothing_started = report.seam.is_none()
+        && report.repair_attempts.is_empty()
+        && report.artifacts.iter().all(|artifact| !artifact.present);
     match &report.seam {
         Some(seam) => rendered.push_str(&format!("Seam: {} ({})\n", seam.seam_id, seam.source)),
+        None if nothing_started => rendered.push_str("No repair in progress.\n"),
         None => rendered.push_str("Seam: unknown\n"),
     }
     if let Some(reading) = report.unrun_test_receipt() {
@@ -2412,19 +2418,21 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         ));
     }
 
-    rendered.push_str("\n## Artifacts\n\n");
-    rendered.push_str("| Artifact | State | Path |\n");
-    rendered.push_str("| --- | --- | --- |\n");
-    for artifact in &report.artifacts {
-        let state = if artifact.present {
-            "present"
-        } else {
-            "missing"
-        };
-        rendered.push_str(&format!(
-            "| {} | {} | `{}` |\n",
-            artifact.label, state, artifact.path
-        ));
+    if !nothing_started {
+        rendered.push_str("\n## Artifacts\n\n");
+        rendered.push_str("| Artifact | State | Path |\n");
+        rendered.push_str("| --- | --- | --- |\n");
+        for artifact in &report.artifacts {
+            let state = if artifact.present {
+                "present"
+            } else {
+                "missing"
+            };
+            rendered.push_str(&format!(
+                "| {} | {} | `{}` |\n",
+                artifact.label, state, artifact.path
+            ));
+        }
     }
 
     if !report.repair_attempts.is_empty() {
@@ -5149,6 +5157,30 @@ mod tests {
         Ok(())
     }
 
+    /// #10696 review: the artifact table is hidden only while nothing has
+    /// started; one present artifact brings it (and the `Seam:` line) back.
+    #[test]
+    fn agent_status_markdown_keeps_artifact_table_once_an_artifact_exists() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("table-returns");
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow).map_err(|err| format!("create workflow: {err}"))?;
+        std::fs::write(workflow.join("before.repo-exposure.json"), "{}")
+            .map_err(|err| format!("write artifact: {err}"))?;
+
+        let report = build_agent_status_report(&root, Path::new("."));
+        let rendered = render_agent_status_markdown(&report);
+
+        assert!(!rendered.contains("No repair in progress."), "{rendered}");
+        assert!(rendered.contains("Seam: unknown"), "{rendered}");
+        assert!(
+            rendered.contains("| before snapshot | present |"),
+            "{rendered}"
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
     #[test]
     fn agent_status_markdown_names_next_command_and_limits() -> Result<(), String> {
         let root = unique_agent_status_test_dir("markdown");
@@ -5159,7 +5191,10 @@ mod tests {
 
         assert!(rendered.contains("# RIPR Agent Status"));
         assert!(rendered.contains("Status: incomplete"));
-        assert!(rendered.contains("| before snapshot | missing |"));
+        // #10696: nothing has run yet, so no table of `missing` rows.
+        assert!(rendered.contains("No repair in progress."), "{rendered}");
+        assert!(!rendered.contains("| before snapshot |"), "{rendered}");
+        assert!(!rendered.contains("Seam: unknown"), "{rendered}");
         assert!(rendered.contains("## Next Command"));
         assert!(rendered.contains(&pilot_select_command(&bound_root("."))));
         assert!(rendered.contains("No runtime mutation execution."));
