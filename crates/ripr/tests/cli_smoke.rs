@@ -22647,7 +22647,12 @@ fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<()
     let pinned_binary = dir.join(if cfg!(windows) { "ripr.exe" } else { "ripr" });
     std::fs::copy(env!("CARGO_BIN_EXE_ripr"), &pinned_binary)
         .map_err(|err| format!("copy test binary: {err}"))?;
-    let run_pinned = |args: &[&str]| Command::new(&pinned_binary).args(args).output().unwrap();
+    let pinned_binary = pinned_binary
+        .to_str()
+        .ok_or_else(|| "pinned binary path is not UTF-8".to_string())?;
+    let run_pinned = |args: &[&str]| -> Result<Output, String> {
+        run_command(pinned_binary, None, args).map_err(|err| format!("run pinned ripr: {err}"))
+    };
 
     let check = run_pinned(&[
         "check",
@@ -22658,7 +22663,7 @@ fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<()
         "--no-unchanged-tests",
         "--write-artifact",
         &artifact_arg,
-    ]);
+    ])?;
     assert_success(&check);
 
     let fresh = run_pinned(&[
@@ -22670,7 +22675,7 @@ fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<()
         "--no-unchanged-tests",
         "--at",
         selector,
-    ]);
+    ])?;
     assert_success(&fresh);
     let reused = run_pinned(&[
         "context",
@@ -22681,7 +22686,7 @@ fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<()
         "--no-unchanged-tests",
         "--at",
         selector,
-    ]);
+    ])?;
     assert_success(&reused);
     context_reuse_matches_fresh(&fresh.stdout, &reused.stdout)?;
 
@@ -22693,7 +22698,7 @@ fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<()
         &artifact_arg,
         "--at",
         selector,
-    ]);
+    ])?;
     assert_failure(&without_flag);
     let stderr = String::from_utf8_lossy(&without_flag.stderr);
     assert!(
