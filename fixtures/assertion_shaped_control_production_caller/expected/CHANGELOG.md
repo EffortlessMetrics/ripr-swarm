@@ -515,3 +515,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_control_production_caller (34)
+
+Reason:
+RIPR-SPEC-0122: the hand-written step no longer claims no repair route beside a no-binding-seam advisory that points at ripr pilot (#10710)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_control_production_caller --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
