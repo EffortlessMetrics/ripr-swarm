@@ -154,8 +154,9 @@ totals never become a percentage or ETA. Progress does not mean analysis is
 faster or that the command will succeed. `--quiet` suppresses the progress
 stream; it does not change findings or exit codes. `ripr explain` and
 `ripr context` print the same `ripr progress:` lines on stderr and accept
-`--quiet`. `context` writes JSON to stdout, so do not merge stderr into it
-(`2>&1`) when you parse the packet.
+`--quiet`, as does `ripr pilot`. The stderr progress lines are a deliberate
+contract: stdout is the output contract, so for machine capture (for example
+the JSON from `context`) use `--quiet` or `2>/dev/null`, never `2>&1`.
 
 A short glossary for the terms below:
 
@@ -546,12 +547,12 @@ PR-facing packet. It does not run analysis or repair the code. See
 [First successful PR workflow](FIRST_PR_WORKFLOW.md) for the inputs and
 `ripr help first-pr` for its options.
 
-`first-pr` prints the next missing artifact and its command; run each, then
-rerun `first-pr`. In a Rust repository the sequence is: `ripr check --root .
---mode instant --format repo-exposure-json` redirected to
-`target/ripr/reports/repo-exposure.json`; `ripr reports gap-ledger ...`; then
-`ripr review-comments --root . --base BASE --head HEAD --out
-target/ripr/review/comments.json`. Commit your test first, because the
+On a fresh checkout the first `first-pr` run lists the whole missing chain in
+dependency order: a `Missing artifact` command, then `Also missing` entries
+with their `Then run` commands (repo exposure, gap ledger, and review cards
+via `ripr review-comments --root . --base BASE --head HEAD --out
+target/ripr/review/comments.json`). Run the printed commands, then rerun
+`first-pr`; it reads artifact presence only and runs none of them. Commit your test first, because the
 committed diff does not include uncommitted edits. After a successful repair
 the final state `no actionable gap` is expected: the gap is already addressed.
 It also appears when no repairable PR-local gap was selected; read the printed
