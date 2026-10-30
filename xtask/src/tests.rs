@@ -31031,7 +31031,10 @@ fn gh_pr_status_readiness_selects_safe_next_action() {
     let contexts = vec!["rust".to_string()];
     let clean = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
     let clean_readiness = gh_pr_status_readiness(&clean, &contexts, true, Vec::new());
-    assert_eq!(clean_readiness.safe_next_action, "merge");
+    assert_eq!(
+        clean_readiness.safe_next_action,
+        "inspect final merge gates"
+    );
 
     let pending = gh_pr_status_pr(vec![gh_pr_status_check("rust", "IN_PROGRESS", "")]);
     let pending_readiness = gh_pr_status_readiness(&pending, &contexts, true, Vec::new());
@@ -31072,7 +31075,7 @@ fn gh_pr_status_unknown_required_checks_are_not_passed_or_classified() -> Result
 
     let clean = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
     let readiness = gh_pr_status_readiness(&clean, &[], false, Vec::new());
-    assert_eq!(readiness.safe_next_action, "merge"); // advisory request, not merge authority
+    assert_eq!(readiness.safe_next_action, "inspect final merge gates"); // advisory, not merge authority
     assert!(gh_pr_status_markdown(&clean, &[], &readiness).contains("completeness are unknown"));
     Ok(())
 }
@@ -31092,7 +31095,10 @@ fn gh_pr_status_rejects_missing_rollup_and_waits_on_unknown_check_states() -> Re
     fixture["statusCheckRollup"] = serde_json::json!([]);
     let empty = parse_gh_pr_status_pull_request(&fixture.to_string())?;
     let empty_readiness = gh_pr_status_readiness(&empty, &[], false, Vec::new());
-    assert_eq!(empty_readiness.safe_next_action, "merge");
+    assert_eq!(
+        empty_readiness.safe_next_action,
+        "inspect final merge gates"
+    );
     assert!(
         gh_pr_status_markdown(&empty, &[], &empty_readiness).contains("completeness are unknown")
     );
@@ -31179,7 +31185,7 @@ fn gh_pr_status_behind_preserves_failure_and_wait_routes() {
 fn gh_pr_status_behind_does_not_hide_a_conflict_or_grant_merge() {
     let contexts = vec!["rust".to_string()];
     for (state, expected) in [
-        ("CLEAN", "merge"),
+        ("CLEAN", "inspect final merge gates"),
         ("BEHIND", "inspect integration"),
         ("DIRTY", "inspect failure"),
         ("UNKNOWN", "wait"),
@@ -31255,7 +31261,7 @@ fn gh_pr_status_markdown_reports_reviews_checks_and_action() {
     let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
     let markdown = gh_pr_status_markdown(&pr, &contexts, &readiness);
     assert!(markdown.contains("# GitHub PR Status"));
-    assert!(markdown.contains("safe next action: `merge`"));
+    assert!(markdown.contains("safe next action: `inspect final merge gates`"));
     assert!(markdown.contains("## Required Checks Outstanding"));
     assert!(markdown.contains("## Reviews"));
     assert!(markdown.contains("droid/review"));
@@ -31278,7 +31284,7 @@ fn gh_pr_status_json_reports_merge_readiness_packet() -> Result<(), String> {
     assert_eq!(json["merge_state"], "CLEAN");
     assert_eq!(json["behind_main"], false);
     assert_eq!(json["review_decision"], "APPROVED");
-    assert_eq!(json["safe_next_action"], "merge");
+    assert_eq!(json["safe_next_action"], "inspect final merge gates");
     assert_eq!(
         json["advisory_checks"][0],
         "droid/review (status=COMPLETED, conclusion=SUCCESS)"
@@ -56909,7 +56915,7 @@ fn gh_pr_status_current_review_subject_control() -> Result<(), String> {
         "current_head"
     );
     let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
-    assert_eq!(readiness.safe_next_action, "merge");
+    assert_eq!(readiness.safe_next_action, "inspect final merge gates");
     assert!(readiness.warnings.is_empty());
     Ok(())
 }
@@ -57126,7 +57132,7 @@ fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), St
     assert!(markdown.contains("not evidence of review completion"));
     assert!(markdown.contains("not attributed to the current head"));
     assert_eq!(
-        readiness.safe_next_action, "merge",
+        readiness.safe_next_action, "inspect final merge gates",
         "advisory provider disclosure must not silently become a new gate"
     );
     Ok(())
@@ -57135,7 +57141,13 @@ fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), St
 #[test]
 fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Result<(), String> {
     for (status, conclusion, review, expected) in [
-        ("COMPLETED", "SUCCESS", "APPROVED", "merge"),
+        (
+            "COMPLETED",
+            "SUCCESS",
+            "APPROVED",
+            "inspect final merge gates",
+        ),
+        ("EMPTY", "", "APPROVED", "inspect final merge gates"),
         ("IN_PROGRESS", "", "APPROVED", "wait"),
         ("COMPLETED", "FAILURE", "APPROVED", "inspect failure"),
         (
@@ -57155,8 +57167,12 @@ fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Resu
         });
         let mut last = first.clone();
         last["reviewDecision"] = serde_json::json!(review);
-        last["statusCheckRollup"][0]["status"] = serde_json::json!(status);
-        last["statusCheckRollup"][0]["conclusion"] = serde_json::json!(conclusion);
+        if status == "EMPTY" {
+            last["statusCheckRollup"] = serde_json::json!([]);
+        } else {
+            last["statusCheckRollup"][0]["status"] = serde_json::json!(status);
+            last["statusCheckRollup"][0]["conclusion"] = serde_json::json!(conclusion);
+        }
         let mut reads = 0;
         let observation = super::gh_pr_status_snapshot::collect_current(42, || {
             reads += 1;
@@ -57197,7 +57213,9 @@ fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Resu
             serde_json::from_str(&gh_pr_status_json(&pr, &observation.contexts, &readiness))
                 .map_err(|error| error.to_string())?;
         assert_eq!(json["safe_next_action"], expected);
+        assert_eq!(json["required_contexts_available"], false);
         let markdown = gh_pr_status_markdown(&pr, &observation.contexts, &readiness);
+        assert!(markdown.contains("Required-check classification and completeness are unknown"));
         assert!(markdown.contains(&format!("safe next action: `{expected}`")));
         assert!(markdown.contains("1111111111111111111111111111111111111111"));
         assert!(markdown.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));

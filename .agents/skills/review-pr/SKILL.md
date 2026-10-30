@@ -103,7 +103,7 @@ Use this procedure when a coherent candidate exists and one of these is true:
 - automated comments or CI results need an accountable synthesis;
 - a prior review was anchored to another head or an incomplete diff.
 
-A differently named reviewer is optional. Use another agent only when it changes the evidence, oracle, context, tools, threat model, platform reach, or failure perspective. The accountable root verifies the review and owns the disposition.
+Independent substantive exact-head LLM review is required before merge. A different name alone is not independence: the reviewer must make an independent judgment, challenging the actual candidate and evidence rather than echoing the author. An author self-review, even when posted as `COMMENT`, does not replace it; an independent review may record its disposition in a `COMMENT`. The accountable root verifies the review and owns the disposition. If a permitted independent review is unavailable, retain `REVIEW_INCOMPLETE` while continuing independent authorized work.
 
 # Procedure
 
