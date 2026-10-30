@@ -926,7 +926,7 @@ fn gap_bound_route(
         return Ok(None);
     };
     let uncommitted_files = uncommitted_production_files(&output.root, &record)
-        .map_err(|_| "could not validate the prerequisites for the repair start")?;
+        .map_err(|_error| "could not validate the prerequisites for the repair start")?;
     let repair_base = if uncommitted_files.is_empty() {
         base
     } else {
@@ -2694,7 +2694,9 @@ pub(crate) mod tests {
             crate::app::repair_attempt::edit_cage_policy_from_packet(&packet.to_string(), "gap-1")?;
 
         // A missing repository is unknown, never a clean tree.
-        assert!(dirty_paths_outside_surface(&root.join("missing"), &policy).is_err());
+        let Err(_error) = dirty_paths_outside_surface(&root.join("missing"), &policy) else {
+            return Err("missing repository was treated as clean".to_string());
+        };
 
         // Clean tree: nothing to commit, so the start prints bare.
         assert!(dirty_paths_outside_surface(&root, &policy)?.is_empty());
@@ -2736,8 +2738,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn dirty_origin_requires_captured_revisions_and_resolvable_git() {
-        assert!(resolved_dirty_origin(Path::new("."), None).is_err());
+    fn dirty_origin_requires_captured_revisions_and_resolvable_git() -> Result<(), String> {
+        let Err(_error) = resolved_dirty_origin(Path::new("."), None) else {
+            return Err("missing revisions were accepted".to_string());
+        };
         let revisions = crate::analysis::AnalyzedRevisions {
             base_ref: "HEAD".to_string(),
             base_commit: Some("a".repeat(40)),
@@ -2746,7 +2750,10 @@ pub(crate) mod tests {
             head_commit: Some("b".repeat(40)),
             working_tree: true,
         };
-        assert!(resolved_dirty_origin(Path::new("."), Some(&revisions)).is_err());
+        let Err(_error) = resolved_dirty_origin(Path::new("."), Some(&revisions)) else {
+            return Err("missing origin was accepted".to_string());
+        };
+        Ok(())
     }
 
     /// #10698: the commit hint is spelled relative to the analyzed root, which
