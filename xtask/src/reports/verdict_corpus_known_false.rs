@@ -222,7 +222,7 @@ pub(crate) fn growth_violations(
             continue;
         }
         let accepted = entry.accepted_growth.is_some_and(|issue| issue != 0)
-            && entry.reason.contains(entry.case.as_str());
+            && names_case(&entry.reason, &entry.case);
         if !accepted {
             violations.push(format!(
                 "verdict-corpus: known_false case `{}` in {ledger_label} is new in this diff and the row was not a false verdict at the merge base; a bless cannot list its own regression. Fix the case, spec or analyzer. Accepting a new false verdict adds `accepted_growth = <issue>` (an accepted-cost issue that names the case) to the entry and names `{}` in its `reason`, and is a reviewed edit",
@@ -231,6 +231,13 @@ pub(crate) fn growth_violations(
         }
     }
     Ok(violations)
+}
+
+/// True when `reason` carries `case` as a whole token, so a short case id is
+/// not satisfied by an unrelated word that merely contains it.
+fn names_case(reason: &str, case: &str) -> bool {
+    let is_id = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    reason.split(|c: char| !is_id(c)).any(|token| token == case)
 }
 
 /// The base revision for the growth gate: `RIPR_VERDICT_CORPUS_BASE`, else the
@@ -960,6 +967,10 @@ mod tests {
             (
                 "[[known_false]]\ncase = \"a\"\nissue = 7\naccepted_growth = 9\nreason = \"why\"\n",
                 "case not named",
+            ),
+            (
+                "[[known_false]]\ncase = \"a\"\nissue = 7\naccepted_growth = 9\nreason = \"accepted until the analyzer is fixed\"\n",
+                "case only a substring of another word",
             ),
             (
                 "[[known_false]]\ncase = \"a\"\nissue = 7\nreason = \"a is accepted\"\n",
