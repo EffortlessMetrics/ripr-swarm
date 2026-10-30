@@ -315,9 +315,10 @@ fn to_string_dispatch_at(masked: &str, at: usize, self_type: &str) -> bool {
 }
 
 /// Whether one fixed output fragment of an ordinary format template changed.
-/// Keep the original lexical admission as an upper bound: this repair only
-/// withholds display-pin credit. Token validation then prevents quotes in raw
-/// strings, characters or comments from hiding argument or placeholder edits.
+/// The original lexical admission stays the withholding ceiling for placeholder,
+/// argument and cancelling-fragment edits. Token validation prevents quotes in
+/// raw strings, characters or comments from hiding them, and also admits a real
+/// fixed-fragment edit the lexical scanner mis-parsed (a `'"'` argument).
 pub(in crate::analysis) fn changes_only_string_literals(
     before: Option<&str>,
     after: Option<&str>,

@@ -105,8 +105,12 @@ all are required:
   `use std::fmt;` does not defeat the pin, because a test never calls `fmt` by
   that bare name.
 
-- Stimulus (#9836). The original lexical literal-edit boundary remains an
-  upper bound. Ordinary string tokens must validate and decode. The template
+- Stimulus (#9836). The original lexical literal-edit boundary stays the
+  withholding ceiling for placeholder, argument and cancelling-fragment edits;
+  the syntax-backed reader can also admit a fixed-fragment edit the lexical
+  scanner mis-parsed (a quote-bearing character-literal argument), which keeps
+  its credit because an exact whole-output pin observes a real fixed-fragment
+  change. Ordinary string tokens must validate and decode. The template
   retains identical ordered placeholder groups after Unicode/ASCII decoding;
   doubled braces form fixed output; a brace may be the fill character before an
   alignment marker. Groups and fixed fragments compare by their written source.

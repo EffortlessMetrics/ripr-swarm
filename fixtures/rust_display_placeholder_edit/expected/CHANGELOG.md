@@ -64,3 +64,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_display_placeholder_edit (6)
+
+Reason:
+RIPR-SPEC-0297: human.txt follows main's plain-words repair-start wording (#9836)
+
+Command:
+`cargo xtask goldens bless rust_display_placeholder_edit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
