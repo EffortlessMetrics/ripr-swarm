@@ -208,17 +208,20 @@ impl StableNames {
     }
 }
 
-/// `source` with the body of every `test*` function and every `test*` method
-/// of a `Test*` class blanked (decorators, signatures and all other code
-/// stay). A test body runs only when pytest calls it, after every decorator in
-/// the module was applied, so a namespace writer there cannot change what a
-/// decorator read at import. Module scope, class bodies, helpers, fixtures and
-/// decorator arguments are untouched, so those writers still count. A module
-/// that names a test function outside its own `def` (called at import, used as a
-/// decorator) keeps the whole-module scan (#11018).
+/// `source` with the body of every `test*` function, every `test*` method of
+/// a `Test*` class and every undecorated module-level helper blanked
+/// (decorators, signatures and all other code stay). Such a body runs only when
+/// something calls it, after every decorator in the module was applied, so a
+/// namespace writer there cannot change what a decorator read at import.
+/// Module scope, class bodies, fixtures, decorated functions and decorator
+/// arguments are untouched, so those writers still count. A module that names
+/// one of those functions outside its own `def` (called at import, aliased,
+/// used as a decorator or argument) keeps the whole-module scan (#11018,
+/// #11144).
 fn without_test_bodies(source: &str, statements: &[Stmt]) -> String {
     let mut ranges = Vec::new();
     let mut names: Vec<&str> = Vec::new();
+    let mut helpers: Vec<(&str, (usize, usize))> = Vec::new();
     for statement in statements {
         match statement {
             Stmt::FunctionDef(function)
@@ -234,6 +237,23 @@ fn without_test_bodies(source: &str, statements: &[Stmt]) -> String {
             {
                 ranges.extend(body_range(&function.body));
                 names.push(function.name.as_str());
+            }
+            // An undecorated module-level helper runs only when something
+            // calls it. One that anything outside a blanked body names (a
+            // call at import, an alias, an argument) keeps its body (#11144).
+            Stmt::FunctionDef(function)
+                if function.decorator_list.is_empty() && !function.name.starts_with("test") =>
+            {
+                helpers.extend(
+                    body_range(&function.body).map(|range| (function.name.as_str(), range)),
+                );
+            }
+            Stmt::AsyncFunctionDef(function)
+                if function.decorator_list.is_empty() && !function.name.starts_with("test") =>
+            {
+                helpers.extend(
+                    body_range(&function.body).map(|range| (function.name.as_str(), range)),
+                );
             }
             Stmt::ClassDef(class) if class.name.starts_with("Test") => {
                 for member in &class.body {
@@ -259,23 +279,33 @@ fn without_test_bodies(source: &str, statements: &[Stmt]) -> String {
             _ => {}
         }
     }
-    if ranges.is_empty() {
+    if ranges.is_empty() && helpers.is_empty() {
         return source.to_string();
     }
-    let mut blanked = source.as_bytes().to_vec();
-    for (start, end) in ranges {
-        let end = end.min(blanked.len());
-        for byte in blanked.get_mut(start..end).unwrap_or_default() {
-            if *byte != b'\n' {
-                *byte = b' ';
+    // Whole statements are replaced byte for byte by spaces, so the text is
+    // valid UTF-8; the fallback is only a guard.
+    let blank = |helpers: &[(&str, (usize, usize))]| {
+        let mut blanked = source.as_bytes().to_vec();
+        for &(start, end) in ranges.iter().chain(helpers.iter().map(|(_, range)| range)) {
+            let end = end.min(blanked.len());
+            for byte in blanked.get_mut(start..end).unwrap_or_default() {
+                if *byte != b'\n' {
+                    *byte = b' ';
+                }
             }
         }
-    }
-    // Whole statements were replaced byte for byte by spaces, so the text is
-    // valid UTF-8; the fallback is only a guard.
-    let Ok(blanked) = String::from_utf8(blanked) else {
-        return source.to_string();
+        String::from_utf8(blanked).unwrap_or_else(|_| source.to_string())
     };
+    // A kept helper's body can name another helper, so repeat to a fixpoint.
+    let mut blanked = blank(&helpers);
+    loop {
+        let before = helpers.len();
+        helpers.retain(|(name, _)| identifier_offsets(&blanked, name).count() <= 1);
+        if helpers.len() == before {
+            break;
+        }
+        blanked = blank(&helpers);
+    }
     // A test function named anywhere but its own `def` (called at import,
     // used as a decorator) may run before the decorators: scan everything.
     if names

@@ -1,6 +1,7 @@
 //! A namespace writer inside a test body runs after every decorator was
 //! applied, so it does not unsettle the parametrize argnames of other tests
-//! in the module (#11018). Every other writer position keeps the limit.
+//! in the module (#11018). An undecorated helper nothing names at module scope is the same
+//! (#11144). Every other writer position keeps the limit.
 
 use super::owners_tests::{extract_owners, extract_tests};
 use super::*;
@@ -44,6 +45,12 @@ fn a_writer_inside_a_test_body_does_not_unsettle_the_argnames() -> Result<(), St
         "async def test_later():\n    setattr(object(), \"x\", 1)\n",
         "class TestCompat:\n    def test_reload(self):\n        globals()[\"x\"] = 1\n",
         "class TestCompat:\n    async def test_reload(self):\n        globals()[\"x\"] = 1\n",
+        // An undecorated helper only runs when something calls it (#11144).
+        "def _build(**kw):\n    for k, v in kw.items():\n        setattr(object(), k, v)\n",
+        "def _drive(monkeypatch):\n    monkeypatch.setattr(object(), \"isatty\", lambda: True)\n\n\ndef test_uses(monkeypatch):\n    _drive(monkeypatch)\n",
+        "async def _drive():\n    globals()[\"x\"] = 1\n",
+        // Naming one helper at import keeps only that helper's body.
+        "def _a():\n    globals()[\"x\"] = 1\n\n\ndef _b():\n    return 1\n\n\nrun(_b)\n",
     ] {
         let finding = classify_module(&module_with(other))?;
         assert!(
@@ -61,8 +68,15 @@ fn a_writer_anywhere_else_keeps_the_limit() -> Result<(), String> {
         // Module scope.
         "setattr(object(), \"x\", 1)\n",
         "globals()[\"pytest\"] = object()\n",
-        // A non-test helper, which module code may call at import.
-        "def helper():\n    setattr(object(), \"x\", 1)\n",
+        // A helper that module code calls at import, aliases or decorates with.
+        "def helper():\n    setattr(object(), \"x\", 1)\n\n\nhelper()\n",
+        "def helper():\n    setattr(object(), \"x\", 1)\n\n\nalias = helper\n",
+        "def helper(f):\n    setattr(object(), \"x\", 1)\n    return f\n\n\n@helper\ndef test_wrapped():\n    pass\n",
+        "async def helper():\n    setattr(object(), \"x\", 1)\n\n\nrun(helper)\n",
+        // A kept helper's body names a second helper, which is kept as well.
+        "def inner():\n    setattr(object(), \"x\", 1)\n\n\ndef outer():\n    inner()\n\n\nouter()\n",
+        // A decorated helper may be invoked by its decorator.
+        "@register\ndef helper():\n    setattr(object(), \"x\", 1)\n",
         // A class body and a non-test class's test-named method.
         "class Holder:\n    setattr(object(), \"x\", 1)\n",
         "class Helper:\n    def test_x(self):\n        setattr(object(), \"x\", 1)\n",
