@@ -1547,21 +1547,27 @@ the masker.
     renamed or default import, or a resolved namespace import; a same-file
     callee is not followed. The class and every same-file ancestor must be
     unable to replace the getter on an instance: no instance field of that
-    name, `this.<getter> =`, `defineProperty` naming it, `Class.prototype`
-    edit, `__proto__`, constructor that returns a value, repeated or
-    reassigned class name, or second getter of the name; an ancestor that is
-    imported or not a plain identifier refuses. The relation is refused when
+    name, `this.<getter> =`, constructor that returns a value, repeated or
+    reassigned class name (cast and non-null targets included), or second
+    getter of the name; an ancestor that is imported or not a plain
+    identifier refuses. The owner file is scanned with a closed rule: ANY
+    mention of `defineProperty`, `defineProperties`, `setPrototypeOf`,
+    `replaceProperty`, `__proto__` or `Class.prototype` refuses, whatever the
+    arguments or spacing. The relation is refused when
     the receiver is declared twice, written again, bound by a catch, function,
     arrow or loop parameter, or mentioned outside the block that declares it;
     when the factory call is not the whole initializer; when the read is not
     the subject of an `expect(...)`; when the test file mentions `defineProperty`,
-    `defineProperties`, `setPrototypeOf`, `replaceProperty` or `__proto__`
-    at all, contains a `spyOn` that is not a call with a plain string-literal
-    member name, a `mocked` of anything but an identifier path, an index
-    assignment, or an argument list past the scan bound (the closed rule
-    refuses every name); when any other spy, mock or `.name =` assignment
-    names the getter or the factory, whatever its fabrication form; when the
-    owner module is mocked;
+    `defineProperties`, `setPrototypeOf`, `replaceProperty`, `__proto__`,
+    `replaceGetter`, `replaceSetter`, `proxyquire`, `rewire` or
+    `createStubInstance` at all (or `td.replace` / `testdouble.replace`),
+    contains a `spyOn` that is not a call with a plain string-literal member
+    name, a `mocked` of anything but an identifier path, an index assignment,
+    or an argument list past the scan bound (the closed rule refuses every
+    name); when the arguments of any `spyOn`, `mock`, `doMock`, `stubGlobal`,
+    `stub`, `replace`, `mockImplementation` or `mockReturnValue` call, or a
+    `.name =` assignment target, name the getter, the class or the factory,
+    whatever its fabrication form; when the owner module is mocked;
     and for computed access. The relation reads like a constructed receiver
     (`receiver_owner_call`), so it lends reach and the assertion's oracle, and
     the classifier then decides the class exactly as it does for
@@ -1577,7 +1583,12 @@ the masker.
     `setupFiles`, an owner-module `patch()` export) that patch the prototype
     are not scanned, as for a constructed receiver; obfuscated spellings
     (`Object["define" + "Property"]`) and a mid-line shadow of the factory
-    name are not detected.
+    name are not detected. Also not detected, with the same parity for
+    constructed receivers: a module patched through `Object.assign` or
+    `Reflect.set` on a CommonJS namespace, a prototype getter removed with
+    `delete` or `Reflect.deleteProperty` (including an owner-side
+    `delete (Cached as any).prototype.value`), and rebinds spelled through
+    `eval`.
 
 ### Counted removal receiver witness (#10157)
 

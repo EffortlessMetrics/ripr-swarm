@@ -184,12 +184,17 @@ pub(crate) struct TypeScriptTest {
     /// the owner function. Populated once per file by `extract_tests`.
     pub(crate) written_locals_in_file: Shared<String>,
     /// Identifier tokens the containing test file passes to a replacement
-    /// call (`spyOn`, `mock`, `doMock`, `mocked`, `defineProperty`,
-    /// `defineProperties`, `setPrototypeOf`, `replaceProperty`) or assigns as
-    /// a member (`.name =`), plus `__proto__` when the file mentions it. A
-    /// getter or factory a name here may be replaced, so a relation that
-    /// credits it refuses (#10402). Populated once per file by
-    /// `extract_tests`.
+    /// call (`spyOn`, `mock`, `doMock`, `stubGlobal`, `stub`, `replace`,
+    /// `mockImplementation`, `mockReturnValue`) or assigns as a member
+    /// (`.name =`). A getter, class or factory named here may be replaced, so
+    /// a relation that credits it refuses (#10402). The single entry `"*"`
+    /// refuses every name: it is recorded when the file mentions
+    /// `defineProperty`, `defineProperties`, `setPrototypeOf`,
+    /// `replaceProperty`, `__proto__`, `replaceGetter`, `replaceSetter`,
+    /// `proxyquire`, `rewire` or `createStubInstance`, or `td.replace`, has a
+    /// `spyOn` without a plain string-literal member name, a `mocked` of
+    /// anything but an identifier path, an index assignment, or an argument
+    /// list past 8 KB. Populated once per file by `extract_tests`.
     pub(crate) member_replacements_in_file: Shared<String>,
     /// Test-local mock factories of the containing test file
     /// (RIPR-SPEC-0247 rule 1, amended 2026-10-15): top-level
