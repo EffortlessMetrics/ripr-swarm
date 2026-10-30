@@ -31,6 +31,9 @@ pub(crate) fn unresolved_boundary_operand(missing: &[String]) -> Option<String> 
         line.split("; ").find_map(|segment| {
             segment
                 .strip_prefix("observed ")
+                // The Missing check is prose: the final segment ends with a
+                // sentence period after `unresolved`.
+                .map(|rest| rest.trim_end_matches('.'))
                 .and_then(|rest| rest.strip_suffix("values: unresolved"))
                 .map(|operand| operand.trim().to_string())
                 .filter(|operand| !operand.is_empty())

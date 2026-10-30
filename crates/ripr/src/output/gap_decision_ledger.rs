@@ -2300,6 +2300,9 @@ fn gap_record_from_python_no_repair_card_finding(
             line.split("; ").find_map(|segment| {
                 segment
                     .strip_prefix("observed ")
+                    // The Missing check is prose: the final segment ends with
+                    // a sentence period after `unresolved`.
+                    .map(|rest| rest.trim_end_matches('.'))
                     .and_then(|rest| rest.strip_suffix("values: unresolved"))
                     .map(|operand| operand.trim().to_string())
                     .filter(|operand| !operand.is_empty())
