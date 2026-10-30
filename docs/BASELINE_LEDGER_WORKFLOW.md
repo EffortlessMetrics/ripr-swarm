@@ -84,10 +84,11 @@ gh run list --workflow ripr.yml --branch PR_BRANCH --limit 5 \
   --json databaseId,headBranch,conclusion,createdAt
 tmp="$(mktemp -d)"
 gh run download RUN_ID --name ripr-reports --dir "$tmp"
-find "$tmp" -name gate-decision.json
+decision="$(find "$tmp" -name gate-decision.json -print -quit)"
+test -n "$decision"
 ```
 
-Use the path `find` prints as `--from` below. Notes:
+Use `$decision` as `--from` below. Notes:
 
 - Artifacts are retained for 14 days by default; download from a recent run.
 - The decision comes from that pull request's diff, so a baseline created from
@@ -106,7 +107,7 @@ ledger:
 
 ```bash
 ripr baseline create \
-  --from target/ripr/reports/gate-decision.json \
+  --from "$decision" \
   --out target/ripr/reports/gate-baseline.candidate.json
 ```
 
