@@ -1825,6 +1825,27 @@ id = "RIPR-SPEC-0011"
 name = "LLM work loop"
 spec = "docs/specs/RIPR-SPEC-0011-llm-work-loop.md"
 tests = [
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::verify_typed_refusal_classifier_matches_only_whole_or_leading_clauses",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::after_refusal_json_is_one_versioned_document_with_trimmed_error",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_verify_execute_refuses_a_missing_root_as_failure_not_decision",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_status_refuses_a_malformed_attempt_id_before_reading_artifacts",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_status_accepts_an_out_dir_that_names_the_default_workflow_dir",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::after_refusal_reason_folds_narration_into_sentences",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::short_head_truncates_long_heads_and_keeps_short_or_unsliceable_ones",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_start_out_dir_anchors_relative_dirs_at_root_only",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::seam_id_translation_passes_plain_ids_through_without_resolving",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::unknown_seam_hint_falls_back_to_the_pilot_listing_for_other_shapes",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::policy_omitted_hint_routes_to_the_brief_not_a_relisting",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_receipt_refuses_a_missing_root_with_failure",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_verify_refuses_a_missing_root_before_reading_snapshots",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_receipt_with_an_unknown_attempt_refuses_before_reading_the_verify_json",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_receipt_with_a_malformed_attempt_id_is_a_failure",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::json_brief_with_a_missing_root_answers_with_the_root_unusable_envelope",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_packet_unknown_seam_is_a_decision_not_a_failure",
+  "crates/ripr/tests/cli_smoke.rs::agent_verify_missing_snapshot_named_like_a_refusal_is_operational",
+  "crates/ripr/tests/cli_smoke.rs::agent_repair_operational_error_after_attempt_selection_stays_failure",
+  "crates/ripr/tests/cli_smoke.rs::agent_receipt_rejects_invalid_attempt_before_reading_verify_input",
   "crates/ripr/src/cli/agent.rs::tests::agent_repair_phase_values_keep_their_exact_meaning",
   "crates/ripr/tests/cli_help_hierarchy.rs::agent_repair_phase_refusals_render_scoped_recovery_without_writes",
   "crates/ripr/tests/cli_help_hierarchy.rs::agent_repair_help_names_the_primary_transaction_and_its_limits",
@@ -19429,6 +19450,8 @@ id = "RIPR-SPEC-0282"
 name = "Repair attempt after-refusal history and retry budget"
 spec = "docs/specs/RIPR-SPEC-0282-repair-attempt-after-refusal-retry-budget.md"
 tests = [
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::repair_after_retry_budget_lines_name_the_spent_budget_and_new_attempt_route",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::repair_after_no_movement_lines_advise_retry_until_the_budget_is_spent",
   "crates/ripr/tests/cli_smoke.rs::repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget",
   "crates/ripr/tests/task_first_facade.rs::repair_after_a_spent_retry_budget_starts_a_fresh_attempt",
   "crates/ripr/src/app/task_first.rs::tests::reuse_skips_an_attempt_that_spent_its_retry_budget",
