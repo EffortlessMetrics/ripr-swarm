@@ -31,7 +31,7 @@ use super::boundary::{
     BoundaryActivation, PythonBoundaryEvidence, strong_owner_call_rows_with_gaps,
     unrebound_constants,
 };
-use super::guard_activation::{for_target_rebinds, line_rebinds_parameter, name_rebound_in_owner};
+
 use super::related_tests::PythonRelatedCandidate;
 use crate::domain::OwnerKind;
 use crate::{domain::ValueContext, value_origins::LocatedValueFact as ValueFact};
@@ -177,7 +177,7 @@ pub(super) fn python_truthiness_swap_evidence(
     {
         return None;
     }
-    if parameter_rebound(owner_source?, owner, &name) {
+    if !parameter_only_read(owner_source?, owner, &name, line_text) {
         return None;
     }
     if owner_reached_indirectly(owner, related_candidates) {
@@ -264,43 +264,96 @@ pub(super) fn strip_trailing_comment(line: &str) -> &str {
     line
 }
 
-/// Whether the owner body may rebind `name`: the existing line reading, plus
-/// any assignment after a `:` or `;` (`if flag: x = 0`, `else: x = 0`), an
-/// `as name` target, and `del`/`global`/`nonlocal`. Over-refuses by design.
-fn parameter_rebound(owner_source: &str, owner: &PythonOwner, name: &str) -> bool {
-    if name_rebound_in_owner(owner_source, owner, name) {
-        return true;
-    }
+/// Closed allow-list: the parameter may appear in the owner body (after the
+/// `def` header line) only on the changed line, or on a line that is a plain
+/// `return`/`if`/`elif`/`while`/`raise`/`assert` statement holding no
+/// assignment, walrus, comprehension, lambda, `as` target or dynamic-scope
+/// call. Any other mention (an assignment target in any shape, a nested
+/// `def`/`class`/`import`, a `for`/`case`/`with` target, `global`, a
+/// continuation line) refuses, so an unrecognized shape keeps the existing
+/// verdict.
+fn parameter_only_read(
+    owner_source: &str,
+    owner: &PythonOwner,
+    name: &str,
+    changed_line: &str,
+) -> bool {
+    let changed = strip_trailing_comment(changed_line).trim();
     owner_source
         .lines()
         .skip(owner.start_line)
         .take(owner.end_line.saturating_sub(owner.start_line))
-        .map(str::trim)
-        .any(|line| {
-            statement_names(line, name)
-                || line.match_indices([':', ';']).any(|(index, _)| {
-                    let tail = line[index + 1..].trim();
-                    line_rebinds_parameter(tail, name)
-                        || for_target_rebinds(tail, name)
-                        || statement_names(tail, name)
-                })
+        .map(|line| strip_trailing_comment(line).trim())
+        .all(|line| {
+            if DYNAMIC_SCOPE.iter().any(|word| line.contains(word)) {
+                return false;
+            }
+            if !mentions_identifier(line, name) || line == changed {
+                return true;
+            }
+            plain_read_statement(line)
         })
 }
 
-/// An `as name` target or a `del`/`global`/`nonlocal` statement naming it.
-fn statement_names(text: &str, name: &str) -> bool {
-    let named = |rest: &str| {
-        rest.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-            .any(|word| word == name)
-    };
-    if ["del ", "global ", "nonlocal "]
-        .iter()
-        .any(|keyword| text.strip_prefix(keyword).is_some_and(named))
-    {
-        return true;
+/// Calls that read or write the local scope by name.
+const DYNAMIC_SCOPE: &[&str] = &[
+    "locals", "globals", "vars(", "exec", "eval", "setattr", "__dict__", "inspect",
+];
+
+fn mentions_identifier(text: &str, name: &str) -> bool {
+    let bytes = text.as_bytes();
+    text.match_indices(name).any(|(start, _)| {
+        (start == 0 || !is_ident_byte(bytes[start - 1]))
+            && bytes
+                .get(start + name.len())
+                .is_none_or(|byte| !is_ident_byte(*byte))
+    })
+}
+
+/// A statement that starts with a read-only keyword and holds no binding
+/// construct.
+fn plain_read_statement(line: &str) -> bool {
+    const STARTS: &[&str] = &["return ", "if ", "elif ", "while ", "raise ", "assert "];
+    if !STARTS.iter().any(|start| line.starts_with(start)) {
+        return false;
     }
-    text.match_indices(" as ")
-        .any(|(index, _)| named(&text[index + 4..]))
+    if [" for ", "lambda", " as ", ":=", ";", "\\", "yield", "await"]
+        .iter()
+        .any(|word| line.contains(word))
+    {
+        return false;
+    }
+    // A `:` inside a condition header must be its last character (an inline
+    // body such as `if flag: x = 0` is not a plain read); `return` and the
+    // other keywords may hold no colon at all (a dict, slice or annotation).
+    let colons = line.matches(':').count();
+    let header = ["if ", "elif ", "while "]
+        .iter()
+        .any(|start| line.starts_with(start));
+    if colons > usize::from(header && line.ends_with(':')) {
+        return false;
+    }
+    !has_assignment(line)
+}
+
+/// A standalone `=` or an augmented assignment operator.
+fn has_assignment(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    bytes.iter().enumerate().any(|(index, byte)| {
+        if *byte != b'=' {
+            return false;
+        }
+        let prev = index.checked_sub(1).map(|i| bytes[i]);
+        let next = bytes.get(index + 1).copied();
+        // `==`, `!=`, `<=`, `>=` are comparisons; `+=`, `-=` and the rest
+        // are assignments.
+        let comparison = next == Some(b'=')
+            || matches!(prev, Some(b'=' | b'!'))
+            || (matches!(prev, Some(b'<' | b'>'))
+                && line.get(index.saturating_sub(2)..index) != Some("<<")
+                && line.get(index.saturating_sub(2)..index) != Some(">>"));
+        !comparison
+    })
 }
 
 /// Whether some related test mentions the owner other than as a bare direct
@@ -322,49 +375,18 @@ fn owner_reached_indirectly(
             let text = candidate.test.body_text.as_str();
             let names = owner_call_names(owner, candidate.test, method_call);
             names.iter().any(|name| mentions_without_call(text, name))
-                || calls_unknown_bare_name(text, &names)
+                || calls_unrecognized_callee(text, &names)
         })
 }
 
-fn is_ident_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
-}
-
-/// Whether `name` (the last segment of a dotted alias) occurs as a whole
-/// identifier not directly followed by `(`.
-fn mentions_without_call(text: &str, name: &str) -> bool {
-    let bytes = text.as_bytes();
-    let last = name.rsplit('.').next().unwrap_or(name);
-    text.match_indices(last).any(|(start, _)| {
-        let end = start + last.len();
-        let whole = (start == 0 || !is_ident_byte(bytes[start - 1]))
-            && bytes.get(end).is_none_or(|byte| !is_ident_byte(*byte));
-        whole && !text[end..].trim_start().starts_with('(')
-    })
-}
-
-/// Whether the body calls a bare name it could define itself. Builtins, the
-/// owner's own call names, keywords, attribute calls and `def`/`class`
-/// headers are not unknown.
-fn calls_unknown_bare_name(text: &str, owner_names: &[String]) -> bool {
-    const KNOWN: &[&str] = &[
-        "assert",
-        "not",
-        "and",
-        "or",
-        "in",
-        "is",
-        "if",
-        "elif",
-        "while",
-        "return",
-        "with",
-        "for",
-        "else",
-        "lambda",
-        "yield",
-        "await",
-        "print",
+/// Whether the body makes a call other than the recognized ones: the owner
+/// itself (any receiver), known pure builtins, `assert*`/`self.assert*`
+/// oracle calls, `pytest.raises`/`approx`/`warns`/`param`/`mark.*`, and the
+/// `def`/`class` headers. Any other callee, attribute calls included
+/// (`helpers.run(0)`, `self.check(0)`, `mock.patch(..)`), may pass an input
+/// to the owner that the call-row reader never sees.
+fn calls_unrecognized_callee(text: &str, owner_names: &[String]) -> bool {
+    const BUILTINS: &[&str] = &[
         "len",
         "str",
         "int",
@@ -391,36 +413,82 @@ fn calls_unknown_bare_name(text: &str, owner_names: &[String]) -> bool {
         "any",
         "all",
     ];
+    const PYTEST: &[&str] = &[
+        "pytest.raises",
+        "pytest.approx",
+        "pytest.warns",
+        "pytest.param",
+    ];
     let bytes = text.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
-        if !is_ident_byte(bytes[index]) {
+        if !is_ident_byte(bytes[index]) && bytes[index] != b'.' {
             index += 1;
             continue;
         }
+        // A callee chain: identifiers joined by dots, possibly starting with
+        // a dot (a method on a call result).
         let start = index;
-        while index < bytes.len() && is_ident_byte(bytes[index]) {
+        while index < bytes.len() && (is_ident_byte(bytes[index]) || bytes[index] == b'.') {
             index += 1;
         }
-        let word = &text[start..index];
-        let attribute = start > 0 && bytes[start - 1] == b'.';
-        let called = text[index..].trim_start().starts_with('(');
+        let chain = &text[start..index];
+        if !text[index..].trim_start().starts_with('(') {
+            continue;
+        }
         let before = text[..start].trim_end();
+        let last = chain.rsplit('.').next().unwrap_or(chain);
         let header = before.ends_with("def") || before.ends_with("class");
-        let owner = owner_names
-            .iter()
-            .any(|name| name.rsplit('.').next() == Some(word));
-        if called
-            && !attribute
-            && !header
-            && !owner
-            && !KNOWN.contains(&word)
-            && !word.starts_with(|ch: char| ch.is_ascii_digit())
-        {
+        let recognized = header
+            || chain.starts_with(|ch: char| ch.is_ascii_digit())
+            || BUILTINS.contains(&chain)
+            || PYTEST.contains(&chain)
+            || chain.starts_with("pytest.mark.")
+            || chain.starts_with("assert")
+            || chain.starts_with("self.assert")
+            || owner_names
+                .iter()
+                .any(|name| name.rsplit('.').next() == Some(last));
+        let keyword = matches!(
+            chain,
+            "not"
+                | "and"
+                | "or"
+                | "in"
+                | "is"
+                | "if"
+                | "elif"
+                | "while"
+                | "return"
+                | "with"
+                | "for"
+                | "else"
+                | "lambda"
+                | "yield"
+                | "await"
+        );
+        if !(recognized || keyword) {
             return true;
         }
     }
     false
+}
+
+fn is_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// Whether `name` (the last segment of a dotted alias) occurs as a whole
+/// identifier not directly followed by `(`.
+fn mentions_without_call(text: &str, name: &str) -> bool {
+    let bytes = text.as_bytes();
+    let last = name.rsplit('.').next().unwrap_or(name);
+    text.match_indices(last).any(|(start, _)| {
+        let end = start + last.len();
+        let whole = (start == 0 || !is_ident_byte(bytes[start - 1]))
+            && bytes.get(end).is_none_or(|byte| !is_ident_byte(*byte));
+        whole && !text[end..].trim_start().starts_with('(')
+    })
 }
 
 #[cfg(test)]
@@ -480,20 +548,54 @@ mod tests {
         assert!(!mentions_without_call("assert test_pick(1)", "pick"));
         assert!(mentions_without_call("list(map(pick, a, b))", "pick"));
         assert!(mentions_without_call("alias = pick", "pick"));
-        assert!(!calls_unknown_bare_name(
-            "def test_pick():\n    assert len(pick(1)) == 1\n    pytest.raises(E)\n",
+        assert!(!calls_unrecognized_callee(
+            "def test_pick():\n    assert len(pick(1)) == 1\n    pytest.raises(E)\n    self.assertEqual(pick(1), 1)\n",
             &names
         ));
-        assert!(calls_unknown_bare_name("assert w(0) == 3", &names));
+        for unknown in [
+            "assert w(0) == 3",
+            "assert helpers.run(0) == 3",
+            "assert self.check(0) == 3",
+            "mock.patch('a')",
+            "assert str(pick(1)).strip()",
+        ] {
+            assert!(calls_unrecognized_callee(unknown, &names), "{unknown}");
+        }
     }
 
     #[test]
-    fn statement_names_reads_as_targets_and_scope_statements() {
-        assert!(statement_names("with open(p) as x:", "x"));
-        assert!(statement_names("del x", "x"));
-        assert!(statement_names("global x", "x"));
-        assert!(!statement_names("with open(p) as xs:", "x"));
-        assert!(!statement_names("return x", "x"));
+    fn plain_read_statements_are_a_closed_allow_list() {
+        for read in [
+            "return x",
+            "if x is None:",
+            "elif not x:",
+            "while x > 0:",
+            "return d if x >= 1 else 0",
+            "raise ValueError(x)",
+        ] {
+            assert!(plain_read_statement(read), "{read}");
+        }
+        for binding in [
+            "(a, x) = d",
+            "[a, x] = d",
+            "x = 0",
+            "if flag: x = 0",
+            "return [x for x in d]",
+            "with open(p) as x:",
+            "return (x := 1)",
+            "x) = d",
+            "for x in d:",
+            "del x",
+            "def inner(x):",
+            "case x:",
+            "import x",
+            "return lambda x: x",
+            "x <<= 1",
+        ] {
+            assert!(!plain_read_statement(binding), "{binding}");
+        }
+        assert!(has_assignment("x <<= 1"));
+        assert!(!has_assignment("a >= b and c <= d != e == f"));
     }
 
     #[test]

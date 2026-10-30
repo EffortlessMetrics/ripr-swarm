@@ -1410,6 +1410,17 @@ This differs from `helper_assertions` (#9419, #9711): it is a same-file,
 literal-argument, multi-assert source rewrite that runs first, so
 `helper_assertions` then sees no call to resolve.
 
+## Predicate Swap Amendment (2026-10-30, #9186)
+
+A changed predicate that swaps one single-operand test of an owner parameter
+for another (`x is None` to `not x`) is `weakly_exposed`, not `exposed`, when
+every strong related call binds that parameter to a literal on which both
+tests agree. The rule is a closed allow-list that keeps the existing verdict
+on anything unrecognized: the parameter may be mentioned in the owner body
+only on the changed line or in a plain read statement, and a related test may
+make only recognized calls (the owner, assertions, known builtins and
+`pytest` helpers), so no binding or helper-forwarded input can be missed.
+
 ## Metrics
 
 In addition to the cross-language metrics in RIPR-SPEC-0026, the Python

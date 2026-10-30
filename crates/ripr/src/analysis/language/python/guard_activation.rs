@@ -1033,7 +1033,7 @@ pub(super) fn parameter_rebound_before(
 /// `for a, name in ..`, and parenthesized, bracketed or star targets. Python
 /// binds every target before the body runs, so decoration around the name
 /// must not hide it (`for (other, total) in ..`).
-pub(super) fn for_target_rebinds(trimmed: &str, name: &str) -> bool {
+fn for_target_rebinds(trimmed: &str, name: &str) -> bool {
     trimmed
         .strip_prefix("for ")
         .and_then(|rest| rest.split(" in ").next())

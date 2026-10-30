@@ -3547,6 +3547,79 @@ fn truthiness_swap_fails_open_when_the_owner_may_rebind_the_parameter() -> Resul
     Ok(())
 }
 
+const NL: &str = "\n";
+
+fn swap_with_prefix(prefix: &str) -> Result<ExposureClass, String> {
+    // `~` stands for a line break after a colon.
+    let prefix = prefix.replace('~', "\n");
+    let source =
+        format!("def pick(x, d, flag):\n{prefix}    if not x:{NL}        return d\n    return x\n");
+    let line = source
+        .lines()
+        .position(|line| line == SWAP_NEW)
+        .map(|index| index + 1)
+        .ok_or_else(|| format!("no swap line in {source}"))?;
+    Ok(classify_truthiness_swap(
+        &source,
+        line,
+        SWAP_OLD,
+        SWAP_NEW,
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3, True) == 3\n",
+    )?
+    .class)
+}
+
+// Closed allow-list: the parameter may appear in the owner body only on the
+// changed line or in a plain read statement; any other mention keeps exposed.
+#[test]
+fn truthiness_swap_refuses_every_parameter_binding_shape() -> Result<(), String> {
+    // The builder itself demotes when nothing mentions the parameter.
+    for prefix in ["", "    y = 1\n"] {
+        assert_eq!(
+            swap_with_prefix(prefix)?,
+            ExposureClass::WeaklyExposed,
+            "{prefix:?}"
+        );
+    }
+    for prefix in [
+        "    (a, x) = d\n",
+        "    [a, x] = d\n",
+        "    (x) = d\n",
+        "    a, x = d\n",
+        "    x \\\n        = d\n",
+        "    locals()['x'] = d\n",
+        "    match d:~        case x:~            pass\n",
+        "    async def g():~        async for x in d:~            pass\n",
+        "    def inner(x):\n        return x\n",
+        "    ys = [x for x in d]\n",
+        "    import x\n",
+        "    def x():\n        pass\n",
+        "    for x in d:~        pass\n",
+        "    with d as x:~        pass\n",
+        "    if (x := d):\n        pass\n",
+    ] {
+        assert_eq!(
+            swap_with_prefix(prefix)?,
+            ExposureClass::Exposed,
+            "{prefix:?}"
+        );
+    }
+    Ok(())
+}
+
+// An attribute-call helper can forward a separating literal to the owner.
+#[test]
+fn truthiness_swap_fails_open_on_attribute_call_helpers() -> Result<(), String> {
+    for tests in [
+        "import helpers\nfrom src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert helpers.run(0) == 3\n",
+        "from src.lib import pick\n\nclass TestPick:\n    def helper(self, v):\n        return pick(v, 3)\n\n    def test_pick(self):\n        assert pick(None, 3) == 3\n        assert self.helper(0) == 3\n",
+        "from src.lib import pick\n\nclass TestPick:\n    def test_pick(self):\n        assert pick(None, 3) == 3\n        self.check(0)\n",
+    ] {
+        assert_eq!(swap_class(tests)?, ExposureClass::Exposed, "{tests}");
+    }
+    Ok(())
+}
+
 #[test]
 fn truthiness_swap_fails_open_on_a_separating_default_or_a_branch_value_edit() -> Result<(), String>
 {
