@@ -129,6 +129,10 @@ pub(crate) fn render_finding_digest_with_config(
         severity,
         finding.confidence
     ));
+    if let Some(line) = crate::domain::why_capped_line(&finding.confidence_basis, finding.language)
+    {
+        out.push_str(&format!("  {line}\n"));
+    }
     // #2614: add a brief classification hint so the digest reader understands
     // WHY the finding is at this class without reading the full form.
     let refused_macro = refused_assertion_macro(finding);
@@ -629,6 +633,10 @@ pub(super) fn render_finding_with_shared_sections(
         severity,
         finding.confidence
     ));
+    if let Some(line) = crate::domain::why_capped_line(&finding.confidence_basis, finding.language)
+    {
+        out.push_str(&format!("  {line}\n"));
+    }
 
     out.push_str("\nEvidence\n");
     if let Some(shared) = shared {

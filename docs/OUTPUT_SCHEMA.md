@@ -793,10 +793,11 @@ reason alongside location, exposure class, and any currentness label. When
 `--at FILE:LINE --kind FAMILY` is ambiguous, check prints explicit
 `ripr agent stub --seam-id ID` choices from that resolver. Choices also appear beside eligible hidden findings within the same first
 twenty-row window, keyed by finding ID. Base-side/unresolved subjects and
-stale source bytes receive no choices. These syntax choices are unvalidated:
-the seam-ID command may refuse an already-gripped or unsupported seam. They
-do not establish stub readiness, a canonical finding-to-seam repair binding,
-or repair eligibility. Hidden rows resolve syntax ambiguity only; unique
+stale source bytes receive no choices. Each listed seam-ID command is validated
+with the stub resolver, so it produces a stub; an already-gripped or unsupported seam is not listed. A
+listed command does not establish a canonical finding-to-seam repair binding
+or repair eligibility. Hidden rows resolve syntax ambiguity only, and print a
+choice only when each listed seam-ID command produces a stub; unique
 hidden routes do not trigger classified inventory lookups merely to be omitted.
 A named Rust transitive/public-API reach limitation with retained unresolved-edge
 evidence says tests cannot close that analysis limitation, names the edge and
@@ -1992,8 +1993,11 @@ The evidence-first fields are additive in schema `0.2`:
       name that is not in the recognised matcher set (real oxc-parsed AST
       evidence).
     - `typescript_dynamic_assertion_unresolved` — fired (RIPR-SPEC-0085 §PR5)
-      when an oracle-eligible related test assertion has a non-literal dynamic
-      matcher argument (a variable, function call, or computed expression). The
+      when an oracle-eligible related test assertion in the changed seam's
+      oracle family (RIPR-SPEC-0104) has a non-literal dynamic matcher argument
+      (a variable, function call, or computed expression); a dynamic assertion
+      of another family (for example an error expectation on a value or
+      predicate seam) does not fire it. The
       real producer is `oracle.rs::extract_matcher_expected_value`, which sets
       `has_dynamic_matcher_arg = true` when the argument is not a resolvable
       literal. The limitation explains that the expected discriminator value
@@ -2218,7 +2222,9 @@ JSON fields:
     being observed by the assertion.
   - `typescript_oracle_expected: <value>` — additive; the matcher argument as
     source text, emitted ONLY when the argument is a concrete resolvable literal
-    (string, number, boolean, null, or a safe all-literal object). NOT emitted
+    (string, number, boolean, null, a safe all-literal object, or, for the
+    deep-equality matchers AVA `deepEqual` and Jest `toEqual` / `toStrictEqual`,
+    an all-literal array). NOT emitted
     for dynamic/non-literal arguments; those trigger
     `typescript_dynamic_assertion_unresolved` instead.
   - `typescript_oracle_confidence: <level>` — additive; confidence derived from
@@ -3006,7 +3012,7 @@ TypeScript/JavaScript preview findings carry a per-class constant `confidence`
 that is not on the same scale as Rust's. `confidence_basis` is a non-empty list
 of `{code, summary}` objects naming why the score is capped (codes:
 `preview_stages_not_modeled`, `syntax_first_no_type_resolution`,
-`no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
+`infection_not_established`, `propagation_not_established`, `no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
 `observation_not_confirmed`, `discriminator_not_established`), and
 `confidence_why_capped` is the one-line English form. Both are omitted for Rust
 findings and when empty. The same fields appear on `ripr context` packets and
@@ -3831,6 +3837,12 @@ replaced by the fixed placeholder. The analysis format is part of
 `analysis.input_identity`, so this artifact is never comparable to a
 repo-exposure artifact.
 
+Check-findings input identity v5 binds the analysis-time configuration, resolved
+enabled languages and unchanged-test setting, including CLI overrides. Earlier
+check-findings identities are rejected. Runs consuming a Perl facts packet
+cannot currently emit this artifact because the producer does not retain a
+commitment to the packet it consumed; other report formats remain available.
+
 `ripr agent verify` and `ripr agent receipt` accept it as a snapshot. It is
 validated by the same identity, commitment and Git-provenance authority as
 `repo-exposure-json`, and additionally requires
@@ -4100,6 +4112,40 @@ run, of every workspace file a seam entry names under a `file`, `path`,
 no seam names a file or a named file cannot be read. `content_sha256` covers it
 like any other member. The gap ledger and `actionable-gaps.json` derived from
 this snapshot copy their stamps from it.
+
+The gap decision ledger built from a snapshot of this kind
+(`ripr reports gap-ledger --repo-exposure`) additionally carries an optional
+top-level `analysis_coverage` (#9599) only when the snapshot is a complete
+whole-Rust-workspace run of a producer-issued artifact (the `repo_exposure`
+envelope whose governed `content_sha256` still matches the bytes read;
+`run_status: complete`; no `limitations[]` entry other than TypeScript/Python
+guidance; no `run_limitations` and no incomplete `analysis_outcome` when one is
+present; every seam converted to a record; and a `source_subject.corpus` carrying
+the producer's `cache_schema_version`, 16-lowercase-hex `files_content_hash`, and
+`analyzed_production_files` array, plus the top-level `analysis_inputs` object (carried into the coverage `corpus`); a refused disclosure is named in the fallback
+`gap_ledger_artifact` scope's additive `coverage_refused` array):
+`scope` (`rust_workspace`), `basis` (`repo_exposure_complete_run`), `run_status`,
+`corpus`, `records_total` and `records_digest` (SHA-256 over every record's
+canonical serialization, ordered by `gap_id`). The digest is tamper-evident
+against filtering or editing the records, not authentication: a party who can
+rewrite the ledger and recompute it is out of scope (a writer who deletes
+records and recomputes the digest and total still earns the disclosure).
+`gate evaluate --gap-ledger` honors the disclosure only while the records still
+match the count and digest, and the disclosed corpus hash and production-file
+membership, and `corpus.analysis_inputs` (the producer cache key's 64-bit FNV
+hashes of the classified config including raw `ripr.toml` bytes, test-intent
+file, suppressions file, `RIPR_CFG_FEATURES`, Cargo workspace manifests and
+configuration (checkout-path bound), `Cargo.lock`, the toolchain label, plus the
+analyzer build identity; all eight required, seam limit not compared because a
+complete run applied none)
+equal the current inventory owner's discovery, role selection and inputs
+for the tree being gated (`--root`, loaded with its `ripr.toml`). Membership
+comes from the actual inventory inputs, including cache hits, independently of
+surviving records. Source symlinks and symlinked parents are not followed.
+Missing, malformed or duplicate membership entries establish no coverage;
+a present empty array covers no baseline paths. A stale,
+unverifiable or rootless evaluation ignores it. The field is omitted for every
+other source or a limited run, so existing ledgers are byte-stable.
 
 ### Repo Exposure Summary JSON
 
@@ -10549,7 +10595,22 @@ Field contract:
   targets instead of raw PR guidance candidates.
 - `analysis_scope` - additive (#9301). The candidate source's `analysis_scope`
   copied verbatim: from the `--pr-guidance` review-comments document, or the
-  `gap_ledger_artifact` scope for `--gap-ledger`. Omitted when the evaluation
+  `gap_ledger_artifact` scope for `--gap-ledger`, or `rust_workspace_complete`
+  (`run_status`, `basis = "repo_exposure_complete_run"`, the producer's `corpus`
+  identity, `records_total`, `records_digest`; #9599) when the ledger carries a
+  verified `analysis_coverage` disclosure from a complete repo-exposure run and
+  its corpus is still current. When a disclosed coverage is refused the
+  `gap_ledger_artifact` scope carries an additive `coverage_refused` array of
+  the differing classes (`content`, `membership`, `config`, `test_intent`,
+  `suppressions`, `cfg_features`, `workspace_manifests`, `lockfile`,
+  `toolchain`, `analyzer_version`, `records_or_disclosure`,
+  `config_unloadable`, `unverifiable`); it is absent when no coverage was
+  disclosed. Only that path can emit
+  `rust_workspace_complete`: a `rust_workspace_complete` scope arriving in a
+  `--pr-guidance` document is dropped (with a warning) and leaves baseline
+  entries `not_evaluated`. A hand-edited gate-decision file is out of scope: the
+  contract does not authenticate the producer.
+  Omitted when the evaluation
   is a `config_error`. `ripr baseline diff` / `baseline update` read it to decide
   whether a baseline entry absent from `decisions` was actually analyzed. A
   review-comments scope also carries `cap_omitted_seams` (seams dropped by the
@@ -10559,7 +10620,9 @@ Field contract:
   `changed_production_files` counts as coverage; changed production files the
   parser declined (nesting budget, parse error, non-UTF-8: the lexical fallback
   extracts no seams) are excluded from it and listed in the optional
-  `parser_declined_files` (present only when non-empty). A gate decision without `analysis_scope` (a build before #9301),
+  `parser_declined_files` (present only when non-empty; the review-comments
+  Markdown summary also lists them as a `limitation: parser_declined_files`
+  line, omitted when empty, #9734). A gate decision without `analysis_scope` (a build before #9301),
   or with a malformed one, makes every absent baseline entry `not_evaluated`.
 - `subject` - identity of the evaluation (#5263): `analyzer_version` (the
   writing binary's build identity, the same stamp `check --write-artifact`
@@ -11150,7 +11213,12 @@ Field contract:
   present only on a `stale_baseline_entry` item whose baseline entry is absent
   from current evidence but whose file the current `analysis_scope` does not
   cover (or whose scope is missing, malformed, skipped or cap-omitted seams, or
-  is a `gap_ledger_artifact` scope, tracked in #9599). `evaluation` is
+  is a `gap_ledger_artifact` scope; a `rust_workspace_complete` scope covers only
+  normalized relative `.rs` paths in `corpus.analyzed_production_files`, the
+  inventory's actual production-role inputs. Symlink aliases, skipped sources
+  and evidence-only inputs are not covered, #9599; when the gate refused a
+  ledger's workspace coverage the scope's additive `coverage_refused` classes
+  are quoted as `differing: ...`). `evaluation` is
   `"not_evaluated"`; `not_evaluated_reason` is a one-sentence reason. Such an
   item is never `resolved` and `baseline update --remove-resolved` keeps it. The
   same set is exhaustive in the Markdown `Not evaluated by the current analysis`
@@ -14301,6 +14369,32 @@ Field contract:
 - `missing_artifact`, `malformed_artifact`, `stale_artifact`, `wrong_root`,
   `blocked_artifact`, and `timeout` require `status = "blocked"` and a
   bounded next command when one is known.
+- For a check-output-derived or legacy preview/mixed, presentation-text, or unclassifiable
+  records ledger with no selected repair, `blocked_artifact`
+  carries `selected.reason_code = "source_currentness_unavailable"`
+  rather than claiming current no-action from incomplete corpus authority. A
+  known distinct producer root yields `wrong_root` with reason code
+  `check_output_wrong_root`. Its inspection command runs a fresh default
+  worktree check without redirecting over an input and is offered only when
+  selected head resolves to the live HEAD; it is not a replay of input options.
+  Missing, relative or unresolvable check-producer roots are unknown, not
+  same-root evidence. For every check-derived ledger status and record count,
+  unknown or foreign roots suppress write-oriented input and ledger regeneration
+  guidance; a verified same-root zero-record projection keeps its existing
+  bounded recovery route. A `--check-output` supplied as a plain root-relative
+  path is the selected root's own artifact: its present artifact keeps the
+  anchored regeneration command, and a zero-record projection miss on it keeps
+  the blocked repo-exposure recovery, without promoting its evidence.
+  A still-no-action preview/mixed result remains limited until corpus
+  provenance is available (#7452). `missing_artifacts` on this blocked state
+  means missing source authority, not necessarily a missing file.
+  `first-pr --check` also refuses an older check-output no-action packet; it
+  does not rerun analysis or rewrite that packet. Ledger-selected no-action
+  packets include `inputs.gap_ledger_sha256`, a SHA-256 of the exact ledger
+  bytes selection consumed. `--check` refuses a missing digest or a replaced
+  ledger; this binds the packet to its input, not the input to current source.
+  A currently revalidated unsupported-language preflight no-action never
+  consumed a ledger and does not need that digest.
 - When a Rust first-pr run lacks both the repo-exposure report and the gap
   ledger, `selected.artifact` remains the first recovery step and
   `selected.also_missing[]` names the gap ledger and its regeneration command.
@@ -18819,6 +18913,14 @@ the ledger carries no `source_subject` and instead a top-level
 stays unstamped. A ledger rendered in memory by another report is not
 stamped.
 
+For `--check-output`, the top-level optional `input_root` retains the source
+report's root spelling separately from the ledger's selected `root`. A missing
+or relative producer root is not an absolute checkout identity. This additive
+field does not authenticate the input or imply complete corpus provenance.
+`check_output_provenance` retains that root and the original source-subject
+limitation across subsequent `--records` ledger projections; changing the
+immediate input kind cannot make a check-derived no-action conclusion current.
+
 ### Gap artifact source subject
 
 Line numbers in a gap artifact describe one version of the workspace files.
@@ -18829,10 +18931,27 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.121",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.123",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
-  files after the existing generated-file exclusions. This is the existing
+  files after the existing generated-file exclusions. Repo-exposure producers
+  also carry `corpus.analyzed_production_files`, the sorted, normalized
+  repo-relative production-role inputs captured independently of surviving
+  seams and recomputed before cache lookup. Evidence-only sources, generated
+  exclusions and no-follow symlink aliases are absent. Missing or malformed
+  membership cannot establish baseline coverage; an empty list covers no paths.
+  They also carry a top-level `analysis_inputs` object (deliberately outside
+  `source_subject`, whose corpus identity stays checkout-path independent for
+  byte-identical workspaces; the ledger copies it into
+  `analysis_coverage.corpus.analysis_inputs`), eight required strings from the
+  same cache key: `cfg_features_hash`, `config_hash` (classified config
+  including raw `ripr.toml` bytes), `test_intent_hash`, `suppressions_hash`,
+  `workspace_manifests_hash` (Cargo manifests and configuration, bound to the
+  checkout path), `lockfile_hash`, `toolchain_hash` and `analyzer_version`.
+  A gate recomputes them to admit baseline coverage. The seven hash fields use
+  64-bit FNV change detection; `analyzer_version` is the build identity string.
+  Neither is producer authentication.
+  This is the existing
   cache content authority, not another digest or a HEAD identity. Cold and
   warm inventories carry the same authority. Derived writers copy it only
   within the same canonical physical root; they do not rehash the current
@@ -19597,7 +19716,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.121",
+      "schema_version": "1.123",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

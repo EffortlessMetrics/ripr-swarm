@@ -145,6 +145,14 @@ use tower_lsp_server::{Client, LanguageServer};
 
 pub(super) struct Backend {
     client: Client,
+    /// Test-only fault injection: the next `textDocument/hover` unwinds, so
+    /// panic containment is exercised through the real handler.
+    #[cfg(test)]
+    panic_in_next_hover: AtomicBool,
+    /// Test-only fault injection: the next `textDocument/didSave` unwinds, so
+    /// notification-path containment runs through the real handler.
+    #[cfg(test)]
+    panic_in_next_did_save: AtomicBool,
     root: Mutex<PathBuf>,
     workspace_root: Mutex<WorkspaceRootAuthority>,
     workspace_root_epoch: AtomicU64,
@@ -347,6 +355,10 @@ impl<T> Drop for AbortTimerOnDrop<T> {
 impl Backend {
     pub(super) fn new(client: Client, root: PathBuf) -> Self {
         Self {
+            #[cfg(test)]
+            panic_in_next_hover: AtomicBool::new(false),
+            #[cfg(test)]
+            panic_in_next_did_save: AtomicBool::new(false),
             root: Mutex::new(root.clone()),
             workspace_root: Mutex::new(WorkspaceRootAuthority::unavailable(
                 "workspace root authority is awaiting initialization",
@@ -3254,6 +3266,18 @@ impl Backend {
             .lock()
             .ok()
             .map(|features| features.selected_position_encoding.clone())
+    }
+
+    #[cfg(test)]
+    pub(super) fn panic_in_next_hover_for_test(&self) {
+        self.panic_in_next_hover
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub(super) fn panic_in_next_did_save_for_test(&self) {
+        self.panic_in_next_did_save
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     #[cfg(test)]
@@ -6413,6 +6437,13 @@ impl LanguageServer for Backend {
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        #[cfg(test)]
+        if self
+            .panic_in_next_did_save
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            std::panic::resume_unwind(Box::new("injected didSave handler panic"));
+        }
         self.trace_inbound(
             "notification",
             "textDocument/didSave",
@@ -6510,6 +6541,13 @@ impl LanguageServer for Backend {
     }
 
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
+        #[cfg(test)]
+        if self
+            .panic_in_next_hover
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            std::panic::resume_unwind(Box::new("injected hover handler panic"));
+        }
         self.trace_inbound(
             "request",
             "textDocument/hover",
@@ -7806,7 +7844,7 @@ const PUSH_BUDGET_DISCLOSURE_MAX_OMITTED_ITEMS: usize = 20;
 /// stored on the snapshot and read by push publication and both pull
 /// handlers, so no transport re-evaluates the budget with a different
 /// result.
-fn compute_delivery_selection(
+pub(super) fn compute_delivery_selection(
     snapshot: &AnalysisSnapshot,
 ) -> Arc<crate::lsp::diagnostic_budget::DiagnosticDeliverySelection> {
     let complete_evidence_identity =
@@ -8379,7 +8417,7 @@ fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDif
 /// compiled in (Perl on the default build), enablement is not enough —
 /// reuse the shared
 /// [`crate::domain::LanguageId::unavailable_adapter_recovery`] text.
-fn language_adapter_not_enabled_recovery(language: crate::domain::LanguageId) -> String {
+pub(super) fn language_adapter_not_enabled_recovery(language: crate::domain::LanguageId) -> String {
     if !language.is_available() {
         return language.unavailable_adapter_recovery();
     }

@@ -16,6 +16,21 @@ struct Repo(PathBuf);
 
 impl Repo {
     fn create(old_src: &str, new_src: &str, test: &str) -> Result<Self, String> {
+        Self::create_with(old_src, new_src, test, true)
+    }
+
+    /// The change stays in the working tree, so the diff a bare `ripr check`
+    /// reads is available to `ripr repair` too.
+    fn create_uncommitted(old_src: &str, new_src: &str, test: &str) -> Result<Self, String> {
+        Self::create_with(old_src, new_src, test, false)
+    }
+
+    fn create_with(
+        old_src: &str,
+        new_src: &str,
+        test: &str,
+        commit_change: bool,
+    ) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-check-repair-agree-{}-{}",
@@ -37,7 +52,9 @@ impl Repo {
         repo.git(&["add", "-A"])?;
         repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "base"])?;
         repo.write("src/lib.rs", new_src)?;
-        repo.git(&["commit", "-q", "--no-gpg-sign", "-am", "change"])?;
+        if commit_change {
+            repo.git(&["commit", "-q", "--no-gpg-sign", "-am", "change"])?;
+        }
         Ok(repo)
     }
 
@@ -62,15 +79,22 @@ impl Repo {
     }
 
     fn ripr(&self, args: &[&str]) -> Result<String, String> {
+        self.ripr_status(args).map(|(_, text)| text)
+    }
+
+    fn ripr_status(&self, args: &[&str]) -> Result<(Option<i32>, String), String> {
         let output: Output = Command::new(env!("CARGO_BIN_EXE_ripr"))
             .current_dir(&self.0)
             .args(args)
             .output()
             .map_err(|e| e.to_string())?;
-        Ok(format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+        Ok((
+            output.status.code(),
+            format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ),
         ))
     }
 }
@@ -194,6 +218,182 @@ fn unrelated_gripped_seam_does_not_stand_in_for_the_findings_seam() -> Result<()
     assert!(
         !check.contains("`ripr check` reads a gap or limit for this change"),
         "an unrelated gripped seam is not this finding's seam:\n{check}"
+    );
+    Ok(())
+}
+
+const LOOP_OLD: &str = "pub fn sum_to(n: u32) -> u32 {\n    let mut acc = 0;\n    for i in 0..n {\n        acc += i;\n    }\n    acc\n}\n";
+const LOOP_NEW: &str = "pub fn sum_to(n: u32) -> u32 {\n    let mut acc = 0;\n    for i in 1..n {\n        acc += i;\n    }\n    acc\n}\n";
+const LOOP_TEST: &str =
+    "use ar::sum_to;\n\n#[test]\nfn sum_to_zero() {\n    assert_eq!(sum_to(0), 0);\n}\n";
+
+/// #11111: with no diff to scope to, bare repair's whole-seam "already grip
+/// it (exposed)" names the seam it is about, so it is not read as a verdict
+/// on the changed loop line that `ripr check` cannot classify.
+#[test]
+fn whole_seam_gripped_refusal_names_its_seam_not_the_change() -> Result<(), String> {
+    let repo = Repo::create(LOOP_OLD, LOOP_NEW, LOOP_TEST)?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("Changed behavior: for i in 1..n")
+            && !check.contains("Static exposure: exposed"),
+        "precondition, check does not read the changed loop as exposed:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        repair.contains("seam src/lib.rs:6 `acc`: ")
+            && repair.contains("already grip it (exposed)"),
+        "the gripped reason must name the seam it judges:\n{repair}"
+    );
+    Ok(())
+}
+
+const LARGEST_OLD: &str = "pub fn largest(xs: &[u32]) -> Option<u32> {\n    let mut it = xs.iter();\n    let mut best = *it.next()?;\n    for x in it {\n        if *x > best {\n            best = *x;\n        }\n    }\n    Some(best)\n}\n\npub fn dbl(x: i32) -> i32 {\n    x * 2\n}\n";
+const LARGEST_NEW: &str = "pub fn largest(xs: &[u32]) -> Option<u32> {\n    let mut it = xs.iter();\n    let mut best = *it.next()?;\n    for x in it {\n        if *x >= best {\n            best = *x;\n        }\n    }\n    Some(best)\n}\n\npub fn dbl(x: i32) -> i32 {\n    x * 2\n}\n";
+const LARGEST_TEST: &str = "use ar::{dbl, largest};\n\n#[test]\nfn largest_of_three() {\n    assert_eq!(largest(&[1, 5, 3]), Some(5));\n}\n\n#[test]\nfn doubles() {\n    assert_eq!(dbl(2), 4);\n}\n";
+
+/// #11111: when the diff a bare `ripr check` reads is available, a gripped
+/// seam the diff does not touch is counted, not cited: repair never says
+/// "exposed" about an unrelated seam while check reads the change as a gap
+/// or limit.
+#[test]
+fn bare_repair_does_not_cite_an_unrelated_gripped_seam_for_the_change() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(LARGEST_OLD, LARGEST_NEW, LARGEST_TEST)?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Changed behavior: *x >= best")
+            && !check.contains("Static exposure: exposed"),
+        "precondition, check reads the changed comparison as not exposed:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        !repair.contains("already grip it (exposed)"),
+        "an unrelated gripped seam must not stand in for the change:\n{repair}"
+    );
+    assert!(
+        repair.contains("outside your changed lines"),
+        "the omitted gripped seams must be counted, not hidden:\n{repair}"
+    );
+    Ok(())
+}
+
+/// #11111 (contradiction 1): a bool owner whose whole tail is the changed
+/// comparison carries a predicate and a return-value seam. When `ripr check`
+/// reads both as exposed, bare repair must not start a repair on the
+/// return-value seam: both commands read the change as gripped.
+#[test]
+fn exposed_boolean_tail_is_gripped_for_both_check_and_repair() -> Result<(), String> {
+    let repo = Repo::create(
+        "pub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n",
+        "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n",
+        "use ar::is_adult;\n\n#[test]\nfn adult_at_boundary() {\n    assert!(is_adult(18));\n    assert!(!is_adult(17));\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("Static exposure: exposed")
+            && check.contains("no repair start offered: nothing to repair here"),
+        "precondition, check reads the change as exposed:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(
+        code,
+        Some(3),
+        "repair must not start on a change check reads as exposed:\n{repair}"
+    );
+    assert!(
+        repair.contains("already grip it (exposed)") && !repair.contains("repair_ready=true"),
+        "repair must agree that no gap remains:\n{repair}"
+    );
+    Ok(())
+}
+
+const CONST_OLD: &str = "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n\npub fn shout(name: &str) -> String {\n    format!(\"{name}!\")\n}\n";
+const CONST_NEW: &str = "pub const GREETING: &str = \"howdy\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n\npub fn shout(name: &str) -> String {\n    format!(\"{name}!\")\n}\n";
+const CONST_TEST: &str = "use ar::{greet, shout};\n\n#[test]\nfn greets() {\n    assert!(greet(\"a\").contains(\"a\"));\n    assert!(!shout(\"a\").is_empty());\n}\n";
+
+/// #11111 (group 2): a changed string constant has no seam of its own, so
+/// `ripr check` offers no repair start for it ("no gap ID"). Bare repair must
+/// not start, or offer to choose, a repair on the unchanged functions that
+/// merely sit in the same file: that is a different change than the one
+/// check reported.
+#[test]
+fn changed_constant_with_no_seam_does_not_start_repair_elsewhere() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let check = repo.ripr(&["check", "--base", "HEAD"])?;
+    assert!(
+        check.contains("Changed behavior: pub const GREETING")
+            && check.contains("no repair start offered: this finding has no gap ID"),
+        "precondition, check offers no repair start for the constant:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(
+        code,
+        Some(3),
+        "repair must not start a repair the changed finding does not have:\n{repair}"
+    );
+    assert!(
+        !repair.contains("choose the change to repair")
+            && !repair.contains("different repairs")
+            && !repair.contains("repair_ready=true")
+            && !repair.contains("Repair prepared"),
+        "repair must not offer unrelated seams as the change's repair:\n{repair}"
+    );
+    assert!(
+        repair.contains("your changed lines (src/lib.rs:1)")
+            && repair.contains("not offered")
+            && repair.contains("`ripr repair <seam-id>`"),
+        "repair must say why nothing is offered and how to name a seam:\n{repair}"
+    );
+    Ok(())
+}
+
+/// The scoping applies only when the diff changes Rust production lines:
+/// a diff that touches nothing but a test file keeps bare repair's
+/// whole-repository selection, since nothing says which seam is "the change".
+#[test]
+fn test_only_diff_keeps_the_whole_repository_selection() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_OLD, CONST_TEST)?;
+    repo.write("tests/t.rs", &format!("{CONST_TEST}\n// touched\n"))?;
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(
+        code,
+        Some(3),
+        "several seams still need a choice:\n{repair}"
+    );
+    assert!(
+        repair.contains("ripr can start 2 different repairs")
+            && !repair.contains("your changed lines")
+            && !repair.contains("not offered"),
+        "a test-only diff must not scope the selection:\n{repair}"
+    );
+    Ok(())
+}
+
+/// #11111 (review note on the return-value widening): only a tail that is
+/// exactly the one boundary comparison shares the predicate seam's verdict.
+/// With `age >= 18 && age < 65` the assertions pin the lower boundary but not
+/// the upper operand, so check does not read the change as exposed and repair
+/// must keep the whole-tail return-value seam as a repair candidate rather
+/// than refusing it as gripped.
+#[test]
+fn compound_boolean_tail_is_not_read_as_exposed_by_repair() -> Result<(), String> {
+    let repo = Repo::create(
+        "pub fn is_adult(age: u32) -> bool {\n    age > 18 && age < 65\n}\n",
+        "pub fn is_adult(age: u32) -> bool {\n    age >= 18 && age < 65\n}\n",
+        "use ar::is_adult;\n\n#[test]\nfn adult() {\n    assert!(is_adult(19));\n    assert!(!is_adult(18));\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        !check.contains("nothing to repair here"),
+        "precondition, check does not read the compound change as exposed:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(code, Some(3), "several candidates need a choice:\n{repair}");
+    assert!(
+        repair.contains("`age >= 18 && age < 65`") && !repair.contains("already grip it (exposed)"),
+        "the whole-tail seam must stay a candidate, not read as gripped:\n{repair}"
     );
     Ok(())
 }

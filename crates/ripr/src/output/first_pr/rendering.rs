@@ -85,10 +85,8 @@ pub(super) fn start_here_cli_summary(
     let mut out = String::new();
     out.push_str(&format!("Start here: {}\n", display_path(markdown_path)));
     out.push_str(&format!("State: {}\n", cli_state_label(&state)));
-    out.push_str(&format!(
-        "Output state: {}\n",
-        selected_output_state(selected, &state)
-    ));
+    // The snake_case `output_state` token stays in the JSON and Markdown packet
+    // (#10696); the `State:` line above already says the same in words.
     if let Some(limit) = cli_evidence_limit(selected) {
         out.push_str(&format!("Evidence boundary: {limit}\n"));
     }
@@ -115,10 +113,10 @@ pub(super) fn start_here_cli_summary(
                 out.push_str(&format!("Current evidence strength: {strength}\n"));
             }
             if let Some(discriminator) = string_path(selected, &["missing_discriminator"]) {
-                out.push_str(&format!("Missing discriminator: {discriminator}\n"));
+                out.push_str(&format!("Missing check: {discriminator}\n"));
             }
             if let Some(intent) = string_path(selected, &["focused_proof_intent"]) {
-                out.push_str(&format!("Focused proof intent: {intent}\n"));
+                out.push_str(&format!("Test to add: {intent}\n"));
             }
             // The carried review-card repair start (#3906) leads the proof
             // path; its before phase prints the after-phase command, which
@@ -158,11 +156,9 @@ pub(super) fn start_here_cli_summary(
                     "{RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n"
                 ));
             }
-            out.push_str(&format!(
-                "Receipt path: `{}`\n",
-                string_path(selected, &["receipt_path"])
-                    .unwrap_or_else(|| "not_available".to_string())
-            ));
+            if let Some(path) = string_path(selected, &["receipt_path"]) {
+                out.push_str(&format!("Receipt path: `{path}`\n"));
+            }
         }
         "missing_artifact" => {
             let artifact = selected.get("artifact").unwrap_or(&Value::Null);
@@ -186,15 +182,11 @@ pub(super) fn start_here_cli_summary(
                     }
                 }
             }
-            out.push_str("Receipt path: `not_applicable`\n");
         }
         "empty_diff" | "no_action" => {
             if let Some(reason) = string_path(selected, &["reason"]) {
                 out.push_str(&format!("Reason: {reason}\n"));
             }
-            out.push_str("Verify command: `not_applicable`\n");
-            out.push_str("Receipt command: `not_applicable`\n");
-            out.push_str("Receipt path: `not_applicable`\n");
         }
         _ => {
             if let Some(message) = string_path(selected, &["message"]) {
@@ -203,7 +195,6 @@ pub(super) fn start_here_cli_summary(
             if let Some(command) = string_path(selected, &["next_command"]) {
                 push_recovery_command(&mut out, "Next command", &command);
             }
-            out.push_str("Receipt path: `not_applicable`\n");
         }
     }
     out.push_str(&format!(
@@ -211,7 +202,11 @@ pub(super) fn start_here_cli_summary(
         display_path(json_path),
         display_path(markdown_path)
     ));
-    out.push_str(&format!("Boundary: {STATIC_EVIDENCE_BOUNDARY}\n"));
+    // The Markdown packet keeps the full boundary sentence (#10696); the screen
+    // says the same in everyday words.
+    out.push_str(
+        "Note: ripr reads code; it does not run your tests. This is not proof your tests are good enough and not approval to merge.\n",
+    );
     out
 }
 
@@ -236,7 +231,7 @@ pub(super) fn expected_output_state_for_selected(state: &str, selected: &Value) 
 
 fn cli_state_label(state: &str) -> &'static str {
     match state {
-        "top_gap" => "top_gap",
+        "top_gap" => "top gap",
         "missing_artifact" => "missing artifact",
         "malformed_artifact" => "malformed artifact",
         "stale_artifact" => "stale evidence",
@@ -782,9 +777,22 @@ fn render_blocked_markdown(selected: &Value, out: &mut String) {
         "- Output state: `{}`\n",
         selected_output_state(selected, state)
     ));
-    out.push_str(
-        "- Safe next action: resolve this fail-closed state before assigning repair work.\n",
-    );
+    if selected.get("reason_code").and_then(Value::as_str) == Some("source_currentness_unavailable")
+    {
+        if selected
+            .get("next_command")
+            .and_then(Value::as_str)
+            .is_some()
+        {
+            out.push_str("- Safe next action: inspect a fresh check of the selected workspace; do not infer no action while corpus currentness is unavailable.\n");
+        } else {
+            out.push_str("- Safe next action: establish a checkout at the selected head and inspect its intended analysis; do not infer no action while corpus currentness is unavailable.\n");
+        }
+    } else {
+        out.push_str(
+            "- Safe next action: resolve this fail-closed state before assigning repair work.\n",
+        );
+    }
     let message = selected
         .get("message")
         .and_then(Value::as_str)

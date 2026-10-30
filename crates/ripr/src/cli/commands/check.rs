@@ -1553,7 +1553,10 @@ fn check_inner(
                         input.base.clone(),
                         &config,
                     )?
-                    .with_rust_corpus_key(report.corpus_key.as_ref());
+                    .with_rust_inventory(
+                        report.corpus_key.as_ref(),
+                        &report.analyzed_production_files,
+                    );
                 analysis::cancellation::begin_cli_publication()?;
                 let stdout = std::io::stdout();
                 let mut handle = stdout.lock();

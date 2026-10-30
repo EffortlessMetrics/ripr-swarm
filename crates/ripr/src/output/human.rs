@@ -1297,6 +1297,7 @@ mod triage;
 
 pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};
 pub(crate) use sections::render_finding_with_config;
+pub(crate) use triage::unresolved_boundary_operand;
 
 #[cfg(test)]
 mod tests {
@@ -3711,6 +3712,24 @@ mod tests {
         assert!(
             rendered.contains("Changed file(s) by language: python = 5\n"),
             "zero-count languages are omitted; got:\n{rendered}"
+        );
+
+        // #10719: a routed-only entry (its adapter errored or was not
+        // enabled) renders exactly like an adapter-counted one.
+        python_only.summary.changed_files_by_language = vec![
+            LanguageFileCount {
+                language: "perl".to_string(),
+                files: 1,
+            },
+            LanguageFileCount {
+                language: "rust".to_string(),
+                files: 0,
+            },
+        ];
+        let rendered = render(&python_only);
+        assert!(
+            rendered.contains("Changed file(s) by language: perl = 1\n"),
+            "a routed-only count renders; got:\n{rendered}"
         );
     }
 

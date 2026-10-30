@@ -16,6 +16,7 @@ use crate::agent::command_specs::{command_display_is_nonblank, command_displays_
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisCancellationToken;
 use crate::analysis::inventory_classified_seams_at_with_config;
+use crate::analysis::language_outcome::LanguageCompletenessView;
 use crate::analysis::seams::SeamGripClass;
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
@@ -666,7 +667,41 @@ pub(super) fn delivered_diagnostics_for_uri(
     {
         diagnostics.push(delivery_omission_diagnostic(omission));
     }
+    push_unlisted_language_not_analyzed(snapshot, uri, &mut diagnostics);
     diagnostics
+}
+
+/// The producer names at most three changed files per disabled language, so
+/// the stored batches mark only those. A document it did not name but whose
+/// language the run reports as not analyzed with an incomplete listing
+/// (`incomplete_languages`) still must not read as clean (#10715): mark it at
+/// serve time, once, like the budget omission above.
+fn push_unlisted_language_not_analyzed(
+    snapshot: &AnalysisSnapshot,
+    uri: &Uri,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let marked = diagnostics.iter().any(|diagnostic| {
+        diagnostic.code
+            == Some(NumberOrString::String(
+                super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+            ))
+    });
+    if marked {
+        return;
+    }
+    let Some(relative) = super::uri::file_uri_relative_to_root(&snapshot.root, uri) else {
+        return;
+    };
+    if let Some(language) = snapshot
+        .unavailable_adapter
+        .not_enabled_language(&relative, snapshot.language_view.as_ref())
+    {
+        diagnostics.push(language_not_analyzed_diagnostic(
+            language,
+            &relative.to_string_lossy().replace('\\', "/"),
+        ));
+    }
 }
 
 /// One visible summary of the same budget omission the selection and log
@@ -1470,6 +1505,19 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         );
     }
 
+    // A changed file of a language whose adapter is not enabled was never
+    // analyzed; say so on the file itself rather than leaving an empty list
+    // that reads as clean (#10715).
+    let unavailable_adapter = super::state::UnavailableAdapterCoverage::from_preview_advisories(
+        &output.preview_language_advisories,
+    );
+    append_unavailable_language_diagnostics(
+        &root,
+        &unavailable_adapter,
+        language_view.as_ref(),
+        &mut grouped,
+    );
+
     let batches = canonicalize_diagnostic_batches(
         grouped
             .into_iter()
@@ -1502,12 +1550,66 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         partial_scope,
         component_outcomes,
         out_of_scope_test_file_findings,
-        unavailable_adapter: super::state::UnavailableAdapterCoverage::from_preview_advisories(
-            &output.preview_language_advisories,
-        ),
+        unavailable_adapter,
         language_view,
     };
     Ok(WorkspaceDiagnostics { snapshot, batches })
+}
+
+/// One Information diagnostic on each changed file whose language adapter is
+/// not enabled (#10715). The file was not analyzed, so the editor must not
+/// end on an empty list that reads as a clean file; the message says so and
+/// names the recovery. The typed reason stays in `data`, matching the
+/// `language_adapter_unavailable` limitation `check` and MCP report.
+fn append_unavailable_language_diagnostics(
+    root: &Path,
+    coverage: &super::state::UnavailableAdapterCoverage,
+    view: Option<&LanguageCompletenessView>,
+    grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
+) {
+    for path in &coverage.named_paths {
+        let Some(language) = coverage.not_enabled_language(Path::new(path), view) else {
+            continue;
+        };
+        let Ok(uri) = file_uri_for_path(&root.join(path)) else {
+            continue;
+        };
+        grouped
+            .entry(uri)
+            .or_default()
+            .push(language_not_analyzed_diagnostic(language, path));
+    }
+}
+
+/// The marker for one changed file of a language whose adapter is not enabled.
+pub(super) fn language_not_analyzed_diagnostic(language: LanguageId, path: &str) -> Diagnostic {
+    let recovery = super::backend::language_adapter_not_enabled_recovery(language);
+    let name = language.as_str();
+    Diagnostic {
+        range: Range::default(),
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!(
+            "ripr did not analyze this file: the {name} adapter is not enabled, so having no \
+             findings here does not mean it is clean. Fix: {recovery}."
+        ),
+        data: Some(serde_json::json!({
+            // Producer delivery stamp (#4325 model): the governed code is an
+            // identity, not an eligibility authority, so without this the
+            // delivery budget profile-filters the marker out of push and pull.
+            "delivery_eligible": true,
+            "kind": "language_not_analyzed",
+            "limitation": "language_adapter_unavailable",
+            "not_analyzed_reason": "language_adapter_not_enabled",
+            "language": name,
+            "recovery": recovery,
+            "path": path,
+        })),
+        ..Default::default()
+    }
 }
 
 /// Decide whether the validated gap ledger is safe to project into the editor.
@@ -3207,9 +3309,7 @@ fn diagnostic_for_finding_with_causal(
         "probe_id": finding.probe.id.to_string(),
         "classification": finding.class.as_str(),
         "probe_family": finding.probe.family.as_str(),
-        // #10717: f32 -> f64 widening prints 0.4000000059604645; round to the
-        // two decimals every other surface renders.
-        "confidence": (f64::from(finding.confidence) * 100.0).round() / 100.0,
+        "confidence": crate::domain::contract_confidence(finding.confidence),
         "source_range": {
             "file": file,
             "line": finding.probe.location.line,
@@ -3260,6 +3360,12 @@ fn diagnostic_for_finding_with_causal(
                 "explain_command".to_string(),
                 serde_json::Value::String(witness.explain_command.clone()),
             );
+            let mut value = value;
+            if let Some(confidence) = witness.confidence.value
+                && let Some(slot) = value.pointer_mut("/confidence/value")
+            {
+                *slot = serde_json::json!(crate::domain::contract_confidence(confidence));
+            }
             obj.insert("witness".to_string(), value);
             let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
             if let Ok(summary_value) = serde_json::to_value(&summary) {
@@ -6755,6 +6861,34 @@ mod lsp_next_step_parity_tests {
             !message.contains("no actionable repair packet is emitted until"),
             "LSP diagnostic must NOT contain blocked-case tail for complete packet; got: {message}"
         );
+    }
+
+    /// #10717: the diagnostic `data` carries the two-decimal contract value
+    /// that `ripr check` prints, not the widened `f32` (`0.4000000059604645`),
+    /// both for the finding and for its witness.
+    #[test]
+    fn lsp_diagnostic_data_confidence_uses_contract_precision() -> Result<(), String> {
+        for (stored, printed) in [
+            (0.4_f32, "0.4"),
+            (0.92, "0.92"),
+            (0.6, "0.6"),
+            (0.75, "0.75"),
+        ] {
+            let mut finding = complete_ts_finding();
+            finding.confidence = stored;
+            let diagnostic =
+                super::diagnostic_for_finding(std::path::Path::new("/workspace"), &finding);
+            let data = diagnostic.data.ok_or("diagnostic must carry data")?;
+            let top = serde_json::to_string(&data["confidence"]).map_err(|e| e.to_string())?;
+            let witness = serde_json::to_string(&data["witness"]["confidence"]["value"])
+                .map_err(|e| e.to_string())?;
+            if top != printed || witness != printed {
+                return Err(format!(
+                    "stored {stored}: data.confidence {top}, witness value {witness}; want {printed}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// PARITY: blocked packet → LSP diagnostic message must STILL contain the
