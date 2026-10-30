@@ -629,6 +629,16 @@ fn persist_before_repair_attempt(
         eprintln!(
             "ripr: before phase complete. Next: add or strengthen one focused test in the packet's test file and commit it (leave production code unchanged), then run the command printed below. The after phase checks closure first: a gap that does not read exposed is refused and the attempt stays retryable; once the gap reads exposed, the edit cage ends the attempt terminally if any file outside that test surface changed."
         );
+        if matches!(
+            std::path::Path::new(policy.selected_target.path())
+                .extension()
+                .and_then(std::ffi::OsStr::to_str),
+            Some("ts" | "tsx" | "js" | "jsx" | "mts" | "cts" | "mjs" | "cjs")
+        ) {
+            eprintln!(
+                "ripr: Some TypeScript test runners write ignored cache files that the edit cage still observes. To avoid a terminal cache-only refusal, run the focused test after continue and record its result separately; the receipt reports static evidence and does not record a test run. Cache writes may make that receipt stale in agent status, even if HEAD did not change."
+            );
+        }
     } else if policy.inline_test_module_target {
         // #5210: the cage admits only new test functions inserted into the
         // target's inline test module, so "strengthen" an existing test, or
