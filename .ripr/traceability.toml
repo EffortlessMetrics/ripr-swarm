@@ -6814,6 +6814,9 @@ tests = [
   "xtask/src/exact_schema_json.rs::tests::preflight_counts_nodes_before_duplicate_collapse",
   "xtask/src/verification_contracts.rs::tests::file_validator_checks_original_decimal_bytes",
   "xtask/src/schema_producer_sweep.rs::tests::sweep_validates_original_decimal_bytes",
+  "xtask/src/schema_producer_sweep.rs::tests::unbound_numeric_const_lookalikes_use_exact_values",
+  "xtask/src/schema_producer_sweep.rs::tests::unbound_lookalike_comparison_fails_closed_on_unsupported_numbers",
+  "xtask/src/schema_producer_sweep.rs::tests::nested_numeric_constants_have_mathematical_lookalike_equality",
   "xtask/src/schema_producer_sweep.rs::tests::sweep_selects_exact_nested_producer_and_artifact_values",
   "xtask/src/exact_schema_json.rs::tests::exact_parser_preserves_numbers_and_objects"
 ]

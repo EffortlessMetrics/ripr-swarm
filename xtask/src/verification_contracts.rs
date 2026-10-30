@@ -1255,6 +1255,30 @@ fn schema_values_equal(
     }
 }
 
+// Sweep lookalike selection must use the same mathematical equality as
+// validation, and must report unsupported comparisons rather than skipping.
+pub(crate) fn exact_schema_values_equal(
+    left: &ExactValue,
+    right: &ExactValue,
+) -> Result<bool, String> {
+    let mut remaining = MAX_INPUT_NODES;
+    if !supported_numeric_input(left, &mut remaining)
+        || !supported_numeric_input(right, &mut remaining)
+    {
+        return Err("unsupported numeric precision or comparison size".into());
+    }
+    let mut budget = ValidationBudget {
+        remaining: MAX_SCHEMA_STEPS,
+        depth: 0,
+        exhausted: false,
+    };
+    let equal = schema_values_equal(left, right, &mut budget);
+    if budget.exhausted {
+        return Err("schema equality resource limit exceeded".into());
+    }
+    Ok(equal)
+}
+
 pub(crate) fn validate_exact_value_against_schema(
     value: &ExactValue,
     schema: &ExactValue,
