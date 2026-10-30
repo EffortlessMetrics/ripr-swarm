@@ -457,22 +457,57 @@ fn import_shadows(index: &RustIndex, name: &str) -> bool {
                 return false;
             }
             let statement = masked[at + 4..].split(';').next().unwrap_or("");
-            let root = statement
-                .trim_start_matches(['{', ' ', ':'])
-                .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-                .next()
-                .unwrap_or("");
-            // A braced group can mix a std path with a foreign one
-            // (`use {std::io, outside::String};`), so only a plain std path
-            // is skipped; a group is read by its names like any other.
-            if matches!(root, "std" | "core" | "alloc") && !statement.contains('{') {
-                return false;
-            }
-            let glob =
-                statement.trim_end().ends_with('*') && !matches!(root, "crate" | "self" | "super");
-            glob || identifiers(statement).any(|word| word == name)
+            use_leaves(statement).iter().any(|leaf| {
+                let root = leaf
+                    .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                    .find(|word| !word.is_empty())
+                    .unwrap_or("");
+                let aliased_to_name = leaf
+                    .rsplit_once(" as ")
+                    .is_some_and(|(_, alias)| alias.trim() == name);
+                if matches!(root, "std" | "core" | "alloc") {
+                    return aliased_to_name;
+                }
+                let glob =
+                    leaf.trim_end().ends_with('*') && !matches!(root, "crate" | "self" | "super");
+                glob || identifiers(leaf).any(|word| word == name)
+            })
         })
     })
+}
+
+/// The leaf paths of a `use` tree with each group prefix applied:
+/// `std::{io, fmt::Display}` reads as `std::io` and `std::fmt::Display`, and a
+/// rootless group (`{std::io, outside::String}`) splits into its own roots, so
+/// one foreign leaf cannot hide behind a std sibling or a std prefix.
+fn use_leaves(tree: &str) -> Vec<String> {
+    fn walk(tree: &str, prefix: &str, out: &mut Vec<String>) {
+        let tree = tree.trim();
+        let Some(open) = tree.find('{') else {
+            out.push(format!("{prefix}{}", tree.trim_matches(':')));
+            return;
+        };
+        let head = &tree[..open];
+        let close = tree.rfind('}').unwrap_or(tree.len());
+        let inner = &tree[open + 1..close];
+        let prefix = format!("{prefix}{head}");
+        let (mut depth, mut start) = (0usize, 0usize);
+        for (at, ch) in inner.char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => {
+                    walk(&inner[start..at], &prefix, out);
+                    start = at + 1;
+                }
+                _ => {}
+            }
+        }
+        walk(&inner[start..], &prefix, out);
+    }
+    let mut out = Vec::new();
+    walk(tree, "", &mut out);
+    out
 }
 
 /// A std/core/alloc type whose `PartialEq` compares what it holds, so only
@@ -732,7 +767,13 @@ mod tests {
             "use {std::io, outside::String};\npub struct Line { sku: String }\n"
         ));
         assert!(lenient(
-            "use std::{io, outside::String};\npub struct Line { sku: String }\n"
+            "use {std::io, outside::String};\nuse std::collections::{HashMap, HashSet};\npub struct Line { sku: String }\n"
+        ));
+        assert!(!lenient(
+            "use std::collections::{HashMap, HashSet};\nuse std::{fmt, path::PathBuf};\npub struct Line { sku: String, m: HashMap<u8, u8>, p: PathBuf }\n"
+        ));
+        assert!(lenient(
+            "use std::{fmt::Display as String};\npub struct Line { sku: String }\n"
         ));
         assert!(!lenient(
             "use std::{io, collections::BTreeMap};\npub struct Line { sku: String }\n"
