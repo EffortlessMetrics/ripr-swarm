@@ -856,7 +856,8 @@ fn default_help_keeps_the_task_roles_distinct() -> Result<(), String> {
             "Diagnose setup ripr doctor",
             "Inspect one change ripr check",
             "Guided repo adoption ripr pilot --root .",
-            "Repair one named gap ripr repair",
+            "Repair a Rust seam ripr repair",
+            "Repair a diff gap follow the start from ripr check, when offered",
             "Compose PR evidence ripr first-pr",
             "Adopt advisory CI ripr init --ci github",
             "ripr help --all",
@@ -1023,7 +1024,8 @@ fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
         "Diagnose setup ripr doctor",
         "Inspect one change ripr check",
         "Guided repo adoption ripr pilot --root .",
-        "Repair one named gap ripr repair [<item>] | ripr continue | ripr status",
+        "Repair a Rust seam ripr repair [<item>] | ripr continue | ripr status",
+        "Repair a diff gap follow the start from ripr check, when offered",
         "Compose PR evidence ripr first-pr --root . --base BASE --head HEAD",
         "Adopt advisory CI ripr init --ci github",
         "`ripr check` is the ordinary first-value analysis; `ripr pilot` is the guided repo-adoption workflow.",
@@ -1146,7 +1148,7 @@ fn help_screens_state_the_surfaces_the_parsers_accept() -> Result<(), String> {
         assert_contains("exhaustive help (`ripr help --all`)", &all, needle)?;
     }
 
-    // Discriminators. The `Repair one named gap` role line is the task-first
+    // Discriminators. The `Repair a Rust seam` role line is the task-first
     // alternation `repair | continue | status`: it names the ordinary
     // commands rather than the internal phase vocabulary, and
     // `default_help_keeps_the_task_roles_distinct` pins it as role
