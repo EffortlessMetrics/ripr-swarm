@@ -71,3 +71,16 @@ fn the_edit_predicate_is_token_exact_and_fails_closed() {
     // A fragment of a multi-line construct does not lex, so it stays an edit.
     assert!(!same("    f(a,", "    f(a,  # why"));
 }
+
+#[test]
+fn string_content_lines_are_found_from_the_whole_file() {
+    use super::no_behavior::multi_line_string_line_ranges;
+    let source = "def f():\n    sql = \"\"\"\n    SELECT a FROM t\n    \"\"\"\n    return sql\n";
+    assert_eq!(multi_line_string_line_ranges(source), Some(vec![2..=4]));
+    assert_eq!(
+        multi_line_string_line_ranges("x = 'a'\ny = f'{x}'\n"),
+        Some(Vec::new())
+    );
+    // A file that does not lex yields no answer, so the caller fails closed.
+    assert_eq!(multi_line_string_line_ranges("x = '''open\n"), None);
+}

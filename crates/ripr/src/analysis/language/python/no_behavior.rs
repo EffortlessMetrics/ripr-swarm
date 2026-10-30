@@ -61,6 +61,32 @@ pub(super) fn is_comment_or_whitespace_only_change(old: &str, new: &str) -> bool
     }
 }
 
+/// One-based line spans of every string literal that crosses a line break
+/// (triple-quoted strings, f-strings, a backslash-continued string), taken from
+/// a lex of the whole `source`. A line inside one is string content, so a
+/// spacing or `#` change on it changes the string's value. `None` when the
+/// source does not lex, so the caller can fail closed (#10706).
+pub(super) fn multi_line_string_line_ranges(
+    source: &str,
+) -> Option<Vec<std::ops::RangeInclusive<usize>>> {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let line_of = |offset: usize| source[..offset].matches('\n').count() + 1;
+    let mut spans = Vec::new();
+    for result in lex(source, Mode::Module) {
+        let (token, range) = result.ok()?;
+        if matches!(token, Tok::String { .. }) {
+            let (start, end) = (
+                line_of(usize::from(range.start())),
+                line_of(usize::from(range.end())),
+            );
+            if start < end {
+                spans.push(start..=end);
+            }
+        }
+    }
+    Some(spans)
+}
+
 /// A line that only opens, continues, or closes a block or bracket and holds
 /// no expression of its own: `)`, `):`, `],`, `}`, `else:`, `try:`,
 /// `finally:`. Structural is not ignorable: a lone inserted `else:` or `try:`

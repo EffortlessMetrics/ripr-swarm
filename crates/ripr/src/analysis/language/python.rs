@@ -1555,6 +1555,13 @@ impl PythonAdapter {
                     )
                 })
                 .unwrap_or_default();
+            // Lines inside a multi-line string are string content, not
+            // statements; an unreadable or unlexable file is treated as all
+            // string so the trailing-comment guard fails closed (#10706).
+            let string_line_ranges = workspace_read
+                .sources
+                .get(&changed.path)
+                .and_then(|source| no_behavior::multi_line_string_line_ranges(source));
             let import_ranges = import_ranges_by_file
                 .get(&changed.path)
                 .map(Vec::as_slice)
@@ -1628,6 +1635,9 @@ impl PythonAdapter {
                         });
                 let no_behavior = PythonNoBehaviorContext {
                     new_line_in_docstring: line_is_in_ranges(added.line, new_docstring_ranges),
+                    new_line_in_multiline_string: string_line_ranges
+                        .as_deref()
+                        .is_none_or(|ranges| line_is_in_ranges(added.line, ranges)),
                     old_line_in_docstring: old_line.is_some_and(|removed| {
                         line_is_in_ranges(removed.line, &old_docstring_ranges)
                     }),

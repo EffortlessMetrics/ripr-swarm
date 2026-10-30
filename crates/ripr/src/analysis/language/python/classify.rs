@@ -124,6 +124,10 @@ pub(super) fn classify_change_with_source(
 pub(super) struct PythonNoBehaviorContext {
     pub(super) new_line_in_docstring: bool,
     pub(super) old_line_in_docstring: bool,
+    /// The changed line lies inside a string literal that crosses a line
+    /// break, or the file could not be lexed to rule that out. A spacing or
+    /// comment-looking change there edits the string (#10706).
+    pub(super) new_line_in_multiline_string: bool,
     /// The changed line is the first line of its enclosing owner, and that
     /// owner's span carries at least one other added behavior line.
     pub(super) opens_owner_with_added_body: bool,
@@ -263,6 +267,7 @@ fn classify_change_full<'a>(
     // no behavior delta and no probe. The gap id and discriminator would
     // otherwise embed the comment text.
     if let Some(old) = old_line_text
+        && !no_behavior.new_line_in_multiline_string
         && is_comment_or_whitespace_only_change(old, line_text)
     {
         return None;
