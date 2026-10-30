@@ -2530,7 +2530,11 @@ fn case_output_refuses_incomplete_perl_runs() -> Result<(), String> {
         json!({"findings": [], "language_runs": [{"language": "perl"}]}),
         json!({"findings": [], "language_runs": [{"status": "ok"}]}),
     ] {
-        assert!(case_check_output(&malformed.to_string(), case, "ripr-lang-perl").is_err());
+        let Err(_err) = case_check_output(&malformed.to_string(), case, "ripr-lang-perl") else {
+            return Err(format!(
+                "malformed language_runs must be refused: {malformed}"
+            ));
+        };
     }
     Ok(())
 }
