@@ -14093,6 +14093,13 @@ tests = [
   "crates/ripr/tests/invisible_change.rs::an_input_that_hits_the_cap_keeps_the_credit",
   "crates/ripr/tests/invisible_change.rs::an_owner_call_in_the_expected_operand_keeps_the_credit",
   "crates/ripr/tests/invisible_change.rs::a_computed_argument_keeps_the_credit",
+  "crates/ripr/tests/invisible_change.rs::a_relational_sibling_that_holds_on_both_versions_does_not_expose_the_change",
+  "crates/ripr/tests/invisible_change.rs::a_relational_assertion_that_flips_between_versions_keeps_the_credit",
+  "crates/ripr/tests/invisible_change.rs::a_rebound_assert_macro_keeps_the_credit",
+  "crates/ripr/tests/invisible_change.rs::an_assertion_on_an_untouched_field_does_not_expose_a_changed_default",
+  "crates/ripr/tests/invisible_change.rs::an_assertion_that_reads_the_changed_default_keeps_the_credit",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::untouched_field_assertion_does_not_confirm_a_partly_changed_literal",
+  "crates/ripr/src/analysis/classify/builder_override.rs::tests::changed_struct_literal_fields_names_a_proper_subset_only",
   "crates/ripr/tests/returned_comparison_boundary.rs::inputs_far_from_the_threshold_do_not_expose_the_returned_comparison",
   "crates/ripr/tests/returned_comparison_boundary.rs::an_input_at_the_changed_boundary_keeps_the_returned_comparison_exposed",
   "crates/ripr/tests/returned_comparison_boundary.rs::a_returned_compound_predicate_keeps_the_return_value_reading",
@@ -17201,6 +17208,9 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/tests.rs::classify_change_parametrize_argnames_survive_prose_that_names_dynamic_writers",
+  "crates/ripr/src/analysis/language/python/tests.rs::classify_change_names_unsettled_indirect_values_apart_from_known_fixtures",
+  "crates/ripr/src/analysis/language/python/tests.rs::classify_change_parametrize_argnames_stay_unsettled_when_code_writes_the_namespace",
   "crates/ripr/src/app/check_artifact/tests.rs::live_truthiness_admission_cannot_be_reused_from_an_artifact",
   "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_credits_only_a_changed_truth_value",
   "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_refuses_assertion_messages",

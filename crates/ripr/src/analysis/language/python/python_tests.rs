@@ -2200,8 +2200,66 @@ fn analyze_diff_parses_the_workspace_once_however_many_files_changed() -> Result
 /// changed line re-read every workspace test for each line of the same owner
 /// (pandas: ~23k tests times every changed line).
 #[test]
+fn analyze_diff_shares_one_alignment_index_across_owners() -> Result<(), String> {
+    let root = unique_tempdir("analyze-diff-alignment-index")?;
+    let module = PathBuf::from("pricing.py");
+    write_file(
+        &root.join(&module),
+        "def price(x):\n    return x + 2\n\n\ndef tax(x):\n    return x * 3\n",
+    )?;
+    write_file(
+        &root.join("test_pricing.py"),
+        "from pricing import price, tax\n\n\ndef test_price():\n    assert price(1) == 3\n\n\ndef test_tax():\n    assert tax(1) == 3\n",
+    )?;
+    let changed = |line: usize, text: &str| crate::analysis::diff::ChangedLine {
+        line,
+        new_side_line: line,
+        text: text.to_string(),
+    };
+    let changed_files = vec![ChangedFile {
+        path: module,
+        added_lines: vec![
+            changed(2, "    return x + 2"),
+            changed(6, "    return x * 3"),
+        ],
+        removed_lines: vec![
+            changed(2, "    return x + 1"),
+            changed(6, "    return x * 2"),
+        ],
+    }];
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    super::sink_alignment::ALIGNMENT_PREPS.with(|preps| preps.set(0));
+    super::sink_alignment::ALIGNMENT_LOOKUPS.with(|lookups| lookups.set(0));
+    let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+    let preps = super::sink_alignment::ALIGNMENT_PREPS.with(std::cell::Cell::get);
+    let lookups = super::sink_alignment::ALIGNMENT_LOOKUPS.with(std::cell::Cell::get);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    assert_eq!(result.findings.len(), 2, "one finding per changed owner");
+    assert_eq!(preps, 2, "each owner gets its own alias tokens");
+    assert_eq!(lookups, 1, "every owner reads the run's one test index");
+    Ok(())
+}
+
+#[test]
 fn analyze_diff_scans_related_tests_once_per_owner() -> Result<(), String> {
-    fn scans_for(changed_lines: usize) -> Result<(usize, usize), String> {
+    fn scans_for(changed_lines: usize) -> Result<(usize, usize, usize), String> {
         let root = unique_tempdir("analyze-diff-related-once")?;
         let module = PathBuf::from("pricing.py");
         write_file(
@@ -2253,22 +2311,30 @@ fn analyze_diff_scans_related_tests_once_per_owner() -> Result<(), String> {
             open_rust_index_paths: Default::default(),
         };
         super::related_tests::RELATED_SCANS.with(|scans| scans.set(0));
+        super::sink_alignment::ALIGNMENT_PREPS.with(|preps| preps.set(0));
         let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
         let scans = super::related_tests::RELATED_SCANS.with(std::cell::Cell::get);
+        let preps = super::sink_alignment::ALIGNMENT_PREPS.with(std::cell::Cell::get);
         let cleanup = std::fs::remove_dir_all(&root);
         let result = result?;
         cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
-        Ok((scans, result.findings.len()))
+        Ok((scans, preps, result.findings.len()))
     }
 
-    let (one_scans, one_findings) = scans_for(1)?;
-    let (three_scans, three_findings) = scans_for(3)?;
+    let (one_scans, one_preps, one_findings) = scans_for(1)?;
+    let (three_scans, three_preps, three_findings) = scans_for(3)?;
     assert_eq!(one_findings, 1, "one changed line is one finding");
     assert_eq!(three_findings, 3, "three changed lines are three findings");
     assert_eq!(one_scans, 1, "one owner is scanned once");
     assert_eq!(
         three_scans, one_scans,
         "more changed lines of the same owner must not rescan the tests"
+    );
+    // #10914: the owner's sink-alignment index is built once per run too.
+    assert_eq!(one_preps, 1, "one owner builds one alignment index");
+    assert_eq!(
+        three_preps, one_preps,
+        "more changed lines of the same owner must not rebuild the alignment index"
     );
     Ok(())
 }

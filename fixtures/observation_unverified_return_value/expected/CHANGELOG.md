@@ -441,3 +441,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — observation_unverified_return_value (38)
+
+Reason:
+RIPR-SPEC-0197: #10916 relational sibling downgrade now fires for this fixture; infection reads weak (0.84) with the truth-value summary instead of yes (0.92)
+
+Command:
+`cargo xtask goldens bless observation_unverified_return_value --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
