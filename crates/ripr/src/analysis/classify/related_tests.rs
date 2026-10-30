@@ -8996,7 +8996,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             counter_default_fn_relation(body, vec![implementor], ""),
             RelationReason::DirectOwnerCall
         );
-        for self_ty in ["[u32]", "T"] {
+        for self_ty in ["[u32]", "T", "&Vec<u32>", "&mut Vec<u32>"] {
             let mut deref_implementor = function("src/lib.rs", "step");
             deref_implementor.item.container = FunctionContainer::TraitImpl {
                 trait_path: "Counter".to_string(),

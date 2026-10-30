@@ -394,19 +394,27 @@ fn trait_implemented_for(index: &RustIndex, trait_name: &str, head: &str) -> boo
         matches!(&function.item.container,
             FunctionContainer::TraitImpl { trait_path, self_ty }
                 if impl_trait_name_matches(trait_path, trait_name)
-                    && (base_type_name(self_ty) == head || impl_self_reaches_std(self_ty)))
+                    && (base_type_name(strip_reference_prefix(self_ty)) == head
+                        || impl_self_reaches_std(self_ty)))
     })
+}
+
+/// `&Vec<u8>` / `&mut Vec<u8>` -> `Vec<u8>`: only leading `&` and `mut `, so a
+/// qualified path such as `other::Vec` keeps its identity.
+fn strip_reference_prefix(self_ty: &str) -> &str {
+    let mut text = self_ty.trim();
+    while let Some(rest) = text.strip_prefix('&') {
+        text = rest.trim_start();
+        text = text.strip_prefix("mut ").unwrap_or(text).trim_start();
+    }
+    text
 }
 
 /// Whether an `impl <trait> for <self_ty>` can apply to a std collection
 /// receiver without naming it: a slice, array, `str` or `dyn` type is reached
 /// by deref, and a bare single-letter type parameter is a blanket impl.
 fn impl_self_reaches_std(self_ty: &str) -> bool {
-    let mut text = self_ty.trim();
-    while let Some(rest) = text.strip_prefix('&') {
-        text = rest.trim_start();
-        text = text.strip_prefix("mut ").unwrap_or(text).trim_start();
-    }
+    let text = strip_reference_prefix(self_ty);
     text.starts_with('[')
         || text.starts_with("dyn ")
         || base_type_name(text) == "str"
@@ -449,6 +457,14 @@ mod tests {
             vec![false, true]
         );
         assert!(method_spellings("not_contains(x); contains_all(y);", "contains").is_empty());
+    }
+
+    #[test]
+    fn given_reference_self_types_when_stripping_then_only_prefix_goes() {
+        assert_eq!(strip_reference_prefix("&Vec<u32>"), "Vec<u32>");
+        assert_eq!(strip_reference_prefix("& mut Vec<u32>"), "Vec<u32>");
+        assert_eq!(strip_reference_prefix("&mut Vec<u32>"), "Vec<u32>");
+        assert_eq!(strip_reference_prefix("other::Vec<u32>"), "other::Vec<u32>");
     }
 
     #[test]
