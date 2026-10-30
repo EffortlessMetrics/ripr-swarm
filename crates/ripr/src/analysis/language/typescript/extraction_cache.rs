@@ -733,44 +733,41 @@ mod tests {
     #[test]
     fn ast_shape_string_ternary_return_is_return_value() {
         let source = "export function f(): string {\n  return \"a ? b : c\";\n}\n";
-        let Some(shape) = ast_shape_at(source, 2) else {
-            assert!(false, "return line must have an AST shape");
-            return;
-        };
-        assert_eq!(shape.family, ProbeFamily::ReturnValue);
-        assert!(shape.specific);
+        let shape = ast_shape_at(source, 2);
+        assert_eq!(
+            shape.as_ref().map(|shape| shape.family),
+            Some(ProbeFamily::ReturnValue)
+        );
+        assert_eq!(shape.map(|shape| shape.specific), Some(true));
     }
 
     #[test]
     fn ast_shape_statement_inside_switch_arm_takes_own_family() {
         let source = "export function f(x: number): number {\n  switch (x) {\n    case 1: throw new Error(\"one\");\n    default: return x;\n  }\n}\n";
-        let Some(thrown) = ast_shape_at(source, 3) else {
-            assert!(false, "throw line must have an AST shape");
-            return;
-        };
-        assert_eq!(thrown.family, ProbeFamily::ErrorPath);
-        let Some(returned) = ast_shape_at(source, 4) else {
-            assert!(false, "return line must have an AST shape");
-            return;
-        };
-        assert_eq!(returned.family, ProbeFamily::ReturnValue);
+        assert_eq!(
+            ast_shape_at(source, 3).map(|shape| shape.family),
+            Some(ProbeFamily::ErrorPath)
+        );
+        assert_eq!(
+            ast_shape_at(source, 4).map(|shape| shape.family),
+            Some(ProbeFamily::ReturnValue)
+        );
     }
 
     #[test]
     fn ast_shape_multiline_return_ternary_continuation_is_return_value() {
         let source =
             "export function f(n: number): number {\n  return n > 100\n    ? n - 20\n    : n;\n}\n";
-        let Some(test_line) = ast_shape_at(source, 2) else {
-            assert!(false, "return line must have an AST shape");
-            return;
-        };
-        assert_eq!(test_line.family, ProbeFamily::Predicate);
-        let Some(continuation) = ast_shape_at(source, 3) else {
-            assert!(false, "continuation must have an AST shape");
-            return;
-        };
-        assert_eq!(continuation.family, ProbeFamily::ReturnValue);
-        assert!(continuation.specific);
+        assert_eq!(
+            ast_shape_at(source, 2).map(|shape| shape.family),
+            Some(ProbeFamily::Predicate)
+        );
+        let continuation = ast_shape_at(source, 3);
+        assert_eq!(
+            continuation.as_ref().map(|shape| shape.family),
+            Some(ProbeFamily::ReturnValue)
+        );
+        assert_eq!(continuation.map(|shape| shape.specific), Some(true));
     }
 
     #[test]
