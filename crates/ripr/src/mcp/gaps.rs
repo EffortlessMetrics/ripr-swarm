@@ -72,15 +72,18 @@ pub(crate) struct RepairReadiness {
 
 impl RepairReadiness {
     /// Conjoin the shared seam-level repair validator's verdict (#8717).
-    /// A finding-level refusal stays the first failing gate, except that a
-    /// truncated inventory refuses first; a finding-ready item becomes not
-    /// ready, keeping no fix site, when the validator that backs `ripr repair`
-    /// does not admit its seam.
+    /// The validator that backs `ripr repair` is the one authority for why a
+    /// seam is refused, so its refusal outranks every finding-level gate
+    /// (#10718): the same item must carry the same typed cause here as in
+    /// `ripr repair`, never a producer-side `fix_site_not_established` for an
+    /// already-gripped, route-not-ready or seamless item. A finding-ready
+    /// item becomes not ready, keeping no fix site, when that validator does
+    /// not admit its seam. The one exception is a saved-worktree snapshot's
+    /// withheld verdict (#7357): it is a snapshot-level fact, not a seam
+    /// decision, so a finding-level gate stays the first failing gate there.
     pub(crate) fn with_seam_verdict(mut self, verdict: Option<&SeamVerdict>) -> Self {
-        // The CLI errors on a truncated inventory before it resolves any item
-        // (#9108), so that refusal outranks every finding-level gate.
         if let Some(SeamVerdict::Refused { code, detail }) = verdict
-            && (self.ready || *code == crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED)
+            && (self.ready || *code != crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE)
         {
             self.ready = false;
             self.fix_site = None;
@@ -1430,11 +1433,34 @@ mod tests {
             seam_detail: None,
         }
         .with_seam_verdict(Some(&refused));
-        if finding_level.ineligibility != Some("missing_discriminator")
-            || finding_level.seam_detail.is_some()
+        // #10718: the shared validator is the one authority for the cause, so
+        // its refusal outranks the producer-side gate; the same item must not
+        // read `missing_discriminator` here and "already gripped" in
+        // `ripr repair`.
+        if finding_level.ineligibility != Some("seam_already_gripped")
+            || finding_level.seam_detail.is_none()
         {
             return Err(format!(
-                "the finding-level refusal must stay first: {finding_level:?}"
+                "the shared validator's refusal must outrank the finding gate: {finding_level:?}"
+            ));
+        }
+        // The saved-worktree withheld verdict is a snapshot-level fact, not a
+        // seam decision, so a finding-level gate stays first there (#7357).
+        let withheld = SeamVerdict::Refused {
+            code: crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE,
+            detail: "withheld".to_string(),
+        };
+        let worktree = RepairReadiness {
+            ready: false,
+            fix_site: None,
+            ineligibility: Some("missing_discriminator"),
+            seam_detail: None,
+        }
+        .with_seam_verdict(Some(&withheld));
+        if worktree.ineligibility != Some("missing_discriminator") || worktree.seam_detail.is_some()
+        {
+            return Err(format!(
+                "a worktree withhold must not outrank a finding gate: {worktree:?}"
             ));
         }
         Ok(())
@@ -1512,9 +1538,8 @@ mod tests {
         {
             return Err(format!("truncation must block readiness: {blocked:?}"));
         }
-        // Precedence: a finding failing a finding-level gate still gets the
-        // inventory-level refusal, but keeps its own gate when the verdict is
-        // an ordinary seam refusal.
+        // Precedence: the shared validator's refusal, truncation or an
+        // ordinary seam refusal alike, outranks a finding-level gate (#10718).
         let unready = RepairReadiness {
             ready: false,
             fix_site: None,
@@ -1531,8 +1556,11 @@ mod tests {
             code: "seam_gate_refused",
             detail: "gate".to_string(),
         };
-        if unready.clone().with_seam_verdict(Some(&ordinary)) != unready {
-            return Err("an ordinary seam refusal must not outrank a finding gate".to_string());
+        let outranked = unready.clone().with_seam_verdict(Some(&ordinary));
+        if outranked.ineligibility != Some("seam_gate_refused") || outranked.seam_detail.is_none() {
+            return Err(format!(
+                "an ordinary seam refusal must outrank a finding gate: {outranked:?}"
+            ));
         }
         Ok(())
     }

@@ -3114,8 +3114,14 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
             || item["repair_ineligibility"]
                 != if ready {
                     Value::Null
+                } else if id == PYTHON {
+                    // #10718: the seam inventory covers Rust files only, so
+                    // `ripr repair` resolves the Python item to no seam.
+                    json!("seam_not_found")
                 } else {
-                    json!("fix_site_not_established")
+                    // #10718: the shared repair gate's cause (route not
+                    // ready), not the producer-side fix-site gate.
+                    json!("seam_gate_refused")
                 }
             || item["class"] != if ready { "exposed" } else { "no_static_path" }
         {

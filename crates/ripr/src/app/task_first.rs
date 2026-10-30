@@ -1370,6 +1370,14 @@ pub(crate) fn gap_bound_start_pointer(language: &str) -> &'static str {
 }
 
 fn unknown_repair_item(root: &Path, item: &str) -> String {
+    unknown_repair_item_reason(Some(root), item)
+}
+
+/// The refusal sentence for a repair item that names no seam. `ripr repair`
+/// words it with its selected root; the MCP adapter, whose verdicts are
+/// already relative to its workspace root, passes `None` and so shares the
+/// cause text without an emitted root (#10718).
+pub(crate) fn unknown_repair_item_reason(root: Option<&Path>, item: &str) -> String {
     if let Some(language) = non_rust_item_language(item) {
         return format!(
             "repair item `{item}` names no seam in the selected root: {}{}",
@@ -1377,10 +1385,13 @@ fn unknown_repair_item(root: &Path, item: &str) -> String {
             gap_bound_start_pointer(language)
         );
     }
-    let list = format!(
-        "`ripr pilot --root {}` to list current seam IDs",
-        shell_arg(&bound_root(&root.to_string_lossy()))
-    );
+    let list = match root {
+        Some(root) => format!(
+            "`ripr pilot --root {}` to list current seam IDs",
+            shell_arg(&bound_root(&root.to_string_lossy()))
+        ),
+        None => "`ripr pilot` to list current seam IDs".to_string(),
+    };
     if item.starts_with("probe:") || item.starts_with("repo-probe:") {
         return format!(
             "repair item `{item}` names no seam in the selected root; the `ripr check` finding ID is stale or maps to no current seam; run {list}"

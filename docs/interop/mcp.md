@@ -403,6 +403,11 @@ omission), `seam_ambiguous` (several seams name the item), `seam_not_found`
 seam inventory is truncated by the seam limit, or its completeness could not
 be established, so `ripr repair` refuses every item; widen the budget with
 `RIPR_REPO_EXPOSURE_SEAM_LIMIT`).
+When that gate refuses an item, its reason is the item's first failing gate,
+ahead of the producer-side reasons such as `fix_site_not_established`, so
+`ripr_prepare_repair` and `ripr repair` name the same cause for the same item
+(#10718). The producer-side reasons remain for items the gate admits or when
+no seam evaluation ran.
 
 The truncation refusal covers repair readiness (`ripr_list_gaps`,
 `ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` reads the same
@@ -527,9 +532,14 @@ reachable on the repair-card read (an item no seam owner-discriminated binds,
 an unnameable portable workspace identity, a card over its detail budget, a
 truncated or unverified repo-wide seam inventory). The card uses the CLI-pinned
 `incomplete_inventory` code, while the list/get/prepare readiness fields keep
-`seam_inventory_truncated`. `policy_omitted` and
-`witness_unavailable` stay named for wire stability even though this adapter
-cannot reach them; the rest stay reserved for the slices that own those
+`seam_inventory_truncated`. `policy_omitted` is reachable on the same read
+(#10718): the card applies the repository's agent policy to the seam's class
+exactly like `ripr agent card`, so an already-gripped seam the policy omits
+refuses with `policy_omitted`, and an item the repair-subject resolver maps to
+no seam (for example a Python finding, since the seam inventory covers Rust
+files only) refuses with `seam_not_found` carrying the CLI's own cause text.
+`witness_unavailable` stays named for wire stability even though this adapter
+cannot reach it; the rest stay reserved for the slices that own those
 states (they are named now so the wire contract
 stays stable). Tool argument shape violations use standard Invalid Params;
 unknown tools use Invalid Params (MCP: the `tools/call` method exists; the
