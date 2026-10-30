@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/typescript_rejects_literal_equality/input
 config: <cwd>/fixtures/typescript_rejects_literal_equality/input/ripr.toml
 
-Summary: 2 changed behavior(s) checked: 1 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 1 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
 Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
   only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
   no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
@@ -106,29 +106,32 @@ Language
 Preview actionability
   authority: preview_advisory_only
   gap state: advisory
-  category: incomplete_repair_packet
+  category: missing_target_shape
   repair packet ready: false
-  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
-  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
-  missing fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
-  evidence needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
+  why not actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  repair route: add probe-specific discriminator extraction for this expression before repair packet projection
+  missing fields: repair_kind, target_test_shape, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
+  evidence needed: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries
   raw evidence: src/load.ts:5 (typescript_preview_probe) source=probe:src_load.ts:typescript_preview:2209cfc8 owner=load
 
 Static exposure
-  weakly_exposed (warning, confidence 0.40)
+  infection_unknown (warning, confidence 0.40)
 
 Evidence
   - reach yes: 1 related test(s) found for owner `load`
-  - infection unknown: TypeScript preview adapter does not yet model infection
+  - infection unknown: TypeScript preview adapter does not model infection for this `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return
   - propagation unknown: TypeScript preview adapter does not yet model propagation
-  - observation weak: Strongest extracted oracle kind: `unknown` (rank 0)
-  - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == "ready"`
+  - observation unknown: Strongest extracted oracle kind: `unknown` (rank 0)
+  - discriminator unknown: TypeScript preview adapter: infection is `unknown` for this `literal_return` edit, so whether an assertion discriminates the change is not asked (#10704)
   - local flow reaches returned value: return "ready"; (line 5)
-  - related test tests/load.test.ts:4 missing token rejects with the required literal uses no oracle; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/load.test.ts:4 missing token rejects with the required literal uses no oracle
 
 Weakness
-  - Related test reaches `load` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)
-  - missing discriminator return value == "ready": changed TypeScript returned-value at line 5 lacks a concrete preview discriminator
+  - The change to `load` is a `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return. No assertion is requested until a test input is shown to change the behavior
+
+Stop reasons:
+  - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
+    Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
@@ -138,12 +141,11 @@ TypeScript preview card (advisory)
   changed behavior: return_value changed at src/load.ts:5: `return "ready";`
   related test: tests/load.test.ts:4 missing token rejects with the required literal
   oracle: unknown (unknown)
-  missing discriminator: return value == "ready"
   suggested assertion shape: Add an exact return-value assertion for the changed output.
   verify: npx --no-install vitest run tests/load.test.ts
   repair packet ready: false
-  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
-  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
+  why not actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  repair route: add probe-specific discriminator extraction for this expression before repair packet projection
   limits:
     - Syntax-first TypeScript/JavaScript preview evidence only.
     - No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.
@@ -151,11 +153,11 @@ TypeScript preview card (advisory)
 
 TypeScript repair packet (advisory)
   status: not actionable
-  limitation: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
-  next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
+  limitation: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  next capability needed: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == "ready"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
+  TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_rejects_literal_equality/input --diff <cwd>/fixtures/typescript_rejects_literal_equality/diff.patch --mode fast probe:src_load.ts:typescript_preview:2209cfc8
   ripr context --root <cwd>/fixtures/typescript_rejects_literal_equality/input --diff <cwd>/fixtures/typescript_rejects_literal_equality/diff.patch --mode fast --at probe:src_load.ts:typescript_preview:2209cfc8

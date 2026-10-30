@@ -1068,7 +1068,59 @@ fn gap_bound_route(
     output: &super::CheckOutput,
     check_config: &crate::config::RiprConfig,
     finding: &crate::domain::Finding,
-) -> Option<crate::app::GapRepairRoute> {
+) -> Result<Option<crate::app::GapRepairRoute>, &'static str> {
+    let Some((base, record)) = gap_bound_record(output, check_config, finding) else {
+        return Ok(None);
+    };
+    let uncommitted_files = uncommitted_production_files(&output.root, &record)
+        .map_err(|_error| "could not validate the prerequisites for the repair start")?;
+    let repair_base = if uncommitted_files.is_empty() {
+        base
+    } else {
+        if output
+            .analyzed_revisions
+            .as_ref()
+            .is_some_and(|r| !r.working_tree)
+        {
+            return Err(
+                "the committed-only check excluded dirty tracked files; commit or restore them before rerunning",
+            );
+        }
+        if output.unanalyzed_working_tree {
+            return Err("the working tree contains source or test changes that were not analyzed");
+        }
+        let origin = resolved_dirty_origin(&output.root, output.analyzed_revisions.as_ref())?;
+        return Ok(Some(crate::app::GapRepairRoute {
+            finding_id: finding.id.clone(),
+            gap_id: record.canonical_gap_id,
+            base: origin,
+            uncommitted_files,
+        }));
+    };
+    Ok(Some(crate::app::GapRepairRoute {
+        finding_id: finding.id.clone(),
+        gap_id: record.canonical_gap_id,
+        base: repair_base.to_string(),
+        uncommitted_files,
+    }))
+}
+
+fn resolved_dirty_origin(
+    root: &Path,
+    revisions: Option<&crate::analysis::AnalyzedRevisions>,
+) -> Result<String, &'static str> {
+    let _ = root;
+    revisions
+        .and_then(|r| r.loaded_diff_origin.as_ref())
+        .cloned()
+        .ok_or("could not establish the analyzed diff origin")
+}
+
+fn gap_bound_record<'a>(
+    output: &'a super::CheckOutput,
+    check_config: &crate::config::RiprConfig,
+    finding: &crate::domain::Finding,
+) -> Option<(&'a str, crate::output::gap_decision_ledger::GapRecord)> {
     if super::gap_bound_repair::finding_is_static_limited(finding) {
         return None;
     }
@@ -1080,13 +1132,7 @@ fn gap_bound_route(
         }
         _ => return None,
     };
-    let uncommitted_files = uncommitted_production_files(&output.root, &record);
-    Some(crate::app::GapRepairRoute {
-        finding_id: finding.id.clone(),
-        gap_id: record.canonical_gap_id,
-        base: base.to_string(),
-        uncommitted_files,
-    })
+    Some((base, record))
 }
 
 /// Dirty paths the gap-bound start would refuse to begin from (#10698),
@@ -1094,26 +1140,21 @@ fn gap_bound_route(
 /// tracked path outside the packet's allowed edit surface (normally only the
 /// selected test file), so this asks the same packet, policy and
 /// `trusted_head_surface_violations` predicate the start itself uses rather
-/// than guessing from path shapes. If the packet, policy, HEAD or Git cannot
-/// answer, no file is named and the start's own refusal stays the backstop.
+/// than guessing from path shapes. If the packet, policy, HEAD or Git cannot answer, the route is withheld.
 fn uncommitted_production_files(
     root: &Path,
     record: &crate::output::gap_decision_ledger::GapRecord,
-) -> Vec<String> {
+) -> Result<Vec<String>, String> {
     let display = format!(
         "target/ripr/workflow/{}",
         super::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_FILE
     );
-    let Ok(packet) =
-        crate::output::agent_seam_packets::render_gap_bound_repair_packet(&display, record)
-    else {
-        return Vec::new();
-    };
-    let Ok(policy) =
-        crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &record.canonical_gap_id)
-    else {
-        return Vec::new();
-    };
+    let packet =
+        crate::output::agent_seam_packets::render_gap_bound_repair_packet(&display, record)?;
+    let policy = crate::app::repair_attempt::edit_cage_policy_from_packet(
+        &packet,
+        &record.canonical_gap_id,
+    )?;
     dirty_paths_outside_surface(root, &policy)
 }
 
@@ -1122,25 +1163,21 @@ fn uncommitted_production_files(
 fn dirty_paths_outside_surface(
     root: &Path,
     policy: &crate::edit_cage::EditCagePolicy,
-) -> Vec<String> {
-    let Ok(head) = crate::agent::artifact::current_git_head(root) else {
-        return Vec::new();
-    };
-    let Ok(violations) =
+) -> Result<Vec<String>, String> {
+    let head = crate::agent::artifact::current_git_head(root).map_err(|e| e.to_string())?;
+    let violations =
         crate::app::repair_attempt::trusted_head_surface_violations(root, policy, &[], &head)
-    else {
-        return Vec::new();
-    };
-    let prefix = repo_prefix(root);
-    violations
+            .map_err(|e| e.to_string())?;
+    let prefix = repo_prefix(root)?;
+    Ok(violations
         .iter()
         .map(|path| relative_to_cwd_root(path, &prefix))
-        .collect()
+        .collect())
 }
 
 /// `git rev-parse --show-prefix`: the analyzed root's path inside its
 /// repository (empty at the top, otherwise `dir/sub/`).
-fn repo_prefix(root: &Path) -> String {
+fn repo_prefix(root: &Path) -> Result<String, String> {
     crate::git::run_git_output_with_deadline_and_limit(
         root,
         &["rev-parse", "--show-prefix"],
@@ -1150,7 +1187,7 @@ fn repo_prefix(root: &Path) -> String {
     .ok()
     .filter(|output| output.status.success())
     .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-    .unwrap_or_default()
+    .ok_or_else(|| "could not resolve repository prefix".to_string())
 }
 
 /// A repository-root-relative path respelled relative to the analyzed root,
@@ -1174,6 +1211,8 @@ pub(crate) fn selected_gap_bound_route(
 ) -> Option<crate::app::GapRepairRoute> {
     let finding = crate::output::human::selected_triage_finding(output, check_config)?;
     gap_bound_route(output, check_config, finding)
+        .ok()
+        .flatten()
 }
 
 /// The repair route for the one finding the default human `ripr check`
@@ -1246,8 +1285,16 @@ pub(crate) fn check_repair_route(
     // that does not validate, a static-limited one, and a run without a base
     // keep the refusals below. A Python finding takes the same route
     // (#10373); the other routed languages are unchanged.
-    if !static_limited && let Some(route) = gap_bound_route(output, check_config, finding) {
-        return CheckRepairRoute::GapRoute(route);
+    if !static_limited {
+        match gap_bound_route(output, check_config, finding) {
+            Ok(Some(route)) => return CheckRepairRoute::GapRoute(route),
+            Err(reason) => {
+                return CheckRepairRoute::Refused(RepairRouteRefusal::GapRouteUnavailable {
+                    reason,
+                });
+            }
+            Ok(None) => {}
+        }
     }
     let Some(gap) = finding.canonical_gap.as_ref() else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoCanonicalGap);
@@ -2869,25 +2916,30 @@ pub(crate) mod tests {
         let policy =
             crate::app::repair_attempt::edit_cage_policy_from_packet(&packet.to_string(), "gap-1")?;
 
+        // A missing repository is unknown, never a clean tree.
+        let Err(_error) = dirty_paths_outside_surface(&root.join("missing"), &policy) else {
+            return Err("missing repository was treated as clean".to_string());
+        };
+
         // Clean tree: nothing to commit, so the start prints bare.
-        assert!(dirty_paths_outside_surface(&root, &policy).is_empty());
+        assert!(dirty_paths_outside_surface(&root, &policy)?.is_empty());
 
         // The selected test file is the only dirty path the start allows.
         std::fs::write(root.join("tests/test_pricing.py"), "y = 2\n")
             .map_err(|error| format!("write test failed: {error}"))?;
-        assert!(dirty_paths_outside_surface(&root, &policy).is_empty());
+        assert!(dirty_paths_outside_surface(&root, &policy)?.is_empty());
         // A second test-looking file is NOT allowed: the start refuses it.
         std::fs::write(root.join("tests/conftest.py"), "z = 2\n")
             .map_err(|error| format!("write conftest failed: {error}"))?;
         assert_eq!(
-            dirty_paths_outside_surface(&root, &policy),
+            dirty_paths_outside_surface(&root, &policy)?,
             ["tests/conftest.py"]
         );
         std::fs::write(root.join("pricing.py"), "x = 2\n")
             .map_err(|error| format!("write production failed: {error}"))?;
         run_git(&root, &["add", "pricing.py"])?;
         assert_eq!(
-            dirty_paths_outside_surface(&root, &policy),
+            dirty_paths_outside_surface(&root, &policy)?,
             ["pricing.py", "tests/conftest.py"]
         );
         // A deleted tracked production file also differs from HEAD, and the
@@ -2895,16 +2947,35 @@ pub(crate) mod tests {
         std::fs::remove_file(root.join("util.py"))
             .map_err(|error| format!("delete util.py failed: {error}"))?;
         assert_eq!(
-            dirty_paths_outside_surface(&root, &policy),
+            dirty_paths_outside_surface(&root, &policy)?,
             ["pricing.py", "tests/conftest.py", "util.py"]
         );
         // A tracked file whose name looks like a glob is named literally.
         std::fs::write(root.join("src/[ab].py"), "g = 2\n")
             .map_err(|error| format!("write glob-named file failed: {error}"))?;
         assert_eq!(
-            dirty_paths_outside_surface(&root, &policy),
+            dirty_paths_outside_surface(&root, &policy)?,
             ["pricing.py", "src/[ab].py", "tests/conftest.py", "util.py"]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn dirty_origin_requires_captured_revisions_and_resolvable_git() -> Result<(), String> {
+        let Err(_error) = resolved_dirty_origin(Path::new("."), None) else {
+            return Err("missing revisions were accepted".to_string());
+        };
+        let revisions = crate::analysis::AnalyzedRevisions {
+            base_ref: "HEAD".to_string(),
+            base_commit: Some("a".repeat(40)),
+            merge_base_commit: None,
+            loaded_diff_origin: None,
+            head_commit: Some("b".repeat(40)),
+            working_tree: true,
+        };
+        let Err(_error) = resolved_dirty_origin(Path::new("."), Some(&revisions)) else {
+            return Err("missing origin was accepted".to_string());
+        };
         Ok(())
     }
 

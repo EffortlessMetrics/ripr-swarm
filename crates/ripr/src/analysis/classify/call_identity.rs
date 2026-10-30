@@ -102,7 +102,11 @@ pub(crate) struct CallIdentityMemos {
     /// One syntax owner for every inherent-receiver query of the run, so the
     /// workspace trusted-macro scan behind assertion admission is paid once
     /// per index rather than once per (seam, test) receiver check.
-    pub(super) receiver_pin_syntax: Mutex<super::OwnerPinSyntax>,
+    ///
+    /// Held directly, not behind a lock: its memos are already `SyncMemo`s, and
+    /// a guard held across a query would serialize every worker and could
+    /// re-enter on the rayon thread that steals a sibling seam mid-scan.
+    pub(super) receiver_pin_syntax: super::OwnerPinSyntax,
     /// #9218: the same per owner, built even when the owner has no
     /// same-named rival, for resolving a qualified call's spelled path.
     solo_identities: Mutex<SoloIdentities>,
@@ -124,9 +128,24 @@ pub(crate) struct CallIdentityMemos {
     /// further type names its renames and definitions mention, so each name is
     /// read from the corpus once per run instead of once per seam.
     type_word_facts: Mutex<BTreeMap<String, (bool, Vec<String>)>>,
+    /// #10977: whole-index macro-rebound answers keyed by requested name
+    /// set, so the fixed-set production callers share one parser-backed
+    /// scan per set instead of rescanning the corpus per probe.
+    macro_rebound: crate::analysis::sync_memo::SyncMemo<BTreeMap<Vec<String>, bool>>,
+    /// #10977: how many unmemoized rebound scans ran on this index.
+    /// Test-only scaling probe: repeated probes must not rescan.
+    #[cfg(test)]
+    rebound_scans: std::sync::atomic::AtomicUsize,
 }
 
 impl CallIdentityMemos {
+    /// How many full-workspace macro scans the run-shared receiver syntax
+    /// owner has paid.
+    #[cfg(test)]
+    pub(in crate::analysis) fn receiver_scan_passes(&self) -> u32 {
+        self.receiver_pin_syntax.workspace_scan_passes()
+    }
+
     /// The memoized masked sources, built by `build` on first use.
     pub(in crate::analysis) fn masked_sources(
         &self,
@@ -160,6 +179,40 @@ impl CallIdentityMemos {
         build: impl FnOnce() -> BTreeMap<String, usize>,
     ) -> &BTreeMap<String, usize> {
         self.type_name_counts.get_or_init(build)
+    }
+
+    /// The memoized rebound answer for requested macro set `key`
+    /// (sorted), computed by `compute` outside the lock on first use.
+    /// The scan is a pure function of the index sources, which never
+    /// change after the build except through producers that
+    /// [`clear`](Self::clear) these memos. Two workers that miss together
+    /// may each scan; the first insert wins and both get the same answer.
+    pub(in crate::analysis) fn macro_rebound(
+        &self,
+        key: Vec<String>,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        if let Some(found) = self.macro_rebound.borrow().get(&key) {
+            return *found;
+        }
+        let computed = compute();
+        #[cfg(test)]
+        self.rebound_scans
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *self
+            .macro_rebound
+            .borrow_mut()
+            .entry(key)
+            .or_insert(computed)
+    }
+
+    /// How many unmemoized rebound scans ran on this index (#10977
+    /// scaling probe). Every repeated probe of one analysis must reuse
+    /// the first scan, so a repeated fixed-set query keeps this at one.
+    #[cfg(test)]
+    pub(in crate::analysis) fn rebound_scan_count(&self) -> usize {
+        self.rebound_scans
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 

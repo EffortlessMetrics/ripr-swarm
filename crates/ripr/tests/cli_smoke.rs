@@ -30,6 +30,9 @@ mod candidate_config_recovery;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 #[path = "cli_smoke/check_artifact_stdin.rs"]
 mod check_artifact_stdin;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/check_budget_refusals.rs"]
+mod check_budget_refusals;
 #[path = "cli_smoke/cli_value_contracts.rs"]
 mod cli_value_contracts;
 #[path = "cli_smoke/closed_stderr.rs"]
@@ -149,6 +152,10 @@ mod source_unicode;
 mod structural_workspace_markers;
 #[path = "cli_smoke/suppression_notice.rs"]
 mod suppression_notice;
+#[path = "cli_smoke/ts_limitations_boundaries.rs"]
+mod ts_limitations_boundaries;
+#[path = "cli_smoke/ts_limitations_truncation.rs"]
+mod ts_limitations_truncation;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_caught_assertions.rs"]
 mod typescript_caught_assertions;
@@ -17699,8 +17706,8 @@ fn pilot_excludes_rust_when_disabled_in_language_config() -> Result<(), String> 
         "must rank no Rust seam: {terminal}"
     );
     assert!(
-        terminal.contains("Excluded from pilot's Rust seam scan:")
-            && terminal.contains("not enabled in ripr.toml [languages]"),
+        terminal.contains("Not scanned by pilot:\n  rust:")
+            && terminal.contains("turned off in ripr.toml [languages]"),
         "missing exclusion disclosure: {terminal}"
     );
     // Markdown: the exclusion section.
@@ -17847,9 +17854,9 @@ fn pilot_says_so_when_the_top_seam_has_no_repair_command() -> Result<(), String>
         "pilot-no-repair-command",
         "\n#[cfg(test)]\nmod more {\n    #[test]\n    fn smoke() {\n        assert_eq!(1 + 1, 2);\n    }\n}\n",
     )?;
-    assert!(stdout.contains("focused test: add "), "{stdout}");
+    assert!(stdout.contains("test to add: a test such as "), "{stdout}");
     assert!(
-        stdout.contains("repair this seam: not available for this seam"),
+        stdout.contains("repair this gap: not available for this gap"),
         "{stdout}"
     );
     assert!(
@@ -17869,9 +17876,9 @@ fn pilot_says_so_when_the_top_seam_has_no_repair_command() -> Result<(), String>
 #[test]
 fn pilot_prints_a_module_confined_repair_for_one_inline_test_module() -> Result<(), String> {
     let stdout = pilot_inline_only_stdout("pilot-inline-repair-command", "")?;
-    assert!(stdout.contains("focused test: add "), "{stdout}");
+    assert!(stdout.contains("test to add: a test such as "), "{stdout}");
     assert!(
-        stdout.contains("repair this seam: ripr agent repair --root"),
+        stdout.contains("repair this gap: ripr agent repair --root"),
         "{stdout}"
     );
     assert!(
@@ -17943,7 +17950,7 @@ fn pilot_format_json_prints_the_packet_summary_and_suppresses_the_human_block() 
         assert_eq!(seam["owner"], "src/lib.rs::price", "{parsed}");
     }
     assert!(
-        !stdout.contains("focused test:"),
+        !stdout.contains("test to add:"),
         "human terminal must not mix into JSON stdout:\n{stdout}"
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -18010,7 +18017,7 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
     assert!(stdout.contains("RIPR pilot complete."));
     assert!(stdout.contains("config: missing, using built-in defaults"));
     assert!(stdout.contains("Top recommendation:"));
-    assert!(stdout.contains("focused test:"));
+    assert!(stdout.contains("test to add:"));
     // #3906: an eligible top seam gets one ordinary route, the repair
     // transaction, not the manual before/after snapshot pair as well.
     assert!(stdout.contains("Next, in order:"), "{stdout}");
@@ -18044,12 +18051,13 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
     // transaction cannot find.
     let seam_line = stdout
         .lines()
-        .find_map(|line| line.trim().strip_prefix("inspected seam: "))
-        .ok_or_else(|| format!("pilot terminal printed no inspected-seam line:\n{stdout}"))?;
+        .find_map(|line| line.trim().strip_prefix("gap "))
+        .ok_or_else(|| format!("pilot terminal printed no gap line:\n{stdout}"))?;
     let printed_id = seam_line
         .split_whitespace()
         .next()
-        .ok_or_else(|| format!("inspected-seam line carried no id: {seam_line}"))?;
+        .ok_or_else(|| format!("gap line carried no id: {seam_line}"))?
+        .trim_end_matches(':');
     assert!(
         printed_id.len() == 16 && printed_id.chars().all(|ch| ch.is_ascii_hexdigit()),
         "expected a 16-hex seam id to lead the inspected-seam line, got: {seam_line}"
@@ -18066,7 +18074,7 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
     // this assertion fail on Windows for a command that is in fact correct.
     let repair_line = stdout
         .lines()
-        .find_map(|line| line.trim().strip_prefix("repair this seam: "))
+        .find_map(|line| line.trim().strip_prefix("repair this gap: "))
         .ok_or_else(|| format!("pilot did not print a repair command:\n{stdout}"))?;
     let repair_words = shell_words::printed_words(repair_line)?;
     let tokens: Vec<&str> = repair_words.iter().map(String::as_str).collect();
@@ -18929,7 +18937,7 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
         "recommended repair: strengthen test_calculate_discount_smoke in tests/test_pricing.py",
         "verify: python -m pytest tests/test_pricing.py::test_calculate_discount_smoke",
         "receipt status: unavailable_until_python_gap_ledger",
-        "  scope: change-first (python (preview) seams on lines changed since origin/main rank first)\n",
+        "  scope: change-first (gaps in python (preview) code on lines changed since origin/main rank first)\n",
     ] {
         assert!(stdout.contains(needle), "missing stdout needle: {needle}");
     }
@@ -19533,7 +19541,7 @@ fn assert_pilot_does_not_read_as_clean(stdout: &str, md: &str) {
         "no-Rust-seam pilot must not print the plain no-recommendation line:\n{stdout}"
     );
     assert!(
-        stdout.contains("Languages outside pilot's Rust seam scan:"),
+        stdout.contains("Not scanned by pilot (it scans Rust):"),
         "{stdout}"
     );
     assert!(
@@ -19562,12 +19570,15 @@ fn assert_pilot_headline_names_supported_check_route(
         "headline must name the supported-language check route:\n{stdout}"
     );
     assert!(
-        !stdout
-            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        !stdout.contains(
+            "none: pilot found no gaps in the Rust code it checked; see the other languages below"
+        ),
         "headline must not read as an empty recommendation:\n{stdout}"
     );
     assert!(
-        stdout.contains("(pilot ranks Rust seams and found none here; see the languages below)"),
+        stdout.contains(
+            "(pilot found no gaps in the Rust code it checked; see the other languages below)"
+        ),
         "{stdout}"
     );
     assert!(
@@ -19627,8 +19638,9 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
     // analyze it, so the headline stays none while the languages section
     // still names the route (#7665).
     assert!(
-        stdout
-            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        stdout.contains(
+            "none: pilot found no gaps in the Rust code it checked; see the other languages below"
+        ),
         "disabled TypeScript must not headline the check route:\n{stdout}"
     );
     assert!(!stdout.contains("analyze the TypeScript diff:"), "{stdout}");
@@ -19638,13 +19650,13 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
     );
     assert!(
         stdout.contains(
-            "typescript: 2 files (preview, diff-first; not enabled in ripr.toml [languages])"
+            "typescript: 2 files (preview; turn it on in ripr.toml [languages] to check it)"
         ),
         "{stdout}"
     );
     assert!(
         stdout.contains(&format!(
-            "not enabled in ripr.toml [languages])\n    route: {command}\n"
+            "turn it on in ripr.toml [languages] to check it)\n    route: {command}\n"
         )),
         "{stdout}"
     );
@@ -19669,7 +19681,8 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
         true
     );
     assert!(
-        enabled_stdout.contains("typescript: 2 files (preview, diff-first)\n"),
+        enabled_stdout
+            .contains("typescript: 2 files (preview; run the command below to check the diff)\n"),
         "{enabled_stdout}"
     );
     assert_pilot_headline_names_supported_check_route(
@@ -19745,7 +19758,7 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
     assert_eq!(exposure["metrics"]["seams_total"], 0);
     assert!(
         stdout.contains(&format!(
-            "python: 2 files (preview, diff-first)\n    route: {command}\n"
+            "python: 2 files (preview; run the command below to check the diff)\n    route: {command}\n"
         )),
         "{stdout}"
     );
@@ -19759,8 +19772,9 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
         "{stdout}"
     );
     assert!(
-        !stdout
-            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        !stdout.contains(
+            "none: pilot found no gaps in the Rust code it checked; see the other languages below"
+        ),
         "a Python repair card remains the top recommendation:\n{stdout}"
     );
     assert!(
@@ -19823,7 +19837,7 @@ fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), St
         // headline stays none (same as disabled TypeScript).
         assert!(
             stdout.contains(
-                "none: pilot ranks Rust seams and found none here; see the languages below"
+                "none: pilot found no gaps in the Rust code it checked; see the other languages below"
             ),
             "disabled Perl keeps the none headline:\n{stdout}"
         );
@@ -19831,7 +19845,7 @@ fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), St
     } else {
         assert!(
             stdout.contains(
-                "none: pilot ranks Rust seams and found none here; see the languages below"
+                "none: pilot found no gaps in the Rust code it checked; see the other languages below"
             ),
             "unavailable Perl keeps the none headline:\n{stdout}"
         );
@@ -20099,7 +20113,7 @@ fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), 
     );
     assert!(
         stdout.contains(
-            "current change: part of it (this seam is on a line changed since origin/main)"
+            "current change: part of it (this gap is on a line changed since origin/main)"
         ),
         "{stdout}"
     );
@@ -20192,7 +20206,7 @@ fn pilot_names_no_build_script_when_rust_is_disabled() -> Result<(), String> {
     // the build script unnamed.
     assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
     assert!(
-        stdout.contains("not enabled in ripr.toml [languages]"),
+        stdout.contains("turned off in ripr.toml [languages]"),
         "Rust must be reported as disabled: {stdout}"
     );
     assert!(!stdout.contains("build.rs"), "{stdout}");
@@ -20381,7 +20395,7 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     assert!(!stdout.contains("--worktree"), "{stdout}");
     assert!(
         stdout.contains(
-            "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n"
+            "  scope: change-first (gaps in Rust code on lines changed since origin/main rank first)\n"
         ),
         "{stdout}"
     );
@@ -20401,13 +20415,12 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         true
     );
     assert!(
-        stdout
-            .contains("Top recommendation:\n  Order: change-touched seams first, then grip class"),
+        stdout.contains("Top recommendation:\n  Picked first because "),
         "{stdout}"
     );
     assert!(
         stdout.contains(
-            "  current change: part of it (this seam is on a line changed since origin/main)"
+            "  current change: part of it (this gap is on a line changed since origin/main)"
         ),
         "{stdout}"
     );
@@ -20582,9 +20595,9 @@ fn pilot_keeps_rust_output_byte_identical_when_rust_seams_exist() -> Result<(), 
         rust_summary["language_routes"],
         serde_json::json!({"state": "not_detected", "routes": []})
     );
-    assert!(rust_stdout.contains("inspected seam: "), "{rust_stdout}");
+    assert!(rust_stdout.contains("\n  gap "), "{rust_stdout}");
     assert!(
-        !rust_stdout.contains("Languages outside pilot's Rust seam scan"),
+        !rust_stdout.contains("Not scanned by pilot (it scans Rust)"),
         "{rust_stdout}"
     );
 
@@ -31719,15 +31732,58 @@ fn check_rejects_invalid_check_timeout_flag_and_env() -> Result<(), String> {
         ));
     }
 
-    let explicit = run_ripr_with_env(
+    // Precedence wiring stays observable on every feature set: an explicit
+    // `--timeout` must win without consulting the environment, so the env
+    // refusal stays absent even though the plain root is refused on its own.
+    let precedence = run_ripr_with_env(
         &["check", "--root", root, "--timeout", "5"],
         &[("RIPR_CHECK_TIMEOUT", "abc")],
     );
-    let stderr = String::from_utf8_lossy(&explicit.stderr);
-    if stderr.contains("RIPR_CHECK_TIMEOUT requires a non-negative integer") {
+    let stderr = String::from_utf8_lossy(&precedence.stderr);
+    if precedence.status.code() != Some(2)
+        || stderr.contains("RIPR_CHECK_TIMEOUT requires a non-negative integer")
+    {
         return Err(format!(
-            "--timeout should take precedence over the env var: {stderr}"
+            "--timeout must win over a bad RIPR_CHECK_TIMEOUT without reading it, got {:?}; stderr: {stderr}",
+            precedence.status.code()
         ));
+    }
+
+    #[cfg(feature = "lang-rust")]
+    {
+        // A real nonempty diff makes precedence observable: reaching a different
+        // error, or skipping analysis entirely, must not satisfy this control.
+        let fixture = workspace_root().join("fixtures/boundary_gap");
+        let input = fixture.join("input").to_string_lossy().into_owned();
+        let diff = fixture.join("diff.patch").to_string_lossy().into_owned();
+        let explicit = run_ripr_with_env(
+            &[
+                "check",
+                "--root",
+                &input,
+                "--diff",
+                &diff,
+                "--json",
+                "--timeout",
+                "0",
+            ],
+            &[("RIPR_CHECK_TIMEOUT", "abc")],
+        );
+        let stderr = String::from_utf8_lossy(&explicit.stderr);
+        if stderr.contains("RIPR_CHECK_TIMEOUT requires a non-negative integer") {
+            return Err(format!(
+                "--timeout should take precedence over the env var: {stderr}"
+            ));
+        }
+        assert_success(&explicit);
+        let document: serde_json::Value = serde_json::from_slice(&explicit.stdout)
+            .map_err(|err| format!("successful timeout override must emit JSON: {err}"))?;
+        assert!(
+            document["findings"]
+                .as_array()
+                .is_some_and(|rows| !rows.is_empty()),
+            "override must analyze the real diff: {document}"
+        );
     }
     ignore_remove_dir_all(&workspace);
     Ok(())

@@ -42,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/boundary_named_constant/input --diff <cwd>/fixtures/boundary_named_constant/diff.patch --mode fast probe:src_lib.rs:predicate:70700926
   ripr context --root <cwd>/fixtures/boundary_named_constant/input --diff <cwd>/fixtures/boundary_named_constant/diff.patch --mode fast --at probe:src_lib.rs:predicate:70700926
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that pins the changed boundary value exactly; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that pins the changed boundary value exactly; a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/boundary_named_constant/input --at src/lib.rs:30 --kind predicate
 

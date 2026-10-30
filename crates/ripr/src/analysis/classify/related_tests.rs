@@ -4201,7 +4201,12 @@ fn base_type_name(name: &str) -> &str {
 /// `name` is judged by its declared return type alone. With none, `default`
 /// is credited only by positive evidence of `impl Default for ty` or a unique
 /// `#[derive(Default)]` type, and `from` only by an `impl From<_> for ty`.
-fn associated_constructor_names_own_type(index: &RustIndex, ty: &str, name: &str) -> bool {
+fn associated_constructor_names_own_type(
+    index: &RustIndex,
+    ty: &str,
+    name: &str,
+    test_file: Option<&Path>,
+) -> bool {
     let inherent = index.functions().iter().any(|function| {
         function.name == name
             && matches!(&function.item.container,
@@ -4221,7 +4226,11 @@ fn associated_constructor_names_own_type(index: &RustIndex, ty: &str, name: &str
         })
     };
     match name {
-        "default" => trait_impl("Default") || type_derives_default(index, ty),
+        "default" => {
+            trait_impl("Default")
+                || type_derives_default(index, ty)
+                || test_file.is_some_and(|file| type_derives_default_in_file(index, ty, file))
+        }
         "from" => trait_impl("From"),
         _ => false,
     }
@@ -4945,6 +4954,7 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     method: &str,
     impl_type: &str,
     index: Option<&RustIndex>,
+    owner: Option<&FunctionSummary>,
 ) -> bool {
     // The legacy text scan cannot be a deny gate: its last `let` can live in
     // an expired sibling block, and it cannot read a qualified unit variant.
@@ -4953,15 +4963,11 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
         return false;
     }
     // The index-owned syntax owner keeps the workspace macro scan to one pass
-    // per run; a poisoned lock or an index-less probe uses a private owner.
+    // per run; an index-less probe uses a private owner.
     let private_syntax;
-    let shared_syntax;
-    let pin_syntax = match index.map(|index| index.call_identity_memos.receiver_pin_syntax.lock()) {
-        Some(Ok(guard)) => {
-            shared_syntax = guard;
-            &*shared_syntax
-        }
-        _ => {
+    let pin_syntax = match index {
+        Some(index) => &index.call_identity_memos.receiver_pin_syntax,
+        None => {
             private_syntax = super::OwnerPinSyntax::default();
             &private_syntax
         }
@@ -4971,18 +4977,42 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
             super::owner_pin::unit_struct_value(name, &test.file, index, pin_syntax)
         })
     };
+    // The file-local claims below speak of the test file's own root `ty`, so
+    // they bind the probed owner only when its `impl` is a root item of that
+    // same file (a sibling module's same-named type is another owner).
+    let owner_local = index
+        .zip(owner)
+        .is_some_and(|(index, owner)| owner_impl_is_root_item_of(index, owner, &test.file));
     let factory = |ty: &str, name: &str| {
         index.is_some_and(|index| {
             if ty.is_empty() {
                 // A free-function receiver head: `fixture().method()`.
                 free_fn_returns_type(index, name, impl_type)
             } else {
-                associated_constructor_names_own_type(index, ty, name)
+                associated_constructor_names_own_type(
+                    index,
+                    ty,
+                    name,
+                    owner_local.then_some(test.file.as_path()),
+                )
             }
         })
     };
+    // The test fragment omits its file's imports, so a parameter's type name
+    // is the owner only when no `use` or `type` in that file rebinds it.
+    let owner_unrebound = || {
+        owner_local && index.is_some_and(|index| !file_rebinds_type(index, &test.file, impl_type))
+    };
     executable_call_resolves(test, index, pin_syntax, &|node, scope| {
-        inherent_call_node_resolves(node, scope, method, impl_type, &unit_struct, &factory)
+        inherent_call_node_resolves(
+            node,
+            scope,
+            method,
+            impl_type,
+            &unit_struct,
+            &factory,
+            &owner_unrebound,
+        )
     })
 }
 
@@ -4997,8 +5027,10 @@ pub(in crate::analysis) fn free_helper_call_resolves(
     if helper.item.container != FunctionContainer::Free {
         return false;
     }
-    let syntax = super::OwnerPinSyntax::default();
-    executable_call_resolves(caller, Some(index), &syntax, &|node, _| {
+    // The index-owned owner, so the workspace trusted-macro scan behind the
+    // binding check is paid once per run, not once per (seam, helper) hop.
+    let syntax = &index.call_identity_memos.receiver_pin_syntax;
+    executable_call_resolves(caller, Some(index), syntax, &|node, _| {
         let Some(call) = ast::CallExpr::cast(node) else {
             return false;
         };
@@ -5029,7 +5061,7 @@ pub(in crate::analysis) fn free_helper_call_resolves(
             helper,
             prefix.as_deref(),
             index,
-            &syntax,
+            syntax,
         )
     })
 }
@@ -5106,6 +5138,7 @@ fn inherent_call_node_resolves(
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
     factory: &dyn Fn(&str, &str) -> bool,
+    owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
     if !ast::MethodCallExpr::can_cast(node.kind()) && !ast::CallExpr::can_cast(node.kind()) {
         return false;
@@ -5131,6 +5164,7 @@ fn inherent_call_node_resolves(
                     impl_type,
                     unit_struct,
                     factory,
+                    owner_unrebound,
                 )
             });
     }
@@ -5154,6 +5188,7 @@ fn inherent_call_node_resolves(
                     impl_type,
                     unit_struct,
                     factory,
+                    owner_unrebound,
                 )
             })
 }
@@ -5237,6 +5272,7 @@ fn scoped_receiver_names_type(
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
     factory: &dyn Fn(&str, &str) -> bool,
+    owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
     // Parentheses and borrows preserve this bounded receiver identity.
     for _ in 0..32 {
@@ -5266,6 +5302,7 @@ fn scoped_receiver_names_type(
                     impl_type,
                     unit_struct,
                     factory,
+                    owner_unrebound,
                 );
             }
         }
@@ -5314,6 +5351,7 @@ fn visible_receiver_binding_names_type(
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
     factory: &dyn Fn(&str, &str) -> bool,
+    owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
     for ancestor in call.ancestors().skip(1) {
         // These patterns may bind the receiver. This small admission does not
@@ -5394,11 +5432,194 @@ fn visible_receiver_binding_names_type(
                 });
             }
         }
-        if ast::Fn::can_cast(ancestor.kind()) {
-            return false;
+        if let Some(function) = ast::Fn::cast(ancestor) {
+            return owner_unrebound() && fn_param_names_type(&function, name, impl_type);
         }
     }
     false
+}
+
+/// Whether `function` declares a plain parameter `name` whose whole type is
+/// the unqualified `impl_type`, optionally behind `&`/`&mut`. An rstest
+/// fixture is injected through such a parameter, and any enclosing fn's
+/// declared parameter type is its nominal type. A qualified path,
+/// generic argument list or `impl`/`dyn` type is not the nominal owner.
+fn fn_param_names_type(function: &ast::Fn, name: &str, impl_type: &str) -> bool {
+    function.param_list().is_some_and(|list| {
+        list.params().any(|param| {
+            let Some(ast::Pat::IdentPat(pattern)) = param.pat() else {
+                return false;
+            };
+            if pattern.at_token().is_some()
+                || pattern.name().is_none_or(|bound| bound.text() != name)
+            {
+                return false;
+            }
+            let Some(ty) = param.ty() else {
+                return false;
+            };
+            let text = ty.syntax().text().to_string();
+            let text = text.trim().trim_start_matches('&').trim();
+            let text = text.strip_prefix("mut ").unwrap_or(text).trim();
+            text == impl_type
+        })
+    })
+}
+
+/// Whether `owner` is declared in `file` inside an `impl` that is a direct item
+/// of the file root.
+fn owner_impl_is_root_item_of(index: &RustIndex, owner: &FunctionSummary, file: &Path) -> bool {
+    if owner.file != file {
+        return false;
+    }
+    let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
+        return false;
+    };
+    let syntax = tree.syntax();
+    let source = syntax.text().to_string();
+    let line_of = |offset: usize| {
+        1 + source.as_bytes()[..offset.min(source.len())]
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count()
+    };
+    syntax
+        .descendants()
+        .filter_map(ast::Impl::cast)
+        .any(|item| {
+            let range = item.syntax().text_range();
+            let (start, end) = (
+                line_of(u32::from(range.start()) as usize),
+                line_of(u32::from(range.end()) as usize),
+            );
+            start <= owner.start_line
+                && owner.start_line <= end
+                && item
+                    .syntax()
+                    .parent()
+                    .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
+        })
+}
+
+/// Whether `file` has a `use` that names `ty` or a glob other than `self::*` /
+/// `super::*`, or a `type` alias called `ty`: any of which can make a bare
+/// `ty` mean a type declared elsewhere.
+fn file_rebinds_type(index: &RustIndex, file: &Path, ty: &str) -> bool {
+    let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
+        return true;
+    };
+    let syntax = tree.syntax();
+    let mentions = |node: &SyntaxNode| {
+        node.descendants().any(|node| {
+            ast::Name::cast(node.clone()).is_some_and(|bound| bound.text() == ty)
+                || ast::NameRef::cast(node).is_some_and(|bound| bound.text() == ty)
+        })
+    };
+    for item in syntax.descendants().filter_map(ast::Use::cast) {
+        let compact: String = item
+            .syntax()
+            .text()
+            .to_string()
+            .split_whitespace()
+            .collect();
+        let glob = item
+            .syntax()
+            .descendants()
+            .filter_map(ast::UseTree::cast)
+            .any(|tree| tree.star_token().is_some());
+        // `super::*` reaches the file root only from a `mod` declared directly
+        // in it; anywhere else `super` is another module that may hold `ty`.
+        let reaches_root = match compact.as_str() {
+            "useself::*;" => true,
+            "usesuper::*;" => item
+                .syntax()
+                .parent()
+                .and_then(|list| list.parent())
+                .is_some_and(|module| {
+                    ast::Module::can_cast(module.kind())
+                        && module
+                            .parent()
+                            .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
+                }),
+            _ => false,
+        };
+        if mentions(item.syntax()) || (glob && !reaches_root) {
+            return true;
+        }
+    }
+    // A local alias, trait or module spelled `ty`, or a type declared away
+    // from the root or twice, can stand for a different type than the owner.
+    let at_root = |node: &SyntaxNode| {
+        node.parent()
+            .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
+    };
+    let named = |name: Option<ast::Name>| name.is_some_and(|name| name.text() == ty);
+    let mut root_types = 0;
+    for node in syntax.descendants() {
+        if let Some(alias) = ast::TypeAlias::cast(node.clone()) {
+            if named(alias.name()) {
+                return true;
+            }
+        } else if let Some(item) = ast::Trait::cast(node.clone()) {
+            if named(item.name()) {
+                return true;
+            }
+        } else if let Some(item) = ast::Module::cast(node.clone()) {
+            if named(item.name()) {
+                return true;
+            }
+        } else if let Some(adt) = ast::Adt::cast(node.clone())
+            && named(adt.name())
+        {
+            if !at_root(&node) {
+                return true;
+            }
+            root_types += 1;
+        }
+    }
+    root_types > 1
+}
+
+/// A struct/enum/union `ty` declared exactly once in `test_file`, as a direct
+/// item of the file root, carrying `#[derive(.. Default ..)]`. The file may not
+/// bind `ty` by `use` or `type`, and its only glob imports are `self::*` and
+/// `super::*` (a `mod tests` reaching the root), so no outside module can
+/// supply a same-named type. The workspace-wide uniqueness of
+/// [`type_derives_default`] is too strong for a file-local fixture type that
+/// sibling files also spell.
+fn type_derives_default_in_file(index: &RustIndex, ty: &str, test_file: &Path) -> bool {
+    let Some(tree) = index
+        .source_syntax
+        .get(index, test_file)
+        .and_then(|s| s.tree())
+    else {
+        return false;
+    };
+    let syntax = tree.syntax();
+    if file_rebinds_type(index, test_file, ty) {
+        return false;
+    }
+    let mut found = Vec::new();
+    for adt in syntax.descendants().filter_map(ast::Adt::cast) {
+        if adt.name().is_none_or(|name| name.text() != ty) {
+            continue;
+        }
+        let at_root = adt
+            .syntax()
+            .parent()
+            .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()));
+        found.push(
+            at_root
+                && ast::HasAttrs::attrs(&adt).any(|attr| {
+                    let text = attr.syntax().text().to_string();
+                    text.trim_start().starts_with("#[derive(")
+                        && text
+                            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                            .any(|word| word == "Default")
+                }),
+        );
+    }
+    matches!(found.as_slice(), [true])
 }
 
 /// Helper last hops borrow the direct owner's complete receiver refusal,
@@ -5754,7 +5975,13 @@ fn owner_call_relation_reason(
         return RelationReason::WeakTokenSubstring;
     }
     if requires_inherent_receiver_identity(owner) {
-        return if inherent_receiver_call_resolves(test, owner_name, &impl_type, Some(index)) {
+        return if inherent_receiver_call_resolves(
+            test,
+            owner_name,
+            &impl_type,
+            Some(index),
+            Some(owner),
+        ) {
             RelationReason::DirectOwnerCall
         } else {
             RelationReason::WeakTokenSubstring
@@ -12560,8 +12787,11 @@ let r = try_parse_summary(\"x\");",
     }
 
     /// #7415: keep the conservative corpus boundary separate from runtime
-    /// truth. Arbitrary factories, parameters and imported bare variants do
-    /// not gain receiver proof merely because the method name is unique.
+    /// truth. Arbitrary factories and imported bare variants do not gain
+    /// receiver proof merely because the method name is unique. A typed
+    /// parameter names its declared type only with an index that can read the
+    /// file's imports (see the index-backed parameter test), so this
+    /// index-less probe still refuses it.
     #[test]
     fn inherent_receiver_corpus_boundary_and_live_scope() {
         for (body, method, ty, expected) in [
@@ -12649,7 +12879,7 @@ let r = try_parse_summary(\"x\");",
         ] {
             let summary = test("src/lib.rs", "t", body);
             assert_eq!(
-                inherent_receiver_call_resolves(&summary, method, ty, None),
+                inherent_receiver_call_resolves(&summary, method, ty, None, None),
                 expected,
                 "{body}"
             );

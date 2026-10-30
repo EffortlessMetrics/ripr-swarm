@@ -1404,6 +1404,7 @@ mod tests {
             base_ref: "origin/main".to_string(),
             base_commit: Some("1a2b3c4d5e6f".to_string()),
             merge_base_commit: Some("9f8e7d6c5b4a".to_string()),
+            loaded_diff_origin: None,
             head_commit: Some("5d6e7f8a9b0c".to_string()),
             working_tree: true,
         });
@@ -2463,6 +2464,7 @@ weakly_gripped = "note"
     fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "finding:discount".to_string(),
             canonical_gap: None,
             probe: Probe {

@@ -1944,6 +1944,7 @@ fn happy_path_passes() {
     fn sample_finding(file: &str, line: usize) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib_rs:42:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
