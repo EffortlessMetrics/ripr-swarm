@@ -3852,6 +3852,16 @@ tests = [
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::match_case_capture_of_the_receiver_counts_as_a_binding_target",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_command_passed_to_a_local_runner_is_reached_without_an_oracle",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_helper_the_command_calls_is_reached_through_the_invoke",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_literal_runner_fixture_is_a_runner",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_runner_fixture_that_is_not_a_bare_literal_construction_is_not_trusted",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::shapes_that_do_not_prove_the_invoke_keep_no_static_path",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::an_undecorated_function_passed_to_invoke_is_not_a_command",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::text_that_only_spells_the_runner_or_the_invoke_is_not_an_invoke",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::spellings_the_relation_accepts",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_decorator_argument_call_is_not_a_helper_edge",
+  "crates/ripr/src/analysis/language/python/cli_runner_tests.rs::a_click_name_that_is_not_the_click_module_is_not_a_command",
   "crates/ripr/src/analysis/language/python/effect_order_tests.rs",
 ]
 fixtures = [
@@ -3959,6 +3969,7 @@ code = [
   "crates/ripr/src/analysis/language/python/oracles/unittest_list.rs",
   "crates/ripr/src/analysis/language/python/static_limits.rs",
   "crates/ripr/src/analysis/language/python/parse_budget.rs",
+  "crates/ripr/src/analysis/language/python/cli_runner.rs",
   "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/analysis/language/mod.rs",
   "crates/ripr/src/analysis/language/router.rs",
@@ -9868,6 +9879,11 @@ tests = [
   "crates/ripr/src/analysis/diff/load.rs::tests::git_root_probe_does_not_invent_a_cause_on_timeout",
   "crates/ripr/src/git.rs::tests::spawn_failure_names_missing_git_on_path_without_dumping_argv",
   "crates/ripr/src/git.rs::tests::native_git_spawn_with_empty_path_names_the_missing_binary",
+  "crates/ripr/src/git.rs::missing_git_marker_tests::missing_git_dotgit_directory_above_base_is_a_marker",
+  "crates/ripr/src/git.rs::missing_git_marker_tests::missing_git_plain_directory_without_marker_stays_admitted",
+  "crates/ripr/src/git.rs::missing_git_marker_tests::missing_git_gitfile_with_gitdir_prefix_is_a_marker",
+  "crates/ripr/src/git.rs::missing_git_marker_tests::missing_git_stray_dotgit_file_is_not_authority",
+  "crates/ripr/src/git.rs::missing_git_marker_tests::missing_git_symlinked_base_resolves_to_marked_tree",
   "crates/ripr/src/output/doctor.rs::tests::doctor_spawn_failure_names_the_shared_git_path_fix",
   "crates/ripr/src/output/doctor.rs::tests::doctor_first_command_prefers_saved_diff_when_git_cannot_run",
   "crates/ripr/tests/cli_smoke.rs::check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure",
@@ -18557,6 +18573,9 @@ id = "RIPR-SPEC-0241"
 name = "check --json refusal envelope"
 spec = "docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/check_budget_refusals.rs::check_budget_flag_and_environment_reach_analysis_timeout",
+  "crates/ripr/src/cli/commands/check_argv_refusal_tests.rs",
+  "crates/ripr/tests/cli_smoke.rs::check_rejects_invalid_check_timeout_flag_and_env",
   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection",
   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes",
   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory",
