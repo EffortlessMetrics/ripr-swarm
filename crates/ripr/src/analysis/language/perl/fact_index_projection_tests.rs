@@ -30,7 +30,7 @@ fn digest(packet: &PerlFactPacket) -> (String, usize) {
     let findings = packet_to_findings_with_currentness(packet, &BTreeMap::new(), |_, _| {
         crate::domain::SourceCurrentness::UnresolvedSubject
     });
-    // These snapshots predate `analysis_scope` (#9941), the absent related-test
+    // These snapshots predate `analysis_scope` (#9941), `confidence_basis` (#10700), the absent related-test
     // support field (#5564) and the related-test `role` (#5563). Retain their
     // original field set.
     let rendered = historical_projection_debug(&findings);
@@ -83,7 +83,11 @@ fn pre_index_debug(rendered: &str) -> String {
         let default_role = related_test_indent.is_some_and(|item_indent| {
             indent == item_indent + 4 && trimmed == "role: Contributing,"
         });
-        if trimmed != "analysis_scope: Diff," && !absent_support && !default_role {
+        if trimmed != "analysis_scope: Diff,"
+            && trimmed != "confidence_basis: [],"
+            && !absent_support
+            && !default_role
+        {
             lines.push(line);
         }
     }

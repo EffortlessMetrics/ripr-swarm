@@ -1221,6 +1221,7 @@ mod tests {
             summary: Summary::default(),
             findings: vec![Finding {
                 analysis_scope: crate::domain::AnalysisScope::Diff,
+                confidence_basis: Vec::new(),
                 id: "probe:src_lib_rs:21:error_path".to_string(),
                 canonical_gap: None,
                 probe: Probe {
@@ -1300,6 +1301,7 @@ mod tests {
             summary: Summary::default(),
             findings: vec![Finding {
                 analysis_scope: crate::domain::AnalysisScope::Diff,
+                confidence_basis: Vec::new(),
                 id: "probe:src_lib_rs:34:weak_signal".to_string(),
                 canonical_gap: None,
                 probe: Probe {
@@ -2033,6 +2035,7 @@ mod tests {
             summary: Summary::default(),
             findings: vec![Finding {
                 analysis_scope: crate::domain::AnalysisScope::Diff,
+                confidence_basis: Vec::new(),
                 id: "probe:src_lib_rs:13:static_unknown".to_string(),
                 canonical_gap: None,
                 probe: Probe {
@@ -2391,6 +2394,7 @@ mod tests {
             summary: Summary::default(),
             findings: vec![Finding {
                 analysis_scope: crate::domain::AnalysisScope::Diff,
+                confidence_basis: Vec::new(),
                 id: "probe:src_pricing_ts:5:predicate".to_string(),
                 canonical_gap: None,
                 probe: Probe {

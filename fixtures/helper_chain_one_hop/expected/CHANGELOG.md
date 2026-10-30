@@ -433,3 +433,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — helper_chain_one_hop (34)
+
+Reason:
+RIPR-SPEC-0122: incomplete evidence stage tokens render as plain words in the human repair advisory (#11025)
+
+Command:
+`cargo xtask goldens bless helper_chain_one_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

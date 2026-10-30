@@ -70,7 +70,7 @@ packets use, emitting it into:
 - the JSON output (`typescript_repair_packet` alongside
   `typescript_preview_card`);
 - the LSP hover (a "Repair packet" section when `repair_packet_ready: true`);
-- the LSP code-action surface ("Copy TypeScript repair packet" command).
+- the LSP code-action surface ("Copy TypeScript repair instructions for an AI agent" command).
 
 For a **blocked** (non-actionable) finding the human output names the
 limitation and why the packet is not emitted — no partial packet, no implied
@@ -202,18 +202,18 @@ When `preview_actionability.repair_packet_ready == true`, the hover adds a
 `## Repair packet` section:
 
 ```markdown
-## Repair packet (TypeScript preview, advisory)
+## Repair instructions (TypeScript preview, advisory)
 Verify: `<verify_command>`
 Receipt: `<receipt_command>`
 Edit surface: `<test_file>`
 Must not change: <n items>
 Canonical gap: `<canonical_gap_id>`
-Authority: preview_advisory_only
+Authority: preview advisory only
 ```
 
 ### LSP code action
 
-A new code action `"Copy TypeScript repair packet"` is added when the
+A new code action `"Copy TypeScript repair instructions for an AI agent"` is added when the
 diagnostic's `data.preview_actionability.repair_packet_ready == true`. It
 copies the same verify/receipt/edit-surface payload to the clipboard (via the
 existing `COPY_CONTEXT_COMMAND` mechanism).
@@ -234,9 +234,9 @@ separate projection step. This is additive — the field already exists in
   verify, receipt, edit surface, must_not_change, canonical_gap_id, and authority.
 - At least one non-actionable golden (human.txt) with the named limitation section
   (`status: not actionable`, `limitation:`, `next capability needed:`).
-- LSP hover integration evidence: `## Repair packet (TypeScript preview, advisory)`
+- LSP hover integration evidence: `## Repair instructions (TypeScript preview, advisory)`
   section visible when `repair_packet_ready: true`.
-- LSP code-action evidence: "Copy TypeScript repair packet (advisory)" action present
+- LSP code-action evidence: "Copy TypeScript repair instructions for an AI agent (advisory)" action present
   when `repair_packet_ready: true`.
 - All four surfaces built from the same `GapRecord` returned by
   `typescript_gap_record_for` — no parallel projection.

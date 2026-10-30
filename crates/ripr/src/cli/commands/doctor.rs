@@ -612,7 +612,11 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     // substitution.
     if let Some(check) = check_named(report, "git_head") {
         let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
-        lines.push(compact_tilde_line(evidence));
+        if check.status == output::doctor::DoctorCheckStatus::Fail {
+            lines.extend(failure_block(evidence));
+        } else {
+            lines.push(compact_tilde_line(evidence));
+        }
     }
     if let Some(advisory) = generated_workflow_advisory(root) {
         lines.push(compact_tilde_line(&format!(
@@ -1140,6 +1144,7 @@ fn doctor_start_here_lines(
         output::doctor::DoctorFirstCommand::MissingRoot
         | output::doctor::DoctorFirstCommand::OutsideGit
         | output::doctor::DoctorFirstCommand::InvalidConfig
+        | output::doctor::DoctorFirstCommand::DamagedRefs
         | output::doctor::DoctorFirstCommand::FailedPrerequisites => {}
         // #5259: the recommended line above already names the commit-first
         // repair; the advisory `git_head` check line carries the same state.

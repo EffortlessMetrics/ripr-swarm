@@ -44,7 +44,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_call_chain_literal_input/input --diff <cwd>/fixtures/rust_call_chain_literal_input/diff.patch --mode fast probe:src_lib.rs:predicate:596620ae
   ripr context --root <cwd>/fixtures/rust_call_chain_literal_input/input --diff <cwd>/fixtures/rust_call_chain_literal_input/diff.patch --mode fast --at probe:src_lib.rs:predicate:596620ae
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_call_chain_literal_input/input --at src/lib.rs:2 --kind predicate
 

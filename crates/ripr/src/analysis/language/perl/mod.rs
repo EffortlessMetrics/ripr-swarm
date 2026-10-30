@@ -616,6 +616,7 @@ fn unowned_change_findings(
             );
             findings.push(crate::domain::Finding {
                 analysis_scope: crate::domain::AnalysisScope::Diff,
+                confidence_basis: Vec::new(),
                 id: probe_id.clone(),
                 canonical_gap: None,
                 probe: Probe {
@@ -1072,6 +1073,7 @@ fn packet_to_findings_with_currentness(
 
         findings.push(crate::domain::Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: probe_id,
             canonical_gap,
             probe,

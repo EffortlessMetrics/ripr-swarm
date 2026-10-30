@@ -73,6 +73,7 @@ mod approx_band;
 mod arm_activation;
 mod bool_oracle;
 mod boundary;
+mod call_chain;
 mod caplog_text;
 mod classify;
 mod conditional_defs;
@@ -194,6 +195,7 @@ use static_limits::{
     PythonStaticLimit, has_identifier_boundary, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
+mod cli_runner;
 mod transitive_reach;
 #[cfg(test)]
 use static_limits::{
@@ -502,6 +504,10 @@ struct PythonFixtureDef {
     /// The class the fixture returns a fresh literal-built instance of
     /// (`return Account(100)`), when that is its whole shape (#9619).
     literal_construction: Option<String>,
+    /// The inert test-support class (`CliRunner`) the fixture returns a fresh
+    /// literal-built instance of, when that is its whole shape; the
+    /// fixture may take a lone unused `request` (#11016).
+    inert_tool: Option<String>,
     /// The literal `params=` rows a fixture returning `request.param` hands
     /// the test, one run per row (#9619, `param_fixtures.rs`).
     literal_params: Option<Vec<param_fixtures::FixtureParamRow>>,
@@ -1411,8 +1417,47 @@ impl PythonAdapter {
             workspace_incomplete,
             &foreign_prior_by_file,
         );
+        // Bytecode CPython never checks against its source, or an import path
+        // a test configuration adds, can run code other than what is read
+        // here (#9226). Read once, only when a file changed.
+        let shadowed_import = !python_changed_files.is_empty()
+            && (module_value::unchecked_bytecode(
+                &options.root,
+                workspace_read.sources.keys().map(|file| file.as_path()),
+            ) || module_value::import_path_configured(
+                &options.root,
+                workspace_read.sources.keys().map(|file| file.as_path()),
+            ));
+        let extension_names = if python_changed_files.is_empty() {
+            Some(BTreeSet::new())
+        } else {
+            module_value::extension_names(
+                &options.root,
+                workspace_read.sources.keys().map(|file| file.as_path()),
+            )
+        };
+        // pytest's prepend mode can put any ancestor of a test file on
+        // `sys.path`, including one with no source of its own.
+        let import_roots: BTreeSet<&Path> = workspace_read
+            .sources
+            .keys()
+            .flat_map(|file| file.ancestors().skip(1))
+            .collect();
         for changed in &python_changed_files {
-            let foreign = foreign_index.excluding(&changed.path);
+            let mut foreign = foreign_index.excluding(&changed.path);
+            if shadowed_import
+                || module_value::extension_beside(&options.root, &changed.path)
+                || module_value::compiled_package_shadow(
+                    &options.root,
+                    &import_roots,
+                    &changed.path,
+                )
+                || extension_names
+                    .as_ref()
+                    .is_none_or(|names| module_value::shadowed_by_extension(names, &changed.path))
+            {
+                foreign.mark_compiled_shadow();
+            }
             conditional_defs::retain_workspace_certain(&mut all_owners, &changed.path, &foreign);
             for owner in all_owners
                 .iter_mut()
@@ -1720,6 +1765,8 @@ mod deleted_lines_tests;
 mod fixtures_tests;
 
 #[cfg(test)]
+mod inert_tool_fixture_tests;
+#[cfg(test)]
 mod literal_fixture_tests;
 
 #[cfg(test)]
@@ -1745,8 +1792,14 @@ mod helper_inline_tests;
 mod literal_patch_tests;
 
 #[cfg(test)]
+mod cli_runner_tests;
+#[cfg(test)]
 mod helper_owner_call_tests;
+#[cfg(test)]
+mod test_body_writer_tests;
 
+#[cfg(test)]
+mod call_chain_tests;
 #[cfg(test)]
 mod imported_call_operator_tests;
 #[cfg(test)]
