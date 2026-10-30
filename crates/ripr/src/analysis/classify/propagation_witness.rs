@@ -189,6 +189,11 @@ pub(in crate::analysis) fn current_path_witness_with(
                     && !opaque_path_text(&probe.expression)
                     && !opaque_path_text(&sink.text)
                     || unchanged_closure_tail(probe, sink)
+                    // RIPR-SPEC-0360: the update binds to the returned local
+                    // by name; a `.await` in its term is a dot the path
+                    // identity above would read as a qualified path.
+                    || (accumulates_into_returned_local(probe, sink)
+                        && !opaque_path_text(&probe.expression))
                     // #7063: the payload-carrying source and its
                     // variant-named sink share no path identity.
                     || constructs_its_error_on_its_line(probe, sink, declared_error_variant)))
@@ -376,9 +381,32 @@ pub(in crate::analysis) fn constant_tail_witness(
             },
         },
     };
+    direct_tail_witness(probe, owner, sinks, tail_line, limitation)
+}
+
+/// #9870: the exact Result.map rewrite forwards its callback's payload.
+/// Observation remains the existing per-test Ok owner-return pin's decision.
+pub(in crate::analysis) fn result_map_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+    sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    let line = super::owner_pin::result_map::admitted_rewrite(probe, owner, index)?;
+    direct_tail_witness(probe, owner, sinks, line, "result_map_callback_payload")
+}
+
+fn direct_tail_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    sinks: &[FlowSinkFact],
+    tail_line: usize,
+    limitation: &str,
+) -> Option<PropagationWitnessV1> {
     if tail_line != probe.location.line {
         return None;
     }
+    let identity = normalize_semantic_text(&probe.expression);
     let sink = sinks.iter().find(|sink| {
         sink.owner.as_ref() == Some(&owner.id)
             && sink.kind == FlowSinkKind::ReturnValue
@@ -1621,6 +1649,7 @@ fn subject_field_collection_read(subject: &str, path: &str) -> Option<FieldColle
 ///   `self.m(..)` whose body (from `method_body`, through further `self`
 ///   calls) may do so. A method `method_body` cannot resolve counts as a
 ///   write.
+#[cfg(test)]
 pub(in crate::analysis) fn pushed_literal_collection_path(
     body: &str,
     start_line: usize,
@@ -1628,6 +1657,24 @@ pub(in crate::analysis) fn pushed_literal_collection_path(
     expression: &str,
     method_body: &dyn Fn(&str) -> Option<String>,
 ) -> Option<String> {
+    pushed_literal_site(body, start_line, line, expression, method_body).map(|site| site.path)
+}
+
+/// The push [`pushed_literal_collection_path`] confirms: the field path it
+/// writes and the path of the struct or variant literal it pushes
+/// (`Line`, `Event::Shipped`).
+pub(in crate::analysis) struct PushedLiteralSite {
+    pub(in crate::analysis) path: String,
+    pub(in crate::analysis) literal: String,
+}
+
+pub(in crate::analysis) fn pushed_literal_site(
+    body: &str,
+    start_line: usize,
+    line: usize,
+    expression: &str,
+    method_body: &dyn Fn(&str) -> Option<String>,
+) -> Option<PushedLiteralSite> {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let line_start = masked
         .split_inclusive('\n')
@@ -1675,8 +1722,12 @@ pub(in crate::analysis) fn pushed_literal_collection_path(
             let path = field_collection_write_path(body.get(call_line_start..=paren)?)?;
             let call_end = masked.len() - after_literal.len();
             let mut visited = Vec::new();
-            (!may_write_field(&masked[call_end..], path, method_body, &mut visited))
-                .then(|| path.to_string())
+            (!may_write_field(&masked[call_end..], path, method_body, &mut visited)).then(|| {
+                PushedLiteralSite {
+                    path: path.to_string(),
+                    literal: literal_path.get(..path_len).unwrap_or_default().to_string(),
+                }
+            })
         })
 }
 
@@ -4562,6 +4613,32 @@ mod tests {
     /// #7131: a field credits through a pushed collection only when its
     /// literal is the whole `push` argument on a field path of `self` and
     /// nothing after the push writes that field again.
+    #[test]
+    fn pushed_literal_site_names_the_literal_that_encloses_the_probe() {
+        let site = |body: &str, line: usize, expression: &str| {
+            pushed_literal_site(body, 1, line, expression, &|_| None)
+                .map(|site| (site.path, site.literal))
+        };
+        let plain =
+            "fn add(&mut self) {\n    self.lines.push(Line { sku: sku.to_uppercase(), qty });\n}";
+        assert_eq!(
+            site(plain, 2, "sku: sku.to_uppercase()"),
+            Some(("lines".to_string(), "Line".to_string()))
+        );
+        let variant = "fn add(&mut self) {\n    self.log.push(Event::Shipped { sku: sku.to_uppercase() });\n}";
+        assert_eq!(
+            site(variant, 2, "sku: sku.to_uppercase()"),
+            Some(("log".to_string(), "Event::Shipped".to_string()))
+        );
+        // A closed push inside the initializer must not stand in for the
+        // outer literal that holds the changed field.
+        let nested = "fn add(&mut self) {\n    self.lines.push(Line { sku: { self.audit.push(Tag { id: 1 }); sku.to_uppercase() }, qty });\n}";
+        assert_eq!(
+            site(nested, 2, "sku.to_uppercase()"),
+            Some(("lines".to_string(), "Line".to_string()))
+        );
+    }
+
     #[test]
     fn pushed_literal_collection_path_needs_the_whole_pushed_literal() {
         let path = |body: &str, line: usize| {

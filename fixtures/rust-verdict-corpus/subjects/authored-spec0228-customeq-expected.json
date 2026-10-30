@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-spec0228-customeq-expected",
+  "origin": "authored",
+  "version_label": "authored 2026-10-26 for a pushed field compared whole after a hand-written PartialEq on the pushed element type (RIPR-SPEC-0228, #7697)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "d4d5aa5d71cb3e707fb15da47d8e6d299948a8eecb82435433c7a06d6ea86820"
+    },
+    {
+      "path": "src/c_ci.rs",
+      "sha256": "c7c3f59efa1da3a5a2034a63efa45e3fb29200462d8f0cdecbb157b13ca3044f"
+    },
+    {
+      "path": "src/c_derived.rs",
+      "sha256": "114655de263a6000144625b19c069fd926919f6b434aa7cd3ed9766293c62978"
+    },
+    {
+      "path": "src/c_embed.rs",
+      "sha256": "a8c51626fcf1a7d1475423ad886543bbe01993d00d1adec03627c4a099c081cc"
+    },
+    {
+      "path": "src/c_key.rs",
+      "sha256": "ad9c3271e690509b43309fb1a0179046376d1cf8ecabdefb16fa16c816787f2a"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "70692ac88743041a251ee35c1add399d88c4713403567ca0bbd5db23981b775c"
+    }
+  ]
+}

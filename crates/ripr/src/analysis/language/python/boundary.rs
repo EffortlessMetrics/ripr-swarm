@@ -245,7 +245,7 @@ pub(super) fn python_boundary_evidence(
         observed_values.extend(rows.iter().filter_map(|row| {
             let elements = row.elements.get(filter.iterable)?;
             Some(ValueFact {
-                file: None,
+                file: Some(row.file.clone()),
                 line: row.line,
                 text: row.text.clone(),
                 value: format!("{} = [{}]", filter.iterable, elements.join(", ")),
@@ -349,6 +349,52 @@ pub(super) fn python_boundary_evidence(
                 });
             }
         }
+    }
+    // A rewrite that keeps the predicate on every integer (`v >= 100` ->
+    // `v > 99`) changes no behavior, so what a test must notice is a wrong
+    // version of the new line. The equality row pins its operator flip, but
+    // Python's mutation tool also shifts a number literal up by one
+    // (mutmut: `n` -> `n + 1`). For `v > C` and `v <= C` (and their
+    // mirrors) that moves the boundary off the equality point to
+    // `v == C + 1`, which a further row must place (#10842). `v >= C` and
+    // `v < C` move it onto `v == C`. A behavior change keeps the equality
+    // rule: the equality row notices the edit itself (RIPR-SPEC-0238 #39).
+    let step = observed_new
+        .then(|| literal_step(&condition, &operators, &left, &right))
+        .flatten()
+        .filter(|step| {
+            static_operand(&step.variable, &constants).is_none()
+                && old_line_text.is_some_and(|old| integer_equivalent_rewrite(line_text, old))
+        })
+        .filter(|step| {
+            !rows.iter().any(|row| {
+                candidates(&step.variable, row)
+                    .iter()
+                    .any(|value| literals_equal(value, &step.value))
+            })
+        });
+    if let Some(step) = step {
+        let observed_lists = format!(
+            "observed {} values: {}",
+            step.variable,
+            list_or_unresolved(if step.variable == left {
+                left_values
+            } else {
+                right_values
+            })
+        );
+        crate::analysis::classify::sort_value_facts(&mut observed_values);
+        return Some(PythonBoundaryEvidence {
+            activation: BoundaryActivation::Missing,
+            discriminator: Some(format!("{} == {}", step.variable, step.value)),
+            observed_values,
+            reason: format!(
+                "A strong related test call places {left} equal to {right}, but none places {variable} equal to {value}, where the shifted bound `{shifted}` differs; {observed_lists}",
+                variable = step.variable,
+                value = step.value,
+                shifted = step.shifted,
+            ),
+        });
     }
     let observed = observed_new || observed_old;
     // Preserve distinct source files while collapsing exact duplicate facts
@@ -628,6 +674,139 @@ fn provably_unequal(left: &str, right: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether the old and new predicates are each one relational comparison of
+/// the same name against an integer literal, true on exactly the same
+/// integers (`v >= 100` and `v > 99`, `v < 10` and `9 >= v`), with the rest
+/// of the condition unchanged (`and flag` -> `or flag` is a behavior change)
+/// and the line around the condition unchanged (`return 0 if v >= 100 else 6`
+/// -> `return 0 if v > 99 else 5` changes a branch value).
+fn integer_equivalent_rewrite(new_line_text: &str, old_line_text: &str) -> bool {
+    let new_condition = predicate_condition(new_line_text);
+    let old_condition = predicate_condition(old_line_text);
+    let outside = |line: &str, condition: &str| {
+        line.replacen(condition, "\u{0}", 1)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    if outside(new_line_text, &new_condition) != outside(old_line_text, &old_condition) {
+        return false;
+    }
+    match (integer_bound(&new_condition), integer_bound(&old_condition)) {
+        (Some(new), Some(old)) => new == old,
+        _ => false,
+    }
+}
+
+/// The inclusive bound a comparison of a name against an integer literal
+/// sets on the name, and the condition text around the comparison:
+/// (name, lower bound?, bound, surrounding text).
+fn integer_bound(condition: &str) -> Option<(String, bool, i128, String)> {
+    let operators = relational_operators(condition);
+    let [(start, len)] = operators.as_slice() else {
+        return None;
+    };
+    let operator = condition.get(*start..start + len)?;
+    let (left, right) = simple_comparison_operands(condition, *start, *len)?;
+    let before = condition
+        .get(..*start)?
+        .trim_end()
+        .strip_suffix(left.as_str())?;
+    let after = condition
+        .get(start + len..)?
+        .trim_start()
+        .strip_prefix(right.as_str())?;
+    let surrounding = format!("{before}\u{0}{after}")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let integer = |operand: &str| -> Option<i128> {
+        let value = canonical_decimal(&literal_value(operand)?)?;
+        if value.contains('.') {
+            return None;
+        }
+        value.parse().ok()
+    };
+    // Read as `name <operator> bound`.
+    let (name, operator, bound) = match (integer(&left), integer(&right)) {
+        (None, Some(bound)) => (left, operator, bound),
+        (Some(bound), None) => (
+            right,
+            match operator {
+                "<" => ">",
+                "<=" => ">=",
+                ">" => "<",
+                ">=" => "<=",
+                _ => return None,
+            },
+            bound,
+        ),
+        _ => return None,
+    };
+    if literal_value(&name).is_some() {
+        return None;
+    }
+    let (lower, bound) = match operator {
+        ">" => (true, bound.checked_add(1)?),
+        ">=" => (true, bound),
+        "<" => (false, bound.checked_sub(1)?),
+        "<=" => (false, bound),
+        _ => return None,
+    };
+    Some((name, lower, bound, surrounding))
+}
+
+/// The row a one-up shift of a literal integer bound needs (#10842).
+struct LiteralStep {
+    /// The operand that varies with the test input.
+    variable: String,
+    /// `C + 1`, where the shifted comparison first differs.
+    value: String,
+    /// The comparison with the bound shifted (`amount > 100`).
+    shifted: String,
+}
+
+/// For one relational comparison of a name against an integer literal,
+/// the input value at which the literal shifted up by one changes the
+/// result, when that is not the equality point already required. A bound
+/// spelled as a module constant or an offset (`LIMIT - 1`), a float and a
+/// comparison of two names keep the equality rule alone.
+fn literal_step(
+    condition: &str,
+    operators: &[(usize, usize)],
+    left: &str,
+    right: &str,
+) -> Option<LiteralStep> {
+    let [(start, len)] = operators else {
+        return None;
+    };
+    let operator = condition.get(*start..start + len)?;
+    let integer = |operand: &str| {
+        literal_value(operand)
+            .and_then(|value| canonical_decimal(&value))
+            .filter(|value| !value.contains('.'))
+    };
+    let (variable, bound, needs_step) = match (integer(left), integer(right)) {
+        (None, Some(bound)) => (left, bound, matches!(operator, ">" | "<=")),
+        (Some(bound), None) => (right, bound, matches!(operator, "<" | ">=")),
+        _ => return None,
+    };
+    if !needs_step || literal_value(variable).is_some() {
+        return None;
+    }
+    let value = shifted_integer(&bound, 1)?;
+    let shifted = if variable == left {
+        format!("{left} {operator} {value}")
+    } else {
+        format!("{value} {operator} {right}")
+    };
+    Some(LiteralStep {
+        variable: variable.to_string(),
+        value,
+        shifted,
+    })
 }
 
 /// Whether the old predicate compares the same operands in the same order

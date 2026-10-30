@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -123,7 +123,7 @@
+ 
+ impl Ring {
+     pub fn try_push(&mut self, wanted: usize) -> Result<bool, Overflow> {
+-        if wanted > 4 {
++        if wanted >= 4 {
+             self.pushed += 1;
+             return Ok(true);
+         }

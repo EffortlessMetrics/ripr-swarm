@@ -1,0 +1,173 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_rewrite_shifted_bound/input",
+  "config_path": "<cwd>/fixtures/python_rewrite_shifted_bound/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:ca1627c6c44a97452d6a466a8c9606b3fb4cd3feceea7d9ff9785dc262f9dc17","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:shop.py:python_preview:d0041328",
+      "canonical_gap_id": "gap:python:shop.py:handling_fee:predicate_boundary:predicate:amount>99",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:shop.py:handling_fee:predicate_boundary:predicate:amount>99",
+        "language": "python",
+        "file": "shop.py",
+        "owner": "handling_fee",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "amount>99"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:shop.py:python_preview:d0041328",
+        "family": "predicate",
+        "delta": "control",
+        "file": "shop.py",
+        "line": 2,
+        "expression": "    if amount > 99:",
+        "owner": "python:shop.py::handling_fee"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `handling_fee`"},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary."},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `handling_fee`", "infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if amount > 99: (line 2)", "related test tests/test_shop.py:7 test_handling_fee uses strong exact value oracle: assert handling_fee(amount) == fee", "source function argument value amount = 99 at line 8", "source function argument value amount == 99 at line 8", "missing discriminator amount == 100: A strong related test call places amount equal to 99, but none places amount equal to 100, where the shifted bound `amount > 100` differs; observed amount values: 99"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"if amount > 99:","line":2}
+      ],
+      "evidence": ["owner: handling_fee", "owner_kind: function", "missing_discriminator: amount == 100", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_shop.py", "suggested_test_name: test_handling_fee", "suggested_test_node_id: tests/test_shop.py::test_handling_fee", "suggested_verify_command: python -m pytest tests/test_shop.py::test_handling_fee", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_handling_fee)", "test_fixtures: amount, fee (test_handling_fee)", "test_parametrized: pytest (test_handling_fee)", "test_verify_command: python -m pytest tests/test_shop.py::test_handling_fee (test_handling_fee)", "related_test_relation: syntactic_call (test_handling_fee)", "test_oracle: exact_value strong (test_handling_fee)"],
+      "missing": ["A strong Python oracle reaches `handling_fee`, but static evidence does not place a related test input at the changed predicate boundary `amount == 100`. A strong related test call places amount equal to 99, but none places amount equal to 100, where the shifted bound `amount > 100` differs; observed amount values: 99."],
+      "assertion_texts": {
+        "8": "assert handling_fee(amount) == fee [parametrize amount=99]"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 8,
+            "value": "amount = 99",
+            "context": "function_argument"
+          },
+          {
+            "line": 8,
+            "value": "amount == 99",
+            "context": "function_argument",
+            "provenance": "assert handling_fee(amount) == fee [parametrize amount=99] | amount = 99; literal operand 99"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "amount == 100",
+            "reason": "A strong related test call places amount equal to 99, but none places amount equal to 100, where the shifted bound `amount > 100` differs; observed amount values: 99",
+            "flow_sink": {"kind":"unknown","text":"if amount > 99:","line":2}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 8,
+          "value": "amount = 99",
+          "context": "function_argument"
+        },
+        {
+          "line": 8,
+          "value": "amount == 99",
+          "context": "function_argument",
+          "provenance": "assert handling_fee(amount) == fee [parametrize amount=99] | amount = 99; literal operand 99"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "amount == 100",
+          "reason": "A strong related test call places amount equal to 99, but none places amount equal to 100, where the shifted bound `amount > 100` differs; observed amount values: 99",
+          "flow_sink": {"kind":"unknown","text":"if amount > 99:","line":2}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_handling_fee",
+          "file": "tests/test_shop.py",
+          "line": 7,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert handling_fee(amount) == fee"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_shop.py",
+        "suggested_test_name": "test_handling_fee",
+        "suggested_test_node_id": "tests/test_shop.py::test_handling_fee",
+        "verify_command": "python -m pytest tests/test_shop.py::test_handling_fee",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:shop.py:handling_fee:predicate_boundary:predicate:amount>99",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "handling_fee",
+        "changed_behavior": "predicate_boundary changed at shop.py:2: `if amount > 99:`",
+        "current_test_evidence": "tests/test_shop.py:7 test_handling_fee currently has oracle_strength=strong, oracle_kind=exact_value: assert handling_fee(amount) == fee",
+        "missing_discriminator": "amount == 100",
+        "recommended_test_shape": "Strengthen the existing pytest boundary assertion for `amount == 100`. Keep the equality case as the minimum repair; optional pytest parameterization can add `99`, `100`, and `101` rows when expected values are clear.",
+        "suggested_assertion": "Assert the owner result or effect at `amount == 100` first. Optional pytest shape: @pytest.mark.parametrize(\"amount, expected\", [(99, ...), (100, ...), (101, ...)]); fill expected values from domain behavior only.",
+        "suggested_location": {
+          "test_file": "tests/test_shop.py",
+          "test_name": "test_handling_fee",
+          "pytest_node_id": "tests/test_shop.py::test_handling_fee"
+         },
+        "verify": {
+          "command": "python -m pytest tests/test_shop.py::test_handling_fee",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit.", "Stop before adding parametrized below/above rows if their expected values are not clear; keep only the equality-boundary assertion."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == 100`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == 100`.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "amount",
+      "observed_sink": "assert handling_fee(amount) == fee",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["shop.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"shop.py","digest":"sha256:c982e1bd5bfcc84d829f36d0388ab222361ae05e35ce1c6b3bf36c2e8a0d4966"},{"path":"tests/test_shop.py","digest":"sha256:b1ffeaf4339976b368aa19db747e4b030c56ddf38772936d2275e97fc465884b"}]}
+}

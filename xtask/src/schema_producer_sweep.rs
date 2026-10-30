@@ -105,6 +105,15 @@ const BINDINGS: &[Binding] = &[
             "fixtures/evidence-quality-benchmark/regex-word-boundary-empty/static/68770-weak.json",
             "fixtures/python-real-repo-evals/werkzeug-multiple-cookie/evidence/effective-check.json",
             "fixtures/python-real-repo-evals/werkzeug-multiple-cookie/evidence/ineffective-check.json",
+            // Retained captures of past `ripr check` runs: the D491 cross-file
+            // integer-truthiness rejection receipts preserved with #9795's
+            // bounded admission slice. They validate against the schema, but
+            // they are not bytes the candidate's build produced, so they stay
+            // edge fixtures.
+            "fixtures/python_dunder_truthiness_integer/evidence/cross-file-direct.report.json",
+            "fixtures/python_dunder_truthiness_integer/evidence/cross-file-generated.report.json",
+            "fixtures/python_dunder_truthiness_integer/evidence/cross-file-hidden.report.json",
+            "fixtures/python_dunder_truthiness_integer/evidence/cross-file-unicode.report.json",
         ],
         excluded: &[(
             "fixtures/evidence-promotion-honesty-corpus/reports/",

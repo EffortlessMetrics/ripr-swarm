@@ -671,6 +671,7 @@ fn build_production_file_evidence(
             // before this fix and keeping repo verdicts unchanged.
             None,
             &mut finding_origins,
+            None,
         ) {
             let original_probe = finding.probe.clone();
             // Repo mode classifies every representative behavior line, so

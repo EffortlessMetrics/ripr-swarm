@@ -35,6 +35,10 @@ use super::reveal::contains_as_whole_word;
 use crate::analysis::facts::TestFact;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex};
 use crate::domain::*;
+use ra_ap_syntax::{
+    AstNode, ast,
+    ast::{HasModuleItem, HasName},
+};
 
 const LIMIT: StaticLimitKind = StaticLimitKind::RustImplicitCallUnresolved;
 const FIRST_UNRESOLVED_EDGE: &str = "whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method";
@@ -178,6 +182,54 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     true
 }
 
+/// Withhold an `exposed` verdict on a standard `Drop::drop`. A destructor runs
+/// at scope end and cannot be named, so a test never calls it; every route to
+/// `exposed` (a reach the scope-end relation set, a name match on the free
+/// `drop`) credits an assertion no authority ties to that scope end, whichever
+/// probe family the changed line is (#10553). The one exception is the
+/// scope-end carrier (#10814): when every strong contributing test ends the
+/// guard's scope over a handle its assertion reads, the verdict stands.
+/// Returns `true` when rewritten.
+pub(in crate::analysis) fn withhold_destructor_credit(
+    finding: &mut Finding,
+    index: &RustIndex,
+) -> bool {
+    if finding.class != ExposureClass::Exposed || finding.static_limit_kind.is_some() {
+        return false;
+    }
+    let Some(owner_id) = finding.probe.owner.as_ref() else {
+        return false;
+    };
+    let changed_line = finding.probe.location.line;
+    let Some(owner) = index.functions().iter().find(|function| {
+        function.id == *owner_id
+            && function.start_line <= changed_line
+            && changed_line <= function.end_line
+    }) else {
+        return false;
+    };
+    if !super::is_drop_destructor(owner, index) {
+        return false;
+    }
+    // #10814: an assertion the scope-end carrier ties to this destructor's
+    // write stands; every other route to `exposed` is still withheld.
+    if super::destructor_credit_established(finding, owner, index) {
+        return false;
+    }
+    let next_step = format!(
+        "`{}` runs at the end of a scope no test can name, and no assertion is tied to that scope end, so ripr does not report it exposed. Check that an assertion would fail if the destructor did the wrong thing.",
+        owner.name,
+    );
+    withhold_gap(
+        finding,
+        LIMIT,
+        "whether an assertion observes the effect of the scope end that runs the destructor",
+        next_step,
+        &[],
+    );
+    true
+}
+
 /// Whether the earlier stages are established and only the discriminator is
 /// unconfirmed, the way `pinned_shape` reads it: reach is already decided by
 /// the caller, infection is read, and propagation is read or weak. A finding
@@ -232,11 +284,137 @@ fn reached_only_through_syntax(
             .is_some_and(|test| {
                 let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
                 !calls_method_named(&code, &owner.name)
-                    && !path_owner
-                        .as_ref()
-                        .is_some_and(|path| calls_by_type_path(&code, &owner.name, path))
+                    && !path_owner.as_ref().is_some_and(|path| {
+                        type_path_scope_is_clear(test, owner, index, path)
+                            && calls_by_type_path(&code, &owner.name, path)
+                    })
             })
     })
+}
+
+/// Check only the scopes enclosing this test, not sibling modules. An
+/// unresolved import is not proof that a bare type or trait names the owner.
+fn type_path_scope_is_clear(
+    test: &TestFact,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    path: &TypePathOwner,
+) -> bool {
+    if test.file != owner.file {
+        return false;
+    }
+    let Some(snapshot) = index.source_syntax.get(index, &test.file) else {
+        return false;
+    };
+    let (Some(scopes), Some(tree)) = (snapshot.lexical_items(), snapshot.tree()) else {
+        return false;
+    };
+    let mut tests = scopes.functions.iter().filter(|f| {
+        f.name == test.name && f.start_line <= test.end_line && test.start_line <= f.end_line
+    });
+    let Some(test_scope) = tests.next() else {
+        return false;
+    };
+    if tests.next().is_some() {
+        return false;
+    }
+    let mut owners = scopes.functions.iter().filter(|f| {
+        f.name == owner.name && f.start_line <= owner.start_line && owner.start_line <= f.end_line
+    });
+    let Some(owner_scope) = owners.next() else {
+        return false;
+    };
+    if owners.next().is_some() {
+        return false;
+    }
+    let owner_module = owner_scope.modules.first().copied();
+    if owner_module.is_some_and(|module| !test_scope.modules.contains(&module)) {
+        return false;
+    }
+    let root = tree.syntax();
+    let clear = |item: ast::Item, module, parent| {
+        let owner_path = |value: &str| {
+            value.strip_prefix("super::") == Some(path.self_type.as_str()) && parent == owner_module
+        };
+        if let ast::Item::Use(ref item) = item {
+            return super::reveal::flattened_use_paths(&item.syntax().text().to_string())
+                .iter()
+                .all(|import| {
+                    // In `use a::T::{self}`, the leaf binds `T`, not `self`.
+                    // Retain the flattened path's existing contract for its
+                    // other consumers; normalize only this binding check.
+                    let target = import.path.strip_suffix("::self").unwrap_or(&import.path);
+                    let bound = import
+                        .alias
+                        .as_deref()
+                        .unwrap_or_else(|| target.rsplit("::").next().unwrap_or(""));
+                    let bound = bound.strip_prefix("r#").unwrap_or(bound);
+                    if bound == "*" {
+                        return matches!(
+                            import.path.as_str(),
+                            "super::*" | "self::*" | "std::ops::*" | "core::ops::*"
+                        );
+                    }
+                    if bound == path.self_type {
+                        return owner_path(target);
+                    }
+                    if bound == path.trait_name {
+                        return target
+                            .strip_prefix("std::ops::")
+                            .or_else(|| target.strip_prefix("core::ops::"))
+                            == Some(path.trait_name.as_str());
+                    }
+                    true
+                });
+        }
+        if let ast::Item::Module(ref module) = item {
+            return !module.name().is_some_and(|name| {
+                let name = name.text().to_string();
+                name.strip_prefix("r#").unwrap_or(&name) == path.self_type
+            });
+        }
+        let text =
+            crate::analysis::extract::mask_comments_and_strings(&item.syntax().text().to_string());
+        if matches!(item, ast::Item::Fn(_) | ast::Item::Impl(_)) {
+            return true;
+        }
+        if matches!(item, ast::Item::MacroRules(_) | ast::Item::MacroDef(_)) {
+            return !contains_as_whole_word(&text, &path.self_type)
+                && !contains_as_whole_word(&text, &path.trait_name);
+        }
+        if matches!(item, ast::Item::MacroCall(_)) {
+            // A macro invocation is unresolved: its expansion can introduce
+            // any binding without naming it at the invocation site, so any
+            // invocation in an enclosing scope refuses the lift.
+            return false;
+        }
+        if module == owner_module {
+            return true;
+        }
+        !rebinds_type_name(&text, &path.self_type) && !rebinds_type_name(&text, &path.trait_name)
+    };
+    if !tree.items().all(|item| clear(item, None, None)) {
+        return false;
+    }
+    let mut enclosing: Vec<_> = scopes
+        .modules
+        .iter()
+        .filter(|m| test_scope.modules.contains(&m.range))
+        .collect();
+    enclosing.sort_by_key(|m| m.range.start());
+    let mut parent = None;
+    for module in enclosing {
+        let node = module.item.to_node(root);
+        if !node.item_list().is_some_and(|items| {
+            items
+                .items()
+                .all(|item| clear(item, Some(module.range), parent))
+        }) {
+            return false;
+        }
+        parent = Some(module.range);
+    }
+    true
 }
 
 /// How the language reaches the owner without a call that names it.

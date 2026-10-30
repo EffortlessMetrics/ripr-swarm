@@ -473,16 +473,18 @@ after phase applies) and selects `next_command` in this order:
    required` with a recorded route command) and recorded no repair start
    selects nothing and warns `pilot_routed_to_check_no_repair_target`, for
    any routed language. For an enabled route the warning names the recorded
-   check command and the hand step (add or strengthen a test, then rerun
-   that check); for a route with `enabled: false` it names the enable step
+   check command; for a route with `enabled: false` it names the enable step
    (add the language to `[languages] enabled` in `ripr.toml`) instead. It
    also says to rerun pilot if the workspace changed since that run. For an
-   enabled TypeScript-family route, whether the warning says `ripr check`
-   "offers no `ripr agent repair` start" is derived from the same gap-start
-   admission the routed `ripr check` uses (#10001): when check would print a
-   gap-bound start, the warning names that start instead, and a refused or
-   undecidable admission keeps the "offers no start" wording. A
-   timed-out, missing or unreadable summary still routes to pilot. When the
+   enabled TypeScript-family route, the warning uses the same gap-start
+   admission as the routed `ripr check` (#10001): when `ripr check` would print
+   a gap-bound start, the warning names that start and offers adding or
+   strengthening a test by hand, then rerunning the check, as an alternative.
+   For a refused or undecidable admission, it reports "status could not
+   confirm a gap-bound start" and directs the user to the routed check for
+   the current finding and any reason a start is unavailable, without claiming
+   that no start exists.
+   A timed-out, missing or unreadable summary still routes to pilot. When the
    first missing artifact's directory does not exist and the seam is known,
    the next command starts a repair attempt, which writes the workflow
    artifacts itself, instead of redirecting into the missing directory.
@@ -762,7 +764,7 @@ it does not execute the command or grant edit authority.
 - `crates/ripr/tests/cli_smoke.rs::agent_receipt_writes_one_seam_handoff_json`
 - `crates/ripr/tests/cli_smoke.rs::agent_start_writes_source_edit_free_workflow_packet`
 - `crates/ripr/tests/cli_smoke.rs::agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2`
-- `crates/ripr/tests/cli_smoke.rs::agent_start_config_hidden_known_seam_stays_exit_2`
+- `crates/ripr/tests/cli_smoke.rs::agent_start_config_hidden_known_seam_is_a_policy_refusal`
 - `crates/ripr/tests/cli_smoke.rs::agent_packet_rejects_configured_off_seam`
 - `crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_workspace_relative_for_platform_roots`
 - `xtask/src/reports/operator.rs::tests::operator_cockpit_matches_editor_agent_loop_fixture`

@@ -12,7 +12,7 @@ typechecker or test runner, and they do not make generated CI blocking.
 | Language | Status | Default | Evidence scope |
 | --- | --- | --- | --- |
 | Rust | reference path | enabled | Rust static exposure evidence and the existing CLI, CI, editor, report, and gate surfaces. |
-| TypeScript and JavaScript | preview | detected TypeScript projects (root `tsconfig.json`/`jsconfig.json`, or `.ts`/`.tsx`/`.mts`/`.cts` source under `src/` or `tests/`) without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. |
+| TypeScript and JavaScript | preview | detected TypeScript projects (`tsconfig.json`/`jsconfig.json`, or `.ts`/`.tsx`/`.mts`/`.cts` source under `src/` or `tests/`, at the root, in a directory one level below it, or in `packages/*`, `apps/*`, `libs/*` or `libraries/*`) without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. |
 | Python | preview static facts, plus a scoped repair-routing lane (tier in the registry projection below) | detected Python projects without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, RIPR-stage evidence, selected repair-class missing discriminators, fail-closed static limits, and bounded repair cards/packets for selected pytest/unittest routes. |
 
 ## Capability Registry Projection
@@ -368,6 +368,8 @@ budget (`RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES`). Files refused by any bound
 and unreadable changed files are named typed limitations on the diff
 result, never silent skips. The file-count cap only refuses unchanged context: changed
 `.py` files are kept past it, while the byte budgets still apply (#10461).
+The walk streams each discovered file into a selection bounded by that cap,
+so discovery holds at most the cap plus the changed files in memory (#10594).
 
 | Format | Rust repo | Perl repo | TypeScript repo | Python repo |
 | --- | --- | --- | --- | --- |

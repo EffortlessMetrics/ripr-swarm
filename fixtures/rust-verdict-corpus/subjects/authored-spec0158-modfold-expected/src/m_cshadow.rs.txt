@@ -1,0 +1,21 @@
+pub fn tier_cshadow(qty: u32) -> u32 {
+    if 10 <= qty {
+        5
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE: u32 = 9;
+
+    #[test]
+    fn the_inner_base_is_fourteen_m_cshadow() {
+        const BASE: u32 = 14;
+        assert_eq!(tier_cshadow(BASE + 1), 5);
+        assert_eq!(tier_cshadow(BASE), 5);
+    }
+}

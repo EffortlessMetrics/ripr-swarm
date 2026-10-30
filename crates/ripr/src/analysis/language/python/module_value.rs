@@ -33,7 +33,10 @@ use super::related_tests::{
 };
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, is_test_file};
-use super::table_reads::{dict_literal_names, unsafe_table_uses};
+use super::table_reads::{
+    LexedSource, dict_literal_names, dict_literal_names_lexed, unsafe_table_uses,
+    unsafe_table_uses_lexed,
+};
 use super::{PythonAssertion, PythonOwner, PythonTest, expr_full_name};
 use crate::domain::OwnerKind;
 use rayon::prelude::*;
@@ -42,8 +45,19 @@ use std::path::Path;
 
 /// Words that mark a file able to rewrite another module's attribute at
 /// runtime without an assignment statement.
-const DYNAMIC_WRITERS: [&str; 10] = [
+const DYNAMIC_WRITERS: [&str; 21] = [
     "setattr",
+    "__globals__",
+    "f_globals",
+    "f_locals",
+    "_getframe",
+    "currentframe",
+    "f_back",
+    "tb_frame",
+    "get_referrers",
+    "get_referents",
+    "__setattr__",
+    "delattr",
     "patch",
     "monkeypatch",
     "reload",
@@ -59,7 +73,7 @@ const DYNAMIC_WRITERS: [&str; 10] = [
 /// assigned attribute names, and every word of a file that holds a dynamic
 /// writer (`setattr`, `patch`, `monkeypatch`, `importlib.reload`,
 /// `sys.modules`, ...). Filled for the module owner of a changed file.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct ForeignWrites {
     attributes: Vec<String>,
     dynamic_words: Vec<String>,
@@ -67,9 +81,26 @@ pub(super) struct ForeignWrites {
     table_unsafe: Vec<String>,
     /// Every word of the files that can reach a module's objects reflectively.
     reflective_words: Vec<String>,
-    /// Some other file is reflective and imports modules, so it may reach a
-    /// table through an alias or re-export no word of it names.
-    reflective_imports: bool,
+    /// Module names (file stems and package directories) in the import
+    /// component of some other reflective file: it may reach those modules
+    /// through an alias or re-export no word of it names.
+    reflective_reach: Vec<String>,
+    /// Some other reflective file also loads modules dynamically, so the
+    /// modules it reaches are unknown.
+    reflective_opaque: bool,
+    /// Some other file reflects ([`mentions_reflection`]): it may reach a
+    /// module's namespace under a name built at runtime (#9226).
+    reflection_elsewhere: bool,
+    /// Some other file has the module's module name (its file stem, or its
+    /// package directory for `__init__.py`): under pytest's `prepend` import
+    /// mode, an extra import root, or a package beating a same-named module,
+    /// an import of the module's dotted path may load that file instead
+    /// (#9226).
+    shares_module_name: bool,
+    /// Some other file may bind names it does not spell byte for byte
+    /// ([`names_may_differ`]), so a byte-exact name match cannot bound what
+    /// it binds (#9226).
+    names_may_differ_elsewhere: bool,
     /// A workspace file could not be read or the scan hit its bound, so the
     /// absence of a write is unknown.
     unknown: bool,
@@ -98,8 +129,72 @@ const DYNAMIC_LOADERS: [&str; 13] = [
     "__dict__",
 ];
 
+/// Words that reach a module namespace through a frame, a function's globals
+/// or the garbage collector's referrers (#9226).
+const FRAME_WALKERS: [&str; 9] = [
+    "__globals__",
+    "f_globals",
+    "f_locals",
+    "_getframe",
+    "currentframe",
+    "f_back",
+    "tb_frame",
+    "get_referrers",
+    "get_referents",
+];
+
+/// Whether `source` reflects: reaches objects through a frame, a function's
+/// globals, the garbage collector (`gc.get_objects()`), or a spelling that
+/// takes the name at runtime (`getattr`, `dir`, `inspect`, ...). Such code can
+/// write a module namespace under a name built at runtime, so no name it
+/// mentions bounds what it changes (#9226).
+/// The import system counts too: a file that may replace a module in
+/// `sys.modules` (however spelled: `from sys import modules`), install an
+/// import hook, or extend a package's `__path__` hands every importer a
+/// different module.
+pub(super) fn mentions_reflection(source: &str) -> bool {
+    mentions_reflection_with(&|identifier| mentions_identifier(source, identifier))
+}
+
+/// [`mentions_reflection`] through a whole-word `mentions` test, so a caller
+/// holding the source's sorted words looks each spelling up instead of
+/// scanning the source once per spelling (#10914).
+fn mentions_reflection_with(mentions: &dyn Fn(&str) -> bool) -> bool {
+    REFLECTIVE_SPELLINGS
+        .iter()
+        .chain(&FRAME_WALKERS)
+        .chain(&IMPORT_SYSTEM)
+        .chain(&[
+            "get_objects",
+            "setattr",
+            "__setattr__",
+            "delattr",
+            "__dict__",
+            "vars",
+        ])
+        .any(|spelling| mentions(spelling))
+        || (mentions("sys") && (mentions("modules") || mentions("path")))
+}
+
+/// Words that replace what an `import` binds (#9226).
+const IMPORT_SYSTEM: [&str; 12] = [
+    "__path__",
+    "addsitedir",
+    "pkgutil",
+    "extend_path",
+    "meta_path",
+    "path_hooks",
+    "path_importer_cache",
+    "importlib",
+    "__import__",
+    "import_module",
+    "exec_module",
+    "reload",
+];
+
 /// Spellings that reach a module's objects without writing their names.
-const REFLECTIVE_SPELLINGS: [&str; 15] = [
+const REFLECTIVE_SPELLINGS: [&str; 16] = [
+    "exec",
     "getattr",
     "dir",
     "getmembers",
@@ -132,8 +227,137 @@ pub(super) struct ForeignIndex<'a> {
     /// malformed file's own function/name is not an import.
     references: std::collections::BTreeMap<&'a str, Option<&'a Path>>,
     hidden_import: bool,
+    /// For each reflective file, the module names in its import component.
+    reflective_reach: Vec<(&'a Path, std::collections::BTreeSet<String>)>,
     /// The reference index passed its bound or a file went unread.
     unknown: bool,
+    /// Per-write source counts over `files` and `reflective_reach`.
+    totals: ForeignTotals,
+}
+
+/// How many indexed sources hold each write, so the writes of every source
+/// but one are a subtraction instead of a rebuild over the whole workspace
+/// for each changed file (#10857).
+#[derive(Default)]
+struct ForeignTotals {
+    attributes: std::collections::BTreeMap<String, usize>,
+    dynamic_words: std::collections::BTreeMap<String, usize>,
+    table_unsafe: std::collections::BTreeMap<String, usize>,
+    reflective_words: std::collections::BTreeMap<String, usize>,
+    reflective_reach: std::collections::BTreeMap<String, usize>,
+}
+
+impl ForeignTotals {
+    fn build(
+        files: &[IndexedSource<'_>],
+        reflective_reach: &[(&Path, std::collections::BTreeSet<String>)],
+    ) -> Self {
+        // Each source's distinct writes are counted in parallel and the
+        // additive counts merged, so the totals match a sequential pass.
+        let mut counts = files
+            .par_iter()
+            .map(SourceCounts::of)
+            .reduce(SourceCounts::default, SourceCounts::merge);
+        for (_, reach) in reflective_reach {
+            count_distinct(
+                &mut counts.reflective_reach,
+                reach.iter().map(String::as_str),
+            );
+        }
+        counts.into_totals()
+    }
+}
+
+/// [`ForeignTotals`] keyed by borrowed words while the counts are built.
+#[derive(Default)]
+struct SourceCounts<'w> {
+    attributes: std::collections::BTreeMap<&'w str, usize>,
+    dynamic_words: std::collections::BTreeMap<&'w str, usize>,
+    table_unsafe: std::collections::BTreeMap<&'w str, usize>,
+    reflective_words: std::collections::BTreeMap<&'w str, usize>,
+    reflective_reach: std::collections::BTreeMap<&'w str, usize>,
+}
+
+impl<'w> SourceCounts<'w> {
+    /// The writes one source contributes to each [`ForeignWrites`] set:
+    /// assigned attributes, dynamic words, unsafe tables, reflective words.
+    fn of(source: &'w IndexedSource<'_>) -> Self {
+        let mut counts = Self::default();
+        count_distinct(
+            &mut counts.attributes,
+            source.assigned.iter().flatten().map(String::as_str),
+        );
+        count_distinct(
+            &mut counts.dynamic_words,
+            source.dynamic_words.iter().flatten().copied(),
+        );
+        count_distinct(
+            &mut counts.table_unsafe,
+            source.table_unsafe.iter().map(String::as_str),
+        );
+        count_distinct(
+            &mut counts.reflective_words,
+            source.reflective_words.iter().flatten().copied(),
+        );
+        counts
+    }
+
+    fn merge(mut self, other: Self) -> Self {
+        fn add<'w>(
+            into: &mut std::collections::BTreeMap<&'w str, usize>,
+            from: std::collections::BTreeMap<&'w str, usize>,
+        ) {
+            for (word, count) in from {
+                *into.entry(word).or_default() += count;
+            }
+        }
+        add(&mut self.attributes, other.attributes);
+        add(&mut self.dynamic_words, other.dynamic_words);
+        add(&mut self.table_unsafe, other.table_unsafe);
+        add(&mut self.reflective_words, other.reflective_words);
+        add(&mut self.reflective_reach, other.reflective_reach);
+        self
+    }
+
+    fn into_totals(self) -> ForeignTotals {
+        let owned = |counts: std::collections::BTreeMap<&str, usize>| {
+            counts
+                .into_iter()
+                .map(|(word, count)| (word.to_string(), count))
+                .collect()
+        };
+        ForeignTotals {
+            attributes: owned(self.attributes),
+            dynamic_words: owned(self.dynamic_words),
+            table_unsafe: owned(self.table_unsafe),
+            reflective_words: owned(self.reflective_words),
+            reflective_reach: owned(self.reflective_reach),
+        }
+    }
+}
+
+/// Add one source's distinct `words` to borrowed-key `counts`.
+fn count_distinct<'w>(
+    counts: &mut std::collections::BTreeMap<&'w str, usize>,
+    words: impl Iterator<Item = &'w str>,
+) {
+    let distinct: std::collections::BTreeSet<&str> = words.collect();
+    for word in distinct {
+        *counts.entry(word).or_default() += 1;
+    }
+}
+
+/// The words of `counts` that some source other than the excluded ones holds,
+/// in order. `excluded` counts how many excluded sources hold each word.
+fn held_by_others(
+    counts: &std::collections::BTreeMap<String, usize>,
+    excluded: &std::collections::BTreeMap<&str, usize>,
+) -> Vec<String> {
+    counts
+        .iter()
+        .filter(|(word, count)| **count > excluded.get(word.as_str()).copied().unwrap_or_default())
+        .map(|(word, _)| word.clone())
+        .collect()
 }
 
 // Parses the foreign index has done on this thread, so a test can pin that
@@ -143,6 +367,47 @@ pub(super) struct ForeignIndex<'a> {
 #[cfg(test)]
 thread_local! {
     pub(super) static FOREIGN_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The per-file lexes the foreign index needs, functions of the source text
+/// alone: computed once by the source-fact pass and persisted with its
+/// facts, so a warm run does not lex every workspace file again (#10914).
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct ForeignLexes {
+    /// [`dict_literal_names`], sorted.
+    pub(super) dict_literal_names: Vec<String>,
+    /// [`import_words`], in source order.
+    pub(super) import_words: Vec<String>,
+    /// [`unsafe_table_uses`] of every name, sorted: the uses of the
+    /// workspace's tables are this list filtered to them.
+    pub(super) unsafe_names: Vec<String>,
+    /// [`names_may_differ`], which lexes a source holding non-ASCII text.
+    pub(super) loose_names: bool,
+}
+
+impl ForeignLexes {
+    pub(super) fn of(source: &str) -> Self {
+        let lexed = LexedSource::new(source);
+        Self {
+            dict_literal_names: dict_literal_names_lexed(&lexed).into_iter().collect(),
+            import_words: import_words_lexed(source, &lexed)
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            unsafe_names: unsafe_table_uses_lexed(source, &lexed, &|_| true, None)
+                .into_iter()
+                .collect(),
+            loose_names: names_may_differ(source),
+        }
+    }
+}
+
+/// What the source-fact pass already knows about one workspace file.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct PriorFileFacts {
+    /// The attribute names its statements assign; None when it does not parse.
+    pub(super) assigned: Option<Vec<String>>,
+    pub(super) lexes: Option<ForeignLexes>,
 }
 
 struct IndexedSource<'a> {
@@ -156,15 +421,35 @@ struct IndexedSource<'a> {
     table_unsafe: Vec<String>,
     /// Holds a reflective spelling: every word is a possible table access.
     reflective_words: Option<Vec<&'a str>>,
-    /// The reflective file also imports, so the module it reflects over may
-    /// be another file's re-export.
-    reflective_imports: bool,
+    /// Words of the lines that import, to link modules into components.
+    import_words: Vec<&'a str>,
+    /// The reflective file also loads modules by name at runtime.
+    reflective_opaque: bool,
+    /// The file reflects, whatever tables the workspace holds.
+    reflects: bool,
+    /// The file may bind names it does not spell byte for byte ([`names_may_differ`]).
+    loose_names: bool,
 }
 
 impl<'a> ForeignIndex<'a> {
+    /// The index parsing every file's assigned attributes itself.
+    #[cfg(test)]
     pub(super) fn build(
         sources: impl Iterator<Item = (&'a Path, &'a str)>,
         unread_files: bool,
+    ) -> Self {
+        static NONE: std::collections::BTreeMap<std::path::PathBuf, PriorFileFacts> =
+            std::collections::BTreeMap::new();
+        Self::build_with_prior(sources, unread_files, &NONE)
+    }
+
+    /// [`Self::build`], reading each file's assigned attributes and lexes
+    /// from `prior` (the source-fact pass already derived them) and parsing
+    /// or lexing only what it does not hold (#10914).
+    pub(super) fn build_with_prior(
+        sources: impl Iterator<Item = (&'a Path, &'a str)>,
+        unread_files: bool,
+        prior: &'a std::collections::BTreeMap<std::path::PathBuf, PriorFileFacts>,
     ) -> Self {
         let mut files = Vec::new();
         let mut references = std::collections::BTreeMap::new();
@@ -174,28 +459,51 @@ impl<'a> ForeignIndex<'a> {
         // order: word ownership and the word cap behave as before, and a
         // tripped word cap stops parsing within one batch (#10441).
         let sources: Vec<(&'a Path, &'a str)> = sources.collect();
-        let tables: std::collections::BTreeSet<String> = sources
-            .iter()
-            .flat_map(|(_, source)| dict_literal_names(source))
-            .collect();
         let token = crate::analysis::cancellation::current_token();
+        // Every per-file scan below lexes or parses the whole source, so all
+        // of them run inside the parallel stage; only word ownership and the
+        // word cap stay in the sequential fold (#10441, #10735). The stage
+        // also sorts each source's distinct words: the fold then visits each
+        // word once per file, which leaves ownership and the cap unchanged
+        // because a repeat changes neither (#10914).
+        let tables: std::collections::BTreeSet<String> = sources
+            .par_iter()
+            .map(|(file, source)| {
+                crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                    match prior.get(*file).and_then(|facts| facts.lexes.as_ref()) {
+                        Some(lexes) => {
+                            debug_assert_eq!(
+                                lexes.dict_literal_names,
+                                dict_literal_names(source).into_iter().collect::<Vec<_>>(),
+                                "{}: supplied dict-literal names differ from the source's",
+                                file.display()
+                            );
+                            lexes.dict_literal_names.iter().cloned().collect()
+                        }
+                        None => dict_literal_names(source),
+                    }
+                })
+            })
+            .reduce(std::collections::BTreeSet::new, |mut all, names| {
+                all.extend(names);
+                all
+            });
         for batch in sources.chunks(FOREIGN_PARSE_BATCH_FILES) {
-            let parsed: Vec<Option<Vec<String>>> = batch
+            let scanned: Vec<((bool, IndexedSource<'a>), Vec<&'a str>)> = batch
                 .par_iter()
-                .map(|(_, source)| {
+                .map(|&(file, source)| {
                     crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
-                        assigned_attributes(source)
+                        let mut words: Vec<&'a str> = source_words(source).collect();
+                        words.sort_unstable();
+                        words.dedup();
+                        let indexed = scan_source(file, source, &words, &tables, prior.get(file));
+                        (indexed, words)
                     })
                 })
                 .collect();
-            for (&(file, source), assigned) in batch.iter().zip(parsed) {
-                hidden_import |= DYNAMIC_LOADERS
-                    .iter()
-                    .any(|loader| mentions_identifier(source, loader))
-                    || source.contains("sys.modules")
-                    || (file.file_name().is_some_and(|name| name == "__init__.py")
-                        && mentions_identifier(source, "__all__"));
-                for word in source_words(source) {
+            for (&(file, _), ((hides_import, indexed), words)) in batch.iter().zip(scanned) {
+                hidden_import |= hides_import;
+                for word in words {
                     let first = references.entry(word).or_insert(Some(file));
                     if first.is_some_and(|first| first != file) {
                         *first = None;
@@ -206,48 +514,25 @@ impl<'a> ForeignIndex<'a> {
                             references: std::collections::BTreeMap::new(),
                             hidden_import,
                             unknown: true,
+                            reflective_reach: Vec::new(),
+                            totals: ForeignTotals::default(),
                         };
                     }
                 }
                 #[cfg(test)]
                 FOREIGN_PARSES.with(|parses| parses.set(parses.get() + 1));
-                let dynamic = assigned.is_none()
-                    || DYNAMIC_WRITERS
-                        .iter()
-                        .any(|writer| mentions_identifier(source, writer))
-                    || source.contains("sys.modules");
-                let table_unsafe = if tables.is_empty()
-                    || !source_words(source).any(|word| tables.contains(word))
-                {
-                    Vec::new()
-                } else {
-                    unsafe_table_uses(source, &|word| tables.contains(word), None)
-                        .into_iter()
-                        .collect()
-                };
-                // Reflection reaches a module's dict without naming it, or
-                // with a name built at runtime (`getattr(module, n)`,
-                // `dir(module)`, `inspect.getmembers`, `locals()`,
-                // `fn.__globals__`).
-                let reflective = !tables.is_empty()
-                    && REFLECTIVE_SPELLINGS
-                        .iter()
-                        .any(|spelling| mentions_identifier(source, spelling));
-                files.push(IndexedSource {
-                    file,
-                    assigned,
-                    dynamic_words: dynamic.then(|| source_words(source).collect()),
-                    table_unsafe,
-                    reflective_words: reflective.then(|| source_words(source).collect()),
-                    reflective_imports: reflective && mentions_identifier(source, "import"),
-                });
+                files.push(indexed);
             }
         }
+        let reflective_reach = reflective_reaches(&files);
+        let totals = ForeignTotals::build(&files, &reflective_reach);
         Self {
             files,
             references,
             hidden_import,
             unknown: unread_files,
+            reflective_reach,
+            totals,
         }
     }
 
@@ -260,24 +545,31 @@ impl<'a> ForeignIndex<'a> {
                 ..ForeignWrites::default()
             };
         }
-        let mut attributes = std::collections::BTreeSet::new();
-        let mut words = std::collections::BTreeSet::new();
-        let mut table_unsafe = std::collections::BTreeSet::new();
-        let mut reflective_words = std::collections::BTreeSet::new();
-        let mut reflective_imports = false;
+        let mut excluded = SourceCounts::default();
+        let mut reflective_opaque = false;
+        let mut reflection_elsewhere = false;
+        let mut shares_module_name = false;
+        let mut names_may_differ_elsewhere = false;
         let mut unparsed = Vec::new();
-        for indexed in self.files.iter().filter(|indexed| indexed.file != own) {
-            table_unsafe.extend(indexed.table_unsafe.iter().cloned());
-            reflective_imports |= indexed.reflective_imports;
-            if let Some(reflective) = &indexed.reflective_words {
-                reflective_words.extend(reflective.iter().map(|word| word.to_string()));
+        for indexed in &self.files {
+            if indexed.file == own {
+                excluded = excluded.merge(SourceCounts::of(indexed));
+                continue;
             }
-            match &indexed.assigned {
-                Some(assigned) => attributes.extend(assigned.iter().cloned()),
-                None => unparsed.push(indexed.file),
+            reflective_opaque |= indexed.reflective_opaque;
+            reflection_elsewhere |= indexed.reflects;
+            shares_module_name |= same_module_name(indexed.file, own);
+            names_may_differ_elsewhere |= indexed.loose_names;
+            if indexed.assigned.is_none() {
+                unparsed.push(indexed.file);
             }
-            if let Some(dynamic) = &indexed.dynamic_words {
-                words.extend(dynamic.iter().map(|word| word.to_string()));
+        }
+        for (file, reach) in &self.reflective_reach {
+            if *file == own {
+                count_distinct(
+                    &mut excluded.reflective_reach,
+                    reach.iter().map(String::as_str),
+                );
             }
         }
         // An unreferenced malformed production module cannot poison every
@@ -299,18 +591,575 @@ impl<'a> ForeignIndex<'a> {
                                 .is_some_and(|first| first.is_none_or(|first| first != *file))
                         })
             });
+        let totals = &self.totals;
+        ForeignWrites {
+            attributes: held_by_others(&totals.attributes, &excluded.attributes),
+            dynamic_words: held_by_others(&totals.dynamic_words, &excluded.dynamic_words),
+            table_unsafe: held_by_others(&totals.table_unsafe, &excluded.table_unsafe),
+            reflective_words: held_by_others(&totals.reflective_words, &excluded.reflective_words),
+            reflective_reach: held_by_others(&totals.reflective_reach, &excluded.reflective_reach),
+            reflective_opaque,
+            reflection_elsewhere,
+            shares_module_name,
+            names_may_differ_elsewhere,
+            unknown,
+        }
+    }
+
+    /// The per-file rebuild [`Self::excluding`] replaced: the union of every
+    /// other source's writes. An independent oracle for the subtraction.
+    #[cfg(test)]
+    pub(super) fn rebuilt_excluding(&self, own: &Path) -> ForeignWrites {
+        let mut attributes = std::collections::BTreeSet::new();
+        let mut words = std::collections::BTreeSet::new();
+        let mut table_unsafe = std::collections::BTreeSet::new();
+        let mut reflective_words = std::collections::BTreeSet::new();
+        for indexed in self.files.iter().filter(|indexed| indexed.file != own) {
+            table_unsafe.extend(indexed.table_unsafe.iter().cloned());
+            if let Some(reflective) = &indexed.reflective_words {
+                reflective_words.extend(reflective.iter().map(|word| word.to_string()));
+            }
+            if let Some(assigned) = &indexed.assigned {
+                attributes.extend(assigned.iter().cloned());
+            }
+            if let Some(dynamic) = &indexed.dynamic_words {
+                words.extend(dynamic.iter().map(|word| word.to_string()));
+            }
+        }
         ForeignWrites {
             attributes: attributes.into_iter().collect(),
             dynamic_words: words.into_iter().collect(),
             table_unsafe: table_unsafe.into_iter().collect(),
             reflective_words: reflective_words.into_iter().collect(),
-            reflective_imports,
-            unknown,
+            reflective_reach: self
+                .reflective_reach
+                .iter()
+                .filter(|(file, _)| *file != own)
+                .flat_map(|(_, reach)| reach.iter().cloned())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            ..self.excluding(own)
         }
     }
 }
 
+/// Whether CPython may bind names `source` does not spell byte for byte: it
+/// declares a source encoding other than UTF-8 ([`declares_foreign_encoding`]),
+/// holds a NUL or a carriage return not followed by a newline (CPython
+/// breaks lines on a lone `\r`, the scan does not, so the two disagree on
+/// what each line is), or spells a name or an f-string with a non-ASCII
+/// character, or fails to lex. Python NFKC-normalises identifiers, so
+/// `def _\u{ff50}ad()` rebinds `_pad`, while every name comparison here is
+/// byte-exact (#9226).
+pub(super) fn names_may_differ(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    bytes
+        .iter()
+        .enumerate()
+        .any(|(at, byte)| *byte == 0 || (*byte == b'\r' && bytes.get(at + 1) != Some(&b'\n')))
+        || declares_foreign_encoding(source)
+        || spells_non_ascii_name(source)
+}
+
+fn spells_non_ascii_name(source: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    !source.is_ascii()
+        && lex(source, Mode::Module).any(|token| match token {
+            Err(_) => true,
+            Ok((Tok::Name { name }, _)) => !name.is_ascii(),
+            Ok((Tok::String { value, kind, .. }, _)) => kind.is_any_fstring() && !value.is_ascii(),
+            Ok(_) => false,
+        })
+}
+
+/// Whether `source` declares a PEP 263 encoding other than UTF-8 in a
+/// comment on its first two lines (`# coding: utf-7`). CPython decodes the
+/// file with that codec, so an all-ASCII file can hold code the scan reads
+/// as a comment (`# +AAo-_pad = 2` is a second line in UTF-7) (#9226).
+fn declares_foreign_encoding(source: &str) -> bool {
+    source.lines().take(2).any(|line| {
+        let line = line
+            .trim_start_matches('\u{feff}')
+            .trim_start_matches([' ', '\t', '\x0c']);
+        let Some(comment) = line.strip_prefix('#') else {
+            return false;
+        };
+        let Some(declared) = comment.match_indices("coding").find_map(|(at, word)| {
+            let rest = &comment[at + word.len()..];
+            rest.strip_prefix([':', '='])
+        }) else {
+            return false;
+        };
+        let name: String = declared
+            .trim_start_matches([' ', '\t'])
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+            .map(|ch| {
+                if ch == '_' {
+                    '-'
+                } else {
+                    ch.to_ascii_lowercase()
+                }
+            })
+            .collect();
+        name != "utf-8" && name != "utf8"
+    })
+}
+
+/// Whether the directory of the module `file` (relative to `root`) holds a
+/// compiled extension module of the same name (`ledger.abi3.so`,
+/// `ledger.cpython-313-x86_64-linux-gnu.so`, `ledger.so`, `ledger.pyd`). The
+/// import system tries extensions before `.py` source, so an import of the
+/// module's dotted path loads that file instead; for a package's
+/// `__init__.py`, an `__init__.*.so` beside it wins the same way. An
+/// unreadable directory counts as one (#9226).
+pub(super) fn extension_beside(root: &Path, file: &Path) -> bool {
+    let Some(stem) = file.file_stem().and_then(|stem| stem.to_str()) else {
+        return true;
+    };
+    let directory = root.join(file).parent().map(Path::to_path_buf);
+    let Some(Ok(entries)) = directory.map(std::fs::read_dir) else {
+        return true;
+    };
+    let prefix = format!("{stem}.");
+    entries.into_iter().any(|entry| {
+        let Ok(entry) = entry else {
+            return true;
+        };
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            return true;
+        };
+        name.starts_with(&prefix) && (name.ends_with(".so") || name.ends_with(".pyd"))
+    })
+}
+
+/// Whether some workspace source has an unchecked-hash pyc (PEP 552,
+/// `compileall --invalidation-mode unchecked-hash`) in its `__pycache__`:
+/// CPython loads it without comparing it with the source, so the code that
+/// runs may not be the code the scan read. Timestamp and checked-hash pycs
+/// are trusted the way CPython trusts them: it recompiles them when the
+/// source's mtime, size or hash moves. An unreadable cache or pyc counts as
+/// unchecked (#9226).
+pub(super) fn unchecked_bytecode<'a>(root: &Path, files: impl Iterator<Item = &'a Path>) -> bool {
+    let mut stems: std::collections::BTreeMap<&Path, std::collections::BTreeSet<&str>> =
+        std::collections::BTreeMap::new();
+    for file in files {
+        let (Some(directory), Some(stem)) = (
+            file.parent(),
+            file.file_stem().and_then(|stem| stem.to_str()),
+        ) else {
+            return true;
+        };
+        stems.entry(directory).or_default().insert(stem);
+    }
+    stems.iter().any(|(directory, stems)| {
+        let entries = match std::fs::read_dir(root.join(directory).join("__pycache__")) {
+            Ok(entries) => entries,
+            Err(error) => return error.kind() != std::io::ErrorKind::NotFound,
+        };
+        entries.into_iter().any(|entry| {
+            let Ok(entry) = entry else {
+                return true;
+            };
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                return true;
+            };
+            name.ends_with(".pyc")
+                && name
+                    .split_once('.')
+                    .is_some_and(|(stem, _)| stems.contains(stem))
+                && pyc_unchecked(&entry.path())
+        })
+    })
+}
+
+/// Whether the pyc at `pyc` is hash-based without the source check: its
+/// flags word (bytes 4..8) has bit 0 set and bit 1 clear (PEP 552).
+fn pyc_unchecked(pyc: &Path) -> bool {
+    use std::io::Read;
+    let mut header = [0_u8; 8];
+    let Ok(mut opened) = std::fs::File::open(pyc) else {
+        return true;
+    };
+    if opened.read_exact(&mut header).is_err() {
+        return true;
+    }
+    let flags = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+    flags & 0b11 == 0b01
+}
+
+/// Whether a pytest or tox configuration in the workspace sets an import
+/// path (`pythonpath`, `python_paths`, a `PYTHONPATH` environment entry)
+/// other than its own directory (`.`). Any other entry can hold code the
+/// scan does not read: an archive, a directory the workspace walk excludes,
+/// a root holding only compiled extensions, a path outside the workspace or
+/// an expansion such as `{toxinidir}`. A setting whose entries cannot be
+/// read off its lines counts as one. Every directory holding a
+/// source, and each of its ancestors, is checked, since pytest reads the
+/// first configuration above its arguments. An unreadable configuration
+/// counts as such a setting (#9226).
+pub(super) fn import_path_configured<'a>(
+    root: &Path,
+    files: impl Iterator<Item = &'a Path>,
+) -> bool {
+    let mut directories = std::collections::BTreeSet::new();
+    directories.insert(Path::new(""));
+    for file in files {
+        directories.extend(file.ancestors().skip(1));
+    }
+    directories.iter().any(|directory| {
+        let base = root.join(directory);
+        [
+            "pytest.ini",
+            ".pytest.ini",
+            "pytest.toml",
+            "pyproject.toml",
+            "setup.cfg",
+            "tox.ini",
+        ]
+        .iter()
+        .any(|name| match std::fs::read_to_string(base.join(name)) {
+            Ok(text) => sets_unread_import_path(name.ends_with(".toml"), &text),
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        })
+    })
+}
+
+/// Whether the configuration `text` sets an import path other than `.`, or
+/// sets `addopts`, whose shell-split `-o`/`--override-ini` (or `-p`,
+/// `--rootdir`, `--import-mode`) can set one under any quoting. A TOML file
+/// is always parsed, since an escaped key spells `pythonpath` without the
+/// word: every `pythonpath` or `python_paths` key at any depth must hold `.`
+/// alone, no key may be `addopts`, and a textual mention the parsed keys do
+/// not account for refuses. In an INI file the entries are the
+/// whitespace-separated words after the key's `=` through its continuation
+/// lines, which, as in iniconfig, run on across blank and `#`/`;` comment
+/// lines.
+fn sets_unread_import_path(toml_file: bool, text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    if lowered.contains("addopts") {
+        return true;
+    }
+    let mentions = lowered.matches("pythonpath").count() + lowered.matches("python_paths").count();
+    if mentions == 0 && !toml_file {
+        return false;
+    }
+    if toml_file {
+        let Ok(table) = text.parse::<toml::Table>() else {
+            return true;
+        };
+        let mut settings = Vec::new();
+        let mut overrides = false;
+        let table = toml::Value::Table(table);
+        import_path_values(&table, &mut settings, &mut overrides);
+        return overrides
+            || settings.len() != mentions
+            || settings.iter().any(|value| match value {
+                toml::Value::String(entry) => !own_directory(entry),
+                toml::Value::Array(entries) => {
+                    entries.is_empty()
+                        || entries
+                            .iter()
+                            .any(|entry| entry.as_str().is_none_or(|entry| !own_directory(entry)))
+                }
+                _ => true,
+            });
+    }
+    let lines: Vec<&str> = text.lines().collect();
+    lines.iter().enumerate().any(|(at, line)| {
+        let lowered = line.to_ascii_lowercase();
+        if !(lowered.contains("pythonpath") || lowered.contains("python_paths")) {
+            return false;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return true;
+        };
+        let key = key.trim().to_ascii_lowercase();
+        if key != "pythonpath" && key != "python_paths" {
+            return true;
+        }
+        let mut words: Vec<&str> = value.split_whitespace().collect();
+        for line in &lines[at + 1..] {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with(['#', ';']) {
+                continue;
+            }
+            if !line.starts_with([' ', '\t']) {
+                break;
+            }
+            words.extend(trimmed.split_whitespace());
+        }
+        words.is_empty() || words.iter().any(|word| !own_directory(word))
+    })
+}
+
+/// Every value under a `pythonpath` or `python_paths` key in `value`, and
+/// whether any key is `addopts`.
+fn import_path_values<'v>(
+    value: &'v toml::Value,
+    settings: &mut Vec<&'v toml::Value>,
+    overrides: &mut bool,
+) {
+    match value {
+        toml::Value::Table(table) => {
+            for (key, value) in table {
+                let key = key.to_ascii_lowercase();
+                if key == "pythonpath" || key == "python_paths" {
+                    settings.push(value);
+                } else {
+                    *overrides |= key == "addopts";
+                    import_path_values(value, settings, overrides);
+                }
+            }
+        }
+        toml::Value::Array(values) => {
+            for value in values {
+                import_path_values(value, settings, overrides);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether an import path entry names the configuration's own directory.
+fn own_directory(entry: &str) -> bool {
+    entry == "." || entry == "./"
+}
+
+/// The module names of the compiled extension modules (`name.*.so`,
+/// `name.so`, `name.*.pyd`, `name.pyd`) and sourceless bytecode
+/// (`name.pyc`) in every directory holding a workspace source or above one,
+/// since pytest's prepend mode can put any of them on `sys.path`, with a compiled `__init__` named by
+/// its package, or `None` when one cannot be read. With more than one
+/// import root, an extension in another root can shadow a source module or
+/// a package of the same name (#9226).
+pub(super) fn extension_names<'a>(
+    root: &Path,
+    files: impl Iterator<Item = &'a Path>,
+) -> Option<std::collections::BTreeSet<String>> {
+    let directories: std::collections::BTreeSet<&Path> =
+        files.flat_map(|file| file.ancestors().skip(1)).collect();
+    let mut names = std::collections::BTreeSet::new();
+    for directory in directories {
+        for entry in std::fs::read_dir(root.join(directory)).ok()? {
+            let name = entry.ok()?.file_name();
+            let name = name.to_str()?;
+            if name.ends_with(".so") || name.ends_with(".pyd") || name.ends_with(".pyc") {
+                // A compiled package initializer stands for its package.
+                let module = name.split('.').next().unwrap_or_default();
+                if module == "__init__" {
+                    names.insert(directory.file_name()?.to_str()?.to_string());
+                } else {
+                    names.insert(module.to_string());
+                }
+            }
+        }
+    }
+    Some(names)
+}
+
+/// Whether one of `names` (from [`extension_names`]) is the module name of
+/// `file` or of a package above it.
+pub(super) fn shadowed_by_extension(
+    names: &std::collections::BTreeSet<String>,
+    file: &Path,
+) -> bool {
+    let stem = file.file_stem().and_then(|stem| stem.to_str());
+    stem.is_none_or(|stem| stem != "__init__" && names.contains(stem))
+        || file
+            .parent()
+            .into_iter()
+            .flat_map(Path::components)
+            .any(|part| {
+                part.as_os_str()
+                    .to_str()
+                    .is_none_or(|part| names.contains(part))
+            })
+}
+
+/// Whether a package directory below an import root, along a dotted path
+/// the owner `file` can be imported by, holds compiled code (`.so`, `.pyd`,
+/// sourceless `.pyc`) for the next component of that path or for the
+/// package's `__init__`. Under pytest's prepend mode a test directory goes
+/// first on `sys.path`, so `tests/reach/ledger.pyc` in a directory with no
+/// source is what `import reach.ledger` loads. A directory named for the
+/// whole path with an initializer of any kind (`tests/reach/ledger/
+/// __init__.pyc`) is a package that wins over the module the same way,
+/// unless it is the owner's own package. `roots` are every directory
+/// holding a source or above one; their own entries are left to
+/// `extension_names`. An unreadable directory or name counts as one
+/// (#9226).
+pub(super) fn compiled_package_shadow(
+    root: &Path,
+    roots: &std::collections::BTreeSet<&Path>,
+    file: &Path,
+) -> bool {
+    let module = file.with_extension("");
+    let mut parts = Vec::new();
+    for part in module.components() {
+        let Some(part) = part.as_os_str().to_str() else {
+            return true;
+        };
+        parts.push(part);
+    }
+    let own_package = if parts.last() == Some(&"__init__") {
+        parts.pop();
+        file.parent().map(|package| root.join(package))
+    } else {
+        None
+    };
+    roots.iter().any(|base| {
+        (0..parts.len()).any(|start| {
+            let mut directory = root.join(base);
+            for (depth, name) in parts[start..].iter().enumerate() {
+                if depth > 0 && compiled_entry(&directory, name) {
+                    return true;
+                }
+                directory.push(name);
+                if !directory.is_dir() {
+                    return false;
+                }
+            }
+            own_package.as_ref() != Some(&directory) && initializer_in(&directory)
+        })
+    })
+}
+
+/// Whether `directory` holds a package initializer of any kind (`__init__`
+/// source, bytecode or extension), or cannot be read.
+fn initializer_in(directory: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return true;
+    };
+    entries.into_iter().any(|entry| {
+        let Ok(entry) = entry else {
+            return true;
+        };
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            return true;
+        };
+        file_name.split('.').next() == Some("__init__")
+            && [".py", ".pyc", ".so", ".pyd"]
+                .iter()
+                .any(|suffix| file_name.ends_with(suffix))
+    })
+}
+
+/// Whether `directory` holds compiled code named `name` or `__init__`, or
+/// cannot be read.
+fn compiled_entry(directory: &Path, name: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return true;
+    };
+    entries.into_iter().any(|entry| {
+        let Ok(entry) = entry else {
+            return true;
+        };
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            return true;
+        };
+        let module = file_name.split('.').next().unwrap_or_default();
+        (module == name || module == "__init__")
+            && (file_name.ends_with(".so")
+                || file_name.ends_with(".pyd")
+                || file_name.ends_with(".pyc"))
+    })
+}
+
+/// Whether the top-level name of the dotted module `module` is a standard
+/// library module. `sys.meta_path` tries the built-in and frozen importers
+/// before any path entry, and pytest has imported many pure-Python stdlib
+/// modules before a test runs, so `from math import floor` never loads a
+/// workspace `math.py` (#9226).
+pub(super) fn names_stdlib_module(module: &str) -> bool {
+    let top = module.split('.').next().unwrap_or_default();
+    STDLIB_MODULE_NAMES
+        .split_whitespace()
+        .any(|name| name == top)
+}
+
+/// Every top-level standard-library module name from CPython 3.9 to 3.14:
+/// 3.13 `sys.stdlib_module_names`, the names 3.14 adds, the modules removed
+/// since 3.9, and the frozen `__hello__` family.
+const STDLIB_MODULE_NAMES: &str = "\
+__future__ __hello__ __hello_alias__ __hello_only__ __phello__ \
+__phello_alias__ _abc _aix_support _android_support _apple_support _ast \
+_ast_unparse _asyncio _bisect _blake2 _bootlocale _bz2 _codecs _codecs_cn \
+_codecs_hk _codecs_iso2022 _codecs_jp _codecs_kr _codecs_tw _collections \
+_collections_abc _colorize _compat_pickle _compression _contextvars _crypt \
+_csv _ctypes _curses _curses_panel _datetime _dbm _decimal _dummy_thread \
+_elementtree _frozen_importlib _frozen_importlib_external _functools _gdbm \
+_hashlib _heapq _hmac _imp _interpchannels _interpqueues _interpreters _io \
+_ios_support _json _locale _lsprof _lzma _markupbase _md5 _msi \
+_multibytecodec _multiprocessing _opcode _opcode_metadata _operator \
+_osx_support _overlapped _pickle _posixshmem _posixsubprocess _py_abc \
+_py_warnings _pydatetime _pydecimal _pyio _pylong _pyrepl _queue _random \
+_remote_debugging _scproxy _sha1 _sha2 _sha3 _signal _sitebuiltins _socket \
+_sqlite3 _sre _ssl _stat _statistics _string _strptime _struct _suggestions \
+_symtable _sysconfig _testinternalcapi _thread _threading_local _tkinter \
+_tokenize _tracemalloc _types _typing _uuid _warnings _weakref _weakrefset \
+_winapi _wmi _xxtestfuzz _zoneinfo _zstd abc aifc annotationlib antigravity \
+argparse array ast asynchat asyncio asyncore atexit audioop base64 bdb \
+binascii binhex bisect builtins bz2 cProfile calendar cgi cgitb chunk cmath \
+cmd code codecs codeop collections colorsys compileall compression \
+concurrent configparser contextlib contextvars copy copyreg crypt csv ctypes \
+curses dataclasses datetime dbm decimal difflib dis distutils doctest \
+dummy_threading email encodings ensurepip enum errno faulthandler fcntl \
+filecmp fileinput fnmatch formatter fractions ftplib functools gc \
+genericpath getopt getpass gettext glob graphlib grp gzip hashlib heapq hmac \
+html http idlelib imaplib imghdr imp importlib inspect io ipaddress \
+itertools json keyword lib2to3 linecache locale logging lzma macpath mailbox \
+mailcap marshal math mimetypes mmap modulefinder msilib msvcrt \
+multiprocessing netrc nis nntplib nt ntpath nturl2path numbers opcode \
+operator optparse os ossaudiodev parser pathlib pdb pickle pickletools pipes \
+pkgutil platform plistlib poplib posix posixpath pprint profile pstats pty \
+pwd py_compile pyclbr pydoc pydoc_data pyexpat queue quopri random re \
+readline reprlib resource rlcompleter runpy sched secrets select selectors \
+shelve shlex shutil signal site smtpd smtplib sndhdr socket socketserver \
+spwd sqlite3 sre_compile sre_constants sre_parse ssl stat statistics string \
+stringprep struct subprocess sunau symbol symtable sys sysconfig syslog \
+tabnanny tarfile telnetlib tempfile termios test textwrap this threading \
+time timeit tkinter token tokenize tomllib trace traceback tracemalloc tty \
+turtle turtledemo types typing unicodedata unittest urllib uu uuid venv \
+warnings wave weakref webbrowser winreg winsound wsgiref xdrlib xml xmlrpc \
+xxsubtype zipapp zipfile zipimport zlib zoneinfo ";
+
+/// Whether two files would bind the same last module-name component: a
+/// file's stem, or its package directory's name for `__init__.py`. A file
+/// whose module name cannot be read counts as a match (#9226).
+fn same_module_name(file: &Path, own: &Path) -> bool {
+    fn module_name(file: &Path) -> Option<&std::ffi::OsStr> {
+        if file.file_name().is_some_and(|name| name == "__init__.py") {
+            file.parent().and_then(Path::file_name)
+        } else {
+            file.file_stem()
+        }
+    }
+    match (module_name(file), module_name(own)) {
+        (Some(file), Some(own)) => file == own,
+        _ => true,
+    }
+}
+
 impl ForeignWrites {
+    /// Which write sets hold anything: attributes, dynamic words, unsafe
+    /// tables, reflective words, reflective reach.
+    #[cfg(test)]
+    pub(super) fn written_sets(&self) -> [bool; 5] {
+        [
+            !self.attributes.is_empty(),
+            !self.dynamic_words.is_empty(),
+            !self.table_unsafe.is_empty(),
+            !self.reflective_words.is_empty(),
+            !self.reflective_reach.is_empty(),
+        ]
+    }
+
     /// The writes in every source but `own`; one-shot form of
     /// [`ForeignIndex`] for callers that scan a single file.
     #[cfg(test)]
@@ -343,6 +1192,40 @@ impl ForeignWrites {
 }
 
 impl ForeignWrites {
+    /// Whether some other workspace file reflects ([`mentions_reflection`]),
+    /// so it may write this module's namespace under a name built at runtime.
+    pub(super) fn reflection_elsewhere(&self) -> bool {
+        self.unknown || self.reflection_elsewhere
+    }
+
+    /// Whether another workspace file has this module's module name, so an
+    /// import of its dotted path may load that file instead.
+    pub(super) fn shares_module_name(&self) -> bool {
+        self.unknown || self.shares_module_name
+    }
+
+    /// Records that compiled code may run in place of the scanned source: an
+    /// extension module beside it ([`extension_beside`]) or an unchecked pyc
+    /// in the workspace ([`unchecked_bytecode`]).
+    pub(super) fn mark_compiled_shadow(&mut self) {
+        self.shares_module_name = true;
+    }
+
+    /// Whether some other workspace file may bind names it does not spell
+    /// byte for byte (a non-ASCII name, or a non-UTF-8 source encoding).
+    pub(super) fn names_may_differ_elsewhere(&self) -> bool {
+        self.unknown || self.names_may_differ_elsewhere
+    }
+
+    /// Whether some workspace file assigns a dunder attribute (`__new__`,
+    /// `__getattribute__`, `__class__`, ...), which can change what any
+    /// class builds or looks up without naming the method (#9226).
+    pub(super) fn writes_dunder(&self) -> bool {
+        self.attributes.iter().any(|attribute| {
+            attribute.len() > 4 && attribute.starts_with("__") && attribute.ends_with("__")
+        })
+    }
+
     /// Whether some workspace file assigns a function's code slots, which can
     /// replace any reader without rebinding its name (#10626). Checked where a
     /// reader is evaluated, not for plain names such as `version_info`.
@@ -360,7 +1243,8 @@ impl ForeignWrites {
             .and_then(|stem| stem.to_str())
             .unwrap_or_default();
         self.may_rebind(name, module_file)
-            || self.reflective_imports
+            || self.reflective_opaque
+            || (!stem.is_empty() && self.reflective_reach.iter().any(|word| word == stem))
             || self
                 .table_unsafe
                 .iter()
@@ -370,6 +1254,258 @@ impl ForeignWrites {
                 .iter()
                 .any(|word| word == name || (!stem.is_empty() && word == stem))
     }
+}
+
+/// Spellings that load a module chosen at runtime.
+const MODULE_LOADERS: [&str; 11] = [
+    // Evaluated code can import any module and mutate its tables.
+    "eval",
+    "exec",
+    "compile",
+    "importlib",
+    "__import__",
+    "import_module",
+    "load_module",
+    "exec_module",
+    "runpy",
+    "builtins",
+    "__builtins__",
+];
+
+/// Every name of the logical statements that hold an `import` keyword. The
+/// lexer ends a statement, so a parenthesis or backslash continuation reads
+/// whole (`from . import (\n    settings as hub,\n)`) while a bracket inside
+/// a comment or string does not. A lexing error reads every word.
+/// One file's foreign-index facts, plus whether it hides an import from the
+/// static graph. A pure function of the file and the workspace's dict-literal
+/// names, so [`ForeignIndex::build`] runs it in parallel.
+fn scan_source<'a>(
+    file: &'a Path,
+    source: &'a str,
+    words: &[&'a str],
+    tables: &std::collections::BTreeSet<String>,
+    prior: Option<&'a PriorFileFacts>,
+) -> (bool, IndexedSource<'a>) {
+    // `words` is the source's sorted distinct words, so a whole-word mention
+    // is a lookup instead of one scan of the source per spelling.
+    let mentions = |identifier: &str| {
+        let found = words.binary_search(&identifier).is_ok();
+        debug_assert_eq!(found, mentions_identifier(source, identifier));
+        found
+    };
+    let hides_import = DYNAMIC_LOADERS.iter().any(|loader| mentions(loader))
+        || source.contains("sys.modules")
+        || (file.file_name().is_some_and(|name| name == "__init__.py") && mentions("__all__"));
+    let assigned = prior
+        .map(|facts| facts.assigned.clone())
+        .unwrap_or_else(|| assigned_attributes(source));
+    let dynamic = assigned.is_none()
+        || DYNAMIC_WRITERS.iter().any(|writer| mentions(writer))
+        || source.contains("sys.modules");
+    let lexes = prior.and_then(|facts| facts.lexes.as_ref());
+    let table_unsafe: Vec<String> = if tables.is_empty() || !mentions_any_table(words, tables) {
+        Vec::new()
+    } else if let Some(lexes) = lexes {
+        let supplied: Vec<String> = lexes
+            .unsafe_names
+            .iter()
+            .filter(|name| tables.contains(name.as_str()))
+            .cloned()
+            .collect();
+        debug_assert_eq!(
+            supplied,
+            unsafe_table_uses(source, &|word| tables.contains(word), None)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            "{}: supplied unsafe table uses differ from the source's",
+            file.display()
+        );
+        supplied
+    } else {
+        unsafe_table_uses(source, &|word| tables.contains(word), None)
+            .into_iter()
+            .collect()
+    };
+    // Reflection reaches a module's dict without naming it, or with a name
+    // built at runtime (`getattr(module, n)`, `dir(module)`,
+    // `inspect.getmembers`, `locals()`, `fn.__globals__`).
+    let reflective = !tables.is_empty()
+        && REFLECTIVE_SPELLINGS
+            .iter()
+            .any(|spelling| mentions(spelling));
+    let indexed = IndexedSource {
+        file,
+        assigned,
+        dynamic_words: dynamic.then(|| words.to_vec()),
+        table_unsafe,
+        reflective_words: reflective.then(|| words.to_vec()),
+        import_words: if tables.is_empty() {
+            Vec::new()
+        } else {
+            match lexes {
+                Some(lexes) => {
+                    debug_assert_eq!(
+                        lexes.import_words,
+                        import_words(source),
+                        "{}: supplied import words differ from the source's",
+                        file.display()
+                    );
+                    lexes.import_words.iter().map(String::as_str).collect()
+                }
+                None => import_words(source),
+            }
+        },
+        reflects: mentions_reflection_with(&mentions),
+        loose_names: match lexes {
+            Some(lexes) => {
+                debug_assert_eq!(
+                    lexes.loose_names,
+                    names_may_differ(source),
+                    "{}: supplied loose-name answer differs from the source's",
+                    file.display()
+                );
+                lexes.loose_names
+            }
+            None => names_may_differ(source),
+        },
+        reflective_opaque: reflective
+            && (source.contains("sys.modules")
+                || MODULE_LOADERS.iter().any(|loader| mentions(loader))),
+    };
+    (hides_import, indexed)
+}
+
+/// Whether one of the sorted distinct `words` names a table, probing from
+/// the smaller side: pandas holds a few tables and ~300 words per file.
+fn mentions_any_table(words: &[&str], tables: &std::collections::BTreeSet<String>) -> bool {
+    if tables.len() < words.len() {
+        tables
+            .iter()
+            .any(|table| words.binary_search(&table.as_str()).is_ok())
+    } else {
+        words.iter().any(|word| tables.contains(*word))
+    }
+}
+
+fn import_words(source: &str) -> Vec<&str> {
+    import_words_lexed(source, &LexedSource::new(source))
+}
+
+fn import_words_lexed<'s>(source: &'s str, lexed: &LexedSource) -> Vec<&'s str> {
+    use rustpython_parser::Tok;
+    if !lexed.complete() {
+        return source_words(source).collect();
+    }
+    let mut words = Vec::new();
+    let mut statement: Vec<&str> = Vec::new();
+    let mut imports = false;
+    for (tok, start, end) in lexed.tokens() {
+        match tok {
+            Tok::Newline | Tok::Semi => {
+                if imports {
+                    words.append(&mut statement);
+                }
+                statement.clear();
+                imports = false;
+            }
+            Tok::Import => imports = true,
+            Tok::Name { .. } => {
+                if let Some(text) = source.get(*start..*end) {
+                    statement.push(text);
+                }
+            }
+            _ => {}
+        }
+    }
+    if imports {
+        words.append(&mut statement);
+    }
+    words
+}
+
+/// For each reflective file, the names of the modules in its import
+/// component: files linked by an import word naming another file's stem or
+/// package `__init__.py`, in either direction, plus every `conftest.py`
+/// component (a fixture hands a module to any test). A reflective file can
+/// only reach a module that is connected to it, even through a helper that
+/// receives the module as an argument.
+fn reflective_reaches<'a>(
+    files: &[IndexedSource<'a>],
+) -> Vec<(&'a Path, std::collections::BTreeSet<String>)> {
+    if files
+        .iter()
+        .all(|indexed| indexed.reflective_words.is_none())
+    {
+        return Vec::new();
+    }
+    // A package name stands for its `__init__.py` alone: importing `pkg`
+    // runs that file, not its sibling modules.
+    let names = |file: &Path| -> Vec<String> {
+        let stem = file.file_stem().and_then(|stem| stem.to_str());
+        let package = file
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .filter(|_| stem == Some("__init__"));
+        stem.into_iter()
+            .chain(package)
+            .map(str::to_string)
+            .collect()
+    };
+    let mut named: std::collections::BTreeMap<String, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (index, indexed) in files.iter().enumerate() {
+        for name in names(indexed.file) {
+            named.entry(name).or_default().push(index);
+        }
+    }
+    let mut parent: Vec<usize> = (0..files.len()).collect();
+    fn find(parent: &mut [usize], mut index: usize) -> usize {
+        while parent[index] != index {
+            parent[index] = parent[parent[index]];
+            index = parent[index];
+        }
+        index
+    }
+    for (index, indexed) in files.iter().enumerate() {
+        for word in &indexed.import_words {
+            for &other in named.get(*word).into_iter().flatten() {
+                let (a, b) = (find(&mut parent, index), find(&mut parent, other));
+                parent[a] = b;
+            }
+        }
+    }
+    let mut members: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    let mut conftest_roots = std::collections::BTreeSet::new();
+    for (index, indexed) in files.iter().enumerate() {
+        let root = find(&mut parent, index);
+        members.entry(root).or_default().extend(names(indexed.file));
+        if indexed
+            .file
+            .file_name()
+            .is_some_and(|name| name == "conftest.py")
+        {
+            conftest_roots.insert(root);
+        }
+    }
+    let conftest: std::collections::BTreeSet<String> = conftest_roots
+        .iter()
+        .filter_map(|root| members.get(root))
+        .flatten()
+        .cloned()
+        .collect();
+    let mut reaches = Vec::new();
+    for (index, indexed) in files.iter().enumerate() {
+        if indexed.reflective_words.is_none() {
+            continue;
+        }
+        let root = find(&mut parent, index);
+        let mut reach = members.get(&root).cloned().unwrap_or_default();
+        reach.extend(conftest.iter().cloned());
+        reaches.push((indexed.file, reach));
+    }
+    reaches
 }
 
 fn source_words(source: &str) -> impl Iterator<Item = &str> {
@@ -1169,7 +2305,7 @@ pub(super) fn constant_spellings(
     keep_unshadowed(test, spellings)
 }
 
-fn reader_spellings(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
+pub(super) fn reader_spellings(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
     keep_unshadowed(test, owner_module_callees(test, owner))
 }
 
@@ -1526,7 +2662,12 @@ pub(super) fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
     }
 }
 
-fn arithmetic(op: &ast::Operator, left: &Value, right: &Value, floats: bool) -> Option<Value> {
+pub(super) fn arithmetic(
+    op: &ast::Operator,
+    left: &Value,
+    right: &Value,
+    floats: bool,
+) -> Option<Value> {
     if let (Value::Str(left), Value::Str(right), ast::Operator::Add) = (left, right, op) {
         return Some(Value::Str(format!("{left}{right}")));
     }
@@ -1573,7 +2714,12 @@ fn arithmetic(op: &ast::Operator, left: &Value, right: &Value, floats: bool) -> 
     .map(Value::Int)
 }
 
-fn comparison(op: &ast::CmpOp, left: &Value, right: &Value, floats: bool) -> Option<bool> {
+pub(super) fn comparison(
+    op: &ast::CmpOp,
+    left: &Value,
+    right: &Value,
+    floats: bool,
+) -> Option<bool> {
     let ordering = match (left, right) {
         (Value::Str(left), Value::Str(right)) => Some(left.cmp(right)),
         _ if floats && (matches!(left, Value::Float(_)) || matches!(right, Value::Float(_))) => {
