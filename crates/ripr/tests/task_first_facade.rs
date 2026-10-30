@@ -326,6 +326,7 @@ fn repair_without_actionable_item_creates_no_attempt() -> Result<(), String> {
 
 /// An explicit check base is not retained by bare repair. A clean main branch
 /// can therefore have a real diff gap even when the seam inventory is empty.
+#[cfg(feature = "lang-python")]
 #[test]
 fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(), String> {
     let fixture = Fixture::dir("repair-explicit-check-base")?;
@@ -354,10 +355,20 @@ fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(),
     let check_out = stdout_text(&check);
     let gap = "gap:python:pricing.py:price:predicate_boundary:predicate:amount-10_if_amount>100_else_amount";
     assert!(
-        check_out.contains("amount == 100")
-            && check_out.contains(gap)
-            && check_out.contains("--phase before"),
-        "check must print this gap and start:\n{check_out}"
+        check_out.contains("amount == 100"),
+        "check must name the missing boundary:\n{check_out}"
+    );
+    let start_line = check_out
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ripr agent repair --gap-id "))
+        .ok_or_else(|| format!("check printed no gap-bound start:\n{check_out}"))?;
+    assert!(
+        start_line.contains(gap)
+            && start_line.contains("--base")
+            && start_line.contains("HEAD^")
+            && start_line.contains("--phase before"),
+        "start must bind the selected gap and base: {start_line}"
     );
     let repair = run_ripr(root, &["repair"])?;
     assert_exit(&repair, 3, "bare repair");

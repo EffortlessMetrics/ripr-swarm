@@ -1148,7 +1148,7 @@ fn help_screens_state_the_surfaces_the_parsers_accept() -> Result<(), String> {
         assert_contains("exhaustive help (`ripr help --all`)", &all, needle)?;
     }
 
-    // Discriminators. The `Repair one named gap` role line is the task-first
+    // Discriminators. The `Repair a Rust seam` role line is the task-first
     // alternation `repair | continue | status`: it names the ordinary
     // commands rather than the internal phase vocabulary, and
     // `default_help_keeps_the_task_roles_distinct` pins it as role
