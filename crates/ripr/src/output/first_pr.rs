@@ -3084,7 +3084,7 @@ fn git_success_with_ceiling(
 /// checkout the remote has no mapping for the branch, so a bare
 /// `git fetch origin -- <branch>` only fills FETCH_HEAD and `origin/<branch>`
 /// stays unresolved. Every printed missing-base fetch uses this one spelling.
-fn base_fetch_refspec(branch: &str) -> String {
+pub(crate) fn base_fetch_refspec(branch: &str) -> String {
     format!("+refs/heads/{branch}:refs/remotes/origin/{branch}")
 }
 

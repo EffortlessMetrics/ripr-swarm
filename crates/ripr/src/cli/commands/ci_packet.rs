@@ -32,10 +32,11 @@ use crate::agent::loop_commands::{
     WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT, WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT,
     WORKFLOW_AGENT_SEAM_PACKETS_ARTIFACT, WORKFLOW_AGENT_STATUS_ARTIFACT,
     WORKFLOW_AGENT_STATUS_MARKDOWN_ARTIFACT, WORKFLOW_AGENT_VERIFY_ARTIFACT,
-    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, shell_arg,
 };
 use crate::cli::suggest::unknown_argument;
 use crate::output::ci_summary::annotations::render_workflow_annotations;
+use crate::output::first_pr::base_fetch_refspec;
 use crate::process_owner::OwnedProcess;
 use serde::Serialize;
 use serde_json::Value;
@@ -1736,14 +1737,15 @@ fn unresolved_base_message(root: &Path, base_ref: &str, detail: &str) -> String 
          on a pull_request event."
             .to_string()
     } else if crate::analysis::is_shallow_repository(root, None) {
+        let refspec = shell_arg(&base_fetch_refspec(branch));
         format!(
-            "This is a shallow clone: set `fetch-depth: 0` on actions/checkout (or run \
-             `git fetch --unshallow origin '+refs/heads/{branch}:refs/remotes/origin/{branch}'`), \
-             then re-run."
+            "This is most likely a shallow clone: set `fetch-depth: 0` on actions/checkout (or \
+             run `git fetch --unshallow origin {refspec}`), then re-run."
         )
     } else {
+        let refspec = shell_arg(&base_fetch_refspec(branch));
         format!(
-            "Fetch the base branch (`git fetch origin {branch}`; actions/checkout with \
+            "Fetch the base branch (`git fetch origin {refspec}`; actions/checkout with \
              `fetch-depth: 0` fetches every branch), then re-run."
         )
     };
@@ -2718,7 +2720,7 @@ mod tests {
             message.contains("`origin/main` is not in this checkout"),
             "{message}"
         );
-        assert!(message.contains("shallow clone"), "{message}");
+        assert!(message.contains("most likely a shallow clone"), "{message}");
         assert!(message.contains("`fetch-depth: 0`"), "{message}");
         assert!(
             message
@@ -2760,10 +2762,35 @@ mod tests {
             "{message}"
         );
         assert!(
-            message.contains("git fetch origin no-such-branch"),
+            message.contains(
+                "git fetch origin '+refs/heads/no-such-branch:refs/remotes/origin/no-such-branch'"
+            ),
             "{message}"
         );
         assert!(!message.contains("shallow clone"), "{message}");
+        Ok(())
+    }
+
+    /// The branch comes from the event payload; an apostrophe must not close
+    /// the quoted refspec and leave the rest as shell syntax.
+    #[test]
+    fn missing_base_with_an_awkward_branch_name_is_shell_escaped() -> Result<(), String> {
+        let (scratch, full, _shallow) = full_and_shallow_clone("quote-base")?;
+        let message = capture_error(&full, "feat/it's");
+        let _ = fs::remove_dir_all(&scratch);
+        let escaped = shell_arg(&base_fetch_refspec("feat/it's"));
+        assert_ne!(
+            escaped, "'+refs/heads/feat/it's:refs/remotes/origin/feat/it's'",
+            "escaping must change a branch containing an apostrophe"
+        );
+        assert!(
+            message.contains(&format!("git fetch origin {escaped}")),
+            "{message}"
+        );
+        assert!(
+            !message.contains("origin '+refs/heads/feat/it's:"),
+            "unescaped apostrophe: {message}"
+        );
         Ok(())
     }
 }
