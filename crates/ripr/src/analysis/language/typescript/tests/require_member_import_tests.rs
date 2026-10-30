@@ -275,3 +275,280 @@ fn a_hoisted_block_require_or_a_late_create_require_import_is_read_conservativel
         "imports hoist, so their position does not matter"
     );
 }
+
+#[test]
+fn a_member_picked_off_a_const_require_namespace_is_a_named_import() {
+    let lib = (
+        "./lib".to_string(),
+        Some("default".to_string()),
+        "lib".to_string(),
+        true,
+    );
+    assert_eq!(
+        imports_of("const lib = require('./lib');\nconst s = lib.stringify;\n"),
+        vec![lib.clone(), named("./lib", "stringify", "s")]
+    );
+    assert_eq!(
+        imports_of("const lib = require('./lib');\nconst s = lib['stringify'];\n"),
+        vec![lib.clone(), named("./lib", "stringify", "s")]
+    );
+    assert_eq!(
+        imports_of("const lib = require('./lib');\nconst { stringify, pretty: p } = lib;\n"),
+        vec![
+            lib.clone(),
+            named("./lib", "stringify", "stringify"),
+            named("./lib", "pretty", "p")
+        ]
+    );
+}
+
+#[test]
+fn only_a_plain_member_of_a_const_namespace_is_read() {
+    for source in [
+        // A mutable or rewritten namespace may no longer be the module.
+        "let lib = require('./lib');\nconst s = lib.stringify;\n",
+        "var lib = require('./lib');\nconst s = lib.stringify;\n",
+        // Not declared before use, not a namespace, a call, an optional or deeper member.
+        "const s = lib.stringify;\nconst lib = require('./lib');\n",
+        "const lib = other('./lib');\nconst s = lib.stringify;\n",
+        "const lib = require('./lib');\nconst s = lib.make();\n",
+        "const lib = require('./lib');\nconst s = lib?.stringify;\n",
+        "const lib = require('./lib');\nconst s = lib.a.b;\n",
+        "const lib = require('./lib');\nconst s = lib.default;\n",
+        // An alias of the namespace is not followed.
+        "const lib = require('./lib');\nconst again = lib;\nconst s = again.stringify;\n",
+    ] {
+        let imports = imports_of(source);
+        assert!(
+            !imports
+                .iter()
+                .any(|import| !import.3 && import.0 == "./lib"),
+            "{source}: {imports:?}"
+        );
+    }
+}
+
+#[test]
+fn a_call_through_a_namespace_member_alias_reaches_the_owner() -> Result<(), String> {
+    let alias = class_for(
+        "req-ns-alias",
+        "const lib = require('../src/lib');\nconst s = lib.stringify;",
+        "s({ a: 1 })",
+    )?;
+    let destructured = class_for(
+        "req-ns-destructured",
+        "const { stringify: s } = require('../src/lib');",
+        "s({ a: 1 })",
+    )?;
+    assert_eq!(alias, ExposureClass::WeaklyExposed);
+    assert_eq!(alias, destructured, "same program, same reading");
+    let other = class_for(
+        "req-ns-other-name",
+        "const lib = require('../src/lib');\nconst s = lib.pretty;",
+        "s({ a: 1 })",
+    )?;
+    assert_eq!(other, ExposureClass::NoStaticPath);
+    Ok(())
+}
+
+#[test]
+fn destructuring_records_the_bound_local_or_nothing() {
+    let lib = (
+        "./lib".to_string(),
+        Some("default".to_string()),
+        "lib".to_string(),
+        true,
+    );
+    // A default keeps the plain local, direct or through a namespace.
+    assert_eq!(
+        imports_of("const { f: g = 1 } = require('./lib');\n"),
+        vec![named("./lib", "f", "g")]
+    );
+    assert_eq!(
+        imports_of("const { f = 1 } = require('./lib');\n"),
+        vec![named("./lib", "f", "f")]
+    );
+    assert_eq!(
+        imports_of("const lib = require('./lib');\nconst { f: g = 1 } = lib;\n"),
+        vec![lib, named("./lib", "f", "g")]
+    );
+    // A nested pattern binds other names, so no import is recorded for it.
+    for source in [
+        "const { a: { b } } = require('./lib');\n",
+        "const { a: [b] } = require('./lib');\n",
+        "const { a: { b } = {} } = require('./lib');\n",
+    ] {
+        assert_eq!(imports_of(source), Vec::new(), "{source}");
+    }
+}
+
+#[test]
+fn a_rewritten_member_alias_of_a_namespace_records_no_import() {
+    for source in [
+        "const lib = require('./lib');\nlet s = lib.f;\ns = other;\n",
+        "const lib = require('./lib');\nlet { f: s } = lib;\ns = other;\n",
+    ] {
+        assert!(
+            !imports_of(source)
+                .iter()
+                .any(|import| !import.3 && import.0 == "./lib"),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn a_namespace_whose_members_are_replaced_yields_no_member_import() {
+    // `lib.f = stub` makes the later `lib.f` the stub, not the module's
+    // export (#10464 review).
+    for source in [
+        "const lib = require('./lib');\nlib.f = () => 1;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nlib['f'] = () => 1;\nconst { f: s } = lib;\n",
+        "const lib = require('./lib');\ndelete lib.f;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nObject.assign(lib, stubs);\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nObject.defineProperty(lib, 'f', desc);\nconst s = lib.f;\n",
+    ] {
+        assert!(
+            !imports_of(source)
+                .iter()
+                .any(|import| !import.3 && import.0 == "./lib"),
+            "{source}"
+        );
+    }
+    // Passing a member value, or reading, does not replace anything.
+    assert!(
+        imports_of("const lib = require('./lib');\nuse(lib.g);\nconst s = lib.f;\n")
+            .iter()
+            .any(|import| !import.3 && import.0 == "./lib" && import.1.as_deref() == Some("f")),
+    );
+}
+
+#[test]
+fn an_escaping_namespace_yields_no_member_import() {
+    // An alias, wrapper or argument can reach the namespace's members even
+    // though `lib` itself is never assigned through (#10464 review).
+    for source in [
+        "const lib = require('./lib');\nconst alias = lib;\nalias.f = () => 1;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nconst box = { lib };\nbox.lib.f = () => 1;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nmutate([lib]);\nconst s = lib.f;\n",
+        "const lib = require('./lib');\ndelete lib?.f;\nconst s = lib.f;\n",
+    ] {
+        assert!(
+            !imports_of(source)
+                .iter()
+                .any(|import| !import.3 && import.0 == "./lib"),
+            "{source}"
+        );
+    }
+}
+
+/// The member imports (not the namespace binding itself) a TypeScript source
+/// records, after checking the fixture parses cleanly into its three
+/// statements, so a syntax slip cannot make a negative pass on nothing.
+fn ts_member_imports(source: &str) -> Vec<(String, Option<String>, String, bool)> {
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, source, SourceType::ts()).parse();
+    assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+    assert_eq!(parsed.program.body.len(), 3, "{source}");
+    extract_imports_from_statements(&parsed.program.body)
+        .into_iter()
+        .map(|import| {
+            (
+                import.source,
+                import.imported,
+                import.local,
+                import.namespace,
+            )
+        })
+        .filter(|import| !import.3)
+        .collect()
+}
+
+#[test]
+fn a_typescript_wrapped_member_write_taints_the_namespace() {
+    let control = ts_member_imports("const lib = require('./lib');\nstub();\nconst s = lib.f;\n");
+    assert_eq!(control, vec![named("./lib", "f", "s")], "positive control");
+    for source in [
+        "const lib = require('./lib');\n(lib.f as any) = stub;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\n(lib.f)! = stub;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\n(lib.f satisfies object) = stub;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\n<any>lib.f = stub;\nconst s = lib.f;\n",
+    ] {
+        assert_eq!(ts_member_imports(source), Vec::new(), "{source}");
+    }
+}
+
+#[test]
+fn a_call_through_a_namespace_member_taints_the_namespace() {
+    // `this` inside the callee is the namespace, so the call can replace its
+    // exports; static, computed and optional spellings all count.
+    for source in [
+        "const lib = require('./lib');\nlib.__defineGetter__('f', () => stub);\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nlib['__defineGetter__']('f', () => stub);\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nlib?.install();\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nlib.install();\nconst { f: s } = lib;\n",
+    ] {
+        assert!(
+            !imports_of(source)
+                .iter()
+                .any(|import| !import.3 && import.0 == "./lib"),
+            "{source}"
+        );
+    }
+    // Passing a member value to a free function is a passive read.
+    assert!(
+        imports_of("const lib = require('./lib');\nuse(lib.g);\nconst s = lib.f;\n")
+            .iter()
+            .any(|import| !import.3 && import.1.as_deref() == Some("f")),
+    );
+}
+
+#[test]
+fn a_tagged_template_through_a_namespace_member_taints_the_namespace() {
+    // A member tag is invoked with the namespace as `this`, like a call.
+    for source in [
+        "const lib = require('./lib');\nlib.install`replace`;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nlib['install']`replace`;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nlib.install`replace`;\nconst { f: s } = lib;\n",
+    ] {
+        assert!(
+            !imports_of(source)
+                .iter()
+                .any(|import| !import.3 && import.0 == "./lib"),
+            "{source}"
+        );
+    }
+    // A free-function tag over a member value is a passive read.
+    assert!(
+        imports_of("const lib = require('./lib');\ntag`x${lib.g}`;\nconst s = lib.f;\n")
+            .iter()
+            .any(|import| !import.3 && import.1.as_deref() == Some("f")),
+    );
+}
+
+#[test]
+fn a_replaced_export_through_a_tagged_receiver_is_not_credited() -> Result<(), String> {
+    for (name, setup) in [
+        ("static", "lib.install`replace`;"),
+        ("computed", "lib['install']`replace`;"),
+    ] {
+        let class = class_for(
+            &format!("ns-receiver-tag-{name}"),
+            &format!("const lib = require('../src/lib');\n{setup}\nconst s = lib.stringify;"),
+            "s({ a: 1 })",
+        )?;
+        assert_eq!(class, ExposureClass::NoStaticPath, "{name}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_replaced_export_through_a_receiver_call_is_not_credited() -> Result<(), String> {
+    let class = class_for(
+        "ns-receiver-call",
+        "const lib = require('../src/lib');\nlib.__defineGetter__('stringify', () => () => '{\"a\":1}');\nconst s = lib.stringify;",
+        "s({ a: 1 })",
+    )?;
+    assert_eq!(class, ExposureClass::NoStaticPath);
+    Ok(())
+}

@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/error_path_oracle_execution_false_branch/input
 
-Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 1 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed (1 base-side evidence, not candidate edit targets)
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 1 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed (1 base-side evidence, not candidate edit targets)
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 WARNING ./src/lib.rs:5
   id: probe:src_lib.rs:error_path:fedbf836
@@ -14,11 +19,12 @@ Changed
   before: let n = rdr.read(&mut buf).unwrap_or(0);
   after:  let n = rdr.read(&mut buf)?;
 
-Probe
+Change type
+  error handling changed
   family: error_path
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::read_all
-  canonical gap: gap:rust:src/lib.rs:read_all:error_variant:error_path:let_n=rdr.read_mut_buf
+  gap id (for scripts): gap:rust:src/lib.rs:read_all:error_variant:error_path:let_n=rdr.read_mut_buf
 
 Static exposure
   reachable_unrevealed (warning, confidence 0.79)
@@ -51,18 +57,19 @@ Changed
   expr:   let n = rdr.read(&mut buf).unwrap_or(0);
   source:  base_deleted — base-side evidence, not a candidate edit target
 
-Probe
+Change type
+  a change ripr could not classify
   family: static_unknown
-  delta:  unknown
+  delta:  unknown (kind of change not determined)
   owner:  src/lib.rs::read_all
-  canonical gap: gap:rust:src/lib.rs:read_all:static_unknown:static_unknown:let_n=rdr.read_mut_buf_.unwrap_or_0
+  gap id (for scripts): gap:rust:src/lib.rs:read_all:static_unknown:static_unknown:let_n=rdr.read_mut_buf_.unwrap_or_0
 
 Static exposure
   static_unknown (note, confidence 0.50)
 
 Evidence
   - reach yes: Related tests appear to reach read_all: reports_read_failure
-  - infection unknown: Changed syntax is not mapped to a high-confidence probe family
+  - infection unknown: Changed syntax is not mapped to a high-confidence change type
   - propagation unknown: No propagation model is available for this changed syntax
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator unknown: Assertions exist, but oracle strength is unknown
@@ -75,7 +82,7 @@ Weakness
   - Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests
 
 Stop reasons:
-  - static_probe_unknown — ripr could not model this change well enough to classify it
+  - ripr could not model this change well enough to classify it (static_probe_unknown)
     Next: Add a test that calls the changed code and asserts an exact result.
 
 Next step

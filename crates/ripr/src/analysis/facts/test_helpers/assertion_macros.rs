@@ -27,7 +27,7 @@
 //!   macro is defined in the test's own file. Macros from other files or
 //!   crates (`tokio_test::assert_ready!`) contribute nothing.
 
-use super::super::{OracleFact, RustIndex, TestFact};
+use super::super::{OracleFact, RustIndex, SourceText, TestFact};
 use crate::analysis::extract::{
     extract_assertions, extract_identifier_tokens, mask_comments_and_strings,
     retain_reached_oracles,
@@ -35,6 +35,7 @@ use crate::analysis::extract::{
 use crate::analysis::syntax::{LocalMacroCall, MacroArm, local_macro_calls};
 use crate::domain::{OracleKind, OracleStrength};
 use rayon::prelude::*;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -62,7 +63,7 @@ pub(crate) fn credit_same_file_assertion_macros(index: &mut RustIndex) {
         return;
     }
 
-    let mut credited: BTreeMap<(PathBuf, usize, String), Vec<OracleFact>> = BTreeMap::new();
+    let mut credited: BTreeMap<(PathBuf, usize, String), Credit> = BTreeMap::new();
     for test in index.tests().iter() {
         let Some(calls) = calls_by_file.get(&test.file) else {
             continue;
@@ -86,25 +87,143 @@ pub(crate) fn credit_same_file_assertion_macros(index: &mut RustIndex) {
             .collect::<Vec<_>>();
         // The same never-run statements the ordinary extractor drops.
         retain_reached_oracles(&mut oracles, &test.body, test.start_line);
-        if !oracles.is_empty() {
-            credited.insert(
-                (test.file.clone(), test.start_line, test.name.clone()),
-                oracles,
-            );
+        if oracles.is_empty() {
+            continue;
         }
+        let mut credit = Credit::default();
+        for oracle in oracles {
+            let expansion = calls
+                .iter()
+                .find(|call| call.start_line == oracle.line && call.text.trim() == oracle.text)
+                .and_then(expand_call);
+            match expansion {
+                // The call's text in the body is replaced by the expansion
+                // (see `Credit::rewrites`) so later stages that find the
+                // statement by its text read an ordinary assertion.
+                Some(mut expanded) if test.body.matches(oracle.text.as_str()).count() == 1 => {
+                    // The ordinary extractor keeps a statement's `;` in the
+                    // fact's text, and the file scan keys on it.
+                    let terminated = test
+                        .body
+                        .split_once(oracle.text.as_str())
+                        .is_some_and(|(_, after)| after.trim_start().starts_with(';'));
+                    if terminated && !expanded.oracle.text.ends_with(';') {
+                        expanded.oracle.text.push(';');
+                    }
+                    credit.rewrites.push((oracle.text, expanded.statement));
+                    credit.oracles.push(expanded.oracle);
+                }
+                _ => credit.oracles.push(oracle),
+            }
+        }
+        credited.insert(
+            (test.file.clone(), test.start_line, test.name.clone()),
+            credit,
+        );
     }
     if credited.is_empty() {
         return;
     }
     index.for_each_test_mut(|test| {
-        if let Some(oracles) =
-            credited.get(&(test.file.clone(), test.start_line, test.name.clone()))
-        {
-            test.assertions.extend(oracles.iter().cloned());
-            test.assertions
-                .sort_by(|left, right| left.line.cmp(&right.line).then(left.text.cmp(&right.text)));
+        let Some(credit) = credited.get(&(test.file.clone(), test.start_line, test.name.clone()))
+        else {
+            return;
+        };
+        test.assertions.extend(credit.oracles.iter().cloned());
+        test.assertions
+            .sort_by(|left, right| left.line.cmp(&right.line).then(left.text.cmp(&right.text)));
+        if credit.rewrites.is_empty() {
+            return;
         }
+        let mut body = test.body.as_str().to_string();
+        for (call_text, statement) in &credit.rewrites {
+            body = body.replacen(call_text.as_str(), statement, 1);
+        }
+        test.body = SourceText::owned(body);
     });
+}
+
+/// `source` with every call the credit path rewrote in its test's body
+/// replaced by the assertion it stands for, line count preserved. The
+/// owner-pin admission scans this view, so an expanded statement is found at
+/// the call's line the way a hand-written one is (#10650).
+///
+/// The view expands a call only when its test's current body no longer holds
+/// the call text but holds the expansion. That is the credit path's own
+/// decision (use items, control flow, unreached statements, duplicate call
+/// text and the rest are all decided there), so the function slice the scan
+/// fingerprints equals the test body exactly and a declined call can never
+/// make the two differ. Borrowed when nothing expands.
+pub(crate) fn expanded_assertion_view<'a, 't>(
+    source: &'a str,
+    tests: impl IntoIterator<Item = &'t TestFact>,
+) -> Cow<'a, str> {
+    if !source.contains("macro_rules") {
+        return Cow::Borrowed(source);
+    }
+    let tests = tests.into_iter().collect::<Vec<_>>();
+    let mut calls = local_macro_calls(source);
+    calls.sort_by_key(|call| std::cmp::Reverse(call.start_line));
+    let line_starts = std::iter::once(0)
+        .chain(source.match_indices('\n').map(|(index, _)| index + 1))
+        .collect::<Vec<_>>();
+    let mut view: Option<String> = None;
+    for call in &calls {
+        if !extract_assertions(&call.text, 1).is_empty() {
+            continue;
+        }
+        let Some(expanded) = expand_call(call) else {
+            continue;
+        };
+        let text = call.text.trim();
+        let rewritten = tests.iter().any(|test| {
+            call.function == test.name
+                && test.start_line <= call.start_line
+                && call.end_line <= test.end_line
+                && !test.body.contains(text)
+                && test.body.contains(expanded.statement.as_str())
+        });
+        if !rewritten {
+            continue;
+        }
+        let Some(&start) = line_starts.get(call.start_line.saturating_sub(1)) else {
+            continue;
+        };
+        let current = view.as_deref().unwrap_or(source);
+        // The region's end comes from the current view: an earlier edit on
+        // the same line changed its byte length, and expansions keep the
+        // newline count, so the call's lines end after this many newlines.
+        let mut end = start;
+        for _ in call.start_line..=call.end_line.max(call.start_line) {
+            match current.get(end..).and_then(|rest| rest.find('\n')) {
+                Some(offset) => end += offset + 1,
+                None => {
+                    end = current.len();
+                    break;
+                }
+            }
+        }
+        if start > end || !current.is_char_boundary(start) || !current.is_char_boundary(end) {
+            continue;
+        }
+        let region = &current[start..end];
+        if region.matches(text).count() != 1 {
+            continue;
+        }
+        let replaced = region.replacen(text, &expanded.statement, 1);
+        view.get_or_insert_with(|| source.to_string())
+            .replace_range(start..end, &replaced);
+    }
+    view.map_or(Cow::Borrowed(source), Cow::Owned)
+}
+
+/// What one test earns from its same-file assertion macro calls.
+#[derive(Default)]
+struct Credit {
+    oracles: Vec<OracleFact>,
+    /// `(call text, expansion)` pairs applied to the test's body, for calls
+    /// that expand exactly.
+    rewrites: Vec<(String, String)>,
 }
 
 /// A `use` item can import a same-named macro over the local definition.
@@ -132,6 +251,232 @@ fn macro_call_oracle(call: &LocalMacroCall) -> Option<OracleFact> {
         observed_tokens: extract_identifier_tokens(&text),
         text,
         ok_value_observed: None,
+    })
+}
+
+struct ExpandedCall {
+    /// The assertion statement the call stands for.
+    statement: String,
+    /// Its ordinary grade, attributed to the call's line.
+    oracle: OracleFact,
+}
+
+/// The assertion a call whose macro expands exactly stands for: one arm,
+/// only comma-separated `$name:expr` fragments, and a transcriber that is a
+/// single assertion macro statement. Substituting the call's own argument
+/// text for the fragments yields the assertion the test runs, which the
+/// ordinary extractor then grades like a hand-written one. Anything else
+/// (several arms, other fragment kinds, repetitions, several statements, a
+/// generic or closure argument whose commas cannot be split reliably) keeps
+/// the capped `unknown` credit.
+fn expand_call(call: &LocalMacroCall) -> Option<ExpandedCall> {
+    let [arm] = call.arms.as_slice() else {
+        return None;
+    };
+    let names = expr_fragment_names(&arm.matcher)?;
+    let arguments = call_arguments(&call.text)?;
+    let masked = mask_comments_and_strings(arguments);
+    if masked.contains("::<") || masked.contains('|') {
+        return None;
+    }
+    let arguments = split_top_level(arguments, &masked);
+    if arguments.len() != names.len() || arguments.iter().any(|argument| argument.is_empty()) {
+        return None;
+    }
+    let statement = single_assertion_statement(&arm.transcriber)?;
+    if transcriber_makes_its_own_call(statement, &names) {
+        return None;
+    }
+    let expanded = substitute_fragments(statement, &names, &arguments)?;
+    // The expansion replaces the call's text in place, so a line break in
+    // either would shift every later line, and a call split from its `;` by a
+    // newline would not match the file scan's statement text.
+    if expanded.contains('\n') || call.text.trim().contains('\n') {
+        return None;
+    }
+    let mut assertions = extract_assertions(&expanded, call.start_line);
+    if assertions.len() != 1 {
+        return None;
+    }
+    let oracle = assertions.remove(0);
+    if rank(&oracle.strength) <= rank(&OracleStrength::Unknown) || is_tautology(&oracle.text) {
+        return None;
+    }
+    Some(ExpandedCall {
+        statement: expanded,
+        oracle,
+    })
+}
+
+/// Whether the transcriber calls something whose inputs the call's arguments
+/// do not supply: `assert_eq!(surcharge(5), $expected)` runs `surcharge(5)`
+/// whatever the call site wrote, so the call line's own inputs say nothing
+/// about what the assertion exercises and the expansion would be graded
+/// against the wrong ones. A call is the call site's own when every argument
+/// holds a `$fragment` (`gate($x)`, `gate($x + 1)`); a method on a bare
+/// fragment (`$value.len()`), the `Some`/`Ok`/`Err` constructors and nested
+/// macros are read too. Any other head, capitalised or not, may be the owner.
+fn transcriber_makes_its_own_call(statement: &str, names: &[String]) -> bool {
+    let masked = mask_comments_and_strings(statement);
+    masked.match_indices('(').any(|(open, _)| {
+        let before = &masked[..open];
+        let head = before
+            .trim_end_matches(|character: char| character.is_alphanumeric() || character == '_');
+        let callee = &before[head.len()..];
+        if callee.is_empty() || matches!(callee, "Some" | "Ok" | "Err") {
+            return false;
+        }
+        if let Some(receiver) = head.strip_suffix('.') {
+            let name = receiver
+                .rsplit(|character: char| !(character.is_alphanumeric() || character == '_'))
+                .next()
+                .unwrap_or_default();
+            if receiver.ends_with(&format!("${name}"))
+                && names.iter().any(|fragment| fragment == name)
+            {
+                return false;
+            }
+        }
+        let mut depth = 0usize;
+        let close = masked[open..]
+            .char_indices()
+            .find_map(|(offset, character)| {
+                match character {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                (depth == 0).then_some(open + offset)
+            });
+        let Some(close) = close else {
+            return true;
+        };
+        let inner = &masked[open + 1..close];
+        let arguments = split_top_level(inner, inner);
+        arguments.is_empty() || arguments.iter().any(|argument| !argument.contains('$'))
+    })
+}
+
+/// The `$name` of every fragment when the matcher is exactly
+/// `$a:expr, $b:expr, ..`.
+fn expr_fragment_names(matcher: &str) -> Option<Vec<String>> {
+    let inner = delimited_inner(matcher)?;
+    let masked = mask_comments_and_strings(inner);
+    if masked.contains("$(") {
+        return None;
+    }
+    split_top_level(inner, &masked)
+        .into_iter()
+        .map(|part| {
+            let (name, kind) = part.strip_prefix('$')?.split_once(':')?;
+            let name_ok = !name.is_empty()
+                && name
+                    .chars()
+                    .all(|character| character.is_alphanumeric() || character == '_');
+            (name_ok && kind.trim() == "expr").then(|| name.to_string())
+        })
+        .collect()
+}
+
+/// Comma-split at bracket depth zero over the original text, using its
+/// masked twin (same byte length) to find the structure.
+fn split_top_level<'a>(text: &'a str, masked: &str) -> Vec<&'a str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (index, byte) in masked.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                parts.push(text[start..index].trim());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = text[start..].trim();
+    if !last.is_empty() {
+        parts.push(last);
+    }
+    parts
+}
+
+/// The transcriber's lone `name!( .. )` statement, outer braces and the
+/// trailing `;` removed. `None` for several statements or any other shape.
+fn single_assertion_statement(transcriber: &str) -> Option<&str> {
+    let mut text = delimited_inner(transcriber)?;
+    loop {
+        text = text.trim().trim_end_matches(';').trim();
+        match delimited_inner(text) {
+            Some(inner) if text.starts_with('{') => text = inner,
+            _ => break,
+        }
+    }
+    let masked = mask_comments_and_strings(text);
+    let (name, rest) = masked.split_once('!')?;
+    let name_ok = !name.trim().is_empty()
+        && name
+            .trim()
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '_' || character == ':');
+    (name_ok && parenthesized_whole(rest.trim()).is_some()).then_some(text)
+}
+
+/// `statement` with each `$name` replaced by its call argument, wrapped in
+/// parentheses unless it is a plain path, call or literal. `None` when a
+/// `$` remains, so an unbound fragment never reads as an assertion.
+fn substitute_fragments(statement: &str, names: &[String], arguments: &[&str]) -> Option<String> {
+    let masked = mask_comments_and_strings(statement);
+    let mut expanded = String::new();
+    let mut index = 0;
+    while index < statement.len() {
+        let rest = &masked[index..];
+        if let Some(after) = rest.strip_prefix('$') {
+            let name = after
+                .chars()
+                .take_while(|character| character.is_alphanumeric() || *character == '_')
+                .collect::<String>();
+            let position = names.iter().position(|candidate| *candidate == name)?;
+            let argument = arguments.get(position)?;
+            if is_atomic_operand(argument) {
+                expanded.push_str(argument);
+            } else {
+                expanded.push('(');
+                expanded.push_str(argument);
+                expanded.push(')');
+            }
+            index += 1 + name.len();
+            continue;
+        }
+        let character = statement[index..].chars().next()?;
+        expanded.push(character);
+        index += character.len_utf8();
+    }
+    (!mask_comments_and_strings(&expanded).contains('$')).then_some(expanded)
+}
+
+/// A path, field or method chain, call or literal: safe to splice into
+/// another expression without parentheses. A prefix operator is not atomic:
+/// an `$x:expr` fragment is opaque, so `$x.len()` over `&v` is `(&v).len()`,
+/// not `&v.len()`.
+fn is_atomic_operand(argument: &str) -> bool {
+    let masked = mask_comments_and_strings(argument.trim());
+    let mut depth = 0usize;
+    masked.chars().all(|character| match character {
+        '(' | '[' | '{' => {
+            depth += 1;
+            true
+        }
+        ')' | ']' | '}' => {
+            depth = depth.saturating_sub(1);
+            true
+        }
+        _ => {
+            depth > 0
+                || character.is_alphanumeric()
+                || matches!(character, '_' | ':' | '.' | '"' | '\'')
+        }
     })
 }
 

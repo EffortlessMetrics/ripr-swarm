@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..0000000 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -32,7 +32,7 @@
+     pub const MAX: u32 = 9;
+ }
+ 
+-pub const RATE: u32 = 5;
++pub const RATE: u32 = 6;
+ 
+ pub fn charge(x: u32) -> u32 {
+     const RATE: u32 = 2;

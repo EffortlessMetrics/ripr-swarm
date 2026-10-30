@@ -161,7 +161,8 @@ language run.
 For each change, the first match wins:
 
 1. a class-capping static limit (rule 1) gives `static_unknown`;
-2. no bound relation (rule 3) gives `no_static_path`;
+2. no bound relation (rule 3) gives `no_static_path`, or `static_unknown` on a
+   `partial` packet whose only relations are `file_proximity` (rule 10, #8352);
 3. established sink alignment (rule 9) gives `exposed`;
 4. otherwise the aggregate of the per-relation classes (rule 8).
 
@@ -182,7 +183,7 @@ For each change, the first match wins:
    `perl_packet_contract_migration_corpus_pins_real_producer_dispositions`
    pins.
 2. **No relations.** A change with no bound relation is `no_static_path`,
-   reach `no`.
+   reach `no`, except on a `partial` packet (rule 10).
 3. **Relation binding.** A relation binds to a change only when
    `relation.change_id` is the change id and `relation.owner_id` is the
    change owner, compared as exact strings. A relation whose change id is
@@ -242,7 +243,11 @@ For each change, the first match wins:
    `perl_already_discriminated:` and
    no gap, suggested location, suggested assertion or missing
    discriminator.
-10. **Partial packets.** `packet_status: partial` does not cap the class.
+10. **Partial packets.** `packet_status: partial` does not cap the class,
+    except that a partial packet with no relation other than
+    `file_proximity` (including none) is `static_unknown` with no gap and
+    no location, because the run may not have emitted the link (#8352;
+    example 16).
     A sink-aligned change in a partial packet is `exposed`. A partial
     packet records a partial language run and gets no canonical gap. It
     keeps `perl_suggested_test_location` under rule 13.
@@ -330,6 +335,18 @@ For each change, the first match wins:
     `dynamic_framework_indirection` kinds stay `reachable_unrevealed`. The
     recommended next step says the producer grades the assertion broad and that
     no change is needed if it asserts the message, class or value.
+
+    **Matcher grading.** A packet whose `producer.capabilities` lists
+    `oracle_matcher_grading` promises that the producer separates these
+    assertions: `throws_ok` with a class or regex and `like(dies {...}, ...)`
+    are `strong_exact`, a bare `dies_ok` or a value `like` stays `weak_broad`,
+    and an exception block nested in such an assertion is not a second oracle.
+    For such a packet a `weak_broad` oracle is an ordinary weak oracle
+    (`reachable_unrevealed`, the gap), and a bound `strong_exact`
+    `exception_observer` reads `static_unknown`: a class or message matcher
+    pins that an error is raised, not which boundary raises it. The recommended
+    next step says so. A packet without the capability keeps the reading above,
+    including example 5. No producer advertises the capability yet.
 17. **`isnt` pins nothing.** An oracle whose recorded expression begins with
     the call `isnt` (bare, or qualified `Test::More::`, `Test2::V0::` or
     `Test2::V1::`) is read as `weak_smoke` when the producer graded it
@@ -579,7 +596,11 @@ cases.
     / medium. Neither has a location (class unchanged; today location
     emitted).
 16. `relations: []`: `no_static_path`, reach `no`, gap, no location
-    (unchanged).
+    (unchanged). On a `partial` packet, the real producer's status, the
+    same facts, or relations that are only `file_proximity`, read
+    `static_unknown`, no gap, no location (#8352): a
+    partial run may simply not have emitted the link, so neither "no
+    static path" nor "reachable" is an assessed result.
 17. `changed_observable: "return $amount * 0.9"`, `observed_sink:
     "$amount * 0.9"`: `exposed`, `perl_already_discriminated:`, no gap, no
     location (unchanged).
@@ -625,10 +646,16 @@ cases.
     from code, not probed).
 32. `changed_observable: null` (or blank) on the change: `static_unknown`, no gap, no
     location (rule 18; was `weakly_exposed`).
+33. Example 5's oracle with `producer.capabilities` also listing
+    `oracle_matcher_grading`: `static_unknown`, no gap, no location (rule 16
+    matcher grading). The same packet with the oracle `weak_broad`:
+    `reachable_unrevealed`, gap (without the capability: `static_unknown`).
 
 ## Test Mapping
 
 - Existing: `crates/ripr/src/analysis/language/perl/tests.rs`:
+  `perl_matcher_grading_separates_pinned_errors_from_broad_assertions`
+  (rule 16 matcher grading, example 33),
   `perl_related_test_linking_classifies_reachability_and_revealability`
   (rules 3, 4, 6), `perl_to_domain_oracle_mapping_preserves_signal_kinds`
   (rule 12 kind), `h2_sink_aligned_oracle_classifies_exposed_and_suppresses_repair_gap`

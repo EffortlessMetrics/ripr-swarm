@@ -1,0 +1,2 @@
+crates/ripr/tests/repair_layout_parity.rs|Command::new|2|cli-tests|#10711: runs git (fixture repository setup and commits) and the built ripr binary (`check`, `repair`) against an isolated temp workspace to compare one-line and rustfmt layouts. No shell, network, or user-repository mutation.
+crates/ripr/tests/repair_layout_parity.rs|use std::process::Command|1|cli-tests|#10711: imports the process spawner for the two fixture-repository commands above.

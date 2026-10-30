@@ -1,0 +1,9 @@
+diff --git a/src/shapes/money.py b/src/shapes/money.py
+--- a/src/shapes/money.py
++++ b/src/shapes/money.py
+@@ -3,4 +3,4 @@
+         self.cents = cents
+ 
+     def __bool__(self):
+-        return self.cents != 0
++        return self.cents > 0

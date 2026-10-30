@@ -97,6 +97,26 @@ The default contract is:
 - Actionable weak, missing, reachable, and unknown seam classes remain visible
   with conservative severities.
 
+### CLI value diagnostics and option help
+
+`ripr diff --format` accepts `human`, `text`, `md`, `markdown`, and `json`.
+The first four retain human output; `json` retains JSON output. Unknown values
+use the shared enum-value diagnostic: `xml` produces
+`unknown diff format "xml". Accepted: human, text, md, markdown, json.`;
+the near miss `jsonn` produces
+``unknown diff format "jsonn". Did you mean `json`? Accepted: human, text, md, markdown, json.``.
+These are argv refusals: exit 2, empty stdout, and the diagnostic prefixed
+with `ripr: ` on stderr. A suggestion does not accept the mistyped value.
+Omitting the value retains `missing value for --format` with the same exit
+and streams. This does not replace `check`'s common-format/help-pointer contract.
+
+The rendered `pilot` usage line names `[--format FORMAT]`; its option line
+names `human` as the default and `json` as the alternative. Both spellings
+remain accepted by the parser. The rendered `doctor` option line names
+`--profile NAME`, `analysis` as the default, and `source-build` as the
+alternative. Both profiles remain accepted. Help exits 0 with empty stderr;
+invalid or missing option values remain usage errors with exit 2.
+
 ## Surface Defaults
 
 | Surface | Default should do | Default should not do |
@@ -430,6 +450,10 @@ blocking by default.
 
 Defaults-first adoption evidence should cover:
 
+- `cli_smoke/cli_value_contracts.rs` exercises actual process output and exit
+  status for diff's distant/near-miss/missing values, accepted aliases reaching
+  revision validation, and the rendered pilot/doctor option contracts paired
+  with parser acceptance and refusal controls;
 - documentation for every default surface listed above;
 - implicit-root saved-diff analysis beneath invalid Git markers matching the
   explicit-root and genuine-repository positives with nonzero changed files,
@@ -703,7 +727,22 @@ developer knows (for example `assert_eq!(total(/* boundary input where a >= b
 `assertion shape: ...`, followed by a note to replace each `/* ... */` comment
 with a real value from the developer's test before using it. Any other
 assertion text keeps its `assertion:` label and gets no note. The structured
-pilot packets keep their existing fields and values unchanged (#9244).
+pilot packets keep their existing fields; the only value that changes is the
+boundary placeholder text below (#9244, #11023).
+
+The boundary placeholder describes the equality value the missing discriminator
+asks for (#11023): when the changed predicate is a simple strict comparison
+(`x > 5`, `count < limit`), the placeholder reads `boundary input where x == 5`,
+because an input where `x > 5` holds excludes the boundary beside it. A
+non-strict or compound predicate (`>=`, `<=`, `==`, `!=`, `a > b && c`) is
+spelled as written. The placeholder is one string carried wherever the
+suggested assertion is shown, so for strict-comparison seams the same text
+changes in the machine JSON string values that carry it (`assertion_shape`,
+`assertion`, `suggested_assertion`, `suggested_test`, `example`,
+`recommended_repair`, `target_test_shape`, `brief` and `focused_proof_intent` in
+agent packets, PR guidance comments, gate decisions, evidence records and the
+LSP code-action and hover assertions) and in the human and Markdown surfaces
+that print it. Keys, structure and every other value are unchanged.
 
 ### Outcome is public CLI
 

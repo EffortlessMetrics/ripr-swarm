@@ -6,7 +6,7 @@ ripr uses three ordinary command exit codes, plus standalone Unix check interrup
 |------|---------|
 | `0`  | The command completed. |
 | `2`  | The command could not complete: usage, parse, operational, or internal error. |
-| `3`  | The command ran successfully and reached a blocking decision or a typed refusal. |
+| `3`  | ripr declined: the command ran and reached a blocking result, or a request it will not run (the output says why). |
 | `130` | Supported standalone Unix `check` analysis was interrupted. |
 
 `ripr check` is advisory: it exits `0` whether or not it found gaps, including
@@ -35,9 +35,16 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
   (`agent_card_refusal` / `rust_test_stub` `state: refused`) on stdout only
   with `--json`, with the prose on stderr; without it stdout stays empty and
   stderr names the cause. An unknown `--seam-id` is one typed refusal with
-  one exit, `3`, on `agent card`, `agent stub` and `agent packet` (`agent
-  repair --phase before` still exits `2` for it): with `--json` the document is on stdout
-  and the prose on stderr).
+  one exit, `3`, on `agent start`, `agent card`, `agent stub`,
+  `agent packet`, and `agent repair --phase before`. A known seam that
+  agent policy withholds (#10712) is the same typed refusal (exit `3`) on
+  `agent start`, `agent card`, `agent packet`, and
+  `agent repair --phase before`; `agent stub` still produces the stub
+  (exit `0`) with the omission disclosed in `warnings` and no repair
+  journey offered. With `--json` the
+  document is on stdout and the prose on stderr, except `agent start` and
+  `agent repair --phase before`, whose
+  refusals are prose on stderr with empty stdout).
 - `2`: the invocation or operation failed; retrying differently is
   appropriate.
 
@@ -92,9 +99,12 @@ reached the caller.
   commands (#7331): `diff --json`, `rerun --json`, `context` (which emits
   JSON only), `agent brief --json`, and `agent packet --json` each write the
   shared refusal shape keyed with their own `schema_version` (rerun
-  `ripr-targeted-rerun-v1`, context `1.0`, diff and agent brief `0.1`, agent
-  packet `0.5`; an unknown `agent packet --seam-id` is the one typed
+  `ripr-targeted-rerun-v1`, context `1.1`, diff and agent brief `0.1`, agent
+  packet `0.5`; an unknown or policy-withheld `agent packet --seam-id` is the one typed
   refusal among these and exits `3`, see above), and `mode` appears only on commands that accept `--mode`.
+  A fresh `context` run preserves the check producer's typed failure and
+  recovery route for both committed and working-tree analysis; an invalid
+  base therefore names `base_unresolvable`, not the generic `analysis_failed`.
   For `check`, the machine-readable formats also carry their own refusal
   document on stdout (#7332): SARIF renders a schema-valid run whose only
   signal is a tool-configuration notification, GitHub renders one workflow
@@ -108,9 +118,15 @@ reached the caller.
   `repo-badge-*`, `repo-seams-*`, `repo-exposure-md`, and
   `repo-exposure-summary-json` — write
   nothing to stdout and put the prose diagnostic on stderr for now; that
-  gap is a named limitation, not a clean result. Exactly two cases stay
-  prose-only with empty stdout on every command: argv usage errors and
-  these not-yet-refusing machine formats. [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) documents the refusal
+  gap is a named limitation, not a clean result. These machine formats and
+  usage-class errors keep stdout empty. Usage-class errors include argv
+  errors and `context`/`explain` selector misses or ambiguity; their guidance
+  and retry listing stay on stderr (RIPR-SPEC-0003).
+  Fresh selector misses also retain producer-owned language limitations for
+  that run, with the configured-off or unavailable-binary recovery. These
+  describe analysis scope rather than prove why the selector missed;
+  recorded `--from` lookups do not invent ambient language facts (#10720).
+  [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) documents the refusal
   shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
   config.
@@ -173,13 +189,19 @@ reached the caller.
   body or `const` block, an owner behind a cfg in its own file that a plain
   `cargo test` build may not enable, no return value, an out-of-line test module, or
   inline test modules that are all gated by more than `cfg(test)`), or the
-  selector names no reported gap (`seam_not_found`), or the location selector
+  `--at` path names a language the Rust-only generator does not support
+  (`unsupported_language`: follow any check-provided test guidance, edit and
+  run the test by hand, then refresh the finding), or the selector names no
+  reported gap (`seam_not_found`), or the location selector
   matches several files or tied disjoint seams (`selector_ambiguous`: choose
-  a specific path or one of the suggested seam IDs). Several inline test modules are not a
+  a specific path or one of the suggested seam IDs), or a single related
+  test already reaches the changed predicate boundary and only its assertion
+  is weak (`existing_test_weak_oracle`, #10683: strengthen that named test's
+  assertion instead of adding a second test). Several inline test modules are not a
   refusal: among those gated by plain `cfg(test)`, the stub goes into the
   one that already names the owner, else the nearest one after it, else the
   nearest one before it. The named reason is on stderr; under `--json` a
-  `rust_test_stub` schema `0.3` `state: refused` envelope is the stdout
+  `rust_test_stub` schema `0.4` `state: refused` envelope is the stdout
   document. A failed read, analysis, or `--write` stays exit `2`.
 - **Typed agent card refusal**: `ripr agent card` reached a deliberate named
   refusal of the default handoff — the seam id names no seam

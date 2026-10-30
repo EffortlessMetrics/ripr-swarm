@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0364"
+scope = "out"
+reason = "Partial-diff widen-hint budget guidance; not a typescript verdict example"

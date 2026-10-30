@@ -1,0 +1,10 @@
+# Registers the non-literal loop registration tests (#10501) under RIPR-SPEC-0243.
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests.rs::for_of_over_non_literal_data_indexes_the_test_under_the_loop_head",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::for_each_over_a_parameter_and_for_in_are_indexed_under_their_loop_head",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::loop_over_a_literal_table_keeps_credit_and_no_guard",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::loop_binding_a_registration_api_is_not_descended",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::non_literal_loop_nested_in_an_if_joins_both_guards",
+]

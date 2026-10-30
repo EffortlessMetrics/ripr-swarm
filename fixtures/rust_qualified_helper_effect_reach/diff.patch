@@ -1,0 +1,8 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ fn record(out: &mut Vec<u32>) {
+-    out.push(9);
++    out.push(10);
+ }

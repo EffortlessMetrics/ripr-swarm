@@ -168,6 +168,8 @@ use init_workflow::generated_github_actions_workflow;
 
 #[path = "commands/pilot.rs"]
 mod pilot;
+#[path = "commands/pilot_timings.rs"]
+mod pilot_timings;
 pub(super) use pilot::pilot;
 
 pub(super) fn outcome(args: &[String]) -> Result<(), String> {
@@ -3070,8 +3072,12 @@ fn parse_diff_format(value: &str) -> Result<DiffReportFormat, String> {
     match value {
         "human" | "text" | "md" | "markdown" => Ok(DiffReportFormat::Human),
         "json" => Ok(DiffReportFormat::Json),
-        _ => Err(format!(
-            "unknown diff format {value:?}; expected `human`, `text`, `md`, `markdown`, or `json`"
+        // Share the enum-value diagnostic and near-miss suggestion with
+        // pilot and outcome without changing diff's accepted aliases.
+        _ => Err(unknown_value(
+            "diff format",
+            value,
+            &["human", "text", "md", "markdown", "json"],
         )),
     }
 }
