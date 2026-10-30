@@ -367,15 +367,31 @@ pub(crate) fn agent_card_prose_lines(
     for stop in &card.stop_conditions {
         lines.push(format!("  stop: {stop}"));
     }
-    for reference in &card.detail_references {
+    // Group only references with identical destination, state and reason.
+    // Each family remains named, and a stale or missing reference cannot be
+    // merged into a current one merely because its route is the same.
+    let same_detail = |a: &crate::domain::RepairCardDetailRef,
+                       b: &crate::domain::RepairCardDetailRef| {
+        a.state == b.state && a.route == b.route && a.unavailable_reason == b.unavailable_reason
+    };
+    for (index, reference) in card.detail_references.iter().enumerate() {
+        if card.detail_references[..index]
+            .iter()
+            .any(|earlier| same_detail(earlier, reference))
+        {
+            continue;
+        }
+        let families = card.detail_references[index..]
+            .iter()
+            .filter(|other| same_detail(other, reference))
+            .map(|other| wire_name(&other.family))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let state = wire_name(&reference.state);
         match &reference.route {
-            Some(route) => lines.push(format!(
-                "  detail [{}]: {route}",
-                wire_name(&reference.family)
-            )),
+            Some(route) => lines.push(format!("  detail [{families}] ({state}): {route}")),
             None => lines.push(format!(
-                "  detail [{}]: unavailable ({})",
-                wire_name(&reference.family),
+                "  detail [{families}] ({state}): unavailable ({})",
                 reference
                     .unavailable_reason
                     .as_deref()
@@ -736,6 +752,66 @@ mod tests {
             Vec::new(),
             limitations,
         )
+    }
+
+    #[test]
+    fn prose_groups_equal_detail_routes_without_hiding_state() -> Result<(), String> {
+        use crate::domain::{
+            RepairCardDetailFamily as Family, RepairCardDetailRef, RepairCardDetailState as State,
+            RepairCardOmissionClass as Omission,
+        };
+        let reference =
+            |family, state, route: Option<&str>, reason: Option<&str>| RepairCardDetailRef {
+                family,
+                state,
+                route: route.map(str::to_string),
+                unavailable_reason: reason.map(str::to_string),
+                detail_digest: String::new(),
+                omitted_bytes: 0,
+                ordinal: 0,
+                omission_class: Omission::AuthorityOwnedDetail,
+            };
+        let mut card = prose_test_card();
+        card.detail_references = vec![
+            reference(
+                Family::CanonicalPacket,
+                State::Current,
+                Some("packet"),
+                None,
+            ),
+            reference(
+                Family::RelatedTestCandidates,
+                State::Current,
+                Some("packet"),
+                None,
+            ),
+            reference(Family::StaticMovement, State::Stale, Some("packet"), None),
+            reference(
+                Family::FixInstruction,
+                State::Unavailable,
+                None,
+                Some("unknown witness"),
+            ),
+            reference(
+                Family::LimitationDetail,
+                State::Unavailable,
+                None,
+                Some("unknown witness"),
+            ),
+            reference(Family::FocusedProofReceipt, State::Missing, None, None),
+        ];
+        let text = agent_card_prose_lines(&card, "full", None).join("\n");
+        for expected in [
+            "detail [canonical_packet, related_test_candidates] (current): packet",
+            "detail [static_movement] (stale): packet",
+            "detail [fix_instruction, limitation_detail] (unavailable): unavailable (unknown witness)",
+            "detail [focused_proof_receipt] (missing): unavailable (no reason recorded)",
+        ] {
+            if !text.contains(expected) {
+                return Err(format!("missing {expected}: {text}"));
+            }
+        }
+        Ok(())
     }
 
     /// #6304: the card prose renders the canonical decision's block, so the
