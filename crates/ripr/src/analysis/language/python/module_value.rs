@@ -33,7 +33,10 @@ use super::related_tests::{
 };
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, is_test_file};
-use super::table_reads::{dict_literal_names, unsafe_table_uses};
+use super::table_reads::{
+    LexedSource, dict_literal_names, dict_literal_names_lexed, unsafe_table_uses,
+    unsafe_table_uses_lexed,
+};
 use super::{PythonAssertion, PythonOwner, PythonTest, expr_full_name};
 use crate::domain::OwnerKind;
 use rayon::prelude::*;
@@ -279,6 +282,44 @@ thread_local! {
     pub(super) static FOREIGN_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// The per-file lexes the foreign index needs, functions of the source text
+/// alone: computed once by the source-fact pass and persisted with its
+/// facts, so a warm run does not lex every workspace file again (#10914).
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct ForeignLexes {
+    /// [`dict_literal_names`], sorted.
+    pub(super) dict_literal_names: Vec<String>,
+    /// [`import_words`], in source order.
+    pub(super) import_words: Vec<String>,
+    /// [`unsafe_table_uses`] of every name, sorted: the uses of the
+    /// workspace's tables are this list filtered to them.
+    pub(super) unsafe_names: Vec<String>,
+}
+
+impl ForeignLexes {
+    pub(super) fn of(source: &str) -> Self {
+        let lexed = LexedSource::new(source);
+        Self {
+            dict_literal_names: dict_literal_names_lexed(&lexed).into_iter().collect(),
+            import_words: import_words_lexed(source, &lexed)
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            unsafe_names: unsafe_table_uses_lexed(source, &lexed, &|_| true, None)
+                .into_iter()
+                .collect(),
+        }
+    }
+}
+
+/// What the source-fact pass already knows about one workspace file.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct PriorFileFacts {
+    /// The attribute names its statements assign; None when it does not parse.
+    pub(super) assigned: Option<Vec<String>>,
+    pub(super) lexes: Option<ForeignLexes>,
+}
+
 struct IndexedSource<'a> {
     file: &'a Path,
     /// None when the file does not parse.
@@ -303,16 +344,18 @@ impl<'a> ForeignIndex<'a> {
         sources: impl Iterator<Item = (&'a Path, &'a str)>,
         unread_files: bool,
     ) -> Self {
-        Self::build_with_assigned(sources, unread_files, &std::collections::BTreeMap::new())
+        static NONE: std::collections::BTreeMap<std::path::PathBuf, PriorFileFacts> =
+            std::collections::BTreeMap::new();
+        Self::build_with_prior(sources, unread_files, &NONE)
     }
 
-    /// [`Self::build`], reading each file's assigned attributes from
-    /// `assigned` (the source-fact pass already parsed it) and parsing only
-    /// the files it does not hold (#10914).
-    pub(super) fn build_with_assigned(
+    /// [`Self::build`], reading each file's assigned attributes and lexes
+    /// from `prior` (the source-fact pass already derived them) and parsing
+    /// or lexing only what it does not hold (#10914).
+    pub(super) fn build_with_prior(
         sources: impl Iterator<Item = (&'a Path, &'a str)>,
         unread_files: bool,
-        assigned: &std::collections::BTreeMap<std::path::PathBuf, Option<Vec<String>>>,
+        prior: &'a std::collections::BTreeMap<std::path::PathBuf, PriorFileFacts>,
     ) -> Self {
         let mut files = Vec::new();
         let mut references = std::collections::BTreeMap::new();
@@ -331,9 +374,20 @@ impl<'a> ForeignIndex<'a> {
         // because a repeat changes neither (#10914).
         let tables: std::collections::BTreeSet<String> = sources
             .par_iter()
-            .map(|(_, source)| {
+            .map(|(file, source)| {
                 crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
-                    dict_literal_names(source)
+                    match prior.get(*file).and_then(|facts| facts.lexes.as_ref()) {
+                        Some(lexes) => {
+                            debug_assert_eq!(
+                                lexes.dict_literal_names,
+                                dict_literal_names(source).into_iter().collect::<Vec<_>>(),
+                                "{}: supplied dict-literal names differ from the source's",
+                                file.display()
+                            );
+                            lexes.dict_literal_names.iter().cloned().collect()
+                        }
+                        None => dict_literal_names(source),
+                    }
                 })
             })
             .reduce(std::collections::BTreeSet::new, |mut all, names| {
@@ -348,8 +402,7 @@ impl<'a> ForeignIndex<'a> {
                         let mut words: Vec<&'a str> = source_words(source).collect();
                         words.sort_unstable();
                         words.dedup();
-                        let indexed =
-                            scan_source(file, source, &words, &tables, assigned.get(file));
+                        let indexed = scan_source(file, source, &words, &tables, prior.get(file));
                         (indexed, words)
                     })
                 })
@@ -592,7 +645,7 @@ fn scan_source<'a>(
     source: &'a str,
     words: &[&'a str],
     tables: &std::collections::BTreeSet<String>,
-    parsed_assigned: Option<&Option<Vec<String>>>,
+    prior: Option<&'a PriorFileFacts>,
 ) -> (bool, IndexedSource<'a>) {
     // `words` is the source's sorted distinct words, so a whole-word mention
     // is a lookup instead of one scan of the source per spelling.
@@ -604,19 +657,37 @@ fn scan_source<'a>(
     let hides_import = DYNAMIC_LOADERS.iter().any(|loader| mentions(loader))
         || source.contains("sys.modules")
         || (file.file_name().is_some_and(|name| name == "__init__.py") && mentions("__all__"));
-    let assigned = parsed_assigned
-        .cloned()
+    let assigned = prior
+        .map(|facts| facts.assigned.clone())
         .unwrap_or_else(|| assigned_attributes(source));
     let dynamic = assigned.is_none()
         || DYNAMIC_WRITERS.iter().any(|writer| mentions(writer))
         || source.contains("sys.modules");
-    let table_unsafe = if tables.is_empty() || !words.iter().any(|word| tables.contains(*word)) {
-        Vec::new()
-    } else {
-        unsafe_table_uses(source, &|word| tables.contains(word), None)
-            .into_iter()
-            .collect()
-    };
+    let lexes = prior.and_then(|facts| facts.lexes.as_ref());
+    let table_unsafe: Vec<String> =
+        if tables.is_empty() || !words.iter().any(|word| tables.contains(*word)) {
+            Vec::new()
+        } else if let Some(lexes) = lexes {
+            let supplied: Vec<String> = lexes
+                .unsafe_names
+                .iter()
+                .filter(|name| tables.contains(name.as_str()))
+                .cloned()
+                .collect();
+            debug_assert_eq!(
+                supplied,
+                unsafe_table_uses(source, &|word| tables.contains(word), None)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+                "{}: supplied unsafe table uses differ from the source's",
+                file.display()
+            );
+            supplied
+        } else {
+            unsafe_table_uses(source, &|word| tables.contains(word), None)
+                .into_iter()
+                .collect()
+        };
     // Reflection reaches a module's dict without naming it, or with a name
     // built at runtime (`getattr(module, n)`, `dir(module)`,
     // `inspect.getmembers`, `locals()`, `fn.__globals__`).
@@ -633,7 +704,18 @@ fn scan_source<'a>(
         import_words: if tables.is_empty() {
             Vec::new()
         } else {
-            import_words(source)
+            match lexes {
+                Some(lexes) => {
+                    debug_assert_eq!(
+                        lexes.import_words,
+                        import_words(source),
+                        "{}: supplied import words differ from the source's",
+                        file.display()
+                    );
+                    lexes.import_words.iter().map(String::as_str).collect()
+                }
+                None => import_words(source),
+            }
         },
         reflective_opaque: reflective
             && (source.contains("sys.modules")
@@ -643,14 +725,18 @@ fn scan_source<'a>(
 }
 
 fn import_words(source: &str) -> Vec<&str> {
-    use rustpython_parser::{Mode, Tok, lexer::lex};
+    import_words_lexed(source, &LexedSource::new(source))
+}
+
+fn import_words_lexed<'s>(source: &'s str, lexed: &LexedSource) -> Vec<&'s str> {
+    use rustpython_parser::Tok;
+    if !lexed.complete() {
+        return source_words(source).collect();
+    }
     let mut words = Vec::new();
     let mut statement: Vec<&str> = Vec::new();
     let mut imports = false;
-    for token in lex(source, Mode::Module) {
-        let Ok((tok, range)) = token else {
-            return source_words(source).collect();
-        };
+    for (tok, start, end) in lexed.tokens() {
         match tok {
             Tok::Newline | Tok::Semi => {
                 if imports {
@@ -661,8 +747,7 @@ fn import_words(source: &str) -> Vec<&str> {
             }
             Tok::Import => imports = true,
             Tok::Name { .. } => {
-                if let Some(text) = source.get(usize::from(range.start())..usize::from(range.end()))
-                {
+                if let Some(text) = source.get(*start..*end) {
                     statement.push(text);
                 }
             }

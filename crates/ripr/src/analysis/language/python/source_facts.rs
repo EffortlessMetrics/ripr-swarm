@@ -54,6 +54,10 @@ pub(super) struct PythonSourceFacts {
     /// original source; None when it does not parse. The workspace foreign
     /// index reads it instead of parsing every file again (#10914).
     pub(super) assigned_attributes: Option<Vec<String>>,
+    /// The foreign index's lexes of the source as written; filled only by
+    /// [`extract_workspace_source_facts`], so the workspace index reads them
+    /// instead of lexing every file again (#10914).
+    pub(super) foreign_lexes: Option<super::module_value::ForeignLexes>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -628,6 +632,14 @@ pub(super) fn source_facts_syntax_parse_error(
     })
 }
 
+/// [`extract_source_facts`] for a workspace file the foreign index will read:
+/// also lexes the source as written for that index (#10914).
+pub(super) fn extract_workspace_source_facts(file: &Path, source: &str) -> PythonSourceFacts {
+    let mut facts = extract_source_facts(file, source);
+    facts.foreign_lexes = Some(super::module_value::ForeignLexes::of(source));
+    facts
+}
+
 pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFacts {
     let mut snapshot = PythonSourceFacts {
         file: file.to_path_buf(),
@@ -644,6 +656,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         docstring_line_ranges: Vec::new(),
         import_line_ranges: Vec::new(),
         assigned_attributes: None,
+        foreign_lexes: None,
     };
     let module = match parse_module_result(file, source) {
         Ok(Mod::Module(module)) => module,

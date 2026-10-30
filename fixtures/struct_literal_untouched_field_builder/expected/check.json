@@ -1,0 +1,237 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/struct_literal_untouched_field_builder/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:3d04ba9dc232724b6c967b74c55255a54ed97c86380d362cc28723d8e171032a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:call_deletion:5af80bde",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl RequestBuilder::build:call_deletion:call_deletion:request_url_self.url_timeout_ms_self.timeout_ms.unwrap_or_3_000",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl RequestBuilder::build:call_deletion:call_deletion:request_url_self.url_timeout_ms_self.timeout_ms.unwrap_or_3_000",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl RequestBuilder::build",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "request_url_self.url_timeout_ms_self.timeout_ms.unwrap_or_3_000"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:call_deletion:5af80bde",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 22,
+        "expression": "Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach build: url_is_kept"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence call effect: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach build: url_is_kept", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches call effect: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) } (line 22)", "related test tests/builder.rs:4 url_is_kept uses strong exact value oracle: assert_eq!(RequestBuilder::new(\"http://x\").build().url, \"http://x\");", "related test tests/builder.rs:9 explicit_timeout_is_kept uses strong exact value oracle: assert_eq!(request.timeout_ms, 500);", "source assertion argument value \"http://x\" at line 5", "source assertion argument value 500 at line 11"],
+      "flow_sinks": [
+        {"kind":"call_effect","text":"Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }","line":22}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence call effect: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach build: url_is_kept"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "5": "assert_eq!(RequestBuilder::new(\"http://x\").build().url, \"http://x\");",
+        "11": "assert_eq!(request.timeout_ms, 500);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "\"http://x\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 11,
+            "value": "500",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "\"http://x\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 11,
+          "value": "500",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "url_is_kept",
+          "file": "tests/builder.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(RequestBuilder::new(\"http://x\").build().url, \"http://x\");",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "explicit_timeout_is_kept",
+          "file": "tests/builder.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(request.timeout_ms, 500);",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:field_construction:dcc39302",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl RequestBuilder::build:field_construction:field_construction:request_url_self.url_timeout_ms_self.timeout_ms.unwrap_or_3_000",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl RequestBuilder::build:field_construction:field_construction:request_url_self.url_timeout_ms_self.timeout_ms.unwrap_or_3_000",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl RequestBuilder::build",
+        "behavior_kind": "field_construction",
+        "probe_kind": "field_construction",
+        "normalized_discriminator": "request_url_self.url_timeout_ms_self.timeout_ms.unwrap_or_3_000"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:field_construction:dcc39302",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 22,
+        "expression": "Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach build: url_is_kept"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches constructed field: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach build: url_is_kept", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches constructed field: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) } (line 22)", "related test tests/builder.rs:4 url_is_kept uses strong exact value oracle: assert_eq!(RequestBuilder::new(\"http://x\").build().url, \"http://x\");", "related test tests/builder.rs:9 explicit_timeout_is_kept uses strong exact value oracle: assert_eq!(request.timeout_ms, 500);", "source assertion argument value \"http://x\" at line 5", "source assertion argument value 500 at line 11", "missing discriminator Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }: No field-value assertion observes the constructed field: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }","line":22}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach build: url_is_kept"],
+      "missing": ["Missing discriminator value: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "5": "assert_eq!(RequestBuilder::new(\"http://x\").build().url, \"http://x\");",
+        "11": "assert_eq!(request.timeout_ms, 500);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "\"http://x\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 11,
+            "value": "500",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }",
+            "reason": "No field-value assertion observes the constructed field: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }",
+            "flow_sink": {"kind":"struct_field","text":"Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }","line":22}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "\"http://x\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 11,
+          "value": "500",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }",
+          "reason": "No field-value assertion observes the constructed field: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }",
+          "flow_sink": {"kind":"struct_field","text":"Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }","line":22}
+        }
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "url_is_kept",
+          "file": "tests/builder.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(RequestBuilder::new(\"http://x\").build().url, \"http://x\");",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }`"
+        },
+        {
+          "name": "explicit_timeout_is_kept",
+          "file": "tests/builder.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(request.timeout_ms, 500);",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}
