@@ -646,6 +646,67 @@ line continuation cannot hide a table from the foreign-store scan.
 Preceding assertions must evaluate true under the same bounded old/new scope
 before a later assertion can supply the value-flip credit.
 
+A scalar or table constant's reader may also be reached through one forwarding
+hop in a sibling module (#9619). A test that imports `quote` with `from
+pkg.quote import quote [as name]`, where `quote`'s body is one `return` calling
+`lookup` bound by `from .table import lookup [as local]`, relates as
+`module_value_call` when the assertion holds through the old reader and fails
+through the new one. The conditions are:
+
+- the owner module is not `__init__.py` and sits in a regular package (its
+  `__init__.py` is a workspace source), does not mention the forwarder
+  module's name, and loads inertly: its top level holds only a docstring,
+  `pass`, `from __future__` imports, assignments of literals (dict, list and
+  tuple displays of constants included) to plain non-dunder names or
+  `__all__`, with an optional annotation that is a string or, under
+  `from __future__ import annotations`, a bare name, and undecorated `def`s
+  with literal defaults and annotations of the same kinds.
+  It imports nothing else, not even a standard-library module, because a
+  test-root module can take a standard-library name and calls such as
+  `pickle.loads` or `pydoc.locate` import by a string. Loading it therefore
+  never imports the forwarder module;
+- the forwarder module is a non-test sibling in the same directory (not
+  `__init__.py` or `conftest.py`) whose source spells `from .<stem> import`; at
+  most 16 such siblings are read per changed file, and more reads none;
+- loading the forwarder module runs nothing else: its top level holds only a
+  docstring, `pass`, `from __future__` and level-1 `from .<stem>` imports,
+  assignments of literals to plain names other than dunders (`__all__`
+  aside, so `__package__` cannot redirect the relative import), and
+  undecorated `def`s whose defaults are literals; an annotation is absent or
+  a string, or a bare name under `from __future__ import annotations`, so
+  loading never evaluates one;
+- the local name and the forwarder are each bound once in that module; the
+  forwarder is a top-level `def` with positional parameters and no defaults,
+  and it calls the local name with positional arguments only;
+- the test reaches the forwarder only through a `from` import of the
+  forwarder's own name whose module path ends with the forwarder's package
+  directory and module (`rates.quote`), never through a module receiver,
+  which a package `__init__` may rebind, or a path that drops the package,
+  which breaks the relative import; its module path does not start with a
+  standard-library name;
+- the forwarder module gets its own write view of every other workspace file:
+  a write of the forwarder or the local name, a code-slot or dunder write,
+  reflection or a non-byte-exact name anywhere, or another file, extension
+  module or compiled package sharing the forwarder module's name withholds
+  credit, as do reflection, a dynamic writer or a dunder assignment in the
+  forwarder module's own source, and a shared name of the owner module;
+- inside the forwarder only its parameters are bound (the owner's constant is
+  not), and the reader it calls is evaluated with no forwarder of its own, so
+  a second hop decides nothing.
+
+Along a module's dotted path from any import root, read from its whole path
+and from the path below a `src` layout root (any depth) or a top-level `lib`
+root, a package with an initializer of any kind or a source module named for
+a leading component that is not the module's own ancestor
+(`tests/shapes/__init__.py` or `tests/shapes.py` for `shapes.rates.quote`)
+shadows the module's package under pytest's prepend mode. An import root
+that is itself a package below the workspace root (it holds `__init__.py`,
+as `tests/` does when `tests/__init__.py` exists) is skipped by this rule:
+pytest inserts the first directory above a test that has no `__init__.py`,
+so it never puts a package directory on `sys.path`. It withholds the
+credit of every pass that refuses a shared module name. A shadow reached only
+through another suffix of the path is not checked.
+
 A change to the single `return` of an undecorated module function or method
 that no test calls directly (#9226) relates as `module_value_call` to a test
 whose straight-line `assert <entry> == <literal>` holds with the old body and
