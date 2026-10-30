@@ -1,0 +1,45 @@
+{
+  "case_id": "assoc-unevaluable-condition",
+  "subject_id": "authored-spec0048-assoc-kit",
+  "diff": "cases/assoc-unevaluable-condition.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 74
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "associated_const_clamp_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "const LIMIT: u32 = 13;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "door_passes_a_big_value_as_its_limit",
+        "equivalence_review": "the edit itself: The default method's `if` condition calls a helper (`is_big`), which the evaluator cannot run; the test pins the limit, so the edit is discriminated at runtime but a static claim would be a guess."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The default method's `if` condition calls a helper (`is_big`), which the evaluator cannot run; the test pins the limit, so the edit is discriminated at runtime but a static claim would be a guess.",
+  "labeling_observation": {
+    "ripr_commit": "ea68ea04",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

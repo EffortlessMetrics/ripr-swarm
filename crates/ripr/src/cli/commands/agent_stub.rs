@@ -13,7 +13,7 @@ use crate::app::test_stub::{
     AlreadyPresentRevalidation, StubNextRepair, StubPlacementDivergence, TargetLookup,
     TestStubError, TestStubSelector, integration_target_lookup, line_of_offset,
     package_manifest_for, resolve_test_stub, revalidate_already_present_stub, run_command,
-    stub_refusal, write_test_stub,
+    write_test_stub,
 };
 use crate::cli::CommandError;
 use crate::cli::agent::AgentStubOptions;
@@ -103,10 +103,12 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     // the existing test with `check`'s wording instead.
     // The weak-oracle refusal is evaluated before the stub producer's own
     // refusals: an existing reaching test needs its assertion fixed first.
-    let refusal = stub_refusal(
-        resolution.weak_oracle_guidance.as_deref(),
-        &resolution.outcome,
-    );
+    let refusal: Option<(&str, &str)> =
+        match (&resolution.weak_oracle_guidance, &resolution.outcome) {
+            (Some(guidance), _) => Some(("existing_test_weak_oracle", guidance.as_str())),
+            (None, Err(refusal)) => Some((refusal.as_str(), refusal.reason())),
+            (None, Ok(_)) => None,
+        };
     if let Some((kind, reason)) = refusal {
         if options.json {
             let document = serde_json::json!({

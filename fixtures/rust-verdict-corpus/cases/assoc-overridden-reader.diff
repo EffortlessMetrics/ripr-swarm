@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..0000000 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -37,7 +37,7 @@
+ pub struct Fixed;
+ 
+ impl Limits for Fixed {
+-    const MAX: u32 = 6;
++    const MAX: u32 = 7;
+ 
+     fn clamp(v: u32) -> u32 {
+         v.min(3)

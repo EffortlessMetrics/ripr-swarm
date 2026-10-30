@@ -253,14 +253,3 @@ Command:
 
 Updated:
 - `expected/human.txt`
-
-## Pending — rust_adversarial_shared_error_variant_proximity (19)
-
-Reason:
-RIPR-SPEC-0288: stub choices in check are checked against the stub route (#10192)
-
-Command:
-`cargo xtask goldens bless rust_adversarial_shared_error_variant_proximity --reason "..."`
-
-Updated:
-- `expected/human.txt`

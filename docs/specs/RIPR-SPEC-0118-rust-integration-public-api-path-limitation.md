@@ -302,14 +302,13 @@ MCP gap evidence uses the same named-edge guidance while preserving an absent
 next step as `null`. Missing edge evidence and unrelated limitation kinds keep
 their original advice. This projection does not change repair readiness.
 
-Ambiguous stub locations list only the syntax resolver's seam identities that
-the `--seam-id` stub resolution would accept; the choice set is checked before
-it is printed, and when none qualifies or the check cannot be made, no command
-is offered. They establish neither a repair binding nor repair admission. The
-mixed-grip CLI control independently establishes a strongly gripped seam and a
-weakly gripped seam at the same location, then requires that only the weakly
-gripped seam is offered, that its stub is unwritten, and that the strongly
-gripped seam's direct command still refuses as `not_a_gap`.
+Ambiguous stub locations retain the syntax resolver's seam identities, with
+explicit disclosure that these selectors are unvalidated and their commands
+may refuse already-gripped or unsupported seams. They establish neither stub
+readiness nor repair admission. The mixed-grip CLI control independently
+establishes a strongly gripped seam and a weakly gripped seam at the same
+location, then requires the former's `not_a_gap` refusal and the latter's
+unwritten stub without filtering either syntax identity from the choices.
 
 The bounded hidden-row projection resolves syntax ambiguity only, after the
 existing eligibility and source-currentness guards. A canonical in-root file
