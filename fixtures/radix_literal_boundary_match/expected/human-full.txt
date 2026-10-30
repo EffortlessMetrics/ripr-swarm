@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/radix_literal_boundary_match/input
 
-Summary: 2 probe(s), 2 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 2 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach is_big: boundary_is_not_big
@@ -22,11 +27,12 @@ Finding 1: INFO ./src/lib.rs:2
 Changed
   before: n >= 0xFF
   after:  n > 0xFF
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/lib.rs::is_big
-  canonical gap: gap:rust:src/lib.rs:is_big:predicate_boundary:predicate:n==0xff
+  gap id (for scripts): gap:rust:src/lib.rs:is_big:predicate_boundary:predicate:n==0xff
 Static exposure
   exposed (info, confidence 1.00)
 Evidence
@@ -43,11 +49,12 @@ Finding 2: INFO ./src/lib.rs:2
 Changed
   before: n >= 0xFF
   after:  n > 0xFF
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::is_big
-  canonical gap: gap:rust:src/lib.rs:is_big:return_value:return_value:n>0xff
+  gap id (for scripts): gap:rust:src/lib.rs:is_big:return_value:return_value:n>0xff
 Static exposure
   exposed (info, confidence 1.00)
 Evidence

@@ -1,0 +1,51 @@
+//! RIPR-SPEC-0048 same-file direct-reader must-not-claim shapes (#9871).
+//! One constant, one reader and one isolated test per case.
+
+use std::collections::HashMap;
+
+pub mod reader;
+
+pub const LOOKUP_DEFAULT: u32 = 10;
+
+pub fn lookup_fee(kind: &str) -> u32 {
+    let table: HashMap<&str, u32> = HashMap::from([("basic", 5), ("plus", 8)]);
+    table.get(kind).copied().unwrap_or(LOOKUP_DEFAULT)
+}
+
+pub mod settings {
+    pub const CAP: u32 = 3;
+}
+
+#[allow(non_snake_case)]
+pub fn capped(x: u32) -> u32 {
+    let CAP = 7;
+    x.min(CAP)
+}
+
+pub mod first {
+    pub const STEP: u32 = 2;
+}
+
+pub mod second {
+    pub const STEP: u32 = 5;
+
+    pub fn next(x: u32) -> u32 {
+        x + STEP
+    }
+}
+
+pub const OTHER_FILE_LIMIT: u32 = 100;
+
+pub const BANNER: &str = "v1";
+
+pub fn banner_line() -> String {
+    format!("[{BANNER}]")
+}
+
+pub const BURST: u32 = 100;
+
+pub fn allowed(n: u32, premium: bool) -> bool {
+    if premium { n < BURST } else { n < 10 }
+}
+
+pub const UNUSED_RETRIES: u32 = 3;

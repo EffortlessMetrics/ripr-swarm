@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A `text.len() == 0` or `!= 0` guard now reads its infection from the empty and non-empty rows the related tests give it, including the rows of a constant `for` table, when every related call of the owner is strongly asserted; rows on one side only, other literals and weakly asserted calls keep the unknown reading, so `grid-early-table` reads credited and no other Rust corpus row moves (#9619).

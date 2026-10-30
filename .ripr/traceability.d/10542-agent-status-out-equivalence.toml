@@ -1,0 +1,13 @@
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/tests/cli_smoke.rs::agent_status_refuses_non_default_out_dir",
+]
+code = [
+  "crates/ripr/src/cli/commands/agent.rs::run_agent_status",
+  "crates/ripr/src/agent/loop_commands.rs::lexically_clean",
+  "crates/ripr/src/agent/loop_commands.rs::parent_dir_follows_symlink",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0011-llm-work-loop.md",
+]

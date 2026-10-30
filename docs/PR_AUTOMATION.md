@@ -637,6 +637,35 @@ reason to cite an existing `RIPR-SPEC-NNNN` under `docs/specs/`, then records
 the explicit blessing reason, updates expected JSON and human outputs, and
 appends the fixture expected-output changelog.
 
+Human goldens (`human.txt`, `human-full.txt`) mask only the explanatory prose
+of the line `no repair start offered: <reason>`. Pinned: the line's presence and
+position, the fixed opening that identifies the refusal variant (no gap ID, no seam or no binding seam, several binding seams, Rust files only, seam
+budget, unreadable config, classification failure, static evidence incomplete,
+still missing, related test already reaches the boundary), and the
+`still missing:` / `It is also still missing:` evidence lists. Masked as
+`<reason>`: the wording around those pins, such as the trailing "follow the Next
+step" advice, the Rust-files-only explanation and the boundary-variant
+explanation. A reason that matches no known variant opening is compared
+verbatim, so a new or heavily reworded variant is drift to re-bless and add to
+`REPAIR_REFUSAL_RULES` in `xtask/src/reports/fixtures.rs`. `check.json` is never
+masked. The prose has focused tests of its own, and comparing it verbatim turned
+every rewording into one re-blessed line in hundreds of fixtures (#10702). A
+repair start that flips to a refusal, a refusal that appears or disappears, and
+a change of variant or missing-evidence list are still drift.
+
+Transitional (#10702): `xtask/src/reports/fixtures/transitional.rs` lists the
+exact `fixture/surface` human goldens (253) whose expected refusal opening is
+one of four retired openings (no gap ID, no binding seam, seam
+inventory, still missing) and may now open "nothing to repair here" (only when
+the expected golden itself says `Static exposure: exposed`), "found N seams …
+could not tie one … changed line" (43 no-seam surfaces) or "`ripr check` reads a
+gap or limit for this change" (93 no-seam surfaces whose seam the whole-seam view
+grips). Each listed surface approves exactly one new opening, taken from its
+unaliased output. An unlisted fixture, another surface, another pair, the other
+target on a listed surface and `check.json` are still compared strictly. This keeps the check-side
+change under the admission file cap; each follow-up re-bless batch deletes its
+entries and the file is removed once empty (tracking issue #10885).
+
 `golden-drift` writes the same advisory drift reports without failing merely
 because output drift exists. It still reports fixture execution errors as
 command failures.

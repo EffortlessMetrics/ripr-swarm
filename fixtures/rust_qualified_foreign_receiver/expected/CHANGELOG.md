@@ -42,6 +42,7 @@ Updated:
 ## Pending — rust_qualified_foreign_receiver (4)
 
 Reason:
+RIPR-SPEC-0319: explain verdict recipe is conditional on an unresolved reach edge (#10220)
 RIPR-SPEC-0319: main #9449 added Next guidance lines under static limitations without reblessing these fixtures (inherited red goldens); human.txt also carries this PR's RIPR-SPEC-0122 clipped-to-wrap line
 
 Command:
@@ -82,6 +83,19 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless rust_qualified_foreign_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_qualified_foreign_receiver (8)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
 
 Command:
 `cargo xtask goldens bless rust_qualified_foreign_receiver --reason "..."`

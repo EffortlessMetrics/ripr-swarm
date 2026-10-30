@@ -19,7 +19,7 @@
         "seam_id": "67fc764ba37d77bd",
         "seam_kind": "predicate_boundary"
       },
-      "message": "Weakly gripped behavioral seam (predicate_boundary): amount >= discount_threshold",
+      "message": "Tests only loosely check this: amount >= discount_threshold",
       "range": {
         "end": {
           "character": 120,

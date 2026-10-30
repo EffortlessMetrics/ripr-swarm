@@ -5961,7 +5961,11 @@ fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), Str
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
-    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/entry.ts")],
+    );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
 
@@ -6020,7 +6024,12 @@ fn analyze_diff_bounds_workspace_budget_disclosure_with_true_total() -> Result<(
         ts_write_file(&root.join(format!("src/pkg_{index:02}.ts")), source)?;
     }
     let options = ts_analysis_options(root.clone());
-    let result = TypeScriptAdapter::analyze_diff_with_read_limits(&options, &[], 1024, 32);
+    let result = TypeScriptAdapter::analyze_diff_with_read_limits(
+        &options,
+        &[changed("src/entry.ts")],
+        1024,
+        32,
+    );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
     let disclosure = result
@@ -6112,7 +6121,7 @@ fn analyze_diff_bounds_capped_read_disclosure_with_stable_sample_and_total() -> 
     let options = ts_analysis_options(root.clone());
     let result = TypeScriptAdapter::analyze_diff_with_read_limits(
         &options,
-        &[],
+        &[changed("src/entry.ts")],
         64,
         DEFAULT_TS_MAX_WORKSPACE_READ_BYTES,
     );
@@ -6344,7 +6353,11 @@ fn analyze_diff_surfaces_over_limit_tsconfig_read_as_named_limitation() -> Resul
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
-    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/entry.ts")],
+    );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
 
@@ -6422,7 +6435,11 @@ fn analyze_diff_surfaces_absolute_base_url_as_named_limitation() -> Result<(), S
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
-    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/entry.ts")],
+    );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
 
@@ -9405,6 +9422,31 @@ const mod = require('../src/utils');
     assert!(mod_matches[0].namespace);
 }
 
+/// #10724: an ES import that binds the name `require` made the import scan
+/// re-derive its own `require` scope without end and overflow the stack.
+#[test]
+fn extract_imports_terminates_on_es_import_binding_require() {
+    let source = "import require from \"./b\";\n";
+    let allocator = Allocator::default();
+    let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+    let imports = extract_imports_from_statements(&parse_result.program.body);
+
+    assert_eq!(
+        imports.len(),
+        1,
+        "the import is still recorded: {imports:?}"
+    );
+    assert_eq!(imports[0].local, "require");
+    assert_eq!(imports[0].source, "./b");
+    assert_eq!(imports[0].imported.as_deref(), Some("default"));
+
+    let control = "import r from \"./b\";\n";
+    let control_parse = Parser::new(&allocator, control, SourceType::ts()).parse();
+    let control_imports = extract_imports_from_statements(&control_parse.program.body);
+    assert_eq!(control_imports.len(), 1);
+    assert_eq!(control_imports[0].local, "r");
+}
+
 /// Re-export form: `export { x } from './y'` should be extracted as an import
 /// so that `import_source_matches_owner` can follow the re-export one hop.
 #[test]
@@ -11412,15 +11454,164 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
     );
     assert_eq!(
         finding.missing.first().map(String::as_str),
-        Some("No test references `applyDiscount(` — add a test that calls the changed owner.")
+        Some(
+            "No statically linked test call to `applyDiscount(` was established; inspect existing test calls and their import/export paths."
+        )
+    );
+    // #10708: the ordinary owner with no static link carries the honest
+    // ordered next step — owner name, add-test route, native verifier,
+    // then refresh — without claiming universal test absence or naming an
+    // unevidenced file/command. Classification, confidence, related-test
+    // evidence and repair eligibility stay put.
+    let step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "owner with no static link must carry guidance".to_string())?;
+    for expected in [
+        "no statically linked test calls `applyDiscount(`",
+        "inspect existing test calls and their import/export paths",
+        "if no suitable test exists, add a test",
+        "add a test that calls the changed owner",
+        "asserts the changed behavior with `toBe` / `toEqual`",
+        "run the project's native test command",
+        "rerun `ripr check`",
+    ] {
+        assert!(
+            step.contains(expected),
+            "next step must contain {expected:?}; got: {step}"
+        );
+    }
+    for forbidden in [
+        "vitest run",
+        "npx vitest",
+        "tests/owner.test.ts",
+        "test_owner",
+    ] {
+        assert!(
+            !step.contains(forbidden),
+            "no invented exact file/command may appear; found {forbidden:?} in: {step}"
+        );
+    }
+    assert!(
+        !step.contains("no test references the changed owner"),
+        "must not claim universal test absence; got: {step}"
     );
     assert!(
-        finding
-            .recommended_next_step
-            .as_deref()
-            .is_some_and(|next| next.contains("no test references the changed owner")),
-        "control keeps the generic next step, got: {:?}",
-        finding.recommended_next_step
+        (finding.confidence - 0.4).abs() < f32::EPSILON,
+        "no-static-path confidence stays 0.4; got {}",
+        finding.confidence
+    );
+    assert!(finding.related_tests.is_empty());
+    Ok(())
+}
+
+/// #10708: a directly resolved ordinary function owner with no static link
+/// carries the honest ordered next step — owner-named add-test/call and
+/// assertion, native verifier, then refresh — while classification,
+/// confidence, related-test evidence and repair eligibility stay put.
+#[test]
+fn untested_function_owner_guidance_names_owner_and_ordered_route() -> Result<(), String> {
+    let tests = [exact_value_test("shippingFee", "result", "0")];
+    let finding = classify_boundary_line("shippingFee", "  if (total >= 50) {", &tests)?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert!(
+        (finding.confidence - 0.4).abs() < f32::EPSILON,
+        "no-static-path confidence stays 0.4; got {}",
+        finding.confidence
+    );
+    assert!(finding.related_tests.is_empty());
+    assert_eq!(finding.static_limit_kind, None);
+    // Repair eligibility stays suppressed: the NoStaticPath actionability
+    // lands advisory (the preview card's `repair_packet_ready` remains
+    // false, pinned by the fixture goldens), so no packet may be emitted
+    // on this evidence.
+    assert_evidence_contains(&finding, "gap_state: advisory");
+    let step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "owner with no static link must carry guidance".to_string())?;
+    for expected in [
+        "no statically linked test calls `shippingFee(`",
+        "inspect existing test calls and their import/export paths",
+        "if no suitable test exists, add a test",
+        "add a test that calls the changed owner",
+        "asserts the changed behavior with `toBe` / `toEqual`",
+        "run the project's native test command",
+        "rerun `ripr check`",
+    ] {
+        assert!(
+            step.contains(expected),
+            "next step must contain {expected:?}; got: {step}"
+        );
+    }
+    for forbidden in [
+        "vitest run",
+        "npx vitest",
+        "tests/lib.test.ts",
+        "test_shipping",
+    ] {
+        assert!(
+            !step.contains(forbidden),
+            "no invented exact file/command may appear; found {forbidden:?} in: {step}"
+        );
+    }
+    assert!(
+        !step.contains("no test references the changed owner"),
+        "must not claim universal test absence; got: {step}"
+    );
+    Ok(())
+}
+
+/// #10708 negative controls: method, class-method, module-initializer and
+/// alias/static-limit lanes keep their own qualifiers — the ordinary-owner
+/// wording must not leak into them, and unresolved/transitive relations
+/// keep their uncertainty without the direct-call advice.
+#[test]
+fn qualified_owner_lanes_keep_their_own_guidance() -> Result<(), String> {
+    // Method owner keeps the receiver-uncertainty qualifier.
+    let mut method = test_owner("total", "src/cart.ts");
+    method.owner_kind = OwnerKind::Method;
+    let method_step = no_static_path_recommendation(&method);
+    assert!(
+        method_step.contains("receiver"),
+        "method guidance must keep the receiver qualifier; got: {method_step}"
+    );
+    assert!(
+        !method_step.contains("no statically linked test calls"),
+        "method guidance must not use the ordinary-owner wording; got: {method_step}"
+    );
+    // Class-method owner keeps its own qualifier.
+    let mut class_method = test_owner("build", "src/owners.ts");
+    class_method.owner_kind = OwnerKind::ClassMethod;
+    class_method.class_name = Some("Cart".to_string());
+    let class_step = no_static_path_recommendation(&class_method);
+    assert!(
+        class_step.contains("class-method relation"),
+        "class-method guidance must keep its qualifier; got: {class_step}"
+    );
+    assert!(
+        !class_step.contains("no statically linked test calls"),
+        "class-method guidance must not use the ordinary-owner wording; got: {class_step}"
+    );
+    // Module-initializer owner keeps its own observer qualifier.
+    let mut module_fn = test_owner("CART_LIMIT", "src/cart.ts");
+    module_fn.owner_kind = OwnerKind::ModuleFunction;
+    let module_step = no_static_path_recommendation(&module_fn);
+    assert!(
+        module_step.contains("module initializer observer"),
+        "module-function guidance must keep its qualifier; got: {module_step}"
+    );
+    assert!(
+        !module_step.contains("no statically linked test calls"),
+        "module-function guidance must not use the ordinary-owner wording; got: {module_step}"
+    );
+    // Alias-gap disclosure keeps its own unresolved-import route.
+    let ordinary = test_owner("applyDiscount", "src/owner.ts");
+    let ordinary_step = no_static_path_recommendation(&ordinary);
+    assert!(
+        ordinary_step.contains("no statically linked test calls `applyDiscount(`"),
+        "ordinary-owner guidance must name the owner; got: {ordinary_step}"
     );
     Ok(())
 }
@@ -13839,7 +14030,7 @@ fn spec_0027_unrelated_test_does_not_reach_the_boundary_witness() -> Result<(), 
     assert_eq!(finding.ripr.reach.state, StageState::No);
     assert!(
         finding.missing.iter().any(|line| line
-            == "No test references `shippingFee(` — add a test that calls the changed owner."),
+            == "No statically linked test call to `shippingFee(` was established; inspect existing test calls and their import/export paths."),
         "no_static_path must name the missing owner reference: {:?}",
         finding.missing
     );
@@ -15667,6 +15858,492 @@ fn branch_return_expressions_single_return_shapes_still_attributed() {
     );
 }
 
+/// #7433: a one-line `if` closes its own body, so the scan must not read the
+/// enclosing block's next `return` as the true branch. The real pair here is
+/// 1/2; the scan used to answer 2/3.
+#[test]
+fn branch_return_expressions_refuses_a_one_line_changed_if() {
+    let lines: Vec<&str> = [
+        "export function f(s: number, admin: boolean): number {",
+        "    if (!admin) {",
+        "        if (s === 404) { return 1; }",
+        "        return 2;",
+        "    }",
+        "    return 3;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(branch_return_expressions(&lines, 2), None);
+}
+
+/// #7433: a changed `if` inside a nested arrow belongs to that arrow's
+/// returns, not the owner's.
+#[test]
+fn branch_return_expressions_refuses_a_changed_if_in_a_nested_function() {
+    for header in [
+        "    const pick = (n: number) => {",
+        "    const pick = function (n: number) {",
+    ] {
+        let lines: Vec<&str> = [
+            "export function f(s: number): number {",
+            header,
+            "        if (n === 404) {",
+            "            return 1;",
+            "        }",
+            "        return 2;",
+            "    };",
+            "    return pick(s);",
+            "}",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(branch_return_expressions(&lines, 2), None, "{header}");
+    }
+}
+
+/// #10776: a changed `if` inside an object-literal or class method belongs to
+/// that method's returns, not the owner's. Method shorthand carries neither
+/// `=>` nor `function`, so the signature itself is what marks the body.
+#[test]
+fn branch_return_expressions_refuses_a_changed_if_in_a_method_shorthand() {
+    for header in [
+        "    const o = { pick(n: number) {",
+        "    const o = { pick(n: number): number {",
+        "    const o = { async pick(n: number) {",
+        "    const o = { get pick() {",
+        "    const o = { *pick(n: number) {",
+        "    const o = { pick<T>(n: T) {",
+    ] {
+        let lines: Vec<&str> = [
+            "export function f(s: number): number {",
+            header,
+            "        if (n === 404) {",
+            "            return 1;",
+            "        }",
+            "        return 2;",
+            "    } };",
+            "    return o.pick(s);",
+            "}",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(branch_return_expressions(&lines, 2), None, "{header}");
+    }
+}
+
+/// #10776 controls: a control head (`for`, `while`, `switch`, `catch`) or a
+/// call that passes an object is not a method, so the scan still reads the
+/// enclosing owner's returns.
+#[test]
+fn branch_return_expressions_keeps_control_heads_and_object_arguments() {
+    for header in [
+        "    for (const k of keys) {",
+        "    while (go(s)) {",
+        "    try {",
+        "    } catch (e) {",
+        "    run(s, {",
+        "    const o = {",
+        "    f(s) < limit {",
+    ] {
+        let lines: Vec<&str> = [
+            "export function f(s: number): number {",
+            header,
+            "        if (s === 404) {",
+            "            return 1;",
+            "        }",
+            "        return 2;",
+            "    }",
+            "    return 3;",
+            "}",
+        ]
+        .into_iter()
+        .collect();
+        assert!(branch_return_expressions(&lines, 2).is_some(), "{header}");
+    }
+}
+
+/// #7433 controls: a multi-line `if` nested in a plain block, an arrow owner,
+/// and braces or `=>` inside earlier strings and comments keep the scan.
+#[test]
+fn branch_return_expressions_keeps_plain_nesting_and_blanked_literals() {
+    let nested: Vec<&str> = [
+        "export function f(s: number, admin: boolean): number {",
+        "    if (!admin) {",
+        "        if (s === 404) {",
+        "            return 1;",
+        "        }",
+        "        return 2;",
+        "    }",
+        "    return 3;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&nested, 2),
+        Some(("1".to_string(), "2".to_string()))
+    );
+    let arrow_owner: Vec<&str> = [
+        "export const f = (s: number): number => {",
+        "    if (s === 404) {",
+        "        return 1;",
+        "    }",
+        "    return 2;",
+        "};",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&arrow_owner, 1),
+        Some(("1".to_string(), "2".to_string()))
+    );
+    let multiline_comment: Vec<&str> = [
+        "export function f(s: number): number {",
+        "    /* a block comment",
+        "       over two lines { => */",
+        "    const t = `x",
+        "y`;",
+        "    if (s === 404) {",
+        "        return 1;",
+        "    }",
+        "    return 2;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&multiline_comment, 5),
+        Some(("1".to_string(), "2".to_string()))
+    );
+    let literals: Vec<&str> = [
+        "export function f(s: number): number {",
+        "    const label = \"{ => function {\"; // {",
+        "    if (s === 404) {",
+        "        return 1;",
+        "    }",
+        "    return 2;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        branch_return_expressions(&literals, 2),
+        Some(("1".to_string(), "2".to_string()))
+    );
+}
+
+/// #7433 / #10776 through the liveness decision: at the boundary input the
+/// real pair is 1/2, so pinning `3` is dead. The scan cannot read a one-line
+/// changed `if`, and the witness has already credited the pin, so the check
+/// withholds (`Some(false)`) rather than leave a dead pin standing.
+#[test]
+fn expected_side_is_live_withholds_a_one_line_changed_if() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number, admin: boolean): number {\n",
+                "    if (!admin) {\n",
+                "        if (s === 404) { return 1; }\n",
+                "        return 2;\n",
+                "    }\n",
+                "    return 3;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string(), "admin".to_string()],
+        ..boundary_witness_owner()
+    };
+    for expected in ["3", "2", "1"] {
+        assert_eq!(
+            expected_side_is_live(
+                &owner,
+                "        if (s === 404) { return 1; }",
+                "s",
+                "404",
+                &["404".to_string()],
+                expected,
+            ),
+            Some(false),
+            "pin {expected}: an unreadable branch pair cannot show the pin is live"
+        );
+    }
+}
+
+/// #10776: the same holds for a changed `if` inside a nested arrow, whose
+/// returns belong to the arrow, not the owner.
+#[test]
+fn expected_side_is_live_withholds_a_changed_if_in_a_nested_function() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number): number {\n",
+                "    const pick = (n: number) => {\n",
+                "        if (n === 404) {\n",
+                "            return 1;\n",
+                "        }\n",
+                "        return 2;\n",
+                "    };\n",
+                "    return pick(s);\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string()],
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "        if (n === 404) {",
+            "n",
+            "404",
+            &["404".to_string()],
+            "1",
+        ),
+        Some(false)
+    );
+}
+
+/// #10776 control: a statement without a trailing `;` stays in the text before
+/// the next block head, but the call is not that block's signature, so the
+/// block is plain and the scan still reads the owner's returns. A decorator on
+/// its own line does not hide the method it decorates.
+#[test]
+fn branch_return_expressions_reads_a_block_after_a_semicolon_less_call() {
+    let after_call: Vec<&str> = [
+        "export function f(s: number): number {",
+        "    log(s)",
+        "    while (go(s)) {",
+        "        if (s === 404) {",
+        "            return 1;",
+        "        }",
+        "        return 2;",
+        "    }",
+        "    return 3;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert!(branch_return_expressions(&after_call, 3).is_some());
+    let decorated: Vec<&str> = [
+        "export function f(s: number): number {",
+        "    class C {",
+        "        @Get()",
+        "        pick(n: number) {",
+        "            if (n === 404) {",
+        "                return 1;",
+        "            }",
+        "            return 2;",
+        "        }",
+        "    }",
+        "    return new C().pick(s);",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(branch_return_expressions(&decorated, 4), None);
+    // A multi-line parameter list and a brace on its own line keep the name.
+    for (header, changed) in [
+        (
+            vec!["        pick(", "            n: number", "        ) {"],
+            5,
+        ),
+        (vec!["        pick(n: number)", "        {"], 4),
+    ] {
+        let mut lines: Vec<&str> =
+            vec!["export function f(s: number): number {", "    const o = {"];
+        lines.extend(header);
+        lines.extend([
+            "            if (n === 404) {",
+            "                return 1;",
+            "            }",
+            "            return 2;",
+            "        }",
+            "    };",
+            "    return o.pick(s);",
+            "}",
+        ]);
+        assert_eq!(
+            branch_return_expressions(&lines, changed),
+            None,
+            "{lines:?}"
+        );
+    }
+}
+
+/// #10776: a changed `if` inside a class method is withheld the same way.
+#[test]
+fn expected_side_is_live_withholds_a_changed_if_in_a_method_shorthand() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number): number {\n",
+                "    const o = {\n",
+                "        async pick(n: number): Promise<number> {\n",
+                "            if (n === 404) {\n",
+                "                return 1;\n",
+                "            }\n",
+                "            return 2;\n",
+                "        },\n",
+                "    };\n",
+                "    return o.pick(s);\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string()],
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "            if (n === 404) {",
+            "n",
+            "404",
+            &["404".to_string()],
+            "1",
+        ),
+        Some(false)
+    );
+}
+
+/// #10776 control: an `} else if` head is not held to the withholding rule.
+/// Its pair is read by the scan as before, so a live pin still folds to
+/// `Some(true)` and the dead pin to `Some(false)` through the normal path.
+#[test]
+fn expected_side_is_live_leaves_an_else_if_head_to_the_scan() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number): number {\n",
+                "    if (s < 0) {\n",
+                "        return -1;\n",
+                "    } else if (s === 404) {\n",
+                "        return 1;\n",
+                "    } else {\n",
+                "        return 2;\n",
+                "    }\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string()],
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    } else if (s === 404) {",
+            "s",
+            "404",
+            &["404".to_string()],
+            "1",
+        ),
+        None,
+        "the previous behavior for an else-if head is kept"
+    );
+}
+
+/// #10776 control: a brace-less one-line `if (c) return 1;` (#10463) never
+/// reached the brace scan, so it keeps its previous behavior (`None`).
+#[test]
+fn expected_side_is_live_leaves_a_braceless_if_alone() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number): number {\n",
+                "    if (s >= 404) return 1;\n",
+                "    return 2;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string()],
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (s >= 404) return 1;",
+            "s",
+            "404",
+            &["404".to_string()],
+            "1",
+        ),
+        None
+    );
+}
+
+/// #10776 control: a changed ternary is not an `if` statement. It has no
+/// branch pair to read, and its credit stands as before (`None`).
+#[test]
+fn expected_side_is_live_leaves_a_changed_ternary_alone() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function discount(quantity: number): number {\n",
+                "  return quantity > 10 ? 10 : 0;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["quantity".to_string()],
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "  return quantity > 10 ? 10 : 0;",
+            "quantity",
+            "10",
+            &["10".to_string()],
+            "10",
+        ),
+        None
+    );
+}
+
+/// #7433 review: an ordinary block that shares its opening line with an
+/// unrelated arrow expression is not a nested function. Its branch pair
+/// (1/2) still folds, so a pin of `3` stays dead (`Some(false)`) and a pin of
+/// `2` stays live; refusing the block as a function would hand the dead pin
+/// boundary credit.
+#[test]
+fn expected_side_is_live_keeps_a_block_that_shares_a_line_with_an_arrow() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number, admin: boolean): number {\n",
+                "    if (admin) { const next = (n: number) => n + 1;\n",
+                "        if (s === 404) {\n",
+                "            return 1;\n",
+                "        }\n",
+                "        return 2;\n",
+                "    }\n",
+                "    return 3;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string(), "admin".to_string()],
+        ..boundary_witness_owner()
+    };
+    let live = |expected: &str| {
+        expected_side_is_live(
+            &owner,
+            "        if (s === 404) {",
+            "s",
+            "404",
+            &["404".to_string()],
+            expected,
+        )
+    };
+    assert_eq!(live("3"), Some(false), "a dead pin stays withheld");
+    assert_eq!(live("2"), Some(true), "the pre-change value stays live");
+}
+
 /// #4117 review of the liveness lookup: a duplicated predicate line cannot be
 /// attributed through the declared offset (a multiline declarator can shift
 /// the offset onto the identical line of a different function), so the check
@@ -16177,7 +16854,7 @@ fn same_stem_tests_that_only_call_a_sibling_owner_are_not_related() -> Result<()
     );
     assert!(
         finding.missing.iter().any(|line| line
-            == "No test references `loyaltyPrice(` — add a test that calls the changed owner."),
+            == "No statically linked test call to `loyaltyPrice(` was established; inspect existing test calls and their import/export paths."),
         "no_static_path must name the missing owner reference: {:?}",
         finding.missing
     );
@@ -16380,7 +17057,7 @@ it("tiers", () => {
 // `no_static_path` and the advice "add a test that calls the changed owner"
 // points at tests that already exist.
 
-fn ts_analysis_options(root: PathBuf) -> AnalysisOptions {
+pub(super) fn ts_analysis_options(root: PathBuf) -> AnalysisOptions {
     AnalysisOptions {
         root,
         base: None,
@@ -16710,8 +17387,7 @@ fn analyze_diff_scopes_extraction_partial_to_test_files_that_reach_the_diff() ->
         &root.join("src/index.ts"),
         "export * from './pricing';\nexport * from './other';\n",
     )?;
-    let dropped =
-        "for (const n of cases) {\n  it(`adds ${n}`, () => {\n    expect(n).toBe(n);\n  });\n}\n";
+    let dropped = "for (let n = 0; n < count; n++) {\n  it(`adds ${n}`, () => {\n    expect(n).toBe(n);\n  });\n}\n";
     // Reaches only `other.ts`.
     ts_write_file(
         &root.join("tests/unrelated.test.ts"),
@@ -18430,10 +19106,12 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
     assert!(!plain[0].exported_as_default);
 }
 
+mod ava_throws_message_tests;
 mod boolean_pin_tests;
 mod catch_arm_tests;
 mod changed_field_tests;
 mod class_entry_tests;
+mod close_to_pin_tests;
 mod committed_snapshot_tests;
 mod commonjs_default_function_tests;
 mod commonjs_export_tests;
@@ -18446,7 +19124,9 @@ mod dropped_term_tests;
 mod enum_member_tests;
 mod error_payload_tests;
 mod function_reference_callback_tests;
+mod gap_reach_config_tests;
 mod guard_entry_tests;
+mod infection_tests;
 mod instance_class_tests;
 mod issue7507_shadow_tests;
 mod literal_matcher_tests;
@@ -18462,9 +19142,11 @@ mod mock_spread_source_tests;
 mod mocked_callee_tests;
 mod module_const_tests;
 mod module_entry_tests;
+mod namespace_reexport_tests;
 mod nested_callback_tests;
 mod nullish_chain_tests;
 mod out_dir_specifier_tests;
+mod playwright_fixture_tests;
 mod playwright_unit_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
@@ -18476,6 +19158,7 @@ mod rounding_mode_tests;
 mod scope_receiver_tests;
 mod spec0243_owner_tests;
 mod spy_module_object_tests;
+mod string_write_scan_tests;
 mod suite_factory_tests;
 mod table_case_tests;
 mod table_loop_tests;
@@ -18943,6 +19626,220 @@ fn describe_nested_under_an_if_guards_its_tests() {
     );
 }
 
+/// #10501: a registration inside a loop over data static analysis cannot
+/// enumerate is indexed under the loop head, with no assertion credit.
+#[test]
+fn for_of_over_non_literal_data_indexes_the_test_under_the_loop_head() {
+    let source = "for (const name of readdirSync('fixtures')) {\n  test(`parses ${name}`, () => {\n    expect(parse(name)).toBe(true);\n  });\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("for (... of readdirSync('fixtures'))")
+    );
+    assert!(tests[0].assertions.is_empty(), "{:?}", tests[0].assertions);
+}
+
+#[test]
+fn for_each_over_a_parameter_and_for_in_are_indexed_under_their_loop_head() {
+    let source = "cases.forEach((c) => {\n  it('a', () => { expect(f(c)).toBe(1); });\n});\nfor (const k in table) {\n  it('b', () => { expect(f(k)).toBe(1); });\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    let guards = tests
+        .iter()
+        .map(|test| test.conditional_registration.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        guards,
+        vec![Some("cases.forEach(...)"), Some("for (... in table)")]
+    );
+}
+
+#[test]
+fn loop_over_a_literal_table_keeps_credit_and_no_guard() {
+    let source = "for (const n of [1, 2]) {\n  test('a', () => { expect(f(n)).toBe(n); });\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert!(!tests.is_empty());
+    assert!(
+        tests
+            .iter()
+            .all(|test| test.conditional_registration.is_none()),
+        "{tests:?}"
+    );
+}
+
+#[test]
+fn loop_binding_a_registration_api_is_not_descended() {
+    let source = "for (const test of tests) {\n  test('a', () => { expect(f(1)).toBe(2); });\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert!(tests.is_empty(), "{tests:?}");
+}
+
+#[test]
+fn non_literal_loop_nested_in_an_if_joins_both_guards() {
+    let source = "if (isLinux) {\n  for (const n of load()) {\n    test('a', () => { expect(f(n)).toBe(1); });\n  }\n}\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("isLinux && for (... of load())")
+    );
+}
+
+#[test]
+fn describe_skip_if_and_run_if_index_their_tests_under_the_factory_guard() {
+    let source = "describe.skipIf(!existsSync(dist))('built', () => {\n  describe.runIf(ci)('ci', () => {\n    it('a', () => { expect(f(1)).toBe(2); });\n  });\n  it('b', () => { expect(f(2)).toBe(3); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 2, "{tests:?}");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("describe.skipIf(!existsSync(dist)) && describe.runIf(ci)")
+    );
+    assert_eq!(
+        tests[1].conditional_registration.as_deref(),
+        Some("describe.skipIf(!existsSync(dist))")
+    );
+    assert!(tests.iter().all(|test| test.assertions.is_empty()));
+    assert!(
+        tests
+            .iter()
+            .all(|test| { test.assertion_admission == TypeScriptAssertionAdmission::Unresolved })
+    );
+}
+
+#[test]
+fn describe_run_if_indexes_an_untitled_callback_only_suite_under_the_factory_guard() {
+    let run_if = "describe.runIf(!process.env.CI)(() => {\n  it('adds three numbers', () => { expect(add(1, 2)).toBe(3); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), run_if);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "adds three numbers");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("describe.runIf(!process.env.CI)")
+    );
+    assert!(tests[0].assertions.is_empty(), "{tests:?}");
+    assert_eq!(
+        tests[0].assertion_admission,
+        TypeScriptAssertionAdmission::Unresolved
+    );
+    let skip_if = "describe.skipIf(!existsSync(dist))(() => {\n  it('built', () => { expect(add(1, 2)).toBe(3); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), skip_if);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "built");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("describe.skipIf(!existsSync(dist))")
+    );
+}
+
+#[test]
+fn describe_run_if_untitled_suite_with_an_inactive_options_object_is_not_descended() {
+    let source = "describe.runIf(c)(() => {\n  it('x', () => { expect(f(1)).toBe(2); });\n}, { skip: true });\ndescribe.runIf(c)(() => {\n  it('y', () => { expect(f(1)).toBe(2); });\n}, { skip: false });\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "y");
+}
+
+#[test]
+fn describe_run_if_untitled_callback_parameter_binding_a_runner_name_is_not_a_registration() {
+    let source = "describe.runIf(c)((test) => { test('x', () => { expect(f(1)).toBe(2); }); });\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert!(tests.is_empty(), "{tests:?}");
+}
+
+#[test]
+fn describe_run_if_untitled_callback_strict_directive_keeps_block_functions_block_local() {
+    let source = "describe.runIf(c)(() => {\n  'use strict';\n  { function describe() {} }\n  describe('real', () => {\n    it('x', () => { expect(f(1)).toBe(2); });\n  });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "x");
+}
+
+/// The untitled callback-only conditional suite
+/// (`describe.runIf(cond)(() => { ... })`) is indexed under its factory
+/// guard, so it must not fire the `typescript_test_extraction_partial`
+/// disclosure the unindexed shape did (#10982).
+#[test]
+fn analyze_diff_does_not_disclose_an_untitled_conditional_suite() -> Result<(), String> {
+    let root = ts_unique_tempdir("untitledrunif")?;
+    ts_write_file(
+        &root.join("src/math.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/math.test.ts"),
+        "import { add } from '../src/math';\ndescribe.runIf(!process.env.CI)(() => {\n  it('adds three numbers', () => {\n    expect(add(1, 2)).toBe(3);\n  });\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = ts_analysis_options(root.clone());
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/math.ts", &[(2, "  return a + b;")])],
+    )?;
+    assert!(
+        !result.limitations.iter().any(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+        }),
+        "the untitled conditional suite must be indexed, got {:?}",
+        result.limitations
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn describe_skip_if_accepts_an_options_argument_before_the_callback() {
+    let source = "describe.skipIf(c)('a', { timeout: 5 }, () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("describe.skipIf(c)")
+    );
+}
+
+#[test]
+fn describe_skip_if_on_a_local_or_unrelated_describe_is_not_a_runner_suite() {
+    let local = "const describe = { skipIf: () => (_n, cb) => cb() };\ndescribe.skipIf(true)('local', () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), local);
+    assert!(tests.is_empty(), "{tests:?}");
+    let imported = "import { describe } from './harness';\ndescribe.skipIf(true)('local', () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), imported);
+    assert!(tests.is_empty(), "{tests:?}");
+}
+
+#[test]
+fn describe_skip_if_on_another_root_is_not_descended_and_a_dynamic_title_still_is() {
+    let source = "runner.skipIf(c)('a', () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\ndescribe.skipIf(c)(title, () => {\n  it('y', () => { expect(f(1)).toBe(2); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "y");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("describe.skipIf(c)")
+    );
+}
+
+#[test]
+fn describe_skip_if_with_an_inactive_options_object_is_not_descended() {
+    let source = "describe.skipIf(c)('a', { skip: true }, () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\ndescribe.runIf(c)('b', { skip: false }, () => {\n  it('y', () => { expect(f(1)).toBe(2); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "y");
+}
+
+#[test]
+fn describe_skip_if_reads_use_strict_from_the_callback_not_the_title() {
+    let source = "describe.skipIf(c)('s', () => {\n  'use strict';\n  { function describe() {} }\n  describe('inner', () => {\n    it('x', () => { expect(f(1)).toBe(2); });\n  });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "x");
+}
+
 #[test]
 fn unguarded_registration_keeps_assertion_credit() {
     let source = "test('a', () => {\n  expect(f(1)).toBe(2);\n});\n";
@@ -19014,4 +19911,163 @@ fn finding_resting_only_on_a_guarded_test_reads_static_unknown() -> Result<(), S
     );
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
+}
+
+fn cart_add_owner() -> TypeScriptOwner {
+    TypeScriptOwner {
+        name: "add".to_string(),
+        owner_kind: OwnerKind::Method,
+        class_name: Some("Cart".to_string()),
+        params: vec!["amount".to_string()],
+        arity: Some(1),
+        source_text: Some(
+            concat!(
+                "add(amount: number): number {\n",
+                "    this.total += amount * 2;\n",
+                "    return this.total;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..boundary_witness_owner()
+    }
+}
+
+/// #10850: a changed compound assignment to returned state is judged on its
+/// operand, and only when both statements use the same target and operator.
+#[test]
+fn returned_state_operands_pair_an_edited_operand_of_the_same_operator() {
+    let owner = cart_add_owner();
+    assert_eq!(
+        classifier::returned_state_operands(
+            "    this.total += amount * 2;",
+            Some("    this.total += amount;"),
+            &owner,
+        ),
+        Some(("amount", "amount * 2"))
+    );
+    // A different operator changes how the prior state combines with the operand.
+    assert_eq!(
+        classifier::returned_state_operands(
+            "    this.total -= amount * 2;",
+            Some("    this.total += amount;"),
+            &owner,
+        ),
+        None
+    );
+    // A parameter the owner rebinds is not the call's argument.
+    let rebinding = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "add(amount: number): number {\n",
+                "    amount = amount + 1;\n",
+                "    this.total += amount * 2;\n",
+                "    return this.total;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..cart_add_owner()
+    };
+    assert_eq!(
+        classifier::returned_state_operands(
+            "    this.total += amount * 2;",
+            Some("    this.total += amount;"),
+            &rebinding,
+        ),
+        None
+    );
+    // An added statement has no old operand to compare.
+    assert_eq!(
+        classifier::returned_state_operands("    this.total += amount * 2;", None, &owner),
+        None
+    );
+}
+
+/// #10850: a state update is read through whatever plain receiver the test
+/// calls the method on; a chained receiver is left unnamed.
+#[test]
+fn instance_call_receivers_name_plain_receivers_only() {
+    assert_eq!(
+        classifier::instance_call_receivers("cart.add(0)", "add"),
+        vec!["cart".to_string()]
+    );
+    assert_eq!(
+        classifier::instance_call_receivers("a.add(1) + b.add(2)", "add"),
+        vec!["a".to_string(), "b".to_string()]
+    );
+    assert!(classifier::instance_call_receivers("a.b.add(1)", "add").is_empty());
+    assert!(classifier::instance_call_receivers("add(1)", "add").is_empty());
+}
+
+/// #10931: a diff with no file this adapter would analyze returns the empty
+/// complete result without walking or reading the workspace. A source over the
+/// read cap would otherwise surface as a workspace limitation on a docs edit.
+#[test]
+fn diff_without_analyzable_files_skips_the_workspace() -> Result<(), String> {
+    let root = ts_unique_tempdir("skip-workspace-docs-only")?;
+    ts_write_file(
+        &root.join("src/huge.ts"),
+        &format!("export const value = {};\n", "x".repeat(200)),
+    )?;
+    let options = ts_analysis_options(root.clone());
+    let analyze = |files: &[ChangedFile]| {
+        TypeScriptAdapter::analyze_diff_with_read_limits(&options, files, 64, 1024)
+    };
+    let docs_only = analyze(&[changed("docs/guide.mdx"), changed("package.json")]);
+    let excluded = analyze(&[
+        changed("node_modules/pkg/index.ts"),
+        changed("src/api.generated.ts"),
+    ]);
+    let ts_edit = analyze(&[changed("src/huge.ts")]);
+    let _ = std::fs::remove_dir_all(&root);
+    for (label, result) in [("docs-only", docs_only?), ("excluded", excluded?)] {
+        if !result.limitations.is_empty()
+            || !result.findings.is_empty()
+            || result.changed_files != 0
+        {
+            return Err(format!(
+                "{label} diff must return the empty complete result, got {:?}",
+                result.limitations
+            ));
+        }
+    }
+    let ts_edit = ts_edit?;
+    if !ts_edit
+        .limitations
+        .iter()
+        .any(|limitation| limitation.path.as_deref() == Some("src/huge.ts"))
+    {
+        return Err(format!(
+            "a changed TypeScript file must still read the workspace and name the capped file, got {:?}",
+            ts_edit.limitations
+        ));
+    }
+    Ok(())
+}
+
+/// #10931: each reason a changed file reaches Phase 2 keeps the workspace walk:
+/// a JavaScript file, a declared hand-written file under an excluded directory
+/// and a Rust file a Bun bridge profile reads against the TypeScript tests.
+#[test]
+fn diff_needs_workspace_for_every_file_the_loop_would_analyze() {
+    let needs = |paths: &[&str], handwritten: &[&str]| {
+        let files: Vec<ChangedFile> = paths.iter().map(|path| changed(path)).collect();
+        let handwritten: Vec<String> = handwritten.iter().map(|path| path.to_string()).collect();
+        diff_needs_typescript_workspace(&files, &handwritten)
+    };
+    assert!(needs(&["README.md", "src/lib.js"], &[]));
+    assert!(needs(&["README.md", "src/lib.tsx"], &[]));
+    assert!(!needs(&["README.md", "Cargo.toml", "src/lib.rs"], &[]));
+    assert!(!needs(&["dist/bundle.ts"], &[]));
+    assert!(needs(&["dist/bundle.ts"], &["dist/bundle.ts"]));
+    assert!(!needs(&["src/api.generated.ts"], &[]));
+    let bridge = BUN_RUST_CROSS_LANGUAGE_BRIDGE_PROFILES
+        .iter()
+        .map(|profile| profile.rust_file)
+        .next();
+    assert!(
+        bridge.is_some_and(|file| needs(&[file], &[])),
+        "a Bun bridge Rust file must keep the workspace walk"
+    );
 }
