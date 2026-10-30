@@ -793,10 +793,11 @@ reason alongside location, exposure class, and any currentness label. When
 `--at FILE:LINE --kind FAMILY` is ambiguous, check prints explicit
 `ripr agent stub --seam-id ID` choices from that resolver. Choices also appear beside eligible hidden findings within the same first
 twenty-row window, keyed by finding ID. Base-side/unresolved subjects and
-stale source bytes receive no choices. These syntax choices are unvalidated:
-the seam-ID command may refuse an already-gripped or unsupported seam. They
-do not establish stub readiness, a canonical finding-to-seam repair binding,
-or repair eligibility. Hidden rows resolve syntax ambiguity only; unique
+stale source bytes receive no choices. Each listed seam-ID command is validated
+with the stub resolver, so it produces a stub; an already-gripped or unsupported seam is not listed. A
+listed command does not establish a canonical finding-to-seam repair binding
+or repair eligibility. Hidden rows resolve syntax ambiguity only, and print a
+choice only when each listed seam-ID command produces a stub; unique
 hidden routes do not trigger classified inventory lookups merely to be omitted.
 A named Rust transitive/public-API reach limitation with retained unresolved-edge
 evidence says tests cannot close that analysis limitation, names the edge and

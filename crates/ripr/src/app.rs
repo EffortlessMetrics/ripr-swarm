@@ -109,7 +109,7 @@ pub(crate) use explain::{
 };
 pub(crate) use navigation::{
     CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, GapRepairRoute,
-    RepairRoute, finding_navigation, finding_navigation_with_worktree,
+    RepairRoute, RepairRouteRefusal, finding_navigation, finding_navigation_with_worktree,
 };
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
