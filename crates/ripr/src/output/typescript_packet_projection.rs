@@ -1521,7 +1521,12 @@ pub(crate) fn typescript_moved_selection_blocker(finding: &Finding) -> Option<St
         .collect();
     let first = names.first()?;
     let (more, verb) = if names.len() > 1 {
-        (format!(" and {} more", names.len() - 1), "assert")
+        let verb = if names.len() == 2 {
+            "asserts"
+        } else {
+            "assert"
+        };
+        (format!(" and {} more", names.len() - 1), verb)
     } else {
         (String::new(), "asserts")
     };
@@ -1860,10 +1865,18 @@ pub(crate) mod tests {
         let text = typescript_advisory_blocker(&moved)
             .ok_or_else(|| "moved selection must read a blocker".to_string())?;
         if !text.contains("`throws on bad input` and 1 more")
-            || !text.contains(" 1 more assert a different")
+            || !text.contains(" 1 more asserts a different")
             || text.contains("no_predicate")
         {
             return Err(format!("unexpected moved blocker: {text}"));
+        }
+        moved.evidence.push(
+            "typescript_assertion_selection: no_predicate_relevant_assertion (third)".to_string(),
+        );
+        let three = typescript_advisory_blocker(&moved)
+            .ok_or_else(|| "three moved selections must read a blocker".to_string())?;
+        if !three.contains(" 2 more assert a different") {
+            return Err(format!("plural group must use `assert`: {three}"));
         }
         let mut single = incomplete_packet_finding();
         single.evidence.push(
