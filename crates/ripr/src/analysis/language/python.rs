@@ -195,6 +195,7 @@ use static_limits::{
     PythonStaticLimit, has_identifier_boundary, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
+mod cli_runner;
 mod transitive_reach;
 #[cfg(test)]
 use static_limits::{
@@ -503,6 +504,10 @@ struct PythonFixtureDef {
     /// The class the fixture returns a fresh literal-built instance of
     /// (`return Account(100)`), when that is its whole shape (#9619).
     literal_construction: Option<String>,
+    /// The inert test-support class (`CliRunner`) the fixture returns a fresh
+    /// literal-built instance of, when that is its whole shape; the
+    /// fixture may take a lone unused `request` (#11016).
+    inert_tool: Option<String>,
     /// The literal `params=` rows a fixture returning `request.param` hands
     /// the test, one run per row (#9619, `param_fixtures.rs`).
     literal_params: Option<Vec<param_fixtures::FixtureParamRow>>,
@@ -1760,6 +1765,8 @@ mod deleted_lines_tests;
 mod fixtures_tests;
 
 #[cfg(test)]
+mod inert_tool_fixture_tests;
+#[cfg(test)]
 mod literal_fixture_tests;
 
 #[cfg(test)]
@@ -1784,6 +1791,8 @@ mod helper_inline_tests;
 #[cfg(test)]
 mod literal_patch_tests;
 
+#[cfg(test)]
+mod cli_runner_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 
