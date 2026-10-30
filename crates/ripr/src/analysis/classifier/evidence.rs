@@ -278,16 +278,21 @@ impl ClassifiedProbeEvidence {
             }
             other => other,
         });
-        // #10980: the repo-seam activation authority withholds a related
-        // test whose assertion statically contradicts the changed owner's
-        // fold (#6026, #7007, #8610 review): the test fails at baseline, so
-        // its call-site values describe the inverted repair attempt, not the
-        // changed behavior's activation contract. The diff surface reads the
-        // same whole-test rule here — the one owner in
-        // `test_grip_evidence::test_has_contradicted_assertion` — so
+        // #10980: a related test whose assertion statically contradicts the
+        // changed owner's fold on BOTH versions fails everywhere and cannot
+        // notice the change, so its activation credit is withheld — the
+        // diff-side reading of the whole-test contradiction control the
+        // repo-seam activation authority enforces (#6026, #7007, #8610
+        // review), made base-relative because here the current body is the
+        // candidate under review: a row the candidate breaks is the
+        // discriminator itself, not a broken test. The diff surface reads
+        // the one owner in
+        // `test_grip_evidence::test_fails_on_both_diff_versions`, so
         // identical evidence reaches one verdict on both surfaces. A clean
         // or not-evaluable test keeps today's credit, so the fold can only
-        // withhold.
+        // withhold, and a contradiction whose reading the owner pin refuses
+        // is not established (RIPR-SPEC-0240): such a test keeps its credit
+        // and the refusal's own named-limit reading stands.
         let activation_credited: Vec<&TestSummary> = context
             .owner_fn
             .map(|owner| {
@@ -295,9 +300,21 @@ impl ClassifiedProbeEvidence {
                     .iter()
                     .copied()
                     .filter(|test| {
-                        !crate::analysis::test_grip_evidence::test_has_contradicted_assertion(
+                        use crate::analysis::test_grip_evidence::{
+                            contradicted_assertion_reading_is_established,
+                            test_fails_on_both_diff_versions,
+                        };
+                        !test_fails_on_both_diff_versions(
                             test,
-                            Some(owner),
+                            owner,
+                            context.probe.before.as_deref(),
+                            context.probe.after.as_deref(),
+                        ) || !contradicted_assertion_reading_is_established(
+                            test,
+                            owner,
+                            context.probe,
+                            pin_syntax,
+                            context.index,
                         )
                     })
                     .collect()

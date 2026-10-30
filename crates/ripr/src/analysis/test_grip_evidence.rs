@@ -3184,6 +3184,92 @@ pub(in crate::analysis) fn test_has_contradicted_assertion(
     })
 }
 
+/// The diff-mode whole-test contradiction (#10980). A related test carries
+/// the diff surface's credit only when it passes SOMEWHERE: it is withheld
+/// when it fails on BOTH versions — some assertion row contradicts the
+/// candidate body's fold and some row contradicts the baseline body — so
+/// the test passes on neither version and cannot notice the change. A row
+/// written for the baseline that the candidate breaks is the discriminator
+/// itself (the exact-boundary witness of the agentic b4 journey), and a
+/// row the candidate satisfies is the change's own credit; neither
+/// withholds. The baseline body is the owner's current body with the
+/// probe's `after` expression replaced by `before` exactly once (the
+/// #8659/#10916 reconstruction); a probe without a baseline expression or
+/// a body that does not reconstruct keeps the test's credit — the fold
+/// can only withhold. The repo-seam rule above stays current-fold-only:
+/// there the current body is the shipped code and a contradicted row is
+/// a wrong-way discriminator, while on the diff surface the current body
+/// is the candidate under review.
+pub(in crate::analysis) fn test_fails_on_both_diff_versions(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    before: Option<&str>,
+    after: Option<&str>,
+) -> bool {
+    let (Some(before), Some(after)) = (before, after) else {
+        return false;
+    };
+    if before == after || owner.body.matches(after).count() != 1 {
+        return false;
+    }
+    let mut baseline_owner = owner.clone();
+    baseline_owner.body =
+        crate::analysis::facts::SourceText::from(owner.body.as_str().replacen(after, before, 1));
+    let mut fails_on_candidate = false;
+    let mut fails_on_base = false;
+    for oracle in &test.assertions {
+        if !fails_on_candidate
+            && matches!(
+                assertion_verdict_for_test(Some(owner), &oracle.text, test),
+                ExactValueVerdict::Contradicted { .. }
+            )
+        {
+            fails_on_candidate = true;
+        }
+        if !fails_on_base
+            && matches!(
+                assertion_verdict_for_test(Some(&baseline_owner), &oracle.text, test),
+                ExactValueVerdict::Contradicted { .. }
+            )
+        {
+            fails_on_base = true;
+        }
+        if fails_on_candidate && fails_on_base {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether the whole-test contradiction has an established reading. The
+/// fold's premise is the written assertion's plain macro semantics, so a
+/// row the owner pin's reading refuses (a binding that may rebind the
+/// macro, a guard that may keep it from running) leaves the
+/// baseline-failing claim unestablished and the caller must not withhold
+/// on it (#5431, RIPR-SPEC-0240): the same refusal authority the outcome's
+/// named-limit projection consults, not a second rule. An equality-family
+/// row the pin admits reads established; non-equality rows (the #8610
+/// direct boolean assertions) carry their own fail-closed shape guards in
+/// [`value_contradiction::boolean_assertion_verdict_for_test`].
+pub(in crate::analysis) fn contradicted_assertion_reading_is_established(
+    test: &TestSummary,
+    owner_fn: &FunctionSummary,
+    probe: &crate::domain::Probe,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    index: &RustIndex,
+) -> bool {
+    test.assertions.iter().all(|assertion| {
+        let contradicted = matches!(
+            assertion_verdict_for_test(Some(owner_fn), &assertion.text, test),
+            ExactValueVerdict::Contradicted { .. }
+        );
+        !contradicted
+            || pin_syntax
+                .equality_assertion_refusal(probe, test, assertion, index)
+                .is_none()
+    })
+}
+
 /// Returns true when `oracle` is a discriminating match for `seam`.
 ///
 /// For most non-ErrorVariant seams this is identical to
