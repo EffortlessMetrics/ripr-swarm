@@ -7887,7 +7887,9 @@ tests = [
   "crates/ripr/src/output/json/report.rs::tests::typescript_repair_packet_json_field_absent_when_blocked",
   # Actionable-case consistency â€” no contradictory blocked-case messaging
   "crates/ripr/src/output/preview_actionability.rs::tests::actionable_repair_route_names_assertion_shape_not_blocked_text",
-  "crates/ripr/src/output/preview_actionability.rs::tests::actionable_repair_route_falls_back_to_discriminator_then_generic"
+  "crates/ripr/src/output/preview_actionability.rs::tests::actionable_repair_route_falls_back_to_discriminator_then_generic",
+  "crates/ripr/src/output/preview_actionability.rs::tests::projected_evidence_replaces_blocked_lines_for_packet_ready_finding",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_literal_threshold_packet_is_complete_and_controls_fail_closed"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -7905,6 +7907,7 @@ code = [
   "crates/ripr/src/app/explain.rs",
   "crates/ripr/src/output/human/sections.rs",
   "crates/ripr/src/output/json/report.rs",
+  "crates/ripr/src/output/json/context_packet.rs",
   "crates/ripr/src/output/preview_actionability.rs",
   "crates/ripr/src/lsp/hover.rs",
   "crates/ripr/src/lsp/actions.rs"
