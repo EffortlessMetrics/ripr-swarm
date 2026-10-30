@@ -21,11 +21,12 @@ exercises the production CLI.
 
 The getter is related to the test: reading `box.value` runs the getter of the
 class the factory built, so reach is `yes` and the finding is no longer
-`no_static_path`. The changed predicate boundary is still not discriminated, so
-the class stays `weakly_exposed` (RIPR-SPEC-0243 decision 23).
+`no_static_path`. The changed predicate boundary is not discriminated by the test,
+so the class is `weakly_exposed` (RIPR-SPEC-0243 decision 23).
 
 ## Must Not
 
 - Report `no_static_path` for a getter whose test reads it on a factory-built
   instance.
-- Promote the finding to `exposed` on factory reach alone.
+- Give the factory-built receiver more strength than a constructed receiver
+  (`new Cached(...)`) would get; the classifier decides the class.

@@ -2,9 +2,9 @@
 //! a test that binds `const box = cached(...)` and reads `box.value` ran the
 //! getter of the class the factory returned, but the getter was reported
 //! `no_static_path` because reach was keyed on a call of the owner name. The
-//! reach is real but indirect, so it reads `weakly_exposed` at most, and every
-//! shape that could make the receiver or the getter something else records no
-//! reach.
+//! relation lends reach and the assertion's oracle and the classifier decides
+//! the class as for a constructed receiver; every shape that could make the
+//! receiver or the getter something else records no reach.
 
 use super::*;
 
@@ -15,9 +15,18 @@ const CACHE: &str = "export class Cached<T> {\n  private _getter: (() => T) | un
 const READ_TEST: &str = "import { cached } from '../src/cache';\n\ntest('memoizes', () => {\n  let runs = 0;\n  const box = cached(() => ++runs);\n  expect(runs).toBe(0);\n  expect(box.value).toBe(1);\n  expect(box.value).toBe(1);\n  expect(runs).toBe(1);\n});\n";
 
 fn getter_finding(label: &str, owner_source: &str, test_source: &str) -> Result<Finding, String> {
+    getter_finding_at(label, owner_source, test_source, CHANGED)
+}
+
+fn getter_finding_at(
+    label: &str,
+    owner_source: &str,
+    test_source: &str,
+    changed: &str,
+) -> Result<Finding, String> {
     let line = owner_source
         .lines()
-        .position(|line| line == CHANGED)
+        .position(|line| line == changed)
         .map(|index| index + 1)
         .ok_or_else(|| format!("{label}: the changed line is missing from the owner"))?;
     let root = ts_unique_tempdir(label)?;
@@ -26,7 +35,7 @@ fn getter_finding(label: &str, owner_source: &str, test_source: &str) -> Result<
     let result = TypeScriptAdapter.analyze_diff(
         &ts_analysis_options(root.clone()),
         &OraclePolicy::default(),
-        &[changed_with_lines("src/cache.ts", &[(line, CHANGED)])],
+        &[changed_with_lines("src/cache.ts", &[(line, changed)])],
     )?;
     let _ = std::fs::remove_dir_all(&root);
     result
@@ -49,7 +58,10 @@ fn assert_related(label: &str, owner_source: &str, test_source: &str) -> Result<
         "{label}: the test reads the getter of a factory-built instance"
     );
     assert_eq!(finding.ripr.reach.state, StageState::Yes, "{label}");
-    // Reach through a factory never lends `exposed` on its own.
+    // The changed predicate boundary is not discriminated by this test, so the
+    // finding stays below `exposed`. The class for other changed lines is the
+    // classifier's, exactly as for a constructed receiver (see
+    // `factory_receiver_classifies_like_a_constructed_receiver`).
     assert_ne!(finding.class, ExposureClass::Exposed, "{label}");
     assert_ne!(finding.class, ExposureClass::NoStaticPath, "{label}");
     Ok(())
@@ -271,4 +283,185 @@ fn classes_that_can_replace_the_getter_record_no_entry() {
 fn ordinary_methods_record_no_factory_entry() {
     let source = CACHE.replace("get value(): T", "value(): T");
     assert!(factory_entry_names(&source).is_empty());
+}
+
+#[test]
+fn factory_receiver_classifies_like_a_constructed_receiver() -> Result<(), String> {
+    // The relation lends reach and the assertion's oracle; the classifier then
+    // decides the class as for `new Cached(...)`, whatever line changed.
+    let returned = "    return this._value as T;";
+    let direct = READ_TEST
+        .replace("import { cached }", "import { Cached }")
+        .replace("= cached(", "= new Cached(");
+    let through_factory = getter_finding_at("parity-factory", CACHE, READ_TEST, returned)?;
+    let constructed = getter_finding_at("parity-new", CACHE, &direct, returned)?;
+    assert!(!through_factory.related_tests.is_empty());
+    assert_eq!(through_factory.class, constructed.class);
+    assert_eq!(through_factory.ripr.reach.state, StageState::Yes);
+    Ok(())
+}
+
+fn with_namespace_import(test: &str) -> String {
+    test.replace("import { cached }", "import * as m")
+        .replace("= cached(", "= m.cached(")
+}
+
+#[test]
+fn once_variants_and_mocked_wrappers_on_the_factory_are_no_static_path() -> Result<(), String> {
+    for (label, spy) in [
+        (
+            "return-once",
+            "vi.spyOn(m, 'cached').mockReturnValueOnce({ value: 1 } as never);",
+        ),
+        (
+            "implementation-once",
+            "vi.spyOn(m, 'cached').mockImplementationOnce(() => ({ value: 1 }) as never);",
+        ),
+        ("call-through-spy", "vi.spyOn(m, \"cached\");"),
+        (
+            "mocked-wrapper",
+            "vi.mocked(m.cached).mockReturnValueOnce({ value: 1 } as never);",
+        ),
+        ("assigned", "m.cached = (() => ({ value: 1 })) as never;"),
+    ] {
+        let test = with_namespace_import(READ_TEST)
+            .replace("  let runs = 0;", &format!("  {spy}\n  let runs = 0;"));
+        assert_no_static_path(label, CACHE, &test)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn receiver_identity_shapes_are_no_static_path() -> Result<(), String> {
+    let imports = "import { cached } from '../src/cache';\n\n";
+    for (label, body, prelude) in [
+        (
+            "block-scope-leak",
+            "  {\n    const box = cached(() => 1);\n    expect(box).toBeDefined();\n  }\n  expect(box.value).toBe(1);",
+            "const box = { value: 1 };\n",
+        ),
+        (
+            "catch-parameter",
+            "  const box = cached(() => 1);\n  try {\n    throw new Error('x');\n  } catch (box) {\n    expect(box.value).toBe(1);\n  }",
+            "",
+        ),
+        (
+            "arrow-parameter",
+            "  const box = cached(() => 1);\n  [{ value: 1 }].forEach((box) => {\n    expect(box.value).toBe(1);\n  });",
+            "",
+        ),
+        (
+            "function-parameter",
+            "  const box = cached(() => 1);\n  function check(box: { value: number }) {\n    expect(box.value).toBe(1);\n  }\n  check({ value: 1 });",
+            "",
+        ),
+        (
+            "oracle-on-another-object",
+            "  const box = cached(() => 1);\n  void box.value;\n  const other = { value: 1 };\n  expect(other.value).toBe(1);",
+            "",
+        ),
+        (
+            "read-outside-expect",
+            "  const box = cached(() => 1);\n  const seen = box.value;\n  expect(seen).toBe(1);",
+            "",
+        ),
+    ] {
+        let test = format!("{imports}{prelude}test('t', () => {{\n{body}\n}});\n");
+        assert_no_static_path(label, CACHE, &test)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn file_level_replacements_are_no_static_path() -> Result<(), String> {
+    for (label, prelude) in [
+        (
+            "top-level-define-property",
+            "Object.defineProperty(Cached.prototype, 'value', { get: () => 1 });\n",
+        ),
+        (
+            "before-each-getter-spy",
+            "beforeEach(() => {\n  vi.spyOn(Cached.prototype, 'value', 'get').mockReturnValue(1);\n});\n",
+        ),
+        ("proto-write", "const base = { __proto__: null };\n"),
+        ("prototype-assignment", "Cached.prototype.value = 1;\n"),
+        (
+            "top-level-factory-spy",
+            "vi.spyOn(cacheModule, 'cached').mockReturnValueOnce({ value: 1 } as never);\n",
+        ),
+    ] {
+        let test = format!("{prelude}{READ_TEST}");
+        assert_no_static_path(label, CACHE, &test)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn classes_with_other_instance_sources_record_no_entry() {
+    let returns_object = CACHE.replace(
+        "    this._getter = getter;\n  }",
+        "    this._getter = getter;\n    return {} as never;\n  }",
+    );
+    assert!(
+        factory_entry_names(&returns_object).is_empty(),
+        "constructor return"
+    );
+    let imported_base = format!(
+        "import {{ Base }} from './base';\n{}",
+        CACHE.replace(
+            "export class Cached<T> {",
+            "export class Cached<T> extends Base {"
+        )
+    );
+    assert!(
+        factory_entry_names(&imported_base).is_empty(),
+        "imported base"
+    );
+    let call_base = CACHE.replace(
+        "export class Cached<T> {",
+        "export class Cached<T> extends mixin(Object) {",
+    );
+    assert!(factory_entry_names(&call_base).is_empty(), "call base");
+    let clean_base = format!(
+        "class Base {{}}\n{}",
+        CACHE.replace(
+            "export class Cached<T> {",
+            "export class Cached<T> extends Base {"
+        )
+    );
+    assert_eq!(factory_entry_names(&clean_base), ["cached"], "clean base");
+    let base_field = format!(
+        "class Base {{\n  value = 1;\n}}\n{}",
+        CACHE.replace(
+            "export class Cached<T> {",
+            "export class Cached<T> extends Base {"
+        )
+    );
+    assert!(factory_entry_names(&base_field).is_empty(), "base field");
+    let base_returns = format!(
+        "class Base {{\n  constructor() {{\n    return {{}};\n  }}\n}}\n{}",
+        CACHE.replace(
+            "export class Cached<T> {",
+            "export class Cached<T> extends Base {"
+        )
+    );
+    assert!(
+        factory_entry_names(&base_returns).is_empty(),
+        "base constructor return"
+    );
+    let reassigned_class = format!("{CACHE}Cached = class {{}} as never;\n");
+    assert!(
+        factory_entry_names(&reassigned_class).is_empty(),
+        "class name reassigned"
+    );
+    let duplicate_getter = CACHE.replace(
+        "  get value(): T {",
+        "  get value(): T {\n    return this._value as T;\n  }\n\n  get value(): T {",
+    );
+    assert!(
+        factory_entry_names(&duplicate_getter).is_empty(),
+        "duplicate getter"
+    );
+    let proto = format!("{CACHE}const shape = {{ __proto__: null }};\n");
+    assert!(factory_entry_names(&proto).is_empty(), "__proto__");
 }

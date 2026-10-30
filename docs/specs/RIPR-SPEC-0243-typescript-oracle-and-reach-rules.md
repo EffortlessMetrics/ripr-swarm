@@ -1539,23 +1539,35 @@ the masker.
     and `mock.calls[0].arguments` pins, which keep their reading.
 23. **Factory-built getter receivers (2026-10-30, #10402).** Adopted: a getter
     owner is related to a test that binds `const box = factory(...)` once and
-    reads `box.<getter>`, when the owner's module exports `factory` and every
-    `return` the factory runs is `new Class(...)` of the getter's own class
-    (not async or a generator, ending in a return or throw, never mentioning
-    the class except as `new Class`, and the only declaration of its name). The
-    test reaches the factory through the same file, a resolved named, renamed
-    or default import, or a resolved namespace import. The relation is refused
-    when the class can replace the getter on an instance (an instance field of
-    that name, `this.<getter> =`, `defineProperty` naming it, a `Class.prototype`
-    edit, a repeated class name), when the receiver is declared twice or written
-    again, when the factory call is not the whole initializer, when the test
-    spies on the getter or the factory, defines a property, or mocks the owner
-    module, and for computed access. The relation reads like a constructed
-    receiver (`receiver_owner_call`), so it lends reach and the assertion's
-    oracle, and the classifier's boundary and discriminator rules still decide
-    `exposed`: factory reach alone never does. Rejected: following a factory
-    that returns a subclass or a union, crediting a receiver declared outside
-    the test body, and crediting a call of the factory without a getter read.
+    asserts `expect(box.<getter>)`, when the owner's module exports `factory`
+    and every `return` the factory runs is `new Class(...)` of the getter's own
+    class (not async or a generator, ending in a return or throw, never naming
+    the class except as `new Class`, and the only declaration of its name,
+    never reassigned). The test reaches the factory through a resolved named,
+    renamed or default import, or a resolved namespace import; a same-file
+    callee is not followed. The class and every same-file ancestor must be
+    unable to replace the getter on an instance: no instance field of that
+    name, `this.<getter> =`, `defineProperty` naming it, `Class.prototype`
+    edit, `__proto__`, constructor that returns a value, repeated or
+    reassigned class name, or second getter of the name; an ancestor that is
+    imported or not a plain identifier refuses. The relation is refused when
+    the receiver is declared twice, written again, bound by a catch, function,
+    arrow or loop parameter, or mentioned outside the block that declares it;
+    when the factory call is not the whole initializer; when the read is not
+    the subject of an `expect(...)`; when any spy, mock, `defineProperty`,
+    `setPrototypeOf`, `__proto__` or member assignment anywhere in the test
+    file (hooks and top-level statements included) names the getter or the
+    factory, whatever its fabrication form; when the owner module is mocked;
+    and for computed access. The relation reads like a constructed receiver
+    (`receiver_owner_call`), so it lends reach and the assertion's oracle, and
+    the classifier then decides the class exactly as it does for
+    `new Class(...)`: the factory adds no strength of its own, and a changed
+    line the oracle discriminates can read `exposed` as it would with a
+    constructed receiver. Rejected: following a factory that returns a
+    subclass or a union, crediting a receiver declared outside the test body,
+    and crediting a call of the factory without a getter read. Known limit: an
+    `expect(...)` on a different object elsewhere in the same test can still
+    donate its oracle, as for a constructed receiver.
 
 ### Counted removal receiver witness (#10157)
 

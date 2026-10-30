@@ -1989,13 +1989,16 @@ pub(crate) fn receiver_owner_call_relation(
 ///
 /// Fail-closed identity gates: the factory is one the owner's module establishes
 /// (`TypeScriptModuleEntry::instance_factory`) and the test reaches it through
-/// the same-file name, a resolved named or default import, or a resolved
-/// namespace import; the callee and the receiver are bound once in the test
-/// body and never rebound or assigned; the whole initializer is the factory
-/// call (no member access, index or operator applied to its result); the test
-/// neither spies on, fabricates, assigns nor redefines the getter or the
-/// factory; and the owner module is not mocked. Computed access
-/// (`box["value"]`) and receivers declared outside the test body stay
+/// a resolved named, renamed or default import or a resolved namespace import;
+/// the callee is not rebound; the receiver is bound once in the test body, is
+/// never written again, is not a catch, function, arrow or loop binding, and
+/// is mentioned only inside the block that declares it; the whole initializer
+/// is the factory call (no member access, index or operator applied to its
+/// result); the read is the subject of an `expect(...)`; no spy, mock,
+/// `defineProperty`, `setPrototypeOf`, `__proto__` or member assignment
+/// anywhere in the test file names the getter or the factory; and the owner
+/// module is not mocked. Computed access (`box["value"]`), receivers declared
+/// outside the test body and reads outside an `expect(...)` subject stay
 /// uncredited.
 fn factory_built_getter_read(
     test: &TypeScriptTest,
@@ -2013,7 +2016,14 @@ fn factory_built_getter_read(
     }
     let masked = super::classifier::ts_mask_literals_and_comments(&test.body_text);
     let body = masked.as_str();
-    if test_spies_owner_with_fabrication_for_owner(test, &owner.name, false)
+    // Whole-file replacement facts: a spy, mock, redefinition or member
+    // assignment anywhere in the test file (a `beforeEach`, a top-level
+    // `Object.defineProperty(Class.prototype, ...)`) may replace the getter or
+    // the factory, and `__proto__` can rewire any instance.
+    let replaced = |name: &str| test.member_replacements_in_file.iter().any(|n| n == name);
+    if replaced(&owner.name)
+        || replaced("__proto__")
+        || test_spies_owner_with_fabrication_for_owner(test, &owner.name, false)
         || class_entries::assigns_member_named(body, &owner.name)
         || body.contains("defineProperty")
         || body.contains("setPrototypeOf")
@@ -2023,18 +2033,19 @@ fn factory_built_getter_read(
     }
     let mut callees: Vec<String> = Vec::new();
     for factory in &factories {
-        if test_spies_owner_with_fabrication_for_owner(
-            test,
-            &factory.name,
-            factory.exported_as_default,
-        ) || class_entries::assigns_member_named(body, &factory.name)
+        // Any spy, mock or assignment naming the factory refuses it, not only
+        // the fabrication shapes (`mockReturnValueOnce` and kin replace the
+        // product as well).
+        if replaced(&factory.name)
+            || spies_on_member_named(&test.body_text, &factory.name)
+            || test_spies_owner_with_fabrication_for_owner(
+                test,
+                &factory.name,
+                factory.exported_as_default,
+            )
+            || class_entries::assigns_member_named(body, &factory.name)
         {
             continue;
-        }
-        if normalized_module_path(&test.file) == normalized_module_path(&owner.file)
-            && !factory.exported_as_default
-        {
-            push_unique_string(&mut callees, factory.name.clone());
         }
         for import in &test.imports_in_file {
             if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
@@ -2067,7 +2078,8 @@ fn factory_built_getter_read(
         .iter()
         .any(|receiver| {
             !enclosing_scope_shadows(test, receiver)
-                && contains_member_read_name(body, receiver, &owner.name)
+                && !body_binds_shadow_identifier(&test.body_text, receiver)
+                && expect_actual_references_member(body, receiver, &owner.name)
         })
 }
 
@@ -2116,6 +2128,9 @@ fn factory_receiver_names(body: &str, callees: &[String]) -> Vec<String> {
             {
                 continue;
             }
+            if !mentioned_only_in_declaring_block(body, body.len() - after.len(), name) {
+                continue;
+            }
             let declarations = ["const", "let", "var"]
                 .iter()
                 .map(|kw| word_declaration_count(body, kw, name))
@@ -2127,6 +2142,51 @@ fn factory_receiver_names(body: &str, callees: &[String]) -> Vec<String> {
         }
     }
     receivers
+}
+
+/// `true` when every mention of `name` in `body` lies inside the innermost
+/// `{ }` block that holds the declaration at byte `declared_at`: a block-scoped
+/// declaration never reaches a later mention outside its block, where the name
+/// is another binding.
+fn mentioned_only_in_declaring_block(body: &str, declared_at: usize, name: &str) -> bool {
+    let mut open: Vec<usize> = Vec::new();
+    for (idx, ch) in body.char_indices() {
+        if idx >= declared_at {
+            break;
+        }
+        match ch {
+            '{' => open.push(idx),
+            '}' => {
+                open.pop();
+            }
+            _ => {}
+        }
+    }
+    let start = open.last().copied().unwrap_or(0);
+    let mut depth = 0usize;
+    let mut end = body.len();
+    if !open.is_empty() {
+        for (offset, ch) in body[start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = start + offset;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    body.match_indices(name).all(|(idx, _)| {
+        let before = body[..idx].chars().next_back();
+        let after = body[idx + name.len()..].chars().next();
+        let mention = before.is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+            && after.is_none_or(|ch| !is_javascript_identifier_char(ch));
+        !mention || (idx >= start && idx < end)
+    })
 }
 
 /// Occurrences of `keyword name` as a declaration head in `body`.

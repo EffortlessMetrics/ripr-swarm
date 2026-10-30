@@ -308,6 +308,13 @@ fn extract_tests_expanding_suite_factories(
                 test.written_locals_in_file = rewritten.clone();
             }
         }
+        let replacements = member_replacement_names(source);
+        if !replacements.is_empty() {
+            let replacements: Shared<_> = replacements.into();
+            for test in &mut tests {
+                test.member_replacements_in_file = replacements.clone();
+            }
+        }
         let factories = mock_factories(&ret.program.body, &code);
         if !factories.is_empty() {
             let factories: Shared<_> = factories.into();
@@ -3398,6 +3405,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         // Replaced by `collect_tests_from_statements`, which has the file's
@@ -5803,4 +5811,66 @@ fn find_conditional_assertion_credit_in_expression(
         }
         _ => {}
     }
+}
+
+/// Identifier tokens a test file hands to a replacement call or assigns as a
+/// member, for the factory-built getter relation (#10402): every identifier
+/// inside the argument list of `spyOn(`, `mock(`, `doMock(`, `mocked(`,
+/// `defineProperty(`, `defineProperties(`, `setPrototypeOf(`,
+/// `replaceProperty(` and `stubGlobal(` (quoted names included, so
+/// `vi.spyOn(m, 'cached')` names `cached`), every `.name =` assignment target,
+/// and `__proto__` when the file mentions it. A raw-text superset: a name that
+/// is only mentioned near such a call is listed too, which can only withhold a
+/// relation.
+pub(crate) fn member_replacement_names(source: &str) -> Vec<String> {
+    const TRIGGERS: [&str; 9] = [
+        "spyOn(",
+        "mock(",
+        "doMock(",
+        "mocked(",
+        "defineProperty(",
+        "defineProperties(",
+        "setPrototypeOf(",
+        "replaceProperty(",
+        "stubGlobal(",
+    ];
+    const MAX_ARGUMENT_BYTES: usize = 8192;
+    let mut names = std::collections::BTreeSet::new();
+    let mut add_tokens = |text: &str| {
+        for token in text.split(|ch: char| !is_javascript_identifier_char(ch)) {
+            if !token.is_empty() {
+                names.insert(token.to_string());
+            }
+        }
+    };
+    for trigger in TRIGGERS {
+        for (idx, _) in source.match_indices(trigger) {
+            let args = &source[idx + trigger.len()..];
+            let mut end = super::classifier::balanced_close_offset(args).unwrap_or(args.len());
+            end = end.min(MAX_ARGUMENT_BYTES);
+            while !args.is_char_boundary(end) {
+                end -= 1;
+            }
+            add_tokens(&args[..end]);
+        }
+    }
+    for (idx, _) in source.match_indices('.') {
+        let rest = &source[idx + 1..];
+        let len: usize = rest
+            .chars()
+            .take_while(|ch| is_javascript_identifier_char(*ch))
+            .map(char::len_utf8)
+            .sum();
+        if len == 0 {
+            continue;
+        }
+        let after = rest[len..].trim_start();
+        if after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>") {
+            add_tokens(&rest[..len]);
+        }
+    }
+    if source.contains("__proto__") {
+        names.insert("__proto__".to_string());
+    }
+    names.into_iter().collect()
 }

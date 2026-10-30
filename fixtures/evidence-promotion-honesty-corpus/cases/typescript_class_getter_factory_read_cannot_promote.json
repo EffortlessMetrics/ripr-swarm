@@ -3,7 +3,7 @@
   "language": "typescript",
   "tier": "pure",
   "source_fixture": "fixtures/ts_class_getter_factory_read",
-  "vector": "getter_read_on_a_factory_built_receiver_relates_but_cannot_promote",
+  "vector": "getter_read_on_a_factory_built_receiver_relates_at_constructed_receiver_strength",
   "probe_family": "predicate",
   "assertions": [
     {

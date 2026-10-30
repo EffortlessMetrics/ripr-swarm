@@ -18396,6 +18396,11 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::factories_that_may_build_something_else_record_no_entry",
   "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::classes_that_can_replace_the_getter_record_no_entry",
   "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::ordinary_methods_record_no_factory_entry",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::factory_receiver_classifies_like_a_constructed_receiver",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::once_variants_and_mocked_wrappers_on_the_factory_are_no_static_path",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::receiver_identity_shapes_are_no_static_path",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::file_level_replacements_are_no_static_path",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::classes_with_other_instance_sources_record_no_entry",
 ]
 fixtures = [
   "fixtures/typescript_call_removal_throwing_method",

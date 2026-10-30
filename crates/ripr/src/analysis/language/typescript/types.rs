@@ -183,6 +183,14 @@ pub(crate) struct TypeScriptTest {
     /// so a binding such as `let f = require('./owner')` may no longer hold
     /// the owner function. Populated once per file by `extract_tests`.
     pub(crate) written_locals_in_file: Shared<String>,
+    /// Identifier tokens the containing test file passes to a replacement
+    /// call (`spyOn`, `mock`, `doMock`, `mocked`, `defineProperty`,
+    /// `defineProperties`, `setPrototypeOf`, `replaceProperty`) or assigns as
+    /// a member (`.name =`), plus `__proto__` when the file mentions it. A
+    /// getter or factory a name here may be replaced, so a relation that
+    /// credits it refuses (#10402). Populated once per file by
+    /// `extract_tests`.
+    pub(crate) member_replacements_in_file: Shared<String>,
     /// Test-local mock factories of the containing test file
     /// (RIPR-SPEC-0247 rule 1, amended 2026-10-15): top-level
     /// `function f() { return { ... }; }` or `const f = () => ({ ... });`
@@ -330,6 +338,8 @@ pub(crate) fn reshare_file_lists(tests: &mut [TypeScriptTest]) {
             .share_with(&previous.default_member_only_locals_in_file);
         test.written_locals_in_file
             .share_with(&previous.written_locals_in_file);
+        test.member_replacements_in_file
+            .share_with(&previous.member_replacements_in_file);
         test.mock_factories_in_file
             .share_with(&previous.mock_factories_in_file);
         test.mock_spread_sources_in_file

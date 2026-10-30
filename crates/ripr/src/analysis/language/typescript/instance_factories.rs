@@ -14,9 +14,9 @@
 //!
 //! A test with `const box = cached(() => 1); expect(box.value).toBe(1)` runs
 //! the getter. This module records, on each getter owner, the exported
-//! factories that provably return a fresh instance of the owner's class, so the
+//! factories that return a fresh instance of the owner's class, so the
 //! relation layer can treat a receiver bound to such a factory call like a
-//! receiver bound to `new Class(...)` (RIPR-SPEC-0027, #10402). The analysis is
+//! receiver bound to `new Class(...)` (RIPR-SPEC-0243 decision 23, #10402). The analysis is
 //! syntax-only, same-file and fail-closed. A factory qualifies only when:
 //!
 //! - it is the only top-level declaration of its name: a plain (not async, not
@@ -31,11 +31,14 @@
 //! - its parameters never mention the class name and its body mentions the
 //!   class name only as `new Class`, so nothing shadows or aliases the class.
 //!
-//! The owner's class must be declared once in the file, carry no instance
-//! field, `this.<getter> =` assignment, `defineProperty` or `Class.prototype`
-//! edit that could replace the getter on the instance. A class that extends
-//! another is still admitted because the getter is declared on the class the
-//! factory instantiates; a getter an ancestor declares has no owner here.
+//! The owner's class must be declared once in the file and never reassigned,
+//! declare the getter once, carry no instance field, `this.<getter> =`
+//! assignment, `defineProperty` or `Class.prototype` edit that could replace
+//! the getter on the instance, have no constructor that returns a value, and
+//! the file must not mention `__proto__`. A class that extends another is
+//! admitted only when every ancestor is a plain same-file class that passes the
+//! same checks (an imported, called or member base refuses, because its
+//! constructor could return another object or define the member on `this`).
 
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
@@ -84,6 +87,13 @@ pub(crate) fn assign_instance_factories(
         );
     }
     let class_member_sources = class_member_sources(owners);
+    let facts = ClassFacts {
+        file_text: text,
+        instance_fields,
+        member_sources: &class_member_sources,
+        supers: &class_supers(program),
+        repeated_names,
+    };
     let mut additions: Vec<(usize, Vec<TypeScriptModuleEntry>)> = Vec::new();
     for (index, owner) in owners.iter().enumerate() {
         if !is_getter_owner(owner) {
@@ -94,13 +104,19 @@ pub(crate) fn assign_instance_factories(
         };
         if repeated_names.contains(class_name)
             || !is_safe_javascript_identifier(&owner.name)
-            || !class_cannot_replace_getter(
-                class_name,
-                &owner.name,
-                text,
-                instance_fields,
-                class_member_sources.get(&(owner.file.clone(), class_name.to_string())),
-            )
+            || text.contains("__proto__")
+            || super::tests_extract::identifier_written_in(text, class_name)
+            || owners
+                .iter()
+                .filter(|other| {
+                    other.file == owner.file
+                        && other.class_name.as_deref() == Some(class_name)
+                        && other.name == owner.name
+                        && other.method_kind == TypeScriptMethodKind::Getter
+                })
+                .count()
+                != 1
+            || !class_chain_cannot_replace_getter(class_name, &owner.name, &owner.file, &facts)
         {
             continue;
         }
@@ -133,6 +149,92 @@ pub(crate) fn assign_instance_factories(
     }
 }
 
+/// `class name -> extends`: `None` for a class with no `extends` clause,
+/// `Some(base)` for `extends Base`, `Some("")` for any other heritage
+/// expression (a call, a member, a mixin).
+fn class_supers(program: &oxc_ast::ast::Program<'_>) -> BTreeMap<String, Option<String>> {
+    let mut out = BTreeMap::new();
+    let mut visit = |class: &Class<'_>| {
+        let Some(id) = class.id.as_ref() else {
+            return;
+        };
+        let base = class
+            .super_class
+            .as_ref()
+            .map(|base| match unwrap_type_wrappers(base) {
+                Expression::Identifier(ident) => ident.name.as_str().to_string(),
+                _ => String::new(),
+            });
+        out.insert(id.name.as_str().to_string(), base);
+    };
+    for statement in &program.body {
+        match statement {
+            Statement::ClassDeclaration(class) => visit(class),
+            Statement::ExportNamedDeclaration(export) => {
+                if let Some(Declaration::ClassDeclaration(class)) = export.declaration.as_ref() {
+                    visit(class);
+                }
+            }
+            Statement::ExportDefaultDeclaration(export) => {
+                if let ExportDefaultDeclarationKind::ClassDeclaration(class) = &export.declaration {
+                    visit(class);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+type MemberSources<'a> = BTreeMap<(PathBuf, String), Vec<(TypeScriptMethodKind, &'a str)>>;
+
+/// File-wide class facts the getter-replacement gate reads.
+struct ClassFacts<'a> {
+    file_text: &'a str,
+    instance_fields: &'a BTreeMap<String, BTreeSet<String>>,
+    member_sources: &'a MemberSources<'a>,
+    supers: &'a BTreeMap<String, Option<String>>,
+    repeated_names: &'a BTreeSet<String>,
+}
+
+/// The class and every same-file ancestor it extends must be unable to
+/// replace the getter on an instance. An ancestor that is not a plain
+/// same-file class (imported, a call, a member) refuses: its constructor could
+/// return another object or define the member on `this`.
+fn class_chain_cannot_replace_getter(
+    class_name: &str,
+    name: &str,
+    file: &Path,
+    facts: &ClassFacts<'_>,
+) -> bool {
+    let mut current = class_name.to_string();
+    for _ in 0..MAX_CLASS_CHAIN {
+        let sources = facts
+            .member_sources
+            .get(&(file.to_path_buf(), current.clone()));
+        if facts.repeated_names.contains(&current)
+            || !class_cannot_replace_getter(
+                &current,
+                name,
+                facts.file_text,
+                facts.instance_fields,
+                sources,
+            )
+        {
+            return false;
+        }
+        match facts.supers.get(&current) {
+            Some(None) => return true,
+            Some(Some(base)) if !base.is_empty() => current = base.clone(),
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Longest `extends` chain followed; a longer one refuses.
+const MAX_CLASS_CHAIN: usize = 4;
+
 fn is_getter_owner(owner: &TypeScriptOwner) -> bool {
     owner.owner_kind == OwnerKind::Method
         && owner.method_kind == TypeScriptMethodKind::Getter
@@ -141,8 +243,8 @@ fn is_getter_owner(owner: &TypeScriptOwner) -> bool {
 
 /// Source text of every method of each `(file, class)`, so an instance-level
 /// rebinding anywhere in the class shadows the getter.
-fn class_member_sources(owners: &[TypeScriptOwner]) -> BTreeMap<(PathBuf, String), Vec<&str>> {
-    let mut out: BTreeMap<(PathBuf, String), Vec<&str>> = BTreeMap::new();
+fn class_member_sources(owners: &[TypeScriptOwner]) -> MemberSources<'_> {
+    let mut out: MemberSources<'_> = BTreeMap::new();
     for owner in owners {
         if owner.owner_kind == OwnerKind::Method
             && let Some(class_name) = owner.class_name.as_ref()
@@ -150,7 +252,7 @@ fn class_member_sources(owners: &[TypeScriptOwner]) -> BTreeMap<(PathBuf, String
         {
             out.entry((owner.file.clone(), class_name.clone()))
                 .or_default()
-                .push(source);
+                .push((owner.method_kind, source));
         }
     }
     out
@@ -165,7 +267,7 @@ fn class_cannot_replace_getter(
     name: &str,
     file_text: &str,
     instance_fields: &BTreeMap<String, BTreeSet<String>>,
-    member_sources: Option<&Vec<&str>>,
+    member_sources: Option<&Vec<(TypeScriptMethodKind, &str)>>,
 ) -> bool {
     if instance_fields
         .get(class_name)
@@ -174,9 +276,12 @@ fn class_cannot_replace_getter(
         return false;
     }
     if member_sources.is_some_and(|sources| {
-        sources
-            .iter()
-            .any(|source| rebinds_this_member(source, name))
+        sources.iter().any(|(kind, source)| {
+            rebinds_this_member(source, name)
+                // A constructor that returns a value hands back another object.
+                || (*kind == TypeScriptMethodKind::Constructor
+                    && word_offsets(source, "return").next().is_some())
+        })
     }) {
         return false;
     }

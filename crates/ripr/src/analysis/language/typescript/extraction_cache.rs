@@ -370,6 +370,7 @@ fn shared_bytes(tests: &[super::types::TypeScriptTest]) -> usize {
             &test.unstable_member_roots_in_file,
             &test.identity_helpers_in_file,
             &test.written_locals_in_file,
+            &test.member_replacements_in_file,
         ] {
             total = total.saturating_add(elements(list, &mut seen, std::mem::size_of::<String>()));
         }
