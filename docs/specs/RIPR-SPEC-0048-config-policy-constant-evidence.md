@@ -214,6 +214,8 @@ classifier evaluates the same-file reader on each related test's literal call
 arguments twice, once with the old initializer and once with the new, and then
 evaluates the test's assertion on each result.
 
+- The declaration is a single changed line (`const NAME: T = expr;` removed and
+  re-added); a multi-line declaration is not paired.
 - The reader body is one expression over its parameters and the constant:
   literals, parameters, the constant, `+ - * /`, comparisons, `&&`, `||`, `!`,
   parentheses, `min`/`max`, `is_empty`, `len`, and `format!` whose arguments are
@@ -244,13 +246,15 @@ Outcomes, over every related test that calls a reader:
 | --- | --- |
 | Some assertion holds on the old initializer and fails on the new | `exposed` (credited); the test discriminates the changed value |
 | Every related test is evaluated and every assertion holds on both | `weakly_exposed` (gap); the tests reach the reader and cannot tell the values apart |
-| Anything else: a test, assertion or reader that is unevaluable, no change in value (a rewrite), no related test calls a reader | unchanged: `static_unknown` with reach `weak` |
+| A value-keeping rewrite | decided by the neighbour rule below |
+| Anything else: a test, assertion or reader that is unevaluable, no related test calls a reader | unchanged: `static_unknown` with reach `weak` |
 
 A rewrite that keeps the value (`10` to `5 + 5`) has no old/new pair, so it is
 asked the mutation question instead: the integer constant is evaluated one
 below and one above its value (neighbours its declared type admits). It is
-`exposed` only when every neighbour makes some assertion that holds on the
-current value fail; if any neighbour goes unnoticed, or the constant is not an
+`exposed` only when every neighbour makes some assertion, in any related
+test, that holds on the current value fail (each neighbour's breaking
+assertion is cited); if any neighbour goes unnoticed, or the constant is not an
 integer, it keeps its abstention. A rewrite is never reported as a gap here:
 the neighbours are a sample of the wrong values, not all of them.
 

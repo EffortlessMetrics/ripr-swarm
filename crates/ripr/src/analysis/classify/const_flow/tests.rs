@@ -4,7 +4,9 @@ use super::expr::{
 };
 use super::{ChangedConsts, mentions_call};
 use crate::analysis::diff::{ChangedFile, ChangedLine};
-use std::path::PathBuf;
+use crate::analysis::facts::{FunctionSourceRole, FunctionSummary};
+use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+use std::path::{Path, PathBuf};
 
 const U32: Ty = Ty::Int {
     min: 0,
@@ -427,4 +429,84 @@ fn modules_with_the_same_chain_share_a_scope() {
                   pub fn floored(n: u32) -> u32 { n.max(FLOOR) }\n\
                   }\n";
     assert!(super::shares_module_scope(source, 2, &[3]));
+}
+
+/// Run the whole decision on a one-file crate: its production functions that
+/// name `LIMIT` are the readers and its `#[test]`s the related tests.
+fn decide(tests: &str, old: &str, new: &str) -> Result<Option<super::ConstFlow>, String> {
+    let source = format!("{old}\npub fn within(n: u32) -> bool {{ n <= LIMIT }}\n{tests}\n");
+    let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+    let readers: Vec<&FunctionSummary> = facts
+        .functions
+        .iter()
+        .filter(|f| f.source_role == FunctionSourceRole::Production && f.body.contains("LIMIT"))
+        .collect();
+    let related: Vec<_> = facts.tests.iter().collect();
+    let change = super::ConstChange {
+        old_declaration: old.to_string(),
+        new_declaration: new.to_string(),
+    };
+    Ok(super::evaluate_const_flow(
+        &change,
+        &readers,
+        &related,
+        &|name| facts.functions.iter().filter(|f| f.name == name).count(),
+    ))
+}
+
+const OLD: &str = "pub const LIMIT: u32 = 10;";
+
+#[test]
+fn a_rewrite_is_credited_only_when_every_neighbour_is_noticed() -> Result<(), String> {
+    let rewrite = "pub const LIMIT: u32 = 5 + 5;";
+    // 9 breaks `within(10)`; 11 breaks `!within(11)`; one test pins both.
+    let both = "#[test]\nfn pins() {\n    assert!(within(10));\n    assert!(!within(11));\n}";
+    let credited = decide(both, OLD, rewrite)?;
+    let Some(super::ConstFlow::Discriminated(detail)) = credited else {
+        return Err(format!(
+            "both neighbours pinned should credit: {credited:?}"
+        ));
+    };
+    assert!(detail.rewrite);
+    assert_eq!(
+        detail.neighbour_breaks.len(),
+        2,
+        "{:?}",
+        detail.neighbour_breaks
+    );
+    assert!(detail.neighbour_breaks[0].starts_with("9 breaks"));
+    assert!(detail.neighbour_breaks[1].starts_with("11 breaks"));
+
+    // The same pins split over two tests still notice both neighbours.
+    let split =
+        "#[test]\nfn low() { assert!(within(10)); }\n#[test]\nfn high() { assert!(!within(11)); }";
+    assert!(matches!(
+        decide(split, OLD, rewrite)?,
+        Some(super::ConstFlow::Discriminated(_))
+    ));
+
+    // Pinned from below only: 11 still satisfies `within(10)`, so the edit
+    // being one too high goes unnoticed and the rewrite abstains.
+    let below = "#[test]\nfn pins_one_side() { assert!(within(10)); }";
+    assert_eq!(decide(below, OLD, rewrite)?, None);
+    // Pinned from above only: 9 still satisfies `!within(11)`.
+    let above = "#[test]\nfn pins_other_side() { assert!(!within(11)); }";
+    assert_eq!(decide(above, OLD, rewrite)?, None);
+    Ok(())
+}
+
+#[test]
+fn a_changed_value_is_discriminated_or_indistinguishable_by_the_pins() -> Result<(), String> {
+    let new = "pub const LIMIT: u32 = 11;";
+    let pinned = "#[test]\nfn pins() { assert!(!within(11)); }";
+    assert!(matches!(
+        decide(pinned, OLD, new)?,
+        Some(super::ConstFlow::Discriminated(_))
+    ));
+    let unpinned = "#[test]\nfn far_below() { assert!(within(3)); }";
+    assert!(matches!(
+        decide(unpinned, OLD, new)?,
+        Some(super::ConstFlow::Indistinguishable(_))
+    ));
+    Ok(())
 }

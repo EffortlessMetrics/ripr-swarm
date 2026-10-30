@@ -169,6 +169,9 @@ pub(in crate::analysis) struct ConstFlowDetail {
     pub tests_evaluated: usize,
     /// The edit kept the value; `new_value` lists the neighbours tried.
     pub rewrite: bool,
+    /// For a rewrite: each neighbour with the assertion that first broke on
+    /// it. The credit needs one per neighbour, so all are cited.
+    pub neighbour_breaks: Vec<String>,
 }
 
 /// Evaluate the flow, or `None` when any part of it is unreadable.
@@ -237,7 +240,7 @@ pub(in crate::analysis) fn evaluate_const_flow(
 
     let mut first_seen: Option<ConstFlowDetail> = None;
     let mut failing: Option<ConstFlowDetail> = None;
-    let mut flipped = vec![false; afters.len()];
+    let mut broke: Vec<Option<ConstFlowDetail>> = vec![None; afters.len()];
     for test in tests {
         let mut evaluated = 0usize;
         let mut calls_evaluated = 0usize;
@@ -273,14 +276,18 @@ pub(in crate::analysis) fn evaluate_const_flow(
                     (first_after, &alternatives[0]),
                 ));
             }
-            for ((after, value), flip) in afters.iter().zip(&alternatives).zip(flipped.iter_mut()) {
+            for ((after, value), first_break) in
+                afters.iter().zip(&alternatives).zip(broke.iter_mut())
+            {
                 if !after.holds(&assertion)? {
-                    *flip = true;
                     // The cited result is the one that broke the assertion,
                     // not the first value tried.
+                    let detail = explain.detail(test, &oracle.text, &assertion, (after, value));
                     if failing.is_none() {
-                        failing =
-                            Some(explain.detail(test, &oracle.text, &assertion, (after, value)));
+                        failing = Some(detail.clone());
+                    }
+                    if first_break.is_none() {
+                        *first_break = Some(detail);
                     }
                 }
             }
@@ -301,12 +308,24 @@ pub(in crate::analysis) fn evaluate_const_flow(
         ..detail
     };
     if rewrite {
-        // Credit only when every neighbour is noticed; a rewrite that some
-        // tests catch and others do not is not decided here.
-        return match (flipped.iter().all(|flip| *flip), failing) {
-            (true, Some(failing)) => Some(ConstFlow::Discriminated(detail(failing))),
-            _ => None,
-        };
+        // Credit only when every neighbour breaks some related assertion,
+        // from any of the tests; one unnoticed neighbour leaves the edit
+        // undecided. Each neighbour's breaking assertion is cited.
+        let breaks = broke.into_iter().collect::<Option<Vec<_>>>()?;
+        let neighbour_breaks = breaks
+            .iter()
+            .map(|b| {
+                format!(
+                    "{} breaks `{}` in `{}` (`{}` returns {})",
+                    b.new_result_at, b.assertion, b.test, b.reader, b.new_result
+                )
+            })
+            .collect();
+        let first = breaks.into_iter().next()?;
+        return Some(ConstFlow::Discriminated(ConstFlowDetail {
+            neighbour_breaks,
+            ..detail(first)
+        }));
     }
     match (failing, first_seen) {
         (Some(failing), _) => Some(ConstFlow::Discriminated(detail(failing))),
@@ -369,6 +388,7 @@ impl Explain<'_> {
             new_result_at: at.render(),
             tests_evaluated: 0,
             rewrite: false,
+            neighbour_breaks: Vec::new(),
         }
     }
 }

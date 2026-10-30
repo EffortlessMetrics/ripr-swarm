@@ -1660,8 +1660,11 @@ impl ClassifiedProbeEvidence {
                 StageState::Yes,
                 if detail.rewrite {
                     format!(
-                        "{} holds with {} = {} and fails with a neighbouring value; each neighbour ({}) is noticed by a related assertion",
-                        call, detail.constant, detail.old_value, detail.new_value
+                        "{} holds with {} = {}; every neighbour is noticed by a related assertion: {}",
+                        call,
+                        detail.constant,
+                        detail.old_value,
+                        detail.neighbour_breaks.join("; ")
                     )
                 } else {
                     format!(

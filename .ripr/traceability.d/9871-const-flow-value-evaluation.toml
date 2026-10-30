@@ -22,4 +22,6 @@ tests = [
   "crates/ripr/src/analysis/classify/const_flow/tests.rs::a_reader_in_another_module_does_not_share_the_declarations_scope",
   "crates/ripr/src/analysis/classify/const_flow/tests.rs::a_declaration_inside_a_block_is_not_shared_with_a_free_function",
   "crates/ripr/src/analysis/classify/const_flow/tests.rs::modules_with_the_same_chain_share_a_scope",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::a_rewrite_is_credited_only_when_every_neighbour_is_noticed",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::a_changed_value_is_discriminated_or_indistinguishable_by_the_pins",
 ]

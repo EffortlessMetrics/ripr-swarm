@@ -1,5 +1,5 @@
 <!-- section: Added -->
-- A changed `const`/`static` that one same-file function reads as a single
+- A changed single-line `const`/`static` that one same-file function reads as a single
   expression is now decided by evaluating it. When a test's assertion holds
   with the old value and fails with the new one the finding is `exposed`; when
   every related assertion holds with both it is `weakly_exposed`. Control flow,
