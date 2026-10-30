@@ -1,0 +1,43 @@
+//! Private owners reached through free direct calls that an integration test
+//! pins at the public entry (#9638).
+
+pub fn plus_one(x: i64) -> i64 {
+    plus_one_inner(x) + 1
+}
+
+fn plus_one_inner(x: i64) -> i64 {
+    x + x
+}
+
+pub fn minus_one(x: i64) -> i64 {
+    minus_one_inner(x) - 1
+}
+
+fn minus_one_inner(x: i64) -> i64 {
+    x * 3
+}
+
+pub fn clamped(x: i64) -> i64 {
+    clamped_inner(x).min(10)
+}
+
+fn clamped_inner(x: i64) -> i64 {
+    x * 2
+}
+
+pub fn swallowed(x: i64) -> i64 {
+    let _ = swallowed_inner(x);
+    10
+}
+
+fn swallowed_inner(x: i64) -> i64 {
+    x + 5
+}
+
+pub fn passed_in(x: i64, shift: fn(i64) -> i64) -> i64 {
+    shift(x) + 1
+}
+
+fn shift(x: i64) -> i64 {
+    x + 5
+}

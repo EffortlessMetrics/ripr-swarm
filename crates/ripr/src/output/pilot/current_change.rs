@@ -44,7 +44,14 @@ pub(crate) enum PilotCurrentChange {
         absent_file_limitations: Option<Vec<AnalysisLimitation>>,
     },
     /// The default diff loaded and is empty: there is no current change.
-    NoChange { base: Option<String> },
+    /// `working_tree` still records the diff source, which `ripr check` picks
+    /// from tracked dirtiness rather than diff emptiness: an edit that
+    /// restores the merge base leaves the working-tree diff empty while
+    /// committed history differs (#10681).
+    NoChange {
+        base: Option<String>,
+        working_tree: bool,
+    },
     /// The default diff could not be loaded (not a Git work tree, no default
     /// base, git failed). Pilot keeps its repo-wide ranking; this is not
     /// evidence that nothing changed. `reason` is a short fixed phrase.
@@ -76,7 +83,10 @@ impl PilotCurrentChange {
     /// Build from unified diff text taken relative to `root`.
     pub(crate) fn from_diff_text(root: &Path, base: Option<String>, text: &str) -> Self {
         if text.trim().is_empty() {
-            return Self::NoChange { base };
+            return Self::NoChange {
+                base,
+                working_tree: false,
+            };
         }
         let mut lines: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
         for file in crate::analysis::parse_unified_diff(text) {
@@ -228,8 +238,11 @@ impl PilotCurrentChange {
 
     /// Mark a change whose diff came from the live working tree.
     pub(crate) fn with_working_tree(mut self, from_working_tree: bool) -> Self {
-        if let Self::Changed { working_tree, .. } = &mut self {
-            *working_tree = from_working_tree;
+        match &mut self {
+            Self::Changed { working_tree, .. } | Self::NoChange { working_tree, .. } => {
+                *working_tree = from_working_tree;
+            }
+            Self::Unavailable { .. } => {}
         }
         self
     }
@@ -279,6 +292,21 @@ impl PilotCurrentChange {
         }
     }
 
+    /// Whether the diff was read from the live working tree rather than
+    /// committed history, including when that diff is empty.
+    pub(crate) fn is_working_tree(&self) -> bool {
+        matches!(
+            self,
+            Self::Changed {
+                working_tree: true,
+                ..
+            } | Self::NoChange {
+                working_tree: true,
+                ..
+            }
+        )
+    }
+
     /// The `ripr check` flags that select this same diff.
     pub(crate) fn check_selector(&self) -> &'static str {
         match self {
@@ -300,7 +328,7 @@ impl PilotCurrentChange {
 
     pub(crate) fn base(&self) -> Option<&str> {
         match self {
-            Self::Changed { base, .. } | Self::NoChange { base } => base.as_deref(),
+            Self::Changed { base, .. } | Self::NoChange { base, .. } => base.as_deref(),
             Self::Unavailable { .. } => None,
         }
     }

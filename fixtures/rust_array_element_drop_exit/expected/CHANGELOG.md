@@ -155,3 +155,38 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_array_element_drop_exit (11)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless rust_array_element_drop_exit --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_array_element_drop_exit (12)
+
+Reason:
+RIPR-SPEC-0118 / #10192: ambiguous choices retain finding identity and remain discoverable beside bounded current hidden rows; stale/base-side subjects receive no choices. JSON/canonical fields, verdicts and repair admission are unchanged.
+
+Command:
+`cargo xtask goldens bless rust_array_element_drop_exit --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_array_element_drop_exit (13)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless rust_array_element_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

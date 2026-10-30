@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ mod a {
+     pub fn gate(xs: &[i32]) -> Vec<bool> {
+-        xs.iter().map(|&x| x >= 0).collect()
++        xs.iter().map(|&x| x > 0).collect()
+     }
+ }

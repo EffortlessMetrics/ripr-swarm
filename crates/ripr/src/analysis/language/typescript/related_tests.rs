@@ -53,6 +53,10 @@ pub(crate) struct ReExportIndex {
     local_exports: HashMap<String, HashSet<String>>,
     /// Normalized module paths of every workspace file seen by the index.
     modules: HashSet<String>,
+    /// Modules whose export facts were actually available. Missing, refused,
+    /// or unparsable sources cannot establish the absence of a competing star
+    /// export. Kept separate from discovery, which still owns path precedence.
+    indexed_modules: HashSet<String>,
     /// Extension stripping can collapse distinct real files. General owner
     /// discovery keeps its existing behavior; strict enum identity refuses.
     ambiguous_enum_modules: HashSet<String>,
@@ -121,6 +125,7 @@ impl ReExportIndex {
             index.modules.insert(module.clone());
             index.local_exports.entry(module).or_default().insert(name);
         }
+        index.indexed_modules = index.modules.clone();
         index
     }
 
@@ -158,6 +163,7 @@ impl ReExportIndex {
             .iter()
             .map(|file| normalized_module_path(file))
             .collect();
+        let mut indexed_modules = modules.clone();
         let mut module_files = HashMap::new();
         let mut ambiguous_enum_modules = HashSet::new();
         for file in workspace_files {
@@ -171,10 +177,13 @@ impl ReExportIndex {
             }
         }
         for relative in workspace_files {
+            let module = normalized_module_path(relative);
             if is_test(relative) {
+                indexed_modules.remove(&module);
                 continue;
             }
             let Some(source) = sources.get(relative) else {
+                indexed_modules.remove(&module);
                 continue;
             };
             // Per-file facts come from the content-keyed combined cache
@@ -188,6 +197,7 @@ impl ReExportIndex {
                 workspace_root,
                 alias_map,
             ) else {
+                indexed_modules.remove(&module);
                 continue;
             };
             for (key, value) in file_facts.entries {
@@ -197,7 +207,6 @@ impl ReExportIndex {
             for (key, target) in file_facts.namespace_exports {
                 namespace_exports.entry(key).or_insert(target);
             }
-            let module = normalized_module_path(relative);
             for (name, members) in file_facts.enum_bindings {
                 enum_bindings.insert((module.clone(), name), members);
             }
@@ -221,6 +230,7 @@ impl ReExportIndex {
             namespace_exports,
             local_exports,
             modules,
+            indexed_modules,
             ambiguous_enum_modules,
             enum_bindings,
             enum_imports,
@@ -584,6 +594,11 @@ impl ReExportIndex {
         enum_context: Option<&EnumBindingContext<'_>>,
     ) -> ExportResolution {
         let module = self.canonical_module(module);
+        if !self.indexed_modules.contains(&module) {
+            // Unknown is contagious across star siblings; NotFound would
+            // falsely make a known sibling's binding unique on a partial index.
+            return ExportResolution::Unknown;
+        }
         if mocked(&module)
             || (enum_context.is_some() && self.ambiguous_enum_modules.contains(&module))
             || (enum_context.is_some_and(|context| context.check_stability)
@@ -1008,7 +1023,7 @@ fn mock_names_module(test: &TypeScriptTest, mocked_modules: &[String], module: &
 }
 
 /// Export facts of one parsed module, collected on the parse worker.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ModuleExportFacts {
     pub(crate) entries: Vec<((String, String), (String, String))>,
     pub(crate) star_edges: Vec<(String, String)>,
@@ -1017,6 +1032,12 @@ pub(crate) struct ModuleExportFacts {
     pub(crate) enum_bindings: Vec<(String, Vec<String>)>,
     pub(crate) enum_imports: Vec<TypeScriptImport>,
     pub(crate) unstable_enum_roots: Vec<String>,
+    /// Whether the module has a value-level `export ... from` (#10725
+    /// review). Its target resolves on disk and can resolve back to this
+    /// very module (`export { a as b } from './'`), so the entries alone
+    /// cannot tell a re-export from an own rename.
+    #[serde(default)]
+    pub(crate) re_exports_from_source: bool,
 }
 
 impl ModuleExportFacts {
@@ -1153,6 +1174,7 @@ pub(crate) fn module_export_facts(
                 if export_all.export_kind == ImportOrExportKind::Type {
                     continue;
                 }
+                facts.re_exports_from_source = true;
                 let star_source = export_all.source.value.to_string();
                 let Some(resolved) = normalized_relative_import_module(
                     relative,
@@ -1209,6 +1231,7 @@ pub(crate) fn module_export_facts(
                     }
                     continue;
                 };
+                facts.re_exports_from_source = true;
                 let source_str = re_source.value.to_string();
                 // Resolve the source module relative to the intermediate
                 // file's dir. Pass alias_map so tsconfig-aliased paths can be
@@ -1670,6 +1693,29 @@ fn module_entry_relation(
     // entry the test reaches is a decorated method.
     let mut decorated = false;
     let mut ordinary = false;
+    // A test that replaces the changed method, or a sibling on the chain to it,
+    // runs the replacement and not the class code (#9942): a spy that fabricates
+    // the value, an assignment on an instance or the prototype, or a
+    // `defineProperty`. A bare call-through spy still runs the real method.
+    let replaced = owner
+        .module_entries
+        .iter()
+        .any(|entry| entry.class_member.is_some())
+        && std::iter::once(owner.name.as_str())
+            .chain(
+                owner
+                    .module_entries
+                    .iter()
+                    .filter(|entry| entry.class_member.is_some())
+                    .map(|entry| entry.name.as_str()),
+            )
+            .any(|name| {
+                test_spies_owner_with_fabrication_for_owner(test, name, false)
+                    || class_entries::assigns_member_named(&test.body_text, name)
+            });
+    if replaced {
+        return None;
+    }
     for entry in &owner.module_entries {
         let entry_owner = module_entry_owner(owner, entry);
         if owner_call_relation(
@@ -1900,12 +1946,13 @@ pub(crate) fn receiver_owner_call_relation(
     // `describe`, `cart = new Cart()` in a `beforeEach`) is the object the
     // body calls, unless the body declares or reassigns that name itself.
     for binding in test.scope_bindings.iter() {
+        let body = binding_scan_body(test, binding);
         if binding
             .constructed_by
             .as_ref()
             .is_some_and(|constructor| constructor_names.contains(constructor))
-            && !local_identifier_declared_in_test_body(&test.body_text, &binding.name)
-            && !super::tests_extract::identifier_written_in(&test.body_text, &binding.name)
+            && !local_identifier_declared_in_test_body(body, &binding.name)
+            && !super::tests_extract::identifier_written_in(body, &binding.name)
         {
             push_unique_string(&mut receiver_names, binding.name.clone());
         }
@@ -1954,8 +2001,14 @@ pub(crate) fn owner_method_receiver_names(
                     .constructed_by
                     .as_ref()
                     .is_some_and(|constructor| constructor_names.contains(constructor))
-                    && !local_identifier_declared_in_test_body(&test.body_text, &binding.name)
-                    && !super::tests_extract::identifier_written_in(&test.body_text, &binding.name)
+                    && !local_identifier_declared_in_test_body(
+                        binding_scan_body(test, binding),
+                        &binding.name,
+                    )
+                    && !super::tests_extract::identifier_written_in(
+                        binding_scan_body(test, binding),
+                        &binding.name,
+                    )
                 {
                     push_unique_string(&mut receivers, binding.name.clone());
                 }
@@ -1968,6 +2021,16 @@ pub(crate) fn owner_method_receiver_names(
         }
         _ => Vec::new(),
     }
+}
+
+/// The text a shadow or write scan of `binding` covers. A destructured
+/// fixture parameter is the binding itself, not a declaration that shadows
+/// it, so its scan starts after the parameter list.
+fn binding_scan_body<'t>(test: &'t TypeScriptTest, binding: &TypeScriptScopeBinding) -> &'t str {
+    binding
+        .parameter_end
+        .and_then(|end| test.body_text.get(end..))
+        .unwrap_or(&test.body_text)
 }
 
 pub(crate) fn class_method_owner_call_relation(

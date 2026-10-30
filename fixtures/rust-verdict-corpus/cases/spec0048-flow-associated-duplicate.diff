@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..0000000 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -29,7 +29,7 @@
+ pub struct Large;
+ 
+ impl Large {
+-    pub const MAX: u32 = 9;
++    pub const MAX: u32 = 10;
+ }
+ 
+ pub const RATE: u32 = 5;

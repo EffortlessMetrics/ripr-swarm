@@ -286,7 +286,7 @@ packet` remains the full-detail compatibility route. See
 [LLM_OPERATOR_GUIDE.md](LLM_OPERATOR_GUIDE.md) and the
 [Output Schema](OUTPUT_SCHEMA.md) § "Repair card".
 
-To go from one `ripr check` finding to a test in one step, run
+To go from one Rust `ripr check` finding to a test in one step, run
 `ripr agent stub --root . --at FILE:LINE --kind FAMILY` as the finding prints
 it (or `--seam-id ID`). `--kind` is the finding's probe family; only seams of
 that kind are tried, so it picks the seam the finding reported when its line
@@ -326,11 +326,21 @@ feeds: human output prints `Next repair: ripr agent repair --root <root>
 --seam-id <id> --phase before` after the Write/Run lines, and the
 `rust_test_stub` document carries the same start command, the repair packet's
 admitted `allowed_edit_surface`, and — when the stub's placement differs from
-that surface — a `placement_divergence` naming both files (schema `0.3`,
-#8727). No route is invented when the packet cannot be established, notably
+that surface — a `placement_divergence` naming both files. The `next_repair`
+block was introduced in schema `0.3` (#8727) and is retained in schema `0.4`.
+No route is invented when the packet cannot be established, notably
 for `--at --kind` file-parse selections. A
 `--at` path that matches files with gaps in several crates is refused; pass
 the full path or the seam ID.
+
+Stub generation supports Rust `.rs` paths only. A non-Rust `--at` path
+receives the typed `unsupported_language` refusal (exit 3, including with
+`--write`) before Rust seam analysis. For a reported Python, TypeScript, or
+other language gap, use its `ripr check` test file/node and verify command
+when available. Add or strengthen the test by hand, run that verify command
+or the repository's test command, then rerun `ripr check` to refresh the
+finding. The refusal does not claim that the finding is absent and writes
+no stub.
 
 When the file has seams but the selected function has none of the requested
 family, the not-found message names the requested `FAMILY`. Its `nearest:`
@@ -338,7 +348,7 @@ list contains only seams of that family, filtered before the five-entry limit.
 A file with only other families offers no nearest entries. An empty list is
 rendered as `nearest: none`; a suffix selector searches reported gaps, so an
 empty list does not establish that the file has no seam of that family. These
-not-found decisions keep exit 3. With `--json`, stdout carries the schema-0.2
+not-found decisions keep exit 3. With `--json`, stdout carries the schema-0.4
 `rust_test_stub` refused envelope and stderr carries the prose; without it,
 stdout stays empty.
 

@@ -252,17 +252,24 @@ otherwise indexes nothing for it:
 A generator that is a table, itoa's `test! { name(value, expected) ... }`
 (#6925), is the one repetition shape: the whole matcher is
 `$( row ) sep? *` (or `+`), where a row is `$name:ident`, `literal`, `tt`
-or `block` variables, literal `,`, `;` or `:` tokens, and delimited groups of
+or `block` variables, literal `,`, `;`, `:` or `=>` tokens, and delimited groups of
 comma-separated metavariables (an `expr` outside a group needs a `,`, `;` or
-`:` after it, or the row separator); the transcriber is exactly one
+`=>` after it, as rustc requires, or the row separator); the transcriber is exactly one
 separator-free `$( body )*` over those variables. The invocation must split
 into rows with nothing left over, and every fragment must fit as for a plain
 arm. Each row becomes one expansion of the body, so a table of ten rows
 indexes ten tests, up to 512 rows and 128 KiB of expansion text per
-invocation; a larger table indexes nothing. Any other row layout (`=>`,
-nested repetition, a trailing separator, a leftover token, a group of the
-wrong arity) indexes nothing. A matcher that ends in a literal `,`, or an
-invocation that ends in one the matcher does not take, indexes nothing for
+invocation; a larger table indexes nothing. A token tree keeps `=>` as two
+puncts, so it matches only an `=` immediately followed by `>` and not the tail
+of a longer punct (`==>`, `..=>`), while a punct directly followed by another
+is never bound as one `tt` row element, and a literal `:` is never matched against half of a `::`, in the matcher or in
+the invocation (`::` is one token to rustc, so `:` and `: :` do not match it,
+and a matcher `::` is refused whole). An arrow-row table is indexed only when each substituted row (written in the transcriber or supplied by a bound `tt`) parses as exactly one top-level `#[test] fn`: no other attribute, generics, `where` clause, return type or parameters, and no sibling item such as a macro invocation beside it, and a body whose statements are all unqualified `assert!`, `assert_eq!`, `assert_ne!` or their `debug_` forms, with no macro call nested in an argument. A row that declares a `mod`, `use`, `let`, `static`, `const`, item keyword, `for`, `match`, a closure `|` or a second `fn` is refused too, because the registered test keeps
+no lexical scope and could call a different function of the same name (#9967). Full macro name resolution is not modeled. The existing context-ambiguity, generated-test refusal and macro-binding checks detect recognized rebinding of an admitted assertion name and withhold oracle credit; they do not establish complete macro resolution or remove the remaining legacy generated-test scope limits tracked in #9967. Any other
+row layout (`=>` as the repetition separator, nested repetition, a trailing
+separator, a leftover token, a group of the wrong arity) indexes nothing. A
+matcher that ends in a literal `,`, or an invocation that ends in one the
+matcher does not take, indexes nothing for
 that arm, because rustc would match a different arm. A row group is the same:
 `edge(10,)` does not fit `($v:expr)`.
 
@@ -302,6 +309,18 @@ cleanly resolves nothing, and only a file that spells `name!` for a macro whose
 definition mentions `test` is resolved at all. `build.rs`, `main.rs` and
 `lib.rs` are crate roots. Parents are followed up to four modules, and
 `#[macro_use]` modules down to about four.
+
+A text precheck may avoid the generator-call parse only when it cannot hide
+a call established by the parser. Identifier boundaries, Unicode whitespace,
+comments between the name and `!`, raw names (including overlapping text in
+token trees), and qualified paths must retain the parser route. Inert spellings
+may still cause a parse; the parser and existing resolver decide whether any
+definition is imported. This optimization preserves the complete imported
+definitions, import names and blanked path ranges, including grouped imports.
+The parser owner already skips sources without a generator-name substring;
+the visibility precheck additionally rejects incidental identifier hits.
+Performance comparisons retain that existing substring gate in the reference
+and distinguish absent names, incidental hits and real calls on identical inputs.
 
 A module resolves only to one file: `name.rs` or `name/mod.rs` under the
 declaring file's anchor (a crate root, `mod.rs`, or a file directly in
@@ -430,6 +449,111 @@ inline test module stay test evidence. Only `macro_rules!` is covered (including
 raw-identifier names); macros 2.0 are not. An unclosed definition runs to the
 end of the file, which is an approximation for an edit in progress.
 
+## Audited proptest singleton profile (#10839, partial #6643)
+
+The #5051 quarantine remains the default. One separate positive producer may
+admit a function-form property only when all of the following are established:
+
+1. The importing package's actual resolved Cargo edge selects crates.io
+   `proptest 1.11.0`, with lock checksum
+   `4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744`.
+   The existing registry/configuration receipt owner supplies this proof.
+   Renaming, path/git/substituted providers, optional/conditional edges,
+   nondefault dependency declarations and unaudited feature unions refuse.
+   Cargo executable and ordinary registry-cache integrity remain instrument
+   assumptions; a manifest or lockfile spelling alone supplies no authority.
+2. The file is a current Cargo `lib` or integration `test` target root with
+   ordinary test collection. Harness/test disabling, required-feature targets,
+   custom target layouts that cannot be established, and proc-macro libraries
+   refuse. The macro is an item at the source file's root, outside inline
+   modules. Generated functions have no original AST function; line-based
+   scope fallback cannot establish a same-line module's value namespace.
+   The property carries exactly `#[test]`; source-role provenance also holds.
+3. Calls use canonical `proptest::proptest!`, `proptest::strategy::Just` and
+   `proptest::prop_assert`/`proptest::prop_assert_eq` paths (optionally leading
+   `::`). The initial closed
+   source binding context excludes imports, macro definitions, out-of-line
+   modules, root/attribute rebinding and unknown item attributes/expansions.
+   Raw-spelled declarations and bindings also refuse, including property
+   names and parameters: the current scope producer retains `r#name` literally,
+   so it cannot prove its equivalence to the ordinary `name` spelling.
+   Each property has one simple bool or explicitly suffixed primitive integer
+   literal `Just` parameter (a negative literal requires a signed suffix), a
+   one-line declaration header and one-line assertion invocations. At most 32
+   properties per 64 KiB macro and 16 statements per body are read.
+   Unsuffixed integers refuse: copying a single inferred parameter into
+   multiple call/comparison contexts could select different numeric types.
+4. The source uses the audited default runner configuration. Every ambient
+   `PROPTEST_*` override and every applicable Cargo `[env]` property override
+   refuses, including nonzero overrides: function macros call
+   `contextualize_config` after cloning the source configuration. A literal
+   `with_cases` alone would not prove a nonzero run. Config/lock/environment
+   identity participates in classified-cache lookup, including every resolved
+   in-root lib/test target's source-directory configuration consulted at
+   admission. Nested `tests/.cargo` and member-local configuration cannot
+   retain a stale favorable classified result. Property admission is recomputed
+   from raw cached facts when an index is reconstructed or reused.
+5. The body is straight-line direct `prop_assert!` on a bool owner call (or its
+   negation), or `prop_assert_eq!` with one owner-call operand
+   and one independent integer/bool literal or the known `Just` value. Call
+   arguments are those same literals. Exact arity is required; diagnostics can
+   execute on failure and return `Ok(())`, so they are not discarded silently.
+   A parameter shadowing the callee, a self-comparison, model expression,
+   helper result, closure, loop, early return, filter or other strategy refuses.
+   `prop_assert_ne!` remains unsupported: it evaluates `!=`, whereas
+   `std::assert_ne!` negates `==`; custom `PartialEq::ne` can distinguish them.
+
+The provider's function macro wraps the body in a result-returning callback
+and turns runner failure into test failure. That audited path permits a short
+ordinary-assertion interpretation, with original source lines retained. It
+does **not** make `prop_assert*` non-returning macros outside this callback.
+A generation-owned receipt binds the exact generated TestFact and its local
+interpretation; raw cached or deserialized facts cannot manufacture it. The
+registration key remains distinct from that exact authority: if later oracle
+policy changes the generated fact, diff and repository relation discovery
+withhold it instead of treating a missing exact receipt as an ordinary test.
+The original matching receipt is still required for both source and namespace
+interpretation.
+The receipt also retains the normalized function-body scope and the original
+file-root bindings. Qualified owner-call input rows use the existing resolver
+with those scopes: a generated function has no original AST function, while a
+standalone synthetic file would incorrectly erase root module/type shadows.
+Raw-spelled module/type shadows receive no generated test or activation input
+row; a later non-exposed verdict alone would not establish that boundary.
+The existing owner identity, operand, equality-dispatch, activation, propagation
+and discriminator rules still decide the result. In particular, registration
+of a nonzero/inequality check does not make it an exact discriminator.
+Diff and repository evidence additionally bind every owner-name call in an
+admitted property through the existing free-owner authority before any evidence stage.
+The covered positive uses a canonical library-qualified owner call. Bare,
+`self`/`super`, method/associated, generic, re-exported or otherwise unresolved
+forms stay withheld wherever that authority cannot establish them; registration
+and `Just` spelling alone do not grant owner credit. A mixed property cannot
+lend a different function's boundary input to a legitimate owner call.
+
+Admission is atomic for a macro's properties. Refused properties retain the
+existing `rust_macro_reach_unresolved` limitation, and a supported ordinary
+assertion beside them remains available. CLI, JSON and MCP consume the same
+facts and evidence; the Rust capability limit describes this exact profile.
+No new repair route or support-tier promotion follows from it.
+
+The retained integration fixture and
+`crates/ripr/tests/registered_proptest_profile.rs` enforce provider/target/
+environment currentness, cold/warm behavior, independent ordinary evidence,
+classified-cache hit/edit/cold-parity/revert behavior, same-line module shadow
+and custom inequality refusals, and native original/wrong-owner, zero-cases,
+diagnostic-return and weak-check controls. Native runtime truth stays separate
+from static exposure.
+
+This is a foundational subset with **no unchanged real-repository positive
+established**. The real Perl-LSP position property at
+`6ffb36a1d2eff471407badf15721452696850d68` uses `proptest::prelude::*`, string
+strategies, model helpers and loops. Its recorded runtime witness does not
+qualify this source profile. Prelude/import authority, ranges and strings,
+relational/model flow, the non-macro bool-helper corpus row, QuickCheck,
+`TestRunner::run/run_one`, repair and installed daily-use acceptance remain
+open under #6643 and its supporting issues.
+
 ## Wire Format
 
 | Field | Value when fires | Value when not fires |
@@ -498,9 +622,11 @@ end of the file, which is an approximation for an edit in progress.
    The owner is reached through the generated tests and the boundary row
    discriminates it, so it reads `exposed`, exactly as the same three tests
    written by hand. Rows that never touch the boundary read `weakly_exposed`;
-   rows that discard the result read `reachable_unrevealed`; a row layout
-   outside the table form (`name => (..)`) registers no test and keeps
-   `no_static_path`.
+   rows that discard the result read `reachable_unrevealed`; rows written
+   `name => (..)` with a matcher that spells the `=>` expand like the other
+   layouts, so the same boundary row discriminates; an arrow the matcher does
+   not spell, a spaced `= >`, or a longer punct ending in `=>` registers no
+   test and keeps `no_static_path`.
 9. **Table generated by a macro defined in another file** (#6925):
    `tests/support/mod.rs` defines the `imported_table!` table macro and
    `tests/modules.rs` declares `#[macro_use] mod support;` and invokes it with

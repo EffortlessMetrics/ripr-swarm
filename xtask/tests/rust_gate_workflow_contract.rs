@@ -259,6 +259,7 @@ fn rust_gate_workflow_rejects_narrowing_explicit_clippy_coverage() {
 const FIXTURE_PREPARATION_NAME: &str = "name: Prepare locked owner-return fixture dependencies";
 const FALLIBLE_FETCH: &str = "cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml";
 const JSON_FETCH: &str = "cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml";
+const PROPTEST_FETCH: &str = "cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml";
 
 fn prepares_locked_owner_return_fixtures(workflow: &str) -> bool {
     let blocks: Vec<_> = workflow.split("\n      - ").skip(1).collect();
@@ -283,6 +284,7 @@ fn prepares_locked_owner_return_fixtures(workflow: &str) -> bool {
             "run: |",
             FALLIBLE_FETCH,
             JSON_FETCH,
+            PROPTEST_FETCH,
         ]
         && blocks[..*index]
             .iter()
@@ -292,13 +294,15 @@ fn prepares_locked_owner_return_fixtures(workflow: &str) -> bool {
                 .iter()
                 .any(|block| step_id(block) == Some(id))
         })
-        && [FALLIBLE_FETCH, JSON_FETCH].iter().all(|command| {
-            workflow
-                .lines()
-                .filter(|line| line.trim() == *command)
-                .count()
-                == 1
-        })
+        && [FALLIBLE_FETCH, JSON_FETCH, PROPTEST_FETCH]
+            .iter()
+            .all(|command| {
+                workflow
+                    .lines()
+                    .filter(|line| line.trim() == *command)
+                    .count()
+                    == 1
+            })
 }
 
 #[test]
@@ -309,7 +313,7 @@ fn rust_gate_workflow_prepares_both_locked_owner_return_fixtures_before_policy()
 #[test]
 fn rust_gate_workflow_rejects_missing_unlocked_late_or_suppressed_fixture_preparation() {
     let preparation = format!(
-        "      - {FIXTURE_PREPARATION_NAME}\n        run: |\n          {FALLIBLE_FETCH}\n          {JSON_FETCH}\n"
+        "      - {FIXTURE_PREPARATION_NAME}\n        run: |\n          {FALLIBLE_FETCH}\n          {JSON_FETCH}\n          {PROPTEST_FETCH}\n"
     );
     for changed in [
         WORKFLOW.replace(&preparation, ""),
@@ -335,6 +339,34 @@ fn rust_gate_workflow_rejects_missing_unlocked_late_or_suppressed_fixture_prepar
         format!("{}\n{preparation}", WORKFLOW.replace(&preparation, "")),
         format!("{WORKFLOW}\n{preparation}"),
     ] {
+        assert_ne!(
+            changed, WORKFLOW,
+            "negative fixture must change the workflow"
+        );
+        assert!(!prepares_locked_owner_return_fixtures(&changed));
+    }
+}
+
+#[test]
+fn rust_gate_workflow_rejects_missing_unlocked_suppressed_or_duplicate_property_preparation() {
+    for changed in [
+        WORKFLOW.replace(PROPTEST_FETCH, ""),
+        WORKFLOW.replace(PROPTEST_FETCH, &PROPTEST_FETCH.replace(" --locked", "")),
+        WORKFLOW.replace(PROPTEST_FETCH, &format!("{PROPTEST_FETCH} || true")),
+        WORKFLOW.replace(
+            PROPTEST_FETCH,
+            &format!("{PROPTEST_FETCH}\n          {PROPTEST_FETCH}"),
+        ),
+        // This leaves the closed preparation block intact and challenges
+        // the independent whole-workflow uniqueness requirement.
+        format!(
+            "{WORKFLOW}\n      - name: Duplicate property fetch\n        run: |\n          {PROPTEST_FETCH}\n"
+        ),
+    ] {
+        assert_ne!(
+            changed, WORKFLOW,
+            "negative fixture must change the workflow"
+        );
         assert!(!prepares_locked_owner_return_fixtures(&changed));
     }
 }

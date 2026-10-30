@@ -37,6 +37,14 @@ fn release_cut_admission_self_test_passes() -> Result<(), String> {
     run_self_test("release_cut_admission.py", "controls passed")
 }
 
+#[test]
+fn trusted_admission_bundle_two_tree_controls_pass() -> Result<(), String> {
+    run_self_test(
+        "test_trusted_bundle.py",
+        "trusted admission bundle controls passed",
+    )
+}
+
 /// Executes the real action shell with a stubbed read-only `gh` so the
 /// wrapper boundary (live-ref re-read) is exercised, not only the pure scripts.
 fn run_wrapper(second_ref_packet_state: &str, initial_absent: bool) -> Result<i32, String> {
