@@ -7688,6 +7688,7 @@ pub(crate) fn classify_resolved_owner(
             },
         },
         confidence: confidence_value,
+        confidence_basis: Vec::new(),
         evidence,
         missing,
         flow_sinks: flow_sink.into_iter().collect(),

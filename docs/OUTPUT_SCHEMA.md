@@ -2972,6 +2972,22 @@ human formats render from the same full `CheckOutput` through their own
 existing bounds; per-finding caps (`related_tests`, `observed_values`) are
 unchanged and compose underneath (the budget counts already-capped payloads).
 
+### `confidence_basis` and `confidence_why_capped` (additive, preview findings, #10700)
+
+The fields are reserved by the shared `Finding.confidence_basis` shape and are
+not populated by any adapter until the TypeScript/JavaScript classifier lands
+(#10700 part 2); until then no output carries them. Once populated,
+TypeScript/JavaScript preview findings carry a per-class constant `confidence`
+that is not on the same scale as Rust's. `confidence_basis` is a non-empty list
+of `{code, summary}` objects naming why the score is capped (codes:
+`preview_stages_not_modeled`, `syntax_first_no_type_resolution`,
+`no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
+`observation_not_confirmed`, `discriminator_not_established`), and
+`confidence_why_capped` is the one-line English form. Both are omitted for Rust
+findings and when empty. The same fields appear on `ripr context` packets and
+in `ripr check` / `ripr explain` text as a `Why capped:` line. They explain the
+number only and never change classification or actionability.
+
 ## Enums
 
 `classification` values:

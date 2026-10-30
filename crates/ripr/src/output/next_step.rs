@@ -182,6 +182,7 @@ mod tests {
     fn complete_ts_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_discount.ts:typescript_preview:2396aec1".to_string(),
             canonical_gap: None,
             probe: Probe {
