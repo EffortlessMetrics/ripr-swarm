@@ -9,6 +9,7 @@ Created: 2026-07-18
 Linked issues:
 
 - #1662
+- #11253
 
 ## Problem
 
@@ -72,6 +73,26 @@ For every known kind the emitted diagnostic wire shape is unchanged: the
 constructors produce the same code strings the previous inline `format!` calls
 produced, so no golden output changes in this slice.
 
+### No-evidence hover states
+
+The hover on a position with no evidence (`hover_without_evidence`) states
+the pending/clean condition the same way the pending marker does, and never
+asks for an action that is already underway (#11253):
+
+- A committed snapshot whose typed `analysis_outcome.kind` is
+  `no_changed_lines` renders "found no changed behavior against the base ref"
+  (naming the snapshot's base when known) and says there is nothing to grade.
+  Any other committed snapshot keeps the generic static-exposure text.
+- With no committed snapshot, a `queued` or `running` analysis attempt renders
+  "analysis is in progress" and says the result will appear; it does not
+  request `ripr.refresh`.
+- With no committed snapshot and no queued or running attempt, the existing
+  "has not analyzed this workspace yet" wording and `ripr.refresh` route stay.
+
+The `ripr-diagnostic-analysis-pending` marker, its result ids and its wire
+shape are unchanged. These are advisory hover words using static vocabulary;
+they make no runtime-outcome or test-sufficiency claim.
+
 ## Required Evidence
 
 - Every finding, seam, and gap code the emission path can produce resolves to
@@ -115,6 +136,10 @@ produced, so no golden output changes in this slice.
 - `diagnostics.rs::tests::gap_record_diagnostic_fails_closed_for_unregistered_kind`
   covers the emission site itself: a gap record whose kind is not a governed
   code produces no diagnostic, while a registered kind still emits one.
+- `lsp/tests.rs::hover_without_evidence_states_are_distinct_and_static` and
+  the two `backend.rs::tests::no_evidence_hover_*` tests pin the in-progress
+  and clean-workspace hover states against their discriminating negatives
+  (idle session, snapshot without `no_changed_lines`).
 - The existing LSP diagnostic unit tests continue to pass unchanged, pinning
   the byte-identical emitted code strings for known kinds.
 
