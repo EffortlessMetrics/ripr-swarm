@@ -680,7 +680,21 @@ passes on the old code reaches it and fails on the edit. Both cases need the cha
   spread, hole, object or `-x` stay dynamic. `typescript_table_case_unresolved`
   keeps its own unconditional rule. A pinned `[]` / all-zero-like array does not
   witness a field update, and an array expectation is a dead witness against
-  scalar changed arms and scalar branch values.)
+  scalar changed arms and scalar branch values.
+  Amended (#11255): the Jest/Vitest matchers `toEqual`, `toStrictEqual` and
+  `toMatchObject` also accept an all-literal object or array, nested to any
+  depth, as a concrete expected value (`{ _: [], name: "John", admin: true }`,
+  `{ a: { b: "c" } }`, `["~/a.jpg", "~b.jpg"]`, `[]`, `{}`). One identifier,
+  call, spread, hole, computed or shorthand key, accessor, method, template
+  literal, parenthesized or `as` expression, `__proto__` key or `-x` anywhere
+  in the value keeps it dynamic; `toBe`, `toHaveProperty` and every other
+  matcher, and AVA `deepEqual` arrays holding an object, are unchanged. An
+  empty or all-zero-like container at every depth (`{}`, `{ list: [] }`) does
+  not witness a field update, an object expectation is a dead witness against
+  scalar branch values and scalar ternary arms like an array, and a container
+  is not a rejection literal (`rejects.toEqual` earns no error-path credit).
+  `toMatchObject` keeps its relational grade unless RIPR-SPEC-0250 credits a
+  flat object; a nested or array expectation only removes the dynamic limit.)
 
 ### Reach
 
