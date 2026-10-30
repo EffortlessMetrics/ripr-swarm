@@ -411,10 +411,13 @@ pub(super) struct FixtureSideEffects {
     /// (`getfixturevalue`, `fixturenames`, `funcargs`, `node`), a `global`
     /// rebinding inside a def, or a module that only partly parsed.
     pub(super) opaque: bool,
-    /// Names whose attributes the module assigns, deletes or loops into
-    /// (`CliRunner.invoke = fake`): a class patched this way no longer builds
-    /// the object a fixture's shape suggests (#11016).
+    /// Names the module uses other than to import or construct them
+    /// (`CliRunner.invoke = fake`, `setattr(CliRunner, ...)`): a class touched
+    /// this way no longer builds the object a fixture's shape suggests (#11016).
     pub(super) class_writes: Vec<String>,
+    /// Dotted modules the file imports, plain and `from` alike, for the
+    /// transitive read of what an imported workspace module does.
+    pub(super) imported_modules: Vec<String>,
 }
 
 /// Request and item attributes through which a fixture reaches other
@@ -442,7 +445,8 @@ pub(super) fn collect_fixture_side_effects(
             })
             .cloned()
             .collect(),
-        class_writes: super::module_constants::assigned_attribute_bases(statements),
+        class_writes: super::module_constants::names_used_beyond_construction(source),
+        imported_modules: super::module_constants::imported_module_names(statements),
         ..FixtureSideEffects::default()
     };
     for stmt in statements {
@@ -565,6 +569,7 @@ pub(super) fn mark_isolated_fixture_defs(
                 .entry(key)
                 .or_insert_with(|| {
                     let mut scope_imports = Vec::new();
+                    let mut scope_modules: Vec<String> = Vec::new();
                     let isolated = std::iter::once(test_file.clone())
                         .chain(conftest_chain(&test_file))
                         .all(|file| {
@@ -572,6 +577,7 @@ pub(super) fn mark_isolated_fixture_defs(
                                 return false;
                             }
                             if let Some(side) = side_by_file.get(&file) {
+                                scope_modules.extend(side.imported_modules.iter().cloned());
                                 scope_imports.extend(
                                     side.from_imports
                                         .iter()
@@ -602,15 +608,15 @@ pub(super) fn mark_isolated_fixture_defs(
                     // defined in a workspace module that spells this one (#11016);
                     // the tool read refuses it, unlike the owner-module rule.
                     let isolated = isolated
-                        && (def.inert_tool.is_none()
-                            || !scope_imports.iter().any(|(_, import)| {
-                                imported_module_may_touch_fixture(
-                                    import,
-                                    &def.name,
-                                    defs_by_file,
-                                    side_by_file,
-                                )
-                            }));
+                        && def.inert_tool.as_ref().is_none_or(|class| {
+                            !imported_modules_may_touch_fixture(
+                                &scope_modules,
+                                &def.name,
+                                class,
+                                defs_by_file,
+                                side_by_file,
+                            )
+                        });
                     (isolated, scope_imports)
                 })
                 .clone();
@@ -620,30 +626,39 @@ pub(super) fn mark_isolated_fixture_defs(
     }
 }
 
-/// Whether the workspace module a `from M import y` names spells `fixture` in
-/// a fixture or compound statement, or cannot be read through (opaque). An
-/// imported autouse fixture that takes `fixture` could change what it hands
-/// the test, so the scope is not isolated. A module outside the workspace
-/// is not visible to this read.
-fn imported_module_may_touch_fixture(
-    import: &PythonImport,
+/// Whether a workspace module the scope imports, directly or through the
+/// modules it imports in turn, spells `fixture` in a fixture or compound
+/// statement, touches the tool `class`, or cannot be read through (opaque).
+/// An imported autouse fixture that takes `fixture`, or an import-time patch
+/// of the class, could change what the test receives, so the scope is not
+/// isolated. A module outside the workspace is not visible to this read.
+fn imported_modules_may_touch_fixture(
+    modules: &[String],
     fixture: &str,
+    class: &str,
     defs_by_file: &BTreeMap<PathBuf, Vec<PythonFixtureDef>>,
     side_by_file: &BTreeMap<PathBuf, FixtureSideEffects>,
 ) -> bool {
-    if import.source_module.is_empty() {
-        return false;
-    }
-    let module = import.source_module.replace('.', "/");
-    let names_module = |file: &Path| {
-        let path = super::normalized_path(file);
-        [format!("{module}.py"), format!("{module}/__init__.py")]
-            .iter()
-            .any(|suffix| path == *suffix || path.ends_with(&format!("/{suffix}")))
-    };
-    side_by_file.iter().any(|(file, side)| {
-        names_module(file)
-            && (side.opaque
+    let mut pending: Vec<&str> = modules.iter().map(String::as_str).collect();
+    let mut seen_modules = BTreeSet::new();
+    let mut seen_files: BTreeSet<&PathBuf> = BTreeSet::new();
+    while let Some(module) = pending.pop() {
+        if module.is_empty() || !seen_modules.insert(module) {
+            continue;
+        }
+        let path = module.replace('.', "/");
+        let names_module = |file: &Path| {
+            let file = super::normalized_path(file);
+            [format!("{path}.py"), format!("{path}/__init__.py")]
+                .iter()
+                .any(|suffix| file == *suffix || file.ends_with(&format!("/{suffix}")))
+        };
+        for (file, side) in side_by_file {
+            if !names_module(file) || !seen_files.insert(file) {
+                continue;
+            }
+            if side.opaque
+                || side.class_writes.iter().any(|name| name == class)
                 || side
                     .texts
                     .iter()
@@ -651,8 +666,14 @@ fn imported_module_may_touch_fixture(
                 || defs_by_file.get(file).is_some_and(|defs| {
                     defs.iter()
                         .any(|def| mentions_identifier(&def.body_text, fixture))
-                }))
-    })
+                })
+            {
+                return true;
+            }
+            pending.extend(side.imported_modules.iter().map(String::as_str));
+        }
+    }
+    false
 }
 
 /// A fixture that hands the test a fresh `OwnerClass(<literals>)` (#9619):

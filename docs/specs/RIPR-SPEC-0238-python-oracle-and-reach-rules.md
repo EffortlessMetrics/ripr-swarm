@@ -499,9 +499,11 @@ This order is the existing behavior and is normative:
   (or `typer.testing`) import and bound once. The test is a module-level
   pytest test that takes the fixture without a default, does not rebind it,
   and carries no decorator other than a pytest mark. The scope rules above
-  hold, and in addition no scope file assigns, deletes or loops into an
-  attribute of `CliRunner` (`CliRunner.invoke = fake`), and no workspace
-  module a scope `from` import names spells the fixture in a fixture or
+  hold, and in addition no scope file or workspace module it imports (plain
+  or `from`, followed through the modules those import) uses `CliRunner`
+  other than to import or construct it (`CliRunner.invoke = fake`,
+  `setattr(CliRunner, ...)`, an alias, or a patch string naming it), and no
+  such module spells the fixture in a fixture or
   compound statement or is opaque. The runner only invokes commands, so it
   hides no discriminator or expected value.
   Any other shape keeps the limit; a third-party plugin fixture outside

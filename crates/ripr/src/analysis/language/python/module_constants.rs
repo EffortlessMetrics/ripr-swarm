@@ -589,13 +589,79 @@ pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
     assigned_attribute_targets(statements, &|attribute| Some(attribute.attr.to_string()))
 }
 
-/// The names whose attributes the module assigns, deletes or loops into
-/// (`CliRunner.invoke = fake` names `CliRunner`), at any nesting depth.
-pub(super) fn assigned_attribute_bases(statements: &[Stmt]) -> Vec<String> {
-    assigned_attribute_targets(statements, &|attribute| match &*attribute.value {
-        Expr::Name(name) => Some(name.id.to_string()),
-        _ => None,
-    })
+/// The names the module uses other than to import them or to construct them
+/// (`CliRunner(...)`): `CliRunner.invoke = fake`, `setattr(CliRunner, ...)`,
+/// `Runner = CliRunner` and a string such as `"click.testing.CliRunner.invoke"`
+/// all name a class in a way that can change what it builds. A module the
+/// lexer rejects names every identifier it contains, so nothing is hidden.
+pub(super) fn names_used_beyond_construction(source: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut tokens = Vec::new();
+    for result in lex(source, Mode::Module) {
+        match result {
+            Ok((token, _)) => tokens.push(token),
+            Err(_) => {
+                return source
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .filter(|word| !word.is_empty())
+                    .map(str::to_string)
+                    .collect();
+            }
+        }
+    }
+    let mut in_import = false;
+    let mut line_start = true;
+    for (index, token) in tokens.iter().enumerate() {
+        match token {
+            Tok::Newline => {
+                in_import = false;
+                line_start = true;
+                continue;
+            }
+            Tok::Indent | Tok::Dedent => continue,
+            Tok::Import | Tok::From if line_start => in_import = true,
+            Tok::Name { name }
+                if !in_import && !matches!(tokens.get(index + 1), Some(Tok::Lpar)) =>
+            {
+                names.push(name.to_string());
+            }
+            Tok::String { value, .. } => names.extend(
+                value
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .filter(|word| !word.is_empty())
+                    .map(str::to_string),
+            ),
+            _ => {}
+        }
+        line_start = false;
+    }
+    names
+}
+
+/// The dotted modules a file imports, at any nesting depth: `import a.b` names
+/// `a.b`, `from a import b` names `a` and `a.b`. A relative import names the
+/// written module and each imported name, which only over-matches.
+pub(super) fn imported_module_names(statements: &[Stmt]) -> Vec<String> {
+    let mut modules = Vec::new();
+    visit_statements(statements, &mut |stmt| match stmt {
+        Stmt::Import(import) => {
+            modules.extend(import.names.iter().map(|alias| alias.name.to_string()));
+        }
+        Stmt::ImportFrom(import) => {
+            let module = import.module.as_ref().map(|module| module.to_string());
+            if let Some(module) = &module {
+                modules.push(module.clone());
+            }
+            for alias in &import.names {
+                modules.push(match &module {
+                    Some(module) => format!("{module}.{}", alias.name),
+                    None => alias.name.to_string(),
+                });
+            }
+        }
+        _ => {}
+    });
+    modules
 }
 
 fn assigned_attribute_targets(

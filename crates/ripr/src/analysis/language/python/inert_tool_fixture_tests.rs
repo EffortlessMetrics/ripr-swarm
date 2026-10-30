@@ -209,3 +209,88 @@ fn an_imported_autouse_fixture_that_takes_the_runner_keeps_the_limit() -> Result
     assert_eq!(control.static_limit_kind, None, "{:?}", control.evidence);
     Ok(())
 }
+
+fn classify_files(files: &[(&str, &str)]) -> Result<Finding, String> {
+    let (owners, tests) = workspace(files);
+    classify_change(
+        Path::new("shop/__init__.py"),
+        2,
+        "    return amount * 3",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "the changed line must classify".to_string())
+}
+
+#[test]
+fn indirect_class_patching_keeps_the_limit() -> Result<(), String> {
+    let autouse = |body: &str| {
+        format!("{CONFTEST}\n\n@pytest.fixture(autouse=True)\ndef _p(monkeypatch):\n    {body}\n")
+    };
+    let cases = [
+        (
+            "dotted base",
+            format!("{CONFTEST}\nimport click.testing\n\nclick.testing.CliRunner.invoke = None\n"),
+        ),
+        (
+            "alias",
+            format!("{CONFTEST}\nRunner = CliRunner\nRunner.invoke = None\n"),
+        ),
+        (
+            "setattr",
+            format!("{CONFTEST}\nsetattr(CliRunner, \"invoke\", None)\n"),
+        ),
+        (
+            "monkeypatch",
+            autouse("monkeypatch.setattr(CliRunner, \"invoke\", None)"),
+        ),
+        (
+            "mock.patch.object",
+            autouse("mock.patch.object(CliRunner, \"invoke\", None)"),
+        ),
+        (
+            "patch string",
+            autouse("mock.patch(\"click.testing.CliRunner.invoke\")"),
+        ),
+    ];
+    for (case, conftest) in cases {
+        assert_limited(&classify_total(&conftest, TEST)?, case);
+    }
+    Ok(())
+}
+
+#[test]
+fn an_imported_module_that_patches_or_re_exports_keeps_the_limit() -> Result<(), String> {
+    let patches = "from click.testing import CliRunner\n\nCliRunner.invoke = None\n\n\ndef apply():\n    pass\n";
+    let run = |conftest: &str, extra: Option<(&str, &str)>| {
+        let mut files = vec![
+            ("shop/__init__.py", SHOP),
+            ("tests/test_shop.py", TEST),
+            ("tests/patches.py", patches),
+            ("tests/conftest.py", conftest),
+        ];
+        files.extend(extra);
+        classify_files(&files)
+    };
+    assert_limited(
+        &run(&format!("{CONFTEST}\nfrom patches import apply\n"), None)?,
+        "from import of a patching module",
+    );
+    assert_limited(
+        &run(&format!("{CONFTEST}\nimport patches\n"), None)?,
+        "plain import of a patching module",
+    );
+    assert_limited(
+        &run(
+            &format!("{CONFTEST}\nfrom helpers import apply\n"),
+            Some(("tests/helpers.py", "from patches import apply\n")),
+        )?,
+        "patching module reached through a re-export",
+    );
+    let control = run(
+        &format!("{CONFTEST}\nfrom helpers import apply\n"),
+        Some(("tests/helpers.py", "def apply():\n    pass\n")),
+    )?;
+    assert_eq!(control.static_limit_kind, None, "{:?}", control.evidence);
+    Ok(())
+}
