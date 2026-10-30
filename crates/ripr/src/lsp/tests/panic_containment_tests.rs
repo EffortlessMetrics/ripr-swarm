@@ -56,6 +56,22 @@ impl Wire {
             .await
             .map_err(|elapsed| format!("hover {id} was never answered: {elapsed}"))?
     }
+
+    /// Like `hover`, but also returns every message read before the answer so a
+    /// test can assert on stray traffic that `read_lsp_response` would discard.
+    async fn hover_with_skipped(
+        &mut self,
+        id: u64,
+        uri: &str,
+    ) -> Result<(serde_json::Value, Vec<serde_json::Value>), String> {
+        write_lsp_message(&mut self.writer, hover_request(id, uri)).await?;
+        tokio::time::timeout(
+            HOVER_BUDGET,
+            read_lsp_response_with_notifications(&mut self.reader, id),
+        )
+        .await
+        .map_err(|elapsed| format!("hover {id} was never answered: {elapsed}"))?
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -126,7 +142,14 @@ fn panicking_hover_handler_becomes_a_typed_error_and_the_session_keeps_serving()
         }
 
         // The session is still alive: the same handler now answers normally.
-        let recovered = wire.hover(11, &uri).await?;
+        let (recovered, skipped) = wire.hover_with_skipped(11, &uri).await?;
+        // Server-initiated requests and notifications carry a `method`; a
+        // message without one is a response, which nothing was owed.
+        if let Some(stray) = skipped.iter().find(|m| m.get("method").is_none()) {
+            return Err(format!(
+                "a response was written for the dropped notification: {stray}"
+            ));
+        }
         if recovered.get("error").is_some() || recovered.get("result").is_none() {
             return Err(format!(
                 "hover after a contained panic must succeed: {recovered}"
