@@ -1526,6 +1526,24 @@ pub(crate) fn check_repair_route(
         }
     }
     let Some(gap) = finding.canonical_gap.as_ref() else {
+        // A TypeScript/JavaScript preview finding never has a Rust canonical
+        // gap; its start is the gap-bound packet route above, so "no seam" is
+        // the wrong reason. Name the packet state when a plain blocker is
+        // known (unresolved expected value, moved assertion selection); other
+        // causes keep the existing line until their wording is owned.
+        if let Some(language) = finding.language.filter(|language| {
+            matches!(
+                language,
+                crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript
+            )
+        }) && let Some(reason) =
+            crate::output::typescript_packet_projection::typescript_advisory_blocker(finding)
+        {
+            return CheckRepairRoute::Refused(RepairRouteRefusal::PreviewPacketNotComplete {
+                language: language.display_name().to_string(),
+                reason,
+            });
+        }
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoCanonicalGap);
     };
     // #9102: the seam inventory `ripr repair` binds from is built from the
