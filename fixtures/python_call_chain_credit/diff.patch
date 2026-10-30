@@ -1,0 +1,10 @@
+--- a/reach/ledger.py
++++ b/reach/ledger.py
+@@ -1,6 +1,6 @@
+ class Ledger:
+     def _ledger_pad(self):
+-        return 2
++        return 3
+ 
+     def render_ledger(self):
+         return "|" + " " * self._ledger_pad() + "|"

@@ -100,7 +100,11 @@ pub(in crate::analysis) fn activation_and_boundary_input(
         .iter()
         .flat_map(|test| match value_facts {
             Some(memo) => memo.facts_for(index, test, owner_fn),
-            None => value_facts_for_test(test, owner_fn),
+            None => value_facts_for_test(
+                test,
+                owner_fn,
+                super::argument_fold::FoldScope::of_test(test, index),
+            ),
         })
         .collect::<Vec<_>>();
     observed_values.extend(observed_discriminator_values(
@@ -189,13 +193,14 @@ impl TestValueFacts {
         test: &TestSummary,
         owner_fn: Option<&FunctionSummary>,
     ) -> Vec<ValueFact> {
+        let scope = super::argument_fold::FoldScope::of_test(test, index);
         let Some(key) = self.slot_key(index, test, owner_fn) else {
-            return value_facts_for_test(test, owner_fn);
+            return value_facts_for_test(test, owner_fn, scope);
         };
         if let Some(facts) = self.by_slot.borrow().get(&key) {
             return facts.clone();
         }
-        let facts = value_facts_for_test(test, owner_fn);
+        let facts = value_facts_for_test(test, owner_fn, scope);
         self.by_slot.borrow_mut().insert(key, facts.clone());
         facts
     }
@@ -254,7 +259,11 @@ fn path_value_context(path: &str) -> ValueContext {
     }
 }
 
-fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) -> Vec<ValueFact> {
+fn value_facts_for_test(
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+    scope: super::argument_fold::FoldScope<'_>,
+) -> Vec<ValueFact> {
     let owner_name = owner_fn.map(|owner| owner.name.as_str()).unwrap_or("");
     let parameters = owner_fn.map(function_parameters).unwrap_or_default();
     let mut facts = Vec::new();
@@ -270,7 +279,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             continue;
         };
         for (idx, argument) in arguments.iter().enumerate() {
-            for value in owner_row_argument_values(test, argument, false) {
+            for value in owner_row_argument_values(test, argument, false, scope) {
                 let value = parameters
                     .get(idx)
                     .map(|parameter| format!("{parameter} = {value}"))
@@ -471,6 +480,7 @@ fn observed_discriminator_values(
         .then(|| boundary_constant(owner, &right, index))
         .flatten();
     let mut facts = Vec::new();
+    let replaced = replaced_equality_constant(probe);
 
     for row in call_values {
         let inputs: super::value_transfer::ExactInputs = row
@@ -524,6 +534,25 @@ fn observed_discriminator_values(
             });
             continue;
         }
+        if let (Some(left_value), Some(old)) = (&left_exact, &replaced)
+            && exact_values_equal(&old.value, &left_value.value)
+        {
+            facts.push(ValueFact {
+                file: row.first().and_then(|cell| cell.file.clone()),
+                line: row.first().map(|cell| cell.line).unwrap_or_default(),
+                text: format!(
+                    "{} | {}; replaced constant {}",
+                    row.first()
+                        .map(|cell| cell.text.clone())
+                        .unwrap_or_default(),
+                    left_value.provenance,
+                    old.text,
+                ),
+                value: format!("{left} == {}", old.text),
+                context: ValueContext::FunctionArgument,
+            });
+            continue;
+        }
         let Some(left_credit) = left_credit.as_deref() else {
             continue;
         };
@@ -546,6 +575,18 @@ fn observed_discriminator_values(
                 line: left_value.line,
                 text: left_value.text.clone(),
                 value: format!("{left} == {right}"),
+                context: ValueContext::FunctionArgument,
+            });
+        } else if let Some(old) = &replaced
+            && same_literal_value(&old.value, &left_value.value)
+        {
+            // The row sits on the constant the edit replaced; it flips the
+            // same way a row on the new constant does (#10680).
+            facts.push(ValueFact {
+                file: left_value.file.clone(),
+                line: left_value.line,
+                text: format!("{} | replaced constant {}", left_value.text, old.text),
+                value: format!("{left} == {}", old.text),
                 context: ValueContext::FunctionArgument,
             });
         }
@@ -2399,7 +2440,14 @@ fn missing_boundary_discriminator(
                 .flatten()
             })
             .or_else(|| {
-                call_built_input_reason(owner, &parameters, related_tests, compared, &call_values)
+                call_built_input_reason(
+                    owner,
+                    &parameters,
+                    related_tests,
+                    compared,
+                    &call_values,
+                    index,
+                )
             })
             .or_else(|| unreadable_spelled_line_reason(owner, related_tests, helper_chain));
         return None;
@@ -2546,7 +2594,27 @@ fn missing_boundary_discriminator(
                 .is_empty()
             })
     };
+    // RIPR-SPEC-0164 (#10304): a changed equality constant (`label == "alpha"`
+    // to `label == "beta"`) flips every row that sits on either constant, so
+    // a row on the replaced constant discriminates the swap as a row on the
+    // new one does. Only a bare `left == literal` / `left != literal` line
+    // on both sides of the edit qualifies; a compound predicate, a changed
+    // operand or a non-literal constant keeps the missing equality.
+    let replaced_constant = replaced_equality_constant(probe);
+    let replaced_row_observed = replaced_constant.as_ref().is_some_and(|old| {
+        exact_rows.iter().any(|(lefts, _)| {
+            lefts
+                .iter()
+                .any(|left_value| exact_values_equal(&old.value, &left_value.value))
+        }) || left_credit.as_deref().is_some_and(|name| {
+            call_values.iter().any(|row| {
+                parameter_value(row, name)
+                    .is_some_and(|cell| same_literal_value(&cell.value, &old.value))
+            })
+        })
+    });
     let equality_observed = exact_equality_observed
+        || replaced_row_observed
         || parameter_equality(left_credit.as_deref(), right_credit.as_deref());
     let constant_named = constant_passed(left_credit.as_deref());
     if equality_observed || constant_named {
@@ -2688,6 +2756,7 @@ fn missing_boundary_discriminator(
         related_tests,
         [left_parameter.clone(), right_parameter.clone()],
         &call_values,
+        index,
     ) {
         *unresolved = Some(reason);
         return None;
@@ -3123,6 +3192,7 @@ fn call_built_input_reason(
     related_tests: &[&TestSummary],
     compared: [Option<String>; 2],
     call_values: &[Vec<ParameterValue>],
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<String> {
     let free_owner = is_free(owner);
     compared.into_iter().flatten().find_map(|parameter| {
@@ -3144,7 +3214,13 @@ fn call_built_input_reason(
                         crate::analysis::syntax::fn_signature::call_argument_facts(&contents)?;
                     let argument = arguments.get(position)?;
                     (argument.built_by_call
-                        && owner_row_argument_values(test, &argument.text, false).is_empty())
+                        && owner_row_argument_values(
+                            test,
+                            &argument.text,
+                            false,
+                            super::argument_fold::FoldScope::of_test(test, index),
+                        )
+                        .is_empty())
                         .then(|| {
                             format!(
                                 "a related test passes `{parameter}` the result of a call (`{}`), whose value ripr does not evaluate statically, so it cannot tell which side of the boundary that call reaches",
@@ -3675,23 +3751,8 @@ fn missing_field_value_discriminator(
     // { sku, .. })`) is observed whole by an `assert_eq!` on that whole
     // collection, read after the owner call directly or through a getter
     // whose body returns the field (RIPR-SPEC-0228 Decision 2).
-    let pushed_into = owner_fn.and_then(|owner| {
-        let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
-            .and_then(|call| call.impl_type());
-        super::propagation_witness::pushed_literal_collection_path(
-            owner.body.as_str(),
-            owner.start_line,
-            probe.location.line,
-            &probe.expression,
-            &|method| {
-                impl_type.and_then(|impl_type| {
-                    super::builder_override::inherent_method_body(index, impl_type, method)
-                        .map(str::to_string)
-                })
-            },
-        )
-        .map(|path| (owner, path))
-    });
+    let pushed_into = owner_fn
+        .and_then(|owner| pushed_literal_path(owner, probe, index).map(|path| (owner, path)));
     let pushed_literal_observed = |test: &TestSummary, assertion: &OracleFact| {
         pushed_into.as_ref().is_some_and(|(owner, path)| {
             pushed_collection_compared_whole(owner, path, test, assertion, index)
@@ -3843,6 +3904,34 @@ pub(in crate::analysis) fn assigned_field_of(
     )
 }
 
+/// #7131: the field collection path (`lines` for `self.lines.push(Line {
+/// sku: .. })`) the owner pushes the probe's literal onto, if the placement
+/// is one `pushed_literal_collection_path` accepts.
+pub(in crate::analysis) fn pushed_literal_path(
+    owner: &FunctionSummary,
+    probe: &Probe,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
+        .and_then(|call| call.impl_type());
+    let site = super::propagation_witness::pushed_literal_site(
+        owner.body.as_str(),
+        owner.start_line,
+        probe.location.line,
+        &probe.expression,
+        &|method| {
+            impl_type.and_then(|impl_type| {
+                super::builder_override::inherent_method_body(index, impl_type, method)
+                    .map(str::to_string)
+            })
+        },
+    )?;
+    // A hand-written `PartialEq` may ignore the pushed field, so the whole
+    // collection equality that confirms it is not evidence for it.
+    (!super::custom_eq::pushed_element_may_compare_leniently(&site.literal, index))
+        .then_some(site.path)
+}
+
 /// #7131: whether `assertion` compares the whole field collection `path`
 /// that `owner` pushes onto, read from the binding the test called `owner`
 /// on, after that call and with nothing between that may write through the
@@ -3852,7 +3941,7 @@ pub(in crate::analysis) fn assigned_field_of(
 /// (`binding_untouched_after_owner_call`), since another value built through
 /// the owner, or a snapshot, may carry the same changed value into the other
 /// operand.
-fn pushed_collection_compared_whole(
+pub(in crate::analysis) fn pushed_collection_compared_whole(
     owner: &FunctionSummary,
     path: &str,
     test: &TestSummary,
@@ -4413,6 +4502,10 @@ struct ReceiverParameters<'a> {
     value: Option<&'a ReceiverReader<'a>>,
     /// Read a string or char literal table cell as an exact input.
     text_cells: bool,
+    /// Where each test's file is read from for a `const` operand or a
+    /// nullary helper argument (RIPR-SPEC-0158); without it only the test's
+    /// own bindings fold.
+    index: Option<&'a crate::analysis::rust_index::RustIndex>,
 }
 
 type ReceiverReader<'a> = dyn Fn(&str) -> Option<String> + 'a;
@@ -4423,7 +4516,21 @@ impl<'a> ReceiverParameters<'a> {
             names: Vec::new(),
             value: None,
             text_cells: false,
+            index: None,
         }
+    }
+
+    fn reading_files_of(self, index: &'a crate::analysis::rust_index::RustIndex) -> Self {
+        Self {
+            index: Some(index),
+            ..self
+        }
+    }
+
+    fn fold_scope(&self, test: &TestSummary) -> super::argument_fold::FoldScope<'a> {
+        self.index.map_or_else(Default::default, |index| {
+            super::argument_fold::FoldScope::of_test(test, index)
+        })
     }
 
     fn reading_text_cells(text_cells: bool) -> Self {
@@ -4484,7 +4591,12 @@ fn owner_call_parameter_values_where(
                     if let Some(values) = receivers.cell(parameter, argument) {
                         return Some((parameter, values, argument.trim(), false));
                     }
-                    let values = owner_row_argument_values(test, argument, receivers.text_cells);
+                    let values = owner_row_argument_values(
+                        test,
+                        argument,
+                        receivers.text_cells,
+                        receivers.fold_scope(test),
+                    );
                     let table_column = !values.is_empty()
                         && crate::analysis::syntax::constant_table_column(
                             &test.body,
@@ -4607,7 +4719,7 @@ fn every_owner_call_reads_a_row(
                             &call.text,
                         )
                 },
-                &ReceiverParameters::reading_text_cells(true),
+                &ReceiverParameters::reading_text_cells(true).reading_files_of(index),
             )
             .is_empty()
         })
@@ -4642,7 +4754,7 @@ fn call_values_for_owner(
         |test, call| {
             super::call_identity::qualified_owner_calls_resolve(index, owner, test, &call.text)
         },
-        &ReceiverParameters::reading_text_cells(text_cells),
+        &ReceiverParameters::reading_text_cells(text_cells).reading_files_of(index),
     );
     if !direct.is_empty() {
         return direct;
@@ -5019,6 +5131,7 @@ fn chain_entry_rows(
         names: entry.receiver.iter().cloned().collect(),
         value: Some(&receiver_reader),
         text_cells: false,
+        index: Some(index),
     };
     owner_call_parameter_values_where(
         related_tests,
@@ -5648,6 +5761,73 @@ fn same_comparison_shape(before: &str, after: &str) -> bool {
     }
 }
 
+/// The literal a changed bare equality line replaced: `before` and
+/// `probe.expression` are both exactly `left == literal` (or `!=`, after
+/// an optional leading `if` and trailing `{`) with the same left operand and
+/// operator, and two different single literals (a string, a char or a plain
+/// integer). `None` for anything else, so a compound predicate, a changed
+/// left operand and a computed or named constant never qualify.
+struct ReplacedConstant {
+    /// The literal as it was spelled before the edit (`"alpha"`).
+    text: String,
+    /// Its value in the shared operand rendering.
+    value: String,
+}
+
+fn replaced_equality_constant(probe: &Probe) -> Option<ReplacedConstant> {
+    fn bare_equality(text: &str) -> Option<(String, &'static str, String)> {
+        let text = text.trim();
+        let text = text.strip_prefix("if ").unwrap_or(text);
+        let text = text.strip_suffix('{').unwrap_or(text).trim();
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+        if masked.len() != text.len()
+            || ["&&", "||", ">=", "<=", "<", ">", "?", ";", "=>", "|"]
+                .iter()
+                .any(|token| masked.contains(token))
+        {
+            return None;
+        }
+        let operator = match (masked.matches("==").count(), masked.matches("!=").count()) {
+            (1, 0) => "==",
+            (0, 1) => "!=",
+            _ => return None,
+        };
+        let at = masked.find(operator)?;
+        let left = text.get(..at)?;
+        let right = text.get(at + operator.len()..)?.trim();
+        let literal = !right.is_empty()
+            && if right.starts_with('"') || right.starts_with('\'') {
+                super::match_transfer::is_single_literal(right)
+            } else {
+                right.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+            };
+        (literal && !left.trim().is_empty()).then(|| {
+            (
+                left.split_whitespace().collect::<String>(),
+                operator,
+                right.to_string(),
+            )
+        })
+    }
+    let (before_left, before_operator, before_literal) = bare_equality(probe.before.as_deref()?)?;
+    let (after_left, after_operator, after_literal) = bare_equality(&probe.expression)?;
+    if before_left != after_left
+        || before_operator != after_operator
+        || before_literal == after_literal
+    {
+        return None;
+    }
+    let value = literal_operand_value(&before_literal)?;
+    // `5` to `05` or `"a"` to `"\u{61}"` is the same value: nothing flips.
+    if same_literal_value(&value, &literal_operand_value(&after_literal)?) {
+        return None;
+    }
+    Some(ReplacedConstant {
+        text: before_literal,
+        value,
+    })
+}
+
 pub(in crate::analysis) fn comparison_operands(expression: &str) -> Option<(String, String)> {
     for operator in [">=", "<=", "==", "!=", ">", "<"] {
         if let Some((left, right)) = expression.split_once(operator) {
@@ -5972,6 +6152,14 @@ fn is_float_exponent_sign(chars: &[char], sign: usize) -> bool {
             .all(|ch| ch.is_ascii_digit() || matches!(ch, '_' | '.'))
 }
 
+/// Two literal values are the same constant: equal text or the same plain
+/// decimal, never merely equal once underscores are erased (`"a_b"` is not
+/// `"ab"`), which `comparable_value` would claim.
+fn same_literal_value(left: &str, right: &str) -> bool {
+    let bare = |value: &'_ str| value.trim().trim_matches('"').to_string();
+    exact_values_equal(left, right) || bare(left) == bare(right)
+}
+
 fn comparable_value(value: &str) -> String {
     value
         .trim()
@@ -6049,9 +6237,21 @@ pub(in crate::analysis) fn owner_argument_values(
 /// literal inside a call chain is that call's operand, not the argument:
 /// `std::env::var("WHO").unwrap_or_default()` passes no `"WHO"` (#10484).
 /// The argument is the literal only when nothing computes around it.
-fn owner_row_argument_values(test: &TestSummary, argument: &str, text_cells: bool) -> Vec<String> {
+fn owner_row_argument_values(
+    test: &TestSummary,
+    argument: &str,
+    text_cells: bool,
+    scope: super::argument_fold::FoldScope<'_>,
+) -> Vec<String> {
     let values = owner_argument_values_in(test, argument, text_cells);
-    if values.is_empty() || passes_literals_through(strip_literal_wrappers(argument), 0) {
+    if values.is_empty() {
+        // RIPR-SPEC-0158: arithmetic over the test's own literal bindings
+        // is the number it computes (`score(base + 1)` after `let base = 9`).
+        return super::argument_fold::folded_argument(&test.body, argument, scope)
+            .into_iter()
+            .collect();
+    }
+    if passes_literals_through(strip_literal_wrappers(argument), 0) {
         values
     } else {
         Vec::new()
@@ -8308,7 +8508,11 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
         };
 
-        let facts = value_facts_for_test(&test, None);
+        let facts = value_facts_for_test(
+            &test,
+            None,
+            crate::analysis::classify::argument_fold::FoldScope::default(),
+        );
 
         assert!(
             facts
@@ -8352,7 +8556,11 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
         };
 
-        let facts = value_facts_for_test(&test, None);
+        let facts = value_facts_for_test(
+            &test,
+            None,
+            crate::analysis::classify::argument_fold::FoldScope::default(),
+        );
         let context_of = |value: &str| {
             facts
                 .iter()
@@ -8385,7 +8593,11 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
         };
 
-        let facts = value_facts_for_test(&test, Some(&owner));
+        let facts = value_facts_for_test(
+            &test,
+            Some(&owner),
+            crate::analysis::classify::argument_fold::FoldScope::default(),
+        );
         let values: Vec<&str> = facts.iter().map(|fact| fact.value.as_str()).collect();
 
         assert!(
@@ -8433,7 +8645,11 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
         };
 
-        let facts = value_facts_for_test(&test, Some(&owner));
+        let facts = value_facts_for_test(
+            &test,
+            Some(&owner),
+            crate::analysis::classify::argument_fold::FoldScope::default(),
+        );
 
         assert!(
             facts
@@ -8503,7 +8719,11 @@ assert_eq!(input.amount, 100);"#
                 for owner in owners {
                     assert_eq!(
                         memo.facts_for(&index, test, owner),
-                        value_facts_for_test(test, owner),
+                        value_facts_for_test(
+                            test,
+                            owner,
+                            crate::analysis::classify::argument_fold::FoldScope::default()
+                        ),
                         "round {round}: {} / {:?}",
                         test.name,
                         owner.map(|owner| owner.body.as_str())
@@ -8522,12 +8742,20 @@ assert_eq!(input.amount, 100);"#
         let detached = index.tests()[0].clone();
         assert_eq!(
             memo.facts_for(&index, &detached, owners[1]),
-            value_facts_for_test(&detached, owners[1])
+            value_facts_for_test(
+                &detached,
+                owners[1],
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            )
         );
         let other_index = index.clone();
         assert_eq!(
             memo.facts_for(&other_index, other_index.tests().at(0), None),
-            value_facts_for_test(other_index.tests().at(0), None)
+            value_facts_for_test(
+                other_index.tests().at(0),
+                None,
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            )
         );
         assert_eq!(memo.by_slot.borrow().len(), cached);
 
@@ -8544,7 +8772,11 @@ assert_eq!(input.amount, 100);"#
             for owner in reordered.functions() {
                 assert_eq!(
                     memo.facts_for(&reordered, test, Some(owner)),
-                    value_facts_for_test(test, Some(owner))
+                    value_facts_for_test(
+                        test,
+                        Some(owner),
+                        crate::analysis::classify::argument_fold::FoldScope::default()
+                    )
                 );
             }
         }
@@ -9049,6 +9281,55 @@ assert_eq!(input.amount, 100);"#
         }
     }
 
+    /// #10304: only a bare `left == literal` line on both sides of the edit
+    /// names the constant the edit replaced.
+    #[test]
+    fn replaced_equality_constant_needs_a_bare_literal_swap() {
+        let replaced = |before: &str, after: &str| {
+            let mut p = probe(ProbeFamily::Predicate, after);
+            p.before = Some(before.to_string());
+            replaced_equality_constant(&p).map(|c| c.text)
+        };
+        assert_eq!(
+            replaced("if label == \"alpha\" {", "if label == \"beta\" {"),
+            Some("\"alpha\"".to_string())
+        );
+        assert_eq!(
+            replaced("if n == 5 {", "if n == 6 {"),
+            Some("5".to_string())
+        );
+        assert_eq!(
+            replaced("if label != \"alpha\" {", "if label != \"beta\" {"),
+            Some("\"alpha\"".to_string())
+        );
+        // The same value spelled twice is no swap.
+        assert_eq!(replaced("if n == 5 {", "if n == 05 {"), None);
+        assert_eq!(
+            replaced("if n == 5 {", "if n == 5_0 {"),
+            Some("5".to_string())
+        );
+        assert!(same_literal_value("\"a\"", "a"));
+        assert!(!same_literal_value("\"a_b\"", "\"ab\""));
+        // A compound predicate, a changed operand or operator, a named or
+        // computed constant, an unchanged literal and a missing `before`
+        // all keep the missing equality.
+        for (before, after) in [
+            ("label == \"alpha\" && on", "label == \"beta\" && on"),
+            ("a == \"x\"", "b == \"x\""),
+            ("a == \"x\"", "a != \"y\""),
+            ("n == LIMIT", "n == OTHER"),
+            ("n == 5", "n == 5 + 1"),
+            ("a == \"x\"", "a == \"x\""),
+            ("n >= 5", "n >= 6"),
+            ("a == \"x == y\"", "a == \"x == z\" || b"),
+        ] {
+            assert_eq!(replaced(before, after), None, "{before} -> {after}");
+        }
+        let mut no_before = probe(ProbeFamily::Predicate, "n == 6");
+        no_before.before = None;
+        assert!(replaced_equality_constant(&no_before).is_none());
+    }
+
     /// #9116: an explicit `return` normalises only to a top-level comparison.
     #[test]
     fn explicit_return_normalises_only_a_top_level_comparison() {
@@ -9543,7 +9824,13 @@ assert_eq!(input.amount, 100);"#
             r#"7.max(load(2))"#,
         ] {
             assert!(
-                owner_row_argument_values(&test, chain, false).is_empty(),
+                owner_row_argument_values(
+                    &test,
+                    chain,
+                    false,
+                    crate::analysis::classify::argument_fold::FoldScope::default()
+                )
+                .is_empty(),
                 "`{chain}` holds a literal inside a call and passes none"
             );
         }
@@ -9569,9 +9856,14 @@ assert_eq!(input.amount, 100);"#
             ("-5", "-5"),
         ] {
             assert_eq!(
-                owner_row_argument_values(&test, spelled, false)
-                    .first()
-                    .map(String::as_str),
+                owner_row_argument_values(
+                    &test,
+                    spelled,
+                    false,
+                    crate::analysis::classify::argument_fold::FoldScope::default()
+                )
+                .first()
+                .map(String::as_str),
                 Some(expected),
                 "`{spelled}` is the literal it spells"
             );
@@ -9581,8 +9873,8 @@ assert_eq!(input.amount, 100);"#
     #[test]
     fn given_computed_argument_for_compared_parameter_then_boundary_is_unresolved_not_missing() {
         // #6672: `score(base + 1)` with `let base = 9` is 10, the boundary.
-        // ripr cannot read it, so it must not report `amount == 10` as
-        // missing from the remaining `score(base)` row.
+        // Arithmetic over the test's own literal bindings is read (RIPR-SPEC-0158
+        // example 21), so both rows are definite inputs and nothing is missing.
         let owner = function("pub fn score(amount: u32) -> bool {\n    10 <= amount\n}");
         let test = test_with_body_calls(
             "let base = 9;\nassert!(score(base + 1));\nassert!(!score(base));",
@@ -9595,6 +9887,26 @@ assert_eq!(input.amount, 100);"#
             &owner,
             &probe(ProbeFamily::Predicate, "10 <= amount"),
             &[&test],
+        );
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        assert_eq!(gathered.unresolved_boundary, None);
+        let mut values = owner_input_values(&gathered.activation);
+        values.sort();
+        assert_eq!(values, vec!["10", "9"]);
+
+        // An operand the fold cannot read keeps the argument computed: the
+        // bare `score(base)` row stays, the boundary is unresolved, not missing.
+        let unread = test_with_body_calls(
+            "let base = 9;\nassert!(score(base + 1u32));\nassert!(!score(base));",
+            &[
+                (11, "assert!(score(base + 1u32));"),
+                (12, "assert!(!score(base));"),
+            ],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "10 <= amount"),
+            &[&unread],
         );
 
         assert!(gathered.activation.missing_discriminators.is_empty());
@@ -10063,7 +10375,9 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec![owner_argument.to_string()],
                     receiver: None,
                     through_macro: false,
+                    module_qualified: false,
                     transparent_macros_rebound: false,
+                    diverging_handlers: Vec::new(),
                 },
                 super::super::helper_transfer::HelperHop {
                     caller: entry.clone(),
@@ -10071,7 +10385,9 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec!["x".to_string()],
                     receiver: None,
                     through_macro: false,
+                    module_qualified: false,
                     transparent_macros_rebound: false,
+                    diverging_handlers: Vec::new(),
                 },
             ],
             stop_above: None,

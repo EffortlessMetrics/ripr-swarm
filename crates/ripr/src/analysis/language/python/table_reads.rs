@@ -21,6 +21,54 @@
 use rustpython_parser::{Mode, Tok, lexer::lex};
 use std::collections::BTreeSet;
 
+/// One lex of a source, shared by the table scans and the foreign index's
+/// import words so a file is lexed once (#10914). Indentation tokens are
+/// dropped and kept only as each token's block depth.
+pub(super) struct LexedSource {
+    tokens: Vec<(Tok, usize, usize)>,
+    depths: Vec<usize>,
+    /// False when lexing stopped at an error; `tokens` holds what preceded it.
+    complete: bool,
+}
+
+impl LexedSource {
+    pub(super) fn new(source: &str) -> Self {
+        let mut tokens = Vec::new();
+        let mut depths = Vec::new();
+        let mut depth = 0usize;
+        for token in lex(source, Mode::Module) {
+            match token {
+                Ok((Tok::Indent, _)) => depth += 1,
+                Ok((Tok::Dedent, _)) => depth = depth.saturating_sub(1),
+                Ok((tok, range)) => {
+                    tokens.push((tok, usize::from(range.start()), usize::from(range.end())));
+                    depths.push(depth);
+                }
+                Err(_) => {
+                    return Self {
+                        tokens,
+                        depths,
+                        complete: false,
+                    };
+                }
+            }
+        }
+        Self {
+            tokens,
+            depths,
+            complete: true,
+        }
+    }
+
+    pub(super) fn complete(&self) -> bool {
+        self.complete
+    }
+
+    pub(super) fn tokens(&self) -> &[(Tok, usize, usize)] {
+        &self.tokens
+    }
+}
+
 /// The names of `watched` that `source` may mutate or alias. `defining_line`
 /// is the 1-indexed line of the one `NAME = {...}` statement the owning module
 /// is allowed to contain.
@@ -29,17 +77,22 @@ pub(super) fn unsafe_table_uses(
     watched: &dyn Fn(&str) -> bool,
     defining_line: Option<usize>,
 ) -> BTreeSet<String> {
-    let mut tokens = Vec::new();
-    for token in lex(source, Mode::Module) {
-        match token {
-            // Indentation tokens lead a dedented line; they are not part of it.
-            Ok((Tok::Indent | Tok::Dedent, _)) => {}
-            Ok((tok, range)) => {
-                tokens.push((tok, usize::from(range.start()), usize::from(range.end())));
-            }
-            Err(_) => return all_mentioned(source, watched),
-        }
+    unsafe_table_uses_lexed(source, &LexedSource::new(source), watched, defining_line)
+}
+
+/// [`unsafe_table_uses`] over an existing lex of `source`. The verdict for a
+/// name reads only that name's own tokens, so the uses of a watched set are
+/// the uses of every name filtered to that set.
+pub(super) fn unsafe_table_uses_lexed(
+    source: &str,
+    lexed: &LexedSource,
+    watched: &dyn Fn(&str) -> bool,
+    defining_line: Option<usize>,
+) -> BTreeSet<String> {
+    if !lexed.complete {
+        return all_mentioned(source, watched);
     }
+    let tokens = &lexed.tokens;
     let mut unsafe_names = BTreeSet::new();
     let mut start = 0;
     while start < tokens.len() {
@@ -186,25 +239,20 @@ fn line_binds(line: &[(Tok, usize, usize)]) -> bool {
 /// Names bound at module scope to a dict literal: `NAME = {` or
 /// `NAME: annotation = {` at the start of a top-level logical line.
 pub(super) fn dict_literal_names(source: &str) -> BTreeSet<String> {
+    dict_literal_names_lexed(&LexedSource::new(source))
+}
+
+/// [`dict_literal_names`] over an existing lex. A lexing error ends the scan
+/// at the tokens that preceded it.
+pub(super) fn dict_literal_names_lexed(lexed: &LexedSource) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
-    let mut depth = 0usize;
     let mut line_start = true;
     let mut candidate: Option<String> = None;
     // Set by `=`, kept through opening parentheses: `NAME = ({...})` is the
     // same dict as `NAME = {...}`.
     let mut armed = false;
-    for token in lex(source, Mode::Module) {
-        let Ok((tok, _)) = token else { break };
-        match &tok {
-            // Indentation tokens lead a line and are not its first token.
-            Tok::Indent => {
-                depth += 1;
-                continue;
-            }
-            Tok::Dedent => {
-                depth = depth.saturating_sub(1);
-                continue;
-            }
+    for ((tok, _, _), depth) in lexed.tokens.iter().zip(&lexed.depths) {
+        match tok {
             // A semicolon ends a simple statement as a newline does, including
             // after an explicit continuation that suppresses the Newline token.
             Tok::Newline | Tok::Semi => {
@@ -213,7 +261,7 @@ pub(super) fn dict_literal_names(source: &str) -> BTreeSet<String> {
                 armed = false;
                 continue;
             }
-            Tok::Name { name } if line_start && depth == 0 => candidate = Some(name.to_string()),
+            Tok::Name { name } if line_start && *depth == 0 => candidate = Some(name.to_string()),
             Tok::Equal => armed = true,
             Tok::Lpar if armed => {}
             Tok::Lbrace if armed => {

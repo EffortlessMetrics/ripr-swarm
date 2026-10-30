@@ -418,8 +418,52 @@ non-ignored related test matches one of these shapes:
   call, compares `rec.field` (a field, not a method call and not only its `.len()`, `.is_empty()` or `.count()`) in an `assert_eq!`.
   A concrete `&mut` parameter, a std collection, a constructor call, a method
   read or a comparison before the call keep the finding. The recorded value
-  reaches the assertion through the double's own method, which ripr does not
-  follow.
+  reaches the assertion through the double's own method. Outside the bounded
+  recording rule below, ripr does not follow that method.
+
+  **Bounded recording credit (#9766):** a same-file free owner sends one
+  `String` argument through a local root trait. The asserted double has a
+  unique same-file struct definition and trait implementation (possibly in an
+  inline test module), whose method consists only of
+  `self.field.push(argument);`; `field` is a standard `Vec<String>`.
+  The test begins with its empty struct-literal double, an unqualified owner
+  call, and an immediately following exact comparison of that field (or its
+  standard `clone()`) to a nonempty vector of independent string literals.
+  The equality has exactly two arguments, with an optional trailing comma
+  followed by ordinary line or block comments.
+  Diagnostic arguments refuse this bounded credit: they execute on comparison
+  failure and may prevent the test harness from reporting that failure.
+  The existing free-call binding authority must resolve the actual call to
+  this owner; a module constant, static or constructor twin cannot borrow it.
+  This supplies assertion-local observation, without changing reach or strength.
+
+  Owner execution is bounded to primitive integer inputs, literal setup or an
+  explicitly typed primitive slice `iter().sum()`, and direct sends. A scalar
+  binding that shadows a slice removes that slice provenance. Raw parameter or
+  setup binding names refuse credit. Declaration names in the recording file must
+  be unescaped ASCII identifiers, so raw type shadows and Unicode normalization
+  cannot borrow another declaration or retain aliased provenance.
+  A later
+  primitive comparison may guard further append-only sends. Format arguments
+  are parsed out of their token tree: only primitive names or numeric literals
+  and plain named/positional placeholders are admitted. Hidden calls, operators
+  on unknown values, let-else, other setup/effects, type aliases, ambiguous imports,
+  item expansion/attributes, and user-defined `clone`/`to_string` methods
+  (including raw spellings) refuse
+  this credit. A competing `push` declaration without the exact `&mut self`
+  receiver also refuses credit: a borrowed trait method can run before the
+  inherent vector mutation. A competing mutable-receiver method does not
+  displace the inherent vector mutation. This guard does not broaden the
+  existing refusal for an owner calling a push-named sink method.
+  An inherent method on the target dyn trait with the sink method's name also
+  refuses credit: Rust reports an ambiguous call, so the recorder's trait writer
+  does not establish its binding. Raw trait references, qualified paths,
+  parentheses, lifetimes and ordinary comments do not bypass this check.
+  Other methods, other dyn traits and wrapper types retain their existing scope.
+  Concrete mutable parameters, standard collection receivers,
+  count-only observations, before-call assertions, no-op/constant writers and
+  comparisons of another field retain their prior refusals. This rule grants
+  no fixture-builder receiver credit.
 - **local executor** (#9443): a `return_value` probe on an `async fn` owner,
   and a `direct_owner_call` test with a strong assertion: an `assert_eq!` with
   a literal on one side and `helper(owner(..))` on the other, where `helper`
@@ -427,9 +471,10 @@ non-ignored related test matches one of these shapes:
   is its only argument (a hand-written `block_on`). The owner's bare call is a
   future, so the compared value comes out of the helper, which ripr does not
   read. A sync owner, a helper defined elsewhere, a second argument and a
-  non-literal expectation keep the finding. Whether a bounded rule can credit a
-  single-argument local executor is left open; until then the gap is withheld,
-  never credited.
+  non-literal expectation keep the finding. A helper that
+  RIPR-SPEC-0197 verifies as a poll-to-completion loop over standard
+  primitives (#9478) is read as `owner(..).await` and credits; every other
+  single-argument local executor stays withheld, never credited.
 
 Any one matching related test withholds the finding: a weaker sibling test
 reads as evidence ripr gathered, not as the oracle that decides, and the
@@ -443,7 +488,13 @@ method name, not the receiver, and only related tests (the first eight per
 finding) are judged; either can withhold a gap, which only costs an advisory.
 
 It runs after the should-panic rule and before `withhold_unsupported_gap`,
-and writes the finding the same way. Nothing is credited. Corpus effect:
+and writes the finding the same way. This withholding route credits nothing.
+The isolated recording-double receipt (#10286) reads
+`idiom-hand-mock-exact-line` as `credited`; `idiom-fixture-builder-total`
+remains `limited` and `spec0231-oracle-events-sent-len-eq` remains `gap`.
+This receipt does not measure the separately owned fixture-builder candidate
+(#10297) or a combined tree.
+Historical corpus effect before bounded recording credit (#9766):
 `lib-serial-test-retries-default-arm`, `lib-mockall-recipient-predicate`,
 `lib-expect-test-assert-debug-eq-variant-payload` and
 `lib-insta-json-unredacted-sibling-field` move from `false_actionable` to
@@ -549,7 +600,8 @@ comments and strings masked, matches:
   after a unary `-` or `!`. A `-` that is `->` or `-=`, a doubled `&&`/`||`,
   a closure parameter list and a macro bang are not operators. `PartialOrd`
   is also reached through `partial_cmp`, `max`, `min`, `sort` and `clamp`.
-  `Drop` needs `drop(` or an inner block; the iterator traits need an
+  For the withholding gate (not the relation rule below), `Drop` needs `drop(`
+  or an inner block; the iterator traits need an
   iterating `for`, any method call (a terminal adapter such as `any`, `len` or
   `next_back` consumes the value) or a path call into an iterator trait; `Deref` has no
   syntax to inspect. A workspace declaration of a trait with an operator
@@ -632,9 +684,9 @@ under `rust_indirect_owner_call_unresolved`:
   value, whatever the helper returns), a second argument, or a same-file
   helper that does not take a `Future` keeps the gap; a literal expectation
   through a same-file helper is also read by the local-executor rule. The
-  assertion reads the helper's result, and a bounded rule that follows a
-  single-argument helper to the future's output is not specified, so the
-  finding is limited rather than credited.
+  assertion reads the helper's result, and only a helper RIPR-SPEC-0197
+  verifies as a poll-to-completion loop is followed to the future's output
+  (#9478); every other helper leaves the finding limited rather than credited.
 
 These forms are limited, not credited: crediting needs the iterator chain or
 the executor's return evaluated, and a wrong credit is worse than an honest
@@ -699,6 +751,26 @@ hold, or the test is not related and the abstention above applies:
 - the result is used: `let _ = a + b;` or a `let` nothing reads again does not
   reach an assertion.
 
+A standalone compound-assignment statement (`let mut total = Money(1);
+total += Money(2); assert_eq!(total, Money(3));`) qualifies for an
+`AddAssign::add_assign` relation even though the operator returns unit. The
+same-file, typed-`Self` and unique-impl gates still apply: integer `+=` beside
+an unused `Money` and a second `AddAssign<i64> for Money` do not qualify, and
+`+=` does not relate an `Add::add` owner. This is call-relation evidence;
+whether the assertion discriminates the changed behavior is judged separately.
+
+A closing `}` is a possible binary left-operand boundary for the shared
+operator scanner. The later whole-operand/type check distinguishes
+`let r = Money { 0: 5 } - n;` (a typed `Sub` operand, never unary `Neg`)
+from `if true {} -n;`, `{} -n;` and `match true { true => (), false => () }
+-n;`. Rust executes unary negation in those statement forms, but the bounded
+reader conservatively relates neither `Neg` nor `Sub` there. An observed
+separate expression (`let r = -n; assert_eq!(r, Money(-2));`) remains supported.
+
+`operator_call_credit::block_statements_followed_by_minus_stay_unrelated`
+and `operator_call_credit::standalone_add_assign_keeps_typed_operand_and_unique_impl_gates`
+pin these boundaries (#9813).
+
 A relation says the operator runs the owner, not that an assertion would
 notice the owner change. When no assertion shares a token with the changed
 expression (a result built through `Self(..)` or `Self { .. }` asserted
@@ -741,14 +813,111 @@ A confirmed
 credit (`Money(other.0 + self.0)` against `Money(2) + Money(3)`) is untouched
 and reads `exposed`.
 
-`Index`, `Drop` and the iterator traits keep the abstention until their own
-readings are added. `Drop` and `Iterator::next` need more than a relation: the
-observed value (a counter behind a shared cell, a `collect`ed vector) shares no
-token with the changed line, so a relation without observation confirmation
-would read `weakly_exposed` on a test that pins the effect (#9567).
+`a[i]` credits the same way (#10552). A read runs `Index::index` and a write
+(`a[i] = v`, `a[i] += v`, `&mut a[i]`) runs `IndexMut::index_mut`, so a site is
+credited to the one impl it runs. The receiver is a whole operand typed as the
+impl's self type (a leading `&` or `&mut` is allowed because indexing
+auto-dereferences; a field, method chain or helper return is not), a read whose
+value is discarded runs nothing a test can observe, and a site whose result is
+projected further (`a[i].len()`, `a[i].x`, `a[i][j]`) is credited to neither
+trait because the projection may borrow either way. A second `Index` impl for
+the type (`Index<&str>` beside `Index<usize>`) leaves every site unattributed,
+as for operators. An unconfirmed credit stays withheld; an assertion-free test
+stays a real `weakly_exposed` gap.
+
+`Iterator::next` is related the same narrow way (#10553); the relation alone
+credits nothing. A test relates to `next` only when a `for` loop or a consuming
+adaptor (`collect`, `sum`, `product`, `count`, `last`, `fold`, `reduce`,
+`for_each`, `any`, `all`, `find`, `position`, `nth`) drives an owned value of
+the impl's type. A lazy adaptor, an inherent method of the same name, an
+adaptor the iterator impl itself overrides (`fn count(self)` inside
+`impl Iterator`), a redeclared type, or a macro that may add an impl relates
+nothing, and so does a site that may never run: one not at the test body's top
+level (a closure, a nested `fn`, a branch or a loop body), a brace-less
+closure, or a statement disabled by an attribute such as `#[cfg(any())]`. An
+earlier `return`, `?` or `panic!` is not tracked, as for operators. A related
+test with an exact assertion leaves the finding `static_unknown` unless the
+sibling-effect oracle confirms that the assertion reads a cell the iterator
+writes (`Counter { sink: state.clone() }` then `assert_eq!(state.get(), 1)`),
+which credits it. A collected or returned value has no such carrier yet.
+
+`Drop::drop` is related when a test drops a value at scope end (#10553). A
+statement-position `{ .. }` block that binds an owned value of the impl's type
+in a `let` and uses the name only as a method or field receiver, or `drop(x)`,
+`mem::drop(x)` of such a value, runs `drop` before a later assertion. The
+relation refuses a value that is moved, leaked (`mem::forget`, `ManuallyDrop`,
+`Box::leak`, anywhere a file naming the type spells it), or reached through a
+by-value method of the type or any std method the index cannot see; a `drop` or
+`mem` the test file may rebind (a local `fn drop`, `mod mem`, a renamed or
+foreign `use`, a `mem` imported from another file, a local binding named `drop`); a reference operand; an assertion that came before the drop; a
+value that lives to the end of the test (it is dropped after every assertion);
+and the sites an iterator relation refuses (closures, branches, `#[cfg]`-disabled
+statements), including a guard bound inside a branch or closure of the block.
+
+Unlike `next`, a destructor is not credited by the ordinary sibling-effect read. A
+guard's counter shares no token with the changed line, and relating a scope end
+lifts reach, so without a gate the ordinary oracle credited an assertion on a
+different cell, a fresh guard cell, a cell the test re-created or wrote itself,
+or an assertion that ran before the scope (#9567). Only an assertion-local
+scope-end carrier ties an assertion to the end of a scope (#10814): the related
+test creates one local shared handle (`Rc::new(Cell::new(n))`, or an empty
+`Rc<RefCell<Vec<_>>>`), builds one record-literal guard of the impl's type
+whose field is `handle.clone()` (every other field a literal), ends the guard's
+scope with a top-level `{ let g = Guard { .. }; }` block or a top-level
+`drop(g);` of the standard function, and then asserts, at the top level and
+after the scope, on a wrapper of that same handle whose expected value is
+exactly what the destructor's changed write stores. The handle's initial state
+must differ from the stored one, and no other top-level statement may mention
+the handle or the guard. The impl is the type's only `Drop` impl in the
+workspace, no alias, `use` or item macro names the type or could add an impl,
+the test carries no attribute but `#[test]`, and no earlier top-level statement
+can end the test (`return`, `?`, `break`, `continue`, `yield`, or an `exit` or `abort` call). The initial and stored states are compared as numbers, a raw identifier counts as a mention, and an attribute on the scope block refuses it. Reading the
+destructor's write requires the changed line to be a `side_effect` or
+`call_deletion` write of one self field. Such a finding is credited like an
+iterator's, and a destructor finding stays `exposed` only when every strong
+contributing test is carrier-confirmed.
+
+Every other shape stays `static_unknown` (`rust_implicit_call_unresolved`): an
+assertion on another cell, a guard that writes a fresh cell, a handle the test
+re-creates, aliases or writes after the scope, an assertion before the scope, a
+guard that lives to the end of the test, is moved, leaked, held in a closure or
+scoped in a branch, a shadowed `drop`, a second `Drop` impl for the type name,
+an alias or `macro_rules!` in the file, a `#[should_panic]` test, and an early
+`return` before the scope (#10805 tracks the relation itself). An assertion-free
+test stays a real `weakly_exposed` gap. The same gate covers every probe family:
+an `exposed` verdict on a standard `Drop::drop` the carrier does not confirm (a
+predicate on the changed line, a name match on the free `drop`) is rewritten to
+`static_unknown`. A local trait named `Drop` is an ordinary trait and is not
+gated.
 
 Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
 ideal verdict.
+
+### A refused owner assertion beside an admitted weaker oracle (#5431)
+
+A `weakly_exposed` finding asks for a stronger assertion. When a related test
+also holds an `assert_eq!` on the owner that ripr refused, that refused
+assertion may already be the exact oracle, so the request can be false.
+`withhold_mixed_refusal_gap` rewrites a `weakly_exposed` finding with no
+`static_limit_kind` to `static_unknown` under `rust_assertion_context_unresolved`
+when at least one refused equality assertion calls the owner and every such
+refusal is an analyzer limit (`AssertionRefusal::is_analyzer_limit`: an
+unparsed or unplaced file, a glob or `#[macro_use]` that only may rebind the
+macro). The classifier hands the decision over as an evidence marker, and the
+pass drops the repair values like any withheld gap. It never raises a class.
+
+The pass applies only when reach, infection and propagation are established
+(`yes`) and the discriminator is the missing stage: a boundary input no test
+supplies is a gap whatever a refused assertion compares. Only refusals in
+tests that could have credited an oracle (`oracle_crediting_relations`) count,
+as for the unestablished-context rule above; the macro named in the next step
+is the standard `assert_eq!`.
+
+Refusals that are not analyzer limits (a branch, a loop that may run zero
+times, a gated module, a real rebinding) keep the gap, as do refused
+assertions that do not call the owner: they could not have been its oracle,
+or they are real gaps pinned by the runtime controls. A weak assertion alone
+stays `weakly_exposed`.
 
 ## Scope boundary
 
@@ -821,6 +990,28 @@ a credited weak oracle) and semver `op()` (reach with no retained test, #5344).
 
 ## Test Mapping
 
+- `crates/ripr/tests/refused_assertion_beside_weak_oracle.rs::an_analyzer_limit_refusal_beside_a_weak_oracle_is_not_a_gap` (#5431)
+
+Recording credit is exercised by `crates/ripr/tests/recording_double_credit.rs`:
+`exact_recorded_argument_is_credited`,
+`assertion_diagnostic_arguments_cannot_supply_recording_credit`,
+`a_double_declared_in_the_test_module_is_credited`,
+`primitive_slice_setup_and_later_append_keep_the_exact_pin`,
+`missing_argument_transfer_is_never_credited`,
+`recording_credit_preserves_observer_and_receiver_refusals`,
+`user_read_methods_do_not_supply_recording_credit`,
+`user_push_dispatch_cannot_supply_recording_credit`,
+`hidden_execution_and_module_value_twins_cannot_supply_credit`,
+`a_scalar_shadow_drops_slice_provenance`,
+`the_changed_call_cannot_hide_execution_in_format_arguments`,
+`fixture_setup_owns_only_exclusively_acquired_roots`, and
+`plain_test_cfg_uses_the_shared_predicate_authority`.
+The framework recorder positive is now
+`a_hand_written_recorder_compared_by_field_is_credited`. The
+`a_hand_written_recorder_compared_by_field_is_withheld` catalog entry below is
+its historical name. The framework suite retains the concrete/collection/count/order
+controls.
+
 Tests in `crates/ripr/src/analysis/classify/gap_admission.rs`:
 
 - `analyzer_limit_refusals_withhold_the_gap_and_name_the_test`
@@ -850,6 +1041,11 @@ Tests in `crates/ripr/src/analysis/classify/implicit_call.rs` and
 
 - `method_calls_need_a_dot_receiver_and_a_whole_name`
 - `operator_syntax_is_read_per_trait`
+- `a_scope_end_carrier_credits_the_destructor`,
+  `a_destructor_without_a_scope_end_carrier_is_never_credited`,
+  `a_vec_handle_carrier_credits_only_the_pushed_value` and
+  `a_predicate_in_a_destructor_is_never_credited`
+  (`crates/ripr/tests/sibling_effect_oracle.rs`, #10814)
 - `a_drop_impl_reached_at_scope_exit_is_withheld`,
   `an_iterator_impl_reached_through_collect_is_withheld`,
   `a_dyn_trait_method_called_on_an_untyped_receiver_is_withheld`
@@ -928,6 +1124,12 @@ Wire strings are pinned by
 and `crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose`.
 
 ## Implementation Mapping
+
+- `crates/ripr/src/analysis/classify/effect_carrier/recording.rs` establishes
+  the bounded transfer; `classifier/evidence.rs` and `classify/reveal.rs` carry
+  its assertion-local admission through the existing reveal decision.
+  Plain test-gate recognition uses `facts::cfg_predicates`, preserving the
+  shared source-role predicate authority.
 
 - `crates/ripr/src/analysis/classify/owner_pin.rs`:
   `AssertionRefusal::is_analyzer_limit`.

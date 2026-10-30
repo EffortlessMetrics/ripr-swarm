@@ -70,11 +70,22 @@ registration; the repository has not yet retained cold-session proof that
 either client completes the flow (tracked in #3092), so treat them as
 configuration, not a support claim.
 
-An agent edits the worktree, but `ripr_refresh` analyzes only the committed
-default-branch diff. Commit your edits on a branch that is ahead of the
-default branch before `ripr_refresh` (a commit on the default branch itself
-leaves an empty diff), or use `ripr check --worktree --format json` outside
-MCP.
+An agent edits the worktree, but by default `ripr_refresh` analyzes only the
+committed default-branch diff. To analyze saved staged and unstaged tracked
+edits without committing them, call `ripr_refresh` with `{"source":
+"worktree"}`; omitting `source` (or `"committed"`) keeps the committed
+default. A worktree snapshot is tagged `source: "worktree"`, discloses that
+unsaved editor buffers are outside and that it carries no consumed-source
+commitment, and withholds repair cards and repair readiness
+(`repair_packet_ready: false`, `worktree_source_not_committed`;
+`ripr_get_repair_card` refuses with `incomplete_inventory`): commit the
+change and refresh without `source` for those. Untracked files stay excluded
+until `git add -N <paths>`. The server does not watch the worktree, so
+refresh again after edits. Requested and captured source are separate facts:
+a failed worktree request keeps the last committed snapshot tagged
+committed, and the reverse. A commit on the default branch itself leaves an
+empty committed diff; `ripr check --worktree --format json` remains the
+outside-MCP route.
 
 When the repository's default branch is not `main` or `master` (for example
 `trunk`) and there is no `origin/main`, the default base cannot be resolved and
@@ -156,8 +167,8 @@ runs no tests or verification and grants no execution or edit authority.
 | Surface | Name |
 | --- | --- |
 | Tool (no arguments) | `ripr_workspace_status` |
-| Tool (`base?`) | `ripr_refresh` |
-| Tool (`snapshot_id?`, `offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
+| Tool (`base?`, `source?`) | `ripr_refresh` |
+| Tool (`snapshot_id?`, `offset?`, `omitted_offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
 | Tool (`attempt_id`) | `ripr_get_repair_attempt` |
@@ -210,7 +221,9 @@ disclose this before invocation. `ripr check` defaults to the working tree
 when staged or unstaged tracked edits exist; sharing the authority does not
 mean identical input. `ripr check --committed` selects committed input;
 `ripr check --worktree --format json` analyzes staged and unstaged tracked
-edits outside MCP. The existing response `scope` note discloses detected
+edits outside MCP, or inside MCP with the opt-in `source: "worktree"`
+(RIPR-SPEC-0211, #7357: findings only; repair cards and readiness
+withheld). The existing response `scope` note discloses detected
 excluded edits. The call blocks until the
 attempt reaches a terminal state and reports it: `completed` with the new
 snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the
@@ -231,12 +244,13 @@ zero-config language auto-enable, and a present-but-unreadable or unparseable
 config fails the attempt closed with `config_invalid`. Provider
 configuration stays unloaded.
 
-Gap-list responses use `ripr-mcp-gap-list-v3`, including typed refusals.
+Gap-list responses use `ripr-mcp-gap-list-v4`, including typed refusals.
 The prior v1 success schema forbids unknown top-level properties, so the new
 `filtered` and `filters` fields required the v2 change; v3 adds the snapshot's
 typed `outcome` block (`kind`, a plain label, and the outcome limitation
-kinds), so a `partial_with_limitations` run never reads as clean. Strict v1
-readers must rediscover `tools/list`, accept v3 explicitly and validate
+kinds), so a `partial_with_limitations` run never reads as clean; v4 adds the
+independently windowed omission disclosure (`omitted_page`, `omitted_offset`). Strict v1
+readers must rediscover `tools/list`, accept v4 explicitly and validate
 against the advertised `outputSchema`; callers may still omit all filter
 arguments.
 
@@ -249,7 +263,7 @@ validate every document the server emits:
 | Session block | `ripr-mcp-session-v1` | workspace status/session documents |
 | Snapshot block | `ripr-mcp-snapshot-v1` | snapshot resource |
 | Refresh-time attempt document | `ripr-mcp-refresh-v1` | `ripr_refresh` tool result |
-| Gap list | `ripr-mcp-gap-list-v3` | `ripr_list_gaps` result |
+| Gap list | `ripr-mcp-gap-list-v4` | `ripr_list_gaps` result |
 | Single gap | `ripr-mcp-gap-v1` | `ripr_get_gap` result |
 | Repair attempt list | `ripr-mcp-repair-attempt-list-v1` | durable attempt discovery |
 | Repair packet | `ripr-mcp-repair-packet-v1` | `ripr_prepare_repair` result |
@@ -314,10 +328,20 @@ selection exactly once. Pages are sized so the complete structured result
 under the 128-KiB response bound, including empty pages whose echoed filters
 can overflow the structured envelope while the raw document still fits.
 Those pages return the existing typed `result_too_large` refusal with the
-current snapshot identity. Only a listing that cannot fit even one
-page — an omission disclosure alone over the ceiling — fails closed with
-`result_too_large` naming `ripr://snapshot/{snapshot_id}` as the identity
-route. Other tool responses carry the document once at full fidelity:
+current snapshot identity. The omission disclosure no longer makes a listing
+unservable by itself (#9360): `omitted_items` carries at most 200 identities
+and at most 16 KiB per response (identities embed paths, so the byte budget
+is the real bound; the first entry always ships), `omitted_page` (`offset`,
+`returned`, `has_more`, `next_offset`) discloses the window, and
+`continuation.next_omitted_page` names the `ripr_list_gaps` call that reads
+the next window. Each continuation route replays the whole request, advancing
+only its own axis: `next_omitted_page` keeps the snapshot pin, filters, item
+`offset` and `limit`; `next_page` keeps the requested `omitted_offset`.
+Walking `omitted_page.next_offset` covers every omitted identity exactly
+once; a past-end `omitted_offset` is an empty disclosed window. Only a listing whose remaining non-pageable disclosure
+(for example an oversized filter echo) cannot fit even one page fails closed
+with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
+identity route. Other tool responses carry the document once at full fidelity:
 `content[0].text` is the compact JSON serialization, and
 `structuredContent` repeats it in every successful response. Each tool
 advertises an `outputSchema`, so a success never ships without its
@@ -325,6 +349,21 @@ structured copy: when the complete double-carry envelope does not fit the
 id-aware response budget, the call fails closed with the typed
 `result_too_large` refusal and that tool's recovery route (#7768) instead
 of silently dropping `structuredContent`.
+
+Single-item gap overflow uses one captured-input recovery across the raw
+document, tool envelope and resource envelope. Its CLI command retains the
+captured repository root, effective base and explicit `--committed` or
+`--worktree` source; a later failed request does not relabel that route. The
+command analyzes current repository state, not immutable snapshot bytes. CLI
+JSON remains bounded: related tests are capped and a large finding array may
+omit findings. If the complete recovery exceeds its 4096-byte recovery-text budget,
+the refusal explains that literal recovery is unavailable; it never emits a
+truncated command.
+
+Failed worktree refreshes preserve `source: "worktree"` in their MCP retry
+examples, including default-base, explicit invalid-base and configuration-repair recovery. Correct
+the base without silently changing the source. Ordinary committed requests
+retain omission semantics.
 
 `ripr_get_gap` (and the equivalent resource `ripr://gap/{canonical_id}`)
 returns one canonical item's complete bounded evidence bound to its snapshot

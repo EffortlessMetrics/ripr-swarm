@@ -1,0 +1,51 @@
+{
+  "kind": "result_map_callback_candidate_current_projection",
+  "producer_commit": "4b2b641c0f8386db473439e572e619e321fd7ae0",
+  "producer_executable_sha256": "ffbf97300047c16280c87182472e57f5ade7a74bce83c1235a5a823d5d15849e",
+  "selection": "exact candidate_current return_value map-tail finding; base_deleted findings excluded",
+  "subject_source": "use support::*;\n#[derive(Debug, PartialEq)] struct E;\nstruct Reader { fail: bool }\nimpl Reader {\n fn read(&self) -> Result<u64,E> { None }\n fn mapped(&self) -> Result<u64,E> {\n  self.read().map(|v| v + 1)\n }\n}\n#[test] fn direct_ok() { let r = Reader { fail:false }; assert_eq!(r.mapped(), Ok(8)); }",
+  "subject_source_sha256": "a1acb19c541249ae4bc29c75b81cc7713305869d453b89a1baa64d81b2f5c0a2",
+  "subject_diff": "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -7,1 +7,1 @@\n-        Ok(self.read()? + 1)\n+        self.read().map(|v| v + 1)\n",
+  "baseline_limit": "old, current and wrong callback payload subjects compile and pass; external dependency source retained below",
+  "summary": {
+    "findings": 1
+  },
+  "findings": [
+    {
+      "classification": "static_unknown",
+      "source_currentness": "candidate_current",
+      "ripr": {
+        "reach": {
+          "state": "yes",
+          "confidence": "medium",
+          "summary": "Related tests appear to reach mapped: direct_ok"
+        },
+        "infect": {
+          "state": "yes",
+          "confidence": "medium",
+          "summary": "Reachable tests can plausibly activate this changed behavior"
+        },
+        "propagate": {
+          "state": "weak",
+          "confidence": "low",
+          "summary": "No complete owner-bound propagation witness found for returned value: self.read().map(|v| v + 1)"
+        },
+        "observe": {
+          "state": "no",
+          "confidence": "medium",
+          "summary": "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"
+        },
+        "discriminate": {
+          "state": "no",
+          "confidence": "medium",
+          "summary": "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"
+        }
+      },
+      "probe": {
+        "family": "return_value",
+        "expression": "self.read().map(|v| v + 1)"
+      }
+    }
+  ],
+  "external_dependency_source": "pub struct Select<T,E>(core::marker::PhantomData<(T,E)>); pub trait Out { type Ty; } impl<T,E> Out for Select<T,E> {type Ty=Option<T>;} pub type Result<T,E>=<Select<T,E> as Out>::Ty; #[allow(non_snake_case)] pub fn Ok<T>(_:T)->Option<T>{None}"
+}

@@ -3686,6 +3686,19 @@ fn has_unescaped_quote(text: &str) -> bool {
     false
 }
 
+/// The input the missing discriminator asks for is the equality value
+/// (#11023): a strict comparison `lhs > rhs` / `lhs < rhs` describes the
+/// changed predicate, but an input "where" it holds excludes the boundary the
+/// hint is for. Spell the equality value for a simple strict comparison; any
+/// other description (`>=`, `<=`, `==`, `!=`, compound) is kept as written.
+fn equality_boundary_description(description: &str) -> String {
+    let tokens: Vec<&str> = description.split_whitespace().collect();
+    match tokens.as_slice() {
+        [lhs, ">" | "<", rhs] => format!("{lhs} == {rhs}"),
+        _ => description.to_string(),
+    }
+}
+
 fn predicate_boundary_assertion_hint(
     required: Option<&RequiredDiscriminator>,
     evidence: &TestGripEvidence,
@@ -3693,7 +3706,10 @@ fn predicate_boundary_assertion_hint(
     if let Some(RequiredDiscriminator::BoundaryValue { description }) = required
         && !description.trim().is_empty()
     {
-        return format!("boundary input where {}", description.trim());
+        return format!(
+            "boundary input where {}",
+            equality_boundary_description(description.trim())
+        );
     }
     if let Some(missing) = evidence.missing_discriminators.first()
         && !missing.value.trim().is_empty()
@@ -3706,6 +3722,57 @@ fn predicate_boundary_assertion_hint(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #11023: the hint beside "candidate value: 5 (equality boundary)" must
+    /// not describe an input that excludes 5.
+    #[test]
+    fn strict_boundary_hint_names_the_equality_value() {
+        for (description, expected) in [
+            (
+                "loyalty_years > 5",
+                "boundary input where loyalty_years == 5",
+            ),
+            ("count < limit", "boundary input where count == limit"),
+            // Operands that are negative, fractional or method calls with no
+            // inner spaces are still one token each.
+            ("x > -5", "boundary input where x == -5"),
+            ("price > 0.5", "boundary input where price == 0.5"),
+            ("v.len() > 0", "boundary input where v.len() == 0"),
+            // Not three whitespace tokens: kept as written (the hint stays
+            // advisory and never guesses a rewrite).
+            ("x>5", "boundary input where x>5"),
+            ("Vec<u8>", "boundary input where Vec<u8>"),
+            ("foo(a, b) > 0", "boundary input where foo(a, b) > 0"),
+            // Already includes or names the equality value, or is not a simple
+            // strict comparison: kept as written.
+            (
+                "amount >= threshold",
+                "boundary input where amount >= threshold",
+            ),
+            (
+                "amount <= threshold",
+                "boundary input where amount <= threshold",
+            ),
+            ("unit == 0", "boundary input where unit == 0"),
+            ("left != right", "boundary input where left != right"),
+            ("a > b && c", "boundary input where a > b && c"),
+        ] {
+            let required = RequiredDiscriminator::BoundaryValue {
+                description: description.to_string(),
+            };
+            let classified = weakly_gripped_classified();
+            let hint = predicate_boundary_assertion_hint(Some(&required), &classified.evidence);
+            assert_eq!(hint, expected, "{description}");
+        }
+        // Discriminating negative: the strict description itself must not
+        // survive into the hint, because an input where `x > 5` excludes 5.
+        let required = RequiredDiscriminator::BoundaryValue {
+            description: "x > 5".to_string(),
+        };
+        let classified = weakly_gripped_classified();
+        let hint = predicate_boundary_assertion_hint(Some(&required), &classified.evidence);
+        assert!(!hint.contains("x > 5"), "{hint}");
+    }
     use crate::agent::loop_commands::anchored_redirect_target;
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
     use crate::analysis::test_grip_evidence::{RelatedTestGrip, RelationReason, TestGripEvidence};

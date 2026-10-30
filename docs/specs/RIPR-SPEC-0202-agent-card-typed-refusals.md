@@ -166,7 +166,8 @@ typed envelope on stdout (prose on stderr):
   card human/JSON remedy parity, packet JSON message/stderr parity, and both
   repair-before renderings preserve their status and output channels. A literal
   unknown seam under the same policy retains pilot/list recovery on all three
-  commands; card and packet exit `3`, repair exits `2`. Packet without `--json` retains its argument-validation refusal.
+  commands; card, packet, and repair-before exit `3` (#10712 residual: the
+  repair-before typed refusal). Packet without `--json` retains its argument-validation refusal.
 - `crates/ripr/tests/cli_smoke.rs::agent_card_hands_off_one_seam_as_the_default_repair_card`
   extends the cold-agent refusal journey: exit code `3` and the
   parseable `agent_card_refusal` envelope on stdout under `--json`.

@@ -16,6 +16,9 @@
 //!   the operator cannot pick a different right-hand-side impl;
 //! - the test sits in the owner's own file and no scope between the test and
 //!   the file declares or renames another `T`;
+//! - `a[i]` is read as `Index::index` for a read and `IndexMut::index_mut` for
+//!   an assignment or `&mut a[i]`; a projected result (`a[i].x`), a parenthesised or destructured
+//!   place and a `ref mut` binding are credited to neither because it may borrow either way;
 //! - the operator's `Self` operand has a syntactically resolvable type `T`
 //!   (a constructor, a unit struct, a `let` annotated or built by one), is a
 //!   whole operand (not the tail of a longer expression, not behind `&`, not
@@ -41,6 +44,16 @@ struct OperatorTrait {
     method: &'static str,
     token: &'static str,
     unary: bool,
+    /// Set for `a[i]`: which of the two index traits the site reaches.
+    access: Option<IndexAccess>,
+}
+
+/// `a[i]` runs `Index::index` when it reads and `IndexMut::index_mut` when it
+/// is assigned to or mutably borrowed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum IndexAccess {
+    Read,
+    Write,
 }
 
 const fn binary(name: &'static str, method: &'static str, token: &'static str) -> OperatorTrait {
@@ -49,6 +62,7 @@ const fn binary(name: &'static str, method: &'static str, token: &'static str) -
         method,
         token,
         unary: false,
+        access: None,
     }
 }
 
@@ -58,12 +72,21 @@ const fn unary(name: &'static str, method: &'static str, token: &'static str) ->
         method,
         token,
         unary: true,
+        access: None,
     }
 }
 
-/// `Index` is left to the implicit-call abstention until its `IndexMut` twin
-/// and the `[`-after-operand grammar are read.
-const OPERATORS: [OperatorTrait; 22] = [
+const fn indexing(name: &'static str, method: &'static str, access: IndexAccess) -> OperatorTrait {
+    OperatorTrait {
+        name,
+        method,
+        token: "[",
+        unary: false,
+        access: Some(access),
+    }
+}
+
+const OPERATORS: [OperatorTrait; 24] = [
     binary("Add", "add", "+"),
     binary("Sub", "sub", "-"),
     binary("Mul", "mul", "*"),
@@ -86,6 +109,8 @@ const OPERATORS: [OperatorTrait; 22] = [
     binary("ShrAssign", "shr_assign", ">>="),
     unary("Neg", "neg", "-"),
     unary("Not", "not", "!"),
+    indexing("Index", "index", IndexAccess::Read),
+    indexing("IndexMut", "index_mut", IndexAccess::Write),
 ];
 
 /// The operator reading of an owner.
@@ -94,6 +119,7 @@ pub(super) struct OperatorOwner<'a> {
     impl_type: &'a str,
     token: &'static str,
     unary: bool,
+    access: Option<IndexAccess>,
     /// File-level refusals are the same for every test of the owner's file,
     /// so they are computed once per owner on first use.
     file_level_clear: std::cell::OnceCell<bool>,
@@ -152,6 +178,7 @@ pub(super) fn operator_owner<'a>(
         impl_type,
         token: row.token,
         unary: row.unary,
+        access: row.access,
         file_level_clear: std::cell::OnceCell::new(),
     })
 }
@@ -180,46 +207,79 @@ pub(super) fn test_applies_operator_to_owner(
             .collect();
     let stringified = stringified_ranges(&masked);
     let returns_self = |name: &str| associated_fn_returns_self(index, impl_type, name);
-    let reaching = operator_positions(&masked, operator.token, !operator.unary)
-        .into_iter()
-        .filter(|site| !opaque.iter().any(|range| range.contains(&site.at)))
-        .filter(|site| !stringified.iter().any(|range| range.contains(&site.at)))
-        // A result thrown away cannot reach an assertion.
-        .filter(|site| result_is_used(&masked, site.at))
-        // `>>` and `<<` also close and open generic arguments; no other
-        // operator is read that way.
-        .filter(|site| {
-            !matches!(operator.token, "<<" | ">>") || !in_generic_arguments(&masked, site.at)
-        })
-        .any(|site| {
-            let operand = if operator.unary {
-                operand_after(&masked, site.at + site.len)
-            } else {
-                operand_before(&masked, site.at)
-            };
-            operand.is_some_and(|(start, text)| {
-                !bound_as_parameter_or_pattern(&masked, text)
-                    && !is_reference_operand(text, &masked[..start])
-                    && operand_has_type(text, impl_type, &masked[..start], &returns_self)
+    let reaching = if let Some(access) = operator.access {
+        operator_positions(&masked, "[", true)
+            .into_iter()
+            .filter(|site| !opaque.iter().any(|range| range.contains(&site.at)))
+            .filter(|site| !stringified.iter().any(|range| range.contains(&site.at)))
+            .any(|site| {
+                let Some(operand) = index_operand(&masked, site.at) else {
+                    return false;
+                };
+                !bound_as_parameter_or_pattern(&masked, operand.text)
+                    && operand_has_type(
+                        operand.text,
+                        impl_type,
+                        &masked[..operand.start],
+                        &returns_self,
+                    )
+                    && index_access(&masked, site.at, operand.mut_borrowed) == Some(access)
+                    // A read whose value is thrown away cannot reach an
+                    // assertion; a write changes its operand regardless.
+                    && (access == IndexAccess::Write || result_is_used(&masked, site.at))
             })
-        });
+    } else {
+        operator_positions(&masked, operator.token, !operator.unary)
+            .into_iter()
+            .filter(|site| !opaque.iter().any(|range| range.contains(&site.at)))
+            .filter(|site| !stringified.iter().any(|range| range.contains(&site.at)))
+            // A result thrown away cannot reach an assertion.
+            .filter(|site| result_is_used(&masked, site.at))
+            // `>>` and `<<` also close and open generic arguments; no other
+            // operator is read that way.
+            .filter(|site| {
+                !matches!(operator.token, "<<" | ">>") || !in_generic_arguments(&masked, site.at)
+            })
+            .any(|site| {
+                let operand = if operator.unary {
+                    operand_after(&masked, site.at + site.len)
+                } else {
+                    operand_before(&masked, site.at)
+                };
+                operand.is_some_and(|(start, text)| {
+                    !bound_as_parameter_or_pattern(&masked, text)
+                        && !is_reference_operand(text, &masked[..start])
+                        && operand_has_type(text, impl_type, &masked[..start], &returns_self)
+                })
+            })
+    };
     if !reaching || !type_scope_is_clear(test, owner, source, impl_type, index) {
         return false;
     }
-    *operator.file_level_clear.get_or_init(|| {
-        let masked = mask_comments_and_strings(source);
-        // A `macro_rules!` may expand to a second impl of the operator trait
-        // that the index never sees, so the unique-impl count proves nothing.
-        !masked.contains("macro_rules!")
-            && !imports_other_type(&masked, impl_type, &owner.file)
-            && !workspace_macro_may_generate_impls(index)
-    })
+    *operator
+        .file_level_clear
+        .get_or_init(|| file_is_clear(source, owner, impl_type, index))
+}
+
+/// File-level refusals shared by every implicit-call reading: a `macro_rules!`
+/// may expand to a second impl of the trait that the index never sees, so the
+/// unique-impl count proves nothing, and an import may rename the type.
+pub(super) fn file_is_clear(
+    source: &str,
+    owner: &FunctionSummary,
+    impl_type: &str,
+    index: &RustIndex,
+) -> bool {
+    let masked = mask_comments_and_strings(source);
+    !masked.contains("macro_rules!")
+        && !imports_other_type(&masked, impl_type, &owner.file)
+        && !workspace_macro_may_generate_impls(index)
 }
 
 /// Whether any workspace file defines a `macro_rules!` that expands to an
 /// `impl`. Invoked in the owner's file (through `#[macro_use]` or a path
 /// import), it can generate a second operator impl the index never sees.
-fn workspace_macro_may_generate_impls(index: &RustIndex) -> bool {
+pub(super) fn workspace_macro_may_generate_impls(index: &RustIndex) -> bool {
     index.files().values().any(|facts| {
         let source = facts.data().source.as_ref();
         source.contains("macro_rules!") && {
@@ -234,7 +294,7 @@ fn workspace_macro_may_generate_impls(index: &RustIndex) -> bool {
 /// `&` because equality and formatting compare through references, but an
 /// operator picks the impl by the operand's exact type: `&a + &b` runs
 /// `impl Add<&T> for &T`, never the owned impl this relation credits.
-fn is_reference_operand(operand: &str, before: &str) -> bool {
+pub(super) fn is_reference_operand(operand: &str, before: &str) -> bool {
     let operand = operand.trim();
     if operand.starts_with('&') {
         return true;
@@ -330,7 +390,7 @@ pub(in crate::analysis::classify) fn stringified_ranges(
 /// Whether the bare identifier `operand` is also bound as a parameter, closure
 /// parameter, `for` or enum-payload pattern somewhere in the body, so the
 /// single `let` that types it may not be the value at the site.
-fn bound_as_parameter_or_pattern(masked: &str, operand: &str) -> bool {
+pub(super) fn bound_as_parameter_or_pattern(masked: &str, operand: &str) -> bool {
     if operand.is_empty() || !operand.bytes().all(is_ident_byte) {
         return false;
     }
@@ -399,7 +459,14 @@ fn starts_like_ident(text: &str) -> bool {
 /// body, or after `(`, `,`, `{`, `;` or a plain `=`). `a * b + c` gives no
 /// operand for `+`, `&m + n` and `x.y + n` give none either. Returns the
 /// operand's start offset and text.
-fn operand_before(masked: &str, op_at: usize) -> Option<(usize, &str)> {
+pub(super) fn operand_before(masked: &str, op_at: usize) -> Option<(usize, &str)> {
+    let (start, end) = operand_span(masked, op_at)?;
+    stands_alone(&masked[..start]).then_some((start, &masked[start..end]))
+}
+
+/// The path (with at most one trailing group) ending just before `op_at`, as
+/// byte offsets, whatever precedes it.
+fn operand_span(masked: &str, op_at: usize) -> Option<(usize, usize)> {
     let head = masked[..op_at].trim_end();
     let bytes = head.as_bytes();
     let end = head.len();
@@ -414,10 +481,81 @@ fn operand_before(masked: &str, op_at: usize) -> Option<(usize, &str)> {
     while start > 0 && is_path_byte(bytes[start - 1]) {
         start -= 1;
     }
-    if start == path_end || !starts_like_ident(&head[start..]) {
+    (start != path_end && starts_like_ident(&head[start..])).then_some((start, end))
+}
+
+/// The value an `a[i]` site indexes.
+struct IndexOperand<'a> {
+    start: usize,
+    text: &'a str,
+    /// Written `&mut a[i]`.
+    mut_borrowed: bool,
+}
+
+/// The whole operand before the `[` at `at`. Indexing auto-dereferences, so a
+/// leading `&` or `&mut` does not change which impl runs and is allowed; any
+/// other prefix, a field (`x.items[i]`) or a method chain is not a whole
+/// operand.
+fn index_operand(masked: &str, at: usize) -> Option<IndexOperand<'_>> {
+    let (start, end) = operand_span(masked, at)?;
+    let before = masked[..start].trim_end();
+    let (mut_borrowed, rest) = match before.strip_suffix("&mut") {
+        Some(rest) => (true, rest),
+        None => (false, before.strip_suffix('&').unwrap_or(before)),
+    };
+    stands_alone(rest).then_some(IndexOperand {
+        start,
+        text: &masked[start..end],
+        mut_borrowed,
+    })
+}
+
+/// Which index trait the `[` at `at` runs: `IndexMut` for an assignment,
+/// compound assignment or `&mut a[i]`, `Index` for a plain read, and neither
+/// when the result is projected further (`a[i].x`, `a[i][j]`, `a[i].len()`),
+/// because method and field access may auto-borrow either way.
+fn index_access(masked: &str, at: usize, mut_borrowed: bool) -> Option<IndexAccess> {
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    let close = bytes[at..].iter().position(|&byte| {
+        match byte {
+            b'[' => depth += 1,
+            b']' => depth -= 1,
+            _ => {}
+        }
+        depth == 0
+    })? + at;
+    let after = masked[close + 1..].trim_start();
+    if after.starts_with(['.', '[', '(', '{']) {
         return None;
     }
-    stands_alone(&head[..start]).then_some((start, &head[start..end]))
+    // A site inside a parenthesised or destructured place (`(m[0]).x = 1`,
+    // `(m[0], m[1]) = ..`) or beside a `ref mut` binding is a mutable place
+    // whatever follows the `]`, so only a plainly read position is credited.
+    let statement = masked[..at]
+        .rsplit([';', '{', '}'])
+        .next()
+        .unwrap_or_default()
+        .trim_start();
+    if statement.starts_with('(')
+        || (!mut_borrowed && statement.contains("&mut"))
+        || statement
+            .split(|ch: char| !ch.is_alphanumeric() && ch != '_')
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|pair| pair == ["ref", "mut"])
+    {
+        return None;
+    }
+    let assigns = (after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>"))
+        || ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="]
+            .iter()
+            .any(|op| after.starts_with(op));
+    Some(if assigns || mut_borrowed {
+        IndexAccess::Write
+    } else {
+        IndexAccess::Read
+    })
 }
 
 /// The whole operand starting just after a unary operator: a path with at

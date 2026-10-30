@@ -498,6 +498,30 @@ pub(in crate::analysis::classify) fn pinned_run_sums_to_nonzero(
     position: usize,
     expected: &str,
 ) -> bool {
+    pinned_run_accepts(
+        test,
+        loan,
+        call_text,
+        name,
+        position,
+        expected,
+        &|elements, want| !elements.is_empty() && nonzero_integer_literal(want),
+    )
+}
+
+/// [`pinned_run_sums_to_nonzero`] with the per-run judgment supplied: some
+/// run of the pinned call, read as a literal element sequence and a literal
+/// expected value, must satisfy `accept`. A run ripr cannot read as both is
+/// never offered to `accept` (fail closed).
+pub(in crate::analysis::classify) fn pinned_run_accepts(
+    test: &TestSummary,
+    loan: Option<&HelperLoan>,
+    call_text: &str,
+    name: &str,
+    position: usize,
+    expected: &str,
+    accept: &dyn Fn(&[String], &str) -> bool,
+) -> bool {
     let Some(argument) =
         call_argument_texts(call_text, name).and_then(|arguments| arguments.get(position).cloned())
     else {
@@ -506,14 +530,13 @@ pub(in crate::analysis::classify) fn pinned_run_sums_to_nonzero(
     let expected = expected.trim();
     match loan {
         None if literal_sequence(&argument).is_some() => {
-            literal_sequence(&argument).is_some_and(|elements| !elements.is_empty())
-                && nonzero_integer_literal(expected)
+            literal_sequence(&argument).is_some_and(|elements| accept(&elements, expected))
         }
         // A constant-row table (`for (xs, want) in [(&[3, 4], 7), ..]`) runs
         // the call once per row: some row must walk a non-empty sequence and
         // pin a nonzero literal in the same row. Both columns must be
         // readable constant-row cells of one table, or the pin refuses.
-        None => table_row_sums_to_nonzero(test, call_text, &argument, expected),
+        None => table_row_accepts(test, call_text, &argument, expected, accept),
         Some(loan) => {
             let parameter =
                 |text: &str| loan.parameters.iter().position(|name| name == text.trim());
@@ -541,23 +564,25 @@ pub(in crate::analysis::classify) fn pinned_run_sums_to_nonzero(
                 arguments
                     .get(walked)
                     .and_then(|sequence| literal_sequence(sequence))
-                    .is_some_and(|elements| !elements.is_empty())
-                    && pinned.is_some_and(|value| nonzero_integer_literal(value.trim()))
+                    .is_some_and(|elements| {
+                        pinned.is_some_and(|value| accept(&elements, value.trim()))
+                    })
             })
         }
     }
 }
 
-/// [`pinned_run_sums_to_nonzero`] through one constant-row table: both the
+/// [`pinned_run_accepts`] through one constant-row table: both the
 /// walked argument and the expected value are plain identifiers bound by the
 /// same table loop, and some row pairs a non-empty literal sequence with a
 /// nonzero integer literal. A short row, a cell that is not a literal and a
 /// loop that can leave early have no column, so the pin refuses.
-fn table_row_sums_to_nonzero(
+fn table_row_accepts(
     test: &TestSummary,
     call_text: &str,
     argument: &str,
     expected: &str,
+    accept: &dyn Fn(&[String], &str) -> bool,
 ) -> bool {
     let (argument, expected) = (argument.trim(), expected.trim());
     if !super::is_plain_identifier(argument) || !super::is_plain_identifier(expected) {
@@ -584,7 +609,7 @@ fn table_row_sums_to_nonzero(
             .collect::<Option<Vec<_>>>()
             .is_some_and(|rows| {
                 rows.iter()
-                    .any(|(elements, want)| !elements.is_empty() && nonzero_integer_literal(want))
+                    .any(|(elements, want)| accept(elements, want.as_str()))
             })
 }
 

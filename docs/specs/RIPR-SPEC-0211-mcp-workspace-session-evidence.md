@@ -171,6 +171,57 @@ official SDK transport:
   typed failures and never become snapshots; `partial_with_limitations`
   commits with its typed limitations so complete-zero and incomplete-zero
   remain distinct.
+- `ripr_refresh` takes one more optional argument, `source` (#7357), with
+  the closed values `committed` and `worktree`. Omission and `committed`
+  are the same request and keep every behavior and identity above. A value
+  outside the closed set, including an empty string, a different case, a
+  non-string or an explicit null, is Invalid Params (`-32602`); nothing is
+  coerced. `worktree` routes the same attempt through the shared
+  `check_workspace_worktree_with_config` producer: the diff from the
+  resolved (or explicit) base to the saved working tree, covering staged
+  and unstaged tracked edits. Unsaved editor buffers are outside, and
+  untracked files stay excluded unless the existing intent-to-add
+  mechanism (`git add -N <paths>`) makes them visible; the scope
+  disclosure names them with that remedy. The server adds no Git or
+  worktree digest of its own and still does not watch the worktree.
+  - Requested and captured source are distinct facts. The session records
+    the requested source when an attempt starts
+    (`session.current_desired_input.source: "worktree"`, emitted only for a
+    worktree request); each snapshot records the source it was captured
+    under. The refresh result adds `requested_source` and `captured_source`
+    (`null` before any snapshot) once a worktree source is requested or
+    captured, and snapshot summaries (`snapshot`, `last_completed_snapshot`,
+    `last_known_good`) add `source: "worktree"` for a worktree capture.
+    A failed attempt keeps the last-known-good snapshot with its own tag: a
+    failed worktree request never relabels a retained committed snapshot,
+    and a failed committed request never relabels a retained worktree one.
+    Source-less callers see the unchanged v1 shapes.
+  - The source kind is part of a worktree snapshot's identity (the committed
+    identity payload is unchanged, so existing committed identities do not
+    move). Equal findings captured under a committed and a worktree source
+    are different snapshots, so a snapshot id pinned before a switch fails
+    `stale_snapshot` after it and a committed -> worktree -> committed
+    sequence cannot reuse the other kind's result. The identity is as strong
+    as the producer's outcome identity (a diff-byte commitment) plus the
+    canonical items; it is not a complete consumed-source commitment.
+  - A worktree snapshot discloses that limit instead of claiming
+    currentness: its `scope` always exists, with `analyzed` naming the
+    saved tracked-worktree diff, `uncommitted_edits: "saved tracked edits
+    included"`, `consumed_source_commitment: "not_established"` and
+    `repair_cards: "withheld"`. Because no consumed-source commitment spans
+    the findings and the later live-file seam inventory, a worktree refresh
+    gathers no inventory and binds no card producers: every item's
+    `repair_packet_ready` is false. Otherwise-ready items receive the typed
+    `worktree_source_not_committed` reason; existing finding-level refusal
+    reasons retain precedence. `ripr_prepare_repair` therefore creates no
+    attempt, and `ripr_get_repair_card` refuses with the
+    existing `incomplete_inventory` code and a detail naming the
+    tracked-worktree source. Findings, list and gap evidence are served as
+    for a committed snapshot. Committing the change and refreshing without
+    `source` restores cards and readiness. Establishing worktree repair
+    cards, same-HEAD edit invalidation by consumed bytes and
+    source-movement-between-producers controls remain open under #7357's
+    producer-seam prerequisites (#1765 / #1602).
 - The snapshot identity is `snapshot:sha256:` over the typed outcome digest,
   the sorted canonical item identities, and each item's evidence digest:
   equivalent roots at equivalent inputs share one portable identity, while
@@ -204,7 +255,12 @@ official SDK transport:
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
   limit; replay cannot cross a completed refresh that replaced the snapshot.
-- Gap-list success and refusal documents use `ripr-mcp-gap-list-v3`.
+- Gap-list success and refusal documents use `ripr-mcp-gap-list-v4`.
+  v4 adds `omitted_page` and the `omitted_offset` argument (#9360): the
+  omission disclosure pages on its own axis, at most 200 identities and 16 KiB per response, so
+  a large truncated selection no longer fails the listing with
+  `result_too_large`. `continuation.next_omitted_page` replays the snapshot pin, filters, item
+  window and limit, and `next_page` keeps `omitted_offset`; walking `omitted_page.next_offset` covers every omission once.
   The former v1 success schema closed its top level with
   `additionalProperties: false`, so adding `filtered` and `filters` cannot
   retain strict v1 compatibility. Clients must rediscover `tools/list`, accept
@@ -468,6 +524,13 @@ unknown route into a recognized one.
 
 ## Test Mapping
 
+- `crates/ripr/src/mcp/workspace.rs::tests::omission_disclosure_pages_independently_of_items`
+  — with more omitted identities than one window, each response carries at
+  most 200, `omitted_page`/`continuation.next_omitted_page` walk every
+  omission exactly once, and a past-end window is empty and closed (#9360).
+  `long_omitted_identities_are_byte_fitted_and_fully_walked` and
+  `continuation_routes_preserve_the_other_axis` pin the byte budget and the
+  two-axis replay.
 - `crates/ripr/src/mcp/workspace.rs::tests::status_serves_per_language_completeness_from_the_view`
   and `status_without_a_view_keeps_the_unchanged_shape` — literal
   `language_completeness` rows and absence without a view.
@@ -602,3 +665,18 @@ unknown route into a recognized one.
   snapshot resource)
 - zero committed snapshots for `unsupported_input` / `analysis_failed`
   outcomes (negative invariant)
+
+## Source-preserving recovery follow-up (#10799)
+
+Single-gap overflow recovery is captured with its evidence snapshot and reused
+at the raw-document, tool-envelope and resource-envelope boundaries. The CLI
+renderer binds the captured root, effective base and explicit source; a newer
+failed request cannot relabel it. The route is a bounded current-state rerun,
+not immutable replay. The 4096-byte recovery-text budget refuses an oversized complete route
+with an explicit non-command limitation rather than truncating executable text.
+
+For failed saved-worktree refresh, MCP retry examples retain the requested
+worktree source when the operator corrects or omits a base. Discovery states
+the committed default separately from opt-in saved tracked edits. Unsaved and
+untracked exclusions, withheld worktree cards/readiness and the consumed-source
+commitment limitation remain unchanged.
