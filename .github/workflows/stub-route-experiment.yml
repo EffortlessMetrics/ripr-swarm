@@ -1,0 +1,285 @@
+name: Stub route repair experiment (non-shipping)
+run-name: Bounded non-boundary stub lookup repair
+on:
+  push:
+    branches: [codex/8547-sample-latency-proof]
+    paths: [.github/workflows/stub-route-experiment.yml]
+permissions:
+  contents: read
+concurrency:
+  group: stub-route-repair-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      BASE: d8ba02c0cdd0b5920ec9ca99e25a7b1638d736f7
+      CANDIDATE: codex/8547-nonboundary-stub-lookup
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: codex/8547-nonboundary-stub-lookup
+          path: candidate
+          fetch-depth: 2
+      - uses: actions/checkout@v6
+        with:
+          ref: d8ba02c0cdd0b5920ec9ca99e25a7b1638d736f7
+          path: subject
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.95.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: candidate -> target
+          shared-key: ripr-swarm-rust-small-${{ runner.os }}
+          save-if: 'false'
+      - name: Bind one-writer candidate and immutable analysis inputs
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/stub-route-repair"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          mkdir -p "$EVIDENCE"
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test -z "$(git status --porcelain)"
+          test "$(git -C ../subject rev-parse HEAD)" = "$BASE"
+          test -z "$(git -C ../subject status --porcelain)"
+          {
+            printf 'controller=%s\nbase=%s\ncandidate_branch=%s\nrun=%s\n' "$GITHUB_SHA" "$BASE" "$CANDIDATE" "$GITHUB_RUN_ID"
+            rustc +1.95.0 -Vv
+            nproc
+            free -h
+            df -h .
+          } > "$EVIDENCE/identity.txt"
+      - name: Establish exact-base compilation and retain complete JSON control
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          cargo +1.95.0 fmt --all -- --check > "$EVIDENCE/base-format.stdout" 2> "$EVIDENCE/base-format.stderr"
+          timeout --signal=TERM --kill-after=30s 1500s cargo +1.95.0 build --locked -p ripr --bin ripr > "$EVIDENCE/base-build.stdout" 2> "$EVIDENCE/base-build.stderr"
+          printf 'base_format=0\nbase_build=0\n' >> "$EVIDENCE/status.txt"
+          export BINARY="$PWD/target/debug/ripr"
+          (cd ../subject && RIPR_CACHE_DIR="$EVIDENCE/base-cache" timeout --signal=TERM --kill-after=5s 30s "$BINARY" check --diff crates/ripr/examples/sample/example.diff --format json > "$EVIDENCE/base-sample.json" 2> "$EVIDENCE/base-sample.stderr")
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads((Path(os.environ['EVIDENCE']) / 'base-sample.json').read_text())
+          assert report['analysis_outcome']['analysis_complete'] is True
+          assert report['summary']['findings'] == 4
+          assert any(item['probe']['family'] == 'error_path' for item in report['findings'])
+          PY
+          git diff --exit-code
+      - name: Add lookup-count regression before changing production
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/ripr/src/app/test_stub.rs')
+          text = path.read_text()
+          anchor = '    #[test]\n    fn at_selector_refuses_a_suffix_that_names_two_files_with_gaps() {'
+          assert text.count(anchor) == 1
+          test = r'''
+              #[cfg(feature = "lang-rust")]
+              #[test]
+              fn non_boundary_check_stub_route_skips_boundary_only_inventory() -> Result<(), String> {
+                  let source = "#[derive(Debug, PartialEq)]\npub enum InvoiceError { Other, InvalidCurrency }\npub fn validate_currency(currency: &str) -> Result<(), InvoiceError> {\n    if currency == \"USD\" { Ok(()) } else { Err(InvoiceError::InvalidCurrency) }\n}\n";
+                  let root = scratch_stub_crate("non-boundary-inventory", source)?;
+                  let checks = (|| -> Result<(), String> {
+                      let diff = root.join("change.patch");
+                      std::fs::write(
+                          &diff,
+                          "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4 +4 @@\n-    if currency == \"USD\" { Ok(()) } else { Err(InvoiceError::Other) }\n+    if currency == \"USD\" { Ok(()) } else { Err(InvoiceError::InvalidCurrency) }\n",
+                      ).map_err(|error| error.to_string())?;
+                      let output = crate::app::check_workspace(crate::app::CheckInput {
+                          root: root.clone(),
+                          diff_file: Some(diff),
+                          ..Default::default()
+                      })?;
+                      let finding = output.findings.iter().find(|finding| {
+                          finding.probe.family.as_str() == "error_path"
+                              && finding.class != ExposureClass::Exposed
+                      }).ok_or("fixture must yield a non-exposed error-path finding")?;
+                      let previous = INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.replace(0));
+                      let route = stub_route_for_finding(&root, &RiprConfig::default(), finding, &mut None);
+                      let calls = INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.replace(previous));
+                      let route = route.ok_or("error-path subject must retain a route decision")?;
+                      assert_eq!(route.finding_id, finding.id);
+                      assert!(matches!(route.decision, StubRouteDecision::Stub { kind: "error_path", .. } | StubRouteDecision::Refused { .. }));
+                      assert_eq!(calls, 0, "non-boundary guidance must not build classified inventory");
+                      assert_eq!(std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?, source);
+                      Ok(())
+                  })();
+                  let cleanup = std::fs::remove_dir_all(root);
+                  checks?;
+                  cleanup.map_err(|error| error.to_string())
+              }
+
+          '''
+          path.write_text(text.replace(anchor, test + anchor, 1))
+          PY
+          cargo +1.95.0 fmt --all
+          git diff > "$EVIDENCE/regression-only.patch"
+          set +e
+          timeout --signal=TERM --kill-after=30s 1500s cargo +1.95.0 test --locked -p ripr --lib non_boundary_check_stub_route_skips_boundary_only_inventory -- --nocapture > "$EVIDENCE/red.stdout" 2> "$EVIDENCE/red.stderr"
+          code=$?
+          set -e
+          echo "red_exit=$code" >> "$EVIDENCE/status.txt"
+          test "$code" = 101
+          grep -F 'non-boundary guidance must not build classified inventory' "$EVIDENCE/red.stderr"
+          grep -F 'test result: FAILED. 0 passed; 1 failed;' "$EVIDENCE/red.stdout"
+      - name: Add shared necessary-condition guard and commit the candidate
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          owner = Path('crates/ripr/src/analysis/repair_route.rs')
+          text = owner.read_text()
+          anchor = '/// The seam-side twin of `check`\'s boundary-observed weak-oracle gate'
+          assert text.count(anchor) == 1
+          helper = '''/// A necessary condition for boundary-observed weak-oracle guidance.
+          /// Check's stub navigation needs no classified lookup when the seam kind
+          /// cannot yield this guidance; the full evidence gate remains below.
+          pub(crate) fn boundary_weak_oracle_guidance_possible(kind: SeamKind) -> bool {
+              kind == SeamKind::PredicateBoundary
+          }
+
+          '''
+          text = text.replace(anchor, helper + anchor, 1)
+          old = '    if entry.seam.kind() != SeamKind::PredicateBoundary\n'
+          assert text.count(old) == 1
+          text = text.replace(old, '    if !boundary_weak_oracle_guidance_possible(entry.seam.kind())\n', 1)
+          owner.write_text(text)
+          path = Path('crates/ripr/src/app/test_stub.rs')
+          text = path.read_text()
+          old = '    if resolution.weak_oracle_guidance.is_none() {\n'
+          assert text.count(old) == 1
+          new = '''    // #8547: the selected non-boundary route cannot consume this
+              // boundary-only guidance. Do not classify its workspace to derive None.
+              // The standalone stub command still performs its grip-class lookup.
+              if resolution.weak_oracle_guidance.is_none()
+                  && analysis::seam_kind_for_probe_family(kind)
+                      .is_some_and(analysis::repair_route::boundary_weak_oracle_guidance_possible)
+              {
+          '''
+          path.write_text(text.replace(old, new, 1))
+          fragment = Path('changelog.d/8547-non-boundary-stub-lookup.md')
+          assert not fragment.exists()
+          fragment.write_text('<!-- section: Fixed -->\n- Human check output avoids a classified-inventory lookup for non-boundary test-stub routes when the lookup can only supply predicate-boundary guidance; analysis scope and boundary guidance are unchanged (#8547).\n')
+          PY
+          cargo +1.95.0 fmt --all
+          git diff --check
+          git add crates/ripr/src/analysis/repair_route.rs crates/ripr/src/app/test_stub.rs changelog.d/8547-non-boundary-stub-lookup.md
+          test "$(git diff --cached --name-only | wc -l)" = 3
+          git config user.name 'Effortless Metrics automation'
+          git config user.email '15812269+EffortlessSteven@users.noreply.github.com'
+          git commit -m 'perf(check): skip impossible boundary-guidance inventory for other stub kinds (#8547)'
+          git rev-parse HEAD > "$EVIDENCE/candidate-sha.txt"
+          git rev-parse HEAD^{tree} > "$EVIDENCE/candidate-tree.txt"
+          git diff "$BASE" HEAD > "$EVIDENCE/candidate.patch"
+      - name: Qualify actual candidate source and preserved boundary controls
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          run() {
+            local name="$1"; shift
+            set +e
+            timeout --signal=TERM --kill-after=30s 1500s "$@" > "$EVIDENCE/$name.stdout" 2> "$EVIDENCE/$name.stderr"
+            local code=$?
+            set -e
+            echo "$name exit=$code" | tee -a "$EVIDENCE/status.txt"
+            if [ "$code" -ne 0 ]; then tail -n 80 "$EVIDENCE/$name.stdout" "$EVIDENCE/$name.stderr"; return "$code"; fi
+          }
+          run formatting cargo +1.95.0 fmt --all -- --check
+          run stub-tests cargo +1.95.0 test --locked -p ripr --lib app::test_stub -- --nocapture
+          run weak-oracle-tests cargo +1.95.0 test --locked -p ripr --lib weak_oracle -- --nocapture
+          run clippy cargo +1.95.0 clippy --locked -p ripr --all-targets -- -D warnings
+          run cli-build cargo +1.95.0 build --locked -p ripr --bin ripr
+          grep -E 'test .*non_boundary_check_stub_route_skips_boundary_only_inventory \.\.\. ok' "$EVIDENCE/stub-tests.stdout"
+          grep -E 'test .*limited_journey_hidden_unique_stub_is_not_projected \.\.\. ok' "$EVIDENCE/stub-tests.stdout"
+          git diff --exit-code
+      - name: Measure complete full-root reports and compare findings
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, signal, subprocess, time
+          from pathlib import Path
+          evidence = Path(os.environ['EVIDENCE'])
+          root = Path(os.environ['GITHUB_WORKSPACE']) / 'subject'
+          binary = Path.cwd() / 'target/debug/ripr'
+          baseline = json.loads((evidence / 'base-sample.json').read_text())
+          rows = []
+          for output_format in ['human', 'human-full', 'json']:
+              cache = evidence / ('cache-' + output_format)
+              cache.mkdir()
+              for repeat in range(2):
+                  stem = f'candidate-{output_format}-{repeat}'
+                  argv = [str(binary), 'check', '--diff', 'crates/ripr/examples/sample/example.diff', '--format', output_format]
+                  started = time.perf_counter()
+                  with (evidence / (stem + '.stdout')).open('wb') as stdout, (evidence / (stem + '.stderr')).open('wb') as stderr:
+                      child = subprocess.Popen(argv, cwd=root, env=dict(os.environ, RIPR_CACHE_DIR=str(cache)), stdout=stdout, stderr=stderr, start_new_session=True)
+                      stopped = False
+                      try:
+                          code = child.wait(timeout=30)
+                      except subprocess.TimeoutExpired:
+                          stopped = True
+                          os.killpg(child.pid, signal.SIGTERM)
+                          try: code = child.wait(timeout=5)
+                          except subprocess.TimeoutExpired:
+                              os.killpg(child.pid, signal.SIGKILL)
+                              code = child.wait()
+                  row = {'format': output_format, 'repeat': repeat, 'elapsed_seconds': time.perf_counter()-started, 'external_stop': stopped, 'exit_code': code, 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'cache_condition': 'empty-ripr-cache' if repeat == 0 else 'repeat', 'os_page_cache': 'uncontrolled'}
+                  data = (evidence / (stem + '.stdout')).read_bytes()
+                  row.update(stdout_bytes=len(data), stdout_sha256=hashlib.sha256(data).hexdigest())
+                  if output_format == 'json' and not stopped and code == 0:
+                      report = json.loads(data)
+                      row['analysis_complete'] = report['analysis_outcome']['analysis_complete']
+                      row['findings_identical'] = report['findings'] == baseline['findings']
+                      row['summary_identical'] = report['summary'] == baseline['summary']
+                      row['outcome_identical'] = report['analysis_outcome'] == baseline['analysis_outcome']
+                  rows.append(row)
+                  (evidence / 'timings.json').write_text(json.dumps(rows, indent=2) + '\n')
+                  print(json.dumps(row), flush=True)
+                  assert not stopped and code == 0 and data, 'candidate did not complete the full-root sample'
+                  if output_format == 'json':
+                      assert row['analysis_complete'] and row['findings_identical'] and row['summary_identical'] and row['outcome_identical'], 'changed analysis evidence'
+          PY
+          git -C ../subject diff --exit-code
+      - name: Publish only the verified ordinary candidate branch
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          remote_head=$(git ls-remote --heads origin "refs/heads/$CANDIDATE" | cut -f1)
+          test "$remote_head" = "$BASE"
+          test -z "$(git status --porcelain)"
+          git push origin "HEAD:refs/heads/$CANDIDATE"
+          test "$(git ls-remote --heads origin "refs/heads/$CANDIDATE" | cut -f1)" = "$(git rev-parse HEAD)"
+          echo 'ordinary_candidate_push=verified' >> "$EVIDENCE/status.txt"
+      - name: Retain all proof and candidate source, including failures
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/stub-route-repair/source"
+          cp candidate/crates/ripr/src/app/test_stub.rs "$RUNNER_TEMP/stub-route-repair/source/test_stub.rs"
+          cp candidate/crates/ripr/src/analysis/repair_route.rs "$RUNNER_TEMP/stub-route-repair/source/repair_route.rs"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: stub-route-repair-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/stub-route-repair/*.txt
+            ${{ runner.temp }}/stub-route-repair/*.json
+            ${{ runner.temp }}/stub-route-repair/*.patch
+            ${{ runner.temp }}/stub-route-repair/*.stdout
+            ${{ runner.temp }}/stub-route-repair/*.stderr
+            ${{ runner.temp }}/stub-route-repair/source/*
+          if-no-files-found: error
+          retention-days: 14
