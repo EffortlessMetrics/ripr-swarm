@@ -155,7 +155,14 @@ fn summary_md(entries: &[ClassifiedSeam], max_seams: usize) -> String {
     let artifacts = pilot_artifacts();
     let mut context = pilot_context(&artifacts);
     context.max_seams = max_seams;
-    render_pilot_summary_md(entries, context)
+    let before = crate::git::test_process_spawns();
+    let standalone = render_pilot_summary_md(entries, context);
+    let (markdown, _) = render_pilot_human_summaries(entries, context);
+    assert_eq!(markdown, standalone);
+    // These spec fixtures propose tests/ targets or no repair route. Rendering
+    // them with root="." must not pay for any Git observation (#10037).
+    assert_eq!(crate::git::test_process_spawns() - before, 0);
+    markdown
 }
 
 /// The Markdown ranked list from its first entry on, so a note can be placed

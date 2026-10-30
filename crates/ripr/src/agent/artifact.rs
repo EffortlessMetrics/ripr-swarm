@@ -62,14 +62,17 @@ pub(crate) struct RepoExposureArtifactContext {
     /// Full Rust inventory provenance supplied by that analysis, never
     /// computed by artifact serialization or inferred from these seams.
     pub(crate) corpus_key: Option<crate::analysis::seam_cache::RepoSeamCacheKey>,
+    pub(crate) analyzed_production_files: Option<Vec<PathBuf>>,
 }
 
 impl RepoExposureArtifactContext {
-    pub(crate) fn with_rust_corpus_key(
+    pub(crate) fn with_rust_inventory(
         mut self,
         key: Option<&crate::analysis::seam_cache::RepoSeamCacheKey>,
+        analyzed_production_files: &[PathBuf],
     ) -> Self {
         self.corpus_key = key.cloned();
+        self.analyzed_production_files = Some(analyzed_production_files.to_vec());
         self
     }
 
@@ -195,6 +198,7 @@ impl RepoExposureArtifactContext {
             base_revision,
             input_identity,
             corpus_key: None,
+            analyzed_production_files: None,
         })
     }
 }
@@ -619,6 +623,9 @@ pub(crate) struct CheckFindingsGap {
     pub(crate) classification: String,
     pub(crate) file: String,
     pub(crate) line: u64,
+    /// The discriminator the finding says no test supplies, as the artifact
+    /// states it (`missing_discriminators[0].value`); `None` when it names none.
+    pub(crate) missing_discriminator: Option<String>,
 }
 
 /// A `check-findings-json` artifact whose producer envelope, content
@@ -639,27 +646,70 @@ pub(crate) fn validate_check_findings_artifact(
     raw: &str,
     label: &str,
 ) -> Result<ValidatedCheckFindings, String> {
-    let document: CheckFindingsDocument = serde_json::from_str(raw).map_err(|err| {
-        format!("agent verify {label} artifact is not a canonical check-findings artifact: {err}")
-    })?;
     let CheckFindingsDocument {
-        schema_version,
         artifact: identity,
         analysis_outcome,
         analysis_scope,
         run_limitations,
         findings,
-    } = document;
-    if schema_version.trim().is_empty() {
-        return Err(format!(
-            "agent verify {label} artifact has an empty check schema version"
-        ));
-    }
+        ..
+    } = parse_check_findings_document(raw, label)?;
     let artifact =
         validate_artifact_identity(root, raw, label, identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
     check_findings_run_is_whole(label, analysis_scope.as_ref(), run_limitations.as_deref())?;
     let gaps = check_findings_gaps(label, analysis_outcome, &findings)?;
     Ok(ValidatedCheckFindings { artifact, gaps })
+}
+
+fn parse_check_findings_document(raw: &str, label: &str) -> Result<CheckFindingsDocument, String> {
+    let document: CheckFindingsDocument = serde_json::from_str(raw).map_err(|err| {
+        format!("agent verify {label} artifact is not a canonical check-findings artifact: {err}")
+    })?;
+    if document.schema_version.trim().is_empty() {
+        return Err(format!(
+            "agent verify {label} artifact has an empty check schema version"
+        ));
+    }
+    Ok(document)
+}
+
+/// Commitment-validated issued history, deliberately without any currentness
+/// field. Only an already-bound terminal reader may use this result; issuance
+/// and missing-projection reconstruction still require the live validator.
+pub(crate) struct IssuedCheckFindingsCommitment {
+    pub(crate) repository_head: String,
+    pub(crate) base_revision: Option<String>,
+    pub(crate) content_sha256: String,
+}
+
+pub(crate) fn validate_issued_check_findings_commitment(
+    root: &Path,
+    raw: &str,
+    label: &str,
+    recorded_producer_version: &str,
+) -> Result<IssuedCheckFindingsCommitment, String> {
+    let CheckFindingsDocument {
+        artifact: identity,
+        analysis_outcome,
+        analysis_scope,
+        run_limitations,
+        findings,
+        ..
+    } = parse_check_findings_document(raw, label)?;
+    validate_artifact_identity_shape(label, &identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
+    if identity.producer.version != recorded_producer_version {
+        return Err(format!(
+            "agent verify {label} artifact producer does not match the issued attempt"
+        ));
+    }
+    validate_artifact_commitment(root, raw, label, &identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
+    check_findings_run_is_whole(label, analysis_scope.as_ref(), run_limitations.as_deref())?;
+    check_findings_gaps(label, analysis_outcome, &findings)?;
+    Ok(IssuedCheckFindingsCommitment {
+        repository_head: identity.repository.head,
+        base_revision: identity.analysis.base_revision,
+        content_sha256: identity.content_sha256,
+    })
 }
 
 /// Prefix of every typed refusal from [`evaluate_gap_closure`]; the CLI maps
@@ -708,8 +758,9 @@ pub(crate) fn evaluate_gap_closure(
     };
     if after_gap.classification != GAP_CLOSED_CLASSIFICATION {
         return Err(refuse(format!(
-            "still reads `{}` in the after artifact",
-            after_gap.classification
+            "still reads `{}` in the after artifact{}",
+            after_gap.classification,
+            still_open_reason(before_gap.missing_discriminator.as_deref(), &after_gap)
         )));
     }
     Ok(GapClosure {
@@ -719,6 +770,29 @@ pub(crate) fn evaluate_gap_closure(
         file: after_gap.file,
         line: after_gap.line,
     })
+}
+
+/// Why an open gap did not close, from what the two artifacts already state
+/// (#11196): the discriminator the finding says no test supplies. Empty when
+/// the after artifact names none, so no reason is invented.
+fn still_open_reason(before: Option<&str>, after: &CheckFindingsGap) -> String {
+    let Some(missing) = after.missing_discriminator.as_deref() else {
+        return String::new();
+    };
+    match before {
+        Some(before) if before == missing && missing.starts_with("typeof ") => format!(
+            "; the missing discriminator `{missing}` named before the edit is still not matched by any test in the after artifact, so the edited test is not shown to supply it. Make the focused test supply that input in the call itself (a value of that kind, not a variable or a stand-in string), then rerun"
+        ),
+        Some(before) if before == missing => format!(
+            "; the missing discriminator `{missing}` named before the edit is still not matched by any test in the after artifact, so the edited test is not shown to supply it"
+        ),
+        Some(before) => format!(
+            "; the missing discriminator changed from `{before}` to `{missing}`, and no test in the after artifact is shown to supply the new one"
+        ),
+        None => format!(
+            "; the after artifact names the missing discriminator `{missing}`, which no test in it is shown to supply"
+        ),
+    }
 }
 
 /// The gap-bound half of `agent verify --gap-id`: both snapshots must be
@@ -775,10 +849,12 @@ fn check_findings_gaps(
             "agent verify {label} artifact carries no analysis outcome, so a gap's absence cannot be read as closed"
         ));
     };
-    if outcome.analysis_complete != Some(true) || outcome.document_complete == Some(false) {
+    if !check_findings_outcome_is_complete(outcome.analysis_complete, outcome.document_complete) {
         return Err(format!(
-            "agent verify {label} artifact is incomplete (analysis_complete={:?}, document_complete={:?}); regenerate it before verifying",
-            outcome.analysis_complete, outcome.document_complete
+            "agent verify {label} artifact is incomplete (analysis_complete={:?}, document_complete={:?}); {}",
+            outcome.analysis_complete,
+            outcome.document_complete,
+            outcome.incomplete_next_step()
         ));
     }
     let mut gaps = Vec::new();
@@ -798,11 +874,19 @@ fn check_findings_gaps(
                 "agent verify {label} artifact contains an invalid finding for gap `{gap_id}`"
             ));
         }
+        let missing_discriminator = finding
+            .missing_discriminators
+            .iter()
+            .filter_map(|missing| missing.value.as_deref())
+            .map(str::trim)
+            .find(|value| !value.is_empty())
+            .map(str::to_string);
         gaps.push(CheckFindingsGap {
             gap_id,
             classification,
             file,
             line,
+            missing_discriminator,
         });
     }
     let mut seen = std::collections::BTreeSet::new();
@@ -823,6 +907,70 @@ fn validate_artifact_identity(
     spec: &ArtifactIdentitySpec,
 ) -> Result<ValidatedArtifact, String> {
     let subject = format!("agent verify {label} artifact");
+    validate_artifact_identity_shape(label, &identity, spec)?;
+    // #9500: the envelope's producer version must be this executable's. A
+    // forged or foreign version used to pass because only non-emptiness and
+    // before/after equality were checked. Fail closed on any other version
+    // (conservative: an artifact from another RIPR build, even a patch
+    // release, is regenerated rather than trusted).
+    if identity.producer.version != env!("CARGO_PKG_VERSION") {
+        return Err(foreign_producer_refusal(
+            root,
+            &subject,
+            &identity.producer.version,
+        ));
+    }
+    let expected_root = validate_artifact_commitment(root, raw, label, &identity, spec)?;
+
+    let actual_head = git_output(&expected_root, &["rev-parse", "HEAD"])?;
+    let actual_head = actual_head.trim();
+    let actual_worktree_dirty = git_worktree_dirty(&expected_root)?;
+    // Lineage presence (#2922 PR A): a well-formed head that does not name a
+    // commit held by the checked repository is rejected, not merely disclosed
+    // as historical. Git liveness is established by the HEAD and status reads
+    // above, so a failed `cat-file` here means the object is absent.
+    match git_object_type(&expected_root, &identity.repository.head)? {
+        Some(kind) if kind == "commit" => {}
+        Some(kind) => {
+            return Err(format!(
+                "agent verify {label} artifact repository head `{}` names a {kind}, not a commit",
+                identity.repository.head
+            ));
+        }
+        None => {
+            return Err(format!(
+                "agent verify {label} artifact repository head `{}` is not present in the checked repository",
+                identity.repository.head
+            ));
+        }
+    }
+    let currentness = if actual_head == identity.repository.head {
+        if identity.analysis.worktree == "dirty" || actual_worktree_dirty {
+            ArtifactCurrentness::DirtyWorktree
+        } else {
+            ArtifactCurrentness::Current
+        }
+    } else {
+        ArtifactCurrentness::Historical
+    };
+    Ok(ValidatedArtifact {
+        currentness,
+        base_revision: identity.analysis.base_revision,
+        input_identity: identity.analysis.input_identity,
+        snapshot_identity: identity.snapshot_identity,
+        repository_head: identity.repository.head,
+        producer_version: identity.producer.version,
+        analysis_mode: identity.analysis.mode,
+        analysis_profile: identity.analysis.profile,
+        content_sha256: identity.content_sha256,
+    })
+}
+
+fn validate_artifact_identity_shape(
+    label: &str,
+    identity: &ArtifactIdentity,
+    spec: &ArtifactIdentitySpec,
+) -> Result<(), String> {
     if identity.kind != spec.kind
         || identity.schema_version != ARTIFACT_IDENTITY_SCHEMA_VERSION
         || identity.canonicalization != CONTENT_COMMITMENT_CANONICALIZATION
@@ -842,18 +990,18 @@ fn validate_artifact_identity(
             "agent verify {label} artifact has invalid or unknown producer identity"
         ));
     }
-    // #9500: the envelope's producer version must be this executable's. A
-    // forged or foreign version used to pass because only non-emptiness and
-    // before/after equality were checked. Fail closed on any other version
-    // (conservative: an artifact from another RIPR build, even a patch
-    // release, is regenerated rather than trusted).
-    if identity.producer.version != env!("CARGO_PKG_VERSION") {
-        return Err(foreign_producer_refusal(
-            root,
-            &subject,
-            &identity.producer.version,
-        ));
-    }
+    Ok(())
+}
+
+/// Structural and commitment authority shared by live evidence and already
+/// issued history. It resolves only filesystem roots, not live Git state.
+fn validate_artifact_commitment(
+    root: &Path,
+    raw: &str,
+    label: &str,
+    identity: &ArtifactIdentity,
+    spec: &ArtifactIdentitySpec,
+) -> Result<PathBuf, String> {
     // #7369: a present stamp must carry the same `unix_ms:` millisecond
     // disclosure shape the producer pins, or the producer's documented
     // `unavailable` fallback for a clock that predates the Unix epoch. A
@@ -869,7 +1017,7 @@ fn validate_artifact_identity(
         ));
     }
     // Version gate (#2823): only the current input-identity algorithm
-    // validates as current evidence. A previous-version identity (for example
+    // validates as live evidence or issued history. A previous-version identity (for example
     // the v1 `input:<digest>` form that embedded the absolute checkout root)
     // is rejected with an explicit bounded reason rather than silently
     // accepted; a compatibility/migration boundary for earlier versions is
@@ -957,48 +1105,7 @@ fn validate_artifact_identity(
         ));
     }
 
-    let actual_head = git_output(&expected_root, &["rev-parse", "HEAD"])?;
-    let actual_head = actual_head.trim();
-    let actual_worktree_dirty = git_worktree_dirty(&expected_root)?;
-    // Lineage presence (#2922 PR A): a well-formed head that does not name a
-    // commit held by the checked repository is rejected, not merely disclosed
-    // as historical. Git liveness is established by the HEAD and status reads
-    // above, so a failed `cat-file` here means the object is absent.
-    match git_object_type(&expected_root, &identity.repository.head)? {
-        Some(kind) if kind == "commit" => {}
-        Some(kind) => {
-            return Err(format!(
-                "agent verify {label} artifact repository head `{}` names a {kind}, not a commit",
-                identity.repository.head
-            ));
-        }
-        None => {
-            return Err(format!(
-                "agent verify {label} artifact repository head `{}` is not present in the checked repository",
-                identity.repository.head
-            ));
-        }
-    }
-    let currentness = if actual_head == identity.repository.head {
-        if identity.analysis.worktree == "dirty" || actual_worktree_dirty {
-            ArtifactCurrentness::DirtyWorktree
-        } else {
-            ArtifactCurrentness::Current
-        }
-    } else {
-        ArtifactCurrentness::Historical
-    };
-    Ok(ValidatedArtifact {
-        currentness,
-        base_revision: identity.analysis.base_revision,
-        input_identity: identity.analysis.input_identity,
-        snapshot_identity: identity.snapshot_identity,
-        repository_head: identity.repository.head,
-        producer_version: identity.producer.version,
-        analysis_mode: identity.analysis.mode,
-        analysis_profile: identity.analysis.profile,
-        content_sha256: identity.content_sha256,
-    })
+    Ok(expected_root)
 }
 
 /// Classify only the old repo-exposure shape after canonical parsing refused it.
@@ -1196,10 +1303,75 @@ struct CheckFindingsDocument {
     findings: Vec<CheckFindingsFinding>,
 }
 
+/// The one completeness predicate for a check-findings artifact (#11136): a
+/// gap's absence is only readable as closure when the producer reported a
+/// complete analysis and the findings document was not bounded. The verify and
+/// after phases consult it through [`check_findings_gaps`]; `ripr check`
+/// consults it before printing a gap-bound repair start, so a start is never
+/// offered for a before artifact the after phase will refuse.
+pub(crate) const fn check_findings_outcome_is_complete(
+    analysis_complete: Option<bool>,
+    document_complete: Option<bool>,
+) -> bool {
+    matches!(analysis_complete, Some(true)) && !matches!(document_complete, Some(false))
+}
+
 #[derive(serde::Deserialize)]
 struct CheckFindingsOutcome {
     analysis_complete: Option<bool>,
     document_complete: Option<bool>,
+    outcome: Option<CheckFindingsTypedOutcome>,
+}
+
+#[derive(serde::Deserialize)]
+struct CheckFindingsTypedOutcome {
+    limitations: Option<Vec<CheckFindingsLimitation>>,
+}
+
+#[derive(serde::Deserialize)]
+struct CheckFindingsLimitation {
+    kind: Option<String>,
+    path: Option<String>,
+    recovery: Option<CheckFindingsRecovery>,
+}
+
+#[derive(serde::Deserialize)]
+struct CheckFindingsRecovery {
+    detail: Option<String>,
+}
+
+impl CheckFindingsOutcome {
+    /// What the user does next: names the first producer limitation and its
+    /// recovery when the artifact carries one, instead of "regenerate it",
+    /// which reproduces the same incomplete artifact (#11136).
+    fn incomplete_next_step(&self) -> String {
+        if self.document_complete == Some(false) {
+            return "the findings document was bounded, so a gap's absence cannot be read as closed; rerun `ripr check` with RIPR_CHECK_FINDINGS_BYTES=0 for the full set, then start the repair again".to_string();
+        }
+        let limitation = self
+            .outcome
+            .as_ref()
+            .and_then(|outcome| outcome.limitations.as_ref())
+            .and_then(|limitations| limitations.first());
+        let Some(limitation) = limitation else {
+            return "the producer reported no complete analysis and named no limitation, so regenerating it would not help; resolve what `ripr check` reports as incomplete, then start the repair again".to_string();
+        };
+        let kind = limitation.kind.as_deref().unwrap_or("unnamed");
+        let location = limitation
+            .path
+            .as_deref()
+            .map(|path| format!(" in `{path}`"))
+            .unwrap_or_default();
+        let recovery = limitation
+            .recovery
+            .as_ref()
+            .and_then(|recovery| recovery.detail.as_deref())
+            .map(|detail| format!(" ({})", detail.trim_end_matches('.')))
+            .unwrap_or_default();
+        format!(
+            "the analysis is incomplete because of limitation `{kind}`{location}{recovery}; regenerating the artifact reproduces it, so resolve that limitation (or treat the repair packet as manual guidance and add the test by hand), then rerun `ripr check` and start the repair again"
+        )
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -1208,6 +1380,13 @@ struct CheckFindingsFinding {
     canonical_gap_id: Option<String>,
     classification: Option<String>,
     probe: Option<CheckFindingsProbe>,
+    #[serde(default)]
+    missing_discriminators: Vec<CheckFindingsMissingDiscriminator>,
+}
+
+#[derive(serde::Deserialize)]
+struct CheckFindingsMissingDiscriminator {
+    value: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1878,6 +2057,7 @@ mod tests {
 
     fn gap(id: &str, classification: &str) -> CheckFindingsGap {
         CheckFindingsGap {
+            missing_discriminator: None,
             gap_id: id.to_string(),
             classification: classification.to_string(),
             file: "src/pricing.ts".to_string(),
@@ -1968,6 +2148,91 @@ mod tests {
         Ok(())
     }
 
+    fn gap_missing(id: &str, classification: &str, missing: Option<&str>) -> CheckFindingsGap {
+        CheckFindingsGap {
+            missing_discriminator: missing.map(str::to_string),
+            ..gap(id, classification)
+        }
+    }
+
+    #[test]
+    fn still_open_refusal_says_why_from_the_artifact_discriminators() -> Result<(), String> {
+        let missing = "typeof input == \"function\"";
+        let before = [gap_missing("gap:a", "weakly_exposed", Some(missing))];
+        let cases = [
+            (
+                "same discriminator still missing",
+                gap_missing("gap:a", "weakly_exposed", Some(missing)),
+                vec![
+                    "still reads `weakly_exposed` in the after artifact; the missing discriminator `typeof input == \"function\"` named before the edit is still not matched",
+                    "supply that input in the call itself",
+                ],
+            ),
+            (
+                "discriminator changed",
+                gap_missing("gap:a", "weakly_exposed", Some("total == 100")),
+                vec!["changed from `typeof input == \"function\"` to `total == 100`"],
+            ),
+        ];
+        for (case, after, expected) in cases {
+            let Err(error) = evaluate_gap_closure("gap:a", &before, &[after]) else {
+                return Err(format!("{case}: accepted"));
+            };
+            for fragment in expected {
+                if !error.contains(fragment) {
+                    return Err(format!("{case}: `{error}` lacks `{fragment}`"));
+                }
+            }
+        }
+        let plain = [gap_missing("gap:a", "weakly_exposed", Some("total == 100"))];
+        let Err(plain_error) = evaluate_gap_closure(
+            "gap:a",
+            &plain,
+            &[gap_missing("gap:a", "weakly_exposed", Some("total == 100"))],
+        ) else {
+            return Err("plain gap accepted".to_string());
+        };
+        if !plain_error.contains("`total == 100` named before the edit is still not matched")
+            || plain_error.contains("a value of that kind")
+        {
+            return Err(format!(
+                "kind hint leaked to a non-typeof gap: `{plain_error}`"
+            ));
+        }
+        // No named discriminator in the after artifact: the reason is not
+        // invented, and a bare open gap reads as before.
+        let Err(bare) = evaluate_gap_closure(
+            "gap:a",
+            &before,
+            &[gap_missing("gap:a", "weakly_exposed", None)],
+        ) else {
+            return Err("bare gap accepted".to_string());
+        };
+        if !bare.ends_with("still reads `weakly_exposed` in the after artifact") {
+            return Err(format!("invented a reason: `{bare}`"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_findings_gaps_read_the_missing_discriminator_the_artifact_states() -> Result<(), String>
+    {
+        let mut finding = ts_finding("1a2b3c4d", "weakly_exposed");
+        finding["missing_discriminators"] =
+            serde_json::json!([{ "value": "typeof input == \"function\"", "reason": "r" }]);
+        let (outcome, findings) = findings_fixture(serde_json::json!({
+            "analysis_outcome": { "analysis_complete": true },
+            "findings": [finding]
+        }))?;
+        let gaps = check_findings_gaps("after", outcome, &findings)?;
+        assert_eq!(
+            gaps.first()
+                .and_then(|gap| gap.missing_discriminator.as_deref()),
+            Some("typeof input == \"function\"")
+        );
+        Ok(())
+    }
+
     #[test]
     fn check_findings_gaps_key_typescript_findings_by_derived_gap_id() -> Result<(), String> {
         let (outcome, findings) = findings_fixture(serde_json::json!({
@@ -1999,6 +2264,59 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn check_findings_incomplete_refusal_names_the_limitation_not_regenerate() -> Result<(), String>
+    {
+        let document = serde_json::json!({
+            "analysis_outcome": {
+                "analysis_complete": false,
+                "outcome": { "limitations": [{
+                    "kind": "unevaluated_condition",
+                    "path": "test/scule.test.ts",
+                    "recovery": { "detail": "Static analysis cannot evaluate the branch condition." }
+                }] }
+            },
+            "findings": []
+        });
+        let (outcome, findings) = findings_fixture(document)?;
+        let Err(message) = check_findings_gaps("before", outcome, &findings) else {
+            return Err("an incomplete analysis was accepted".to_string());
+        };
+        for needle in [
+            "unevaluated_condition",
+            "test/scule.test.ts",
+            "cannot evaluate the branch condition",
+            "regenerating the artifact reproduces it",
+        ] {
+            if !message.contains(needle) {
+                return Err(format!("refusal lacks `{needle}`: {message}"));
+            }
+        }
+        if message.contains("regenerate it before verifying") {
+            return Err(format!("refusal still says regenerate: {message}"));
+        }
+        let (bounded, findings) = findings_fixture(serde_json::json!({
+            "analysis_outcome": { "analysis_complete": true, "document_complete": false },
+            "findings": []
+        }))?;
+        let Err(bounded) = check_findings_gaps("before", bounded, &findings) else {
+            return Err("a bounded findings document was accepted".to_string());
+        };
+        if !bounded.contains("RIPR_CHECK_FINDINGS_BYTES=0") {
+            return Err(format!("bounded refusal lacks its recovery: {bounded}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_findings_outcome_completeness_is_one_predicate() {
+        assert!(check_findings_outcome_is_complete(Some(true), None));
+        assert!(check_findings_outcome_is_complete(Some(true), Some(true)));
+        assert!(!check_findings_outcome_is_complete(Some(true), Some(false)));
+        assert!(!check_findings_outcome_is_complete(Some(false), None));
+        assert!(!check_findings_outcome_is_complete(None, None));
     }
 
     #[test]
@@ -5222,3 +5540,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "artifact_issued_history_tests.rs"]
+mod issued_history_tests;

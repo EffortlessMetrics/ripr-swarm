@@ -209,7 +209,7 @@ fn agent_repair_later_phases_require_existing_attempts_without_writes() -> Resul
         assert_contains(
             "after seam selector",
             &String::from_utf8_lossy(&output.stderr),
-            "no awaiting repair attempt exists for seam `seam:missing`; start one with",
+            "no repair is in progress for this gap; start one with",
         )?;
         Ok(())
     })

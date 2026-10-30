@@ -2,6 +2,10 @@
 
 use super::*;
 
+#[path = "tests_extract_hook_identity.rs"]
+mod hook_identity;
+use hook_identity::HookCalls;
+
 #[derive(Clone, Copy)]
 enum TestDeclarationRoot {
     Test,
@@ -222,13 +226,16 @@ fn extract_tests_expanding_suite_factories(
         let imports = extract_imports_for_test_file(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
         let mut tests = Vec::new();
+        let admission = TypeScriptAdmissionContext::of_program(&ret.program, &imports, file);
+        let hook_calls = HookCalls::of_program(&ret.program, &imports, &admission);
         let mut scope = TestScope {
             assertion_bindings: TypeScriptAssertionBindings::from_program(
                 &ret.program.body,
                 &imports,
             )
             .with_strict_matchers(strict_equality_matchers(&ret.program.body, source)),
-            admission: TypeScriptAdmissionContext::of_program(&ret.program, &imports, file),
+            admission,
+            hook_calls,
             ..TestScope::default()
         };
         scope.fixtures = super::fixture_receivers::PlaywrightFixtures::of_program(
@@ -926,6 +933,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
     // level. Collected before any test so a hook written after a test still
     // counts, as it does at runtime.
     let mut level = Vec::new();
+    let mut untrusted_hook_entries = Vec::new();
     let mut sites = Vec::new();
     let mut iterables = Vec::new();
     let mut returned = false;
@@ -942,6 +950,8 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             &mut level,
             &mut sites,
             scope.admission.block_functions_are_lexical,
+            &scope.hook_calls,
+            &mut untrusted_hook_entries,
         );
         // After a possible early `return`, a binding may never run.
         if returned {
@@ -950,6 +960,12 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                 .for_each(|entry| entry.1 = ScopeValue::Other);
         }
         returned |= may_return(stmt, source);
+    }
+    // Keep duplicate-hook race summaries from the original collection. Only
+    // actual callback contributions receive the call-identity downgrade.
+    for index in untrusted_hook_entries {
+        level[index].1 = ScopeValue::Other;
+        level[index].2 = Phase::Interleaved;
     }
     // A destructuring or hoisted declaration can also shadow `undefined` at a
     // registration. Nested blocks contribute only names visible after them
@@ -1314,7 +1330,7 @@ fn collect_mocha_setup_hooks(
             import.local == hook
                 && !(import.source == "mocha" && import.imported.as_deref() == Some(hook))
         });
-        if declared || imported_elsewhere {
+        if declared || imported_elsewhere || !scope.hook_calls.contains(call) {
             continue;
         }
         let Some(argument) = call.arguments.last() else {
@@ -1400,6 +1416,8 @@ const TEST_RUNNER_MODULES: [&str; 4] = ["vitest", "@jest/globals", "bun:test", "
 /// The enclosing scopes of the statements being walked.
 #[derive(Default)]
 pub(crate) struct TestScope {
+    /// The callable identity captured at each hook registration.
+    hook_calls: HookCalls,
     /// Describe names, outermost first.
     describe_names: Vec<String>,
     /// Name bindings of the file and each enclosing describe, outermost first.
@@ -1555,6 +1573,8 @@ fn collect_scope_bindings(
     out: &mut Vec<ScopeEntry>,
     sites: &mut Vec<usize>,
     block_functions_are_lexical: bool,
+    hook_calls: &HookCalls,
+    untrusted_hook_entries: &mut Vec<usize>,
 ) {
     match stmt {
         // `declare` forms are erased before the test runs: no runtime binding.
@@ -1635,6 +1655,8 @@ fn collect_scope_bindings(
                         &mut locals,
                         &mut Vec::new(),
                         block_functions_are_lexical,
+                        hook_calls,
+                        &mut Vec::new(),
                     );
                 }
                 locals.retain(|(_, _, phase)| *phase == Phase::Declaration);
@@ -1689,7 +1711,11 @@ fn collect_scope_bindings(
                     })
                     .map(|(name, _, _)| name.clone())
                     .collect();
+                let start = out.len();
                 out.extend(writes);
+                if phase != Phase::Interleaved && !hook_calls.contains(call) {
+                    untrusted_hook_entries.extend(start..out.len());
+                }
                 out.extend(
                     raced
                         .into_iter()

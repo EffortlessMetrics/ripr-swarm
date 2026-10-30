@@ -306,8 +306,9 @@ fn detected_language_entries(
             language: id.as_str().to_string(),
             status: language_status(*id),
             adapter_available: id.is_available(),
-            // JavaScript has no config entry of its own: the `typescript`
-            // entry analyzes it, so enablement is read through the same
+            // JavaScript is analyzed by the `typescript` entry (and
+            // `javascript` is accepted as its alias), so enablement is read
+            // through the same
             // mapping the gaps path uses. `None` (no loaded configuration)
             // stays unknown rather than reading as disabled.
             enabled: enabled.map(|list| list.contains(&config_entry(*id))),
@@ -1254,7 +1255,7 @@ fn shallow_has_file(root: &Path, name: &str) -> bool {
 /// Detect which languages have concrete file markers in this workspace.
 /// Returns detected `LanguageId`s in a stable order (Rust first, then
 /// TypeScript, JavaScript, Python, Perl).
-fn detect_languages(root: &Path) -> Vec<LanguageId> {
+pub(crate) fn detect_languages(root: &Path) -> Vec<LanguageId> {
     let mut found = Vec::new();
 
     // Rust: Cargo.toml at root OR .rs files in root/src (shared with the
@@ -1621,10 +1622,10 @@ fn preview_languages_to_enable(
     detected: &[LanguageId],
     config: &Result<RiprConfig, String>,
 ) -> Option<PreviewEnablement> {
-    // JavaScript is analyzed by the TypeScript adapter and has no config
-    // entry of its own (`parse_languages_enabled` accepts only `typescript`),
-    // so a detected JavaScript source maps to the `typescript` entry. Using
-    // the scanner id would print `"javascript"`, which config loading rejects.
+    // JavaScript is analyzed by the TypeScript adapter, so a detected
+    // JavaScript source maps to the `typescript` entry. The tip prints the
+    // canonical `typescript` name even though `javascript` is also accepted
+    // as an alias, so one spelling owns the suggestion.
     let mut preview_detected: Vec<LanguageId> = Vec::new();
     for id in detected
         .iter()
