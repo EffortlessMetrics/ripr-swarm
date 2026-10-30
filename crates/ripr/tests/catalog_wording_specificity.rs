@@ -213,3 +213,11 @@ fn run_bounded(
         stderr: read_bounded_stream(&stderr)?,
     })
 }
+
+#[test]
+fn changed_word_in_diagnostic_does_not_confirm_structural_observer() -> Result<(), String> {
+    let test = TEST.replace("Vec::<String>::new()", "Vec::<String>::new(), \"verifies\"");
+    assert_ne!(test, TEST);
+    assert_eq!(check(&test)?, "weakly_exposed");
+    Ok(())
+}
