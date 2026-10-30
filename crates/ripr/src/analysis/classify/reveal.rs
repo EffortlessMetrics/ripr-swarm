@@ -4159,7 +4159,20 @@ fn assertion_matches_probe_detail_with_literals(
     // an owner call (`let value = score(1); assert!(matches!(value, 2))`).
     // Scope this lexical token confirmation to return assertion operands,
     // not diagnostics. Keep full text for association and rendering.
-    let return_operands = matches!(family, ProbeFamily::ReturnValue)
+    let top_level_assertion = [
+        "assert!(",
+        "assert_eq!(",
+        "assert_ne!(",
+        "debug_assert!(",
+        "debug_assert_eq!(",
+        "debug_assert_ne!(",
+        "assert_matches!(",
+        "debug_assert_matches!(",
+        "ensure!(",
+    ]
+    .iter()
+    .any(|prefix| assertion.text.trim_start().starts_with(prefix));
+    let return_operands = (matches!(family, ProbeFamily::ReturnValue) && top_level_assertion)
         .then(|| crate::analysis::extract::assertion_oracle_text(&assertion.text))
         .flatten();
     let confirmation_text = return_operands.as_deref().unwrap_or(&assertion.text);
@@ -8533,6 +8546,33 @@ mod tests {
             related.iter().all(|test| test.is_contributing()),
             "the miss is outside the window: {related:?}"
         );
+    }
+
+    #[test]
+    fn return_lexical_confirmation_uses_operands_not_diagnostics() {
+        let tokens = vec!["verifies".to_string()];
+        for (text, expected) in [
+            ("assert_eq!(value, \"verifies\");", true),
+            ("assert_eq!(value, \"other\", \"verifies\");", false),
+            (
+                "wrapper!(assert_eq!(value, \"other\", \"verifies\"));",
+                true,
+            ),
+        ] {
+            let assertion = oracle(text, OracleKind::ExactValue, OracleStrength::Strong);
+            let (matched, confirmed) = assertion_matches_probe_detail(
+                &tokens,
+                &[],
+                &[],
+                None,
+                &ProbeFamily::ReturnValue,
+                &assertion,
+                1,
+                None,
+            );
+            assert!(matched, "assertion stays associated: {text}");
+            assert_eq!(confirmed, expected, "{text}");
+        }
     }
 
     #[test]

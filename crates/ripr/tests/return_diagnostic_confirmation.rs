@@ -218,6 +218,10 @@ fn diagnostic_only_token_cannot_confirm_return() -> Result<(), String> {
         .replace("let catalog =", "let items =")
         .replace("&catalog", "&items")
         .replace("Vec::<String>::new()", "Vec::<String>::new(), \"verifies\"");
+    assert_ne!(source, SOURCE);
+    assert!(test.contains("check_entries(&items)"));
+    assert!(test.contains("Vec::<String>::new(), \"verifies\""));
+    assert!(!test.contains("entry_description_violations"));
     assert_eq!(check_source(&source, &test)?, "weakly_exposed");
     Ok(())
 }
