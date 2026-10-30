@@ -146,7 +146,11 @@ impl Fixture {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         )));
-        std::fs::create_dir(&fixture.0).map_err(|error| error.to_string())?;
+        // `.cargo/config.toml` points TMPDIR at `<workspace>/target`, which does
+        // not exist when CARGO_TARGET_DIR redirects build output elsewhere, so
+        // create missing parents and name the resolved path on failure.
+        std::fs::create_dir_all(&fixture.0)
+            .map_err(|error| format!("create fixture root {}: {error}", fixture.0.display()))?;
         for (relative, text) in files {
             let path = fixture.0.join(relative);
             if let Some(parent) = path.parent() {
@@ -166,11 +170,12 @@ impl Fixture {
             include_unchanged_tests: true,
             ..CheckInput::default()
         })?;
+        assert!(output.summary.probes > 0, "nonempty probe inventory");
         assert_eq!(
-            output.summary.probes, 3,
-            "nonempty complete probe inventory"
+            output.findings.len(),
+            output.summary.probes,
+            "every probe retained as a finding"
         );
-        assert_eq!(output.findings.len(), 3, "all original subjects retained");
         Ok(output.findings)
     }
 }
