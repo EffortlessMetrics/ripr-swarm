@@ -2688,7 +2688,7 @@ mod tests {
     /// An empty `GITHUB_BASE_REF` makes the base `origin/`; advice must not
     /// tell the reader to `git fetch origin ` with no branch.
     #[test]
-    fn empty_base_ref_names_the_missing_event_not_a_blank_fetch() -> Result<(), String> {
+    fn empty_base_ref_names_the_missing_event_not_a_blank_branch() -> Result<(), String> {
         let (scratch, full, shallow) = full_and_shallow_clone("empty-base")?;
         let messages = [capture_error(&full, ""), capture_error(&shallow, "")];
         let _ = fs::remove_dir_all(&scratch);
