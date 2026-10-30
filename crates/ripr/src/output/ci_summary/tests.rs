@@ -25,6 +25,7 @@ const REPAIR: &str = "ripr agent repair --root . --seam-id s1 --phase before";
 /// Every heading the summary can print, in print order.
 const SECTIONS: &[&str] = &[
     "## RIPR advisory summary",
+    "### What RIPR found in this pull request",
     "### Start here",
     "#### First-run status",
     "### Language preview grouping",
@@ -814,5 +815,100 @@ fn preview_promotion_packets_follow_the_shell_glob() -> TestResult {
     assert!(a < b, "{packets}");
     assert!(!packets.contains("skip"));
     assert!(packets.contains("<details><summary>Full report: target/ripr/reports/preview-promotion-python-a.md</summary>\n\n# A\n</details>"), "{packets}");
+    Ok(())
+}
+
+const HEADLINE: &str = "### What RIPR found in this pull request";
+
+fn card() -> Value {
+    json!({
+        "seam": {"file": "src/pricing.rs", "line": 88},
+        "owner": "pricing::discounted_total",
+        "missing_discriminator": "amount == discount_threshold",
+        "llm_guidance": {"repair_command": REPAIR},
+    })
+}
+
+#[test]
+fn the_pull_requests_own_verdict_comes_before_ripr_orientation() -> TestResult {
+    let fixture = Fixture::new("headline")?;
+    fixture.json(
+        "target/ripr/review/comments.json",
+        &json!({
+            "summary": {"comments": 1, "summary_only": 2},
+            "analysis_outcome": {"analysis_complete": true},
+            "comments": [card()],
+        }),
+    )?;
+    let summary = fixture.render(&[])?;
+    let headline = summary.find(HEADLINE).ok_or("headline is missing")?;
+    let start_here = summary
+        .find("### Start here\n")
+        .ok_or("start here is missing")?;
+    assert!(headline < start_here, "{summary}");
+    let head = block(&summary, HEADLINE);
+    assert!(
+        head.contains(
+            "**3 changed-behavior spots where the tests may not notice a wrong result.**"
+        ),
+        "{head}"
+    );
+    assert!(
+        head.contains("- First: `src/pricing.rs:88` in `pricing::discounted_total`"),
+        "{head}"
+    );
+    assert!(
+        head.contains("- Missing check: `amount == discount_threshold`"),
+        "{head}"
+    );
+    assert!(head.contains(&format!("- Next step: `{REPAIR}`")), "{head}");
+    Ok(())
+}
+
+#[test]
+fn a_clean_run_is_not_reported_as_an_unfinished_one() -> TestResult {
+    let clean = Fixture::new("headline-clean")?;
+    clean.json(
+        "target/ripr/review/comments.json",
+        &json!({"summary": {"comments": 0}, "analysis_outcome": {"analysis_complete": true}, "comments": []}),
+    )?;
+    let summary = clean.render(&[])?;
+    assert!(
+        block(&summary, HEADLINE).contains("No changed-behavior spot with weak test evidence"),
+        "{summary}"
+    );
+    // Discriminating alternate: the same empty report without a completed
+    // analysis must not read as clean.
+    let unfinished = Fixture::new("headline-unfinished")?;
+    unfinished.json(
+        "target/ripr/review/comments.json",
+        &json!({"summary": {"comments": 0}, "comments": []}),
+    )?;
+    let summary = unfinished.render(&[])?;
+    let head = block(&summary, HEADLINE);
+    assert!(head.contains("did not complete"), "{head}");
+    assert!(!head.contains("No changed-behavior spot"), "{head}");
+    Ok(())
+}
+
+#[test]
+fn no_review_report_means_no_headline_and_a_cut_command_is_not_shown() -> TestResult {
+    let none = Fixture::new("headline-none")?;
+    assert!(!none.render(&[])?.contains(HEADLINE));
+    let unparsable = Fixture::new("headline-bad")?;
+    unparsable.write("target/ripr/review/comments.json", "{not json")?;
+    assert!(!unparsable.render(&[])?.contains(HEADLINE));
+    let mut shell = card();
+    shell["llm_guidance"]["repair_command"] = json!("ripr agent repair; rm -rf .");
+    shell["owner"] = json!("fn `x` @team");
+    let hostile = Fixture::new("headline-hostile")?;
+    hostile.json(
+        "target/ripr/review/comments.json",
+        &json!({"summary": {}, "comments": [shell]}),
+    )?;
+    let summary = hostile.render(&[])?;
+    let head = block(&summary, HEADLINE);
+    assert!(!head.contains("Next step"), "{head}");
+    assert!(head.contains("1 changed-behavior spot where"), "{head}");
     Ok(())
 }
