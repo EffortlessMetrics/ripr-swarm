@@ -2,6 +2,7 @@
 
 use super::super::extract_source_facts;
 use super::*;
+use std::collections::BTreeSet;
 use std::sync::Barrier;
 
 const SOURCE: &str = "def amount(value):\n    return value + 1\n";
@@ -104,15 +105,25 @@ fn concurrent_stores_cannot_overspend_the_shared_budget() -> Result<(), String> 
     let entries = (0..8)
         .map(|id| fixture.entry(&format!("src/amount_{id}.py")))
         .collect::<Result<Vec<_>, _>>()?;
-    let largest = entries
-        .iter()
+    let entry_bytes = entries
+        .first()
         .map(|(_, _, bytes)| bytes.len())
-        .max()
         .ok_or_else(|| "concurrency fixture has no entries".to_string())?;
-    let available = largest * 3;
-    assert!(entries.iter().map(|(_, _, bytes)| bytes.len()).sum::<usize>() > available);
+    assert!(
+        entries.iter().all(|(_, _, bytes)| bytes.len() == entry_bytes),
+        "equal-size entries make the admission count independent of scheduling"
+    );
+    let filenames = entries
+        .iter()
+        .map(|(key, _, _)| key.filename())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(filenames.len(), entries.len(), "each writer has its own key");
+    let expected_admissions = 3;
+    let available = entry_bytes * expected_admissions;
+    assert!(entries.len() > expected_admissions);
 
-    // Several independent stores exercise contention without a timing oracle.
+    // Each round has ONE store and AtomicUsize shared by all eight workers.
+    // Repeat with fresh budgets; this exercises contention, not every schedule.
     for round in 0..8 {
         let store = fixture.store(&format!("concurrent-{round}"));
         store
@@ -142,10 +153,11 @@ fn concurrent_stores_cannot_overspend_the_shared_budget() -> Result<(), String> 
                 })
                 .collect::<Result<Vec<_>, String>>()
         })?;
-        assert!(results.iter().any(|stored| *stored), "positive control");
-        assert!(
-            results.iter().any(|stored| !*stored),
-            "budget must refuse work"
+        assert_eq!(results.len(), entries.len());
+        assert_eq!(
+            results.iter().filter(|stored| **stored).count(),
+            expected_admissions,
+            "exactly three equal-size entries fit the shared budget"
         );
         let spent = entries
             .iter()
@@ -156,6 +168,7 @@ fn concurrent_stores_cannot_overspend_the_shared_budget() -> Result<(), String> 
         assert!(spent <= available, "concurrent callers overspent the budget");
         let remaining = store.remaining_store_bytes.load(Ordering::Relaxed);
         assert_eq!(remaining, available - spent);
+        assert_eq!(remaining, 0, "three admissions consume the exact budget");
         for ((key, facts, bytes), stored) in entries.iter().zip(results) {
             let path = store.dir.join(key.filename());
             if stored {
@@ -169,7 +182,10 @@ fn concurrent_stores_cannot_overspend_the_shared_budget() -> Result<(), String> 
                 }
             } else {
                 assert!(!path.exists(), "a refused entry was persisted");
-                assert!(remaining < bytes.len(), "an affordable entry was refused");
+                assert!(
+                    remaining < bytes.len(),
+                    "the final remainder must be smaller than each refused entry"
+                );
                 assert!(matches!(store.load(key), CacheLoad::Miss));
             }
         }
@@ -179,6 +195,8 @@ fn concurrent_stores_cannot_overspend_the_shared_budget() -> Result<(), String> 
 
 #[test]
 fn a_write_error_keeps_the_existing_reservation_without_a_refund() -> Result<(), String> {
+    // Characterize the existing per-run accounting, not a recommendation:
+    // refunding a failed write would be a separate behavior change.
     let fixture = Fixture::new()?;
     let (key, facts, bytes) = fixture.entry("src/amount.py")?;
     let store = fixture.store("write-error");
