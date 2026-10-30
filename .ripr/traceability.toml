@@ -17214,6 +17214,8 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/decorator_stable_tests.rs::a_setattr_inside_a_test_body_does_not_unsettle_the_decorator",
+  "crates/ripr/src/analysis/language/python/decorator_stable_tests.rs::a_writer_that_can_run_before_the_decorator_keeps_the_limit",
   "crates/ripr/src/analysis/language/python/inert_tool_fixture_tests.rs::an_imported_autouse_fixture_that_takes_the_runner_keeps_the_limit",
   "crates/ripr/src/analysis/language/python/inert_tool_fixture_tests.rs::a_workspace_local_or_relative_clirunner_is_not_the_inert_tool",
   "crates/ripr/src/analysis/language/python/inert_tool_fixture_tests.rs::patching_the_runner_class_keeps_the_limit",

@@ -96,13 +96,19 @@ pub(super) struct PythonModuleNames<'a> {
     /// Plain `NAME = <value>` bindings nothing rebinds.
     pub(super) values: Vec<PythonModuleValue<'a>>,
     /// Every name bound exactly once at module scope (an import counts) and
-    /// never rebound, under the same conditions as [`module_literal_constants`].
-    pub(super) stable: std::collections::BTreeSet<String>,
+    /// never rebound, under the same conditions as [`module_literal_constants`],
+    /// where writers that only live inside `test*` bodies do not count: a
+    /// decorator runs at import, before any test body (#11018).
+    pub(super) decorator_stable: std::collections::BTreeSet<String>,
 }
 
 impl PythonModuleNames<'_> {
-    pub(super) fn holds(&self, name: &str) -> bool {
-        self.stable.contains(name)
+    /// Whether nothing can rebind `name` before a decorator reads it. A
+    /// decorator runs when the module is imported, so a writer that only
+    /// lives inside a test body (`monkeypatch.setattr(...)`) cannot change
+    /// what the decorator saw (#11018).
+    pub(super) fn holds_at_decoration(&self, name: &str) -> bool {
+        self.decorator_stable.contains(name)
     }
 }
 
@@ -113,8 +119,23 @@ pub(super) fn module_stable_names<'a>(
     source: &SourceText<'_>,
     statements: &'a [Stmt],
 ) -> PythonModuleNames<'a> {
+    let stable_set = |stable: &StableNames| {
+        stable
+            .counts
+            .keys()
+            .filter(|name| stable.holds(name))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let masked = mask_test_bodies(source, statements);
+    let decorator_stable = StableNames::of(&SourceText::new(&masked), statements)
+        .map(|stable| stable_set(&stable))
+        .unwrap_or_default();
     let Some(stable) = StableNames::of(source, statements) else {
-        return PythonModuleNames::default();
+        return PythonModuleNames {
+            decorator_stable,
+            ..PythonModuleNames::default()
+        };
     };
     let values = statements
         .iter()
@@ -133,13 +154,50 @@ pub(super) fn module_stable_names<'a>(
         .collect();
     PythonModuleNames {
         values,
-        stable: stable
-            .counts
-            .keys()
-            .filter(|name| stable.holds(name))
-            .cloned()
-            .collect(),
+        decorator_stable,
     }
+}
+
+/// `source` with the bodies of module-level `test*` functions and of `test*`
+/// methods in `Test*` classes blanked (newlines kept). pytest runs those
+/// after collection, so a writer named only there is out of reach of a
+/// decorator that already ran. Helpers, fixtures, class bodies and module
+/// code stay visible.
+fn mask_test_bodies(source: &str, statements: &[Stmt]) -> String {
+    let mut ranges = Vec::new();
+    let mut add_test = |function: &ast::StmtFunctionDef| {
+        if function.name.as_str().starts_with("test")
+            && let Some(first) = function.body.first()
+        {
+            ranges.push((
+                usize::from(first.range().start()),
+                usize::from(function.range.end()),
+            ));
+        }
+    };
+    for stmt in statements {
+        match stmt {
+            Stmt::FunctionDef(function) => add_test(function),
+            Stmt::ClassDef(class) if class.name.as_str().starts_with("Test") => {
+                for inner in &class.body {
+                    if let Stmt::FunctionDef(function) = inner {
+                        add_test(function);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut bytes = source.as_bytes().to_vec();
+    for (start, end) in ranges {
+        let end = end.min(bytes.len());
+        for byte in bytes.get_mut(start..end).into_iter().flatten() {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    String::from_utf8(bytes).unwrap_or_else(|_| source.to_string())
 }
 
 /// Every name a class body binds in its own scope, nested `def` and `class`

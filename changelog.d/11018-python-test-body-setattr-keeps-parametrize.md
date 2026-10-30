@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A `monkeypatch.setattr(...)`, `patch(...)` or `globals()` write inside a `test*` function no longer makes every `@pytest.mark.parametrize` argname in the same file look like an unresolved fixture. A decorator runs at import, before any test body, so only writers that can run before it (module scope, a helper called at import, the decorator's own arguments) keep the `unresolved_pytest_fixture` limit (#11018).

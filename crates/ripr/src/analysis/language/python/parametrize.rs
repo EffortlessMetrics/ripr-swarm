@@ -225,7 +225,7 @@ impl<'a> ParametrizeScope<'a> {
         if resolved != "pytest.mark.parametrize" {
             return unsettled;
         }
-        if self.module_values.holds(root) {
+        if self.module_values.holds_at_decoration(root) {
             Some(MarkKind::Pytest)
         } else {
             Some(MarkKind::Unsettled)

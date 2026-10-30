@@ -443,7 +443,10 @@ This order is the existing behavior and is normative:
   binding the root, is spelled `pytest.mark.parametrize` or
   `mark.parametrize`. An import root counts only when the module binds it
   exactly once (that import) and the enclosing class body does not bind
-  it; a canonical spelling whose root is not pinned that way (another
+  it, where a dynamic writer (`setattr`, `globals()`, `patch`) that only
+  lives inside a `test*` function or `Test*` method body is out of reach of
+  the decorator, which runs at import, and does not unsettle the root
+  (#11018); a canonical spelling whose root is not pinned that way (another
   library's `mark`, a rebound or class-local root) leaves every argname
   unsettled. A bare decorator name (`@cases`), the mark's callee
   (`parametrize = pytest.mark.parametrize`), argnames and `indirect` may
