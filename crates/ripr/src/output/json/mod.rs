@@ -336,6 +336,7 @@ mod tests {
             uninspected_changed_lines_lower_bound: 120,
             stop_reason: crate::analysis::PartialDiffStopReason::LineBudget,
             next_file_changed_lines: Some(50),
+            whole_diff_budgets: None,
             partition_identity: "b".repeat(64),
         }
     }
@@ -2068,6 +2069,50 @@ mod tests {
         assert_eq!(actionability["raw_evidence_refs"][0]["line"], 2);
         assert!(value.get("repair_placement").is_none());
         assert!(value.get("python_repair_card").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn finding_json_states_typescript_preview_canonical_gap_id() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        add_typescript_preview_actionability(&mut finding);
+        finding.id = "probe:src_lib.ts:typescript_preview:1a2b3c4d".to_string();
+        let mut out = String::new();
+        finding_json(&mut out, &finding, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert_eq!(
+            value["canonical_gap_id"],
+            "gap:typescript:typescript_preview:1a2b3c4d"
+        );
+
+        // Negative: a finding without the TypeScript preview card, or whose id
+        // is not a TypeScript preview probe id, states no gap id.
+        let mut other_id = finding.clone();
+        other_id.id = "probe:src_lib.ts:other:1a2b3c4d".to_string();
+        let mut out = String::new();
+        finding_json(&mut out, &other_id, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
+
+        let mut not_ts = finding.clone();
+        not_ts.language = None;
+        let mut out = String::new();
+        finding_json(&mut out, &not_ts, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
+
+        // JavaScript shares the preview card and probe family but has no
+        // TypeScript gap identity (#10709 review).
+        let mut js = finding.clone();
+        js.language = Some(LanguageId::JavaScript);
+        let mut out = String::new();
+        finding_json(&mut out, &js, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
         Ok(())
     }
 

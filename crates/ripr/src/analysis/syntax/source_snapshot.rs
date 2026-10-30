@@ -64,6 +64,9 @@ pub(crate) struct SourceScopes {
 #[derive(Default)]
 pub(crate) struct SourceSyntaxMemos {
     files: Mutex<BTreeMap<PathBuf, SnapshotSlot>>,
+    // Syntax only: content-identical fragments may share immutable green nodes.
+    // Call-site scope, offsets and owner-dependent answers are never cached here.
+    fragments: Mutex<BTreeMap<String, Option<Parse<SourceFile>>>>,
 }
 
 impl Clone for SourceSyntaxMemos {
@@ -79,6 +82,21 @@ impl std::fmt::Debug for SourceSyntaxMemos {
 }
 
 impl SourceSyntaxMemos {
+    pub(crate) fn parse_fragment(&self, text: &str) -> Option<Parse<SourceFile>> {
+        // Parse outside the index-wide lock; the first stored entry wins so
+        // concurrent callers converge on one shared green tree.
+        if let Ok(fragments) = self.fragments.lock()
+            && let Some(parse) = fragments.get(text)
+        {
+            return parse.clone();
+        }
+        let parse = parse_clean_source_file(text);
+        match self.fragments.lock() {
+            Ok(mut fragments) => fragments.entry(text.to_string()).or_insert(parse).clone(),
+            Err(_) => parse,
+        }
+    }
+
     pub(crate) fn get(&self, index: &RustIndex, file: &Path) -> Option<Arc<SourceSnapshot>> {
         let facts = index.files().get(file)?;
         let source = &facts.data().source;
@@ -396,6 +414,62 @@ pub(crate) fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
 mod tests {
     use super::*;
     use crate::analysis::rust_index::summarize_file;
+
+    #[test]
+    fn fragment_parses_share_only_exact_bytes_and_clones_start_empty() -> Result<(), String> {
+        let memos = SourceSyntaxMemos::default();
+        let text = "fn subject() { assert!(Widget.read()); }";
+        let first = memos.parse_fragment(text).ok_or("first parse")?.tree();
+        let second = memos.parse_fragment(text).ok_or("shared parse")?.tree();
+        assert!(std::ptr::eq(
+            first.syntax().green(),
+            second.syntax().green()
+        ));
+        let asynchronous = "async fn subject() { assert!(Widget.read()); }";
+        let other = memos
+            .parse_fragment(asynchronous)
+            .ok_or("async parse")?
+            .tree();
+        assert!(!std::ptr::eq(
+            first.syntax().green(),
+            other.syntax().green()
+        ));
+        assert!(memos.parse_fragment("fn broken( {").is_none());
+        assert!(memos.parse_fragment("fn broken( {").is_none());
+        let count = memos.fragments.lock().map_err(|e| e.to_string())?.len();
+        assert_eq!(count, 3);
+        let cloned = memos.clone();
+        assert!(
+            cloned
+                .fragments
+                .lock()
+                .map_err(|e| e.to_string())?
+                .is_empty()
+        );
+        std::thread::scope(|threads| -> Result<(), String> {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    threads.spawn(|| {
+                        memos
+                            .parse_fragment(text)
+                            .ok_or("thread parse")
+                            .map(|p| p.tree().syntax().text().to_string())
+                    })
+                })
+                .collect();
+            for handle in handles {
+                assert_eq!(
+                    handle
+                        .join()
+                        .map_err(|p| format!("fragment worker: {p:?}"))??,
+                    text
+                );
+            }
+            Ok(())
+        })?;
+        assert_eq!(memos.fragments.lock().map_err(|e| e.to_string())?.len(), 3);
+        Ok(())
+    }
 
     const FILE: &str = "src/lib.rs";
 

@@ -853,3 +853,8 @@ reason = "Pipeline diff-scope line-budget guard behavior; not a python verdict e
 id = "RIPR-SPEC-0362"
 scope = "out"
 reason = "Gate/ledger refusal-admission behavior; not an exposure-verdict example a Python case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0363"
+scope = "out"
+reason = "TypeScript per-file fact persistence; a cache-admission behavior, not an exposure-verdict example a python case labels"

@@ -751,3 +751,8 @@ reason = "Pipeline diff-scope line-budget guard behavior; not a perl verdict exa
 id = "RIPR-SPEC-0362"
 scope = "out"
 reason = "Gate/ledger refusal-admission behavior; not an exposure-verdict example a Perl case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0363"
+scope = "out"
+reason = "TypeScript per-file fact persistence; a cache-admission behavior, not an exposure-verdict example a perl case labels"

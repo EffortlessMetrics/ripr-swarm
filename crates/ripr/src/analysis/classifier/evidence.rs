@@ -3,8 +3,8 @@ use crate::analysis::classify::{
     HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
     activation_and_boundary_input, assertion_compares_hand_built_field,
-    assertion_observes_collection_argument, assertion_out_parameter, body_contains_owner_call,
-    call_parameter_names, callee_is_unique, chain_entry_pin_admits,
+    assertion_observes_collection_argument, assertion_observes_scope_end, assertion_out_parameter,
+    body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
     direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
@@ -372,19 +372,20 @@ impl ClassifiedProbeEvidence {
                 }))
         });
         // The truth-table reading takes `assert_eq!(owner(..), want)` as a
-        // comparison by the macro's name; a rebound name compares nothing.
-        // Only a `&&`/`||` owner reaches that reading, so other owners skip the
-        // per-file macro scan.
+        // comparison by the macro's name, and the invisible-change reading
+        // (#8659) reads `assert!`/`debug_assert!` comparison tokens and
+        // `assert_eq!`/`assert_ne!` operands the same way; a rebound name
+        // compares nothing — or checks an exact value its written tokens
+        // never show (#10920 review). Both readings only ever withhold
+        // credit, so any Predicate/ReturnValue probe asks the per-file scan
+        // once and every consumer refuses when it fires.
         let assertion_macros_rebound = matches!(
             context.probe.family,
             ProbeFamily::Predicate | ProbeFamily::ReturnValue
-        ) && context
-            .owner_fn
-            .is_some_and(|owner| owner.body.contains("&&") || owner.body.contains("||"))
-            && crate::analysis::classify::macro_names_rebound(
-                context.index,
-                &["assert", "assert_eq", "assert_ne"],
-            );
+        ) && crate::analysis::classify::macro_names_rebound(
+            context.index,
+            &["assert", "debug_assert", "assert_eq", "assert_ne"],
+        );
         let infect = infection_evidence_for_owner(
             context.probe,
             &test_summaries,
@@ -521,6 +522,8 @@ impl ClassifiedProbeEvidence {
             context.probe.family,
             ProbeFamily::SideEffect | ProbeFamily::CallDeletion
         );
+        // The free-call chain's identity is one answer per probe.
+        let free_chain_identity = std::cell::OnceCell::new();
         let propagate = match (context.owner_fn, context.helper_chain.as_ref()) {
             // An already-unknown stage keeps its own reason.
             (Some(owner), Some(chain))
@@ -544,12 +547,23 @@ impl ClassifiedProbeEvidence {
                             &context.related_tests,
                         )
                     } else {
-                        !chain_forwards_to_observed_hops(
-                            &owner.name,
-                            chain,
-                            &context.related_tests,
-                            context.index,
-                        )
+                        let forwards = if matches!(context.probe.family, ProbeFamily::ReturnValue) {
+                            crate::analysis::classify::chain_forwards_return_to_observed_hops(
+                                &owner.name,
+                                chain,
+                                &context.related_tests,
+                                context.index,
+                                &free_chain_identity,
+                            )
+                        } else {
+                            chain_forwards_to_observed_hops(
+                                &owner.name,
+                                chain,
+                                &context.related_tests,
+                                context.index,
+                            )
+                        };
+                        !forwards
                             && field_projection.is_none()
                     } =>
             {
@@ -819,8 +833,8 @@ impl ClassifiedProbeEvidence {
                             chain,
                             &context.related_tests,
                             context.index,
-                            test,
-                            assertion,
+                            (test, assertion),
+                            &free_chain_identity,
                         )
                     })
                 });
@@ -842,6 +856,14 @@ impl ClassifiedProbeEvidence {
                 })
                 || direct_owner_pin_admits(test, assertion)
         };
+        let recording_double = context.owner_fn.and_then(|owner| {
+            EffectStateCarrier::recording_double(
+                context.probe,
+                owner,
+                context.index,
+                context.workspace_complete,
+            )
+        });
         let fallback_expansion = crate::analysis::classify::ImplicitExpansionMemo::default();
         let expansion = crate::analysis::classify::ImplicitExpansionContext::new(
             context.index,
@@ -872,6 +894,11 @@ impl ClassifiedProbeEvidence {
             &import_defeats,
             &cross_package_defeats,
             &ReturnOracleAdmission {
+                recording_double_observed: &|test, assertion| {
+                    recording_double.as_ref().is_some_and(|carrier| {
+                        carrier.admits(test, assertion, context.index, pin_syntax)
+                    })
+                },
                 returned_closure_pin_required: context.owner_fn.is_some_and(|owner| {
                     crate::analysis::classify::returned_closure_pin_required(context.probe, owner)
                 }),
@@ -927,9 +954,20 @@ impl ClassifiedProbeEvidence {
                     }
                     let owner = context.owner_fn?;
                     // A destructor runs at scope end, which the shared-sink
-                    // authority below has no reading for; never confirm it.
+                    // authority below has no reading for. Only the scope-end
+                    // carrier confirms one (#10814); any other test stays
+                    // unconfirmed.
                     if is_drop_destructor(owner, context.index) {
-                        return Some(false);
+                        return Some(context.index.files().get(&test.file).is_some_and(|facts| {
+                            assertion_observes_scope_end(
+                                owner,
+                                &context.probe.expression,
+                                test,
+                                assertion,
+                                &facts.source,
+                                &expansion,
+                            )
+                        }));
                     }
                     let reach =
                         owner_reach.get_or_init(|| proximity_reach.owner_reach(&owner.name));

@@ -5330,7 +5330,14 @@ mod tests {
         // #10832: `python_parametrize_tuple_unpack` reads a tuple argname's
         // off-boundary rows through its leading unpack, so the boundary is
         // `weakly_exposed` and carries one direct-aligned card.
-        if (direct, no_strong, orthogonal, family_selection) != (11, 27, 30, 1) {
+        // #10842: `python_rewrite_shifted_bound` names the row its shifted
+        // bound needs, one more direct-aligned `weakly_exposed` card.
+        // #9815: `python_factor_reorder` adds four direct-aligned weak cards
+        // for area, float_area, boxed_area and hashed_area. Their numeric rows
+        // observe the owners but need operands that distinguish product order.
+        // `python_factor_reorder_rebound` adds one direct-aligned weak card:
+        // its rebound table operand leaves multiplication order unresolved.
+        if (direct, no_strong, orthogonal, family_selection) != (17, 27, 30, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

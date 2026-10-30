@@ -26,6 +26,7 @@ Linked issues:
 - #6603 (mutation evidence for rules 12 to 14, from the #6597 corpus)
 - #6599, #6600, #6601 (false actionable, false `exposed` and Hypothesis
   fixture verdicts in the #6597 corpus; rules 15 to 19)
+- #10936 (numpy.testing and assertpy equality helpers; rule 28, example 10)
 - #6733 (a removed term that is zero at every asserted input; rule 20)
 - #9185 (a message-only change under a literal pattern that fits both
   messages; rule 2)
@@ -70,6 +71,13 @@ Support-tier impact:
   the test shape of examples 8, 20 and 21 fails on a non-equivalent
   mutant of its owner, so today's `weakly_exposed` is a false actionable
   verdict there. Those findings move to `exposed`.
+- Rule 28 adds credit that no earlier spec promised, and only where the
+  test file proves the helper is numpy's or assertpy's. A numpy.testing
+  `assert_array_equal` / `assert_equal` or an assertpy
+  `assert_that(..).is_equal_to(..)` call that fails exactly when its two
+  operands differ moves from `static_unknown` to the class the equivalent
+  `assert a == b` reads (example 10, #10936). Every unproven name keeps
+  `static_unknown`.
 - Rules 15 to 19 (amended 2026-10-05) come from the same corpus (#6599,
   #6600, #6601). Rules 15, 16, 17 and 19 add credit where the corpus
   case's test fails on a non-equivalent mutant of its owner, so the
@@ -188,7 +196,7 @@ A call statement or `with` item, by the last dotted segment of its callee:
 | `raises` as `pytest.raises` or bare `raises`, as a `with` item, with `match=` | `exact_error_variant` / strong |
 | the same without `match=` | `broad_error` / weak |
 | `assert_called`, `assert_called_once`, `assert_called_with`, `assert_called_once_with`, `assert_any_call`, `assert_has_calls`, `assert_not_called` | `mock_expectation` / medium |
-| other segment starting `assert_`, or `assert_that` | `unknown`, shape `unknown_custom_helper` |
+| other segment starting `assert_`, or `assert_that` | `unknown`, shape `unknown_custom_helper` (rule 28 re-reads proven numpy.testing and assertpy equality) |
 | anything else | no assertion recorded |
 
 Strength ranks are strong 5, medium 4, weak 3, smoke 2, unknown 1. Only
@@ -251,6 +259,8 @@ as strong for one credit branch only; its table row is unchanged.
    `unknown`, shape `unknown_custom_helper`, when the table gives no
    other kind for the outermost call. Today only the outermost segment is
    read, so the chain records no assertion and the owner reads as a gap.
+   Rule 28 re-reads the numpy.testing and assertpy forms of this shape as
+   equality when the test file proves whose they are.
 
 ### Per-test oracle selection
 
@@ -415,9 +425,17 @@ This order is the existing behavior and is normative:
   other fixtures, and an `indirect=` argname is a fixture (#9619). An
   argname whose `indirect=` value the read cannot settle (`indirect=IND`, a
   computed list, a non-boolean constant) makes no fixture edge
-  (RIPR-SPEC-0028) but still counts here; only literal `False`, `None` or a
+  (RIPR-SPEC-0028) but still counts here; only literal `False` or a
   literal list or tuple of strings that omits it (an empty one included)
-  leaves the argname a direct value (#10685). `indirect` is read from the
+  leaves the argname a direct value (#10685). A mark pytest refuses at
+  collection (`indirect=None`, a literal `indirect` list naming a name the
+  mark does not parametrize, an argname parametrized twice within one mark,
+  across stacked marks, or by the test's class or a local ancestor and the
+  test) makes the whole test uncollectible: every argname of every mark on
+  it is unsettled, a healthy sibling's routed fixture included, and the test
+  carries the `pytest.mark.parametrize(collection error)` activation control,
+  so it lends no credit through assertions, boundary inputs or fixtures
+  (#10867). `indirect` is read from the
   keyword or the third positional argument; a `*args` or `**kwargs` splat in
   the mark leaves every argname unsettled. The mark is pytest's own when its
   root resolves through the imports in effect at the definition
@@ -1058,6 +1076,93 @@ mutant calibrates the rule; ripr reports only the static shape.
     `py-trap-wrapped-conditional` and `py-trap-wrapped-finally` stay
     non-credited, #9619).
 
+28. **numpy.testing and assertpy equality helpers are the equality they
+    run.** `numpy.testing.assert_array_equal(a, b)`,
+    `numpy.testing.assert_equal(a, b)` and
+    `assertpy.assert_that(a).is_equal_to(b)` fail exactly when the two
+    operands differ, like `assert a == b`. Extraction still assigns them
+    `unknown`, `unknown_custom_helper` (rule 3), because the name alone does
+    not say whose helper it is. A pass over the test file then reads such a
+    call as `assert a == b`, `exact_value` / strong, only when all of these
+    hold. The call is `a`, `b` as exactly two positional operands (keywords
+    only `err_msg`, `verbose` and `strict` for numpy; none for assertpy,
+    and the chain is `assert_that(a).is_equal_to(b)` and nothing more). The
+    head name (`np`, `numpy`, `npt`, an imported `assert_equal` or
+    `assert_that`) resolves, through a top-level `import` or
+    `from numpy.testing import` / `from assertpy import` of the same file,
+    to that library's function, and is bound exactly once in the file;
+    relative and star imports and a second import of the name resolve
+    nothing. No name after the head (`np.testing = fake`) and no
+    `is_equal_to` is bound anywhere in the file. The head is otherwise used
+    only as `head.` (a module alias) or `head(` (an imported callable), so
+    it is never stored or passed along, and `np.testing` is only dotted
+    into. No line that patches, mocks or `setattr`s mentions the library or
+    the helper, and `globals`, `locals`, `vars`, `exec`, `eval` or `__import__` as a
+    word (so `exec (...)` with a space is refused like `exec(...)`), or
+    `__dict__`, `__code__`, `sys.modules`, `importlib` or `import *` with any
+    spacing, anywhere refuses the file. The call is not under a `with`, `try` or `match`, where it may
+    be expected to fail (`with pytest.raises(AssertionError)`). A numpy
+    helper with a scalar literal operand (`assert_array_equal(f(), 3)`; numbers, including signed,
+    parenthesized and arbitrary-width `0x`/`0b`/`0o` integers,
+    `True`/`False`/`None`, and string literals of any prefix, triple-quoted or
+    implicitly concatenated) is
+    not read either: numpy broadcasts the scalar, so the call passes for
+    `[3]` as well as `3` and a shape change goes unseen (assertpy compares
+    with `==` and is unaffected). The credit is a diff-mode pass: repo-mode
+    exposure analysis keeps the rule 3 reading (#10945). The reported
+    oracle text stays the call as written; the equality gates (rule 4, the
+    tautology and wrapped-argument gates) read the equivalent comparison.
+    `assert_allclose`, `assert_almost_equal`, `assert_array_almost_equal`,
+    `assert_array_less`, an `np` or `assert_that` the file did not import
+    from the library, a project-local fluent helper (example 11), a name
+    renamed away from `assert_array_equal` or `assert_equal`, and a helper
+    re-exported through a project module keep the rule 3 reading. Another
+    file that patches the library (a conftest fixture, a plugin) is not
+    seen, as for every helper this module resolves
+    (`py-numpy-assertpy-equal-to` and `py-numpy-assert-equal-import`
+    credited; `py-numpy-allclose-tolerance`, `py-numpy-under-raises`,
+    `py-numpy-shadowed-np`, `py-numpy-patched-helper` and
+    `py-numpy-tautology` stay non-credited, #10936).
+
+29. **Bounded integer dunder truthiness.** For a sole-line replacement in
+    `__bool__`, a bare `assert Class(integer)` (optionally `not`) is an exact
+    discriminator only when its condition holds before and fails after the
+    edit. The module must contain one plain, undecorated class without bases;
+    methods have no decorators, defaults or annotations and are limited to
+    `__init__` and `__bool__`.
+    Its constructor is one `self.field = parameter` and
+    `__bool__` is one return comparing that field to a signed 64-bit integer
+    literal with `==`, `!=`, `<`, `<=`, `>` or `>=`. Both old and new predicates
+    must resolve on the same field. The test module contains one import and
+    one argument-free, undecorated function without annotations or defaults;
+    literal docstrings are allowed. This capability is limited to explicit
+    `--diff` input's live source view; default/`--base`, `--worktree` and immutable
+    candidate subjects retain abstention. A committed-content overlay also
+    refuses credit: a physical audit cannot exclude committed writers or import
+    artifacts deleted or truncated on disk. A truthiness-only physical audit must find
+    exactly those two nonempty, ASCII Python sources with bytes matching the
+    parsed view. Empty package initializers are allowed. It inspects every
+    directory, including generated, excluded and hidden paths, within 512
+    entries and 16 levels; a third Python source, local bytecode/native/import
+    artifact, symlink, non-ASCII path, incomplete read or traversal/type error
+    refuses this credit. The audit is a bounded current filesystem observation,
+    not a change to the general walker or a hostile-race guarantee.
+    Pytest configuration files in the workspace or its bounded ancestor chain
+    also refuse credit, because collection settings and options are not
+    interpreted by this audit. Environment options, external plugins and
+    explicit pytest command-line selection are not audited. Assertions with
+    message expressions refuse credit because those expressions run on failure.
+    The physical observation cannot be reused through `explain/context --from`:
+    artifacts carrying this credit refuse with `check_artifact_unusable` and
+    direct fresh analysis; other artifact findings retain their existing contract.
+    The selected function's sole statement is that assertion,
+    the class import identifies the exact owner module, and no fixture, implicit
+    setup, activation control, edited test, rebinding or known foreign write
+    can replace the class, constructor, method or field. Other types and wider
+    object behavior retain the existing abstention. In particular, `Money(1)`
+    and `not Money(0)` do not distinguish `!= 0` from `> 0`; `Money(-1)` does
+    (#9795). This does not broaden equality guards, properties or `__str__`.
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -1321,12 +1426,18 @@ and the test is `tests/test_subject.py`, which imports each owner from
    mock the test passed. With the change `handler(abs(int(text)))`
    instead: `weakly_exposed` (unchanged), since `abs` hands the mock 1 at
    that input.
-10. `np.testing.assert_array_equal(parse('1'), [2])` only: `unknown`
-    helper, `static_unknown`, `opaque_custom_assertion_helper`
-    (unchanged).
-11. `assert_that(parse('1')).is_equal_to(2)` only: `unknown` helper,
-    `static_unknown`, `opaque_custom_assertion_helper` (today no
-    assertion, `weakly_exposed`).
+10. `np.testing.assert_array_equal(parse('1'), [2])` only, with
+    `import numpy as np` in the test file: `exact_value` / strong,
+    `exposed` (today `unknown` helper, `static_unknown`,
+    `opaque_custom_assertion_helper`; rule 28, #10936). Without that import,
+    or with `np` bound by anything else: `unknown` helper, `static_unknown`,
+    `opaque_custom_assertion_helper` (unchanged). `assertpy`'s
+    `assert_that(parse('1')).is_equal_to(2)` with `from assertpy import
+    assert_that` reads the same way.
+11. `assert_that(parse('1')).is_equal_to(2)` only, where `assert_that` is
+    a project helper (`from tests.fluent import assert_that`): `unknown`
+    helper, `static_unknown`, `opaque_custom_assertion_helper` (today no
+    assertion, `weakly_exposed`; rule 3).
 12. `assert parse('1') == 2` then `assert other == 3`: `exposed`,
     `direct`, reported oracle `assert parse('1') == 2` (today
     `weakly_exposed`, `orthogonal`).
@@ -1713,6 +1824,37 @@ and the test is `tests/test_subject.py`, which imports each owner from
   the decorated control, the conftest, same-module and single-name forms,
   the off-boundary parity and every negative shape of example 42;
   `classify/tests.rs` `an_indirect_parametrize_argname_is_an_unresolved_fixture`.
+
+## Numeric factor reorders
+
+A factor swap involving named operands retains the ordinary table-row reading
+(#9815). Python `int`/`float` annotations and numeric defaults do not enforce
+runtime operand types: custom `__mul__`/`__rmul__` methods can make the swap a
+behavior change. Numeric test rows alone cannot establish global commutativity.
+Order-sensitive repair guidance requests operands that distinguish multiplication
+order; varying numeric rows alone cannot do so. Literal-only products have no
+named table operand and keep their ordinary exact-oracle reading. This rule does
+not infer local or module runtime types.
+
+Guidance follows the changed product inside a container, and quoted `#` text
+does not hide the expression. Exact binary swaps also read primitive finite
+float rows. Integer literals are bounded to i128; mixed integer/float rows
+require the integer to fit i32 before conversion, and the product must remain
+finite. Calls, booleans, strings and nonfinite values are not numeric evidence.
+This reading never flattens multiplication trees or assumes floating-point
+associativity; unsupported rows retain the ordinary reading.
+
+A direct whole-result table assertion can distinguish an independently changed
+integer tuple or list sibling beside a factor swap. Credit this only for a
+single-line replacement and a direct, undecorated simple owner with stable
+parameters, a plain literal parametrization and a direct equality whose whole
+old result matches an actual row while the new result differs. Unsupported
+numeric comparisons and projected assertions do not establish this proof. A
+test that rebinds a directly parametrized factor and has one admitted strong
+assertion keeps the factor finding weak when the row no longer binds
+that call value. The rebound-specific fallback applies only when the test has
+one admitted strong assertion; prior handling of tests with multiple admitted
+strong assertions is retained.
 
 ## Implementation Mapping
 

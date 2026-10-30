@@ -204,7 +204,7 @@ fn repair_refusal(
             {
                 (
                     RefusalKind::AlreadyGripped,
-                    format!("{label}: its existing tests already grip it (exposed) on current static evidence, so no static gap remains to repair"),
+                    format!("{label}: its existing tests already grip it (exposed) on current static evidence, so no static gap remains to repair in this seam (this is the whole-seam view of `ripr repair`; `ripr check` judges your changed lines)"),
                 )
             } else if reason == RepairPacketIneligibility::RouteNotReady {
                 // Name the evidence the route still needs, not just the gate
@@ -224,43 +224,7 @@ fn repair_refusal(
                 // #10644: the refusal reads on a human surface, so name each
                 // missing fact in plain words; the machine readiness strings
                 // behind it stay internal.
-                let missing = eligibility
-                    .readiness
-                    .missing_evidence
-                    .iter()
-                    .map(|evidence| humanize_evidence(evidence))
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                let mut label = if missing.is_empty() {
-                    label.to_string()
-                } else {
-                    format!("{label} (missing evidence: {missing})")
-                };
-                // #10622: a Rust predicate boundary whose only missing fact
-                // is the boundary discriminator has a concrete manual route —
-                // the predicate stub writes a fill-in skeleton for the changed
-                // comparison, prefilling the boundary input when it derives
-                // (a bare parameter against a literal; compound operands
-                // still leave todo!() values). Name the route instead of
-                // leaving the reader at the jargon dead end; when anything
-                // else is also missing the stub alone would not ready the
-                // route, so the bare label stays. The seam inventory this
-                // gate reads is Rust-only, so the kind check is also the
-                // language check.
-                if let [missing] = eligibility.readiness.missing_evidence.as_slice()
-                    && missing
-                        .starts_with("producer-owned missing discriminator fact: boundary_value")
-                    && entry.seam.kind() == crate::analysis::seams::SeamKind::PredicateBoundary
-                {
-                    let file = crate::analysis::stable_path_text(entry.seam.file());
-                    let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
-                    let root_flag = root.map_or_else(String::new, |root| {
-                        format!(" --root {}", shell_arg(&bound_root(&root.to_string_lossy())))
-                    });
-                    label.push_str(&format!(
-                        ": write the boundary test by hand — `ripr agent stub{root_flag} --at {at} --kind predicate` writes a fill-in skeleton for the changed comparison; the boundary input is prefilled when it derives, otherwise fill the todo!() values, then rerun `ripr repair`"
-                    ));
-                }
+                let label = route_not_ready_reason(entry, label, &eligibility.readiness.missing_evidence, root);
                 (RefusalKind::RouteNotReady, label)
             } else {
                 (RefusalKind::Other, label.to_string())
@@ -270,6 +234,78 @@ fn repair_refusal(
     policy
         .omission_reason_for_class(entry.class)
         .map(|reason| (RefusalKind::Other, reason))
+}
+
+/// The route-not-ready refusal wording: the plain-language missing evidence
+/// plus any concrete manual route (predicate or return-value stub).
+fn route_not_ready_reason(
+    entry: &crate::analysis::ClassifiedSeam,
+    label: &str,
+    missing_evidence: &[String],
+    root: Option<&Path>,
+) -> String {
+    let missing = missing_evidence
+        .iter()
+        .map(|evidence| humanize_evidence(evidence))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let mut label = if missing.is_empty() {
+        label.to_string()
+    } else {
+        format!("{label} (missing evidence: {missing})")
+    };
+    // #10622: a Rust predicate boundary whose only missing fact
+    // is the boundary discriminator has a concrete manual route —
+    // the predicate stub writes a fill-in skeleton for the changed
+    // comparison, prefilling the boundary input when it derives
+    // (a bare parameter against a literal; compound operands
+    // still leave todo!() values). Name the route instead of
+    // leaving the reader at the jargon dead end; when anything
+    // else is also missing the stub alone would not ready the
+    // route, so the bare label stays. The seam inventory this
+    // gate reads is Rust-only, so the kind check is also the
+    // language check.
+    if let [missing] = missing_evidence
+        && missing.starts_with("producer-owned missing discriminator fact: boundary_value")
+        && entry.seam.kind() == crate::analysis::seams::SeamKind::PredicateBoundary
+    {
+        let file = crate::analysis::stable_path_text(entry.seam.file());
+        let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
+        let root_flag = root.map_or_else(String::new, |root| {
+            format!(
+                " --root {}",
+                shell_arg(&bound_root(&root.to_string_lossy()))
+            )
+        });
+        label.push_str(&format!(
+            ": write the boundary test by hand — `ripr agent stub{root_flag} --at {at} --kind predicate` writes a fill-in skeleton for the changed comparison; the boundary input is prefilled when it derives, otherwise fill the todo!() values, then rerun `ripr repair`"
+        ));
+    }
+    // #10701: a changed return value or error with no test ripr can
+    // safely strengthen has a working manual route too.
+    if let [missing] = missing_evidence
+        && let Some(kind) = crate::analysis::repair_route::stub_kind_for_missing_evidence(missing)
+        && matches!(
+            (entry.seam.kind(), kind),
+            (
+                crate::analysis::seams::SeamKind::ReturnValue,
+                "return_value"
+            ) | (crate::analysis::seams::SeamKind::ErrorVariant, "error_path")
+        )
+    {
+        let file = crate::analysis::stable_path_text(entry.seam.file());
+        let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
+        let root_flag = root.map_or_else(String::new, |root| {
+            format!(
+                " --root {}",
+                shell_arg(&bound_root(&root.to_string_lossy()))
+            )
+        });
+        label.push_str(&format!(
+            ": write the test by hand, or run `ripr agent stub{root_flag} --at {at} --kind {kind}` for a fill-in skeleton, then rerun `ripr repair`"
+        ));
+    }
+    label
 }
 
 /// Whether a readiness missing-evidence item is the boundary-value
@@ -783,7 +819,7 @@ pub(crate) fn uncommitted_start_refusal_message(root: &Path, seam_id: &str, file
 /// The gate applied to one classified seam: [`repair_refusal_reason`], the
 /// edit-target predicate and the held inline target, plus the related test
 /// the by-hand work targets.
-fn repair_start_refusal_for_entry(
+pub(crate) fn repair_start_refusal_for_entry(
     root: &Path,
     entry: &crate::analysis::ClassifiedSeam,
     policy: AgentBriefPolicy<'_>,
@@ -1049,6 +1085,13 @@ pub(crate) fn check_repair_route(
     // finding whose seam the gate refused must not read as "analysis could
     // not decide" either.
     let static_limited = super::gap_bound_repair::finding_is_static_limited(finding);
+    // #10702: an `exposed` finding means the related tests already notice the
+    // change. That is `check`'s own verdict; the seam view below can only
+    // disagree by reading older or wider evidence, so it must not surface a
+    // "missing evidence" or "no seam" refusal beside an exposed finding.
+    if finding.class == crate::domain::ExposureClass::Exposed && !static_limited {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::FindingAlreadyExposed);
+    }
     // #9103 (RIPR-SPEC-0311): a TypeScript preview finding carries no Rust
     // canonical gap, but its GapRecord validates through the shared
     // agent-packet validator and starts a gap-bound attempt. The canonical
@@ -1116,12 +1159,32 @@ pub(crate) fn check_repair_route(
         .is_some_and(|bound_finding| bound_finding.id == finding.id)
     });
     let Some(entry) = bound.next() else {
-        return CheckRepairRoute::Refused(RepairRouteRefusal::NoBindingSeam);
+        // #10702: a strongly gripped seam has no canonical gap id, so the
+        // id-keyed join above never binds it. Name it by file, owner, kind
+        // and line instead, and only when it is the one such seam: the
+        // disagreement is then the whole story, not "no seam".
+        let mut gripped = classified.iter().filter(|entry| {
+            entry.class == crate::analysis::seams::SeamGripClass::StronglyGripped
+                && super::repair_card_handoff::finding_names_seam_by_location(
+                    finding,
+                    entry,
+                    &classified,
+                )
+        });
+        if gripped.next().is_some() && gripped.next().is_none() {
+            return CheckRepairRoute::Refused(RepairRouteRefusal::SeamGrippedFindingNot);
+        }
+        return CheckRepairRoute::Refused(RepairRouteRefusal::NoBindingSeam {
+            seams_in_file: classified.len(),
+        });
     };
     if bound.next().is_some() {
         return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralBindingSeams);
     }
     if let Some((kind, reason)) = repair_refusal(entry, policy, Some(root)) {
+        // A bound seam carries a canonical gap id, which a strongly gripped
+        // seam never does, so `AlreadyGripped` cannot reach here: that case is
+        // named by the location fallback above (#10702).
         // #9244: carry the typed kind and the producer-owned missing list so
         // the check screen words a not-ready route without parsing `reason`.
         let missing = repair_packet_eligibility(entry).readiness.missing_evidence;

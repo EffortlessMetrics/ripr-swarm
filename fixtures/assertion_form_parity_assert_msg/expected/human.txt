@@ -43,7 +43,7 @@ No test stub here: A related test already reaches the boundary input, but ripr g
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (unknown)
-    - ./src/lib.rs:5 (unknown)
+    - ./src/lib.rs:3 (unknown); kind: static_unknown; reason: No strong discriminator was detected
+    - ./src/lib.rs:5 (unknown); kind: static_unknown; reason: No strong discriminator was detected
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

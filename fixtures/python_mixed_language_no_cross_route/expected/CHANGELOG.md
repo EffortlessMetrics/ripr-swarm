@@ -613,3 +613,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_mixed_language_no_cross_route (25)
+
+Reason:
+RIPR-SPEC-0028: #10708 untested Python owner gains honest add-test/native-verifier/refresh guidance
+
+Command:
+`cargo xtask goldens bless python_mixed_language_no_cross_route --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -54,7 +54,7 @@ use std::collections::BTreeMap;
 
 /// One literal `params=` row: its source text and, for a tuple row, the
 /// source text of each element.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct FixtureParamRow {
     pub(super) text: String,
     pub(super) elements: Option<Vec<String>>,
@@ -192,6 +192,13 @@ fn literal_param_cases(
             .iter()
             .all(|decorator| decorator.starts_with("pytest.mark."))
     {
+        return None;
+    }
+    // The unpacked fixture must be an isolated literal-param fixture the test
+    // requests (checked below), so a test without one skips the parse.
+    if !test.fixture_defs.iter().any(|def| {
+        def.isolated && def.literal_params.is_some() && test.fixtures.contains(&def.name)
+    }) {
         return None;
     }
     let Ok(Mod::Module(module)) = parse(&test.body_text, Mode::Module, "<python-test-body>") else {

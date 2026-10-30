@@ -1,6 +1,48 @@
 mod json_construction;
 mod retention_parity;
 #[test]
+fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> {
+    // The owner's nearest enclosing module is the production declaration's
+    // scope and never a shadow; every other module still counts.
+    for (source, expected) in [
+        // Owner and the same-name type share `a`: exempt.
+        (
+            "mod a { struct Widget; fn read() {} #[test] fn subject() {} }",
+            false,
+        ),
+        // The owner sits in `b`; the type declared in the test's own `a` shadows.
+        (
+            "mod a { struct Widget; #[test] fn subject() {} } mod b { fn read() {} }",
+            true,
+        ),
+        // Nested: the owner's nearest module is `inner`, so `outer`'s type counts.
+        (
+            "mod outer { struct Widget; mod inner { fn read() {} #[test] fn subject() {} } }",
+            true,
+        ),
+        // Same-name owner `fn` in two modules on the owner's line: ambiguous, no exemption.
+        (
+            "mod a { struct Widget; fn read() {} #[test] fn subject() {} } mod b { fn read() {} }",
+            true,
+        ),
+    ] {
+        let index = index(&[(LIB, source)]);
+        let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+        let owner = OwnerScope::new("read", 1, Path::new(LIB));
+        assert!(!index.tests().is_empty());
+        for test in index.tests().iter() {
+            assert_eq!(
+                test_module_shadows_type(test, source, "Widget", Some(owner), &index),
+                expected,
+                "{source}"
+            );
+        }
+    }
+    Ok(())
+}
+
+mod shared_target_context;
+#[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
     let source = "mod production {\nstruct Widget;\nimpl Widget { fn read() {} }\n#[test] fn subject() {}\nmod nested { struct Widget; trait Render {}\n#[test] fn subject() {}\n}\n}\nmod peer { struct Widget;\n#[test] fn subject() {}\n}\n";
     let index = index(&[(LIB, source)]);
@@ -204,48 +246,6 @@ fn module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity() -> Res
     }
     Ok(())
 }
-#[test]
-fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> {
-    // The owner's nearest enclosing module is the production declaration's
-    // scope and never a shadow; every other module still counts.
-    for (source, expected) in [
-        // Owner and the same-name type share `a`: exempt.
-        (
-            "mod a { struct Widget; fn read() {} #[test] fn subject() {} }",
-            false,
-        ),
-        // The owner sits in `b`; the type declared in the test's own `a` shadows.
-        (
-            "mod a { struct Widget; #[test] fn subject() {} } mod b { fn read() {} }",
-            true,
-        ),
-        // Nested: the owner's nearest module is `inner`, so `outer`'s type counts.
-        (
-            "mod outer { struct Widget; mod inner { fn read() {} #[test] fn subject() {} } }",
-            true,
-        ),
-        // Same-name owner `fn` in two modules on the owner's line: ambiguous, no exemption.
-        (
-            "mod a { struct Widget; fn read() {} #[test] fn subject() {} } mod b { fn read() {} }",
-            true,
-        ),
-    ] {
-        let index = index(&[(LIB, source)]);
-        let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
-        let owner = OwnerScope::new("read", 1, Path::new(LIB));
-        assert!(!index.tests().is_empty());
-        for test in index.tests().iter() {
-            assert_eq!(
-                test_module_shadows_type(test, source, "Widget", Some(owner), &index),
-                expected,
-                "{source}"
-            );
-        }
-    }
-    Ok(())
-}
-
-mod shared_target_context;
 
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};

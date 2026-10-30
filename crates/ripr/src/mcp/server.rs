@@ -197,6 +197,7 @@ impl McpServer {
             &[
                 "snapshot_id",
                 "offset",
+                "omitted_offset",
                 "limit",
                 "file",
                 "class",
@@ -206,6 +207,7 @@ impl McpServer {
         )?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?;
+        let omitted_offset = optional_nonnegative_argument(&arguments, "omitted_offset")?;
         let limit = optional_positive_argument(&arguments, "limit")?;
         let file = optional_nonempty_string_argument(&arguments, "file")?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
@@ -258,6 +260,7 @@ impl McpServer {
             workspace::GapListWindow {
                 offset: offset.unwrap_or(0),
                 limit,
+                omitted_offset: omitted_offset.unwrap_or(0),
             },
             &workspace::GapListFilter {
                 file,
