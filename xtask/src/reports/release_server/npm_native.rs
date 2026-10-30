@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -198,7 +198,9 @@ fn verify_package(
     path: &Path,
     identity: &payload::FinalNativePayloadIdentity,
     contract: &DistributionContract,
-) -> Result<(), String> {
+) -> Result<String, String> {
+    let bytes = fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let digest = hex_lower(&Sha256::digest(&bytes));
     let temp = std::env::temp_dir().join(format!(
         "ripr-npm-verify-{}-{}",
         std::process::id(),
@@ -208,20 +210,20 @@ fn verify_package(
             .as_nanos()
     ));
     fs::create_dir(&temp).map_err(|e| format!("create verification directory: {e}"))?;
-    let result = verify_package_inner(path, identity, contract, &temp);
+    let result = verify_package_inner(&bytes, identity, contract, &temp);
     let cleanup =
         fs::remove_dir_all(&temp).map_err(|e| format!("remove verification directory: {e}"));
-    result.and(cleanup)
+    result.and(cleanup)?;
+    Ok(digest)
 }
 
 fn verify_package_inner(
-    path: &Path,
+    bytes: &[u8],
     identity: &payload::FinalNativePayloadIdentity,
     contract: &DistributionContract,
     temp: &Path,
 ) -> Result<(), String> {
-    let file = File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
-    let mut archive = tar::Archive::new(GzDecoder::new(file));
+    let mut archive = tar::Archive::new(GzDecoder::new(Cursor::new(bytes)));
     let mut seen = BTreeSet::new();
     let mut expected = BTreeSet::from(["package/package.json".to_string()]);
     expected.extend(
@@ -300,10 +302,54 @@ fn verify_package_inner(
     payload::verify_payload_files(temp, identity)
 }
 
+fn ensure_archive_unchanged(path: &Path, verified_hash: &str) -> Result<(), String> {
+    if sha256_file(path)? != verified_hash {
+        return Err("npm tarball changed after verification".to_string());
+    }
+    Ok(())
+}
+
+fn verify_qualification(bytes: &[u8], expected: &Value) -> Result<(), String> {
+    let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
+    let actual: Value = serde_json::from_slice(bytes)
+        .map_err(|e| format!("parse selected-target build identity: {e}"))?;
+    let fields = expected
+        .as_object()
+        .ok_or("invalid expected build identity")?;
+    for (key, value) in fields {
+        if actual.get(key) != Some(value) {
+            return Err(format!("selected-target build identity mismatch: {key}"));
+        }
+    }
+    Ok(())
+}
+
+fn promote_pair(
+    package: &Path,
+    receipt: &Path,
+    output_package: &Path,
+    output_receipt: &Path,
+) -> Result<(), String> {
+    fs::hard_link(package, output_package)
+        .map_err(|e| format!("publish local package {}: {e}", output_package.display()))?;
+    if let Err(error) = fs::hard_link(receipt, output_receipt) {
+        fs::remove_file(output_package).map_err(|e| {
+            format!("receipt promotion failed ({error}); remove partial package: {e}")
+        })?;
+        return Err(format!(
+            "publish local receipt {}: {error}",
+            output_receipt.display()
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn produce(
     payload_dir: &Path,
     identity_path: &Path,
     producer_path: &Path,
+    build_identity_path: &Path,
+    archive_path: &Path,
     out_dir: &Path,
 ) -> Result<(), String> {
     let identity_hash = sha256_file(identity_path)?;
@@ -320,41 +366,94 @@ pub(super) fn produce(
         &producer.source_commit,
     )?;
     producer::bind_to_payload_identity(&producer, &identity)?;
+    let producer_hash = hex_lower(&Sha256::digest(&producer_bytes));
+    let build_bytes = fs::read(build_identity_path)
+        .map_err(|e| format!("read selected-target build identity: {e}"))?;
+    let archive_name = format!("ripr-server-v{}-{TARGET}.tar.gz", identity.version);
+    if archive_path.file_name().and_then(|name| name.to_str()) != Some(archive_name.as_str()) {
+        return Err(
+            "qualified archive filename does not match the selected target/version".to_string(),
+        );
+    }
+    let archive_hash = sha256_file(archive_path)?;
+    let expected_qualification = json!({
+        "target": TARGET, "candidate_sha": identity.source.commit_sha,
+        "candidate_tree": identity.source.tree_sha, "version": identity.version,
+        "archive_file": archive_name, "archive_sha256": archive_hash,
+        "archive_readback_verified": true, "cargo_lock_sha256": identity.cargo_lock_sha256,
+        "qualification_workflow_sha256": sha256_file(Path::new(".github/workflows/server-archive-qualification.yml"))?,
+        "payload_identity_sha256": identity_hash, "producer_build_sha256": producer_hash,
+        "payload_aggregate_sha256": identity.payload_aggregate_sha256,
+        "payload_file_count": identity.files.len(), "selected_features": identity.selected_features,
+        "native_runtime_evidence": identity.native_runtime_evidence,
+        "producer_cargo_arguments": producer.cargo_arguments,
+        "producer_executable_sha256": producer.executable_sha256,
+        "producer_executable_version_line": producer.executable_version_line,
+        "rustc_verbose_version": identity.toolchain.rustc_verbose_version,
+        "cargo_verbose_version": identity.toolchain.cargo_verbose_version
+    });
+    verify_qualification(&build_bytes, &expected_qualification)?;
     let contract = load_distribution_contract()?;
     manifest(&identity, &contract)?;
     fs::create_dir_all(out_dir).map_err(|e| format!("create output directory: {e}"))?;
-    let package = out_dir.join(format!(
-        "effortlessmetrics-ripr-linux-x64-gnu-{}.tgz",
-        identity.version
+    let staging = out_dir.join(format!(
+        ".npm-native-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos()
     ));
-    pack(payload_dir, &identity, &contract, &package)?;
-    verify_package(&package, &identity, &contract)?;
-    if sha256_file(identity_path)? != identity_hash
-        || payload::verify_final_native_payload(payload_dir, identity_path)? != identity
-    {
-        return Err("source payload or identity changed while packaging".to_string());
-    }
-    let receipt = json!({"schema_version": 1, "kind": "ripr_native_npm_package", "target": identity.target,
+    fs::create_dir(&staging).map_err(|e| format!("create npm staging directory: {e}"))?;
+    let result = (|| {
+        let package_name = format!(
+            "effortlessmetrics-ripr-linux-x64-gnu-{}.tgz",
+            identity.version
+        );
+        let package = staging.join(&package_name);
+        pack(payload_dir, &identity, &contract, &package)?;
+        let verified_tarball_hash = verify_package(&package, &identity, &contract)?;
+        if sha256_file(identity_path)? != identity_hash
+            || payload::verify_final_native_payload(payload_dir, identity_path)? != identity
+        {
+            return Err("source payload or identity changed while packaging".to_string());
+        }
+        ensure_archive_unchanged(&package, &verified_tarball_hash)?;
+        ensure_archive_unchanged(archive_path, &archive_hash)?;
+        let receipt = json!({"schema_version": 1, "kind": "ripr_native_npm_package", "target": identity.target,
         "version": identity.version, "source_commit": identity.source.commit_sha,
         "source_tree": identity.source.tree_sha, "selected_features": identity.selected_features,
         "payload_aggregate_sha256": identity.payload_aggregate_sha256,
-        "payload_identity_sha256": identity_hash, "producer_receipt_sha256": hex_lower(&Sha256::digest(&producer_bytes)),
+        "payload_identity_sha256": identity_hash, "producer_receipt_sha256": producer_hash,
+        "build_identity_sha256": hex_lower(&Sha256::digest(&build_bytes)),
+        "qualified_archive_sha256": archive_hash,
         "tarball": package.file_name().and_then(|s| s.to_str()).ok_or("invalid package file name")?,
-        "tarball_sha256": sha256_file(&package)?, "files": identity.files});
-    let receipt_path = out_dir.join("npm-native-receipt.json");
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&receipt_path)
-        .map_err(|e| format!("create {}: {e}", receipt_path.display()))?;
-    writeln!(
-        output,
-        "{}",
-        serde_json::to_string_pretty(&receipt).map_err(|e| e.to_string())?
-    )
-    .map_err(|e| e.to_string())?;
-    eprintln!("wrote {} and {}", package.display(), receipt_path.display());
-    Ok(())
+        "tarball_sha256": verified_tarball_hash, "files": identity.files});
+        let receipt_path = staging.join("npm-native-receipt.json");
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&receipt_path)
+            .map_err(|e| format!("create {}: {e}", receipt_path.display()))?;
+        writeln!(
+            output,
+            "{}",
+            serde_json::to_string_pretty(&receipt).map_err(|e| e.to_string())?
+        )
+        .map_err(|e| e.to_string())?;
+        let output_package = out_dir.join(&package_name);
+        let output_receipt = out_dir.join("npm-native-receipt.json");
+        promote_pair(&package, &receipt_path, &output_package, &output_receipt)?;
+        eprintln!(
+            "wrote {} and {}",
+            output_package.display(),
+            output_receipt.display()
+        );
+        Ok(())
+    })();
+    let cleanup =
+        fs::remove_dir_all(&staging).map_err(|e| format!("remove npm staging directory: {e}"));
+    result.and(cleanup)
 }
 
 #[cfg(test)]
@@ -373,6 +472,89 @@ mod tests {
         assert!(verify_extracted_file(b"wrong", 0o755, &expected, true).is_err());
         assert!(verify_extracted_file(b"native", 0o644, &expected, true).is_err());
         assert!(verify_extracted_file(b"native", 0o644, &expected, false).is_ok());
+    }
+
+    #[test]
+    fn qualification_requires_success_and_every_bound_field() -> Result<(), String> {
+        let expected = json!({"archive_readback_verified": true, "target": TARGET,
+            "version": "0.11.0", "producer_build_sha256": "producer", "archive_sha256": "archive"});
+        let bytes = serde_json::to_vec(&expected).map_err(|e| e.to_string())?;
+        verify_qualification(&bytes, &expected)?;
+        for key in [
+            "archive_readback_verified",
+            "target",
+            "version",
+            "producer_build_sha256",
+            "archive_sha256",
+        ] {
+            let mut wrong = expected.clone();
+            wrong[key] = json!(null);
+            assert!(
+                verify_qualification(
+                    &serde_json::to_vec(&wrong).map_err(|e| e.to_string())?,
+                    &expected
+                )
+                .is_err(),
+                "accepted wrong {key}"
+            );
+            wrong.as_object_mut().ok_or("expected object")?.remove(key);
+            assert!(
+                verify_qualification(
+                    &serde_json::to_vec(&wrong).map_err(|e| e.to_string())?,
+                    &expected
+                )
+                .is_err(),
+                "accepted missing {key}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn failed_receipt_promotion_removes_owned_package_and_allows_retry() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-npm-promotion-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| e.to_string())?
+                .as_nanos()
+        ));
+        fs::create_dir(&root).map_err(|e| e.to_string())?;
+        let source_package = root.join("source.tgz");
+        let source_receipt = root.join("source.json");
+        let output_package = root.join("output.tgz");
+        let output_receipt = root.join("output.json");
+        fs::write(&source_package, b"package").map_err(|e| e.to_string())?;
+        fs::write(&source_receipt, b"receipt").map_err(|e| e.to_string())?;
+        fs::write(&output_receipt, b"existing").map_err(|e| e.to_string())?;
+        assert!(
+            promote_pair(
+                &source_package,
+                &source_receipt,
+                &output_package,
+                &output_receipt
+            )
+            .is_err()
+        );
+        assert!(!output_package.exists());
+        assert_eq!(
+            fs::read(&output_receipt).map_err(|e| e.to_string())?,
+            b"existing"
+        );
+        fs::remove_file(&output_receipt).map_err(|e| e.to_string())?;
+        promote_pair(
+            &source_package,
+            &source_receipt,
+            &output_package,
+            &output_receipt,
+        )?;
+        assert_eq!(
+            fs::read(&output_package).map_err(|e| e.to_string())?,
+            b"package"
+        );
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -467,6 +649,10 @@ mod tests {
         let repeated = root.join("repeat.tgz");
         pack(&source, &identity, &contract, &repeated)?;
         assert_eq!(sha256_file(&original)?, sha256_file(&repeated)?);
+        let verified = verify_package(&repeated, &identity, &contract)?;
+        ensure_archive_unchanged(&repeated, &verified)?;
+        fs::write(&repeated, b"replacement").map_err(|e| e.to_string())?;
+        assert!(ensure_archive_unchanged(&repeated, &verified).is_err());
         for mutation in [
             "binary", "mode", "license", "version", "platform", "missing",
         ] {

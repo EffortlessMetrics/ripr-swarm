@@ -74,10 +74,14 @@ staged final payload and its producer build receipt without publishing:
 ```bash
 cargo xtask release-server-archive --npm-payload-dir <payload-directory> \
   --payload-identity <payload-identity.json> --producer-receipt <producer-build.json> \
+  --build-identity <selected-target-build-identity.json> --qualified-archive <server-archive.tar.gz> \
   --out-dir <new-output-directory>
 ```
 
-The command validates the current payload and producer identity, maps the flat
+The command requires the successful selected-target build identity from the
+qualification workflow and its matching archive. It binds their candidate,
+version, target, readback flag, workflow, archive and payload hashes to the
+current checkout and producer receipt. The command maps the flat
 `ripr` file to the launcher's `bin/ripr`, writes a deterministic npm tarball,
 and checks its extracted metadata, inventory, executable mode and payload
 digests. It records the payload aggregate, identity and producer receipt hashes
