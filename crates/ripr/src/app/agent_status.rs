@@ -1905,8 +1905,8 @@ fn routed_code_phrase(languages: &[String]) -> String {
 /// print, or `None` (#10001). Status consults the same admission check uses
 /// ([`default_check_gap_start`], which ends in the shared agent-packet
 /// validator) rather than assuming the route offers no start; only a
-/// TypeScript-family or Python route can be admitted (#10373), and anything
-/// an unconfirmed route is reported as such instead of claiming there is no
+/// TypeScript-family or Python route can be admitted (#10373). An unconfirmed
+/// route is reported as such instead of claiming there is no
 /// start (fail-closed).
 ///
 /// [`default_check_gap_start`]: crate::app::gap_bound_repair::default_check_gap_start

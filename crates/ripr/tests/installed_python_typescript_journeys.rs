@@ -1359,7 +1359,8 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
 
 #[cfg(feature = "lang-typescript")]
 #[test]
-fn typescript_status_warning_reports_unconfirmed_start_for_refused_variants() -> Result<(), String> {
+fn typescript_status_warning_reports_unconfirmed_start_for_refused_variants() -> Result<(), String>
+{
     // #10001 negative control: the status warning is derived from the same
     // admission as `ripr check`. For a refused finding it does not invent a
     // start or claim certainty about why one is unavailable.
