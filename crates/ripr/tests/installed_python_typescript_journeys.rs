@@ -102,9 +102,18 @@ fn materialize(
 }
 
 fn ripr_output(launch: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    ripr_output_env(launch, args, &[])
+}
+
+fn ripr_output_env(
+    launch: &Path,
+    args: &[&str],
+    env: &[(&str, std::ffi::OsString)],
+) -> Result<std::process::Output, String> {
     Command::new(env!("CARGO_BIN_EXE_ripr"))
         .current_dir(launch)
         .args(args)
+        .envs(env.iter().map(|(key, value)| (*key, value)))
         .output()
         .map_err(|error| format!("spawn ripr {args:?}: {error}"))
 }
@@ -276,6 +285,73 @@ fn dirty_python_repair_start_keeps_original_diff_after_commit() -> Result<(), St
     )?;
     expect_exit(ok, true, "printed base after commit")?;
     need(&result, "Repair prepared", "prepared attempt")?;
+    Ok(())
+}
+
+#[cfg(all(feature = "lang-python", unix))]
+#[test]
+fn dirty_python_check_withholds_start_when_git_inspection_fails() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let (guard, root, decoy) = materialize(
+        "blind_journey_installed_python",
+        "head",
+        "py-git-failure",
+        None,
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let path = root.join("pricing/core.py");
+    let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    std::fs::write(&path, format!("{source}\n# dirty production\n")).map_err(|e| e.to_string())?;
+    let args = ["check", "--root", &root_arg, "--base", "HEAD~1"];
+    let (ok, normal) = ripr(&decoy, &args)?;
+    expect_exit(ok, true, "normal check")?;
+    gap_start_tokens(&normal).ok_or_else(|| format!("normal check had no start: {normal}"))?;
+
+    let bin = guard.0.join("git-wrapper");
+    std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
+    let wrapper = bin.join("git");
+    std::fs::write(&wrapper, "#!/bin/sh\ncase \" $* \" in *\" rev-parse --show-prefix \"*) exit 1;; esac\nexec \"$RIPR_TEST_REAL_GIT\" \"$@\"\n").map_err(|e| e.to_string())?;
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| e.to_string())?;
+    let inherited_path = std::env::var_os("PATH").ok_or("PATH missing")?;
+    let git = std::env::split_paths(&inherited_path)
+        .map(|dir| {
+            if dir.is_absolute() {
+                dir
+            } else {
+                decoy.join(dir)
+            }
+            .join("git")
+        })
+        .find(|path| {
+            path.metadata()
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        })
+        .ok_or("git missing from PATH")?
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let path =
+        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&inherited_path)))
+            .map_err(|e| e.to_string())?;
+    let output = ripr_output_env(
+        &decoy,
+        &args,
+        &[("PATH", path), ("RIPR_TEST_REAL_GIT", git.into_os_string())],
+    )?;
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    expect_exit(
+        output.status.success(),
+        true,
+        "check with failed inspection",
+    )?;
+    need(
+        &text,
+        "could not validate the prerequisites for the repair start",
+        "honest refusal",
+    )?;
+    if gap_start_tokens(&text).is_some() {
+        return Err(format!("failed inspection offered a start: {text}"));
+    }
     Ok(())
 }
 
