@@ -71,3 +71,28 @@ fn names_the_body_never_spells_skip_the_scan() -> Result<(), String> {
     }
     Ok(())
 }
+
+const PARAM_BODY: &str = "it('shapes', () => {\n  const bump = (cost) => cost + 1;\n  const twice = price => price * 2;\n  function build(qty) { return qty; }\n  const pick = ({ tax }) => tax;\n  const café = 1;\n  use(café);\n  expect(bump(1)).toBe(2);\n  const sum = bump(2) + total;\n});";
+
+#[test]
+fn parameter_destructuring_and_non_ascii_shapes_match_the_scan() -> Result<(), String> {
+    let shadowed = ["cost", "price", "qty", "tax", "café", "bump"];
+    let free = ["total", "sum", "expect", "caf", "taxes", "missing", "zéro"];
+    for (names, expected) in [(&shadowed[..], true), (&free[..], false)] {
+        for name in names {
+            let scanned = local_identifier_declared_in_test_body_scanned(PARAM_BODY, name);
+            let actual = local_identifier_declared_in_test_body(PARAM_BODY, name);
+            if scanned != expected {
+                return Err(format!(
+                    "{name}: full scan expected {expected}, got {scanned}"
+                ));
+            }
+            if actual != expected {
+                return Err(format!(
+                    "{name}: early-out expected {expected}, got {actual}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
