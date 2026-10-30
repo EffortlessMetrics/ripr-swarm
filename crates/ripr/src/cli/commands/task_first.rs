@@ -326,8 +326,29 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                 )));
             }
             RepairStartDecision::Action(action, candidates) => {
-                // A deliberate named outcome, not a failure: the canonical
-                // block on stderr, stdout empty, decision exit code.
+                // A deliberate named outcome, not a failure: stderr, stdout
+                // empty (`cmd:repair` declares an empty-stdout refusal),
+                // decision exit code.
+                let bound =
+                    crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
+                let selection_total = match action.stop() {
+                    Some(crate::domain::NextActionStop::SelectItem { total, .. }) => Some(*total),
+                    _ => None,
+                };
+                if let (Some(total), false) = (selection_total, candidates.is_empty()) {
+                    // #10978 / #11111: a selection is told in plain words:
+                    // where each change is, what a test must check for it,
+                    // and the exact command that starts it. The typed stop
+                    // ids and count are carried by those commands and the
+                    // stated total, so the internal block is not repeated.
+                    eprint!(
+                        "{}",
+                        crate::app::task_first::render_repair_choice(&candidates, total, &bound)
+                    );
+                    return Err(CommandError::Decision(
+                        "no repair started; run one of the commands above".to_string(),
+                    ));
+                }
                 eprint!(
                     "{}",
                     crate::output::next_action::render_next_action_human_at_root(
@@ -336,21 +357,9 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                     )
                 );
                 if action.action_class() == crate::domain::NextActionClass::ChooseItem {
-                    // #10978: the stop lists bare ids; say where each one is
-                    // and what changed there so the choice is informed.
-                    if !candidates.is_empty() {
-                        eprintln!("choose the change to repair:");
-                        for candidate in &candidates {
-                            eprintln!("  {candidate}");
-                        }
-                    }
                     print_retry_line(&format!(
                         "ripr repair <seam-id> --root {}",
-                        crate::agent::loop_commands::shell_arg(
-                            &crate::agent::loop_commands::bound_root(
-                                &options.root.to_string_lossy()
-                            )
-                        )
+                        crate::agent::loop_commands::shell_arg(&bound)
                     ));
                 }
                 return Err(CommandError::Decision(
@@ -770,9 +779,16 @@ fn run_facade_status(mut options: StatusFacadeOptions) -> Result<(), CommandErro
 /// renders one. The template keeps a placeholder, never a filled
 /// candidate: filling one would be the implicit selection the façade
 /// refuses to make.
+/// Print a retry template and, only when PowerShell needs a different
+/// spelling, that spelling. The templates carry a `<placeholder>` the user
+/// replaces, which the PowerShell translator reads as a redirection; its
+/// "unavailable" disclosure would then describe the placeholder, not the
+/// command, so it is not printed (#11111).
 fn print_retry_line(retry: &str) {
     eprintln!("retry: {retry}");
-    if let Some(form) = crate::output::markdown::powershell_text_variant(retry) {
+    if let crate::output::markdown::PowershellForm::Translated(form) =
+        crate::output::markdown::powershell_form(retry)
+    {
         eprintln!("retry (PowerShell): {form}");
     }
 }

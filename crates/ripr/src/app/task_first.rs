@@ -43,9 +43,10 @@ pub(crate) enum RepairStartDecision {
         seam_id: String,
     },
     /// The canonical action, plus one plain description per listed candidate
-    /// (file:line and the changed code) when the action is a selection, so the
-    /// stop never shows bare ids (#10978).
-    Action(Box<CanonicalNextActionV1>, Vec<String>),
+    /// (file:line, the changed code and what a test must check) when the
+    /// action is a selection, so the stop never shows bare ids (#10978) or two
+    /// candidates that read the same (#11111).
+    Action(Box<CanonicalNextActionV1>, Vec<RepairCandidateNote>),
     NoEligible {
         total_seams: usize,
         /// Distinct ineligibility reasons rendered in the bounded list.
@@ -79,7 +80,7 @@ pub(crate) struct RepairStartFacts<'a> {
     pub(crate) head: Option<&'a str>,
     /// One plain description per eligible seam, aligned with `eligible_ids`
     /// (empty when the gatherer has none): where the change is and what it is.
-    pub(crate) candidate_notes: &'a [String],
+    pub(crate) candidate_notes: &'a [RepairCandidateNote],
     /// The before-phase command for the single candidate, if any. Ignored
     /// unless exactly one seam is eligible.
     pub(crate) start_spec: Option<&'a CommandSpec>,
@@ -174,11 +175,11 @@ pub(crate) fn decide_repair_start(
 /// inventory (`notes` is aligned with `eligible_ids`) and kept in the stop's
 /// order, so a description can never belong to a different candidate than the
 /// id beside it. An id with no description is skipped.
-fn notes_for_stop_ids(
+fn notes_for_stop_ids<T: Clone>(
     stop_ids: &[String],
     eligible_ids: &[String],
-    notes: &[String],
-) -> Vec<String> {
+    notes: &[T],
+) -> Vec<T> {
     stop_ids
         .iter()
         .filter_map(|id| {
@@ -444,7 +445,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     let policy = AgentBriefPolicy::from_config(&config);
     let bound = bound_root(&root.to_string_lossy());
     let mut eligible_ids = Vec::new();
-    let mut candidate_notes: Vec<String> = Vec::new();
+    let mut candidate_notes: Vec<RepairCandidateNote> = Vec::new();
     let mut refusal_reasons: Vec<String> = Vec::new();
     for entry in &classified {
         match repair_refusal_reason(entry, policy, Some(root)) {
@@ -559,10 +560,95 @@ pub(crate) fn is_missing_edit_target_error(error: &str) -> bool {
 /// Longest changed-code excerpt shown beside a candidate.
 const CANDIDATE_CODE_CHARS: usize = 70;
 
-/// One plain line for a selectable seam: where the change is and the changed
-/// code, then the exact command that picks it (#10978). The excerpt is the
-/// seam's own expression collapsed to one line and bounded.
-fn describe_candidate(entry: &crate::analysis::ClassifiedSeam, bound_root_display: &str) -> String {
+/// One selectable repair candidate in plain words (#10978, #11111): where the
+/// change is, the changed code, what a test must check, and the exact command
+/// that starts it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RepairCandidateNote {
+    /// `file:line` of the change.
+    pub(crate) location: String,
+    /// The changed code, collapsed to one bounded line.
+    pub(crate) code: String,
+    /// What a test must check to notice this change, from the seam's kind.
+    pub(crate) test_need: &'static str,
+    /// The exact command that starts this candidate.
+    pub(crate) command: String,
+}
+
+/// The plain-language choice `ripr repair` prints when several changes could
+/// start a repair (#11111). When every listed candidate is the same changed
+/// code, the header names that change once and each choice is told apart by
+/// what a test must check; otherwise each choice also names its location.
+/// `total` is the selection's full count; candidates beyond the listed ones
+/// are disclosed with the route that lists them all. The closing line points
+/// at the command `ripr check` printed, which applies to the finding check
+/// selected; this selector has no diff base, so it does not guess which
+/// candidate that was.
+pub(crate) fn render_repair_choice(
+    candidates: &[RepairCandidateNote],
+    total: usize,
+    root_display: &str,
+) -> String {
+    let mut out = String::new();
+    let same_change = candidates.len() > 1
+        && total == candidates.len()
+        && candidates.split_first().is_some_and(|(first, rest)| {
+            rest.iter()
+                .all(|other| other.location == first.location && other.code == first.code)
+        });
+    match candidates.first() {
+        Some(first) if same_change => {
+            out.push_str(&format!(
+                "ripr can start a repair for the change at {} `{}` in {} ways; each asks a test to check something different. Pick one and run its command:\n",
+                first.location,
+                first.code,
+                candidates.len()
+            ));
+            for (index, candidate) in candidates.iter().enumerate() {
+                out.push_str(&format!(
+                    "  {}. {}\n     {}\n",
+                    index + 1,
+                    candidate.test_need,
+                    candidate.command
+                ));
+            }
+        }
+        _ => {
+            out.push_str(&format!(
+                "ripr can start a repair for {total} changes. Pick one and run its command:\n"
+            ));
+            for (index, candidate) in candidates.iter().enumerate() {
+                out.push_str(&format!(
+                    "  {}. {}  `{}`: {}\n     {}\n",
+                    index + 1,
+                    candidate.location,
+                    candidate.code,
+                    candidate.test_need,
+                    candidate.command
+                ));
+            }
+            if total > candidates.len() {
+                out.push_str(&format!(
+                    "  ({} more not shown; `ripr pilot --root {}` lists them all)\n",
+                    total - candidates.len(),
+                    shell_arg(root_display)
+                ));
+            }
+        }
+    }
+    out.push_str(
+        "If `ripr check` printed a `ripr repair` command for this change, run that one: it is the choice check recommends.\n",
+    );
+    out
+}
+
+/// Describe a selectable seam: where the change is and the changed code (the
+/// seam's own expression collapsed to one line and bounded), what a test must
+/// check for it, and the exact command that picks it.
+fn describe_candidate(
+    entry: &crate::analysis::ClassifiedSeam,
+    bound_root_display: &str,
+) -> RepairCandidateNote {
     let file = crate::analysis::stable_path_text(entry.seam.file());
     let collapsed = entry
         .seam
@@ -576,12 +662,16 @@ fn describe_candidate(entry: &crate::analysis::ClassifiedSeam, bound_root_displa
     } else {
         collapsed
     };
-    format!(
-        "{file}:{}  `{code}`  -> ripr repair {} --root {}",
-        entry.seam.display_line(),
-        entry.seam.id().as_str(),
-        shell_arg(bound_root_display)
-    )
+    RepairCandidateNote {
+        location: format!("{file}:{}", entry.seam.display_line()),
+        code,
+        test_need: entry.seam.kind().plain_test_need(),
+        command: format!(
+            "ripr repair {} --root {}",
+            entry.seam.id().as_str(),
+            shell_arg(bound_root_display)
+        ),
+    }
 }
 
 /// What an explicit `ripr repair` item resolved to: the seam to start,
@@ -1859,7 +1949,9 @@ pub(crate) mod tests {
     #[test]
     fn decide_describes_only_the_candidates_the_stop_lists() -> Result<(), String> {
         let eligible: Vec<String> = (0..10).map(|n| format!("seam:{n}")).collect();
-        let notes: Vec<String> = (0..10).map(|n| format!("note {n}")).collect();
+        let notes: Vec<RepairCandidateNote> = (0..10)
+            .map(|n| note(&format!("src/lib.rs:{n}"), "x", &format!("seam:{n}")))
+            .collect();
         let facts = RepairStartFacts {
             candidate_notes: &notes,
             ..facts(&eligible, 10, &[], 0, None)
@@ -1868,22 +1960,94 @@ pub(crate) mod tests {
             RepairStartDecision::Action(_, described) => {
                 // The stop lists at most eight candidates.
                 assert_eq!(described.len(), 8);
-                assert_eq!(described.first().map(String::as_str), Some("note 0"));
+                assert_eq!(
+                    described.first().map(|n| n.location.as_str()),
+                    Some("src/lib.rs:0")
+                );
+                // The disclosure names the remainder and the route listing it.
+                let text = render_repair_choice(&described, 10, ".");
+                assert!(text.contains("10 changes"), "{text}");
+                assert!(text.contains("2 more not shown"), "{text}");
                 Ok(())
             }
             _ => Err("ten eligible seams must select".to_string()),
         }
     }
 
+    fn note(location: &str, code: &str, seam: &str) -> RepairCandidateNote {
+        RepairCandidateNote {
+            location: location.to_string(),
+            code: code.to_string(),
+            test_need: crate::analysis::seams::SeamKind::ReturnValue.plain_test_need(),
+            command: format!("ripr repair {seam} --root ."),
+        }
+    }
+
+    /// #11111: two candidates on the same changed code are told apart by what
+    /// a test must check, the change is named once, and no line reads the same
+    /// as another; the closing line points at the command `ripr check` printed.
+    #[test]
+    fn same_change_candidates_are_told_apart_by_what_a_test_checks() {
+        use crate::analysis::seams::SeamKind;
+        let mut boundary = note("src/lib.rs:2", "age >= 18", "aaa");
+        boundary.test_need = SeamKind::PredicateBoundary.plain_test_need();
+        let value = note("src/lib.rs:2", "age >= 18", "bbb");
+        let text = render_repair_choice(&[boundary, value], 2, ".");
+        assert!(
+            text.starts_with(
+                "ripr can start a repair for the change at src/lib.rs:2 `age >= 18` in 2 ways"
+            ),
+            "{text}"
+        );
+        assert_eq!(text.matches("age >= 18").count(), 1, "{text}");
+        assert!(
+            text.contains(SeamKind::PredicateBoundary.plain_test_need()),
+            "{text}"
+        );
+        assert!(
+            text.contains(SeamKind::ReturnValue.plain_test_need()),
+            "{text}"
+        );
+        let lines: Vec<&str> = text.lines().collect();
+        let mut unique = lines.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), lines.len(), "no two lines may match:\n{text}");
+        assert!(text.contains("If `ripr check` printed a `ripr repair` command"));
+        for jargon in ["choose_item", "select_item", "seam", "PowerShell"] {
+            assert!(!text.contains(jargon), "no `{jargon}`:\n{text}");
+        }
+    }
+
+    /// Different changes keep their own location beside each choice.
+    #[test]
+    fn different_change_candidates_name_each_location() {
+        let text = render_repair_choice(
+            &[
+                note("src/lib.rs:2", "a >= b", "aaa"),
+                note("src/lib.rs:10", "c >= d", "bbb"),
+            ],
+            2,
+            ".",
+        );
+        assert!(
+            text.starts_with("ripr can start a repair for 2 changes"),
+            "{text}"
+        );
+        assert!(text.contains("1. src/lib.rs:2  `a >= b`:"), "{text}");
+        assert!(text.contains("2. src/lib.rs:10  `c >= d`:"), "{text}");
+        assert!(!text.contains("more not shown"), "{text}");
+    }
+
     /// Descriptions follow the stop's ids and order, not the inventory's.
     #[test]
     fn notes_follow_the_stops_ids_and_order() {
         let eligible: Vec<String> = ["a", "b", "c"].map(String::from).to_vec();
-        let notes: Vec<String> = ["note a", "note b", "note c"].map(String::from).to_vec();
+        let notes: Vec<RepairCandidateNote> = ["a", "b", "c"].map(|id| note(id, "x", id)).to_vec();
         let stop: Vec<String> = ["c", "a", "zzz"].map(String::from).to_vec();
         assert_eq!(
             notes_for_stop_ids(&stop, &eligible, &notes),
-            vec!["note c".to_string(), "note a".to_string()]
+            vec![note("c", "x", "c"), note("a", "x", "a")]
         );
     }
 
