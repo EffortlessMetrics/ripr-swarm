@@ -9647,7 +9647,7 @@ fn a_len_local_over_a_literal_argument_names_the_boundary_equality() -> Result<(
         finding
             .missing
             .iter()
-            .any(|line| line.contains("observed visible values: 6, 2")),
+            .any(|line| line.contains("observed visible values: 2, 6")),
         "{:?}",
         finding.missing
     );
