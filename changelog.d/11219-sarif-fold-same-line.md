@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Findings SARIF now reports one result per changed line and class: two probes of the same class on one line (for example an `error_path` and a `return_value` probe) fold into the first result, which keeps its message and fingerprint, lists the others in `properties.folded_results`, and the run records `folded_same_line_results`. Code scanning opens one alert for the edit instead of several. Different classes stay separate (#11219).

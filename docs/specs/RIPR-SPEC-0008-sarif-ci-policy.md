@@ -44,7 +44,13 @@ The SARIF layer should:
   complete run is not indistinguishable from a clean analysis (#5091).
   The property is absent when the count is zero. Omitted findings stay
   out of `results`; the property only discloses the filter, matching the
-  GitHub annotation denominator notice (#4393).
+  GitHub annotation denominator notice (#4393);
+- fold diff-scoped results that share a rule, file, line and suppression
+  state into the first one, so one changed line is one code-scanning alert
+  (#11219). The kept result keeps its message and fingerprint, lists the
+  folded results in `properties.folded_results`, and the run records the
+  count in `runs[].properties.folded_same_line_results` (absent when zero).
+  Different classes never fold: a weaker class does not hide a stronger one.
 
 ## Rule IDs
 
@@ -271,6 +277,21 @@ then results is empty, run_status is complete, and
 runs[].properties.omitted_not_current is absent.
 ```
 
+### Same-line findings of one class fold into one alert
+
+```text
+Given two current findings of the same class on one file and line,
+when they are rendered as SARIF,
+then results holds one entry with properties.folded_results naming the
+other, and runs[].properties.folded_same_line_results equals 1.
+```
+
+```text
+Given findings that differ in class or line,
+when they are rendered as SARIF,
+then every one is its own result and folded_same_line_results is absent.
+```
+
 ### Baseline policy flags new warnings
 
 ```text
@@ -299,6 +320,8 @@ Implemented renderer tests:
 - `crates/ripr/src/output/sarif.rs::tests::sarif_run_with_only_not_current_findings_records_omitted_property`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_empty_findings_run_omits_omitted_not_current_property`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_mixed_current_and_not_current_records_omitted_count_beside_results`
+- `crates/ripr/src/output/sarif.rs::tests::same_line_same_class_findings_fold_into_one_alert_that_names_the_rest`
+- `crates/ripr/src/output/sarif.rs::tests::findings_that_differ_in_class_line_or_suppression_stay_separate`
 
 Implemented policy tests:
 

@@ -75,6 +75,7 @@ pub(crate) fn render_findings_sarif(
         .filter(|finding| finding.is_candidate_actionable())
         .filter_map(|finding| finding_result(&output.root, finding, config, suppressions, &today))
         .collect::<Vec<_>>();
+    let (results, folded_same_line) = fold_same_line_results(results);
     sarif_document(
         "finding",
         rules,
@@ -82,7 +83,66 @@ pub(crate) fn render_findings_sarif(
         output.analysis_outcome.as_ref(),
         output.analyzed_revisions.as_ref(),
         omitted_not_current,
+        folded_same_line,
     )
+}
+
+/// One alert per changed line and class (#11219): two probes of the same
+/// class on one line (for example an `error_path` and a `return_value`
+/// probe) read as one edit to the author, yet code scanning opens one alert
+/// for each. The first result keeps its message, fingerprint and location
+/// unchanged; the later ones are named in its `properties.folded_results`
+/// and counted for the run, so nothing is dropped silently. Results with
+/// different classes, or different suppression state, stay separate: a
+/// weaker class never hides a stronger one, and a suppressed result never
+/// hides an active one. Returns the kept results and how many were folded.
+fn fold_same_line_results(results: Vec<Value>) -> (Vec<Value>, usize) {
+    let mut kept: Vec<Value> = Vec::new();
+    let mut index: std::collections::HashMap<(String, String, u64, bool), usize> =
+        std::collections::HashMap::new();
+    let mut folded = 0usize;
+    for result in results {
+        let region = &result["locations"][0]["physicalLocation"];
+        let line = region["region"]["startLine"].as_u64();
+        let key = line.map(|line| {
+            (
+                result["ruleId"].as_str().unwrap_or_default().to_string(),
+                region["artifactLocation"]["uri"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                line,
+                result.get("suppressions").is_some(),
+            )
+        });
+        let Some(key) = key else {
+            kept.push(result);
+            continue;
+        };
+        match index.get(&key) {
+            Some(&at) => {
+                folded += 1;
+                let note = json!({
+                    "finding_id": result["properties"]["finding_id"],
+                    "probe_id": result["properties"]["probe_id"],
+                    "probe_family": result["properties"]["probe_family"],
+                });
+                if let Some(Value::Object(properties)) = kept[at].get_mut("properties") {
+                    let list = properties
+                        .entry("folded_results".to_string())
+                        .or_insert_with(|| json!([]));
+                    if let Some(list) = list.as_array_mut() {
+                        list.push(note);
+                    }
+                }
+            }
+            None => {
+                index.insert(key, kept.len());
+                kept.push(result);
+            }
+        }
+    }
+    (kept, folded)
 }
 
 /// Render repo-scoped classified seams as SARIF.
@@ -156,6 +216,7 @@ fn sarif_document(
     analysis_outcome: Option<&AnalysisOutcome>,
     revisions: Option<&crate::analysis::AnalyzedRevisions>,
     omitted_not_current: usize,
+    folded_same_line: usize,
 ) -> String {
     let mut properties = Map::new();
     properties.insert("tool".to_string(), json!("ripr"));
@@ -212,6 +273,12 @@ fn sarif_document(
         properties.insert(
             "omitted_not_current".to_string(),
             json!(omitted_not_current),
+        );
+    }
+    if folded_same_line > 0 {
+        properties.insert(
+            "folded_same_line_results".to_string(),
+            json!(folded_same_line),
         );
     }
     let document = json!({
@@ -2812,6 +2879,72 @@ weakly_gripped = "note"
         assert_eq!(
             props["omitted_not_current"], 1,
             "the not-current sibling still counts: {props}"
+        );
+        Ok(())
+    }
+
+    fn sibling_probe(id: &str, family: ProbeFamily) -> Finding {
+        let mut finding = sample_finding();
+        finding.id = format!("finding:{id}");
+        finding.probe.id = ProbeId(format!("probe:src/pricing.rs:88:{id}"));
+        finding.probe.family = family;
+        finding
+    }
+
+    #[test]
+    fn same_line_same_class_findings_fold_into_one_alert_that_names_the_rest() -> Result<(), String>
+    {
+        // #11219: an error_path and a return_value probe on one line are one
+        // edit to the author, so one code-scanning alert.
+        let mut output = sample_output();
+        output.findings = vec![
+            sibling_probe("first", ProbeFamily::ErrorPath),
+            sibling_probe("second", ProbeFamily::ReturnValue),
+        ];
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let results = results(&sarif)?;
+        assert_eq!(results.len(), 1, "{sarif}");
+        assert_eq!(results[0]["properties"]["finding_id"], "finding:first");
+        assert_eq!(
+            results[0]["partialFingerprints"]["riprFingerprintV1"],
+            "ripr.finding.weakly_exposed|finding:first|probe:src/pricing.rs:88:first|src/pricing.rs|88",
+            "the kept result keeps its own fingerprint"
+        );
+        let folded = &results[0]["properties"]["folded_results"];
+        assert_eq!(folded.as_array().map(Vec::len), Some(1), "{folded}");
+        assert_eq!(folded[0]["finding_id"], "finding:second");
+        assert_eq!(folded[0]["probe_family"], "return_value");
+        assert_eq!(
+            sarif["runs"][0]["properties"]["folded_same_line_results"], 1,
+            "the run discloses the fold"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn findings_that_differ_in_class_line_or_suppression_stay_separate() -> Result<(), String> {
+        let mut other_class = sibling_probe("class", ProbeFamily::ReturnValue);
+        other_class.class = ExposureClass::InfectionUnknown;
+        let mut other_line = sibling_probe("line", ProbeFamily::ReturnValue);
+        other_line.probe.location = SourceLocation::new("src/pricing.rs", 89, 9);
+        let mut output = sample_output();
+        output.findings = vec![
+            sibling_probe("first", ProbeFamily::ErrorPath),
+            other_class,
+            other_line,
+        ];
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        assert_eq!(results(&sarif)?.len(), 3, "{sarif}");
+        assert!(
+            sarif["runs"][0]["properties"]
+                .get("folded_same_line_results")
+                .is_none(),
+            "nothing folded, nothing disclosed"
+        );
+        assert!(
+            results(&sarif)?[0]["properties"]
+                .get("folded_results")
+                .is_none()
         );
         Ok(())
     }
