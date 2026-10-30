@@ -50,3 +50,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — inherent_receiver_macro_discard (5)
+
+Reason:
+RIPR-SPEC-0005: #7415 decoy demotion to weak_token_substring plus #9342 (0bfaa83289 / #9169): the ignored_operand finding weakly_exposed -> reachable_unrevealed (a demoted decoy never credits an oracle); less credit, no new exposed, plus next-step wording from #10886/#10887
+
+Command:
+`cargo xtask goldens bless inherent_receiver_macro_discard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

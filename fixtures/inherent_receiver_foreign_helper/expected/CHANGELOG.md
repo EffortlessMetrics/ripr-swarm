@@ -50,3 +50,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — inherent_receiver_foreign_helper (5)
+
+Reason:
+RIPR-SPEC-0005: wording only, next-step/canonical_next_action rendering from e7a35fba89 (#10886) and 701102d507 (#10887); classes unchanged, no new exposed or credit (#7415)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_foreign_helper --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
