@@ -2170,6 +2170,7 @@ fn an_unknown_language_error_names_only_the_repair() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "lang-typescript")]
 #[test]
 fn javascript_in_languages_enabled_enables_the_typescript_adapter() -> Result<(), String> {
     let config = parse_config("[languages]\nenabled = [\"javascript\"]\n")?;
@@ -2201,6 +2202,7 @@ fn javascript_and_typescript_together_are_a_duplicate_alias() -> Result<(), Stri
     Ok(())
 }
 
+#[cfg(feature = "lang-typescript")]
 #[test]
 fn javascript_twice_is_a_duplicate_and_rust_plus_javascript_parses() -> Result<(), String> {
     let Err(message) = parse_config("[languages]\nenabled = [\"javascript\", \"javascript\"]\n")
@@ -2217,6 +2219,16 @@ fn javascript_twice_is_a_duplicate_and_rust_plus_javascript_parses() -> Result<(
         vec![LanguageId::Rust, LanguageId::TypeScript]
     );
     Ok(())
+}
+
+#[cfg(not(feature = "lang-typescript"))]
+#[test]
+fn javascript_without_typescript_feature_names_the_feature() {
+    let result = parse_config("[languages]\nenabled = [\"javascript\"]\n");
+    assert!(
+        matches!(result, Err(ref message) if message.contains("lang-typescript")),
+        "expected missing lang-typescript error, got {result:?}"
+    );
 }
 
 #[test]
