@@ -3597,6 +3597,11 @@ fn truthiness_swap_refuses_every_parameter_binding_shape() -> Result<(), String>
         "    for x in d:~        pass\n",
         "    with d as x:~        pass\n",
         "    if (x := d):\n        pass\n",
+        // A fullwidth letter NFKC-normalizes to the parameter name.
+        "    \u{ff58} = d\n",
+        // An f-string defeats the naive comment and quote tracking.
+        "    s = f'{d}'\n",
+        "    print(rf\"{d!r}\")\n",
     ] {
         assert_eq!(
             swap_with_prefix(prefix)?,
@@ -3614,6 +3619,37 @@ fn truthiness_swap_fails_open_on_attribute_call_helpers() -> Result<(), String> 
         "import helpers\nfrom src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert helpers.run(0) == 3\n",
         "from src.lib import pick\n\nclass TestPick:\n    def helper(self, v):\n        return pick(v, 3)\n\n    def test_pick(self):\n        assert pick(None, 3) == 3\n        assert self.helper(0) == 3\n",
         "from src.lib import pick\n\nclass TestPick:\n    def test_pick(self):\n        assert pick(None, 3) == 3\n        self.check(0)\n",
+    ] {
+        assert_eq!(swap_class(tests)?, ExposureClass::Exposed, "{tests}");
+    }
+    Ok(())
+}
+
+// The changed line is itself a plain read: an assignment holding the swapped
+// condition rebinds the parameter on the next loop iteration.
+#[test]
+fn truthiness_swap_refuses_a_changed_line_that_assigns_the_parameter() -> Result<(), String> {
+    let source = "def pick(x, items):\n    for _ in items:\n        x = items if not x else x\n    return x\n";
+    let finding = classify_truthiness_swap(
+        source,
+        3,
+        "        x = items if x is None else x",
+        "        x = items if not x else x",
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, [1]) == [1]\n",
+    )?;
+    assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+// Calls that hide a separating input: a helper named `assert_*`, a callee
+// that is a subscript or a call result, and non-ASCII identifier letters.
+#[test]
+fn truthiness_swap_fails_open_on_assert_named_helpers_and_result_callees() -> Result<(), String> {
+    for tests in [
+        "from src.lib import pick\nfrom helpers import assert_pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert_pick(0, 3)\n",
+        "from src.lib import pick\n\nRUNNERS = [lambda v: pick(v, 3)]\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert RUNNERS[0](0) == 3\n",
+        "from src.lib import pick\n\ndef make():\n    return pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert make()(0, 3) == 3\n",
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    \u{ff56} = 0\n    assert pick(\u{ff56}, 3) == 3\n",
     ] {
         assert_eq!(swap_class(tests)?, ExposureClass::Exposed, "{tests}");
     }

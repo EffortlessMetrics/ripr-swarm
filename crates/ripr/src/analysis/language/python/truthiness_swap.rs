@@ -279,12 +279,25 @@ fn parameter_only_read(
     changed_line: &str,
 ) -> bool {
     let changed = strip_trailing_comment(changed_line).trim();
+    // The changed line is a plain read statement itself: an assignment that
+    // holds the swapped condition (`x = i if not x else x`) rebinds the
+    // parameter. It is also subject to the f-string and non-ASCII refusals.
+    if !plain_read_statement(changed) || has_fstring(changed_line) || has_unicode_name(changed) {
+        return false;
+    }
     owner_source
         .lines()
         .skip(owner.start_line)
         .take(owner.end_line.saturating_sub(owner.start_line))
-        .map(|line| strip_trailing_comment(line).trim())
-        .all(|line| {
+        .all(|raw| {
+            // Comment stripping tracks quotes naively, which an f-string
+            // reusing its quote (Python 3.12) can defeat; refuse any
+            // f-string. A non-ASCII letter can NFKC-normalize to the
+            // parameter name (fullwidth `ｘ`), so refuse those too.
+            if has_fstring(raw) || has_unicode_name(raw) {
+                return false;
+            }
+            let line = strip_trailing_comment(raw).trim();
             if DYNAMIC_SCOPE.iter().any(|word| line.contains(word)) {
                 return false;
             }
@@ -293,6 +306,29 @@ fn parameter_only_read(
             }
             plain_read_statement(line)
         })
+}
+
+/// Whether the text holds a non-ASCII letter or digit (an identifier
+/// character that Python NFKC-normalizes).
+fn has_unicode_name(text: &str) -> bool {
+    text.chars()
+        .any(|ch| !ch.is_ascii() && ch.is_alphanumeric())
+}
+
+/// Whether the text holds an f-string literal (`f"`, `rf'`, `Fr"`).
+fn has_fstring(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.iter().enumerate().any(|(index, byte)| {
+        if !matches!(byte, b'"' | b'\'') {
+            return false;
+        }
+        let mut start = index;
+        while start > 0 && matches!(bytes[start - 1], b'r' | b'R' | b'f' | b'F' | b'b' | b'B') {
+            start -= 1;
+        }
+        let standalone = start == 0 || !is_ident_byte(bytes[start - 1]);
+        standalone && bytes[start..index].iter().any(|p| matches!(p, b'f' | b'F'))
+    })
 }
 
 /// Calls that read or write the local scope by name.
@@ -374,14 +410,58 @@ fn owner_reached_indirectly(
         .any(|candidate| {
             let text = candidate.test.body_text.as_str();
             let names = owner_call_names(owner, candidate.test, method_call);
-            names.iter().any(|name| mentions_without_call(text, name))
+            has_unicode_name(text)
+                || calls_through_a_result(text)
+                || names.iter().any(|name| mentions_without_call(text, name))
                 || calls_unrecognized_callee(text, &names)
         })
 }
 
+/// Whether a call's callee is itself a subscript or a call result
+/// (`RUNNERS[0](0)`, `make()(0)`): a callable the reader cannot name.
+fn calls_through_a_result(text: &str) -> bool {
+    text.match_indices('(').any(|(index, _)| {
+        text[..index]
+            .trim_end()
+            .ends_with(|ch: char| ch == ')' || ch == ']')
+    })
+}
+
+const UNITTEST_ASSERTS: &[&str] = &[
+    "assertEqual",
+    "assertNotEqual",
+    "assertTrue",
+    "assertFalse",
+    "assertIs",
+    "assertIsNot",
+    "assertIsNone",
+    "assertIsNotNone",
+    "assertIn",
+    "assertNotIn",
+    "assertIsInstance",
+    "assertNotIsInstance",
+    "assertAlmostEqual",
+    "assertNotAlmostEqual",
+    "assertGreater",
+    "assertGreaterEqual",
+    "assertLess",
+    "assertLessEqual",
+    "assertRaises",
+    "assertRaisesRegex",
+    "assertListEqual",
+    "assertTupleEqual",
+    "assertSetEqual",
+    "assertDictEqual",
+    "assertCountEqual",
+    "assertSequenceEqual",
+    "assertRegex",
+    "assertWarns",
+];
+
 /// Whether the body makes a call other than the recognized ones: the owner
-/// itself (any receiver), known pure builtins, `assert*`/`self.assert*`
-/// oracle calls, `pytest.raises`/`approx`/`warns`/`param`/`mark.*`, and the
+/// itself (any receiver), known pure builtins, the bare `assert` statement
+/// and the named `self.assert*` unittest methods, a
+/// `pytest.raises`/`approx`/`warns`/`param`/`mark.*` helper, `pytest.raises`/`approx`/`warns`/`param`/`mark.*`, and the
 /// `def`/`class` headers. Any other callee, attribute calls included
 /// (`helpers.run(0)`, `self.check(0)`, `mock.patch(..)`), may pass an input
 /// to the owner that the call-row reader never sees.
@@ -444,8 +524,10 @@ fn calls_unrecognized_callee(text: &str, owner_names: &[String]) -> bool {
             || BUILTINS.contains(&chain)
             || PYTEST.contains(&chain)
             || chain.starts_with("pytest.mark.")
-            || chain.starts_with("assert")
-            || chain.starts_with("self.assert")
+            || chain == "assert"
+            || chain
+                .strip_prefix("self.")
+                .is_some_and(|method| UNITTEST_ASSERTS.contains(&method))
             || owner_names
                 .iter()
                 .any(|name| name.rsplit('.').next() == Some(last));
@@ -594,6 +676,23 @@ mod tests {
         ] {
             assert!(!plain_read_statement(binding), "{binding}");
         }
+        // The changed line is held to the same rule.
+        assert!(!plain_read_statement("x = i if not x else x"));
+        assert!(plain_read_statement("return i if not x else x"));
+        assert!(has_fstring("s = f'{d}'"));
+        assert!(has_fstring("print(Rf\"{d}\")"));
+        assert!(!has_fstring("s = 'if'") && !has_fstring("buf = b'a'"));
+        assert!(has_unicode_name("\u{ff58} = 0") && !has_unicode_name("x = 'a'"));
+        assert!(calls_through_a_result("RUNNERS[0](0)"));
+        assert!(calls_through_a_result("make()(0)"));
+        assert!(!calls_through_a_result("assert pick(1)[0] == 1"));
+        let names = vec!["pick".to_string()];
+        assert!(calls_unrecognized_callee("assert_pick(0, 3)", &names));
+        assert!(calls_unrecognized_callee("self.assertHelper(0)", &names));
+        assert!(!calls_unrecognized_callee(
+            "self.assertEqual(pick(1), 1)",
+            &names
+        ));
         assert!(has_assignment("x <<= 1"));
         assert!(!has_assignment("a >= b and c <= d != e == f"));
     }

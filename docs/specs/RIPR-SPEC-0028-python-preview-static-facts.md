@@ -1417,9 +1417,13 @@ for another (`x is None` to `not x`) is `weakly_exposed`, not `exposed`, when
 every strong related call binds that parameter to a literal on which both
 tests agree. The rule is a closed allow-list that keeps the existing verdict
 on anything unrecognized: the parameter may be mentioned in the owner body
-only on the changed line or in a plain read statement, and a related test may
-make only recognized calls (the owner, assertions, known builtins and
-`pytest` helpers), so no binding or helper-forwarded input can be missed.
+only in plain read statements (the changed line included), and a related test
+body may make only recognized calls (the owner, the `assert` statement, named
+`self.assert*` methods, known builtins and `pytest` helpers) with no
+non-ASCII identifier letters, f-strings in the owner, subscript or call-result
+callees, or non-call mentions of the owner. A helper or runner defined at
+module level of the test file is seen only through its call in the test body;
+the file source is not read.
 
 ## Metrics
 
