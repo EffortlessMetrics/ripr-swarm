@@ -536,6 +536,14 @@ fn suppressed_report(
     if !has_suppressed_guidance(parsed.pr_guidance.as_ref()) {
         return None;
     }
+    // SPEC-0020: suppressed items stay visible but do not outrank PR-local
+    // work. A suppressed entry, or the note that a neighbouring seam is
+    // "configured off for strongly_gripped seams" (the default config, so on
+    // any PR next to a well-tested seam), says nothing about the card that
+    // names a gap. Only guidance with nothing to act on is `suppressed`.
+    if has_card_to_act_on(parsed.pr_guidance.as_ref()) {
+        return None;
+    }
     Some(base_report(
         input,
         inputs,
@@ -1715,6 +1723,19 @@ fn receipt_movement(receipt: &Value) -> Option<String> {
 
 fn has_actionable_guidance(pr_guidance: Option<&Value>) -> bool {
     first_guidance_item(pr_guidance).is_some() || first_summary_only_item(pr_guidance).is_some()
+}
+
+/// A review card or summary-only item that is not a static limitation, so
+/// it names a gap the author can act on.
+fn has_card_to_act_on(pr_guidance: Option<&Value>) -> bool {
+    let Some(value) = pr_guidance else {
+        return false;
+    };
+    ["comments", "summary_only"]
+        .iter()
+        .filter_map(|key| value.get(*key).and_then(Value::as_array))
+        .flatten()
+        .any(|card| card.get("gap_state").and_then(Value::as_str) != Some("static_limitation"))
 }
 
 fn has_suppressed_guidance(pr_guidance: Option<&Value>) -> bool {

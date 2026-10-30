@@ -819,6 +819,50 @@ fn suppressed_guidance_via_warning_text_suppressed_keyword() -> Result<(), Strin
     Ok(())
 }
 
+/// SPEC-0020: suppressed items stay visible but do not outrank PR-local work.
+/// The default config turns `strongly_gripped` seams off, so `review-comments`
+/// warns about every well-tested neighbour; that must not hide a card that
+/// names a gap and carries its repair start.
+#[test]
+fn a_neighbouring_configured_off_note_does_not_hide_a_card_with_a_repair_start()
+-> Result<(), String> {
+    let mut comments = exact_line_comments()?;
+    assert_eq!(
+        comments
+            .pointer("/comments/0/llm_guidance/repair_command")
+            .and_then(Value::as_str),
+        Some(EXACT_LINE_REPAIR),
+        "fixture must carry a card with a repair start"
+    );
+    comments["warnings"] = serde_json::json!([{
+        "kind": "other",
+        "message": "seam de2db1459ec9c03b at src/auth.rs:3 is configured off for strongly_gripped seams and is not included in agent brief results"
+    }]);
+    comments["suppressed"] =
+        serde_json::json!([{"seam_id": "nearby", "reason": "nearby_test_changed"}]);
+    let report = build_first_useful_action_report(guidance_only_input(&comments)?);
+    let rendered = render_first_useful_action_json(&report)?;
+    assert!(
+        rendered.contains(r#""status": "actionable""#),
+        "expected the card's repair start, got: {rendered}"
+    );
+    assert!(rendered.contains(EXACT_LINE_REPAIR), "{rendered}");
+    assert!(
+        !rendered.contains("No first action for suppressed seam"),
+        "{rendered}"
+    );
+
+    // Control: the same notes with no card to act on are still `suppressed`.
+    comments["comments"] = serde_json::json!([]);
+    let report = build_first_useful_action_report(guidance_only_input(&comments)?);
+    let rendered = render_first_useful_action_json(&report)?;
+    assert!(
+        rendered.contains(r#""status": "suppressed""#),
+        "expected suppressed with nothing to act on, got: {rendered}"
+    );
+    Ok(())
+}
+
 // ── acknowledged_report via baseline_delta ───────────────────────────────
 
 #[test]
@@ -2056,10 +2100,11 @@ fn selected_from_receipt_uses_proof_seam_id_fallback() -> Result<(), String> {
 
 #[test]
 fn selected_from_guidance_uses_summary_only_item() -> Result<(), String> {
-    // suppressed items are absent but summary_only is present, and suppressed string in warnings
-    // forces suppressed route → guidance selected from summary_only fallback
+    // A summary-only limitation is not work to act on, so a "configured off"
+    // warning still routes suppressed, and the suppressed report selects the
+    // seam from the summary_only fallback.
     let pr_guidance_json = r#"{
-            "summary_only": [{"seam_id": "so-seam", "kind": "predicate_boundary"}],
+            "summary_only": [{"seam_id": "so-seam", "kind": "predicate_boundary", "gap_state": "static_limitation"}],
             "warnings": [{"kind": "other", "message": "seam configured off by policy"}]
         }"#;
     let mut input = bare_input();
