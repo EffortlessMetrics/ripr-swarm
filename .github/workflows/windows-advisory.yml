@@ -1599,9 +1599,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not list test subjects' }
           if (($listed | Where-Object { $_ -eq "${name}: test" }).Count -ne 1) { throw "Expected exactly one listed subject: $name" }
           if (!(Test-Path 'target/debug/ripr.exe')) { throw 'Expected CLI executable was not built' }
-          Get-FileHash -Algorithm SHA256 'target/debug/ripr.exe'
+          $binaryHash = (Get-FileHash -Algorithm SHA256 'target/debug/ripr.exe').Hash
+          Write-Output "CLI SHA-256 before test: $binaryHash"
           cargo test --locked -p ripr --test task_first_facade $name -- --exact --nocapture 2>&1 | Tee-Object -Variable runOutput
           if ($LASTEXITCODE -ne 0) { throw "Native regression failed: $LASTEXITCODE" }
           if (@($runOutput | Where-Object { $_ -match '^running 1 test$' }).Count -ne 1) { throw 'Test did not report one executing subject' }
           if (@($runOutput | Where-Object { $_ -eq "test $name ... ok" }).Count -ne 1) { throw 'The selected test did not report success' }
           if (@($runOutput | Where-Object { $_ -match '^test result: ok\. 1 passed; 0 failed; 0 ignored;' }).Count -ne 1) { throw 'Expected one executed passing test with none ignored' }
+          $afterHash = (Get-FileHash -Algorithm SHA256 'target/debug/ripr.exe').Hash
+          Write-Output "CLI SHA-256 after test: $afterHash"
+          if ($afterHash -ne $binaryHash) { throw 'CLI binary changed during the selected test' }
