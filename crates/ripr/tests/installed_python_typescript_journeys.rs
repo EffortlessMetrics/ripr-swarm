@@ -1929,6 +1929,32 @@ fn gap_bound_after_phase_enforces_the_edit_cage() -> Result<(), String> {
     Ok(())
 }
 
+/// A gap-bound refusal must point to the packet that its before phase wrote.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_cage_refusal_names_its_own_packet() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-cage-packet-hint")?;
+    if !attempt.root.join("target/ripr/workflow/gap-repair-packet.json").is_file() {
+        return Err("before phase did not write its gap packet".to_string());
+    }
+    attempt.commit_closing_test()?;
+    std::fs::write(attempt.root.join("before.err"), "redirected output")
+        .map_err(|error| format!("write redirect: {error}"))?;
+    let output = attempt.after(false)?;
+    let (_, stderr) = text_of(&output);
+    expect_exit(output.status.success(), false, "untracked redirect")?;
+    need(&stderr, "before.err", "refused redirect")?;
+    need(
+        &stderr,
+        "target/ripr/workflow/gap-repair-packet.json",
+        "gap packet path",
+    )?;
+    if stderr.contains("target/ripr/workflow/agent-packet.json") {
+        return Err(format!("gap refusal names the seam packet:\n{stderr}"));
+    }
+    Ok(())
+}
+
 /// The attempt authority's retry budget applies to gap-bound refusals.
 #[cfg(feature = "lang-typescript")]
 #[test]

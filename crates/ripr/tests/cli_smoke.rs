@@ -9212,6 +9212,14 @@ fn agent_repair_names_output_redirected_into_the_checkout() -> Result<(), Box<dy
     let stderr = String::from_utf8_lossy(&after.stderr);
     assert!(stderr.contains("ripr:   before.err ("), "{stderr}");
     assert!(
+        stderr.contains("target/ripr/workflow/agent-packet.json"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("target/ripr/workflow/gap-repair-packet.json"),
+        "{stderr}"
+    );
+    assert!(
         stderr.contains(&format!(
             "`before.err`, `packet.json` were {UNTRACKED_HINT} If one is {REDIRECT_HINT}"
         )),

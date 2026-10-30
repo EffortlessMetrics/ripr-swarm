@@ -2864,7 +2864,12 @@ fn repair_after_cage_recovery_lines(
                 violations.len() - CAGE_RECOVERY_MAX_VIOLATIONS
             ));
         }
-        lines.extend(untracked_output_hints(root, store, after));
+        lines.extend(untracked_output_hints(
+            root,
+            store,
+            after,
+            gap_base.is_some(),
+        ));
     }
     let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
     let restart = crate::app::gap_bound_repair::repair_start_command(
@@ -2948,6 +2953,7 @@ fn untracked_output_hints(
     root: &Path,
     store: Option<&Path>,
     after: &crate::app::repair_attempt::RepairAttemptAfter,
+    gap_bound: bool,
 ) -> Vec<String> {
     use crate::edit_cage::EditCageViolationKind;
 
@@ -2983,8 +2989,13 @@ fn untracked_output_hints(
     if untracked.is_empty() {
         return hints;
     }
+    let packet = if gap_bound {
+        crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT
+    } else {
+        crate::agent::loop_commands::WORKFLOW_AGENT_PACKET_ARTIFACT
+    };
     hints.push(format!(
-        "{} {} not tracked by Git when the before phase ran. If {} a file you redirected ripr output into (for example `> packet.json` or `2> before.err`), the edit cage counts it as an edit: delete it, and redirect `agent repair` output outside the checkout or under target/ripr/ (the before phase already writes the packet to target/ripr/workflow/agent-packet.json).",
+        "{} {} not tracked by Git when the before phase ran. If {} a file you redirected ripr output into (for example `> packet.json` or `2> before.err`), the edit cage counts it as an edit: delete it, and redirect `agent repair` output outside the checkout or under target/ripr/ (the before phase already writes the packet to {packet}).",
         untracked.join(", "),
         if untracked.len() == 1 { "was" } else { "were" },
         if untracked.len() == 1 {
