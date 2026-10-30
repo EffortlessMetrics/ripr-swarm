@@ -377,6 +377,71 @@ fn zero_record_foreign_check_preserves_the_input() -> Result<(), String> {
 }
 
 #[test]
+fn new_import_config_or_extension_changes_strong_producer_result() -> Result<(), String> {
+    let root = fixture()?;
+    fs::create_dir_all(root.join("reach")).map_err(|e| e.to_string())?;
+    let source = root.join("reach/ledger.py");
+    let test = root.join("tests/test_ledger.py");
+    let before =
+        "def _pad():\n    return 2\n\n\ndef render():\n    return \"|\" + \" \" * _pad() + \"|\"\n";
+    let after = before.replace("return 2", "return 3");
+    let witness = "from reach.ledger import render\n\n\ndef test_render():\n    assert render() == \"|  |\"\n";
+    fs::write(root.join("reach/__init__.py"), "").map_err(|e| e.to_string())?;
+    fs::write(&source, before).map_err(|e| e.to_string())?;
+    fs::write(&test, witness).map_err(|e| e.to_string())?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-qm", "import base"])?;
+    fs::write(&source, &after).map_err(|e| e.to_string())?;
+    git(&root, &["add", "reach/ledger.py"])?;
+    git(&root, &["commit", "-qm", "import change"])?;
+    let head = git(&root, &["rev-parse", "HEAD"])?;
+    let strong = check(&root)?;
+    assert_eq!(strong["summary"]["findings"], 1, "{strong}");
+    assert_eq!(strong["summary"]["exposed"], 1, "{strong}");
+    let input = root.with_extension("import-strong.json");
+    fs::write(
+        &input,
+        serde_json::to_vec(&strong).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    for (name, bytes) in [
+        ("pytest.ini", "[pytest]\npythonpath = outside\n"),
+        ("reach/ledger.so", ""),
+    ] {
+        fs::write(root.join(name), bytes).map_err(|e| e.to_string())?;
+        let fresh = check(&root)?;
+        assert_eq!(fresh["summary"]["weakly_exposed"], 1, "{name}: {fresh}");
+        assert_eq!(fresh["summary"]["findings"], 1, "{name}: {fresh}");
+        assert_eq!(git(&root, &["rev-parse", "HEAD"])?, head);
+        assert_eq!(
+            fs::read_to_string(&source).map_err(|e| e.to_string())?,
+            after
+        );
+        assert_eq!(
+            fs::read_to_string(&test).map_err(|e| e.to_string())?,
+            witness
+        );
+        let packet = first_pr(
+            &root,
+            &input,
+            &root.join("target").join(name.replace('/', "-")),
+            &root
+                .join("target")
+                .join(format!("{}.json", name.replace('/', "-"))),
+        )?;
+        assert_ne!(
+            packet["selected"]["output_state"], "no_actionable_gap",
+            "{name}: {packet}"
+        );
+        fs::remove_file(root.join(name)).map_err(|e| e.to_string())?;
+        assert_eq!(check(&root)?["summary"]["exposed"], 1, "restored {name}");
+    }
+    fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    fs::remove_file(input).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[test]
 fn newly_discovered_foreign_write_changes_strong_producer_result() -> Result<(), String> {
     let root = fixture()?;
     fs::create_dir_all(root.join("hostile")).map_err(|e| e.to_string())?;
