@@ -243,7 +243,10 @@ fn install_docs_explain_macos_gatekeeper_quarantine() -> Result<(), String> {
     }
     let name = "docs/QUICKSTART.md Installation";
     let installation = doc_section(QUICKSTART_DOC, "## Installation")?;
-    let flat = installation.split_whitespace().collect::<Vec<_>>().join(" ");
+    let flat = installation
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     for needle in [
         "not signed or notarized",
         "Gatekeeper",
