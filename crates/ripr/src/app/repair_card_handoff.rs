@@ -1719,6 +1719,7 @@ mod tests {
         // actually produce a witness and fail this control.
         let finding = crate::domain::Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib.rs:predicate:4036edfa".to_string(),
             canonical_gap: Some(FindingCanonicalGap {
                 id: "gap:rust:src/lib.rs:pricing::discounted_total:predicate_boundary:predicate:amount==discount_threshold"
@@ -1815,6 +1816,7 @@ mod tests {
         };
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: id.to_string(),
             canonical_gap: Some(FindingCanonicalGap {
                 id: gap_id.to_string(),

@@ -3170,7 +3170,9 @@ fn diagnostic_for_finding_with_causal(
         "probe_id": finding.probe.id.to_string(),
         "classification": finding.class.as_str(),
         "probe_family": finding.probe.family.as_str(),
-        "confidence": finding.confidence,
+        // #10717: f32 -> f64 widening prints 0.4000000059604645; round to the
+        // two decimals every other surface renders.
+        "confidence": (f64::from(finding.confidence) * 100.0).round() / 100.0,
         "source_range": {
             "file": file,
             "line": finding.probe.location.line,
@@ -5401,6 +5403,7 @@ mod diagnostic_policy_tests {
     fn policy_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:pricing:42:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -6538,6 +6541,7 @@ mod lsp_next_step_parity_tests {
     fn complete_ts_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_discount.ts:typescript_preview:2396aec1".to_string(),
             canonical_gap: None,
             probe: Probe {

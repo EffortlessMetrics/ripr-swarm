@@ -632,6 +632,11 @@ pub struct Finding {
     pub class: ExposureClass,
     pub ripr: RiprEvidence,
     pub confidence: f32,
+    /// Why `confidence` is held at its value, for preview-adapter findings
+    /// (#10700). Empty for Rust, whose score is not a per-class constant.
+    /// Explains the number only; no decision helper reads it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub confidence_basis: Vec<crate::domain::ConfidenceCap>,
     pub evidence: Vec<String>,
     pub missing: Vec<String>,
     pub flow_sinks: Vec<FlowSinkFact>,

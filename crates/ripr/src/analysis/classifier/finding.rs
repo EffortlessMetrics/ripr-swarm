@@ -286,6 +286,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
     let (activation, files) = evidence.activation.into_public();
     let finding = Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: context.probe.id.0.clone(),
         canonical_gap: None,
         probe: context.probe.clone(),

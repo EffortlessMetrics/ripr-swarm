@@ -879,6 +879,12 @@ fn finding_json_with_config_and_counts(
         true,
     );
     float_field(out, indent + 1, "confidence", finding.confidence, true);
+    super::formatter::confidence_basis_fields(
+        out,
+        indent + 1,
+        &crate::domain::basis_entries(&finding.confidence_basis, finding.language),
+        crate::domain::why_capped_line(&finding.confidence_basis, finding.language).as_deref(),
+    );
     // #5531: carry the typed scope for repo findings only, so ledger consumers
     // of the rendered check JSON read the scope, not an evidence line. Omitted
     // for diff scope to keep diff-mode bytes identical.
@@ -2068,6 +2074,7 @@ mod evidence_path_separator_tests {
     fn finding_with_related(file: &str) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib_rs:9:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {

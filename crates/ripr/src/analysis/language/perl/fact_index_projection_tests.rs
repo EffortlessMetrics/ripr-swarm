@@ -252,6 +252,7 @@ fn pre_index_debug_normalizes_only_absent_related_test_support() {
     let rendered = r#"[
     Finding {
         analysis_scope: Diff,
+        confidence_basis: Vec::new(),
         miss_support: None,
         related_tests: [
             RelatedTest {
@@ -327,6 +328,7 @@ fn pre_index_debug_normalizes_only_default_related_test_role() {
     let rendered = r#"[
     Finding {
         analysis_scope: Diff,
+        confidence_basis: Vec::new(),
         role: Contributing,
         related_tests: [
             RelatedTest {

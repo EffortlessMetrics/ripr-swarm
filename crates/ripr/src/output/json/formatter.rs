@@ -85,6 +85,34 @@ pub(crate) fn escape_into(out: &mut String, value: &str) {
     }
 }
 
+/// Renders `confidence_basis` (list of `{code, summary}`) and the one-line
+/// `confidence_why_capped` for a preview finding (#10700). Writes nothing for
+/// an empty basis so Rust output bytes are unchanged.
+pub(crate) fn confidence_basis_fields(
+    out: &mut String,
+    indent: usize,
+    entries: &[crate::domain::ConfidenceBasisEntry],
+    why_capped: Option<&str>,
+) {
+    if entries.is_empty() {
+        return;
+    }
+    let pad = "  ".repeat(indent);
+    out.push_str(&format!("{pad}\"confidence_basis\": [\n"));
+    for (idx, entry) in entries.iter().enumerate() {
+        out.push_str(&format!(
+            "{pad}  {{\"code\": \"{}\", \"summary\": \"{}\"}}{}\n",
+            escape(entry.code),
+            escape(&entry.summary),
+            if idx + 1 != entries.len() { "," } else { "" }
+        ));
+    }
+    out.push_str(&format!("{pad}],\n"));
+    if let Some(line) = why_capped {
+        field(out, indent, "confidence_why_capped", line, true);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{array_field, escape, field, float_field, number_field};
