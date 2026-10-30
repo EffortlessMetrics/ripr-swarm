@@ -1,4 +1,4 @@
-//! An `async fn` hop above an inherent-method owner must not earn helper
+//! An `async fn` hop above an owner (inherent method or free function) must not earn helper
 //! credit (#7415). Calling an `async fn` constructs a future and nothing in
 //! the test establishes polling, so the owner never executes. Synchronous
 //! hops below the first `async` caller stay credited. Each case writes a small
@@ -176,21 +176,38 @@ fn undeclared_callee_earns_no_helper_credit_but_declared_sync_does() -> Result<(
 }
 
 #[test]
-fn free_function_owner_control_is_outside_the_inherent_async_rule() -> Result<(), String> {
-    // Control: the same helper-chain shapes over a free-function owner. The
-    // harness can credit a free owner (`helper_owner_call` through a sync
-    // hop), so the inherent-owner non-credit above is not a harness artifact.
+fn async_hops_above_free_owner_earn_no_helper_credit_but_sync_hops_do() -> Result<(), String> {
+    // Control: the harness can credit a free owner (`helper_owner_call`
+    // through a sync hop), so the non-credit below is not a harness artifact.
     let free_sync = "fn load_item(qty: u32) -> bool {\n    over(qty)\n}\n";
     let direct = free_relation(free_sync, "        assert_eq!(load_item(10), true);")?;
     assert_eq!(direct.as_deref(), Some("helper_owner_call"));
-    // Characterization, not endorsement: #7415 / #11065 truncate only
-    // inherent-method owners, so an `async fn` above a free owner is still
-    // credited today. If a later change fails that closed, this expectation
-    // should flip to `same_test_file` deliberately.
-    let async_over_free = free_relation(
-        &format!("{free_sync}async fn load(qty: u32) -> bool {{\n    load_item(qty)\n}}\n"),
-        FUTURE_ONLY,
-    )?;
-    assert_eq!(async_over_free.as_deref(), Some("helper_owner_call"));
+    // #11151: an unpolled `async fn` above a free owner never executes it, so
+    // it is refused exactly like the inherent-owner case (#7415 / #11065).
+    let async_over_free =
+        format!("{free_sync}async fn load(qty: u32) -> bool {{\n    load_item(qty)\n}}\n");
+    let unpolled = free_relation(&async_over_free, FUTURE_ONLY)?;
+    assert_eq!(unpolled.as_deref(), Some("same_test_file"));
+    // The synchronous hop below the `async fn` still earns credit.
+    let below_async = free_relation(&async_over_free, "        assert_eq!(load_item(10), true);")?;
+    assert_eq!(below_async.as_deref(), Some("helper_owner_call"));
+    Ok(())
+}
+
+#[test]
+fn awaited_async_hop_is_a_known_conservative_gap_for_both_owner_kinds() -> Result<(), String> {
+    // Known limitation, pinned so a future polling-aware change flips it
+    // deliberately: the helper chain is resolved per probe, not per test, and
+    // establishes no polling. A test that awaits or blocks on the `async fn`
+    // hop does execute the owner, yet earns no helper credit for either owner
+    // kind. This is a fail-closed recall gap, never a promotion.
+    let async_free = "fn load_item(qty: u32) -> bool {\n    over(qty)\n}\nasync fn load(qty: u32) -> bool {\n    load_item(qty)\n}\n";
+    let async_inherent =
+        "async fn load(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty)\n}\n";
+    let awaited = "        assert_eq!(block_on(load(10)), true);";
+    let free = free_relation(async_free, awaited)?;
+    assert_eq!(free.as_deref(), Some("same_test_file"));
+    let inherent = relation(async_inherent, awaited)?;
+    assert_eq!(inherent.as_deref(), Some("same_test_file"));
     Ok(())
 }
