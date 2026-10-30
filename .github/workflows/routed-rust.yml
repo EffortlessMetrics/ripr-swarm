@@ -211,8 +211,6 @@ jobs:
           GENERATION: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
-          trap 'echo "PREFLIGHT-DIAG failed status=$? line=$LINENO" >&2' ERR
-          set -x
           if [ "$ACTION" != labeled ] || [ "$LABEL" != merge-ready ]; then
             printf 'execute=false\nprior_result=nonrequest\n' >> "$GITHUB_OUTPUT"
             exit 0
