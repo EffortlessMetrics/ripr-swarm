@@ -278,10 +278,17 @@ pub(crate) fn agent_card_prose_lines(
         yes_no(card.instruction.has_fix_site),
         yes_no(card.instruction.has_suggested_assertion)
     ));
+    // #10644: this readiness line renders for a human reader, so translate
+    // the internal evidence codes; the card's wire data keeps them stable.
     let missing = if card.readiness.missing_evidence.is_empty() {
         "none".to_string()
     } else {
-        card.readiness.missing_evidence.join("; ")
+        card.readiness
+            .missing_evidence
+            .iter()
+            .map(|evidence| analysis::repair_route::humanize_evidence(evidence))
+            .collect::<Vec<_>>()
+            .join("; ")
     };
     lines.push(format!(
         "  readiness: repair_ready={} (missing evidence: {missing})",

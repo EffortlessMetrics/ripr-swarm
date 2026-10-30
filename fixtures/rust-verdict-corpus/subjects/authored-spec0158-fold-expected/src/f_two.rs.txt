@@ -1,0 +1,20 @@
+pub fn tier_two(qty: u32) -> u32 {
+    if 10 <= qty {
+        5
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_area_ten_earns_the_tier_f_two() {
+        let width = 2;
+        let height = 5;
+        assert_eq!(tier_two(width * height), 5);
+        assert_eq!(tier_two(width * height - 1), 0);
+    }
+}

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 886dffc..66faeb1 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -34,7 +34,7 @@ pub fn not_alpha_class(label: &str) -> &'static str {
+ }
+ 
+ pub fn gated_class(label: &str, on: bool) -> &'static str {
+-    if label == "alpha" && on {
++    if label == "beta" && on {
+         "word"
+     } else {
+         "blank"

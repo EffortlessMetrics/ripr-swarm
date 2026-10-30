@@ -22,6 +22,7 @@ Linked issues:
 
 - #9103
 - #10373 (Python gap-bound start, item 9)
+- #10698 (commit step before a start a dirty tree would refuse, item 10)
 
 Linked PRs:
 
@@ -137,6 +138,21 @@ existed with no way to begin the attempt.
    repair` and `agent repair --seam-id` given a Python gap still state the
    Rust-only seam reason and point at the gap-bound start; `agent status`
    after a pilot names the start check prints.
+10. Commit Step Before A Dirty Start (#10698): the start refuses to begin
+    while tracked files outside the packet's allowed edit surface differ from
+    HEAD. When `ripr check` analyzed such a tree, it prints
+    `git -C ROOT --literal-pathspecs commit -m "<message>" -- FILES` before
+    the start, naming exactly the files the start's own premise check refuses,
+    shell-quoted and spelled relative to ROOT, so the command works from any
+    working directory and treats a name like `src/[ab].py` literally. The
+    pilot-routing warnings in `agent status` name the same step. On a clean
+    tree the start prints bare. When the packet, policy, HEAD or Git cannot
+    establish the prerequisite, the start is withheld with a reason. A dirty
+    worktree start binds the diff origin captured by the loader, so committing
+    cannot move a symbolic base. A clean committed-history check can use its
+    requested base; a committed-only check with dirty files outside the
+    allowed edit surface withholds the start and asks for a fresh check after
+    those files are committed or restored.
 
 ## Required Evidence
 
@@ -200,6 +216,10 @@ existed with no way to begin the attempt.
 ## Test Mapping
 
 - `crates/ripr/tests/installed_python_typescript_journeys.rs`:
+  `dirty_python_repair_start_keeps_original_diff_after_commit`,
+  `dirty_typescript_start_uses_diverged_merge_base`,
+  `dirty_python_check_withholds_start_when_git_inspection_fails`,
+  `committed_python_dirty_file_requires_fresh_check`,
   `typescript_literal_threshold_packet_is_complete_and_controls_fail_closed`,
   `gap_bound_after_phase_closes_the_gap_on_positive_evidence`,
   `gap_bound_after_phase_refuses_a_gap_that_is_not_closed_and_stays_retryable`,
@@ -208,10 +228,19 @@ existed with no way to begin the attempt.
   `gap_bound_after_phase_stops_when_the_retry_budget_is_spent`,
   `gap_bound_after_phase_human_output_names_closure_and_replaces_a_stale_receipt`,
   `gap_bound_receipt_requires_the_verify_closure_and_rejects_forgery`,
-  `typescript_status_warning_keeps_the_no_start_claim_for_refused_variants`,
+  `typescript_status_warning_reports_unconfirmed_start_for_refused_variants`,
   `python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start`,
   `python_status_after_pilot_names_the_gap_bound_start`,
   `python_refused_variant_is_offered_no_gap_bound_start`.
+- `crates/ripr/src/app/navigation.rs`:
+  `commit_prerequisite_commits_literal_paths_from_a_decoy_directory`;
+  `crates/ripr/src/app/task_first.rs`:
+  `dirty_paths_outside_surface_mirror_the_start_premise_check`,
+  `commit_hint_paths_are_relative_to_the_analyzed_root`;
+  `crates/ripr/src/app/agent_status.rs`:
+  `pilot_routing_messages_name_the_commit_before_a_start_on_a_dirty_tree`;
+  `crates/ripr/src/output/human.rs`:
+  `gap_bound_start_names_the_commit_first_on_a_dirty_tree`.
 - `crates/ripr/src/app/gap_bound_repair.rs` unit tests
   `python_gap_subjects_need_a_printable_tail` and
   `a_python_lookup_fails_closed_without_one_validated_record`,
@@ -227,8 +256,8 @@ existed with no way to begin the attempt.
 - `crates/ripr/src/app/gap_bound_repair.rs`: lookup, start spelling, manual
   verify route, and `default_check_gap_start`, the admission `ripr agent
   status` consults so its `pilot_routed_to_check_no_repair_target` warning
-  names the start check prints and keeps the "offers no start" claim only when
-  check offers none (#10001).
+  names the start check prints, or reports that it could not confirm a start
+  and directs the user to check the current route (#10001).
 - `crates/ripr/src/cli/commands/agent.rs`: `run_gap_bound_before_phase`.
 - `crates/ripr/src/app/repair_attempt/mod.rs`: `RepairAttemptGapBinding`,
   `begin_gap_bound_repair_attempt_with_identity`,

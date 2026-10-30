@@ -1,0 +1,59 @@
+{
+  "case_id": "spec0158-modfold-helper-glob-import",
+  "subject_id": "authored-spec0158-modfold-expected",
+  "diff": "cases/spec0158-modfold-helper-glob-import.diff",
+  "anchor": {
+    "file": "src/m_gsib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "owner_called_with_helpers_a_glob_import_binds_instead_of_a_sibling_module",
+  "hard_case": "the test glob-imports big() and small() from another module, so the sibling module's unused helpers of the same names are not the ones it calls",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if 10 < qty {",
+        "mutated_line": "if 10 < qty {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the rows are 15 and 14 (the glob-imported helpers), so no mutant of the boundary at 10 changes either assertion"
+      },
+      {
+        "replacement": "if 11 <= qty {",
+        "mutated_line": "if 11 <= qty {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the rows are 15 and 14 (the glob-imported helpers), so no mutant of the boundary at 10 changes either assertion"
+      },
+      {
+        "replacement": "if 9 <= qty {",
+        "mutated_line": "if 9 <= qty {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the rows are 15 and 14 (the glob-imported helpers), so no mutant of the boundary at 10 changes either assertion"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "the glob-imported helpers return 15 and 14, neither on the boundary at 10, so every boundary mutant survives; reading the sibling module's 10 and 9 would be a false credit.",
+  "labeling_observation": {
+    "ripr_commit": "UNSET",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0158#25"
+  ]
+}

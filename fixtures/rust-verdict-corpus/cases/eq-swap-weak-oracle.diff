@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 886dffc..9ebccd6 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -42,7 +42,7 @@ pub fn gated_class(label: &str, on: bool) -> &'static str {
+ }
+ 
+ pub fn weak_class(label: &str) -> &'static str {
+-    if label == "alpha" {
++    if label == "beta" {
+         "word"
+     } else {
+         "blank"

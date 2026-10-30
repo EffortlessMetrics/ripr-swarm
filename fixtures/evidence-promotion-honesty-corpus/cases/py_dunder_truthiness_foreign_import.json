@@ -1,0 +1,24 @@
+{
+  "id": "py_dunder_truthiness_foreign_import",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_dunder_truthiness_foreign_import",
+  "vector": "same_named_foreign_class_cannot_credit_integer_truthiness",
+  "probe_family": "predicate",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "static_unknown"
+    }
+  ]
+}

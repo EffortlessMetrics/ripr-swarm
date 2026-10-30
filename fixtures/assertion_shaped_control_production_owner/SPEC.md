@@ -36,15 +36,19 @@ ripr check --root fixtures/assertion_shaped_control_production_owner/input --dif
 
 Control: the standard code-under-test guidance is emitted unchanged, and the
 finding evidence contains no `owner_shape:` line. The only owner input is the
-helper call `boundary_amount()`, whose value ripr does not evaluate, so the
-boundary reads `infection_unknown` (activation unknown, RIPR-SPEC-0032, #6615)
-with the standard unknown-finding next step (#7477). The class change comes
-from RIPR-SPEC-0032, not RIPR-SPEC-0133. The assertion-shaped reframe must not
+helper call `boundary_amount()`. The helper is a nullary function declared
+once in the test file whose body is the literal `100`, so RIPR-SPEC-0158
+(#9637) reads the call as the row `100`, which sits on the changed `>=`
+boundary, and the exact `assert_eq!(.., 90)` pins it: the boundary reads
+`exposed`. (Before RIPR-SPEC-0158 read such a helper, the same shape read
+`infection_unknown`, RIPR-SPEC-0032, #6615.) The class comes from
+RIPR-SPEC-0158, not RIPR-SPEC-0133. The assertion-shaped reframe must not
 leak onto ordinary production owners.
 
 ## Must Not
 
 - Reframe guidance for an owner that is not assertion-shaped.
-- Change the exposure class or finding set relative to the pre-RIPR-SPEC-0133
-  behavior for this shape.
+- Change the exposure class or finding set because of RIPR-SPEC-0133: the
+  class is whatever RIPR-SPEC-0158 gives the same shape without an
+  assertion-shaped owner.
 - Use mutation-runtime outcome vocabulary reserved for real mutation execution.
