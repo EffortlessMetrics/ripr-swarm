@@ -255,16 +255,16 @@ mod tests {
     }
 
     #[test]
-    fn parse_enforces_scan_budget_on_nested_input() {
+    fn parse_enforces_scan_budget_on_nested_input() -> Result<(), String> {
         let payload = "x".repeat(1024 * 1024);
         let shallow = format!("[\"{payload}\"]");
-        assert!(parse(shallow.as_bytes()).is_ok());
+        parse(shallow.as_bytes())?;
         let nested = format!("{}\"{payload}\"{}", "[".repeat(65), "]".repeat(65));
-        assert!(
-            parse(nested.as_bytes())
-                .unwrap_err()
-                .contains("scan work limit")
-        );
+        match parse(nested.as_bytes()) {
+            Err(error) if error.contains("scan work limit") => Ok(()),
+            Err(error) => Err(format!("unexpected parse error: {error}")),
+            Ok(_) => Err("expected scan work limit error".into()),
+        }
     }
 
     #[test]
@@ -272,9 +272,13 @@ mod tests {
         let raw: &serde_json::value::RawValue =
             serde_json::from_str("[[1]]").map_err(|e| e.to_string())?;
         let mut insufficient = 7;
-        assert!(convert(raw, &mut insufficient).is_err());
+        match convert(raw, &mut insufficient) {
+            Err(error) if error.contains("scan work limit") => {}
+            Err(error) => return Err(format!("unexpected conversion error: {error}")),
+            Ok(_) => return Err("expected scan work limit error".into()),
+        }
         let mut sufficient = 9;
-        assert!(convert(raw, &mut sufficient).is_ok());
+        convert(raw, &mut sufficient)?;
         Ok(())
     }
 
