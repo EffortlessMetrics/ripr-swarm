@@ -493,6 +493,30 @@ fn tool_probe_renderer_fix(evidence: &str) -> Option<&'static str> {
     })
 }
 
+/// Plain wording for the analysis-profile cargo/rustc notes on the compact
+/// screen (#10696). The JSON evidence keeps the producer string; this only
+/// rewrites the two known `<state>; <effect>; project verification ...`
+/// shapes and passes anything else through unchanged.
+fn plain_toolchain_note(text: &str) -> String {
+    const BUILD_TAIL: &str = "; project verification and source builds require their own toolchain";
+    let Some(head) = text.strip_suffix(BUILD_TAIL) else {
+        return text.to_string();
+    };
+    let Some((state, effect)) = head.split_once("; ") else {
+        return text.to_string();
+    };
+    let state = state.replace(" timed out after ", " did not answer within ");
+    if effect.contains("does not run rustc") {
+        format!("{state}. ripr does not need rustc to analyze your code; your own builds do.")
+    } else if effect.contains("cargo metadata") {
+        format!(
+            "{state}. ripr still analyzes, but skips test-target details that need `cargo metadata`; your own builds need cargo."
+        )
+    } else {
+        text.to_string()
+    }
+}
+
 fn compact_tilde_line(text: &str) -> String {
     format!("~ {}", display_text(text))
 }
@@ -561,11 +585,9 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         doctor_profile_name(profile),
         report.ripr_version
     ));
-    lines.push(format!(
-        "Root: {} · Rust {} MSRV",
-        display_path(root),
-        report.ripr_build_msrv
-    ));
+    // The build minimum is ripr's own source-build requirement (#10696); it
+    // stays in the JSON report, not on the first screen.
+    lines.push(format!("Root: {}", display_path(root)));
     lines.push(String::new());
 
     // Failures first, each with its own fix line (#8168).
@@ -707,7 +729,9 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
                         } else {
                             "-"
                         },
-                        display_text(check.evidence.as_deref().unwrap_or(check.name.as_str()))
+                        plain_toolchain_note(&display_text(
+                            check.evidence.as_deref().unwrap_or(check.name.as_str())
+                        ))
                     ));
                 }
                 output::doctor::DoctorCheckStatus::Fail => {}

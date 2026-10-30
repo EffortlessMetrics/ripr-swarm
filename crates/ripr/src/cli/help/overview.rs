@@ -29,8 +29,9 @@ Uses tracked edits, or committed history when clean. On a clean base branch,
 edit a tracked source file first; new files need git add -N PATH.
 
 The loop is: ripr names one gap -> you add one focused test -> ripr records
-whether the gap closed. `ripr.toml` is optional; the zero-config run is the
-intended first interface.
+whether the gap closed. Commit your source change first, so `ripr repair` can
+tell your new test apart from it. `ripr.toml` is optional; the zero-config run
+is the intended first interface.
 
 What are you trying to do?
   Diagnose setup        ripr doctor
@@ -52,16 +53,15 @@ More:
   ripr help --json       Versioned machine-readable command catalog.
 
 Exit codes: 0 completed, 2 could not complete (usage, configuration, or
-operational error), 3 blocking decision or typed refusal, 130 interrupted
-standalone check. Full contract: docs/EXIT_CODES.md.
+operational error), 3 ripr declined: a blocking result, or a request it will
+not run (the output says why), 130 interrupted standalone check. Full
+contract: docs/EXIT_CODES.md.
 Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: analyzed
-languages, mode, and probe/finding counts (any position, except on
-`ripr help --json`).
+languages, mode, and counts (any position, except on `ripr help --json`).
 
-ripr is static and advisory. It reads changed code, builds mutation-shaped
-probes, and estimates whether tests reach, infect, propagate, and reveal the
-changed behavior. It does not run mutants and does not report runtime mutation
-outcomes; a real mutation runner confirms later.
+ripr reads your changed code, imagines small bugs in it, and checks whether
+your tests would likely catch them. It does not run mutants or your tests and
+reports no runtime outcomes; a real mutation runner confirms later.
 "#;
 
 /// The exhaustive command reference: `ripr help --all`.
