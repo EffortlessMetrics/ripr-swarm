@@ -80,7 +80,7 @@ pub(crate) fn install_server_interrupts() -> Result<(), String> {
     {
         let mut registration = SERVER_INTERRUPTS
             .lock()
-            .map_err(|_| "server interrupt installation lock was poisoned".to_string())?;
+            .map_err(|error| format!("server interrupt installation lock was poisoned: {error}"))?;
         if registration.is_none() {
             *registration = Some(ServerInterrupts::install()?);
         }
@@ -679,7 +679,7 @@ mod tests {
                 .map(|worker| {
                     worker
                         .join()
-                        .map_err(|_| "server installer failed".to_string())?
+                        .map_err(|_join| "server installer failed".to_string())?
                 })
                 .collect::<Result<Vec<_>, String>>()
         })?;

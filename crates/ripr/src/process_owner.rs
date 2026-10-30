@@ -1210,7 +1210,14 @@ mod tests {
         let direct = owned.test_direct_kills.clone();
         assert!(owned.terminate_tree().is_err());
         assert!(owned.kill().is_err());
-        assert!(owned.try_wait().is_err());
+        // The refusal must name the lost custody, not an arbitrary wait error.
+        let Err(refusal) = owned.try_wait() else {
+            return Err("try_wait after external reap unexpectedly succeeded".into());
+        };
+        assert!(
+            refusal.to_string().contains("custody was lost"),
+            "{refusal}"
+        );
         assert!(owned.custody_lost);
         assert_eq!(owned.test_group_kills, 0);
         drop(owned);

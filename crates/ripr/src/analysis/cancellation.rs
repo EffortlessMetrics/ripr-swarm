@@ -449,7 +449,7 @@ mod tests {
                     assert!(!owns_process_groups());
                 })
                 .join()
-                .map_err(|_| "captured server worker failed".to_string())
+                .map_err(|_join| "captured server worker failed".to_string())
         })?;
         assert!(!owns_process_groups());
         Ok(())
