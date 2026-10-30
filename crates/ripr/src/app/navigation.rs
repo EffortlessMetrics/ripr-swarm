@@ -167,7 +167,7 @@ impl RepairRouteRefusal {
         let gate = || format!("run `{full_gate_command}` for the full gate's answer");
         match self {
             Self::GapRouteUnavailable { reason } => format!(
-                "no repair start offered: {reason}; resolve the Git or workspace error and rerun `ripr check`"
+                "no repair start offered: {reason}; inspect the current workspace and rerun `ripr check`"
             ),
             Self::NoCanonicalGap => {
                 "no repair start offered: this finding has no gap ID, so there is \

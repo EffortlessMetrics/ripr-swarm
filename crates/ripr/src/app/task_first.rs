@@ -926,7 +926,7 @@ fn gap_bound_route(
         return Ok(None);
     };
     let uncommitted_files = uncommitted_production_files(&output.root, &record)
-        .map_err(|_| "could not inspect the tracked files required for the repair start")?;
+        .map_err(|_| "could not validate the prerequisites for the repair start")?;
     let repair_base = if uncommitted_files.is_empty() {
         base
     } else {
