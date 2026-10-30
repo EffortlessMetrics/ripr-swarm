@@ -309,6 +309,10 @@ fn without_a_recognised_runner_invoke_the_generic_line_stays() -> Result<(), Str
         "from src.app import hello\n\n\ndef test_run(runner):\n    runner.invoke(hello, [])\n",
         // runner imported from an unrelated module
         "from helpers import CliRunner\nfrom src.app import hello\n\n\ndef test_run():\n    runner = CliRunner()\n    runner.invoke(hello, [])\n",
+        // invoke only inside a string literal
+        "from click.testing import CliRunner\nfrom src.app import hello\n\n\ndef test_run():\n    runner = CliRunner()\n    note = \"runner.invoke(hello, [])\"\n    assert note\n",
+        // receiver rebound away from the runner
+        "from click.testing import CliRunner\nfrom src.app import hello\n\n\ndef test_run():\n    runner = CliRunner()\n    runner = make_runner()\n    runner.invoke(hello, [])\n",
         // runner test that does not import the owner's package
         "from click.testing import CliRunner\nfrom other.tool import cmd\n\n\ndef test_run():\n    runner = CliRunner()\n    runner.invoke(cmd, [])\n",
     ];

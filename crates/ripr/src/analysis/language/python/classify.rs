@@ -1772,7 +1772,7 @@ fn note_runner_invocation(finding: &mut Finding, owner: &PythonOwner, tests: &[P
         return;
     };
     *line = format!(
-        "No static test path reaches `{}`. Tests run commands through `CliRunner.invoke(...)` (for example `{}:{}`); ripr does not follow into command internals, so check those tests before adding a new one.",
+        "No static test path reaches `{}`. Tests of this package run commands through `CliRunner.invoke(...)` (for example `{}:{}`) and may exercise it; ripr does not follow into command internals, so check those tests before adding a new one.",
         owner.name,
         test.file.display(),
         test.line
