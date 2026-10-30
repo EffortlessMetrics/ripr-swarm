@@ -495,9 +495,11 @@ disclosed and fails closed; it is never treated as a complete causal comparison.
   rejects inputs exceeding 16 MiB or serde_json's nesting and finite-number
   limits; file bytes are read before the size check. Preflight rejects unresolved
   or recursive references and caps total schema traversal at 128 levels and
-  50,000 steps; evaluation also has those limits, and input has a 100,000-node
-  limit. Equality traversal, repeated string scans, object-field checks, and
-  reference decoding consume the relevant budget. Exhaustion is a violation
+  50,000 steps; evaluation also has those limits. The serde preflight rejects
+  inputs with more than 100,000 nodes before allocating the exact tree, counting
+  duplicate-key values before the usual last-key-wins collapse. Equality
+  traversal, repeated string scans, object-field checks, and reference decoding
+  consume the relevant budget. Exhaustion is a violation
   even inside schema combinators. The existing pattern matcher has unbounded
   match work; this budget does not bound a single pattern match. An
   already-constructed `f64` cannot recover its source precision. The xtask

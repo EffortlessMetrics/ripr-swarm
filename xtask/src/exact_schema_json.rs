@@ -1,6 +1,59 @@
 //! Validator-local JSON values retain source number text without changing
 //! serde_json's workspace-wide representation.
+use serde::de::{DeserializeSeed, Error as _, MapAccess, SeqAccess, Visitor};
 use std::collections::BTreeMap;
+use std::fmt;
+
+pub(crate) const MAX_JSON_NODES: usize = 100_000;
+
+struct CountSeed<'a>(&'a mut usize);
+struct CountVisitor<'a>(&'a mut usize);
+
+impl<'de> DeserializeSeed<'de> for CountSeed<'_> {
+    type Value = ();
+    fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
+        if *self.0 == 0 {
+            return Err(D::Error::custom("JSON input exceeds node limit"));
+        }
+        *self.0 -= 1;
+        deserializer.deserialize_any(CountVisitor(self.0))
+    }
+}
+
+impl<'de> Visitor<'de> for CountVisitor<'_> {
+    type Value = ();
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a JSON value")
+    }
+    fn visit_unit<E: serde::de::Error>(self) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<(), E> {
+        Ok(())
+    }
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
+        while seq.next_element_seed(CountSeed(self.0))?.is_some() {}
+        Ok(())
+    }
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+        while map.next_key::<String>()?.is_some() {
+            map.next_value_seed(CountSeed(self.0))?;
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Value {
@@ -139,7 +192,12 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Value, String> {
     if bytes.len() > MAX_BYTES {
         return Err("JSON input exceeds 16 MiB".into());
     }
-    let _: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    let mut decoder = serde_json::Deserializer::from_slice(bytes);
+    let mut remaining = MAX_JSON_NODES;
+    CountSeed(&mut remaining)
+        .deserialize(&mut decoder)
+        .map_err(|e| e.to_string())?;
+    decoder.end().map_err(|e| e.to_string())?;
     let source = std::str::from_utf8(bytes).map_err(|e| e.to_string())?;
     let parsed: json_syntax::Value = source
         .parse()
@@ -206,10 +264,25 @@ mod tests {
     }
 
     #[test]
+    fn preflight_counts_nodes_before_duplicate_collapse() -> Result<(), String> {
+        let at_limit = format!("[{}0]", "0,".repeat(MAX_JSON_NODES - 2));
+        assert!(parse(at_limit.as_bytes()).is_ok());
+        let over_limit = format!("[{}0]", "0,".repeat(MAX_JSON_NODES - 1));
+        assert!(parse(over_limit.as_bytes()).is_err());
+        let duplicates = format!("{{{}\"x\":0}}", "\"x\":0,".repeat(MAX_JSON_NODES - 1));
+        assert!(parse(duplicates.as_bytes()).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn parser_preflight_rejects_unsupported_input() {
         assert!(parse(b"1e400").is_err());
+        assert!(parse(br#""\uD800""#).is_err());
+        assert!(parse(br#""\uD83D\uDE00""#).is_ok());
         assert!(parse(b"1 trailing").is_err());
         assert!(parse(&vec![b' '; 16 * 1024 * 1024 + 1]).is_err());
+        let within_depth = format!("{}0{}", "[".repeat(127), "]".repeat(127));
+        assert!(parse(within_depth.as_bytes()).is_ok());
         let deep = format!("{}0{}", "[".repeat(129), "]".repeat(129));
         assert!(parse(deep.as_bytes()).is_err());
     }
