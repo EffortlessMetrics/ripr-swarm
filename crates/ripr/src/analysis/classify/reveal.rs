@@ -5045,7 +5045,7 @@ pub(in crate::analysis) fn contains_as_whole_word(text: &str, token: &str) -> bo
 pub(in crate::analysis) fn only_proximity_oracles(related: &[RelatedTest]) -> bool {
     let mut direct_seen = false;
     let mut proximity_oracle_seen = false;
-    for related in related.iter().filter(|related| !related.is_unmatched()) {
+    for related in related.iter().filter(|related| related.is_contributing()) {
         let direct = related.relation_reason.is_some_and(|reason| {
             !super::is_proximity_only(reason) && reason != RelationReason::OwnerNamedTest
         });

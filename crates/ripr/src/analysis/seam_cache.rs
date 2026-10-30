@@ -590,7 +590,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// as an owner-scoped probe token, and the sole glob of the owner's declared
 /// dependency reaches a `T::name(..)` owner (RIPR-SPEC-0158, RIPR-SPEC-0172,
 /// #10479). Old entries keep the missed observation and the abstain.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.121";
+/// `1.122`: retain the opaque assertion-macro limit beside nested expected
+/// macros when a bare owner call sits outside their inputs (#9644).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.122";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -758,7 +760,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.121";
 /// `0.126`: same boolean boundary grip as full `1.119` (#8610).
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.128";
+/// `0.129`: same nested expected-macro limitation as full `1.122` (#9644).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.129";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -928,7 +931,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.128";
 /// `0.126`: same boolean boundary grip as full `1.119` (#8610).
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.128";
+/// `0.129`: same nested expected-macro limitation as full `1.122` (#9644).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.129";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5342,7 +5346,8 @@ mod tests {
         // 1.117 -> 1.118: scope-end carrier for a standard Drop (#10814).
         // 1.118 -> 1.119: direct boolean boundary owner grip (RIPR-SPEC-0197, #8610).
         // 1.120 -> 1.121: Display placeholder-edit refusal (#9836).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.121");
+        // 1.121 -> 1.122: nested expected-macro limit (#9644).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.122");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5449,8 +5454,9 @@ mod tests {
         // 0.124 -> 0.125: same scope-end carrier as full 1.118.
         // 0.125 -> 0.126: same boolean boundary grip as full 1.119 (#8610).
         // 0.127 -> 0.128: same Display placeholder-edit refusal as full 1.121.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.128");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.128");
+        // 0.128 -> 0.129: same nested expected-macro limit as full 1.122 (#9644).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.129");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.129");
     }
 
     #[test]
