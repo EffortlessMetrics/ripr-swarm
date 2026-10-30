@@ -1121,7 +1121,7 @@ fn sink_edit() -> String {
 }
 
 #[test]
-fn a_hand_written_recorder_compared_by_field_is_withheld() -> Result<(), String> {
+fn a_hand_written_recorder_compared_by_field_is_credited() -> Result<(), String> {
     for (label, body) in [
         (
             "whole field",
@@ -1132,7 +1132,11 @@ fn a_hand_written_recorder_compared_by_field_is_withheld() -> Result<(), String>
             "        let mut recorder = Recorder { lines: vec![] };\n        report(&mut recorder, 3);\n        assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()]);",
         ),
     ] {
-        withheld(&sink_source("&mut dyn Sink", body), &sink_edit(), 13, label)?;
+        let findings = findings_on(&sink_source("&mut dyn Sink", body), &sink_edit(), 13)?;
+        assert!(
+            findings.iter().all(|f| f.class == ExposureClass::Exposed),
+            "{label}: {findings:?}"
+        );
     }
     Ok(())
 }

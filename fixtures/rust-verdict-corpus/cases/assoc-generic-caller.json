@@ -1,0 +1,45 @@
+{
+  "case_id": "assoc-generic-caller",
+  "subject_id": "authored-spec0048-assoc-kit",
+  "diff": "cases/assoc-generic-caller.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 34
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "associated_const_clamp_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "const MAX: u32 = 9;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tall_clamps_through_the_generic_caller",
+        "equivalence_review": "the edit itself: The test reaches Tall::MAX only through a generic caller (`limited::<Tall>`), so `Self` is not statically named at the call; a loose name match could not tell it from a real reader."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test reaches Tall::MAX only through a generic caller (`limited::<Tall>`), so `Self` is not statically named at the call; a loose name match could not tell it from a real reader.",
+  "labeling_observation": {
+    "ripr_commit": "ea68ea04",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

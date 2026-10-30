@@ -284,8 +284,57 @@ bucket:
   --remove-resolved` keeps it through the shared
   `absence_not_evaluated_reason` predicate. A `gap_ledger_artifact` scope lists
   only the surviving ledger records' anchor files, not the files analyzed, so it
-  always yields `not_evaluated` until the ledger path discloses real analyzed
-  files (limitation tracked in #9599).
+  always yields `not_evaluated`. The ledger path can instead carry a producer
+  coverage disclosure (#9599): a ledger built from a complete `ripr check
+  --format repo-exposure-json` run (`run_status: complete`, no seam limit, no
+  parse-declined or skipped generated Rust files, and a stamped Rust-workspace
+  corpus identity from a producer-issued, content-committed artifact) records
+  `analysis_coverage` with a digest of its exact, complete record set and
+  `corpus.analyzed_production_files` captured from the inventory's admitted
+  production-role inputs, independently of surviving seams and on cache hits.
+  `gate evaluate` emits the `rust_workspace_complete` scope only on the
+  gap-ledger path, only while that digest still matches the ledger's records,
+  and only while the disclosed corpus hash, production-file membership and
+  non-Rust analysis-input identity (the ledger's
+  `analysis_coverage.corpus.analysis_inputs`, copied from the repo-exposure
+  artifact's top-level `analysis_inputs`, not `source_subject.corpus`: the classified
+  configuration including its raw `ripr.toml` bytes, `.ripr/test_intent.toml`,
+  the suppressions file, `RIPR_CFG_FEATURES`, the Cargo workspace-manifest and
+  configuration identity, `Cargo.lock`, the toolchain label and the analyzer
+  build identity, as the producer cache key hashes them) equal the gated
+  tree's, recomputed with the producer's own helpers; a missing or partial
+  input identity fails closed. So a byte-different `ripr.toml` (comments,
+  whitespace, CRLF) refuses coverage, `RIPR_CFG_FEATURES` and the toolchain
+  environment at the gate must match the producer's, and the manifest identity
+  is bound to the checkout path and Cargo environment (gate in the producer's
+  checkout). The seam limit is not compared: a `run_status: complete` run
+  asserts no limit applied. The hashes are the cache key's 64-bit FNV digests:
+  non-adversarial change detection, not authentication. A refusal is named in
+  the fallback scope's additive `coverage_refused` (the differing classes:
+  `content`, `membership`, `config`, `test_intent`, `suppressions`,
+  `cfg_features`, `workspace_manifests`, `lockfile`, `toolchain`,
+  `analyzer_version`, `records_or_disclosure`, `config_unloadable`,
+  `unverifiable`), which `baseline diff` quotes in its not-evaluated reason; a
+  filtered, edited or stale ledger, or an evaluation with no loadable root,
+  falls back to `gap_ledger_artifact`. A `rust_workspace_complete` scope in a
+  `--pr-guidance` document is dropped. Under `rust_workspace_complete` an absent
+  entry resolves only when its path is a normalized relative `.rs` path (no
+  `..`, `.`, empty, absolute, drive-prefixed, backslash or surrounding-space
+  spelling) in the producer's disclosed production-file membership; every other path
+  stays `not_evaluated`. The digest is tamper-evident, not authentication, and a
+  hand-edited gate-decision is out of scope for this contract.
+  Records are committed only by `records_digest` and `records_total`; the
+  covered membership is workspace-derived, so a ledger writer who deletes
+  records and recomputes both still earns the disclosure. The digest is
+  tamper-evident against accidental filtering, not authentication.
+  Accepted limits, stated plainly: the contract does not authenticate the
+  producer. A ledger rewritten by someone who recomputes `records_digest` on a
+  tree whose corpus still matches earns the scope; `baseline diff` and `baseline
+  update` trust a hand-edited gate-decision file.
+  Discovery does not follow source symlinks or symlinked parent directories.
+  Their aliased paths are absent from production membership and remain
+  `not_evaluated`. Missing, malformed or unverified membership fails closed;
+  a complete empty membership list covers no baseline paths.
   Coverage is file-level by construction: the seam selector matches every seam in
   a working-set file (changed line, changed owner, related test, else same-file),
   so a seam in a covered file is either present in the decisions or counted in

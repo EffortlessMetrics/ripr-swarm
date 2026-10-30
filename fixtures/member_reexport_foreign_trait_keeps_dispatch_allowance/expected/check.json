@@ -86,8 +86,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
-      "suggested_next_action": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
+      "recommended_next_step": "The indexed related tests do not establish a call to the changed owner, and no test input that exercises the changed condition was detected. Inspect existing tests, doctests and examples for a call whose input makes that condition both true and false before changing assertions; add a test only if that inspection finds none.",
+      "suggested_next_action": "The indexed related tests do not establish a call to the changed owner, and no test input that exercises the changed condition was detected. Inspect existing tests, doctests and examples for a call whose input makes that condition both true and false before changing assertions; add a test only if that inspection finds none.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

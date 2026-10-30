@@ -51,6 +51,9 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// #9871: the same-file functions that read the changed constant when the
     /// probe declares one and tests were related through them.
     pub const_readers: Vec<&'a FunctionSummary>,
+    /// RIPR-SPEC-0048: what evaluating the changed constant through those
+    /// readers showed; `None` when any part was unreadable.
+    pub const_flow: Option<super::ConstFlow>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -80,6 +83,7 @@ impl<'a> ProbeContext<'a> {
             diff_touched: None,
             unmounted_build_script: false,
             const_readers: Vec::new(),
+            const_flow: None,
         }
     }
 

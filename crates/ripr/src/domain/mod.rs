@@ -2,6 +2,7 @@ mod candidate_relation;
 mod causal_delta;
 mod classification;
 mod command_spec;
+mod confidence_basis;
 #[doc(hidden)]
 pub mod context_packet;
 mod diagnostic_witness;
@@ -38,9 +39,10 @@ pub(crate) use classification::{
     ASSERTION_CONTEXT_UNESTABLISHED, ASSERTION_NOT_CREDITED_PREFIX,
     ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP, ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP,
     ASSERTION_SHAPED_OWNER_REASON, ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP,
-    ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP, BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP,
-    CALLEE_ONLY_REACH_PREFIX, LIMITATION_ANALYZER_ROUTE_PREFIX,
-    LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX, LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
+    ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP, BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP,
+    BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP, CALLEE_ONLY_REACH_PREFIX,
+    LIMITATION_ANALYZER_ROUTE_PREFIX, LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX,
+    LIMITATION_HELPER_BOUNDARY_PREFIX, LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
     LIMITATION_NON_CLAIM_PREFIX, NO_STATIC_PATH_NEXT_STEP, TRANSITIVE_REACH_WITNESS_PREFIX,
 };
 pub(crate) use command_spec::command_tokens;
@@ -51,11 +53,18 @@ pub use command_spec::{
     actionable_verify_source_is_supported,
     verify_command_is_unbounded_repo_exposure_snapshot_compare,
 };
+pub use confidence_basis::ConfidenceCap;
+pub(crate) use confidence_basis::{
+    ConfidenceBasisEntry, ConfidenceBasisInputs, basis_entries, why_capped_line,
+};
 pub use diagnostic_witness::{
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticSourceLocation, DiagnosticWitness,
     DiagnosticWitnessLimitation,
 };
-pub(crate) use diagnostic_witness::{perl_suggested_related_test, python_suggested_related_test};
+pub(crate) use diagnostic_witness::{
+    contract_confidence, perl_suggested_related_test, python_suggested_related_test,
+};
+pub(crate) use evidence::BOUNDARY_INPUT_OBSERVED_SUMMARY;
 pub(crate) use evidence::indefinite_article;
 pub use evidence::{
     Confidence, OracleKind, OracleStrength, RelationConfidence, RelationReason, RevealEvidence,
@@ -128,7 +137,9 @@ pub use repair_card::{
 };
 // Internal formatting convention, not library API: `lib.rs` re-exports
 // `pub mod domain`, so this stays crate-private.
+pub(crate) use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub(crate) use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
+pub(crate) use probe::boundary_input_observed_with_weak_oracle;
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};
 pub use test_evidence_summary::{TestEvidenceEntry, TestEvidenceSummary};

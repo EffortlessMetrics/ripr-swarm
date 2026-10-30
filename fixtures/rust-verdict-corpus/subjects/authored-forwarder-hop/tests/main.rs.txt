@@ -1,0 +1,55 @@
+use forwarder_hop::{Bay, Fin, Gate, Lane, Pool, Right, Slip};
+
+#[test]
+fn grow_keeps_four_inline_and_spills_five() {
+    let mut pool = Pool::default();
+    assert_eq!(pool.grow(4), Ok(false));
+    assert_eq!(pool.grow(5), Ok(true));
+}
+
+#[test]
+fn merge_runs_without_checking_the_outcome() {
+    let mut lane = Lane::default();
+    assert!(lane.merge(4));
+    assert!(lane.merge(5));
+}
+
+#[test]
+fn fold_answers_for_the_other_type() {
+    let mut fin = Fin::default();
+    assert_eq!(fin.fold(4), Ok(true));
+}
+
+#[test]
+fn cut_answers_for_the_right_type() {
+    let mut right = Right::default();
+    assert_eq!(right.cut(4), Ok(true));
+}
+
+#[test]
+fn std_receivers_named_like_the_ring_forwarder() {
+    assert_eq!(vec![1, 2, 3].len(), 3);
+    let mut seen = std::collections::HashSet::new();
+    assert!(seen.insert(4));
+}
+
+#[test]
+fn gate_insert_pins_the_boundary() {
+    let mut gate = Gate::default();
+    assert_eq!(gate.insert(4), Ok(false));
+    assert_eq!(gate.insert(5), Ok(true));
+}
+
+#[test]
+fn bay_dock_pins_the_boundary() {
+    let mut bay = Bay::default();
+    assert_eq!(bay.dock(4), false);
+    assert_eq!(bay.dock(5), true);
+}
+
+#[test]
+fn slip_answers_for_every_outcome() {
+    let mut slip = Slip::default();
+    assert!(slip.slip(4));
+    assert!(slip.slip(5));
+}

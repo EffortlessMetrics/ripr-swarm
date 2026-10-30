@@ -279,10 +279,50 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     }
 }
 
+/// The refusal for a known seam that `agent start` selection excluded: a
+/// policy omission names the policy reason and its inspection hint; a seam
+/// policy permits (a static limitation: opaque or `*_unknown`) has no
+/// repairable gap, so no workflow starts, and the recovery is its inspection
+/// packet (#10712).
+fn known_seam_start_refusal(
+    root: &Path,
+    seam_id: &str,
+    class: crate::analysis::seams::SeamGripClass,
+    policy: AgentBriefPolicy<'_>,
+) -> CoreError {
+    match policy.omission_reason_for_class(class) {
+        Some(reason) => CoreError::seam_policy_omitted(format!(
+            "agent start seam_id {seam_id} {reason}. {}",
+            policy_omitted_seam_hint(root, seam_id)
+        )),
+        None => CoreError::seam_not_actionable(format!(
+            "agent start seam_id {seam_id} is {}, a static limitation with no repairable gap, so no workflow starts. Inspect it with `ripr agent packet --root {} --seam-id {} --json`.",
+            class.as_str(),
+            crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                &root.to_string_lossy()
+            )),
+            crate::agent::loop_commands::shell_arg(seam_id)
+        )),
+    }
+}
+
+/// A seam-selection typed refusal (exit 3): the id is unknown, or the seam is
+/// known but agent policy withholds it (#10712).
+fn is_seam_refusal(error: &CoreError) -> bool {
+    matches!(
+        error.check_failure_kind(),
+        Some(
+            crate::core_error::CheckFailureKind::SeamIdUnknown
+                | crate::core_error::CheckFailureKind::SeamPolicyOmitted
+                | crate::core_error::CheckFailureKind::SeamNotActionable
+        )
+    )
+}
+
 fn run_agent_start(options: AgentStartOptions) -> Result<(), CommandError> {
     let json = options.json;
     let written = write_agent_start(options).map_err(|error| {
-        if error.check_failure_kind() == Some(crate::core_error::CheckFailureKind::SeamIdUnknown) {
+        if is_seam_refusal(&error) {
             CommandError::Decision(String::from(error))
         } else {
             CommandError::Failure(String::from(error))
@@ -382,23 +422,50 @@ fn write_agent_start_with_report(
         AgentBriefPolicy::from_config(config),
     );
     if selection.top_seams.is_empty() {
-        let message = format!(
-            "agent start seam_id {} was not found or is hidden by config. {}",
-            options.seam_id,
-            unknown_seam_id_hint(&options.root, &options.seam_id)
-        );
-        // Like `agent packet`: only an id absent from the inventory is the
-        // typed unknown-seam refusal (exit 3). A known seam withheld by agent
-        // policy keeps the plain failure (exit 2).
-        let in_inventory = report
+        // Like `agent packet`: an id absent from the inventory is the unknown
+        // refusal, and a known seam that agent policy withholds is the
+        // policy-omitted refusal naming the policy reason. Both are typed
+        // refusals (exit 3), never a "not found" for a seam the inventory has.
+        let entry = report
             .classified
             .iter()
-            .any(|entry| entry.seam.id().as_str() == options.seam_id);
-        return Err(if in_inventory {
-            CoreError::from(message)
-        } else {
-            CoreError::seam_id_unknown(message)
-        });
+            .find(|entry| entry.seam.id().as_str() == options.seam_id);
+        let Some(entry) = entry else {
+            return Err(CoreError::seam_id_unknown(format!(
+                "agent start seam_id {} was not found. {}",
+                options.seam_id,
+                unknown_seam_id_hint(&options.root, &options.seam_id)
+            )));
+        };
+        return Err(known_seam_start_refusal(
+            &options.root,
+            &options.seam_id,
+            entry.class,
+            AgentBriefPolicy::from_config(config),
+        ));
+    }
+    // The shared repair-admission gate decides every other start: a seam
+    // `ripr repair` and `agent card` report as not repair-ready must not
+    // write a workflow either (#10712).
+    if let Some(entry) = report
+        .classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == options.seam_id)
+        && let Some(refusal) = app::task_first::repair_start_refusal_for_entry(
+            &options.root,
+            entry,
+            AgentBriefPolicy::from_config(config),
+        )
+    {
+        let reason = refusal.reason;
+        return Err(CoreError::seam_not_actionable(format!(
+            "agent start seam_id {} is not repair-eligible: {reason}; no workflow starts. Inspect it with `ripr agent packet --root {} --seam-id {} --json`.",
+            options.seam_id,
+            crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                &options.root.to_string_lossy()
+            )),
+            crate::agent::loop_commands::shell_arg(&options.seam_id)
+        )));
     }
     add_agent_brief_provenance_warning(&input.root, &mut selection);
 
@@ -540,8 +607,7 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), CommandError> {
         // failure: exit 3, like `agent card` and `agent stub` for the same
         // cause. Every other packet failure stays exit 2.
         Err(error) => {
-            let unknown_seam = error.check_failure_kind()
-                == Some(crate::core_error::CheckFailureKind::SeamIdUnknown);
+            let unknown_seam = is_seam_refusal(&error);
             match refuse_agent_packet(&options, error, json) {
                 Ok(message) if unknown_seam => Err(CommandError::Decision(message)),
                 Ok(message) | Err(message) => Err(CommandError::Failure(message)),
@@ -772,7 +838,7 @@ fn render_agent_packet_for_seam_with_report(
 
     let policy = AgentBriefPolicy::from_config(config);
     if let Some(reason) = policy.omission_reason_for_class(entry.class) {
-        return Err(CoreError::from(format!(
+        return Err(CoreError::seam_policy_omitted(format!(
             "agent packet seam_id {seam_id} {reason}. {}",
             policy_omitted_seam_hint(root, seam_id)
         )));
@@ -1055,6 +1121,46 @@ fn run_agent_receipt_for_attempt(
     }
 }
 
+/// Whether lexical `..` resolution can disagree with the filesystem: true
+/// when a component that `lexically_clean` would pop is itself a symlink
+/// the kernel follows before the later `..` (or when a relative path keeps
+/// a leading `..` that cannot be checked at all). Callers that accepted a
+/// path on a lexical comparison must refuse in that case — the spelled path
+/// and the cleaned path can then name different real directories (#10624
+/// review).
+fn parent_dir_follows_symlink(path: &Path) -> bool {
+    let mut walked = PathBuf::new();
+    let mut stack: Vec<std::ffi::OsString> = Vec::new();
+    let is_absolute = path.is_absolute();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if stack.pop().is_some() {
+                    // `walked` currently ends at the popped component, so it
+                    // is exactly the path the kernel would follow first.
+                    if crate::agent::loop_commands::is_symlink(&walked) {
+                        return true;
+                    }
+                    walked.pop();
+                } else if !is_absolute {
+                    // lexically_clean preserves a leading relative `..`;
+                    // there is nothing on disk to prove it against.
+                    return true;
+                }
+            }
+            std::path::Component::Normal(name) => {
+                walked.push(name);
+                stack.push(name.to_owned());
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                walked.push(component.as_os_str())
+            }
+        }
+    }
+    false
+}
+
 /// Anchor a relative `agent receipt --out` at the resolved `--root` (issue
 /// #3967): the product renders `--out` relative next to an absolute
 /// `--root`, so resolving it at the paste-site process CWD wrote genuine
@@ -1088,13 +1194,29 @@ pub(in crate::cli) fn run_agent_status(options: AgentStatusOptions) -> Result<()
     // commands. Passing the workflow directory there rendered
     // `--root ./target/ripr/workflow`, a command that cannot run (#3893).
     // A non-default `--out` is refused rather than silently ignored until
-    // the inspected paths can follow it.
+    // the inspected paths can follow it. The comparison is lexical, not raw
+    // `PathBuf` equality: `--out ./target/ripr/workflow` names exactly the
+    // accepted directory and must not fail on its `./` spelling (#10542).
     if let Some(dir) = &options.out_dir {
         let requested = resolve_agent_start_out_dir(&options.root, dir);
         let default_dir = options.root.join("target/ripr/workflow");
-        if requested != default_dir {
+        if crate::agent::loop_commands::lexically_clean(&requested)
+            != crate::agent::loop_commands::lexically_clean(&default_dir)
+        {
             return Err(format!(
                 "agent status --out {} is not supported: agent status reads the workflow artifacts under {}",
+                dir.display(),
+                default_dir.display()
+            ));
+        }
+        // Lexical equality is unsound when a `..` follows a symlink: the
+        // filesystem resolves `..` after the symlink target, not after the
+        // spelled component, so the accepted spelling can name a different
+        // real directory than the default (#10624 review). Refuse unless
+        // lexical resolution provably matches filesystem resolution.
+        if parent_dir_follows_symlink(&requested) {
+            return Err(format!(
+                "agent status --out {} is not supported: a symlink before `..` resolves to a different directory than its spelling; agent status reads the workflow artifacts under {}",
                 dir.display(),
                 default_dir.display()
             ));
@@ -1279,9 +1401,11 @@ fn run_agent_repair_with_identity_ctx(
             artifacts.resolve(false, terminal, refusal.tail_reached);
         }
     }
-    // A deliberate named refusal once the after phase selected its attempt
-    // (typed) is recorded above and maps to the decision exit code 3.
-    // Operational errors after selection stay ordinary failures: exit 2.
+    // A deliberate named refusal (typed) is recorded above and maps to the
+    // decision exit code 3. Operational errors after selection stay ordinary
+    // failures: exit 2. The before phase selects no attempt, so a typed
+    // before-phase refusal (a policy-omitted or unknown seam, #10712) takes
+    // the same decision mapping with nothing recorded.
     if json
         && refusal.typed
         && !refusal.stdout_document_printed
@@ -1297,7 +1421,7 @@ fn run_agent_repair_with_identity_ctx(
         }
     }
     let start_refused = refusal.start_refused;
-    let result = if refusal.selected_attempt.is_some() && refusal.typed {
+    let result = if refusal.typed {
         result.map_err(CommandError::Decision)
     } else {
         result.map_err(CommandError::Failure)
@@ -1718,7 +1842,18 @@ fn run_agent_repair_phase(
                         .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
                 },
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| {
+                // #10712 residual: a seam the inventory has but agent policy
+                // withholds (or an unknown id) is the same typed refusal the
+                // standalone packet/start/card surfaces give (exit 3), not an
+                // operational failure. The error text is unchanged — nothing
+                // was written yet, so there is no attempt to record it on —
+                // and only the exit mapping below honors the flag.
+                if is_seam_refusal(&error) {
+                    refusal.typed = true;
+                }
+                error.to_string()
+            })?;
             // #9033: the selected inline target must be the committed file.
             // Checked on the inventory loaded above, before the cage policy,
             // the lock-protected publication or any workflow artifact, so a
@@ -1735,17 +1870,38 @@ fn run_agent_repair_phase(
             }
             let mut policy =
                 crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
-                    .map_err(|error| before_phase_refusal(&seam_id, &root, &error))?;
+                    .map_err(|error| {
+                        // Only a packet that names no editable test target gets
+                        // the plain next-step text; a malformed packet or an
+                        // invalid edit surface keeps its own diagnostic.
+                        if !crate::app::task_first::is_missing_edit_target_error(&error) {
+                            return error;
+                        }
+                        // #10978: say where the change is and what to do next.
+                        // The exact diagnostic stays last, because `ripr agent
+                        // card` reports the same text as its blocker.
+                        let seam = before_report
+                            .classified
+                            .iter()
+                            .find(|entry| entry.seam.id().as_str() == seam_id);
+                        let source = seam.and_then(|entry| {
+                            std::fs::read_to_string(root.join(entry.seam.file())).ok()
+                        });
+                        let plain = crate::app::task_first::no_test_route_refusal(
+                            &root,
+                            &seam_id,
+                            seam,
+                            source.as_deref(),
+                        );
+                        format!("{plain} (Detail: {error})")
+                    })?;
             crate::app::repair_attempt::include_explicit_store_operational_write(
                 &mut policy,
                 &root,
                 store_ref,
             )?;
-            crate::edit_cage::validate_build_output_precondition(&root, &policy).map_err(
-                |error| {
-                    format!("{error} No workflow was prepared and no repair attempt was started.")
-                },
-            )?;
+            crate::edit_cage::validate_build_output_precondition(&root, &policy)
+                .map_err(|error| format!("{error} Nothing was started."))?;
 
             // Fail early on a dirty production premise (#5262): the repair
             // loop pins the repository at its before phase, so tracked
@@ -2221,13 +2377,10 @@ fn run_agent_repair_phase(
                     && cage_after.verdict.status
                         != crate::edit_cage::EditCageVerdictStatus::Compliant
                 {
-                    Err(format!(
-                        "repair attempt `{}` ended `{}` at its edit cage ({}); gap `{}` is not reported closed for an attempt the cage refused",
+                    Err(gap_bound_rejected_attempt_message(
                         cage_after.attempt_id.as_str(),
-                        crate::app::repair_attempt::repair_attempt_state_for_finish(&cage_after)
-                            .as_label(),
-                        cage_after.verdict.status.as_label(),
-                        attempt.seam_id
+                        cage_after.verdict.status,
+                        &attempt.seam_id,
                     ))
                 } else {
                     run_agent_receipt_for_attempt(
@@ -2548,7 +2701,10 @@ fn write_agent_repo_exposure_snapshot_with_report(
         None,
         config,
     )?
-    .with_rust_corpus_key(report.corpus_key.as_ref());
+    .with_rust_inventory(
+        report.corpus_key.as_ref(),
+        &report.analyzed_production_files,
+    );
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -2682,7 +2838,7 @@ fn repair_after_cage_recovery_lines(
     }
     if !after.current {
         lines.push(format!(
-            "attempt `{attempt_id}` is stale: repository HEAD moved from {} to {} after its before phase.",
+            "attempt `{attempt_id}` is stale: repository HEAD moved from {} to {} after the repair started.",
             short_head(before_head),
             short_head(&after.repository_head)
         ));
@@ -2690,7 +2846,7 @@ fn repair_after_cage_recovery_lines(
     let violations = &after.verdict.violations;
     if !violations.is_empty() {
         lines.push(format!(
-            "the edit cage refused {} path(s); only the packet's allowed test surface may change:",
+            "ripr rejected the attempt: {} file(s) outside the test files you may change were edited:",
             violations.len()
         ));
         for violation in violations.iter().take(CAGE_RECOVERY_MAX_VIOLATIONS) {
@@ -2705,7 +2861,12 @@ fn repair_after_cage_recovery_lines(
                 violations.len() - CAGE_RECOVERY_MAX_VIOLATIONS
             ));
         }
-        lines.extend(untracked_output_hints(root, store, after));
+        lines.extend(untracked_output_hints(
+            root,
+            store,
+            after,
+            gap_base.is_some(),
+        ));
     }
     let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
     let restart = crate::app::gap_bound_repair::repair_start_command(
@@ -2739,9 +2900,9 @@ fn repair_after_cage_recovery_lines(
         .map(|baseline| baseline.is_ambiguous())
         .unwrap_or(false);
         if ambiguous_baseline {
-            lines.push("the attempt's before-phase baseline was recorded ambiguous (its `attempt-baseline.json` artifact has `\"ambiguous\": true`), so the cage cannot prove the exact worktree state the attempt measured and stopped before judging the edit; the attempt is unscorable.".to_string());
+            lines.push("the attempt's before-phase baseline was recorded ambiguous (its `attempt-baseline.json` artifact has `\"ambiguous\": true`), so ripr cannot prove the exact file state the attempt started from and stopped before judging the edit; the attempt cannot be scored.".to_string());
         } else {
-            lines.push("the edit cage could not compare the attempt's before and after states, so the attempt is unscorable; no path change was refused.".to_string());
+            lines.push("ripr could not compare the files before and after the attempt, so it cannot score the attempt; no file change was rejected.".to_string());
         }
         // An incomparable delta skips policy evaluation, so an empty
         // violations list is not a compliance finding: name every change the
@@ -2789,6 +2950,7 @@ fn untracked_output_hints(
     root: &Path,
     store: Option<&Path>,
     after: &crate::app::repair_attempt::RepairAttemptAfter,
+    gap_bound: bool,
 ) -> Vec<String> {
     use crate::edit_cage::EditCageViolationKind;
 
@@ -2813,7 +2975,7 @@ fn untracked_output_hints(
             .map(|violation| format!("`{}`", violation.path))
             .collect::<Vec<_>>();
         hints.push(format!(
-            "Refused untracked paths under Cargo's declared build directory `{}/`: {}. Check the effective Git ignore rules: generated build output must be ignored before starting a new repair attempt (for example `/{}/` in .gitignore). Tracked and untracked-but-not-ignored files remain subject to the edit cage; these paths are not attributed to redirected ripr output.",
+            "Refused untracked paths under Cargo's declared build directory `{}/`: {}. Check the effective Git ignore rules: generated build output must be ignored before starting a new repair (for example `/{}/` in .gitignore). Tracked files and untracked files that are not ignored still count as edits; these paths are not blamed on redirected ripr output.",
             rule.path(), paths.join(", "), rule.path()
         ));
     }
@@ -2824,8 +2986,13 @@ fn untracked_output_hints(
     if untracked.is_empty() {
         return hints;
     }
+    let packet = if gap_bound {
+        crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT
+    } else {
+        crate::agent::loop_commands::WORKFLOW_AGENT_PACKET_ARTIFACT
+    };
     hints.push(format!(
-        "{} {} not tracked by Git when the before phase ran. If {} a file you redirected ripr output into (for example `> packet.json` or `2> before.err`), the edit cage counts it as an edit: delete it, and redirect `agent repair` output outside the checkout or under target/ripr/ (the before phase already writes the packet to target/ripr/workflow/agent-packet.json).",
+        "{} {} not tracked by Git when the repair started. If {} a file you redirected ripr output into (for example `> packet.json` or `2> before.err`), it counts as an edit and fails the repair: delete it, and write `agent repair` output outside the checkout or under target/ripr/ (the first step already writes the packet to {packet}).",
         untracked.join(", "),
         if untracked.len() == 1 { "was" } else { "were" },
         if untracked.len() == 1 {
@@ -2994,11 +3161,11 @@ fn repair_after_input_drift_lines(
     {
         Ok(paths) if !paths.is_empty() => {
             lines.push(format!(
-                "analysis inputs changed after the before phase: {}. The before and after snapshots must analyze the same Cargo manifests, Git-tracked Cargo.lock files, and ripr.toml (an untracked Cargo.lock that the build writes does not count).",
+                "analysis inputs changed after the repair started: {}. The before and after snapshots must analyze the same Cargo manifests, Git-tracked Cargo.lock files, and ripr.toml (an untracked Cargo.lock that the build writes does not count).",
                 paths.join(", ")
             ));
             lines.push(format!(
-                "attempt `{}` was not finished and is still awaiting the focused test edit.",
+                "attempt `{}` was not finished and is still waiting for your test.",
                 attempt.attempt_id.as_str()
             ));
             // A committed input change cannot be restored in the worktree
@@ -3071,8 +3238,8 @@ fn repair_after_trusted_surface_recovery_lines(
         attempt.gap_base.as_deref(),
     );
     vec![
-        format!("attempt `{attempt_id}` passed its edit cage but its receipt was refused: {error}."),
-        "the refusal means a tracked file differs from the attempt's before-phase head outside the allowed test surface: most often a production change that was already uncommitted when the attempt started, or a production edit made during the loop; the edit cage cannot see either as an edit of this attempt.".to_string(),
+        format!("attempt `{attempt_id}` changed only the files the repair allows, but ripr could not accept its result: {error}."),
+        "a tracked file outside the test files differs from where the attempt started: most often a source change that was uncommitted when the attempt started, or a source edit made during the repair, and ripr cannot count either as part of this attempt.".to_string(),
         format!(
             "to recover: first inspect what moved (`git diff -- <path>`). If the named file was already modified before the attempt started, commit that change (`git commit -- <path>`); if it changed during the loop, set it aside without losing it (`git stash`). Only `git checkout {} -- <path>` restores the before-phase content, and it discards uncommitted work irrecoverably, so run it only when the change is disposable. Then start a new attempt: set your test edit aside (`git stash`), run `{restart}` while the gap still exists, restore the test edit (`git stash pop`), and run the new --attempt command it prints.",
             attempt.repository_head
@@ -3107,8 +3274,30 @@ fn before_phase_dirty_premise_refusal(
 fn before_phase_dirty_premise_refusal_with_restart(restart: &str, violations: &[String]) -> String {
     let first = violations.first().map(String::as_str).unwrap_or_default();
     format!(
-        "repair attempt cannot start: tracked file(s) outside the allowed test surface already differ from HEAD: {}. The repair loop pins the repository at its before phase, so an uncommitted production change would pass the edit cage and only refuse the receipt at the end, burning the attempt; a dirty focused test file inside the allowed test surface is fine. to recover: commit the listed file(s) (for example `git commit -- {first}`), or restore them, then rerun `{restart}`. No workflow was prepared and no repair attempt was started.",
+        "ripr repair needs your source changes committed first, so it can tell your new test apart from them. Uncommitted: {}. Commit them (for example `git commit -- {first}`) or restore them, then rerun `{restart}`. A test file you are still editing is fine. Nothing was started.",
         violations.join(", "),
+    )
+}
+
+/// Why a gap-bound attempt gets no receipt when ripr did not accept its
+/// changes. A violation and an incomparable measurement are different facts, so
+/// the wording branches instead of claiming an edit that was never observed.
+fn gap_bound_rejected_attempt_message(
+    attempt_id: &str,
+    status: crate::edit_cage::EditCageVerdictStatus,
+    gap_id: &str,
+) -> String {
+    let why = match status {
+        crate::edit_cage::EditCageVerdictStatus::Violated => {
+            "it edited files outside the test files"
+        }
+        crate::edit_cage::EditCageVerdictStatus::Incomparable => {
+            "ripr could not compare the files before and after it"
+        }
+        crate::edit_cage::EditCageVerdictStatus::Compliant => "ripr did not accept its changes",
+    };
+    format!(
+        "repair attempt `{attempt_id}` was rejected because {why}; gap `{gap_id}` is not reported closed for a rejected attempt"
     )
 }
 
@@ -3205,9 +3394,8 @@ fn run_gap_bound_before_phase(
         root,
         store_ref,
     )?;
-    crate::edit_cage::validate_build_output_precondition(root, &policy).map_err(|error| {
-        format!("{error} No workflow was prepared and no repair attempt was started.")
-    })?;
+    crate::edit_cage::validate_build_output_precondition(root, &policy)
+        .map_err(|error| format!("{error} Nothing was started."))?;
     let premise_head = crate::agent::artifact::current_git_head(root)?;
     let premise_violations = crate::app::repair_attempt::trusted_head_surface_violations(
         root,
@@ -3238,29 +3426,6 @@ fn run_gap_bound_before_phase(
     Ok(())
 }
 
-/// A before phase refused because the seam's repair packet cannot bound a
-/// test-only edit. Names the seam and the reason in plain words, says that
-/// nothing was started, states the observable packet field (#4332 — the
-/// producer-jargon cause alone leaves the agent guessing what to look at),
-/// points at the surfaces that only offer a repair start for seams that
-/// pass this check, names the root-pinned `agent stub` forward route for
-/// the same state (#7735 — the pick-another-seam advice is a dead end when
-/// no seam can start a repair; `--root` keeps the route usable from any
-/// directory because the before phase does not require the shell to sit at
-/// the workspace, and `--kind` pins the probe family so a line holding
-/// several gap families cannot stub another seam), states the inline-test
-/// boundary with its remedy — an ambiguous multi-module inline layout
-/// proposes no target, while one governed inline module would qualify
-/// (#5210) — and points at the repair help carrying the scope boundary.
-fn before_phase_refusal(seam_id: &str, root: &Path, error: &str) -> String {
-    use crate::agent::loop_commands::{bound_root, shell_arg};
-
-    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
-    format!(
-        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface). Pick a seam whose `ripr pilot` output or review card shows a repair start; when none does — for example a crate whose inline tests are spread over several `#[cfg(test)]` modules, where the ambiguous layout proposes no target and one governed inline module would qualify — add a `tests/`-surface test file, or move this gap forward with `ripr agent stub --root {root_arg} --at FILE:LINE --kind KIND` (FILE:LINE and KIND are the finding location and probe family `ripr check` prints for the same state). Repair scope, including the inline-test boundary, is in `ripr agent repair --help`. Cause: {error}"
-    )
-}
-
 /// What the before phase prints on stdout once its attempt is published: with
 /// `--json`, the packet envelope augmented with the additive `repair_attempt`
 /// continuation (#4329) so a driver that captures only stdout can complete
@@ -3285,6 +3450,10 @@ pub(in crate::cli) fn before_phase_stdout(
         .unwrap_or_else(|| {
             format!("Repair packet (JSON): {packet_path}; add --json to print it here\n")
         });
+    if continuation.typescript_test_cache_guidance {
+        document.push_str(output::agent_seam_packets::TYPESCRIPT_TEST_CACHE_GUIDANCE);
+        document.push('\n');
+    }
     if continuation.baseline_ambiguous {
         document.push_str(&before_phase_ambiguous_stdout_lines(
             &crate::agent::human_after_phase_follow_up(&continuation.next_command),
@@ -3508,12 +3677,80 @@ fn resolve_agent_start_out_dir(root: &Path, out_dir: &Path) -> PathBuf {
 mod root_tests;
 
 #[cfg(test)]
+#[path = "agent_refusal_tests.rs"]
+mod refusal_tests;
+
+#[cfg(test)]
 mod tests {
+    use super::gap_bound_rejected_attempt_message as rejected;
+    use crate::edit_cage::EditCageVerdictStatus as Status;
+
+    /// A violated verdict may claim an out-of-surface edit; an incomparable
+    /// one never observed an edit and must not claim it.
+    #[test]
+    fn gap_bound_rejection_wording_branches_on_the_verdict() {
+        let violated = rejected("a1", Status::Violated, "g1");
+        assert!(
+            violated.contains("edited files outside the test files"),
+            "{violated}"
+        );
+        let incomparable = rejected("a1", Status::Incomparable, "g1");
+        assert!(incomparable.contains("could not compare"), "{incomparable}");
+        assert!(!incomparable.contains("edited files"), "{incomparable}");
+        for text in [&violated, &incomparable] {
+            assert!(
+                !text.contains("violated") && !text.contains("incomparable"),
+                "{text}"
+            );
+            assert!(text.contains("gap `g1` is not reported closed"), "{text}");
+        }
+    }
+
     use super::super::tests::{
         args, outcome_after_json, outcome_before_json, unique_command_test_dir,
         unique_repo_relative_test_dir,
     };
     use super::*;
+
+    /// #10712 review: a static-limitation seam that policy permits is not a
+    /// policy omission, so `agent start` must not send the caller to policy
+    /// inspection; a configured-off gap still is one.
+    #[test]
+    fn start_refusal_distinguishes_static_limitations_from_policy_omission() {
+        use crate::analysis::seams::SeamGripClass;
+        let config = RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new(".");
+
+        let limit = known_seam_start_refusal(root, "abc", SeamGripClass::Opaque, policy);
+        assert_eq!(
+            limit.check_failure_kind(),
+            Some(crate::core_error::CheckFailureKind::SeamNotActionable)
+        );
+        let message = String::from(limit);
+        assert!(message.contains("static limitation"), "{message}");
+        assert!(message.contains("ripr agent packet"), "{message}");
+        assert!(!message.contains("agent policy"), "{message}");
+        assert!(!message.contains("configured off"), "{message}");
+
+        let mut off = RiprConfig::default();
+        off.severity.seams.weakly_gripped = crate::config::ConfigSeverity::Off;
+        let omitted = known_seam_start_refusal(
+            root,
+            "abc",
+            SeamGripClass::WeaklyGripped,
+            AgentBriefPolicy::from_config(&off),
+        );
+        assert_eq!(
+            omitted.check_failure_kind(),
+            Some(crate::core_error::CheckFailureKind::SeamPolicyOmitted)
+        );
+        let message = String::from(omitted);
+        assert!(
+            message.contains("configured off for weakly_gripped seams"),
+            "{message}"
+        );
+    }
     use crate::app::agent_brief::AgentBriefLine;
     use crate::cli::agent::AgentBriefWorkingSet;
 
@@ -4658,7 +4895,7 @@ mod tests {
         );
         let joined = lines.join("\n");
         for needle in [
-            "the edit cage refused 1 path(s)",
+            "ripr rejected the attempt: 1 file(s)",
             "`mod tests`: unparseable",
             "attempt `repair-attempt-0123456789abcdef01234567` is terminal",
             "undo the refused changes",
@@ -4710,7 +4947,7 @@ mod tests {
             "a non-parse refusal must not carry the parse hint: {joined}"
         );
         assert!(
-            joined.contains("the edit cage refused 1 path(s)"),
+            joined.contains("ripr rejected the attempt: 1 file(s)"),
             "the refusal keeps its existing narration: {joined}"
         );
         Ok(())
@@ -4912,6 +5149,7 @@ mod before_phase_stdout_tests {
                     .to_string(),
             packet_path: "target/ripr/workflow/agent-packet.json".to_string(),
             baseline_ambiguous: false,
+            typescript_test_cache_guidance: false,
         }
     }
 

@@ -1,0 +1,21 @@
+pub fn tier_loop(qty: u32) -> u32 {
+    if 10 <= qty {
+        5
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_loop_rebinds_base_f_loop() {
+        let base = 9;
+        assert_eq!(tier_loop(base - 9), 0);
+        for base in [14, 15] {
+            assert_eq!(tier_loop(base + 1), 5);
+        }
+    }
+}

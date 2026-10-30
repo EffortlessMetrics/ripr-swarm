@@ -515,3 +515,55 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_constant_first (40)
+
+Reason:
+RIPR-SPEC-0088: #10682 next-step wording names ripr context --at and the Rust-only scope of seam-based repair instead of delegatable
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_first --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_constant_first (41)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_first --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_constant_first (42)
+
+Reason:
+RIPR-SPEC-0088: TypeScript preview check JSON states top-level canonical_gap_id (#10709)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_first --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_constant_first (43)
+
+Reason:
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_first --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

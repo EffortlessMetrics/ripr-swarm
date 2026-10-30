@@ -11,7 +11,7 @@ mod commands_timestamps;
 mod execute;
 pub(crate) mod help;
 mod help_json;
-mod interrupt;
+pub(crate) mod interrupt;
 mod parse;
 pub(crate) mod progress;
 mod rerun;
@@ -41,10 +41,10 @@ pub(crate) const EXIT_DECISION_OR_REFUSAL: i32 = 3;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandError {
     /// The command could not complete: usage, parse, operational, or
-    /// internal error. Maps to [`EXIT_COULD_NOT_COMPLETE`].
+    /// internal error. Maps to `EXIT_COULD_NOT_COMPLETE`.
     Failure(String),
     /// The command ran successfully and reached a blocking decision or a
-    /// typed refusal. Maps to [`EXIT_DECISION_OR_REFUSAL`], so orchestrators
+    /// typed refusal. Maps to `EXIT_DECISION_OR_REFUSAL`, so orchestrators
     /// can branch on `0` (completed), `3` (decision/refusal), and `2`
     /// (could not complete) without parsing output.
     Decision(String),
@@ -599,12 +599,21 @@ fn persist_before_repair_attempt(
     // captures only stdout can complete before → edit → after without reading
     // stderr. Without it, the human summary plus the one command a reader of
     // stdout alone needs next.
+    let typescript_test_cache_guidance = !baseline_ambiguous
+        && options.gap_id.is_some()
+        && matches!(
+            std::path::Path::new(policy.selected_target.path())
+                .extension()
+                .and_then(std::ffi::OsStr::to_str),
+            Some("ts" | "tsx" | "js" | "jsx" | "mts" | "cts" | "mjs" | "cjs")
+        );
     let continuation = crate::output::agent_seam_packets::BeforePhaseAttemptContinuation {
         attempt_id: result.manifest.repair_attempt_id.as_str().to_string(),
         manifest_path: crate::agent::loop_commands::display_path(&result.manifest_path),
         next_command: result.manifest.next_command.clone(),
         packet_path: crate::agent::loop_commands::display_path(&agent_packet),
         baseline_ambiguous,
+        typescript_test_cache_guidance,
     };
     if let Some(binding) = &binding {
         eprintln!(
@@ -627,19 +636,19 @@ fn persist_before_repair_attempt(
         // #9103: the gap-bound after phase enforces this cage, so the
         // guidance matches the seam-bound one except for the committed test.
         eprintln!(
-            "ripr: before phase complete. Next: add or strengthen one focused test in the packet's test file and commit it (leave production code unchanged), then run the command printed below. The after phase checks closure first: a gap that does not read exposed is refused and the attempt stays retryable; once the gap reads exposed, the edit cage ends the attempt terminally if any file outside that test surface changed."
+            "ripr: repair started. Next: add or strengthen one focused test in the packet's test file and commit it (leave production code unchanged), then run the command printed below. The after phase checks closure first: a gap that does not read exposed is refused and the attempt stays retryable; once the gap reads exposed, the attempt fails if any file outside that test file changed."
         );
     } else if policy.inline_test_module_target {
         // #5210: the cage admits only new test functions inserted into the
         // target's inline test module, so "strengthen" an existing test, or
         // any other byte of the production file, would fail the attempt.
         eprintln!(
-            "ripr: before phase complete. Next: add one new focused test function inside the existing `#[cfg(test)]` module of {} (leave production code, the module declaration, and existing tests unchanged), then run the command printed below. Any other edit fails the attempt terminally.",
+            "ripr: repair started. Next: add one new focused test function inside the existing `#[cfg(test)]` module of {} (leave production code, the module declaration, and existing tests unchanged), then run the command printed below. Any other edit fails the attempt.",
             policy.selected_target.path()
         );
     } else {
         eprintln!(
-            "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the command printed below. Editing any file outside that one test surface fails the attempt terminally."
+            "ripr: repair started. Next: add or strengthen one focused test (leave production code unchanged), then run the command printed below. Editing any file outside that test file fails the attempt."
         );
     }
     let packet_location = if options.gap_id.is_some() {
@@ -648,16 +657,16 @@ fn persist_before_repair_attempt(
         "target/ripr/workflow/agent-packet.json"
     };
     eprintln!(
-        "ripr: keep this command's output out of the checkout: the edit cage counts a file you redirect it into (for example `> packet.json` or `2> before.err`) as an edit outside the test surface. The packet is already at {packet_location}; to keep a copy, redirect under target/ripr/ or outside the repository. The same applies to the after phase."
+        "ripr: write this command's output outside the repo (for example under target/ripr/): a file inside it (such as `> packet.json` or `2> before.err`) counts as an edit and fails the repair. The packet is already at {packet_location}. The same applies to the next step."
     );
     if baseline_ambiguous {
         eprintln!(
-            "ripr: repair attempt {} is awaiting the focused test edit, though its ambiguous baseline (above) means this attempt ends in a terminal Incomparable refusal either way; for a scorable attempt, restart from a clean state as described above.",
+            "ripr: repair attempt {} is waiting for your test, though its unclear starting state (above) means ripr cannot score this attempt either way; for a scorable attempt, restart from a clean state as described above.",
             result.manifest.repair_attempt_id.as_str()
         );
     } else {
         eprintln!(
-            "ripr: repair attempt {} is awaiting the focused test edit",
+            "ripr: repair attempt {} is waiting for your test",
             result.manifest.repair_attempt_id.as_str()
         );
     }

@@ -39,7 +39,7 @@ open workspace
 
 ### First repair packet
 
-The editor may expose a `Copy first repair packet` action when the current
+The editor may expose a `Copy repair instructions for an AI agent` action when the current
 validated artifact provides enough typed evidence. The packet should include:
 
 - gap identity;
@@ -80,7 +80,7 @@ Code actions should remain conditional:
 | Action | Required evidence |
 | --- | --- |
 | Open related test | Workspace-local, current-language path exists. |
-| Copy first repair packet | Gap identity, repair route, verify command, and receipt command exist. |
+| Copy repair instructions for an AI agent | Gap identity, repair route, verify command, and receipt command exist. |
 | Copy verify command | Safe command references the current workspace. |
 | Copy receipt command | Verify/receipt chain exists and references the current workspace. |
 | Refresh evidence | Server is available enough to request refresh. |

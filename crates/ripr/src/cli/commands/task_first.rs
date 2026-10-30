@@ -23,7 +23,7 @@ use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
 
-pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt for one gap, or select the gap to repair.
+pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt from a Rust seam, or select a seam to repair.
 
 Usage: ripr repair [<item>] [--root PATH]
 
@@ -40,7 +40,9 @@ item — a seam ID, a `ripr check` finding ID (`probe:` / `repo-probe:`), a
 canonical gap ID, or a `file:line` location naming exactly one
 repair-eligible seam — repair starts the before phase for that exact
 subject. A cross-namespace ID the current seams no longer map refuses with
-the recovery route instead of guessing a seam.
+the recovery route instead of guessing a seam. For a Python or TypeScript
+diff gap, use the gap-bound start printed by `ripr check`, when offered;
+this command does not reuse that check's diff or base.
 
 Run from a workspace member, a `file:line` item is bound to that member and
 is refused (fail closed) when a workspace-root file with the same path suffix
@@ -323,9 +325,30 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                     reasons_total,
                 )));
             }
-            RepairStartDecision::Action(action) => {
-                // A deliberate named outcome, not a failure: the canonical
-                // block on stderr, stdout empty, decision exit code.
+            RepairStartDecision::Action(action, candidates) => {
+                // A deliberate named outcome, not a failure: stderr, stdout
+                // empty (`cmd:repair` declares an empty-stdout refusal),
+                // decision exit code.
+                let bound =
+                    crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
+                let selection_total = match action.stop() {
+                    Some(crate::domain::NextActionStop::SelectItem { total, .. }) => Some(*total),
+                    _ => None,
+                };
+                if let (Some(total), false) = (selection_total, candidates.is_empty()) {
+                    // #10978 / #11111: a selection is told in plain words:
+                    // where each change is, what a test must check for it,
+                    // and the exact command that starts it. The typed stop
+                    // ids and count are carried by those commands and the
+                    // stated total, so the internal block is not repeated.
+                    eprint!(
+                        "{}",
+                        crate::app::task_first::render_repair_choice(&candidates, total, &bound)
+                    );
+                    return Err(CommandError::Decision(
+                        "no repair started; run one of the commands above".to_string(),
+                    ));
+                }
                 eprint!(
                     "{}",
                     crate::output::next_action::render_next_action_human_at_root(
@@ -336,11 +359,7 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                 if action.action_class() == crate::domain::NextActionClass::ChooseItem {
                     print_retry_line(&format!(
                         "ripr repair <seam-id> --root {}",
-                        crate::agent::loop_commands::shell_arg(
-                            &crate::agent::loop_commands::bound_root(
-                                &options.root.to_string_lossy()
-                            )
-                        )
+                        crate::agent::loop_commands::shell_arg(&bound)
                     ));
                 }
                 return Err(CommandError::Decision(
@@ -645,7 +664,7 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
         }
         // The auto selector needs a named seam: `ripr repair` alone would
         // not start one, so it is not printed as the start.
-        Ok(RepairStartDecision::Action(_)) => format!(
+        Ok(RepairStartDecision::Action(..)) => format!(
             "`ripr repair` cannot choose a start by itself right now; run `ripr pilot --root {root_arg}` to list current seam IDs and name one"
         ),
         Err(error) => format!(
@@ -660,12 +679,20 @@ fn no_eligible_seam_message(
     reasons: &[String],
     reasons_total: usize,
 ) -> String {
+    let changed_non_rust = if total_seams == 0 {
+        crate::app::task_first::changed_non_rust_languages(root)
+    } else {
+        Vec::new()
+    };
     let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
         &root.to_string_lossy(),
     ));
     if total_seams == 0 {
+        if !changed_non_rust.is_empty() {
+            return crate::app::task_first::non_rust_repair_guidance(&root, &changed_non_rust);
+        }
         return format!(
-            "no seams visible under {root}; analyze the workspace before starting a repair. Next: `ripr pilot --root {root}`"
+            "no seams visible under {root}; `ripr repair` selects repository seams and does not reuse the diff or base from an earlier `ripr check`. If that check printed a gap-bound repair start, use the start printed by that check; rerun the same check, including its original --base if supplied, if needed. To explore repository seams, run `ripr pilot --root {root}`"
         );
     }
     let noun = if total_seams == 1 { "seam" } else { "seams" };
@@ -748,15 +775,52 @@ fn run_facade_status(mut options: StatusFacadeOptions) -> Result<(), CommandErro
     .map_err(CommandError::from)
 }
 
-/// Print one retry template with its PowerShell pair when the translator
-/// renders one. The template keeps a placeholder, never a filled
-/// candidate: filling one would be the implicit selection the façade
+/// Print one retry template and, when PowerShell needs a different spelling
+/// (or has none), that spelling. The template keeps a placeholder, never a
+/// filled candidate: filling one would be the implicit selection the façade
 /// refuses to make.
 fn print_retry_line(retry: &str) {
-    eprintln!("retry: {retry}");
-    if let Some(form) = crate::output::markdown::powershell_text_variant(retry) {
-        eprintln!("retry (PowerShell): {form}");
+    for line in retry_lines(retry) {
+        eprintln!("{line}");
     }
+}
+
+/// The retry lines [`print_retry_line`] prints. A `<placeholder>` the user
+/// replaces would read to the PowerShell translator as a redirection, so it
+/// is swapped for a plain token while the rest of the command (its quoted
+/// root) is translated, then restored (#11111). The disclosure that no form
+/// exists then describes the command, never the placeholder.
+fn retry_lines(retry: &str) -> Vec<String> {
+    const TOKEN: &str = "riprplaceholder";
+    let mut placeholders = Vec::new();
+    let mut masked = String::new();
+    let mut rest = retry;
+    while let Some(open) = rest.find('<') {
+        let Some(len) = rest[open..].find('>') else {
+            break;
+        };
+        let name = &rest[open..=open + len];
+        if !name[1..name.len() - 1]
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        {
+            break;
+        }
+        masked.push_str(&rest[..open]);
+        masked.push_str(&format!("{TOKEN}{}", placeholders.len()));
+        placeholders.push(name);
+        rest = &rest[open + len + 1..];
+    }
+    masked.push_str(rest);
+    let mut lines = vec![format!("retry: {retry}")];
+    if let Some(mut form) = crate::output::markdown::powershell_text_variant(&masked) {
+        // Restore from the highest index so `…1` never matches inside `…10`.
+        for (index, name) in placeholders.iter().enumerate().rev() {
+            form = form.replace(&format!("{TOKEN}{index}"), name);
+        }
+        lines.push(format!("retry (PowerShell): {form}"));
+    }
+    lines
 }
 
 #[cfg(test)]
@@ -766,6 +830,26 @@ mod tests {
 
     fn args(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| word.to_string()).collect()
+    }
+
+    /// #11111: a retry template keeps its placeholder, yet a root that quotes
+    /// differently in PowerShell still gets its PowerShell line; an ordinary
+    /// root prints only the Bash line.
+    #[test]
+    fn retry_template_translates_root_around_its_placeholder() {
+        let root = crate::agent::loop_commands::shell_arg("/home/o'neil/proj");
+        assert_eq!(
+            retry_lines(&format!("ripr continue --attempt <attempt-id> --root {root}")),
+            vec![
+                format!("retry: ripr continue --attempt <attempt-id> --root {root}"),
+                "retry (PowerShell): ripr continue --attempt <attempt-id> --root '/home/o''neil/proj'"
+                    .to_string(),
+            ]
+        );
+        assert_eq!(
+            retry_lines("ripr repair <seam-id> --root /work/proj"),
+            vec!["retry: ripr repair <seam-id> --root /work/proj".to_string()]
+        );
     }
 
     #[test]

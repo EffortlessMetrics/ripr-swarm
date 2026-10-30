@@ -95,6 +95,11 @@ scope that rebinds it, and `export type * as` bind no namespace value.
   closure) exports it; a module-private function is never forwarded.
 - A name exported by two star sources with different bindings is ambiguous
   and not credited.
+- A resolved star source whose export facts are unavailable (not discovered,
+  unreadable, over a read/parse budget, or unparsable) is unresolved, not an
+  empty export set. Losing that source cannot make a sibling's binding unique.
+  Successfully parsed empty modules still establish absence. Explicit local
+  and named exports retain their precedence over star exports.
 - `export *` never forwards `default`.
 - A local export of the name in an intermediate module shadows its star
   sources.
@@ -146,6 +151,8 @@ involves indirection that ripr cannot verify at runtime.
 - Unit tests in `reexport_chain_tests` for the over-bound chain, cycle,
   ambiguous star, non-exported star target, file-module-over-index, and
   shadowed import controls.
+- Fixture `typescript_reexport_unparsed_star` and CLI read-cap controls ensure
+  unavailable star siblings cannot retain positive owner or namespace credit.
 - `cargo xtask goldens check` must pass for all fixtures.
 
 ## Non-Goals

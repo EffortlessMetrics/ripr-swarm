@@ -112,6 +112,8 @@ pub(super) fn read_gap_ledger_impl(
     input: &GateEvaluateInput,
     config_errors: &mut Vec<String>,
     consumed: &mut ConsumedInputHashes,
+    coverage: &mut Option<Value>,
+    refusal: &mut Vec<String>,
 ) -> Option<Vec<GapRecord>> {
     let path = input.gap_ledger.as_ref()?;
     let resolved = resolve_root_path(&input.root, path);
@@ -173,6 +175,16 @@ pub(super) fn read_gap_ledger_impl(
             ));
             return Some(Vec::new());
         }
+        // #10733: a producer refusal (exit 2, empty findings,
+        // `downstream_consumable: false`) is not a denominator at all. Runs
+        // after the typed bounded/partial/incomplete checks so those keep
+        // their named repairs.
+        if let Some(refusal_error) =
+            super::refusal_input_error(&value, path, "gap decision ledger input")
+        {
+            config_errors.push(format!("required {refusal_error}"));
+            return Some(Vec::new());
+        }
     }
     match gap_decision_ledger::parse_gap_records_json(&text) {
         Ok(records) => {
@@ -186,6 +198,26 @@ pub(super) fn read_gap_ledger_impl(
                 }
                 return Some(Vec::new());
             }
+            // #9599: a producer coverage disclosure counts only while it still
+            // describes exactly this record set.
+            if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                match gap_decision_ledger::verified_analysis_coverage(&value, &records) {
+                    Some(verified) => {
+                        let mismatched = ledger_coverage_mismatches(&input.root, &verified);
+                        if mismatched.is_empty() {
+                            *coverage = Some(verified);
+                        } else {
+                            *refusal = mismatched;
+                        }
+                    }
+                    // A disclosure that no longer describes these records (or is
+                    // malformed) is refused as such; no disclosure is no refusal.
+                    None if value.get("analysis_coverage").is_some() => {
+                        *refusal = vec!["records_or_disclosure".to_string()];
+                    }
+                    None => {}
+                }
+            }
             Some(records)
         }
         Err(error) => {
@@ -196,6 +228,20 @@ pub(super) fn read_gap_ledger_impl(
             Some(Vec::new())
         }
     }
+}
+
+/// #9599: the disclosed corpus, production membership and non-Rust analysis
+/// inputs must still be the tree being gated. A ledger from an older tree, an
+/// unreadable workspace or a missing/unloadable config keeps the ledger
+/// fail-closed (`gap_ledger_artifact`); the returned classes name why.
+fn ledger_coverage_mismatches(root: &std::path::Path, coverage: &Value) -> Vec<String> {
+    let Ok(config) = crate::config::load_for_root(root) else {
+        return vec!["config_unloadable".to_string()];
+    };
+    crate::output::gap_source_subject::rust_workspace_coverage_mismatches(root, coverage, &config)
+        .into_iter()
+        .map(str::to_string)
+        .collect()
 }
 
 pub(super) fn read_recommendation_calibration_impl(
@@ -376,6 +422,13 @@ pub(super) fn read_baseline_impl(
                      an incomplete denominator is never a baseline input",
                     display_path(path),
                 ));
+                return BaselineIndex::default();
+            }
+            // #10733: a producer refusal is not a denominator at all; the
+            // same shared refusal admission as the ledger input applies.
+            if let Some(refusal_error) = super::refusal_input_error(&value, path, "baseline input")
+            {
+                config_errors.push(refusal_error);
                 return BaselineIndex::default();
             }
             if let Some(defect) = baseline_document_defect(&value, &display_path(&input.root)) {

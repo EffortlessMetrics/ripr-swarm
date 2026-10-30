@@ -2078,8 +2078,9 @@ pub(crate) fn edit_cage_policy_from_packet(
     packet: &str,
     seam_id: &str,
 ) -> Result<EditCagePolicy, String> {
-    let value: serde_json::Value = serde_json::from_str(packet)
-        .map_err(|error| format!("decode repair packet for edit cage failed: {error}"))?;
+    let value: serde_json::Value = serde_json::from_str(packet).map_err(|error| {
+        format!("decode repair packet for the allowed-files check failed: {error}")
+    })?;
     if value.get("packets").is_none()
         && value.get("seam_id").and_then(serde_json::Value::as_str) != Some(seam_id)
     {
@@ -2152,7 +2153,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         && is_inline_test_module_candidate(selected_target_text);
     if !is_test_surface_path(selected_target_text) && !inline_test_module_target {
         return Err(format!(
-            "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a production file is never the authored edit target and no edit cage is constructed",
+            "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never the test to edit, so no allowed-files list is built",
             test_surface_requirement()
         ));
     }
@@ -2218,7 +2219,9 @@ pub(crate) fn edit_cage_policy_from_packet(
     // paths there, every rule path named here (including `target/ripr`), and
     // every other ignored path. Other languages keep observing every ignored
     // path: the trust-bound Python verify phase executes tests and retains
-    // its full ignored-path guard.
+    // its ignored-path guard. A Python repair only exempts untracked or
+    // ignored interpreter and test-runner caches (`EditCagePolicy::
+    // expects_python_tool_caches`, #10699), never a tracked path.
     let ignored_build_output =
         if Path::new(selected_target.path()).extension() == Some(std::ffi::OsStr::new("rs")) {
             Some(crate::edit_cage::CagePathRule::subtree(
@@ -2998,7 +3001,7 @@ impl DivergedHeadRecovery {
     pub(crate) fn lines(&self) -> Vec<String> {
         vec![
             self.cause.clone(),
-            "the attempt was not finished and is still awaiting the focused test edit.".to_string(),
+            "the attempt was not finished and is still waiting for your test.".to_string(),
             self.reset.clone(),
             self.restart.clone(),
         ]
@@ -3219,9 +3222,7 @@ fn select_awaiting_repair_attempt_by_seam(
             .collect::<Vec<_>>()
             .join(", ");
         let detail = if matches.is_empty() {
-            format!(
-                "no awaiting repair attempt exists for seam `{seam_id}`; start one with `{restart}`"
-            )
+            format!("no repair is in progress for this gap; start one with `{restart}`")
         } else {
             format!(
                 "found {}: {ids}; pass --attempt <id> to select the prepared work exactly",
@@ -3229,7 +3230,7 @@ fn select_awaiting_repair_attempt_by_seam(
             )
         };
         return Err(format!(
-            "expected exactly one awaiting repair attempt for seam `{seam_id}`: {detail}"
+            "expected exactly one repair in progress for gap `{seam_id}`: {detail}"
         ));
     }
     matches.pop().ok_or_else(|| "missing attempt".to_string())
@@ -4366,7 +4367,7 @@ mod tests {
         for needle in [
             "src/production.py",
             "is not a test surface",
-            "no edit cage is constructed",
+            "no allowed-files list is built",
         ] {
             if !error.contains(needle) {
                 return Err(format!("refusal did not name `{needle}`: {error}"));

@@ -46,6 +46,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use super::non_empty_string_arg;
+use crate::output::json::CHECK_FINDINGS_BYTES_ENV;
 
 const COMMAND: &str = "reports ci-packet";
 
@@ -387,6 +388,14 @@ impl PacketRun {
     /// `ripr ARGS > OUT`: the file is truncated before the command runs, as
     /// the shell redirect did.
     fn ripr_to(&self, args: &[String], out: &str) -> StageResult {
+        self.ripr_to_env(args, out, &[])
+    }
+
+    /// `VAR=… ripr ARGS > OUT`: one child runs with explicit environment
+    /// overrides while the packet's own environment is unchanged. Recorded
+    /// lines carry the overrides as a `VAR=…` prefix so the override is
+    /// visible in `--dry-run`-style packet transcripts.
+    fn ripr_to_env(&self, args: &[String], out: &str, env: &[(&str, &str)]) -> StageResult {
         let target = self.path(out);
         // Same symlink-refusing owner as every other advisory write: refuse a
         // planted link or non-regular leaf, then truncate by replacing the
@@ -406,15 +415,23 @@ impl PacketRun {
                 .map_err(|err| format!("cannot write {out}: {err}"))?;
         }
         if let Some(recorded) = &self.recorded {
+            let prefix = env
+                .iter()
+                .map(|(name, value)| format!("{name}={value} "))
+                .collect::<String>();
             recorded
                 .borrow_mut()
-                .push(format!("ripr {} > {out}", args.join(" ")));
+                .push(format!("{prefix}ripr {} > {out}", args.join(" ")));
             return Ok(());
         }
-        self.spawn(args, Stdio::from(file))
+        self.spawn_env(args, Stdio::from(file), env)
     }
 
     fn spawn(&self, args: &[String], stdout: Stdio) -> StageResult {
+        self.spawn_env(args, stdout, &[])
+    }
+
+    fn spawn_env(&self, args: &[String], stdout: Stdio, env: &[(&str, &str)]) -> StageResult {
         if let Some(recorded) = &self.recorded {
             recorded
                 .borrow_mut()
@@ -429,6 +446,9 @@ impl PacketRun {
             .stdin(Stdio::null())
             .stdout(stdout)
             .stderr(Stdio::inherit());
+        for (name, value) in env {
+            command.env(name, value);
+        }
         let shown = format!("ripr {}", args.join(" "));
         let status = OwnedProcess::spawn(command)
             .and_then(|mut child| child.wait())
@@ -1278,13 +1298,19 @@ impl PacketRun {
 
     /// Gate-critical producer (#2009): advisory by default, but a blocking
     /// `RIPR_GATE_MODE` must not green-on-error past the gate's own input.
+    /// The PR-guidance producer runs with the findings-array byte budget
+    /// disabled (`RIPR_CHECK_FINDINGS_BYTES=0`, #11143): `review-comments`
+    /// needs the complete document and applies its own brief caps, while the
+    /// default 1 MB budget would hand it a `limited_findings_bound` prefix it
+    /// must refuse fail-closed. No other packet child gets the override.
     fn pr_guidance(&mut self) -> StageResult {
         self.mkdir("target/ripr/pr")?;
         self.mkdir("target/ripr/review")?;
         let base = format!("origin/{}", self.settings.base_ref);
-        if let Err(err) = self.ripr_to(
+        if let Err(err) = self.ripr_to_env(
             &args(&["check", "--root", ".", "--base", &base, "--format", "json"]),
             "target/ripr/pr/check.json",
+            &[(CHECK_FINDINGS_BYTES_ENV, "0")],
         ) {
             println!(
                 "RIPR check did not produce a complete result ({}); review-comments will fail closed on the named artifact.",
@@ -2010,7 +2036,7 @@ mod tests {
             "ripr agent packet --root . --seam-id seam-1 --json > target/ripr/workflow/agent-packet.json.partial",
             "ripr reports gap-ledger --root . --repo-exposure target/ripr/reports/repo-exposure.json --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md",
             "capture origin/main...HEAD > target/ripr/reports/pr.diff",
-            "ripr check --root . --base origin/main --format json > target/ripr/pr/check.json",
+            "RIPR_CHECK_FINDINGS_BYTES=0 ripr check --root . --base origin/main --format json > target/ripr/pr/check.json",
             "ripr review-comments --root . --base origin/main --head HEAD --check-output target/ripr/pr/check.json --out target/ripr/review/comments.json",
             "ripr pr-comments plan --root . --pr-guidance target/ripr/review/comments.json --mode inline --event-name pull_request --pull-request 7 --head-repo owner/repo --base-repo owner/repo --out target/ripr/review/comment-publish-plan.json --out-md target/ripr/review/comment-publish-plan.md --existing-comments target/ripr/review/existing-comments.json --token-available --write-permission",
             "ripr check --root . --diff target/ripr/reports/pr.diff --format sarif > target/ripr/reports/ripr-findings.sarif",
@@ -2042,6 +2068,27 @@ mod tests {
             "ripr agent review-summary --root . > target/ripr/workflow/agent-review-summary.md",
         ];
         assert_eq!(packet.lines().collect::<Vec<_>>(), expected);
+        Ok(())
+    }
+
+    /// #11143 pin: the PR-guidance producer is the only packet child that
+    /// runs with the findings-array byte budget disabled, so a >1 MB check
+    /// document still reaches `review-comments` as a complete document while
+    /// every other stage keeps the ambient budget.
+    #[test]
+    fn only_pr_guidance_check_runs_without_the_findings_budget() -> Result<(), String> {
+        let (packet, failed) = recorded_full_packet()?;
+        assert!(failed.is_empty(), "{failed:?}");
+        let override_prefix = format!("{CHECK_FINDINGS_BYTES_ENV}=0 ");
+        let carrying: Vec<&str> = packet
+            .lines()
+            .filter(|line| line.contains(CHECK_FINDINGS_BYTES_ENV))
+            .collect();
+        assert_eq!(
+            carrying,
+            [format!("{override_prefix}ripr check --root . --base origin/main --format json > target/ripr/pr/check.json").as_str()],
+            "exactly the PR-guidance producer carries the override: {carrying:?}"
+        );
         Ok(())
     }
 

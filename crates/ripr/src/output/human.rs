@@ -130,6 +130,17 @@ pub(crate) fn selected_triage_finding<'a>(
     triage::select_human_triage(output, config).selected
 }
 
+/// The selected subject and only the eligible rows inside the displayed
+/// Hidden window. The app resolves these before rendering, without inventing
+/// a second selection/currentness policy.
+pub(crate) fn stub_route_subjects<'a>(
+    output: &'a CheckOutput,
+    config: &RiprConfig,
+) -> (Option<&'a Finding>, Vec<&'a Finding>) {
+    let triage = triage::select_human_triage(output, config);
+    (triage.selected, triage::hidden_stub_route_findings(&triage))
+}
+
 /// Project the check producer's canonical next action for a navigation-aware
 /// render. `None` when the producer cannot bind a subject; JSON callers omit
 /// the member rather than inventing a committed-source default or executable
@@ -251,7 +262,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     render_partial_scope_disclosure(&mut out, output);
 
     if output.findings.is_empty() {
-        out.push_str("No diff-derived static exposure probes found.\n");
+        out.push_str("No findings: ripr checked no changed behavior.\n");
         if output.no_scope_provided {
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
@@ -307,7 +318,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     render_partial_scope_disclosure(&mut out, output);
 
     if output.findings.is_empty() {
-        out.push_str("No diff-derived static exposure probes found.\n");
+        out.push_str("No findings: ripr checked no changed behavior.\n");
         // RIPR-SPEC-0083: disclose when no analysis scope was provided
         // (#4012: or when the established range is empty — the note then
         // names the compared base instead of claiming no scope).
@@ -396,6 +407,28 @@ pub(crate) fn render_full_with_config_and_navigation(
     out
 }
 
+/// One header line, beside `head:`, when untracked routed files were left out
+/// of a committed-history run: the end-of-report note was missed in agent runs
+/// (#11159), so the count and the exact repair sit where `head:` is read.
+/// Display-only: it never touches the verdict, and it is absent on a
+/// working-tree read (which carries its own untracked disclosure).
+fn untracked_header_line(output: &CheckOutput) -> Option<String> {
+    let untracked = &output.untracked_working_tree_source_paths;
+    if !output.unanalyzed_working_tree || untracked.is_empty() {
+        return None;
+    }
+    let noun = if untracked.len() == 1 {
+        "file"
+    } else {
+        "files"
+    };
+    let listing = crate::output::analyzed_revisions::name_paths(untracked, escape_terminal_display);
+    Some(format!(
+        "untracked: {} {noun} not analyzed ({listing}); run `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH`\n",
+        untracked.len()
+    ))
+}
+
 /// Name the analyzed base and head (RIPR-SPEC-0116 amendment): a live
 /// repository diff names its base ref and commit and whether it ended at
 /// `HEAD` or at the working tree; a candidate-tree subject names its two
@@ -409,6 +442,9 @@ fn render_analyzed_revisions(out: &mut String, output: &CheckOutput) {
             base_label(revisions),
             head_label(revisions)
         ));
+        if let Some(line) = untracked_header_line(output) {
+            out.push_str(&line);
+        }
         return;
     }
     if let Some(subject) = output
@@ -474,20 +510,25 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
     let unsuppressed = output.summary.findings.saturating_sub(suppressed);
     let base_side = base_side_summary_note(output);
     if plain {
-        // #8165: plain words via the same labels the digest uses
-        // (`ExposureClass::plain_label`); the three unknown classes share
-        // the one plain word `unknown`, so their counts sum into one bucket
-        // named only when non-zero. Never a snake_case schema token here.
+        // #8165 / #10691: plain words only, no schema tokens and no internal
+        // nouns (probe, finding, unsuppressed). `found` (never `shown` or
+        // `reported`, per the #5017 rule above: the bounded digest renders one
+        // finding) counts the unsuppressed findings. The three unknown classes share
+        // the one plain word `unclear`, so their counts sum into one bucket
+        // named only when non-zero. The numbers are the same producer counts;
+        // only the words changed.
         let s = &output.summary;
         if s.probes == 0 {
+            // Counts are shown only when a caller supplied findings or
+            // suppression data without probes (never from the analysis
+            // pipeline, where findings derive from probes).
+            let counts = if unsuppressed > 0 || suppressed > 0 {
+                format!(". {unsuppressed} found, {suppressed} suppressed by your settings")
+            } else {
+                String::new()
+            };
             out.push_str(&format!(
-                "Summary: 0 probes analyzed; {} {} unsuppressed{base_side}\n\n",
-                unsuppressed,
-                if unsuppressed == 1 {
-                    "finding"
-                } else {
-                    "findings"
-                },
+                "Summary: 0 changed behaviors checked{counts}{base_side}\n\n"
             ));
         } else {
             let unknown = s
@@ -495,31 +536,26 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
                 .saturating_add(s.propagation_unknown)
                 .saturating_add(s.static_unknown);
             let mut classes = format!(
-                "{} exposed, {} weak, {} unrevealed, {} no path",
+                "{} appear noticed by tests, {} partly noticed, {} reached but not noticed, {} no test path",
                 s.exposed, s.weakly_exposed, s.reachable_unrevealed, s.no_static_path,
             );
             if unknown > 0 {
-                classes.push_str(&format!(", {unknown} unknown"));
+                classes.push_str(&format!(", {unknown} unclear"));
             }
             out.push_str(&format!(
-                "Summary: {} {} ({}); {} of {} {} unsuppressed{base_side}\n\n",
+                "Summary: {} changed {} checked: {}. {} found, {} suppressed by your settings{base_side}\n\n",
                 s.probes,
-                if s.probes == 1 { "probe" } else { "probes" },
+                if s.probes == 1 { "behavior" } else { "behaviors" },
                 classes,
                 unsuppressed,
-                s.findings,
-                if s.findings == 1 {
-                    "finding"
-                } else {
-                    "findings"
-                },
+                suppressed,
             ));
         }
     } else {
         out.push_str(&format!(
-            "Summary: {} probe(s), {} exposed, {} weakly_exposed, {} reachable_unrevealed, \
+            "Summary: {} changed behavior(s) checked: {} exposed, {} weakly_exposed, {} reachable_unrevealed, \
              {} no_static_path, {} infection_unknown, {} propagation_unknown, {} static_unknown; \
-             {} of {} finding(s) unsuppressed{base_side}\n\n",
+             {} of {} finding(s) unsuppressed{base_side}\n",
             output.summary.probes,
             output.summary.exposed,
             output.summary.weakly_exposed,
@@ -531,6 +567,14 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
             unsuppressed,
             output.summary.findings,
         ));
+        // #10691: the stable tokens stay (they are the schema vocabulary);
+        // each is glossed once so the line reads without the specs.
+        out.push_str(&wrap_human_prose(
+            "Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change; no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not hidden by your suppression policy",
+            "",
+            "  ",
+        ));
+        out.push_str("\n\n");
     }
     render_language_file_breakdown(&mut out, output);
     out
@@ -590,7 +634,7 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
     if outcome.limitations.is_empty() {
         out.push_str(&format!(
             // #7756: labelled field line — no trailing period.
-            "  Counts: {} changed file(s), {} changed line(s), {} candidate line(s), {} probe(s), {} finding(s)\n\n",
+            "  Counts: {} changed file(s), {} changed line(s), {} candidate line(s), {} changed behavior(s) checked, {} finding(s)\n\n",
             outcome.counts.changed_file_count,
             outcome.counts.changed_line_count,
             outcome.counts.candidate_line_count,
@@ -622,6 +666,23 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
         // Plain words lead; on the full surface the schema tokens follow in
         // parentheses so the line still greps against JSON and docs (#4323).
         // The bounded surface drops the tokens (#8165).
+        if plain
+            && limitation.kind
+                == crate::analysis_outcome::AnalysisLimitationKind::LanguageAdapterUnavailable
+        {
+            // #10691: the preview-language note below names the real recovery
+            // (the `ripr.toml` block to add), so the default view drops the
+            // stage/kind-flavoured Limitation line and keeps one plain pointer.
+            match limitation.affected_items {
+                Some(count) => out.push_str(&format!(
+                    "  Not analyzed: {count} changed file(s) in a language ripr is not set up to analyze (see the note below).\n"
+                )),
+                None => out.push_str(
+                    "  Not analyzed: changed files in a language ripr is not set up to analyze (see the note below).\n",
+                ),
+            }
+            continue;
+        }
         if plain {
             out.push_str(&format!(
                 "  Limitation: {} during {}",
@@ -660,7 +721,8 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
 }
 
 /// Emit a per-language changed-file breakdown only when a non-Rust language
-/// adapter counted at least one file (#2103). Pure-Rust runs emit nothing, so
+/// has at least one changed file, whether its adapter counted it or the
+/// path-routed count was recorded because no adapter did (#2103, #10719). Pure-Rust runs emit nothing, so
 /// Rust-only output stays byte-identical. `changed_rust_files` itself now
 /// carries the Rust adapter's count only; this line shows the full split.
 fn render_language_file_breakdown(out: &mut String, output: &CheckOutput) {
@@ -965,7 +1027,7 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
         note.push_str(&format!(
             " This repo also has {lower_bound}{} Python test file(s) (for example {}); ripr does not link Python tests to Rust changes, so a change they alone cover reads as no static path. Check those tests with your Python test runner, or add a Rust test that observes the behavior.",
             python.count,
-            escape_terminal_display(&python.example)
+            escape_terminal_display(&super::path::path_display_lossy(&python.example))
         ));
     }
     out.push('\n');
@@ -1260,6 +1322,7 @@ mod triage;
 
 pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};
 pub(crate) use sections::render_finding_with_config;
+pub(crate) use triage::unresolved_boundary_operand;
 
 #[cfg(test)]
 mod tests {
@@ -1336,9 +1399,9 @@ mod tests {
         // bounded summary uses plain words, sums the unknown classes into
         // one `unknown` bucket, and keeps the unsuppressed/total denominator.
         assert!(rendered.contains(
-            "Summary: 8 probes (1 exposed, 2 weak, 1 unrevealed, 1 no path, 3 unknown); 0 of 0 findings unsuppressed"
+            "Summary: 8 changed behaviors checked: 1 appear noticed by tests, 2 partly noticed, 1 reached but not noticed, 1 no test path, 3 unclear. 0 found, 0 suppressed by your settings"
         ));
-        assert!(rendered.contains("No diff-derived static exposure probes found."));
+        assert!(rendered.contains("No findings: ripr checked no changed behavior."));
         assert!(!rendered.contains("Next:"));
     }
 
@@ -1381,6 +1444,7 @@ mod tests {
                 base_ref: base.to_string(),
                 base_commit: Some("1a2b3c4d5e6f".to_string()),
                 merge_base_commit: None,
+                loaded_diff_origin: None,
                 head_commit: Some("1a2b3c4d5e6f".to_string()),
                 working_tree: false,
             }),
@@ -1406,6 +1470,7 @@ mod tests {
             base_ref: "HEAD".to_string(),
             base_commit: Some("1a2b3c4d5e6f".to_string()),
             merge_base_commit: None,
+            loaded_diff_origin: None,
             head_commit: Some("1a2b3c4d5e6f".to_string()),
             working_tree: true,
         });
@@ -1861,7 +1926,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("Summary: 9 probes (0 exposed, 0 weak, 0 unrevealed, 0 no path, 9 unknown); 9 of 9 findings unsuppressed"),
+            rendered.contains("Summary: 9 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 9 unclear. 9 found, 0 suppressed by your settings"),
             "bounded summary must sum the unknown classes in plain words; got:\n{rendered}"
         );
         for token in ["infection_unknown", "propagation_unknown", "static_unknown"] {
@@ -1928,7 +1993,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("; 1 of 2 findings unsuppressed"),
+            rendered.contains("1 found, 1 suppressed by your settings"),
             "the denominator must disclose the suppressed remainder; got:\n{rendered}"
         );
     }
@@ -1979,8 +2044,8 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "Summary: 7 probes (1 exposed, 2 weak, 3 unrevealed, 4 no path, 18 unknown); \
-                 7 of 7 findings unsuppressed"
+                "Summary: 7 changed behaviors checked: 1 appear noticed by tests, 2 partly noticed, 3 reached but not noticed, 4 no test path, 18 unclear. \
+                 7 found, 0 suppressed by your settings"
             ),
             "bounded header must name every class in plain words; got:\n{rendered}"
         );
@@ -2002,7 +2067,7 @@ mod tests {
 
         let full = super::render_full_with_config(&output, &RiprConfig::default());
         assert!(full.contains(
-            "Summary: 7 probe(s), 1 exposed, 2 weakly_exposed, 3 reachable_unrevealed, \
+            "Summary: 7 changed behavior(s) checked: 1 exposed, 2 weakly_exposed, 3 reachable_unrevealed, \
              4 no_static_path, 5 infection_unknown, 6 propagation_unknown, 7 static_unknown; \
              7 of 7 finding(s) unsuppressed"
         ));
@@ -2119,6 +2184,141 @@ mod tests {
             "human-full must retain limitation schema tokens:\n{full}"
         );
         Ok(())
+    }
+
+    /// #10691: a changed language with no analyzer renders one plain
+    /// `Not analyzed:` pointer on the bounded surface (the preview-language
+    /// note carries the `ripr.toml` recovery); the full surface keeps the
+    /// glossed kind/stage/recovery tokens.
+    #[test]
+    fn bounded_adapter_unavailable_limitation_is_one_plain_pointer() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let mut limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::LanguageAdapterUnavailable,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::EnableLanguage,
+                "Enable the python preview adapter and re-run the analysis.",
+            )?,
+        );
+        limitation.affected_items = Some(1);
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts::default(),
+            vec![limitation],
+        )?;
+        let mut output = partial_outcome_output(Vec::new())?;
+        output.analysis_outcome = Some(outcome);
+
+        let rendered = render(&output);
+        assert!(
+            rendered.contains(
+                "  Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze (see the note below).\n"
+            ),
+            "{rendered}"
+        );
+        for leaked in [
+            "Limitation:",
+            "language_adapter_unavailable",
+            "enable_language",
+            "language_adapter",
+            "partial_with_limitations",
+        ] {
+            assert!(
+                !rendered.contains(leaked),
+                "bounded render leaked {leaked}:\n{rendered}"
+            );
+        }
+        // Zero is a fact about what was checked, never "nothing to check":
+        // the run is incomplete.
+        assert!(rendered.contains("Summary: 0 changed behaviors checked\n"));
+        let full = super::render_full_with_config(&output, &RiprConfig::default());
+        assert!(
+            full.contains("language_adapter_unavailable at language_adapter"),
+            "human-full must retain the glossed tokens:\n{full}"
+        );
+        Ok(())
+    }
+
+    /// #10691: the default view carries no internal noun from the issue's
+    /// list, on a propagation-unknown finding whose producer prose names an
+    /// "observable sink"; `human-full` keeps the stable tokens, glossed, and
+    /// leads stop reasons with the sentence.
+    #[test]
+    fn plain_language_default_and_glossed_human_full() {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::PropagationUnknown;
+        finding.ripr.propagate = stage(
+            StageState::Unknown,
+            Confidence::Low,
+            "Propagation is not statically obvious from syntax-first analysis",
+        );
+        finding.missing = vec![
+            "No clear propagation path from changed behavior to an observable sink".to_string(),
+        ];
+        finding.activation.missing_discriminators = Vec::new();
+        finding.canonical_gap = Some(crate::domain::FindingCanonicalGap {
+            id: "gap:rust:src/lib.rs:f:predicate_boundary:predicate:a==1".to_string(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "f".to_string(),
+            behavior_kind: "predicate_boundary".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "a==1".to_string(),
+        });
+        let output = bounded_output_with_findings(vec![finding.clone()]);
+        // The `ripr explain <finding id>` drill-in commands carry the stable
+        // `probe:` finding id as data (JSON and selectors key on it); every
+        // other line is renderer-controlled prose.
+        let bounded = render(&output)
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("ripr "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for internal in [
+            "probe",
+            "Probe",
+            "Canonical gap",
+            "canonical gap",
+            "observable sink",
+            "unsuppressed",
+            "Missing discriminator",
+            "static analysis",
+        ] {
+            assert!(
+                !bounded.contains(internal),
+                "default view leaked `{internal}`:\n{bounded}"
+            );
+        }
+        assert!(
+            bounded.contains("  Gap ID (for scripts): gap:rust:"),
+            "{bounded}"
+        );
+        assert!(
+            bounded
+                .contains("ripr could not follow the changed value to something a test can check"),
+            "{bounded}"
+        );
+
+        let full = super::render_full_with_config(&output, &RiprConfig::default());
+        assert!(full.contains("\nChange type\n  a condition or comparison changed\n"));
+        assert!(full.contains("  family: predicate\n"));
+        assert!(full.contains("\nTerms: exposed = "), "{full}");
+        assert!(!full.contains("observable sink"), "{full}");
+        let reason = crate::domain::StopReason::PropagationEvidenceUnknown;
+        assert!(
+            full.contains(&format!(
+                "  - {} ({})\n",
+                reason.describe(),
+                reason.as_str()
+            )),
+            "stop reason must lead with the sentence, token second:\n{full}"
+        );
     }
 
     /// #8165: every class plain label is prose, never a snake_case wire
@@ -2250,6 +2450,80 @@ mod tests {
         );
         assert!(!rendered.contains("eol_only_churn"), "{rendered}");
         Ok(())
+    }
+
+    /// #10698: a gap-bound start whose analyzed tree has uncommitted
+    /// production edits prints the commit step before the start (which the
+    /// before phase refuses on a dirty tree); a clean tree prints it bare.
+    #[test]
+    fn gap_bound_start_names_the_commit_first_on_a_dirty_tree() {
+        let finding = sample_finding();
+        let finding_id = finding.id.clone();
+        let output = CheckOutput {
+            value_origins: Default::default(),
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 1,
+                findings: 1,
+                weakly_exposed: 1,
+                ..Summary::default()
+            },
+            findings: vec![finding],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions: None,
+        };
+        let config = crate::config::RiprConfig::default();
+        let render_with = |uncommitted: Vec<String>| {
+            let navigation = crate::app::FindingDrillIn::Commands(
+                crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                    crate::app::CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+                        finding_id: finding_id.clone(),
+                        gap_id: "gap:python:pricing.py:discount".to_string(),
+                        base: "HEAD".to_string(),
+                        uncommitted_files: uncommitted,
+                    }),
+                ),
+            );
+            super::render_bounded_with_config_and_navigation(
+                &output,
+                &config,
+                Some(&navigation),
+                crate::app::CheckDiffProvenance::CommittedHistory,
+            )
+        };
+        let start =
+            "ripr agent repair --gap-id gap:python:pricing.py:discount --base HEAD --phase before";
+
+        let dirty = render_with(vec!["pricing.py".to_string()]);
+        let commit_at =
+            dirty.find("git -C . --literal-pathspecs commit -m \"<message>\" -- pricing.py");
+        let start_at = dirty.find(start);
+        assert!(
+            matches!((commit_at, start_at), (Some(commit), Some(start)) if commit < start),
+            "the commit step must precede the start:\n{dirty}"
+        );
+        assert!(
+            dirty.contains("Commit your production change first"),
+            "{dirty}"
+        );
+
+        let clean = render_with(Vec::new());
+        assert!(clean.contains(start), "{clean}");
+        assert!(!clean.contains("git commit"), "{clean}");
     }
 
     #[test]
@@ -2758,11 +3032,15 @@ mod tests {
         let rendered = render(&bounded_output_with_findings(findings));
 
         assert!(
-            rendered.contains("    - src/f1.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/f1.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/f2.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/f2.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
     }
@@ -2804,11 +3082,15 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base_0.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/base_0.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base_1.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/base_1.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
         assert!(
@@ -2907,7 +3189,7 @@ mod tests {
         let rendered = render(&bounded_output_with_findings(findings));
 
         assert!(
-            rendered.contains("; 3 of 3 findings unsuppressed"),
+            rendered.contains("3 found, 0 suppressed by your settings"),
             "header denominator must count unsuppressed findings; got:\n{rendered}"
         );
         assert!(
@@ -2951,7 +3233,9 @@ mod tests {
             "base-side evidence must not read as lower-priority:\n{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/base.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
     }
@@ -2985,11 +3269,11 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base.rs:1 (weak, base-side)\n"),
+            rendered.contains("    - src/base.rs:1 (weak, base-side); kind: predicate; reason: missing strong oracle\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lower.rs:1 (weak, lower-priority candidate)\n"),
+            rendered.contains("    - src/lower.rs:1 (weak, lower-priority candidate); kind: predicate; reason: missing strong oracle\n"),
             "{rendered}"
         );
     }
@@ -3021,7 +3305,9 @@ mod tests {
             lower.clone(),
         ]));
         assert!(
-            with_base.contains("unsuppressed (2 base-side evidence, not candidate edit targets)\n"),
+            with_base.contains(
+                "suppressed by your settings (2 base-side evidence, not candidate edit targets)\n"
+            ),
             "{with_base}"
         );
         assert!(
@@ -3452,6 +3738,24 @@ mod tests {
             rendered.contains("Changed file(s) by language: python = 5\n"),
             "zero-count languages are omitted; got:\n{rendered}"
         );
+
+        // #10719: a routed-only entry (its adapter errored or was not
+        // enabled) renders exactly like an adapter-counted one.
+        python_only.summary.changed_files_by_language = vec![
+            LanguageFileCount {
+                language: "perl".to_string(),
+                files: 1,
+            },
+            LanguageFileCount {
+                language: "rust".to_string(),
+                files: 0,
+            },
+        ];
+        let rendered = render(&python_only);
+        assert!(
+            rendered.contains("Changed file(s) by language: perl = 1\n"),
+            "a routed-only count renders; got:\n{rendered}"
+        );
     }
 
     #[test]
@@ -3588,7 +3892,7 @@ mod tests {
         // a concrete diff scope or whole-repository pilot exploration.
         assert!(rendered.contains("`ripr check --base BASE`"));
         assert!(rendered.contains("`ripr pilot --root .`"));
-        assert!(rendered.contains("No diff-derived static exposure probes found."));
+        assert!(rendered.contains("No findings: ripr checked no changed behavior."));
     }
 
     /// #8165: the bounded (default) render leaks no schema token, while
@@ -3747,10 +4051,58 @@ mod tests {
                 base_ref: "main".to_string(),
                 base_commit: Some("1a2b3c4d5e6f".to_string()),
                 merge_base_commit: None,
+                loaded_diff_origin: None,
                 head_commit: Some("1a2b3c4d5e6f".to_string()),
                 working_tree: true,
             }),
         }
+    }
+
+    /// #5358: a committed-history run that left untracked files out names
+    /// their count and the exact repair in the header, beside `head:`. The
+    /// line is absent when nothing was left out, and on a working-tree read.
+    #[test]
+    fn header_names_untracked_files_left_out_of_a_committed_history_run() {
+        let mut output = empty_live_output(false);
+        if let Some(revisions) = output.analyzed_revisions.as_mut() {
+            revisions.working_tree = false;
+        }
+        output.unanalyzed_working_tree = true;
+        output.untracked_working_tree_source_paths =
+            vec!["tests/new.rs".to_string(), "src/new.rs".to_string()];
+        let rendered = render(&output);
+        assert!(
+            rendered.contains(
+                "head: HEAD 1a2b3c4\nuntracked: 2 files not analyzed (tests/new.rs, src/new.rs); run `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH`\n"
+            ),
+            "{rendered}"
+        );
+
+        output.untracked_working_tree_source_paths = vec!["tests/new.rs".to_string()];
+        assert!(
+            render(&output).contains("untracked: 1 file not analyzed (tests/new.rs);"),
+            "singular count"
+        );
+
+        // The count is the full list; the listing is capped at three names.
+        output.untracked_working_tree_source_paths = (1..=5).map(|n| format!("t{n}.rs")).collect();
+        assert!(
+            render(&output)
+                .contains("untracked: 5 files not analyzed (t1.rs, t2.rs, t3.rs and 2 more);"),
+            "count must match the capped listing"
+        );
+
+        output.untracked_working_tree_source_paths = Vec::new();
+        assert!(!render(&output).contains("untracked:"), "nothing left out");
+
+        let mut worktree = empty_live_output(false);
+        worktree.untracked_working_tree_source_paths = vec!["tests/new.rs".to_string()];
+        assert!(
+            !render(&worktree)
+                .lines()
+                .any(|line| line.starts_with("untracked:")),
+            "a working-tree read carries its own disclosure"
+        );
     }
 
     /// RIPR-SPEC-0116: an empty working-tree read names the
@@ -3924,7 +4276,7 @@ mod tests {
             "expected observed-advisory label in digest; got:\n{digest}"
         );
         assert!(
-            !digest.contains("Missing discriminator:"),
+            !digest.contains("Missing check:"),
             "exposed digest must not claim a missing discriminator; got:\n{digest}"
         );
     }
@@ -3952,7 +4304,7 @@ mod tests {
             digest.contains("  Analyzer limit: A test may reach"),
             "{digest}"
         );
-        assert!(!digest.contains("Missing discriminator"), "{digest}");
+        assert!(!digest.contains("Missing check"), "{digest}");
         // The same class without the reach stop reason keeps the gap label.
         finding.stop_reasons.clear();
         let digest = super::sections::render_finding_digest_with_config(
@@ -3960,7 +4312,7 @@ mod tests {
             &crate::config::RiprConfig::default(),
             Path::new("."),
         );
-        assert!(digest.contains("  Missing discriminator:"), "{digest}");
+        assert!(digest.contains("  Missing check:"), "{digest}");
     }
 
     // #9033: a `no_static_path` finding's Evidence block already says
@@ -4014,7 +4366,7 @@ mod tests {
             &crate::config::RiprConfig::default(),
             Path::new("."),
         );
-        if !digest.contains(&format!("  Missing discriminator: {distinct}")) {
+        if !digest.contains(&format!("  Missing check: {distinct}")) {
             return Err(format!("digest names a dropped entry:\n{digest}"));
         }
 
@@ -4074,7 +4426,7 @@ mod tests {
             Path::new("."),
         );
         if !digest.contains(
-            "Why unknown: the path from the changed behavior to an observable sink is not statically clear",
+            "Why unknown: ripr could not follow the changed value to something a test can check (a return value or side effect)",
         ) {
             return Err(format!("honest why-hint missing:
 {digest}"));
@@ -4086,7 +4438,7 @@ mod tests {
             ));
         }
         if !digest.contains(
-            "  Analyzer limit: No clear propagation path from changed behavior to an observable sink",
+            "  Analyzer limit: ripr could not follow the changed value to something a test can check",
         ) {
             return Err(format!("analyzer-limit label missing:
 {digest}"));
@@ -4105,9 +4457,7 @@ mod tests {
             &crate::config::RiprConfig::default(),
             Path::new("."),
         );
-        if !digest
-            .contains("  Missing discriminator (1 of 2): No strong discriminator was detected")
-        {
+        if !digest.contains("  Missing check (1 of 2): No strong discriminator was detected") {
             return Err(format!(
                 "a finding with a real missing discriminator keeps its label:
 {digest}"
@@ -4179,7 +4529,7 @@ mod tests {
             );
 
             assert!(
-                digest.contains("  Missing discriminator (1 of 2): missing strong oracle"),
+                digest.contains("  Missing check (1 of 2): missing strong oracle"),
                 "expected missing-discriminator label for {:?}; got:\n{digest}",
                 finding.class
             );
@@ -4210,11 +4560,11 @@ mod tests {
         );
 
         assert!(
-            digest.contains("  Missing discriminator (1 of 2): AuthError::RevokedToken\n"),
+            digest.contains("  Missing check (1 of 2): AuthError::RevokedToken\n"),
             "digest must print the value alone and disclose the window; got:\n{digest}"
         );
         assert!(
-            !digest.contains("Missing discriminator: Missing discriminator"),
+            !digest.contains("Missing check: Missing discriminator"),
             "digest must not restate its own label; got:\n{digest}"
         );
     }
@@ -4234,9 +4584,7 @@ mod tests {
         );
 
         assert!(
-            digest.contains(
-                "  Missing discriminator (1 of 2): No strong discriminator was detected\n"
-            ),
+            digest.contains("  Missing check (1 of 2): No strong discriminator was detected\n"),
             "prose entries must render unchanged; got:\n{digest}"
         );
     }
@@ -4265,8 +4613,11 @@ mod tests {
             Path::new("."),
         );
 
+        // The wrap point depends on the label width, so compare the prose
+        // with whitespace collapsed.
+        let collapsed = digest.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
-            digest.contains("stay advisory in preview"),
+            collapsed.contains("stay advisory in preview"),
             "the operative tail must survive in the digest; got:\n{digest}"
         );
         assert!(
@@ -4275,7 +4626,7 @@ mod tests {
         );
         assert!(
             digest.lines().any(|line| {
-                line.starts_with("  Missing discriminator")
+                line.starts_with("  Missing check")
                     && line.contains(": No trusted TypeScript module-initializer")
             }),
             "the label line leads the wrapped prose; got:\n{digest}"
@@ -4283,7 +4634,7 @@ mod tests {
         assert!(
             digest
                 .lines()
-                .any(|line| line.starts_with("    ") && line.contains("stay advisory in preview")),
+                .any(|line| line.starts_with("    ") && line.contains("advisory in preview")),
             "wrapped prose continues on an indented line; got:\n{digest}"
         );
     }
@@ -4426,12 +4777,14 @@ mod tests {
 
     // #4216 review: an unknown-class closed packet (for example a Bun-bridge
     // cross-language visibility limit: StaticUnknown, no static_limit_kind,
-    // missing fields present) is not a known weak test, so the manual step is
-    // the Python static-limit check, not a test edit. A long validator reason
-    // is bounded; the routing and manual-step parts stay whole.
+    // missing fields present), or a missing static path, is not a known weak
+    // test. The manual step is the Python static-limit check, not a test edit.
+    // A long validator reason is bounded; the routing and manual-step parts
+    // stay whole.
     #[test]
-    fn preview_limited_closed_packet_unknown_class_asks_for_manual_check() {
+    fn preview_limited_closed_packet_missing_path_or_unknown_class_asks_for_manual_check() {
         for class in [
+            ExposureClass::NoStaticPath,
             ExposureClass::StaticUnknown,
             ExposureClass::InfectionUnknown,
             ExposureClass::PropagationUnknown,
@@ -4962,7 +5315,7 @@ mod tests {
             super::render_full_with_config(&output, &crate::config::RiprConfig::default());
 
         assert_eq!(rendered.matches("Changed\n").count(), 2);
-        assert_eq!(rendered.matches("Probe\n").count(), 2);
+        assert_eq!(rendered.matches("Change type\n").count(), 2);
         assert!(!rendered.contains("lower-priority finding(s) omitted"));
         assert!(!rendered.contains("Drill in:"));
 
@@ -5488,6 +5841,7 @@ mod tests {
                 uninspected_changed_lines_lower_bound: 180,
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
                 next_file_changed_lines: Some(60),
+                whole_diff_budgets: None,
                 partition_identity: "c".repeat(64),
             }),
             analyzed_revisions: None,
@@ -5578,6 +5932,7 @@ mod tests {
                 uninspected_changed_lines_lower_bound: uninspected_lines,
                 stop_reason,
                 next_file_changed_lines,
+                whole_diff_budgets: None,
                 partition_identity: "c".repeat(64),
             }),
             analyzed_revisions: None,
@@ -5689,6 +6044,7 @@ mod tests {
                 uninspected_changed_lines_lower_bound: 1,
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
                 next_file_changed_lines: Some(60),
+                whole_diff_budgets: None,
                 partition_identity: "c".repeat(64),
             }),
             analyzed_revisions: None,
@@ -5823,7 +6179,7 @@ mod tests {
         assert!(rendered.contains("Changed\n"));
         assert!(rendered.contains("before: if enabled"));
         assert!(rendered.contains("after:  if disabled"));
-        assert!(rendered.contains("Probe\n"));
+        assert!(rendered.contains("Change type\n"));
         assert!(rendered.contains("family: predicate"));
         assert!(rendered.contains("Static exposure\n"));
         assert!(rendered.contains("weakly_exposed (warning, confidence 0.70)"));
@@ -6353,7 +6709,7 @@ mod tests {
         );
 
         assert!(
-            digest.contains("  Missing discriminator (1 of 3): amount >= threshold\n"),
+            digest.contains("  Missing check (1 of 3): amount >= threshold\n"),
             "expected the 1-of-3 window disclosure; got:\n{digest}"
         );
     }
@@ -6890,7 +7246,7 @@ mod tests {
         let rendered = render_finding(&finding);
 
         assert!(rendered.contains(
-            "  canonical gap: gap:python:src/pricing.py:discount:predicate_boundary:predicate:amount>=threshold\n"
+            "  gap id (for scripts): gap:python:src/pricing.py:discount:predicate_boundary:predicate:amount>=threshold\n"
         ));
     }
 
@@ -6899,7 +7255,7 @@ mod tests {
         let output = render_finding(&unknown_finding());
 
         assert!(output.contains("Stop reasons:"));
-        assert!(output.contains("  - static_probe_unknown"));
+        assert!(output.contains("(static_probe_unknown)\n"));
     }
 
     /// #4323: a stop reason renders its gloss beside the token, the way the
@@ -6910,7 +7266,7 @@ mod tests {
 
         assert!(
             output.contains(
-                "  - static_probe_unknown \u{2014} ripr could not model this change well enough to classify it\n"
+                "  - ripr could not model this change well enough to classify it (static_probe_unknown)\n"
             ),
             "{output}"
         );
@@ -7108,17 +7464,18 @@ mod tests {
             "not established = discriminator unconfirmed",
             "not applicable = stage unused",
             // #9244 item 4: the words the Summary count line prints.
-            "probe = one changed behavior checked",
-            "exposed/weak = tests appear to notice it fully/partly",
-            "unrevealed = tests reach it but nothing appears to notice",
-            "no path = no test path found",
+            "changed behavior = one change point ripr checked",
+            "appear noticed by tests = a test appears to notice the change",
+            "partly noticed = tests appear to notice it only partly",
+            "reached but not noticed = tests reach it but nothing appears to notice",
+            "no test path = no test path found",
             // #9244 item 4 (leftover jargon): the remaining words the Summary
             // and Counts lines print.
-            "finding = a probe reported for review",
-            "unsuppressed = not hidden by your suppression policy",
-            "unknown = analysis limited, not a verdict",
+            "found = listed for review",
+            "suppressed by your settings = hidden by your suppression policy",
+            "unclear = analysis limited, not a verdict",
             "base-side = evidence from the old code, not an edit target",
-            "candidate line = changed line ripr considers for probes",
+            "candidate line = changed line ripr considers",
         ] {
             assert!(rendered.contains(meaning), "missing {meaning}:\n{rendered}");
         }
@@ -7585,7 +7942,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression\n"
+                "discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression\n"
             ),
             "{rendered}"
         );
@@ -7784,6 +8141,7 @@ mod tests {
     pub(super) fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:sample.rs:7:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -7861,6 +8219,7 @@ mod tests {
     fn unknown_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -8618,7 +8977,7 @@ mod tests {
     fn python_tests(at_least: bool) -> Option<crate::analysis::UnlinkedPythonTests> {
         Some(crate::analysis::UnlinkedPythonTests {
             count: 124,
-            example: "tests/test_x.py".to_string(),
+            example: std::path::PathBuf::from("tests/test_x.py"),
             at_least,
         })
     }
