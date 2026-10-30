@@ -718,6 +718,15 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
                     "first-pr", "--root", root, "--base", "HEAD~1", "--head", "HEAD",
                 ]),
             ),
+            // Right after `pilot`, first-pr reads the pilot's repo-exposure
+            // report (#3905), so only the gap-ledger command is left to print.
+            (
+                "first-pr-after-pilot",
+                1,
+                args(&[
+                    "first-pr", "--root", root, "--base", "HEAD~1", "--head", "HEAD",
+                ]),
+            ),
             (
                 "first-pr-missing-head",
                 1,
@@ -847,6 +856,16 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
             .filter(|(label, _, _)| only.is_none_or(|labels: &[&str]| labels.contains(label)))
             .collect();
         for (label, _, args) in &flows {
+            // The cold `first-pr` flow prints both the repo-exposure and the
+            // gap-ledger recovery commands only without the pilot's report;
+            // `first-pr-after-pilot` covers the warm route.
+            if *label == "first-pr" {
+                let pilot_report = fixture.root.join("target/ripr/pilot/repo-exposure.json");
+                if pilot_report.exists() {
+                    std::fs::remove_file(&pilot_report)
+                        .map_err(|err| format!("remove pilot report: {err}"))?;
+                }
+            }
             let (stdout, stderr) = ripr_streams_in(cwd, args)?;
             sink.ingest(&format!("{prefix}{label}"), &stdout, &stderr);
         }
@@ -873,7 +892,14 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
 
 /// Flows also run with a relative `--root`, as typed from the directory above
 /// the repository.
-const RELATIVE_ROOT_FLOWS: &[&str] = &["check", "first-pr", "doctor", "pilot", "agent-card"];
+const RELATIVE_ROOT_FLOWS: &[&str] = &[
+    "check",
+    "first-pr",
+    "doctor",
+    "pilot",
+    "first-pr-after-pilot",
+    "agent-card",
+];
 
 fn ingest_artifacts(sink: &mut Sink, fixture: &Fixture) -> Result<(), String> {
     for path in artifact_files(&fixture.root) {
