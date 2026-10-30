@@ -1,0 +1,31 @@
+use spec0048_assoc_shapes::{Door, Fixed, Gate, Limits, Narrow, Ring, Tall, Wrap, limited};
+
+#[test]
+fn narrow_clamps_at_ten() {
+    assert_eq!(Narrow::clamp(50), 10);
+}
+
+#[test]
+fn tall_clamps_through_the_generic_caller() {
+    assert_eq!(limited::<Tall>(50), 8);
+}
+
+#[test]
+fn fixed_clamps_at_its_override() {
+    assert_eq!(Fixed::clamp(50), 3);
+}
+
+#[test]
+fn ring_clamp_equals_its_own_max() {
+    assert_eq!(Ring::clamp(50), Ring::MAX);
+}
+
+#[test]
+fn wrap_clamps_at_nine() {
+    assert_eq!(Wrap::<u8>::clamp(50), 9);
+}
+
+#[test]
+fn door_passes_a_big_value_as_its_limit() {
+    assert_eq!(Door::pass(50), 12);
+}
