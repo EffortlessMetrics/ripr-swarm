@@ -1487,6 +1487,341 @@ fn typescript_excluded_by_config_is_not_a_clean_result() -> Result<(), String> {
 
 #[cfg(feature = "lang-typescript")]
 #[test]
+fn check_findings_verify_rejects_changed_test_scope() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "scope-identity",
+        Some(
+            "[languages]\nenabled = [\"typescript\"]\n[analysis]\ninclude_unchanged_tests = true\n",
+        ),
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    let dir = root.join("target/ripr");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let produce = |name: &str,
+                   override_scope: bool,
+                   mode: &str|
+     -> Result<(PathBuf, serde_json::Value), String> {
+        let mut args = vec![
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            &base,
+            "--mode",
+            mode,
+            "--format",
+            "check-findings-json",
+        ];
+        if override_scope {
+            args.push("--no-unchanged-tests");
+        }
+        let output = ripr_output(&decoy, &args)?;
+        if !output.status.success() {
+            return Err(format!(
+                "producer failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        if value["analysis_outcome"]["analysis_complete"] != true
+            || value["findings"].as_array().is_none_or(Vec::is_empty)
+        {
+            return Err(format!(
+                "fixture must yield complete nonempty findings: {value}"
+            ));
+        }
+        let path = dir.join(name);
+        std::fs::write(&path, output.stdout).map_err(|e| e.to_string())?;
+        Ok((path, value))
+    };
+    let (before, before_value) = produce("before.json", false, "deep")?;
+    std::fs::write(root.join("scope-marker.txt"), "next revision\n").map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "scope-marker.txt"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "next revision"])?;
+    let (same_scope, same_value) = produce("same.json", false, "deep")?;
+    assert_eq!(
+        before_value["artifact"]["analysis"]["input_identity"],
+        same_value["artifact"]["analysis"]["input_identity"]
+    );
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"typescript\"]\n[analysis]\ninclude_unchanged_tests = false\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let (changed_scope, changed_value) = produce("changed.json", false, "deep")?;
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"typescript\"]\n[analysis]\ninclude_unchanged_tests = true\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let (overridden, override_value) = produce("override.json", true, "deep")?;
+    assert_eq!(
+        changed_value["artifact"]["analysis"]["input_identity"],
+        override_value["artifact"]["analysis"]["input_identity"],
+        "config and CLI resolving to the same scope agree"
+    );
+    let (different_mode, _) = produce("mode.json", false, "draft")?;
+    std::fs::write(root.join("ripr.toml"), "[languages]\nenabled = [\"typescript\", \"rust\"]\n[analysis]\ninclude_unchanged_tests = true\n").map_err(|e| e.to_string())?;
+    let (different_languages, _) = produce("languages.json", false, "deep")?;
+    let verify = |after: &Path| {
+        ripr_output(
+            &decoy,
+            &[
+                "agent",
+                "verify",
+                "--json",
+                "--root",
+                &root_arg,
+                "--before",
+                &before.to_string_lossy(),
+                "--after",
+                &after.to_string_lossy(),
+            ],
+        )
+    };
+    let control = verify(&same_scope)?;
+    if !control.status.success() {
+        return Err(format!(
+            "same-scope control: {}",
+            String::from_utf8_lossy(&control.stderr)
+        ));
+    }
+    // Adversarial version marker: v4 did not bind the resolved inputs. The
+    // validator must reject it before considering any content commitment.
+    let legacy = dir.join("legacy.json");
+    let current = std::fs::read_to_string(&same_scope).map_err(|e| e.to_string())?;
+    let old = current.replacen("input:v5:", "input:v4:", 1);
+    if old == current {
+        return Err("producer did not emit v5".to_string());
+    }
+    std::fs::write(&legacy, old).map_err(|e| e.to_string())?;
+    let refused_legacy = verify(&legacy)?;
+    if refused_legacy.status.success() {
+        return Err("legacy identity was accepted".to_string());
+    }
+    need(
+        &String::from_utf8_lossy(&refused_legacy.stderr),
+        "unsupported input identity version",
+        "v4 refusal",
+    )?;
+    let mismatch = verify(&changed_scope)?;
+    if mismatch.status.success() {
+        return Err(format!(
+            "different effective test scope was accepted; identities before={} after={}; output={}",
+            before_value["artifact"]["analysis"]["input_identity"],
+            changed_value["artifact"]["analysis"]["input_identity"],
+            String::from_utf8_lossy(&mismatch.stdout)
+        ));
+    }
+    need(
+        &String::from_utf8_lossy(&mismatch.stderr),
+        "incomparable",
+        "scope mismatch",
+    )?;
+    for (label, path) in [
+        ("CLI scope override", overridden),
+        ("mode", different_mode),
+        ("languages", different_languages),
+    ] {
+        let refused = verify(&path)?;
+        if refused.status.success() {
+            return Err(format!("{label} movement was accepted"));
+        }
+        need(
+            &String::from_utf8_lossy(&refused.stderr),
+            "incomparable",
+            label,
+        )?;
+    }
+    decoy_untouched(&decoy)
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn check_findings_public_renderer_binds_analyzed_config() -> Result<(), String> {
+    use ripr::app::{CheckInput, OutputFormat, check_workspace_with_config, render_check};
+    use ripr::config::RiprConfig;
+    use ripr::domain::LanguageId;
+    let (_guard, root, _) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "public-config",
+        None,
+    )?;
+    let input = CheckInput {
+        root,
+        base: Some("HEAD~1".to_string()),
+        ..CheckInput::default()
+    };
+    let mut config = RiprConfig::default();
+    config.languages.enabled = vec![LanguageId::TypeScript];
+    let render = |config: &RiprConfig| -> Result<serde_json::Value, String> {
+        let output = check_workspace_with_config(input.clone(), config)?;
+        if output.findings.is_empty() {
+            return Err("fixture must produce a finding".to_string());
+        }
+        serde_json::from_str(&render_check(&output, &OutputFormat::CheckFindingsJson)?)
+            .map_err(|e| e.to_string())
+    };
+    let first = render(&config)?;
+    let same = render(&config)?;
+    config.typescript.resolve_tsconfig_paths = false;
+    let changed = render(&config)?;
+    assert_eq!(
+        first["artifact"]["analysis"]["input_identity"],
+        same["artifact"]["analysis"]["input_identity"]
+    );
+    assert_ne!(
+        first["artifact"]["analysis"]["input_identity"],
+        changed["artifact"]["analysis"]["input_identity"],
+        "identity must bind the config consumed by analysis, even when the public renderer supplies defaults"
+    );
+    Ok(())
+}
+
+#[cfg(all(feature = "lang-typescript", feature = "lang-perl"))]
+#[test]
+fn check_findings_binds_perl_language_selection_without_packet() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "language-identity",
+        Some("[languages]\nenabled = [\"typescript\"]\n"),
+    )?;
+    let root_arg = root.to_string_lossy();
+    let base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    let produce = || -> Result<(serde_json::Value, Vec<u8>), String> {
+        let output = ripr_output(
+            &decoy,
+            &[
+                "check",
+                "--root",
+                &root_arg,
+                "--base",
+                &base,
+                "--format",
+                "check-findings-json",
+            ],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "producer: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        if value["findings"].as_array().is_none_or(Vec::is_empty) {
+            return Err(format!("expected nonempty findings: {value}"));
+        }
+        Ok((value, output.stdout))
+    };
+    let (before, before_bytes) = produce()?;
+    assert_eq!(before["analysis_outcome"]["analysis_complete"], true);
+    let snapshot_dir = root.join("target/ripr");
+    std::fs::create_dir_all(&snapshot_dir).map_err(|e| e.to_string())?;
+    let before_path = snapshot_dir.join("before-languages.json");
+    std::fs::write(&before_path, before_bytes).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("marker.txt"), "next\n").map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "marker.txt"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "next"])?;
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"typescript\", \"perl\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let (after, after_bytes) = produce()?;
+    assert_eq!(after["analysis_outcome"]["analysis_complete"], false);
+    assert_ne!(
+        before["artifact"]["analysis"]["input_identity"],
+        after["artifact"]["analysis"]["input_identity"],
+        "Perl selection must move identity even without packet-specific config changes"
+    );
+    let after_path = snapshot_dir.join("after-languages.json");
+    std::fs::write(&after_path, after_bytes).map_err(|e| e.to_string())?;
+    let verify = ripr_output(
+        &decoy,
+        &[
+            "agent",
+            "verify",
+            "--json",
+            "--root",
+            &root_arg,
+            "--before",
+            &before_path.to_string_lossy(),
+            "--after",
+            &after_path.to_string_lossy(),
+        ],
+    )?;
+    if verify.status.success() {
+        return Err("different language sets were accepted".to_string());
+    }
+    need(
+        &String::from_utf8_lossy(&verify.stderr),
+        "incomplete",
+        "missing Perl packet",
+    )?;
+    decoy_untouched(&decoy)
+}
+
+#[cfg(all(feature = "lang-typescript", feature = "lang-perl"))]
+#[test]
+fn check_findings_refuses_consumed_perl_packet() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "packet-identity",
+        Some("[languages]\nenabled = [\"typescript\"]\n"),
+    )?;
+    let packet = root.join("packet.json");
+    std::fs::write(&packet, r#"{"schema_version":"ripr-perl-facts-v1","packet_id":"lifecycle-empty","packet_status":"complete","packet_fingerprint":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","producer":{"name":"perl-ripr-facts","version":"lifecycle-fixture","capabilities":["syntax","workspace","test_facts"]},"root":{"repo_relative":".","vcs_head":null,"path_style":"repo_relative"},"input":{"base":null,"head":"HEAD","diff_id":null,"requested_fact_classes":["owners","changes","tests","oracles"]},"files":[],"owners":[],"changes":[],"tests":[],"oracles":[],"relations":[],"dynamic_boundaries":[],"verify_commands":[],"limitations":[],"provenance":[]}"#).map_err(|e| e.to_string())?;
+    let root_arg = root.to_string_lossy();
+    let packet_arg = packet.to_string_lossy();
+    let run = |format| {
+        ripr_output(
+            &decoy,
+            &[
+                "check",
+                "--root",
+                &root_arg,
+                "--base",
+                "HEAD~1",
+                "--perl-facts",
+                &packet_arg,
+                "--format",
+                format,
+            ],
+        )
+    };
+    let ordinary = run("json")?;
+    if !ordinary.status.success() {
+        return Err(format!(
+            "ordinary report failed: {}",
+            String::from_utf8_lossy(&ordinary.stderr)
+        ));
+    }
+    let findings = run("check-findings-json")?;
+    if findings.status.success() || !findings.stdout.is_empty() {
+        return Err("unbound packet produced a findings artifact".to_string());
+    }
+    need(
+        &String::from_utf8_lossy(&findings.stderr),
+        "cannot bind the consumed Perl facts packet",
+        "packet refusal",
+    )?;
+    decoy_untouched(&decoy)
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
 fn typescript_check_findings_artifacts_verify_by_gap_id_and_reject_forgery() -> Result<(), String> {
     let toml = "[languages]\nenabled = [\"typescript\"]\n";
     let (_guard, root, decoy) = materialize(
