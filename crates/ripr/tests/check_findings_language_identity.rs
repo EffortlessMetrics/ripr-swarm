@@ -160,3 +160,110 @@ fn complete_language_movement_is_not_comparable() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn public_api_javascript_selection_is_bound() -> Result<(), String> {
+    use ripr::app::{CheckInput, OutputFormat, check_workspace_with_config, render_check};
+    use ripr::config::RiprConfig;
+    use ripr::domain::LanguageId;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("ripr-js-identity-{}-{stamp}", std::process::id()));
+    std::fs::create_dir(&root).map_err(|e| e.to_string())?;
+    let _guard = Guard(root.clone());
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/blind_journey_installed_typescript/repository");
+    copy_tree(&fixture.join("base"), &root)?;
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["config", "user.name", "fixture"],
+        &["config", "user.email", "fixture@example.invalid"],
+        &["config", "commit.gpgsign", "false"],
+        &["add", "-A"],
+        &["commit", "-q", "-m", "base"],
+    ] {
+        fixture_git_ok(&root, args)?;
+    }
+    copy_tree(&fixture.join("head"), &root)?;
+    fixture_git_ok(&root, &["add", "-A"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "head"])?;
+    let base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_owned();
+    let input = CheckInput {
+        root: root.clone(),
+        base: Some(base),
+        ..CheckInput::default()
+    };
+    let mut config = RiprConfig::default();
+    config.languages.enabled = vec![LanguageId::TypeScript];
+    let snapshots = root.join("target/ripr");
+    std::fs::create_dir_all(&snapshots).map_err(|e| e.to_string())?;
+    let produce =
+        |name: &str, config: &RiprConfig| -> Result<(PathBuf, serde_json::Value), String> {
+            let output = check_workspace_with_config(input.clone(), config)?;
+            let raw = render_check(&output, &OutputFormat::CheckFindingsJson)?;
+            let value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+            if value["analysis_outcome"]["analysis_complete"] != true
+                || value["findings"].as_array().is_none_or(Vec::is_empty)
+            {
+                return Err(format!("expected complete nonempty findings: {value}"));
+            }
+            let path = snapshots.join(name);
+            std::fs::write(&path, raw).map_err(|e| e.to_string())?;
+            Ok((path, value))
+        };
+    let (before, first) = produce("before-js.json", &config)?;
+    std::fs::write(root.join("marker.txt"), "next\n").map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "marker.txt"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "next"])?;
+    let (same, same_value) = produce("same-js.json", &config)?;
+    config.languages.enabled.push(LanguageId::JavaScript);
+    let (changed, changed_value) = produce("changed-js.json", &config)?;
+    assert_eq!(
+        first["artifact"]["analysis"]["input_identity"],
+        same_value["artifact"]["analysis"]["input_identity"]
+    );
+    assert_ne!(
+        first["artifact"]["analysis"]["input_identity"],
+        changed_value["artifact"]["analysis"]["input_identity"]
+    );
+    let verify = |path: &Path| {
+        ripr(
+            &root,
+            &[
+                "agent",
+                "verify",
+                "--json",
+                "--root",
+                ".",
+                "--before",
+                &before.to_string_lossy(),
+                "--after",
+                &path.to_string_lossy(),
+            ],
+        )
+    };
+    let positive = verify(&same)?;
+    if !positive.status.success() {
+        return Err(format!(
+            "same-set verify: {}",
+            String::from_utf8_lossy(&positive.stderr)
+        ));
+    }
+    let negative = verify(&changed)?;
+    if negative.status.code() != Some(3)
+        || !negative.stdout.is_empty()
+        || !String::from_utf8_lossy(&negative.stderr).contains("analysis input identities differ")
+    {
+        return Err(format!(
+            "changed-set verify: {:?}: {}",
+            negative.status.code(),
+            String::from_utf8_lossy(&negative.stderr)
+        ));
+    }
+    Ok(())
+}
