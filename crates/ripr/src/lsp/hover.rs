@@ -1931,6 +1931,26 @@ mod seam_hover_tests {
     // and missing-discriminator reasons spell the producer marker in words;
     // embedded source text with the token is left alone.
     #[test]
+    fn reachable_unrevealed_hover_states_reach_conservatively() -> Result<(), String> {
+        let mut seam = weakly_gripped_classified();
+        seam.class = SeamGripClass::ReachableUnrevealed;
+        let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);
+        let md = extract_markup(&hover)?;
+        for needle in [
+            "Tests appear to reach this code, but nothing found would notice a change",
+            "tests appear to reach this code, but no check that would notice a change was found.",
+        ] {
+            if !md.contains(needle) {
+                return Err(format!("missing {needle:?} in:\n{md}"));
+            }
+        }
+        if md.contains("Tests run this code") || md.contains("tests reach this code") {
+            return Err(format!("hover states reach as fact:\n{md}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn seam_hover_labels_an_error_variant_as_a_value_or_check_not_an_input() -> Result<(), String> {
         let mut seam = weakly_gripped_classified();
         seam.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
