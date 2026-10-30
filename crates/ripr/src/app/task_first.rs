@@ -934,10 +934,23 @@ fn gap_bound_route(
         _ => return None,
     };
     let uncommitted_files = uncommitted_production_files(&output.root, &record);
+    // The suggested commit moves symbolic refs such as HEAD and HEAD~1.
+    // Bind the subsequent repair to the actual origin of this analysis,
+    // otherwise following the prerequisite can erase or change its diff.
+    // Without a resolved origin we cannot safely offer that sequence.
+    let repair_base = if uncommitted_files.is_empty() {
+        base
+    } else {
+        let revisions = output.analyzed_revisions.as_ref()?;
+        revisions
+            .merge_base_commit
+            .as_deref()
+            .or(revisions.base_commit.as_deref())?
+    };
     Some(crate::app::GapRepairRoute {
         finding_id: finding.id.clone(),
         gap_id: record.canonical_gap_id,
-        base: base.to_string(),
+        base: repair_base.to_string(),
         uncommitted_files,
     })
 }

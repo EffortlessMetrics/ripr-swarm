@@ -232,6 +232,55 @@ fn attempt_id_of(manifest: &serde_json::Value) -> Result<String, String> {
 
 #[cfg(feature = "lang-python")]
 #[test]
+fn dirty_python_repair_start_keeps_original_diff_after_commit() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_python",
+        "head",
+        "py-base-pin",
+        None,
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let expected = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?;
+    let expected = expected.trim().to_string();
+    let path = root.join("pricing/core.py");
+    let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    std::fs::write(&path, format!("{source}\n# dirty production\n")).map_err(|e| e.to_string())?;
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "dirty check")?;
+    need(
+        &check,
+        "Commit your production change first",
+        "commit prerequisite",
+    )?;
+    let (gap, base) = gap_start_tokens(&check).ok_or_else(|| format!("missing start: {check}"))?;
+    if base != expected {
+        return Err(format!("expected original base {expected}, got {base}"));
+    }
+    fixture_git_ok(&root, &["add", "pricing/core.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "production"])?;
+    let (wrong_ok, wrong) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", "HEAD", "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(wrong_ok, false, "moving base negative control")?;
+    need(&wrong, "names no current Python gap", "moving base refusal")?;
+    let (ok, result) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "printed base after commit")?;
+    need(&result, "Repair prepared", "prepared attempt")?;
+    Ok(())
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
 fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -> Result<(), String>
 {
     let (_guard, root, decoy) = materialize("blind_journey_installed_python", "head", "py", None)?;
