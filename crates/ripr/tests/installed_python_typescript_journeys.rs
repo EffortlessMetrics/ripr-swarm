@@ -3050,5 +3050,51 @@ fn pending_terminal_recovery_requires_published_receipt() -> Result<(), String> 
     if after["disposition"] != "finished" || after["head_current"] != true {
         return Err(format!("recovered receipt is not current: {after}"));
     }
+
+    // Model interruption after a staged after snapshot was linked into place
+    // but before its temporary name was removed or terminal roles committed.
+    let mut partial = recovered;
+    partial
+        .as_object_mut()
+        .ok_or("manifest is not an object")?
+        .remove("terminal_artifacts");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&partial).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let after_role = roles
+        .iter()
+        .find(|role| role["role"] == "after_check_findings")
+        .and_then(|role| role["path"].as_str())
+        .ok_or("missing retained after role")?;
+    let retained_after = attempt.root.join(after_role);
+    let temporary = retained_after.with_extension("tmp-9999-3");
+    std::fs::hard_link(&retained_after, &temporary).map_err(|e| e.to_string())?;
+    let partial_retry = attempt.after(false)?;
+    expect_exit(
+        partial_retry.status.success(),
+        false,
+        "partial retention retry",
+    )?;
+    let (_, partial_error) = text_of(&partial_retry);
+    need(
+        &partial_error,
+        "already finished",
+        "partial retention reached the finished attempt",
+    )?;
+    let partial_row = read_row()?;
+    if partial_row["disposition"] != "finished" || partial_row["head_current"] != false {
+        return Err(format!(
+            "partial retention residue was hidden: {partial_row}"
+        ));
+    }
+    std::fs::remove_file(&temporary).map_err(|e| e.to_string())?;
+    let restored = read_row()?;
+    if restored["disposition"] != "finished" || restored["head_current"] != true {
+        return Err(format!(
+            "removing the modeled residue did not restore currentness: {restored}"
+        ));
+    }
     decoy_untouched(&attempt.decoy)
 }
