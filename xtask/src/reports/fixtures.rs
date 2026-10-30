@@ -3285,11 +3285,11 @@ mod tests {
     fn normalize_json_windows_tokenizer_handles_trailing_backslash_and_nesting() {
         // A string ending in an escaped backslash must close at its quote, and
         // nested values resolve against their own keys.
-        let source = r#"{"root":"C:\\r\\","n":{"note":"a\\b","dir":["x\\y"]},"k\"q":"v\\w"}"#;
+        let source = r#"{"root":"r\\s\\","n":{"note":"a\\b","dir":["x\\y"]},"k\"q":"v\\w"}"#;
         let out = normalize_fixture_json_output_for_host(source, true);
         assert_eq!(
             out,
-            r#"{"root":"C:/r/","n":{"note":"a\\b","dir":["x/y"]},"k\"q":"v\\w"}"#
+            r#"{"root":"r/s/","n":{"note":"a\\b","dir":["x/y"]},"k\"q":"v\\w"}"#
         );
     }
 
