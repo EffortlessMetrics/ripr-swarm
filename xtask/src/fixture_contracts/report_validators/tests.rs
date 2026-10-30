@@ -6,8 +6,7 @@ use std::fs;
 use std::path::Path;
 
 const CORPUS_DIR: &str = "fixtures/boundary_gap/expected/assistant-loop-health";
-const KIND_ERROR: &str =
-    "assistant-loop-health corpus kind must be assistant_loop_health_corpus";
+const KIND_ERROR: &str = "assistant-loop-health corpus kind must be assistant_loop_health_corpus";
 
 #[test]
 fn assistant_loop_health_stays_in_the_production_fixture_contract_gate() -> Result<(), String> {
@@ -48,12 +47,18 @@ fn assistant_loop_health_stays_in_the_production_fixture_contract_gate() -> Resu
         )
         .map_err(|error| error.to_string())?;
         validate_assistant_loop_health_fixture_corpus_at(&base, &mut violations)?;
-        assert_eq!(violations, vec![KIND_ERROR.to_string()]);
+        assert_eq!(
+            violations,
+            vec![KIND_ERROR.to_string()],
+            "only kind changed from the independently accepted corpus; unexpected diagnostics: {violations:?}"
+        );
 
         // The direct _at result is not passed to the production gate. Its own
         // call must detect the mutation and emit a fresh, specific report.
         fs::remove_file(&report_path).map_err(|error| error.to_string())?;
         let result = crate::fixture_contracts::check_fixture_contracts();
+        // Removing the production validator call makes this assertion fail,
+        // even though the separate _at invocation above still rejects it.
         assert!(result.is_err(), "production gate accepted a malformed corpus");
         let invalid_report = fs::read_to_string(&report_path).map_err(|error| error.to_string())?;
         assert!(invalid_report.contains(KIND_ERROR), "{invalid_report}");
