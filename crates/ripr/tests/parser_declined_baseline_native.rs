@@ -1,4 +1,5 @@
 //! Native review-comments → gate → baseline parser-declined control.
+#![cfg(feature = "lang-rust")]
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -81,8 +82,12 @@ fn review_and_gate(root: &Path, base: &str, label: &str) -> Result<(), String> {
 #[test]
 fn parser_decline_keeps_native_baseline_debt() -> Result<(), String> {
     let root = std::env::temp_dir().join(format!(
-        "ripr-parser-declined-native-{}",
-        std::process::id()
+        "ripr-parser-declined-native-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos()
     ));
     std::fs::create_dir(&root).map_err(|e| e.to_string())?;
     let _fixture = Fixture(root.clone());

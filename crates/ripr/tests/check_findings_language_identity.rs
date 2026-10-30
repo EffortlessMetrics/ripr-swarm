@@ -39,7 +39,14 @@ fn ripr(root: &Path, args: &[&str]) -> Result<Output, String> {
 
 #[test]
 fn complete_language_movement_is_not_comparable() -> Result<(), String> {
-    let root = std::env::temp_dir().join(format!("ripr-language-complete-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!(
+        "ripr-language-complete-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos()
+    ));
     std::fs::create_dir(&root).map_err(|e| e.to_string())?;
     let _guard = Guard(root.clone());
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
