@@ -282,7 +282,10 @@ fn a_later_production_edit_moves_the_recomputed_delta() -> Result<(), String> {
         &baseline,
         HeadMovement::RequireBaselineHead,
     )?;
-    assert_eq!(bound.changes, recomputed.changes);
+    // The bound path now carries its post-change byte identity
+    // (`after_state`), so the later production edit moves `changes` itself,
+    // not only the region observation beside it.
+    assert_ne!(bound.changes, recomputed.changes);
     assert_ne!(bound, recomputed);
     assert_eq!(verdict.status, EditCageVerdictStatus::Violated);
     Ok(())

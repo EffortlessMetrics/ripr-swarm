@@ -574,6 +574,7 @@ fn recompute_after_verdict_binding(
         &baseline,
         &manifest_relative_path(manifest),
     )?;
+    omit_command_owned_identities(&mut delta, &baseline, manifest)?;
     // The after phase, a rerun of `ripr agent receipt`, and `ripr agent
     // status` write command-owned files under `target/ripr` after the finish
     // bound its verdict. Those later operational writes are not part of the
@@ -588,6 +589,30 @@ fn recompute_after_verdict_binding(
         .map_err(|error| format!("serialize repair delta failed: {error}"))?;
     let holds = sha256_bytes(&delta_bytes) == after.delta_sha256 && verdict == after.verdict;
     Ok((verdict, holds))
+}
+
+/// The loop's own directories (attempt store, shared workflow/report
+/// projections and analysis cache) are rewritten by later commands, so
+/// their bytes cannot bind one attempt's delta.
+fn omit_command_owned_identities(
+    delta: &mut crate::edit_cage::AttemptDelta,
+    baseline: &AttemptBaseline,
+    manifest: &RepairAttemptManifest,
+) -> Result<(), String> {
+    let manifest_path = manifest_relative_path(manifest);
+    let store = manifest_path
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| "attempt manifest has no store directory".to_string())?;
+    for directory in [
+        store,
+        Path::new("target/ripr/workflow"),
+        Path::new("target/ripr/reports"),
+        Path::new("target/ripr/cache"),
+    ] {
+        crate::edit_cage::omit_command_owned_directory_identity(delta, baseline, directory)?;
+    }
+    Ok(())
 }
 
 fn manifest_relative_path(manifest: &RepairAttemptManifest) -> PathBuf {
@@ -2629,6 +2654,7 @@ pub(crate) fn finish_repair_attempt_from(
         &baseline,
         &manifest_relative_path(&manifest),
     )?;
+    omit_command_owned_identities(&mut delta, &baseline, &manifest)?;
     let (current, current_head) =
         after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
     if !current {

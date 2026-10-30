@@ -1367,34 +1367,26 @@ fn delta_from_repository_states(
     }
 }
 
-/// The selected attempt manifest contains the delta digest itself, so its
-/// pre-finish bytes cannot be part of that digest. Exclude only this exact
-/// manifest's identity, not its path/kind or other operational files. A
-/// tracked or authored/forbidden manifest path never receives the exception.
-pub(crate) fn omit_attempt_manifest_identity(
-    delta: &mut AttemptDelta,
-    baseline: &AttemptBaseline,
-    manifest_path: &Path,
-) -> Result<(), String> {
-    let path = normalize_repo_relative_path(manifest_path)?;
+/// Whether a path's byte identity may be left out of the bound delta: only
+/// an untracked operational write that is neither the selected target nor
+/// an authored or forbidden path. Such a path still contributes its
+/// path/kind movement; only its bytes are unbound.
+fn identity_is_omittable(baseline: &AttemptBaseline, path: &str) -> bool {
     let policy = baseline.policy();
-    if baseline.index_entry(&path).is_some()
-        || policy.selected_target.matches(&path)
-        || policy
+    baseline.index_entry(path).is_none()
+        && !policy.selected_target.matches(path)
+        && !policy
             .allowed_edit_surface
             .iter()
-            .any(|rule| rule.matches(&path))
-        || policy
-            .forbidden_paths
-            .iter()
-            .any(|rule| rule.matches(&path))
-        || !policy
+            .any(|rule| rule.matches(path))
+        && !policy.forbidden_paths.iter().any(|rule| rule.matches(path))
+        && policy
             .expected_operational_writes
             .iter()
-            .any(|rule| rule.matches(&path))
-    {
-        return Ok(());
-    }
+            .any(|rule| rule.matches(path))
+}
+
+fn omit_path_identity(delta: &mut AttemptDelta, path: &str) -> Result<(), String> {
     for change in &mut delta.changes {
         if normalize_repo_relative_path(&change.path)? == path
             && change
@@ -1403,6 +1395,71 @@ pub(crate) fn omit_attempt_manifest_identity(
                 .is_none_or(|state| state.index_entry.is_none())
         {
             change.after_state = None;
+        }
+    }
+    Ok(())
+}
+
+/// An attempt manifest contains the delta digest itself, so its pre-finish
+/// bytes cannot be part of that digest. The same holds for every other
+/// attempt manifest in the same store: a sibling attempt finishing is
+/// normal multi-attempt operation, not drift in this attempt's evidence.
+/// Exclude only those manifests' identities, not their path/kind or other
+/// operational files. A tracked or authored/forbidden manifest path never
+/// receives the exception.
+pub(crate) fn omit_attempt_manifest_identity(
+    delta: &mut AttemptDelta,
+    baseline: &AttemptBaseline,
+    manifest_path: &Path,
+) -> Result<(), String> {
+    let path = normalize_repo_relative_path(manifest_path)?;
+    if !identity_is_omittable(baseline, &path) {
+        return Ok(());
+    }
+    let manifest = Path::new(&path);
+    let store = manifest.parent().and_then(Path::parent);
+    let file_name = manifest.file_name();
+    let mut paths = vec![path.clone()];
+    if let (Some(store), Some(file_name)) = (store, file_name) {
+        for change in &delta.changes {
+            let change_path = normalize_repo_relative_path(&change.path)?;
+            let candidate = Path::new(&change_path);
+            if candidate.file_name() == Some(file_name)
+                && candidate.parent().and_then(Path::parent) == Some(store)
+                && !paths.contains(&change_path)
+            {
+                paths.push(change_path);
+            }
+        }
+    }
+    for path in &paths {
+        omit_path_identity(delta, path)?;
+    }
+    Ok(())
+}
+
+/// Files under the loop's own directories (the attempt store, the shared
+/// workflow and report projections, and the analysis cache) are rewritten
+/// by later commands as a matter of course: a sibling attempt finishing,
+/// a receipt being issued, or a cache entry being refreshed. Their bytes
+/// are not authored evidence, so they do not bind the delta, under the
+/// same guard as the attempt manifest. A loose operational file outside
+/// those directories is written by no command and stays bound.
+pub(crate) fn omit_command_owned_directory_identity(
+    delta: &mut AttemptDelta,
+    baseline: &AttemptBaseline,
+    directory: &Path,
+) -> Result<(), String> {
+    let directory = normalize_repo_relative_path(directory)?;
+    let prefix = format!("{directory}/");
+    let paths = delta
+        .changes
+        .iter()
+        .map(|change| normalize_repo_relative_path(&change.path))
+        .collect::<Result<Vec<_>, _>>()?;
+    for path in paths {
+        if path.starts_with(&prefix) && identity_is_omittable(baseline, &path) {
+            omit_path_identity(delta, &path)?;
         }
     }
     Ok(())
