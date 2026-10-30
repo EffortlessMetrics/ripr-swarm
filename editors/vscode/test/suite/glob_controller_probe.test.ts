@@ -9,6 +9,8 @@ import { compatibleLspEvidence } from './testCompatibility';
 
 suite('Windows glob controller probe', () => {
   test('controller selects own file through the workspace URI', async () => {
+    const checkpoint = (name: string) => { if (process.env.RIPR_GLOB_PROBE_RESULT) fs.writeFileSync(process.env.RIPR_GLOB_PROBE_RESULT + '.' + name, 'reached'); };
+    checkpoint('entered');
     const folder = vscode.workspace.workspaceFolders?.[0];
     assert.ok(folder);
     assert.match(folder.uri.fsPath, /proj\[1\]\{a,b\}$/);
@@ -27,6 +29,7 @@ c.onRequest('initialize',()=>({capabilities:{textDocumentSync:1}})); c.onRequest
 c.onNotification('textDocument/didOpen',p=>fs.appendFileSync(${JSON.stringify(receipt)},JSON.stringify(p.textDocument.uri)+'\\n'));
 c.onNotification('exit',()=>process.exit(0)); c.listen();`);
     assert.ok(process.env.NODE_BINARY);
+    checkpoint('prepared');
     const runtime = {
       getConfig: () => ({ enabled: true, serverArgs: [script], traceServer: 'off' }),
       workspaceRootState: currentWorkspaceRootState,
@@ -40,7 +43,9 @@ c.onNotification('exit',()=>process.exit(0)); c.listen();`);
     const output = vscode.window.createOutputChannel('glob probe', { log: true });
     const controller = new RiprClientController({} as vscode.ExtensionContext, output, runtime);
     try {
+      checkpoint('starting');
       await controller.start();
+      checkpoint('started');
       // Documents opened before client startup are synchronized on startup.
       const deadline = Date.now() + 10000;
       while (!fs.existsSync(receipt) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));

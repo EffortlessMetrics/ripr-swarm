@@ -42,6 +42,15 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:PROBE_ROOT | Out-Null
           node -e 'const path = require("path"); require("@vscode/test-electron").runTests({version:"1.91.0", extensionDevelopmentPath:process.cwd(), extensionTestsPath:path.resolve("out/test/suite/index"), launchArgs:["--disable-extensions", "--disable-workspace-trust", process.env.PROBE_ROOT]}).catch(e => { console.error(e); process.exitCode=1; });'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify test entered
+        shell: pwsh
+        run: if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'selector-result.json.entered'))) { throw 'test not entered' }
+      - name: Verify server fixture prepared
+        shell: pwsh
+        run: if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'selector-result.json.prepared'))) { throw 'fixture not prepared' }
+      - name: Verify controller started
+        shell: pwsh
+        run: if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'selector-result.json.started'))) { throw 'controller start failed' }
       - name: Verify host reached selector and version
         shell: pwsh
         run: |
