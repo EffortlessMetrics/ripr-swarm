@@ -101,13 +101,19 @@ impl GapRepairRoute {
 /// the state instead of leaving the repair line's absence silent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RepairRouteRefusal {
+    GapRouteUnavailable {
+        reason: &'static str,
+    },
     /// The finding has no canonical gap to bind a seam from.
     NoCanonicalGap,
     /// The finding's file belongs to a language adapter whose findings the
     /// seam inventory behind `ripr repair` cannot bind (#9102). The
     /// inventory is built from the Rust index only, so no seam exists for
     /// this file; a terminal state, not a stale id.
-    NoSeamInventory { language: String, file: String },
+    NoSeamInventory {
+        language: String,
+        file: String,
+    },
     /// The root's typed config could not be loaded.
     ConfigUnreadable,
     /// Classifying seams in the finding's file failed.
@@ -118,7 +124,9 @@ pub(crate) enum RepairRouteRefusal {
     /// No classified seam in the finding's file binds this finding.
     /// `seams_in_file` is how many classified seams the file holds, so the
     /// advisory never says "no seam" where `ripr repair` lists seams (#10702).
-    NoBindingSeam { seams_in_file: usize },
+    NoBindingSeam {
+        seams_in_file: usize,
+    },
     /// The finding itself is `exposed`: the related tests already notice the
     /// change, so there is nothing to repair whatever the seam view says
     /// (#10702).
@@ -158,6 +166,9 @@ impl RepairRouteRefusal {
     pub(crate) fn advisory(&self, full_gate_command: &str) -> String {
         let gate = || format!("run `{full_gate_command}` for the full gate's answer");
         match self {
+            Self::GapRouteUnavailable { reason } => format!(
+                "no repair start offered: {reason}; inspect the current workspace and rerun `ripr check`"
+            ),
             Self::NoCanonicalGap => {
                 "no repair start offered: this finding has no gap ID, so there is \
                  no seam to start a repair from; follow the Next step above"
@@ -602,11 +613,21 @@ mod tests {
             let command = route
                 .commit_prerequisite(&root_text)
                 .ok_or("no commit step")?;
+            // The root anchors at the analyzed tree with the shared quoting
+            // (`shell_arg`: console quotes on Windows, single quotes on
+            // Unix), and the glob-lookalike pathspec stays literal — the
+            // quote form is owned by `shell_arg`, not spelled here (#10996).
+            let expected_prefix = format!("git -C {}", shell_arg(&root_text));
             assert!(
-                command.starts_with("git -C '") && command.contains("--literal-pathspecs commit"),
-                "{command}"
+                command.starts_with(&expected_prefix)
+                    && command.contains("--literal-pathspecs commit"),
+                "Expected command to start with '{expected_prefix}' and contain '--literal-pathspecs commit'. Actual command: {command}"
             );
-            assert!(command.ends_with("-- 'src/[ab].py'"), "{command}");
+            let expected_suffix = format!("-- {}", shell_arg("src/[ab].py"));
+            assert!(
+                command.ends_with(&expected_suffix),
+                "Expected command to end with '{expected_suffix}'. Actual command: {command}"
+            );
             let command = command.replace("<message>", "hint");
             let status = std::process::Command::new("sh")
                 .arg("-c")

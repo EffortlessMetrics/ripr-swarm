@@ -96,6 +96,9 @@ mod helper_inline_tests;
 mod hook_owner_guard;
 #[cfg(test)]
 mod identifier_write_scale_tests;
+mod infection_shape;
+#[cfg(test)]
+mod infection_shape_tests;
 mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;

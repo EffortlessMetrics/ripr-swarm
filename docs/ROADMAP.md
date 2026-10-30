@@ -39,6 +39,46 @@ evidence, next action, and limitation. The product stays one published
 `ripr` package with an experimental LSP sidecar; unsupported language or
 analysis behavior remains visible through its documented support boundary.
 
+### Decision-first feedback
+
+The product goal is timely, useful direction, not maximum output. At a
+decision point, the default should identify the current subject, the action
+or honest stop, why it follows, the decisive evidence, and material uncertainty.
+Keep the human and machine projections aligned; offer deeper evidence through
+explicit routes rather than repeatedly interrupting with unchanged context.
+Do not hide a new failure, stale state, limitation, or required decision merely
+to make output shorter. Feedback is valuable when it helps a person or agent
+decide what to do next, including when the right answer is no action.
+Give fast, bounded feedback while the change, test, or proof obligation can still
+be shaped, before costly execution or late review. For LLM-assisted work,
+provide readable direction and the evidence needed for the next decision
+without displacing the task context with repeated or irrelevant detail.
+An explicit CLI request still receives a concise terminal result; suppress
+redundant notifications, not requested answers or newly relevant failures.
+
+Measure this goal end to end rather than equating fewer bytes with usefulness.
+[#4669](https://github.com/EffortlessMetrics/ripr-swarm/issues/4669) owns
+card field and budget evaluation; [#6307](https://github.com/EffortlessMetrics/ripr-swarm/issues/6307)
+checks that offered actions actually reach their promised state or stop; and
+[#6308](https://github.com/EffortlessMetrics/ripr-swarm/issues/6308) joins
+existing receipts for time and effort to an honest result or verified
+improvement. Keep extra lookups, retries, incorrect targets, unnecessary edits,
+and failure or no-change outcomes visible. Record bytes as bytes; exact token
+counts require the actual target tokenizer. Reuse the matched with/without
+protocol in [#3751](https://github.com/EffortlessMetrics/ripr-swarm/issues/3751)
+for intervention-value claims, retaining its full denominator and independent
+quality judgment. A compact shape or a fast result alone proves neither benefit
+nor correct guidance.
+
+The same standard applies when assisting formal verification. A native verifier
+success is distinct from whether the obligations, specification, assumptions,
+and domain preserve the intended behavior. A result made green by vacuity or
+narrowing must not count as an equivalent improvement. The formal/property
+cohort and installed recipe remain with
+[#10745](https://github.com/EffortlessMetrics/ripr-swarm/issues/10745) and
+[#10690](https://github.com/EffortlessMetrics/ripr-swarm/issues/10690); this
+direction does not claim that those integrations or their benefits are proven.
+
 ## Now: continue the existing work
 
 [#1693](https://github.com/EffortlessMetrics/ripr-swarm/issues/1693) owns the

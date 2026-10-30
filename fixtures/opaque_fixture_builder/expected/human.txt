@@ -17,14 +17,15 @@ Start here:
   Changed behavior: amount >= 100
   Missing check (1 of 2): No detected boundary input for the changed predicate
   Related test: tests/pricing.rs:16 fixture_builder_case_has_no_discount
-  Next step: Open the related test and trace its input through the local or computed operand
-    (including default and empty cases) to see which side of the changed condition it exercises,
-    then name an input that would exercise the other side. ripr.toml does not support
-    fixture/builder value mappings. A related test mentions a fixture, builder, or generator;
-    inspect its produced input before deciding another case is needed. Add or strengthen a test only
-    if this inspection finds a gap. Compare the original and changed implementations with a focused
-    run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static
-    classification may remain unknown
+  Next step: Open the related test, check whether it reaches the changed code, and inspect other
+    existing tests. Trace their inputs through the local or computed operand (including default and
+    empty cases) to see which side of the changed condition they exercise, then name an input that
+    would exercise the other side. ripr.toml does not support fixture/builder value mappings. A
+    related test mentions a fixture, builder, or generator; inspect its produced input before
+    deciding another case is needed. Add or strengthen a test only if this inspection finds a gap.
+    Compare the original and changed implementations with a focused run using the project's
+    configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
+    unknown
   Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -43,7 +44,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/opaque_fixture_builder/input --diff <cwd>/fixtures/opaque_fixture_builder/diff.patch --mode fast probe:src_lib.rs:predicate:e177493b
   ripr context --root <cwd>/fixtures/opaque_fixture_builder/input --diff <cwd>/fixtures/opaque_fixture_builder/diff.patch --mode fast --at probe:src_lib.rs:predicate:e177493b
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/opaque_fixture_builder/input --at src/lib.rs:2 --kind predicate
 

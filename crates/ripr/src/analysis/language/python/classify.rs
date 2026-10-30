@@ -5,6 +5,7 @@ use super::assertion_selection::{
     strength_only_assertion,
 };
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
+use super::call_chain::call_chain_credits;
 use super::caplog_text::{PythonLogVerdict, python_log_evidence};
 use super::dataclass_default::dataclass_default_credits;
 use super::discriminators::python_missing_discriminators;
@@ -416,8 +417,15 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                     all_tests,
                 );
                 if default.is_empty() {
-                    imported_call = true;
-                    imported_call_credits(&edit, owner, owners, all_tests)
+                    let imported = imported_call_credits(&edit, owner, owners, all_tests);
+                    if imported.is_empty() {
+                        // A one-`return` owner read through a chain of
+                        // one-`return` callers a test pins (#9226).
+                        call_chain_credits(&edit, owner, owners, all_tests)
+                    } else {
+                        imported_call = true;
+                        imported
+                    }
                 } else {
                     default
                 }
@@ -1688,6 +1696,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     .into_public();
     let mut finding = Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: probe.id.0.clone(),
         canonical_gap,
         probe,
@@ -1726,6 +1735,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         source_currentness,
     };
     apply_python_no_static_path_limit(&mut finding, owner, owners, all_tests);
+    note_runner_invocation(&mut finding, owner, all_tests);
     // #10708: the with-no-static-link guidance is pre-limit advice. The
     // post-classification step can only attach the Python transitive-reach
     // limitation to a NoStaticPath finding with no related tests (`apply_
@@ -1741,6 +1751,36 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         origins.record(&finding, files);
     }
     Some(finding)
+}
+
+/// #11069: keep `no_static_path`, but when a test that imports the owner's
+/// package runs commands through a recognised `CliRunner.invoke(...)`, say so
+/// instead of asking for a new test the project may already have. Only
+/// replaces the generic "No Python test references" line; never changes class.
+fn note_runner_invocation(finding: &mut Finding, owner: &PythonOwner, tests: &[PythonTest]) {
+    if !(finding.class == ExposureClass::NoStaticPath
+        && finding.related_tests.is_empty()
+        && finding.static_limit_kind.is_none())
+    {
+        return;
+    }
+    let Some(test) = super::cli_runner::runner_invoking_test(owner, tests) else {
+        return;
+    };
+    let Some(line) = finding
+        .missing
+        .iter_mut()
+        .find(|line| line.starts_with("No Python test references"))
+    else {
+        return;
+    };
+    *line = format!(
+        "No static test path reaches `{}`. Tests of this package run commands through `CliRunner.invoke(...)` (for example `{}:{}`) and may exercise it; ripr does not follow into command internals, so check those tests before adding a new one.",
+        owner.name,
+        test.file.display(),
+        test.line
+    );
+    finding.recommended_next_step = None;
 }
 
 /// Number a file's candidate-side findings that share a probe id (#10450).

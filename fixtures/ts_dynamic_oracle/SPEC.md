@@ -18,7 +18,10 @@ which means the finding is classified as `Exposed` and routes through
 `strong_oracle_observed` — the G-A precondition fails before G-C is even checked.
 
 The `typescript_dynamic_assertion_unresolved` named limitation is emitted because
-the dynamic arg prevents static resolution of the expected discriminator value.
+the dynamic arg prevents static resolution of the expected discriminator value;
+it applies to an assertion in the changed seam's oracle family (here a value
+matcher on a predicate seam) and is not raised by a wrong-family dynamic
+assertion.
 
 ## When
 

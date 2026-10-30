@@ -47,6 +47,9 @@ pub(super) enum PythonRelationKind {
     /// The test names a pytest fixture whose body calls the owner (#4563).
     /// Reach evidence only; the fixture value is not an oracle.
     FixtureOwnerCall,
+    /// The test passes the owner, a click command, to `CliRunner.invoke`
+    /// (#9226). Reach evidence only; the command's output is not credited.
+    CliRunnerInvoke,
     ActivationLimited,
 }
 
@@ -68,6 +71,7 @@ impl PythonRelationKind {
             Self::FixtureName => 1,
             Self::FixtureOwnerCall => 2,
             Self::HelperOwnerCall => 2,
+            Self::CliRunnerInvoke => 2,
             Self::ActivationLimited => 0,
         }
     }
@@ -107,6 +111,7 @@ impl PythonRelationKind {
             Self::FixtureName => "fixture_name",
             Self::FixtureOwnerCall => "fixture_owner_call",
             Self::HelperOwnerCall => "helper_owner_call",
+            Self::CliRunnerInvoke => "cli_runner_invoke",
             Self::ActivationLimited => "test_activation_unestablished",
         }
     }
@@ -350,7 +355,9 @@ pub(super) fn helper_owner_call_candidates<'a>(
         // its relation check.
         let related = |test: &'a PythonTest| {
             !seen.contains(&(test.file.as_path(), test.qualified_name.as_str()))
-                && related_test_relation(test, caller).is_some_and(PythonRelationKind::uses_oracle)
+                && related_test_relation(test, caller).is_some_and(|relation| {
+                    relation.uses_oracle() || relation == PythonRelationKind::CliRunnerInvoke
+                })
         };
         let reached: Vec<&'a PythonTest> = if all_tests.len() >= PARALLEL_RELATION_MIN_TESTS {
             #[cfg(test)]
@@ -655,6 +662,9 @@ fn related_test_relation_scan(
     }
     if fixture_owner_call(test, owner) {
         return Some(PythonRelationKind::FixtureOwnerCall);
+    }
+    if super::cli_runner::cli_runner_invokes_owner(test, owner) {
+        return Some(PythonRelationKind::CliRunnerInvoke);
     }
     if route.is_some() {
         return Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
@@ -3218,6 +3228,13 @@ pub(super) fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool 
     test.fixtures.iter().any(|fixture| fixture == alias)
         || assignment_count(&test.body_text, alias) > 0
         || keyword_or_operator_binds_text(&test.body_text, alias, false)
+}
+
+/// Whether `name` is bound by anything other than a plain `name = ...`
+/// assignment: a loop or `with` target, `def`, `class`, walrus, augmented
+/// assignment, import or `nonlocal`.
+pub(super) fn text_binds_beyond_assignment(text: &str, name: &str) -> bool {
+    keyword_or_operator_binds_text(text, name, true)
 }
 
 fn keyword_or_operator_binds_text(body: &str, name: &str, import_as_binds: bool) -> bool {

@@ -197,7 +197,13 @@ fn a_parameter_count_that_the_row_does_not_fill_is_not_read() -> Result<(), Stri
 #[test]
 fn every_plain_literal_spelling_is_credited() -> Result<(), String> {
     for (label, rows) in [
-        ("negative integer", "    #[test_case(10 => -3)]\n"),
+        // A negative literal on both sides of the arrow (`bump(-5) == -3`)
+        // still pins the negative-integer spelling while staying consistent
+        // with the folded body: a row whose expectation contradicts the
+        // fold fails at baseline and is withheld by the whole-test
+        // contradiction control (#7007, #10980), like its plain `#[test]`
+        // twin.
+        ("negative integer", "    #[test_case(-5 => -3)]\n"),
         ("suffixed integer", "    #[test_case(10 => 12i64)]\n"),
         ("boolean", "    #[test_case(10 => true)]\n"),
         ("string", "    #[test_case(10 => \"ab\")]\n"),
