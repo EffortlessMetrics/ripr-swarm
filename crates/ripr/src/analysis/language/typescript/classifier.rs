@@ -7590,6 +7590,17 @@ pub(crate) fn classify_resolved_owner(
     } else {
         0.4
     };
+    // #10700: the score above is a per-class constant, so name why it is
+    // capped. Evidence-derived and explanatory only: it never changes the
+    // score or any actionability decision.
+    let confidence_basis = crate::domain::ConfidenceCap::for_preview(
+        &class,
+        &crate::domain::ConfidenceBasisInputs {
+            has_related_test: has_oracle_eligible_relation,
+            strong_oracle_present: strongest_strength >= OracleStrength::Strong.rank(),
+            boundary_input_matched: boundary_witnessed,
+        },
+    );
 
     let mut evidence = vec![format!("owner: {}", owner.name)];
     if !probe_shape.specific {
@@ -7721,7 +7732,7 @@ pub(crate) fn classify_resolved_owner(
             },
         },
         confidence: confidence_value,
-        confidence_basis: Vec::new(),
+        confidence_basis,
         evidence,
         missing,
         flow_sinks: flow_sink.into_iter().collect(),

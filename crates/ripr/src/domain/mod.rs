@@ -54,7 +54,9 @@ pub use command_spec::{
     verify_command_is_unbounded_repo_exposure_snapshot_compare,
 };
 pub use confidence_basis::ConfidenceCap;
-pub(crate) use confidence_basis::{ConfidenceBasisEntry, basis_entries, why_capped_line};
+pub(crate) use confidence_basis::{
+    ConfidenceBasisEntry, ConfidenceBasisInputs, basis_entries, why_capped_line,
+};
 pub use diagnostic_witness::{
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticSourceLocation, DiagnosticWitness,
     DiagnosticWitnessLimitation,

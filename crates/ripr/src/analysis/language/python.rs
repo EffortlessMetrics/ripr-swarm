@@ -1787,6 +1787,8 @@ mod deleted_lines_tests;
 mod fixtures_tests;
 
 #[cfg(test)]
+mod import_writer_tests;
+#[cfg(test)]
 mod inert_tool_fixture_tests;
 #[cfg(test)]
 mod literal_fixture_tests;
