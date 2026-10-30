@@ -57,8 +57,12 @@ number comes from the merge-group branch name
 (`gh-readonly-queue/<base>/pr-<n>-<sha>`) and the PR's labels are forwarded to
 the gate (`full-ci` still selects the advisory reports, `ripr-waive` still
 reaches the PR-evidence step). The resolver accepts a head-suffixed ref or a
-base-suffixed fallback; the latter does not authoritatively identify the queued
-H. Admission is per PR, so the queue must use a group size of 1; the queued commit must be a single
+base-suffixed fallback; neither ref spelling identifies the queued H, so the
+queued commit's tree must also equal the live head merged onto the group base
+(`git merge-tree --write-tree <base> <head>`, with the head fetched from the
+PR's own `refs/pull/<n>/head` and required to match the head read from the API).
+A different head, extra content, a merge conflict, a moved PR ref or missing
+history refuses. Admission is per PR, so the queue must use a group size of 1; the queued commit must be a single
 squash commit of the queued PR sitting directly on the group's `base_sha`, or
 admission refuses it, so a batch fails closed even if the ruleset is misconfigured. Batching needs per-PR admission (#8082) and is a follow-up. The
 `merge-ready` label request below still works until the label request is
@@ -72,9 +76,11 @@ review decision, and every page of review threads. Missing or malformed
 evidence refuses the result; a Result-only retry cannot reuse admission from
 an older attempt. Main/manual authorities and child-result checks remain.
 
-This is a late eligibility check, not queue-cutover acceptance. The current
-base-suffixed queue-ref fallback still uses a timestamp and does not establish
-the reviewed/admitted H or its composed G tree. Candidate-local admission code
+This is a late eligibility check, not queue-cutover acceptance. The tree match
+binds the queued commit to the head GitHub reports live at admission; it does not
+establish that this is the head a reviewer judged ready, and its premise (GitHub's
+squash tree equals `merge-tree(base, head)`) is checked here only on past
+squash merges and by local fixtures, not on a native queue entry. Candidate-local admission code
 also remains a trusted-source prerequisite. Neither these API freshness reads
 nor a tree match authenticates an arbitrary caller workflow or makes the final
 read and protected merge atomic. Preserve the installed gates until the
