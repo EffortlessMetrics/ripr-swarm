@@ -3309,9 +3309,7 @@ fn diagnostic_for_finding_with_causal(
         "probe_id": finding.probe.id.to_string(),
         "classification": finding.class.as_str(),
         "probe_family": finding.probe.family.as_str(),
-        // #10717: f32 -> f64 widening prints 0.4000000059604645; round to the
-        // two decimals every other surface renders.
-        "confidence": (f64::from(finding.confidence) * 100.0).round() / 100.0,
+        "confidence": crate::domain::contract_confidence(finding.confidence),
         "source_range": {
             "file": file,
             "line": finding.probe.location.line,
@@ -3362,6 +3360,12 @@ fn diagnostic_for_finding_with_causal(
                 "explain_command".to_string(),
                 serde_json::Value::String(witness.explain_command.clone()),
             );
+            let mut value = value;
+            if let Some(confidence) = witness.confidence.value
+                && let Some(slot) = value.pointer_mut("/confidence/value")
+            {
+                *slot = serde_json::json!(crate::domain::contract_confidence(confidence));
+            }
             obj.insert("witness".to_string(), value);
             let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
             if let Ok(summary_value) = serde_json::to_value(&summary) {
@@ -5862,6 +5866,117 @@ mod diagnostic_policy_tests {
         Ok(())
     }
 
+    /// #10714: the actionable profile predicate is one language-neutral rule. A weak
+    /// finding is published only when the shared witness names a missing
+    /// discriminator and a fix-site test; without a related test it is
+    /// route-less and hidden. Rust and Python must get the same disposition
+    /// in both shapes, so no language looks more "alive" in the editor.
+    #[test]
+    fn actionable_profile_predicate_is_language_neutral_for_gap_classes() -> Result<(), String> {
+        let weak_test = || RelatedTest {
+            name: "checks_boundary".to_string(),
+            file: std::path::PathBuf::from("tests/pricing"),
+            line: 12,
+            oracle: Some("assert discount(2, 10) is not None".to_string()),
+            oracle_kind: OracleKind::SmokeOnly,
+            oracle_strength: OracleStrength::Smoke,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        };
+        // The three gap classes `hidden_gaps` covers: a class-specific
+        // language branch would diverge in exactly one of them.
+        for class in [
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+            ExposureClass::NoStaticPath,
+        ] {
+            let mut dispositions = Vec::new();
+            for language in [LanguageId::Rust, LanguageId::Python] {
+                for with_fix_site in [false, true] {
+                    let mut finding = policy_finding();
+                    finding.class = class.clone();
+                    finding.language = Some(language);
+                    finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+                        value: "amount == threshold".to_string(),
+                        reason: "exact boundary is not observed".to_string(),
+                        flow_sink: None,
+                    }];
+                    if with_fix_site {
+                        finding.related_tests.push(weak_test());
+                    }
+                    let visible =
+                        finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, &finding);
+                    if visible != with_fix_site {
+                        return Err(format!(
+                            "{class:?}/{language:?} (fix site: {with_fix_site}) disposition was visible={visible}"
+                        ));
+                    }
+                    if !finding_is_visible_in_profile(LspDiagnosticProfile::Full, &finding) {
+                        return Err(format!(
+                            "full profile dropped a {class:?}/{language:?} finding"
+                        ));
+                    }
+                    dispositions.push((with_fix_site, visible));
+                }
+            }
+            if dispositions[..2] != dispositions[2..] {
+                return Err(format!("{class:?}: languages diverged: {dispositions:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// #10714: the predicate is neutral but its fix-site input is not. A
+    /// Python finding that declares a suggested test (`suggested_test_file:`
+    /// evidence) resolves its fix site only through that declaration, with no
+    /// fallback to the best related test (`python_suggested_related_test`);
+    /// an unmatched declaration therefore leaves the finding route-less and
+    /// hidden, while the same Rust shape falls back to the related test and
+    /// is published. This pins current behavior, not a ruling that it is
+    /// right.
+    #[test]
+    fn unmatched_suggested_test_declaration_hides_python_but_not_rust() {
+        let visible = |language| {
+            let mut finding = policy_finding();
+            finding.class = ExposureClass::WeaklyExposed;
+            finding.language = Some(language);
+            finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+                value: "amount == threshold".to_string(),
+                reason: "exact boundary is not observed".to_string(),
+                flow_sink: None,
+            }];
+            finding.evidence = vec![
+                "suggested_test_file: tests/other_test".to_string(),
+                "suggested_test_name: test_other".to_string(),
+            ];
+            finding.related_tests.push(RelatedTest {
+                name: "checks_boundary".to_string(),
+                file: std::path::PathBuf::from("tests/pricing"),
+                line: 12,
+                oracle: Some("assert discount(2, 10) is not None".to_string()),
+                oracle_kind: OracleKind::SmokeOnly,
+                oracle_strength: OracleStrength::Smoke,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
+            });
+            finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, &finding)
+        };
+        assert!(
+            visible(LanguageId::Rust),
+            "Rust falls back to the related test"
+        );
+        assert!(
+            !visible(LanguageId::Python),
+            "Python has no fallback past an unmatched declaration"
+        );
+    }
+
     #[test]
     fn actionable_profile_excludes_base_side_evidence() {
         // RIPR-SPEC-0152: the actionable profile is an obligation surface;
@@ -6857,6 +6972,34 @@ mod lsp_next_step_parity_tests {
             !message.contains("no actionable repair packet is emitted until"),
             "LSP diagnostic must NOT contain blocked-case tail for complete packet; got: {message}"
         );
+    }
+
+    /// #10717: the diagnostic `data` carries the two-decimal contract value
+    /// that `ripr check` prints, not the widened `f32` (`0.4000000059604645`),
+    /// both for the finding and for its witness.
+    #[test]
+    fn lsp_diagnostic_data_confidence_uses_contract_precision() -> Result<(), String> {
+        for (stored, printed) in [
+            (0.4_f32, "0.4"),
+            (0.92, "0.92"),
+            (0.6, "0.6"),
+            (0.75, "0.75"),
+        ] {
+            let mut finding = complete_ts_finding();
+            finding.confidence = stored;
+            let diagnostic =
+                super::diagnostic_for_finding(std::path::Path::new("/workspace"), &finding);
+            let data = diagnostic.data.ok_or("diagnostic must carry data")?;
+            let top = serde_json::to_string(&data["confidence"]).map_err(|e| e.to_string())?;
+            let witness = serde_json::to_string(&data["witness"]["confidence"]["value"])
+                .map_err(|e| e.to_string())?;
+            if top != printed || witness != printed {
+                return Err(format!(
+                    "stored {stored}: data.confidence {top}, witness value {witness}; want {printed}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// PARITY: blocked packet → LSP diagnostic message must STILL contain the

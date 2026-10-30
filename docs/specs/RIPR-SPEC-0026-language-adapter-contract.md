@@ -100,7 +100,8 @@ Additive optional fields:
   Stable `code` values: `preview_stages_not_modeled` and
   `syntax_first_no_type_resolution` (every preview finding), then at most one
   evidence reason chosen in this order: `discriminator_not_established`
-  (`static_unknown`), `no_related_test`, `oracle_below_strong` (no strong
+  (`static_unknown`), `infection_not_established` (`infection_unknown`),
+  `propagation_not_established` (`propagation_unknown`), `no_related_test`, `oracle_below_strong` (no strong
   oracle, including for `exposed`), `boundary_input_not_matched`,
   `observation_not_confirmed`. The basis explains the score only: it never
   changes the score, the class, actionability or repair-packet readiness, and

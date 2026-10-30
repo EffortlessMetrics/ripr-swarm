@@ -1900,11 +1900,8 @@ fn run_agent_repair_phase(
                 &root,
                 store_ref,
             )?;
-            crate::edit_cage::validate_build_output_precondition(&root, &policy).map_err(
-                |error| {
-                    format!("{error} No workflow was prepared and no repair attempt was started.")
-                },
-            )?;
+            crate::edit_cage::validate_build_output_precondition(&root, &policy)
+                .map_err(|error| format!("{error} Nothing was started."))?;
 
             // Fail early on a dirty production premise (#5262): the repair
             // loop pins the repository at its before phase, so tracked
@@ -2380,13 +2377,10 @@ fn run_agent_repair_phase(
                     && cage_after.verdict.status
                         != crate::edit_cage::EditCageVerdictStatus::Compliant
                 {
-                    Err(format!(
-                        "repair attempt `{}` ended `{}` at its edit cage ({}); gap `{}` is not reported closed for an attempt the cage refused",
+                    Err(gap_bound_rejected_attempt_message(
                         cage_after.attempt_id.as_str(),
-                        crate::app::repair_attempt::repair_attempt_state_for_finish(&cage_after)
-                            .as_label(),
-                        cage_after.verdict.status.as_label(),
-                        attempt.seam_id
+                        cage_after.verdict.status,
+                        &attempt.seam_id,
                     ))
                 } else {
                     run_agent_receipt_for_attempt(
@@ -2707,7 +2701,10 @@ fn write_agent_repo_exposure_snapshot_with_report(
         None,
         config,
     )?
-    .with_rust_corpus_key(report.corpus_key.as_ref());
+    .with_rust_inventory(
+        report.corpus_key.as_ref(),
+        &report.analyzed_production_files,
+    );
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -2841,7 +2838,7 @@ fn repair_after_cage_recovery_lines(
     }
     if !after.current {
         lines.push(format!(
-            "attempt `{attempt_id}` is stale: repository HEAD moved from {} to {} after its before phase.",
+            "attempt `{attempt_id}` is stale: repository HEAD moved from {} to {} after the repair started.",
             short_head(before_head),
             short_head(&after.repository_head)
         ));
@@ -2849,7 +2846,7 @@ fn repair_after_cage_recovery_lines(
     let violations = &after.verdict.violations;
     if !violations.is_empty() {
         lines.push(format!(
-            "the edit cage refused {} path(s); only the packet's allowed test surface may change:",
+            "ripr rejected the attempt: {} file(s) outside the test files you may change were edited:",
             violations.len()
         ));
         for violation in violations.iter().take(CAGE_RECOVERY_MAX_VIOLATIONS) {
@@ -2864,7 +2861,12 @@ fn repair_after_cage_recovery_lines(
                 violations.len() - CAGE_RECOVERY_MAX_VIOLATIONS
             ));
         }
-        lines.extend(untracked_output_hints(root, store, after));
+        lines.extend(untracked_output_hints(
+            root,
+            store,
+            after,
+            gap_base.is_some(),
+        ));
     }
     let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
     let restart = crate::app::gap_bound_repair::repair_start_command(
@@ -2898,9 +2900,9 @@ fn repair_after_cage_recovery_lines(
         .map(|baseline| baseline.is_ambiguous())
         .unwrap_or(false);
         if ambiguous_baseline {
-            lines.push("the attempt's before-phase baseline was recorded ambiguous (its `attempt-baseline.json` artifact has `\"ambiguous\": true`), so the cage cannot prove the exact worktree state the attempt measured and stopped before judging the edit; the attempt is unscorable.".to_string());
+            lines.push("the attempt's before-phase baseline was recorded ambiguous (its `attempt-baseline.json` artifact has `\"ambiguous\": true`), so ripr cannot prove the exact file state the attempt started from and stopped before judging the edit; the attempt cannot be scored.".to_string());
         } else {
-            lines.push("the edit cage could not compare the attempt's before and after states, so the attempt is unscorable; no path change was refused.".to_string());
+            lines.push("ripr could not compare the files before and after the attempt, so it cannot score the attempt; no file change was rejected.".to_string());
         }
         // An incomparable delta skips policy evaluation, so an empty
         // violations list is not a compliance finding: name every change the
@@ -2948,6 +2950,7 @@ fn untracked_output_hints(
     root: &Path,
     store: Option<&Path>,
     after: &crate::app::repair_attempt::RepairAttemptAfter,
+    gap_bound: bool,
 ) -> Vec<String> {
     use crate::edit_cage::EditCageViolationKind;
 
@@ -2972,7 +2975,7 @@ fn untracked_output_hints(
             .map(|violation| format!("`{}`", violation.path))
             .collect::<Vec<_>>();
         hints.push(format!(
-            "Refused untracked paths under Cargo's declared build directory `{}/`: {}. Check the effective Git ignore rules: generated build output must be ignored before starting a new repair attempt (for example `/{}/` in .gitignore). Tracked and untracked-but-not-ignored files remain subject to the edit cage; these paths are not attributed to redirected ripr output.",
+            "Refused untracked paths under Cargo's declared build directory `{}/`: {}. Check the effective Git ignore rules: generated build output must be ignored before starting a new repair (for example `/{}/` in .gitignore). Tracked files and untracked files that are not ignored still count as edits; these paths are not blamed on redirected ripr output.",
             rule.path(), paths.join(", "), rule.path()
         ));
     }
@@ -2983,8 +2986,13 @@ fn untracked_output_hints(
     if untracked.is_empty() {
         return hints;
     }
+    let packet = if gap_bound {
+        crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT
+    } else {
+        crate::agent::loop_commands::WORKFLOW_AGENT_PACKET_ARTIFACT
+    };
     hints.push(format!(
-        "{} {} not tracked by Git when the before phase ran. If {} a file you redirected ripr output into (for example `> packet.json` or `2> before.err`), the edit cage counts it as an edit: delete it, and redirect `agent repair` output outside the checkout or under target/ripr/ (the before phase already writes the packet to target/ripr/workflow/agent-packet.json).",
+        "{} {} not tracked by Git when the repair started. If {} a file you redirected ripr output into (for example `> packet.json` or `2> before.err`), it counts as an edit and fails the repair: delete it, and write `agent repair` output outside the checkout or under target/ripr/ (the first step already writes the packet to {packet}).",
         untracked.join(", "),
         if untracked.len() == 1 { "was" } else { "were" },
         if untracked.len() == 1 {
@@ -3153,11 +3161,11 @@ fn repair_after_input_drift_lines(
     {
         Ok(paths) if !paths.is_empty() => {
             lines.push(format!(
-                "analysis inputs changed after the before phase: {}. The before and after snapshots must analyze the same Cargo manifests, Git-tracked Cargo.lock files, and ripr.toml (an untracked Cargo.lock that the build writes does not count).",
+                "analysis inputs changed after the repair started: {}. The before and after snapshots must analyze the same Cargo manifests, Git-tracked Cargo.lock files, and ripr.toml (an untracked Cargo.lock that the build writes does not count).",
                 paths.join(", ")
             ));
             lines.push(format!(
-                "attempt `{}` was not finished and is still awaiting the focused test edit.",
+                "attempt `{}` was not finished and is still waiting for your test.",
                 attempt.attempt_id.as_str()
             ));
             // A committed input change cannot be restored in the worktree
@@ -3230,8 +3238,8 @@ fn repair_after_trusted_surface_recovery_lines(
         attempt.gap_base.as_deref(),
     );
     vec![
-        format!("attempt `{attempt_id}` passed its edit cage but its receipt was refused: {error}."),
-        "the refusal means a tracked file differs from the attempt's before-phase head outside the allowed test surface: most often a production change that was already uncommitted when the attempt started, or a production edit made during the loop; the edit cage cannot see either as an edit of this attempt.".to_string(),
+        format!("attempt `{attempt_id}` changed only the files the repair allows, but ripr could not accept its result: {error}."),
+        "a tracked file outside the test files differs from where the attempt started: most often a source change that was uncommitted when the attempt started, or a source edit made during the repair, and ripr cannot count either as part of this attempt.".to_string(),
         format!(
             "to recover: first inspect what moved (`git diff -- <path>`). If the named file was already modified before the attempt started, commit that change (`git commit -- <path>`); if it changed during the loop, set it aside without losing it (`git stash`). Only `git checkout {} -- <path>` restores the before-phase content, and it discards uncommitted work irrecoverably, so run it only when the change is disposable. Then start a new attempt: set your test edit aside (`git stash`), run `{restart}` while the gap still exists, restore the test edit (`git stash pop`), and run the new --attempt command it prints.",
             attempt.repository_head
@@ -3266,8 +3274,30 @@ fn before_phase_dirty_premise_refusal(
 fn before_phase_dirty_premise_refusal_with_restart(restart: &str, violations: &[String]) -> String {
     let first = violations.first().map(String::as_str).unwrap_or_default();
     format!(
-        "repair attempt cannot start: tracked file(s) outside the allowed test surface already differ from HEAD: {}. The repair loop pins the repository at its before phase, so an uncommitted production change would pass the edit cage and only refuse the receipt at the end, burning the attempt; a dirty focused test file inside the allowed test surface is fine. to recover: commit the listed file(s) (for example `git commit -- {first}`), or restore them, then rerun `{restart}`. No workflow was prepared and no repair attempt was started.",
+        "ripr repair needs your source changes committed first, so it can tell your new test apart from them. Uncommitted: {}. Commit them (for example `git commit -- {first}`) or restore them, then rerun `{restart}`. A test file you are still editing is fine. Nothing was started.",
         violations.join(", "),
+    )
+}
+
+/// Why a gap-bound attempt gets no receipt when ripr did not accept its
+/// changes. A violation and an incomparable measurement are different facts, so
+/// the wording branches instead of claiming an edit that was never observed.
+fn gap_bound_rejected_attempt_message(
+    attempt_id: &str,
+    status: crate::edit_cage::EditCageVerdictStatus,
+    gap_id: &str,
+) -> String {
+    let why = match status {
+        crate::edit_cage::EditCageVerdictStatus::Violated => {
+            "it edited files outside the test files"
+        }
+        crate::edit_cage::EditCageVerdictStatus::Incomparable => {
+            "ripr could not compare the files before and after it"
+        }
+        crate::edit_cage::EditCageVerdictStatus::Compliant => "ripr did not accept its changes",
+    };
+    format!(
+        "repair attempt `{attempt_id}` was rejected because {why}; gap `{gap_id}` is not reported closed for a rejected attempt"
     )
 }
 
@@ -3364,9 +3394,8 @@ fn run_gap_bound_before_phase(
         root,
         store_ref,
     )?;
-    crate::edit_cage::validate_build_output_precondition(root, &policy).map_err(|error| {
-        format!("{error} No workflow was prepared and no repair attempt was started.")
-    })?;
+    crate::edit_cage::validate_build_output_precondition(root, &policy)
+        .map_err(|error| format!("{error} Nothing was started."))?;
     let premise_head = crate::agent::artifact::current_git_head(root)?;
     let premise_violations = crate::app::repair_attempt::trusted_head_surface_violations(
         root,
@@ -3421,6 +3450,10 @@ pub(in crate::cli) fn before_phase_stdout(
         .unwrap_or_else(|| {
             format!("Repair packet (JSON): {packet_path}; add --json to print it here\n")
         });
+    if continuation.typescript_test_cache_guidance {
+        document.push_str(output::agent_seam_packets::TYPESCRIPT_TEST_CACHE_GUIDANCE);
+        document.push('\n');
+    }
     if continuation.baseline_ambiguous {
         document.push_str(&before_phase_ambiguous_stdout_lines(
             &crate::agent::human_after_phase_follow_up(&continuation.next_command),
@@ -3644,7 +3677,35 @@ fn resolve_agent_start_out_dir(root: &Path, out_dir: &Path) -> PathBuf {
 mod root_tests;
 
 #[cfg(test)]
+#[path = "agent_refusal_tests.rs"]
+mod refusal_tests;
+
+#[cfg(test)]
 mod tests {
+    use super::gap_bound_rejected_attempt_message as rejected;
+    use crate::edit_cage::EditCageVerdictStatus as Status;
+
+    /// A violated verdict may claim an out-of-surface edit; an incomparable
+    /// one never observed an edit and must not claim it.
+    #[test]
+    fn gap_bound_rejection_wording_branches_on_the_verdict() {
+        let violated = rejected("a1", Status::Violated, "g1");
+        assert!(
+            violated.contains("edited files outside the test files"),
+            "{violated}"
+        );
+        let incomparable = rejected("a1", Status::Incomparable, "g1");
+        assert!(incomparable.contains("could not compare"), "{incomparable}");
+        assert!(!incomparable.contains("edited files"), "{incomparable}");
+        for text in [&violated, &incomparable] {
+            assert!(
+                !text.contains("violated") && !text.contains("incomparable"),
+                "{text}"
+            );
+            assert!(text.contains("gap `g1` is not reported closed"), "{text}");
+        }
+    }
+
     use super::super::tests::{
         args, outcome_after_json, outcome_before_json, unique_command_test_dir,
         unique_repo_relative_test_dir,
@@ -4834,7 +4895,7 @@ mod tests {
         );
         let joined = lines.join("\n");
         for needle in [
-            "the edit cage refused 1 path(s)",
+            "ripr rejected the attempt: 1 file(s)",
             "`mod tests`: unparseable",
             "attempt `repair-attempt-0123456789abcdef01234567` is terminal",
             "undo the refused changes",
@@ -4886,7 +4947,7 @@ mod tests {
             "a non-parse refusal must not carry the parse hint: {joined}"
         );
         assert!(
-            joined.contains("the edit cage refused 1 path(s)"),
+            joined.contains("ripr rejected the attempt: 1 file(s)"),
             "the refusal keeps its existing narration: {joined}"
         );
         Ok(())
@@ -5088,6 +5149,7 @@ mod before_phase_stdout_tests {
                     .to_string(),
             packet_path: "target/ripr/workflow/agent-packet.json".to_string(),
             baseline_ambiguous: false,
+            typescript_test_cache_guidance: false,
         }
     }
 

@@ -65,7 +65,7 @@ path = ".ripr/suppressions.toml"
 # file is absent, Python project markers can enable Python preview analysis
 # automatically for the detected repository root; this explicit list remains
 # authoritative when present.
-# Valid values: rust, typescript, python, perl.
+# Valid values: rust, typescript, javascript (alias for typescript), python, perl.
 # (`perl` consumes externally-produced `ripr-perl-facts-v1` packets and does
 # not parse Perl source directly. Pass --perl-facts <path> for an explicit
 # packet, or configure a managed [perl].producer and make its exporter

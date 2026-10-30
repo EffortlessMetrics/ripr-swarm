@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-spec0048-assoc-kit",
+  "origin": "authored",
+  "version_label": "authored 2026-10-30 for RIPR-SPEC-000048 associated-constant must-not-claim shapes (#9871)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "bc73fc36deab8fbbe1bf5b1774ed8f958ff29e7927668d5ffe67746f613aab31"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "0defade4510841a63e1f82c37ba3f0d7dc568573c09d3181e6530e5513cf17bf"
+    },
+    {
+      "path": "tests/it.rs",
+      "sha256": "6a91413b4e167b91fe06cc30a14158fc03e7cc64e7cc547ed7109bbdbeef3969"
+    }
+  ]
+}

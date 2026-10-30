@@ -209,7 +209,7 @@ fn agent_repair_later_phases_require_existing_attempts_without_writes() -> Resul
         assert_contains(
             "after seam selector",
             &String::from_utf8_lossy(&output.stderr),
-            "no awaiting repair attempt exists for seam `seam:missing`; start one with",
+            "no repair is in progress for this gap; start one with",
         )?;
         Ok(())
     })
@@ -970,7 +970,7 @@ fn default_help_discloses_exit_codes_and_global_verbose() -> Result<(), String> 
         for needle in [
             "Exit codes: 0 completed",
             "2 could not complete",
-            "3 blocking decision or typed refusal",
+            "3 ripr declined",
             "130 interrupted",
             "docs/EXIT_CODES.md",
             "-v, --verbose",

@@ -14129,6 +14129,75 @@
       ]
     },
     {
+      "id": "python_caplog_alias_same_line_mask",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_caplog_alias_same_line_mask",
+      "vector": "caplog_alias_native_statement_and_binding_order",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_caplog_alias_assertion_store",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_caplog_alias_assertion_store",
+      "vector": "caplog_alias_native_statement_and_binding_order",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
+      "id": "python_caplog_alias_late_binding",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_caplog_alias_late_binding",
+      "vector": "caplog_alias_native_statement_and_binding_order",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        }
+      ]
+    },
+    {
       "id": "python_caplog_alias_in_literal",
       "language": "python",
       "tier": "pure",
@@ -14837,6 +14906,46 @@
         { "type": "expected_finding_count", "count": 1 },
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "rust_display_placeholder_edit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_display_placeholder_edit",
+      "vector": "encoded_placeholder_change_cannot_borrow_display_pin",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_display_raw_placeholder_edit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_display_raw_placeholder_edit",
+      "vector": "raw_placeholder_change_cannot_recover_credit_through_token_overlap",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        }
       ]
     },
     {

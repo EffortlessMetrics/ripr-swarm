@@ -101,7 +101,9 @@ fn language_flag_without_a_value_is_refused() {
 fn human_output_and_help_route() {
     let (ok, stdout, _) = run(&["capabilities"]);
     assert!(ok);
-    assert!(stdout.contains("not_proven"), "{stdout}");
+    assert!(stdout.contains("ripr language support"), "{stdout}");
+    assert!(!stdout.contains("not_proven"), "{stdout}");
+    assert!(!stdout.contains("RIPR-SPEC"), "{stdout}");
     let (ok, help, _) = run(&["capabilities", "--help"]);
     assert!(ok);
     assert!(help.contains("Usage: ripr capabilities"), "{help}");

@@ -20023,6 +20023,10 @@ fn inherent_receiver_typed_parameter_names_the_owner_only_for_a_plain_type() -> 
         ("mut s: Site", used, true),
         ("s: &Site", used, true),
         ("s: &mut Site", used, true),
+        // One borrow level only: stacked borrows and lifetimes are refused.
+        ("s: &&Site", used, false),
+        ("s: &mut &Site", used, false),
+        ("s: &'static Site", used, false),
         ("s: Cache", used, false),
         ("s: foreign::Site", used, false),
         ("s: Box<Site>", used, false),

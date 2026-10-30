@@ -1649,6 +1649,7 @@ fixtures = [
   "fixtures/python_boundary_gap",
   "fixtures/python_parametrized_boundary_repair_gap",
   "fixtures/python_named_constant_boundary_repair_gap",
+  "fixtures/python_len_local_boundary_repair_gap",
   "fixtures/python_rebound_constant_boundary_limit",
   "fixtures/python_unittest_basic",
   "fixtures/python_method_owner",

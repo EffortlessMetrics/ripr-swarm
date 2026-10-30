@@ -475,7 +475,7 @@ fn stub_grip_omission_reason(
 ) -> Option<String> {
     if class == SeamGripClass::StronglyGripped {
         return Some(format!(
-            "seam {seam_id} is strongly_gripped: existing tests already discriminate it, so a stub would add nothing"
+            "seam {seam_id} is strongly_gripped: existing tests already discriminate it, so this stub is an optional scaffold for the location you named, not evidence of a missing discriminator"
         ));
     }
     AgentBriefPolicy::from_config(config)
@@ -682,7 +682,7 @@ mod tests {
         assert_eq!(
             disclosure.warnings,
             vec![
-                "seam clamp-seam is strongly_gripped: existing tests already discriminate it, so a stub would add nothing"
+                "seam clamp-seam is strongly_gripped: existing tests already discriminate it, so this stub is an optional scaffold for the location you named, not evidence of a missing discriminator"
                     .to_string()
             ]
         );

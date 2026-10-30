@@ -1474,6 +1474,84 @@ fn has_moved_assertion_selection(finding: &Finding) -> bool {
         .any(|line| line.starts_with("typescript_assertion_selection: "))
 }
 
+/// Plain-words account of a dynamic-assertion block (limit from RIPR-SPEC-0085
+/// §PR5; wording under RIPR-SPEC-0122) for the human surfaces: which test line holds the unresolved expected value and
+/// which matcher receives it. The raw limitation id stays in evidence only.
+pub(crate) fn typescript_dynamic_assertion_blocker(finding: &Finding) -> Option<String> {
+    let sample = finding.evidence.iter().find_map(|line| {
+        line.strip_prefix(
+            "typescript_limitation_sample: typescript_dynamic_assertion_unresolved at ",
+        )
+    })?;
+    let matcher = finding.evidence.iter().find_map(|line| {
+        let why = line.strip_prefix(
+            "typescript_limitation_why: typescript_dynamic_assertion_unresolved \u{2014} the matcher `.",
+        )?;
+        why.split_once("(...)`").map(|(name, _)| name.to_string())
+    });
+    Some(match matcher {
+        Some(name) => format!(
+            "ripr cannot tell whether the test at `{}` covers this change: its `.{name}(...)` compares against a variable or computed value, not a literal",
+            sample.trim()
+        ),
+        None => format!(
+            "ripr cannot tell whether the test at `{}` covers this change: it compares against a variable or computed value, not a literal",
+            sample.trim()
+        ),
+    })
+}
+
+/// Plain-words account of the moved-assertion-selection refusal (guard from
+/// RIPR-SPEC-0224; wording under RIPR-SPEC-0122): related tests whose assertions all check other behavior
+/// make the target test ambiguous, so no packet is projected.
+pub(crate) fn typescript_moved_selection_blocker(finding: &Finding) -> Option<String> {
+    // A named limitation refuses projection before the selection guard, so it
+    // is the first cause; do not name the later guard in its place.
+    if has_named_typescript_limitation(finding) || !is_incomplete_repair_packet(finding) {
+        return None;
+    }
+    let names: Vec<&str> = finding
+        .evidence
+        .iter()
+        .filter_map(|line| line.strip_prefix("typescript_assertion_selection: "))
+        .filter_map(|rest| {
+            let (_, name) = rest.split_once(" (")?;
+            name.strip_suffix(')')
+        })
+        .collect();
+    let first = names.first()?;
+    let (more, verb) = if names.len() > 1 {
+        let verb = if names.len() == 2 {
+            "asserts"
+        } else {
+            "assert"
+        };
+        (format!(" and {} more", names.len() - 1), verb)
+    } else {
+        (String::new(), "asserts")
+    };
+    Some(format!(
+        "related test `{first}`{more} {verb} a different kind of behavior than this change, so ripr cannot safely choose which test to edit"
+    ))
+}
+
+/// The plain reason a TypeScript/JavaScript preview finding has no repair
+/// packet, when a guard above names one; `None` keeps the caller's wording.
+pub(crate) fn typescript_advisory_blocker(finding: &Finding) -> Option<String> {
+    // Both blockers explain an `incomplete_repair_packet` finding; a finding
+    // in another actionability category (for example `missing_target_shape`)
+    // keeps its own cause and route.
+    if !is_incomplete_repair_packet(finding) {
+        return None;
+    }
+    typescript_dynamic_assertion_blocker(finding)
+        .or_else(|| typescript_moved_selection_blocker(finding))
+}
+
+fn is_incomplete_repair_packet(finding: &Finding) -> bool {
+    evidence_value(finding, "actionability_category: ") == Some("incomplete_repair_packet")
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -1743,6 +1821,90 @@ pub(crate) mod tests {
                     "`{disclosure}` must keep the finding non-delegatable"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    fn incomplete_packet_finding() -> Finding {
+        complete_finding()
+    }
+
+    /// The plain blockers name the test line, the matcher and the test that
+    /// moved, never the raw limitation id, and stay absent on a clean finding.
+    #[test]
+    fn plain_blockers_name_the_test_and_hide_the_limit_id() -> Result<(), String> {
+        let clean = complete_finding();
+        if typescript_advisory_blocker(&clean).is_some() {
+            return Err("a clean finding has no advisory blocker".to_string());
+        }
+        let mut dynamic = incomplete_packet_finding();
+        dynamic.evidence.push(
+            "typescript_limitation_sample: typescript_dynamic_assertion_unresolved at tests/a.test.ts:12"
+                .to_string(),
+        );
+        dynamic.evidence.push(
+            "typescript_limitation_why: typescript_dynamic_assertion_unresolved \u{2014} the matcher `.deepEqual(...)` receives a non-literal dynamic argument; x"
+                .to_string(),
+        );
+        let text = typescript_advisory_blocker(&dynamic)
+            .ok_or_else(|| "dynamic limitation must read a blocker".to_string())?;
+        if !text.contains("`tests/a.test.ts:12`")
+            || !text.contains("`.deepEqual(...)`")
+            || text.contains("typescript_dynamic_assertion_unresolved")
+        {
+            return Err(format!("unexpected dynamic blocker: {text}"));
+        }
+        let mut moved = incomplete_packet_finding();
+        moved.evidence.push(
+            "typescript_assertion_selection: no_predicate_relevant_assertion (throws on bad input)"
+                .to_string(),
+        );
+        moved.evidence.push(
+            "typescript_assertion_selection: no_predicate_relevant_assertion (other)".to_string(),
+        );
+        let text = typescript_advisory_blocker(&moved)
+            .ok_or_else(|| "moved selection must read a blocker".to_string())?;
+        if !text.contains("`throws on bad input` and 1 more")
+            || !text.contains(" 1 more asserts a different")
+            || text.contains("no_predicate")
+        {
+            return Err(format!("unexpected moved blocker: {text}"));
+        }
+        moved.evidence.push(
+            "typescript_assertion_selection: no_predicate_relevant_assertion (third)".to_string(),
+        );
+        let three = typescript_advisory_blocker(&moved)
+            .ok_or_else(|| "three moved selections must read a blocker".to_string())?;
+        if !three.contains(" 2 more assert a different") {
+            return Err(format!("plural group must use `assert`: {three}"));
+        }
+        let mut single = incomplete_packet_finding();
+        single.evidence.push(
+            "typescript_assertion_selection: no_predicate_relevant_assertion (only one)"
+                .to_string(),
+        );
+        let text = typescript_advisory_blocker(&single)
+            .ok_or_else(|| "single moved selection must read a blocker".to_string())?;
+        if !text.contains("`only one` asserts a different") {
+            return Err(format!("singular wording must use `asserts`: {text}"));
+        }
+        // A different actionability category keeps its own cause.
+        let mut other = complete_finding();
+        other
+            .evidence
+            .retain(|l| !l.starts_with("actionability_category: "));
+        other
+            .evidence
+            .push("actionability_category: missing_target_shape".to_string());
+        other.evidence.push(
+            "typescript_assertion_selection: no_predicate_relevant_assertion (x)".to_string(),
+        );
+        if typescript_advisory_blocker(&other).is_some() {
+            return Err("another category must not read a moved-selection blocker".to_string());
+        }
+        // The blocker is wording only: the guard still refuses the packet.
+        if typescript_gap_record_for(&moved).is_some() {
+            return Err("moved selection must stay non-delegatable".to_string());
         }
         Ok(())
     }

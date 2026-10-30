@@ -691,11 +691,11 @@ fn b6_dirty_production_premise_refuses_the_before_phase_and_a_dirty_test_still_r
     assert_exit_code(&before, 2, "dirty-premise before-phase")?;
     let text = combined_output(&before);
     for fragment in [
-        "repair attempt cannot start",
+        "ripr repair needs your source changes committed first",
         "src/lib.rs",
-        "to recover:",
+        "Commit them",
         "git commit -- src/lib.rs",
-        "No workflow was prepared and no repair attempt was started.",
+        "Nothing was started.",
     ] {
         if !text.contains(fragment) {
             return Err(format!(

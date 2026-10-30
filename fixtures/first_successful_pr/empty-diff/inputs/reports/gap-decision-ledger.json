@@ -6,5 +6,9 @@
   "summary": {
     "records_total": 0
   },
-  "records": []
+  "records": [],
+  "inputs": {
+    "source_kind": "repo_exposure",
+    "records": "repo-exposure.json"
+  }
 }
