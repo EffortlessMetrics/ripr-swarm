@@ -142,14 +142,7 @@ fn panicking_hover_handler_becomes_a_typed_error_and_the_session_keeps_serving()
         }
 
         // The session is still alive: the same handler now answers normally.
-        let (recovered, skipped) = wire.hover_with_skipped(11, &uri).await?;
-        // Server-initiated requests and notifications carry a `method`; a
-        // message without one is a response, which nothing was owed.
-        if let Some(stray) = skipped.iter().find(|m| m.get("method").is_none()) {
-            return Err(format!(
-                "a response was written for the dropped notification: {stray}"
-            ));
-        }
+        let recovered = wire.hover(11, &uri).await?;
         if recovered.get("error").is_some() || recovered.get("result").is_none() {
             return Err(format!(
                 "hover after a contained panic must succeed: {recovered}"
@@ -183,7 +176,14 @@ fn panicking_notification_is_dropped_and_the_session_keeps_serving() -> Result<(
         write_lsp_message(&mut wire.writer, did_save(&uri)).await?;
         // The hover is answered with its own success response, not an error
         // for the dropped notification.
-        let recovered = wire.hover(11, &uri).await?;
+        let (recovered, skipped) = wire.hover_with_skipped(11, &uri).await?;
+        // Server-initiated requests and notifications carry a `method`; a
+        // message without one is a response, which nothing was owed.
+        if let Some(stray) = skipped.iter().find(|m| m.get("method").is_none()) {
+            return Err(format!(
+                "a response was written for the dropped notification: {stray}"
+            ));
+        }
         if recovered.get("error").is_some() || recovered.get("result").is_none() {
             return Err(format!(
                 "request after a dropped notification must succeed: {recovered}"
