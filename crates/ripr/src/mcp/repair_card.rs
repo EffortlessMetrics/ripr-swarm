@@ -611,11 +611,8 @@ impl WorkspaceSession {
         // tool carrying the finding-level detail, and a not-ready card
         // carries the finding's `missing`/`recommended_next_step`.
         let mcp_detail_routes = mcp_detail_routes(&card_value, &item_canonical_id);
-        let not_ready = card_value
-            .pointer("/readiness/repair_ready")
-            .and_then(Value::as_bool)
-            != Some(true);
-        let finding_guidance = not_ready.then(|| super::gaps::finding_guidance(item));
+        let finding_guidance =
+            card_is_not_ready(&card_value).then(|| super::gaps::finding_guidance(item));
         let mut document = json!({
             "schema_version": REPAIR_CARD_SCHEMA_VERSION,
             "snapshot_id": snapshot_id,
@@ -651,6 +648,13 @@ impl WorkspaceSession {
         }
         bounded_document(document, RECOVERY_REPAIR_TOO_LARGE)
     }
+}
+
+/// Fail-closed: only an explicit `repair_ready: true` suppresses guidance.
+fn card_is_not_ready(card: &Value) -> bool {
+    card.pointer("/readiness/repair_ready")
+        .and_then(Value::as_bool)
+        != Some(true)
 }
 
 /// The CLI routes a card names whose finding-level detail `ripr_get_gap`
@@ -933,6 +937,27 @@ mod tests {
     }
 
     #[test]
+    fn guidance_is_withheld_only_for_an_explicitly_ready_card() {
+        // Negative control: a ready card carries no finding_guidance.
+        assert!(!card_is_not_ready(
+            &json!({ "readiness": { "repair_ready": true } })
+        ));
+        // Not ready, false, or malformed readiness all keep guidance (fail-closed).
+        assert!(card_is_not_ready(
+            &json!({ "readiness": { "repair_ready": false } })
+        ));
+        assert!(card_is_not_ready(&json!({ "readiness": {} })));
+        assert!(card_is_not_ready(&json!({})));
+        // mcp_detail_routes is independent of readiness: a ready card that
+        // names a CLI route still gets its MCP twin.
+        let ready = json!({
+            "readiness": { "repair_ready": true },
+            "detail_references": [{ "route": "ripr explain probe:x" }],
+        });
+        assert_eq!(mcp_detail_routes(&ready, "gap:x").len(), 1);
+    }
+
+    #[test]
     fn mcp_detail_routes_twin_only_cli_routes_once() {
         let card = json!({
             "canonical_next_action": { "stop": { "detail_route": "ripr agent packet --seam-id s --json" } },
@@ -1144,8 +1169,14 @@ mod tests {
         if guidance.pointer("/gap_route/tool").and_then(Value::as_str) != Some("ripr_get_gap") {
             return Err(format!("guidance must route to ripr_get_gap: {guidance}"));
         }
-        if guidance.get("missing").is_none() || guidance.get("recommended_next_step").is_none() {
-            return Err(format!("guidance lost missing/next step: {guidance}"));
+        let gap = session.get_gap(&canonical_id, None).map_err(|f| f.detail)?;
+        for field in ["missing", "recommended_next_step"] {
+            let served = gap.pointer(&format!("/item/{field}"));
+            if served.is_none() || guidance.get(field) != served {
+                return Err(format!(
+                    "guidance {field} must equal ripr_get_gap: {guidance} vs {served:?}"
+                ));
+            }
         }
         let routes = document
             .get("mcp_detail_routes")

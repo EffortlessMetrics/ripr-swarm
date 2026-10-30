@@ -1581,7 +1581,10 @@ fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
         Some(base) => format!(
             "the committed diff against requested base `{base}` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
         ),
-        None => "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear".to_string(),
+        None => match snapshot.outcome.kind {
+            AnalysisOutcomeKind::NoBehavioralCandidates => "no base was passed, so the default base was used; the diff has changed lines but none holds a behavior candidate to analyze (a different base may widen it). This is not an all-clear".to_string(),
+            _ => "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear".to_string(),
+        },
     };
     Some(json!({
         "why": why,
@@ -4634,6 +4637,12 @@ mod tests {
                 || !text.contains("worktree")
             {
                 return Err(format!("hint must name why, base and source: {text}"));
+            }
+            let default_why = document["empty_scope_hint"]["why"].to_string();
+            if (kind == AnalysisOutcomeKind::NoBehavioralCandidates)
+                == default_why.contains("the diff is empty")
+            {
+                return Err(format!("why must match the outcome kind: {default_why}"));
             }
             session.desired_base = Some("origin/main".to_string());
             let named = refresh_document(&session)["empty_scope_hint"]["why"].to_string();
