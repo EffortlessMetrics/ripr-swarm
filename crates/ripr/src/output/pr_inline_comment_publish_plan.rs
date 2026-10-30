@@ -25,6 +25,8 @@ const TITLE_FIELD_CHAR_BUDGET: usize = 200;
 /// Skip reason for a comment whose projected published body exceeds
 /// [`PUBLISHED_BODY_BYTE_CEILING`] (#4446).
 const SKIP_REASON_COMMENT_BODY_TOO_LARGE: &str = "comment_body_too_large";
+const SKIP_REASON_NOT_PUBLISHABLE: &str = "not_publishable";
+const GAP_STATE_STATIC_LIMITATION: &str = "static_limitation";
 /// Hard ceiling on the projected published body of one inline comment.
 ///
 /// GitHub rejects a comment body over 65,536 characters, and the generated
@@ -646,6 +648,20 @@ fn add_comment_item_plan(
 ) {
     let source_id = string_field(item, "id");
     let dedupe_key = string_field(item, "dedupe_key");
+    // A card with no test to suggest is a note about what RIPR could not
+    // follow. Posted as a review comment it reads as ripr's own bookkeeping
+    // ("repair route missing") on the author's code and takes a slot from a
+    // gap they can act on. It stays in comments.md and the summary comment.
+    if string_field(item, "gap_state").as_deref() == Some(GAP_STATE_STATIC_LIMITATION) {
+        report.skipped.push(PlanSkipped {
+            source_collection: "comments".to_string(),
+            source_id,
+            dedupe_key,
+            skip_reason: SKIP_REASON_NOT_PUBLISHABLE.to_string(),
+            message: "RIPR has no test to suggest for this card, so it is not posted as an inline comment.".to_string(),
+        });
+        return;
+    }
     let Some(dedupe_key) = dedupe_key else {
         report.blocked.push(PlanBlocked {
             source_collection: "comments".to_string(),
@@ -1134,6 +1150,9 @@ fn skipped_summary(reason: &str, count: usize) -> String {
         SKIP_REASON_COMMENT_BODY_TOO_LARGE => format!(
             "{count} recommendation was too large to post inline and remains in `comments.md`"
         ),
+        SKIP_REASON_NOT_PUBLISHABLE => {
+            format!("{count} recommendation has no test to suggest and stays in `comments.md`")
+        }
         "mode_off" => "inline comment planning is disabled".to_string(),
         _ => format!("{count} recommendation was skipped"),
     }
@@ -1727,6 +1746,67 @@ mod tests {
                 .iter()
                 .all(|skipped| skipped.skip_reason != "cap_reached"),
             "SPEC-0068 collapses the historical publish-plan cap_reached token"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_static_limitation_is_never_planned_as_an_inline_comment() -> Result<(), String> {
+        // Two limitation cards share a line and sit ahead of a real gap, as
+        // they did on a three-file pull request. Only the gap is published,
+        // and the limitations do not use up the cap.
+        let guidance = r#"{"comments":[
+            {"id":"a","gap_state":"static_limitation","dedupe_key":"ripr:a","reason":"RIPR has no test to suggest here.","placement":{"path":"src/parse.rs","line":2}},
+            {"id":"b","gap_state":"static_limitation","dedupe_key":"ripr:b","reason":"RIPR has no test to suggest here.","placement":{"path":"src/parse.rs","line":2}},
+            {"id":"c","gap_state":"actionable","dedupe_key":"ripr:c","missing_discriminator":"20 (equality boundary)","placement":{"path":"src/pricing.rs","line":2}}
+        ],"summary_only":[],"suppressed":[]}"#;
+        let report = build_comment_publish_plan_report(CommentPublishPlanInput {
+            root: ".".to_string(),
+            generated_at: "2026-05-10T12:00:00Z".to_string(),
+            mode: CommentMode::Inline,
+            max_inline_comments: 1,
+            pr_guidance_path: Some("comments.json".to_string()),
+            pr_guidance_json: Some(Ok(guidance.to_string())),
+            existing_comments_path: None,
+            existing_comments_json: None,
+            permission: CommentPermissionContext {
+                pull_request: Some(7),
+                event_name: Some("pull_request".to_string()),
+                head_repo: Some("o/r".to_string()),
+                base_repo: Some("o/r".to_string()),
+                token_available: true,
+                write_permission: true,
+            },
+        });
+
+        assert_eq!(report.summary.publishable, 1);
+        assert_eq!(report.operations.len(), 1);
+        assert_eq!(report.operations[0].source_id, "c");
+        let body = report.operations[0].body.as_deref().ok_or("missing body")?;
+        assert!(body.contains("20 (equality boundary)"), "{body}");
+        let skipped: Vec<(&str, &str)> = report
+            .skipped
+            .iter()
+            .map(|item| {
+                (
+                    item.source_id.as_deref().unwrap_or(""),
+                    item.skip_reason.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            skipped,
+            [("a", "not_publishable"), ("b", "not_publishable")]
+        );
+        // The internal fallback body never reaches a pull request.
+        assert!(
+            !render_comment_publish_plan_json(&report)?.contains("repair route missing"),
+            "a limitation must not fall through to the placeholder repair body"
+        );
+        let markdown = render_comment_publish_plan_markdown(&report);
+        assert!(
+            markdown.contains("2 recommendation has no test to suggest and stays in `comments.md`"),
+            "{markdown}"
         );
         Ok(())
     }
