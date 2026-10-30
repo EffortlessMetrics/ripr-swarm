@@ -1369,7 +1369,7 @@ fn unreadable_ref_without_base_is_not_reported_as_unborn() -> Result<(), String>
     let original = fs::metadata(&reference)
         .map_err(|e| format!("ref metadata: {e}"))?
         .permissions();
-    fs::set_permissions(&reference, fs::Permissions::from_mode(0))
+    fs::set_permissions(&reference, fs::Permissions::from_mode(0o000))
         .map_err(|e| format!("make ref unreadable: {e}"))?;
     let result = (|| {
         if fs::read(&reference).is_ok() {
