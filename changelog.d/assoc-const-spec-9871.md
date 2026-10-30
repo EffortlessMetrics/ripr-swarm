@@ -1,0 +1,1 @@
+- Specify the associated-constant extension of the same-file direct-reader value flow (RIPR-SPEC-0048): `Self::NAME` in a trait default method, `if`/`else` readers, and the must-not-claim cases the analyzer slice must satisfy first.

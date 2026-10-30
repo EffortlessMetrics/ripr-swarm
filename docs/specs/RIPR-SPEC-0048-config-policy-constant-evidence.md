@@ -189,7 +189,8 @@ of these stays a limitation or keeps its prior state:
 - the constant name is shadowed by a local, parameter or pattern binding in the
   reader;
 - the constant is declared more than once in the file (associated consts per
-  impl, a local `const`);
+  impl, a local `const`; the single-impl associated-constant shape is admitted
+  by the extension below);
 - the reader sits in another file or behind a `cfg` gate;
 - the test's expected value is the constant itself or computed from it
   (self-computed oracle, RIPR-SPEC-0035);
@@ -257,6 +258,54 @@ test, that holds on the current value fail (each neighbour's breaking
 assertion is cited); if any neighbour goes unnoticed, or the constant is not an
 integer, it keeps its abstention. A rewrite is never reported as a gap here:
 the neighbours are a sample of the wrong values, not all of them.
+
+#### Associated-constant extension (selected by `shape-assoc-const-value`)
+
+The value-flow evaluation above refuses a constant declared more than once in
+the file, which excludes an associated constant (`impl Limits for Small { const
+MAX: u32 = 10; }`) read through `Self::MAX` in a trait default method. This
+extension admits exactly that shape and nothing wider. It reuses the same
+evaluator, outcomes and neighbour rule; only the binding step and two grammar
+terms change.
+
+Binding. The edited line is a single-line `const NAME: T = expr;` directly
+inside one `impl Trait for Type { ... }` block (no generics on the impl, no
+`cfg`) at the module scope of the file. `Trait` is declared in the same file
+and declares `NAME` as a required constant (no default value). The reader is a
+provided function of `Trait` with no `self` receiver, whose body is evaluable
+and reads `Self::NAME`; `Self` is bound to `Type`. A related test calls it as
+`Type::reader(..)` or `<Type as Trait>::reader(..)` with literal arguments.
+The edit is evaluated only through a call that names `Type`.
+
+Grammar additions. `Self::NAME` is the constant. `if cond { a } else { b }`
+(including `else if` chains) is evaluable when the condition and every branch
+are evaluable single expressions; an `if` without `else`, `match`, `let`,
+loops and early `return` stay unevaluable.
+
+Must-not-claim (authored first; each keeps its prior state, `static_unknown`
+with reach `weak`):
+
+- another `impl Trait for Other` also defines `NAME` and the test calls
+  `Other::reader`, so the edited impl is not what the test reads;
+- the test calls the reader through a generic parameter (`T::reader`), a trait
+  object or an unqualified path, so `Self` is not statically `Type`;
+- the trait gives `NAME` a default value and the edited impl is not the only
+  definition the call can reach;
+- the impl block is generic, `cfg`-gated, or nested inside a function;
+- the reader overrides the provided function inside the edited impl, so the
+  default body is not the code that runs;
+- a branch or the `if` condition is unevaluable (a call, lookup or `match`);
+- the expected value in the test is `Type::NAME` or computed from it.
+
+Positive: the `shape-assoc-const-value` rewrite (`10` to `5 + 5`, test pins
+`clamp(50)` to `10` and `clamp(5)` to `5`) is `exposed`, because both neighbours
+(9 and 11) flip the first assertion. A changed value (`10` to `20`) with the
+same tests is `exposed`; the same value change under tests that never reach a
+clamped input is `weakly_exposed`.
+
+Delivery order: this amendment, then the authored negatives with the existing
+positive left at its current accepted verdict, then the analyzer slice, which
+removes `shape-assoc-const-value` from `missed-credit.toml`.
 
 The first implementation slice after this spec should target only the
 same-file direct-reader row; the slice after it targets only `opaque_config_lookup`. Generated output, macro output, dynamic dispatch,
