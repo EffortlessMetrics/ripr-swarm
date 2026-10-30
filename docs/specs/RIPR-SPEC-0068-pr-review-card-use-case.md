@@ -285,8 +285,10 @@ these states as success:
   never planned as an inline comment: the publish plan skips it with
   `not_publishable`, and it stays in `comments.md` and the summary comment.
   Slots are filled by gaps first: when the inline or summary cap would drop a
-  card, limitation cards are dropped before actionable ones. Its annotation
-  is a `::notice` rather than a `::warning`. A stale inline comment an older
+  card, limitation cards are dropped before actionable ones. The annotation
+  of a card with a present non-actionable `gap_state` is a `::notice` rather
+  than a `::warning`; a card with no `gap_state` is also skipped but keeps the
+  `::warning`, because a missing state is not an established limitation. A stale inline comment an older
   run posted for such a card is planned for deletion.
 - A fourth qualifying seam appears in the summary, or is skipped by
   the inline-comment publish plan, with reason
