@@ -480,7 +480,7 @@ fn observed_discriminator_values(
         .then(|| boundary_constant(owner, &right, index))
         .flatten();
     let mut facts = Vec::new();
-    let replaced = replaced_equality_constant(probe);
+    let replaced = replaced_equality_constant(probe, owner, owner_source);
 
     for row in call_values {
         let inputs: super::value_transfer::ExactInputs = row
@@ -610,6 +610,11 @@ fn observed_discriminator_values(
         }
     }
 
+    // #10856: a row that an earlier branch or early return handles never
+    // reaches the changed equality, so rows on its constants prove nothing.
+    if equality_line_may_be_diverted(probe, owner, owner_source) {
+        facts.retain(|fact| !fact.value.contains(" == "));
+    }
     facts
 }
 
@@ -2600,7 +2605,7 @@ fn missing_boundary_discriminator(
     // new one does. Only a bare `left == literal` / `left != literal` line
     // on both sides of the edit qualifies; a compound predicate, a changed
     // operand or a non-literal constant keeps the missing equality.
-    let replaced_constant = replaced_equality_constant(probe);
+    let replaced_constant = replaced_equality_constant(probe, owner, owner_source);
     let replaced_row_observed = replaced_constant.as_ref().is_some_and(|old| {
         exact_rows.iter().any(|(lefts, _)| {
             lefts
@@ -2617,6 +2622,15 @@ fn missing_boundary_discriminator(
         || replaced_row_observed
         || parameter_equality(left_credit.as_deref(), right_credit.as_deref());
     let constant_named = constant_passed(left_credit.as_deref());
+    if (equality_observed || constant_named)
+        && equality_line_may_be_diverted(probe, owner, owner_source)
+    {
+        *unresolved = Some(
+            "an earlier branch or early return may take a related test's row away from the changed equality, so ripr cannot tell which side a test reaches"
+                .to_string(),
+        );
+        return None;
+    }
     if equality_observed || constant_named {
         return None;
     }
@@ -5761,6 +5775,63 @@ fn same_comparison_shape(before: &str, after: &str) -> bool {
     }
 }
 
+/// The changed line is an equality (`==` or `!=`) and a decision before it can
+/// take a row away from it (#10856).
+fn equality_line_may_be_diverted(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    owner_source: Option<&str>,
+) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&probe.expression);
+    // The comparison the boundary reads, chosen as `comparison_operands`
+    // does: a compound line whose credited comparison is `<` or `>=` keeps
+    // its unchanged `==` conjunct out of this rule.
+    let operator = [">=", "<=", "==", "!=", ">", "<"]
+        .into_iter()
+        .find(|operator| masked.contains(operator));
+    // A match-arm guard (`p if other == 0 =>`) is ordered by the match itself,
+    // not by statements before it; earlier arms are not read here.
+    let on_match_arm = owner_source
+        .and_then(|source| source.lines().nth(probe.location.line.saturating_sub(1)))
+        .is_some_and(|line| line.contains("=>"));
+    matches!(operator, Some("==" | "!="))
+        && !on_match_arm
+        && owner_source.is_some_and(|source| {
+            !changed_line_is_first_decision(owner.start_line, source, probe.location.line)
+        })
+}
+
+/// Whether nothing in `owner` before the changed line can divert a row away
+/// from it: no earlier `if`, `match`, loop, `return`, `?`, `break` or
+/// `continue`. A row that an earlier branch or early return handles never
+/// reaches the changed predicate, so equal-to-a-constant rows prove nothing
+/// about it (#10856). Fails closed on unreadable source.
+fn changed_line_is_first_decision(start_line: usize, source: &str, line: usize) -> bool {
+    let head: Vec<&str> = source
+        .lines()
+        .skip(start_line.saturating_sub(1))
+        .take(line.saturating_sub(start_line))
+        .collect();
+    if head.is_empty() {
+        return false;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&head.join("\n"));
+    // The signature (up to the body's opening brace) is not control flow.
+    let Some((_, body)) = masked.split_once('{') else {
+        return false;
+    };
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    if body.contains('?') || body.contains("=>") {
+        return false;
+    }
+    !body.split(|ch: char| !is_word(ch)).any(|word| {
+        matches!(
+            word,
+            "if" | "else" | "match" | "while" | "for" | "loop" | "return" | "break" | "continue"
+        )
+    })
+}
+
 /// The literal a changed bare equality line replaced: `before` and
 /// `probe.expression` are both exactly `left == literal` (or `!=`, after
 /// an optional leading `if` and trailing `{`) with the same left operand and
@@ -5774,7 +5845,17 @@ struct ReplacedConstant {
     value: String,
 }
 
-fn replaced_equality_constant(probe: &Probe) -> Option<ReplacedConstant> {
+fn replaced_equality_constant(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    owner_source: Option<&str>,
+) -> Option<ReplacedConstant> {
+    changed_line_is_first_decision(owner.start_line, owner_source?, probe.location.line)
+        .then(|| replaced_literal_swap(probe))
+        .flatten()
+}
+
+fn replaced_literal_swap(probe: &Probe) -> Option<ReplacedConstant> {
     fn bare_equality(text: &str) -> Option<(String, &'static str, String)> {
         let text = text.trim();
         let text = text.strip_prefix("if ").unwrap_or(text);
@@ -9288,7 +9369,7 @@ assert_eq!(input.amount, 100);"#
         let replaced = |before: &str, after: &str| {
             let mut p = probe(ProbeFamily::Predicate, after);
             p.before = Some(before.to_string());
-            replaced_equality_constant(&p).map(|c| c.text)
+            replaced_literal_swap(&p).map(|c| c.text)
         };
         assert_eq!(
             replaced("if label == \"alpha\" {", "if label == \"beta\" {"),
@@ -9327,7 +9408,28 @@ assert_eq!(input.amount, 100);"#
         }
         let mut no_before = probe(ProbeFamily::Predicate, "n == 6");
         no_before.before = None;
-        assert!(replaced_equality_constant(&no_before).is_none());
+        assert!(replaced_literal_swap(&no_before).is_none());
+    }
+
+    /// #10856: an earlier branch, loop or early exit can take a row away from
+    /// the changed predicate.
+    #[test]
+    fn a_row_is_only_credited_when_nothing_decides_before_the_changed_line() {
+        let first = |src: &str, line: usize| changed_line_is_first_decision(1, src, line);
+        let plain = "fn f(n: u32) -> u32 {\n    let m = n + 1;\n    if m == 5 {\n        1\n    } else {\n        0\n    }\n}\n";
+        assert!(first(plain, 3));
+        let chain = "fn f(n: u32) -> u32 {\n    if n >= 3 {\n        7\n    } else if n == 5 {\n        1\n    } else {\n        0\n    }\n}\n";
+        assert!(!first(chain, 4));
+        let early = "fn f(n: u32) -> u32 {\n    if n > 3 {\n        return 9;\n    }\n    if n == 5 {\n        1\n    } else {\n        0\n    }\n}\n";
+        assert!(!first(early, 5));
+        let tried = "fn f(n: &str) -> Option<u32> {\n    let k = n.parse::<u32>().ok()?;\n    if k == 5 {\n        Some(1)\n    } else {\n        None\n    }\n}\n";
+        assert!(!first(tried, 3));
+        let looped = "fn f(n: u32) -> u32 {\n    for i in 0..n {\n        if i == 5 {\n            return 1;\n        }\n    }\n    0\n}\n";
+        assert!(!first(looped, 3));
+        // A keyword inside a string or comment is not control flow.
+        let quoted = "fn f(n: u32) -> u32 {\n    let s = \"if x { return }\"; // else\n    if n == 5 {\n        1\n    } else {\n        0\n    }\n}\n";
+        assert!(first(quoted, 3));
+        assert!(!first("", 3));
     }
 
     /// #9116: an explicit `return` normalises only to a top-level comparison.

@@ -1,0 +1,43 @@
+//! An equality an earlier branch or early return can bypass: a row on the
+//! compared constant that is handled before the changed line proves nothing
+//! about it (#10856). One owner per shape.
+
+pub fn chain_old(n: u32) -> u32 {
+    if n >= 3 {
+        7
+    } else if n == 5 {
+        1
+    } else {
+        0
+    }
+}
+
+pub fn early_old(n: u32) -> u32 {
+    if n > 3 { return 9; }
+    if n == 5 { 1 } else { 0 }
+}
+
+pub fn early_new(n: u32) -> u32 {
+    if n > 3 { return 9; }
+    if n == 5 { 1 } else { 0 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn five_takes_the_first_branch_of_the_chain() {
+        assert_eq!(chain_old(5), 7);
+    }
+
+    #[test]
+    fn five_returns_before_the_equality() {
+        assert_eq!(early_old(5), 9);
+    }
+
+    #[test]
+    fn six_returns_before_the_equality() {
+        assert_eq!(early_new(6), 9);
+    }
+}

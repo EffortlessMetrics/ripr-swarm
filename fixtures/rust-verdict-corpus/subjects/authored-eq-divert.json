@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-eq-divert",
+  "origin": "authored",
+  "version_label": "authored 2026-10-27 for #10856 (an earlier branch or early return takes the pinned row away from the changed equality)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "64fde37599d808830d8c59dcddaadeeb7541a05ab1a850000410594991983de3"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "c1d84505b883a17fa0b1d0d4d8debc301fa1f178424761c5aeb65cb2b86ed874"
+    }
+  ]
+}
