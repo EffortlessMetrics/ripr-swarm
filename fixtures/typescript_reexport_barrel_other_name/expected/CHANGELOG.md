@@ -289,3 +289,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_barrel_other_name (25)
+
+Reason:
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
+
+Command:
+`cargo xtask goldens bless typescript_reexport_barrel_other_name --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -47,6 +47,7 @@ Preview actionability
   raw evidence: src/load.ts:3 (typescript_preview_probe) source=probe:src_load.ts:typescript_preview:fd09bc48 owner=load
 Static exposure
   weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.
 Evidence
   shared evidence: E1, E2, E3, E4
   - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws error matching "TOKEN_REQUIRED"`
@@ -107,6 +108,7 @@ Preview actionability
   raw evidence: src/load.ts:5 (typescript_preview_probe) source=probe:src_load.ts:typescript_preview:2209cfc8 owner=load
 Static exposure
   weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.
 Evidence
   shared evidence: E1, E2, E3, E4
   - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == "ready"`
