@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- SARIF rule titles in the code-scanning Security tab now say what the static evidence suggests ("Changed behavior may not be caught by the current tests") instead of restating the class name, and each finding message leads with the analyzer's missing check and is bounded to 400 characters; the full evidence stays in `properties`. Same-line result folding and line-independent seam fingerprints remain open (#11219).

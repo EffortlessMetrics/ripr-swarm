@@ -107,7 +107,7 @@ Every SARIF result should include:
 - `ruleId` matching the tables above;
 - `level` from configured severity;
 - one primary physical location when file and line are known;
-- a short message that uses static exposure vocabulary;
+- a short message that uses static exposure vocabulary, leads with the first missing check when one exists, and is bounded to 400 characters (full evidence stays in `properties`; #11219);
 - `partialFingerprints.riprFingerprintV1`;
 - `properties.tool = "ripr"`;
 - `properties.kind = "finding"` or `"seam"`;
