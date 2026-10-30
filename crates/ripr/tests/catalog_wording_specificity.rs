@@ -119,6 +119,7 @@ fn native_mutants_separate_structural_and_value_observers() -> Result<(), String
             ("verifies catalog consistency", false),
             ("checks catalog consistency", catches),
             ("xxxxxxxxxxxxxxxxxxxxxxxxxxxx", label == "direct"),
+            ("", true),
         ] {
             let source = SOURCE.replace("verifies catalog consistency", wording);
             let path = root.join("fixture.rs");
