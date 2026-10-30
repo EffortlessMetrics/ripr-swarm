@@ -17360,6 +17360,9 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/import_writer_tests.rs::an_imported_patch_name_does_not_unsettle_the_argnames",
+  "crates/ripr/src/analysis/language/python/import_writer_tests.rs::a_call_or_an_alias_of_the_writer_keeps_the_limit",
+  "crates/ripr/src/analysis/language/python/module_constants/tests.rs::importing_a_writer_name_is_not_a_dynamic_write",
   "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_refuses_deferred_owner_bodies",
   "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_observes_the_written_field",
   "crates/ripr/src/analysis/language/python/assertion_helper_tests.rs::a_same_file_assertion_helper_cannot_borrow_a_receiver_or_field",
