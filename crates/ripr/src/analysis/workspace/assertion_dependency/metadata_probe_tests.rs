@@ -159,7 +159,9 @@ fn metadata_capture_refuses_oversize_instead_of_accepting_truncated_bytes() -> R
             .len() as u64,
         BUDGET
     );
-    output.set_len(BUDGET + 1).map_err(|error| error.to_string())?;
+    output
+        .set_len(BUDGET + 1)
+        .map_err(|error| error.to_string())?;
     assert_eq!(
         read_metadata_probe_output(&fixture.output()),
         Err(MetadataProbeFailure::OutputLimit)
@@ -210,7 +212,13 @@ fn metadata_failure_messages_do_not_invent_package_or_toolchain_causes() {
         MetadataProbeFailure::CaptureRead(std::io::ErrorKind::NotFound),
     ];
     let messages = failures.map(|failure| failure.to_string());
-    assert_eq!(messages.iter().collect::<std::collections::BTreeSet<_>>().len(), 10);
+    assert_eq!(
+        messages
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        10
+    );
     assert_eq!(
         messages[7],
         "Offline Cargo metadata exited unsuccessfully (status 101)"
@@ -273,7 +281,11 @@ version = '0.0.0'
     let packages = metadata["packages"]
         .as_array()
         .ok_or("missing packages in real metadata")?;
-    assert_eq!(packages.len(), 1, "the positive must contain its exact package");
+    assert_eq!(
+        packages.len(),
+        1,
+        "the positive must contain its exact package"
+    );
     let package = &packages[0];
     assert_eq!(package["name"], "ripr-metadata-probe-control");
     assert_eq!(package["version"], "0.0.0");
@@ -300,8 +312,7 @@ version = '0.0.0'
     // A native Cargo refusal is neither a launch failure nor an empty success.
     // The malformed manifest is the stimulus, not an inferred missing package.
     let invalid_manifest = "[package\n";
-    std::fs::write(root.join("Cargo.toml"), invalid_manifest)
-        .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("Cargo.toml"), invalid_manifest).map_err(|error| error.to_string())?;
     let refused = metadata_probe_result(&root);
     assert!(
         matches!(
@@ -312,8 +323,7 @@ version = '0.0.0'
     );
     assert!(metadata_probe(&root).is_none());
     assert_eq!(
-        std::fs::read_to_string(root.join("Cargo.toml"))
-            .map_err(|error| error.to_string())?,
+        std::fs::read_to_string(root.join("Cargo.toml")).map_err(|error| error.to_string())?,
         invalid_manifest
     );
 
