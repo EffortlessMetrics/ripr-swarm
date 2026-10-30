@@ -80,6 +80,12 @@ pub(crate) fn render_context_packet_dto(packet: &ContextPacket) -> String {
     field(&mut out, 1, "classification", packet.classification, true);
     field(&mut out, 1, "severity", packet.severity, true);
     float_field(&mut out, 1, "confidence", packet.confidence, true);
+    super::formatter::confidence_basis_fields(
+        &mut out,
+        1,
+        &packet.confidence_basis,
+        packet.confidence_why_capped.as_deref(),
+    );
     out.push_str("  \"probe\": {\n");
     field(&mut out, 2, "id", &packet.probe.id, true);
     field(&mut out, 2, "family", &packet.probe.family, true);
@@ -402,6 +408,7 @@ mod tests {
     fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib_rs:9:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {

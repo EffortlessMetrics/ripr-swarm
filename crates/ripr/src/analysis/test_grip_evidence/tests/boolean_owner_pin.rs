@@ -264,16 +264,20 @@ fn a_contradicted_boolean_assertion_withholds_the_whole_tests_promotion() -> Res
         StageState::Yes,
         "the baseline-failing test keeps no activation credit: {full:?}"
     );
-    assert_ne!(
+    // Should-stay control (docs/LEARNINGS.md): the repo surface's verdict
+    // for this contradictory sibling is exactly `activation_unknown` — the
+    // typed withholding #10980 makes the diff surface match. If a change
+    // moves this class, it must move both surfaces together.
+    assert_eq!(
         crate::analysis::seam_classification::classify_seam(&seam, &full),
-        SeamGripClass::StronglyGripped,
-        "a failing test cannot make the seam strongly gripped: {full:?}"
+        SeamGripClass::ActivationUnknown,
+        "the repo verdict for the contradictory sibling is pinned: {full:?}"
     );
     let context = CompactGripContext::new(&index);
     let compact = compact_evidence_for_seam(&seam, &context);
-    assert_ne!(
+    assert_eq!(
         crate::analysis::seam_classification::classify_seam(&seam, &compact),
-        SeamGripClass::StronglyGripped,
+        SeamGripClass::ActivationUnknown,
         "compact evidence must keep the same refusal: {compact:?}"
     );
     Ok(())

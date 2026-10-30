@@ -323,6 +323,7 @@ mod tests {
         let related_tests = (0..related_test_count).map(make_related_test).collect();
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: format!("probe:{file}:{line}:test_family:aabbccdd"),
             canonical_gap: None,
             probe: Probe {

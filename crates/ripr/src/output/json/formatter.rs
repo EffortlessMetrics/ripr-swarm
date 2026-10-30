@@ -85,9 +85,67 @@ pub(crate) fn escape_into(out: &mut String, value: &str) {
     }
 }
 
+/// Renders `confidence_basis` (list of `{code, summary}`) and the one-line
+/// `confidence_why_capped` for a preview finding (#10700). Writes nothing for
+/// an empty basis so Rust output bytes are unchanged.
+pub(crate) fn confidence_basis_fields(
+    out: &mut String,
+    indent: usize,
+    entries: &[crate::domain::ConfidenceBasisEntry],
+    why_capped: Option<&str>,
+) {
+    if entries.is_empty() {
+        return;
+    }
+    let pad = "  ".repeat(indent);
+    out.push_str(&format!("{pad}\"confidence_basis\": [\n"));
+    for (idx, entry) in entries.iter().enumerate() {
+        out.push_str(&format!(
+            "{pad}  {{\"code\": \"{}\", \"summary\": \"{}\"}}{}\n",
+            escape(entry.code),
+            escape(&entry.summary),
+            if idx + 1 != entries.len() { "," } else { "" }
+        ));
+    }
+    out.push_str(&format!("{pad}],\n"));
+    if let Some(line) = why_capped {
+        field(out, indent, "confidence_why_capped", line, true);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{array_field, escape, field, float_field, number_field};
+
+    #[test]
+    fn confidence_basis_fields_write_nothing_when_empty() {
+        let mut out = String::new();
+        super::confidence_basis_fields(&mut out, 1, &[], Some("ignored"));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn confidence_basis_fields_render_valid_escaped_json() -> Result<(), String> {
+        let entries = vec![
+            crate::domain::ConfidenceBasisEntry {
+                code: "a",
+                summary: "say \"hi\"\n".to_string(),
+            },
+            crate::domain::ConfidenceBasisEntry {
+                code: "b",
+                summary: "two".to_string(),
+            },
+        ];
+        let mut out = String::from("{\n");
+        super::confidence_basis_fields(&mut out, 1, &entries, Some("why \\ line"));
+        out.push_str("  \"next\": 1\n}");
+        let value: serde_json::Value =
+            serde_json::from_str(&out).map_err(|e| format!("{e}: {out}"))?;
+        assert_eq!(value["confidence_basis"][0]["summary"], "say \"hi\"\n");
+        assert_eq!(value["confidence_basis"][1]["code"], "b");
+        assert_eq!(value["confidence_why_capped"], "why \\ line");
+        Ok(())
+    }
 
     #[test]
     fn escapes_json() {
