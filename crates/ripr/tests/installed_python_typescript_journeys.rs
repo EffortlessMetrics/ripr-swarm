@@ -102,9 +102,18 @@ fn materialize(
 }
 
 fn ripr_output(launch: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    ripr_output_env(launch, args, &[])
+}
+
+fn ripr_output_env(
+    launch: &Path,
+    args: &[&str],
+    env: &[(&str, std::ffi::OsString)],
+) -> Result<std::process::Output, String> {
     Command::new(env!("CARGO_BIN_EXE_ripr"))
         .current_dir(launch)
         .args(args)
+        .envs(env.iter().map(|(key, value)| (*key, value)))
         .output()
         .map_err(|error| format!("spawn ripr {args:?}: {error}"))
 }
@@ -228,6 +237,284 @@ fn attempt_id_of(manifest: &serde_json::Value) -> Result<String, String> {
         .as_str()
         .map(str::to_string)
         .ok_or_else(|| "manifest has no repair_attempt_id".to_string())
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn committed_python_dirty_file_requires_fresh_check() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_python",
+        "head",
+        "py-committed-base",
+        None,
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    std::fs::write(root.join("notes.md"), "initial\n").map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "notes.md"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "notes"])?;
+    std::fs::write(root.join("notes.md"), "changed\n").map_err(|e| e.to_string())?;
+    let (ok, check) = ripr(
+        &decoy,
+        &["check", "--root", &root_arg, "--base", &base, "--committed"],
+    )?;
+    expect_exit(ok, true, "committed dirty check")?;
+    need(
+        &check,
+        "committed-only check excluded dirty tracked files",
+        "dirty files withheld",
+    )?;
+    if gap_start_tokens(&check).is_some() {
+        return Err(format!("dirty committed check offered a start: {check}"));
+    }
+    let production = root.join("pricing/core.py");
+    let source = std::fs::read_to_string(&production).map_err(|e| e.to_string())?;
+    std::fs::write(&production, format!("{source}\n# excluded dirty source\n"))
+        .map_err(|e| e.to_string())?;
+    let (dirty_ok, dirty) = ripr(
+        &decoy,
+        &["check", "--root", &root_arg, "--base", &base, "--committed"],
+    )?;
+    expect_exit(dirty_ok, true, "committed check with excluded source")?;
+    need(
+        &dirty,
+        "uncommitted source and test changes were not analyzed",
+        "excluded source disclosure",
+    )?;
+    if gap_start_tokens(&dirty).is_some() {
+        return Err(format!("excluded source offered a start: {dirty}"));
+    }
+    std::fs::write(&production, source).map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "notes.md"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "notes change"])?;
+    let (clean_ok, clean) = ripr(
+        &decoy,
+        &["check", "--root", &root_arg, "--base", &base, "--committed"],
+    )?;
+    expect_exit(clean_ok, true, "fresh committed check")?;
+    let (gap, printed_base) =
+        gap_start_tokens(&clean).ok_or_else(|| format!("fresh check missing start: {clean}"))?;
+    if printed_base != base {
+        return Err(format!("wrong base: {printed_base}"));
+    }
+    let (ok, result) = ripr(
+        &decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            &gap,
+            "--base",
+            &printed_base,
+            "--root",
+            &root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "committed route after commit")?;
+    need(&result, "Repair prepared", "prepared attempt")?;
+    Ok(())
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn dirty_python_repair_start_keeps_original_diff_after_commit() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_python",
+        "head",
+        "py-base-pin",
+        None,
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let expected = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?;
+    let expected = expected.trim().to_string();
+    let path = root.join("pricing/core.py");
+    let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    std::fs::write(&path, format!("{source}\n# dirty production\n")).map_err(|e| e.to_string())?;
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "dirty check")?;
+    need(
+        &check,
+        "Commit your production change first",
+        "commit prerequisite",
+    )?;
+    let (gap, base) = gap_start_tokens(&check).ok_or_else(|| format!("missing start: {check}"))?;
+    if base != expected {
+        return Err(format!("expected original base {expected}, got {base}"));
+    }
+    fixture_git_ok(&root, &["add", "pricing/core.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "production"])?;
+    let (wrong_ok, wrong) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", "HEAD", "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(wrong_ok, false, "moving base negative control")?;
+    need(&wrong, "names no current Python gap", "moving base refusal")?;
+    let (ok, result) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "printed base after commit")?;
+    need(&result, "Repair prepared", "prepared attempt")?;
+    Ok(())
+}
+
+#[cfg(all(feature = "lang-python", unix))]
+#[test]
+fn dirty_python_check_withholds_start_when_git_inspection_fails() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let (guard, root, decoy) = materialize(
+        "blind_journey_installed_python",
+        "head",
+        "py-git-failure",
+        None,
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let path = root.join("pricing/core.py");
+    let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    std::fs::write(&path, format!("{source}\n# dirty production\n")).map_err(|e| e.to_string())?;
+    let args = ["check", "--root", &root_arg, "--base", "HEAD~1"];
+    let (ok, normal) = ripr(&decoy, &args)?;
+    expect_exit(ok, true, "normal check")?;
+    gap_start_tokens(&normal).ok_or_else(|| format!("normal check had no start: {normal}"))?;
+    let bin = guard.0.join("git-wrapper");
+    std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
+    let wrapper = bin.join("git");
+    std::fs::write(&wrapper, "#!/bin/sh\ncase \" $* \" in *\" rev-parse --show-prefix \"*) exit 1;; esac\nexec \"$RIPR_TEST_REAL_GIT\" \"$@\"\n").map_err(|e| e.to_string())?;
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| e.to_string())?;
+    let inherited_path = std::env::var_os("PATH").ok_or("PATH missing")?;
+    let git = std::env::split_paths(&inherited_path)
+        .map(|dir| {
+            if dir.is_absolute() {
+                dir
+            } else {
+                decoy.join(dir)
+            }
+            .join("git")
+        })
+        .find(|path| {
+            path.metadata()
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        })
+        .ok_or("git missing from PATH")?
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let path =
+        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&inherited_path)))
+            .map_err(|e| e.to_string())?;
+    let output = ripr_output_env(
+        &decoy,
+        &args,
+        &[
+            ("PATH", path.clone()),
+            ("RIPR_TEST_REAL_GIT", git.clone().into_os_string()),
+        ],
+    )?;
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    expect_exit(
+        output.status.success(),
+        true,
+        "check with failed inspection",
+    )?;
+    need(
+        &text,
+        "could not validate the prerequisites for the repair start",
+        "honest refusal",
+    )?;
+    if gap_start_tokens(&text).is_some() {
+        return Err(format!("failed inspection offered a start: {text}"));
+    }
+    // Status's routed-pilot consumer must preserve the same uncertainty.
+    fixture_git_ok(&root, &["update-ref", "refs/remotes/origin/main", "HEAD~1"])?;
+    let pilot = root.join("target/ripr/pilot/pilot-summary.json");
+    std::fs::create_dir_all(pilot.parent().ok_or("pilot parent missing")?)
+        .map_err(|e| e.to_string())?;
+    std::fs::write(&pilot, r#"{"status":"complete","top_actionable_seams":[],"python_first_use":null,"language_routes":{"state":"required","routes":[{"language":"python","enabled":true,"command":"ripr check --root ."}]},"next":{"repair_command":null}}"#).map_err(|e| e.to_string())?;
+    let (status_ok, normal_status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+    expect_exit(status_ok, true, "normal status")?;
+    need(
+        &normal_status,
+        "prints the gap-bound start",
+        "normal status route",
+    )?;
+    let status = ripr_output_env(
+        &decoy,
+        &["agent", "status", "--root", &root_arg],
+        &[("PATH", path), ("RIPR_TEST_REAL_GIT", git.into_os_string())],
+    )?;
+    let status_text = String::from_utf8_lossy(&status.stdout);
+    expect_exit(
+        status.status.success(),
+        true,
+        "status with failed inspection",
+    )?;
+    need(
+        &status_text,
+        "status could not confirm a gap-bound start",
+        "status uncertainty",
+    )?;
+    if status_text.contains("prints the gap-bound start") {
+        return Err(format!(
+            "failed inspection also advertised a start: {status_text}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn dirty_typescript_start_uses_diverged_merge_base() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "ts-base-pin",
+        None,
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let original_base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "other", "HEAD~1"])?;
+    std::fs::write(root.join("unrelated.txt"), "other branch\n").map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "unrelated.txt"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "other"])?;
+    fixture_git_ok(&root, &["checkout", "-q", "main"])?;
+    let path = root.join("src/pricing.ts");
+    let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    std::fs::write(&path, format!("{source}\n// dirty production\n")).map_err(|e| e.to_string())?;
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "other"])?;
+    expect_exit(ok, true, "diverged dirty check")?;
+    need(
+        &check,
+        "Commit your production change first",
+        "commit prerequisite",
+    )?;
+    let (gap, base) = gap_start_tokens(&check).ok_or_else(|| format!("missing start: {check}"))?;
+    if base != original_base {
+        return Err(format!("expected merge base {original_base}, got {base}"));
+    }
+    fixture_git_ok(&root, &["add", "src/pricing.ts"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "production"])?;
+    let (ok, result) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "diverged printed base after commit")?;
+    need(&result, "Repair prepared", "prepared attempt")?;
+    Ok(())
 }
 
 #[cfg(feature = "lang-python")]
@@ -569,6 +856,52 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         "literal const resolves",
     )?;
     need(&check, "subtotal == DISCOUNT_THRESHOLD", "discriminator")?;
+    // The same selected subject must agree across human output and context.
+    // Packet readiness removes only the provisional packet-availability
+    // summary, not the real discriminator or the raw RIPR stage states.
+    let finding_id = check
+        .split_whitespace()
+        .find(|token| token.starts_with("probe:") && token.contains(":typescript_preview:"))
+        .ok_or_else(|| format!("check printed no finding id:\n{check}"))?;
+    let context = ripr_output(
+        &decoy,
+        &[
+            "context", "--root", &root_arg, "--base", "HEAD~1", "--at", finding_id,
+        ],
+    )?;
+    if !context.status.success() {
+        return Err(format!(
+            "context failed: {}",
+            String::from_utf8_lossy(&context.stderr)
+        ));
+    }
+    let packet: serde_json::Value = serde_json::from_slice(&context.stdout)
+        .map_err(|error| format!("context JSON: {error}"))?;
+    if packet["probe"]["id"] != finding_id
+        || packet["classification"] != "weakly_exposed"
+        || packet["ripr"]["infect"] != "unknown"
+        || packet["missing_discriminators"][0]["value"] != "subtotal == DISCOUNT_THRESHOLD"
+        || !packet["recommended_next_step"]
+            .as_str()
+            .is_some_and(|step| step.contains("repair packet is complete"))
+    {
+        return Err(format!(
+            "context changed the subject, stages, or discriminator: {packet}"
+        ));
+    }
+    let missing = packet["missing"]
+        .as_array()
+        .ok_or_else(|| format!("context omitted missing array: {packet}"))?;
+    if missing.is_empty()
+        || missing.iter().any(|line| {
+            line.as_str()
+                .is_some_and(|line| line.contains("incomplete_repair_packet"))
+        })
+    {
+        return Err(format!(
+            "context lost real missing evidence or retained provisional packet text: {packet}"
+        ));
+    }
     need(
         &check,
         "expect(discountedTotal(10000)).toBe(expected)",
@@ -594,6 +927,11 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         .nth(4)
         .ok_or_else(|| format!("start line names no gap: {start_line}"))?
         .to_string();
+    if gap != selected_typescript_gap(&check)? {
+        return Err(format!(
+            "context finding {finding_id} and repair start gap {gap} differ"
+        ));
+    }
     if !gap.starts_with("gap:typescript:typescript_preview:") {
         return Err(format!(
             "start line names a non-TypeScript gap: {start_line}"
@@ -1072,10 +1410,11 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
 
 #[cfg(feature = "lang-typescript")]
 #[test]
-fn typescript_status_warning_keeps_the_no_start_claim_for_refused_variants() -> Result<(), String> {
+fn typescript_status_warning_reports_unconfirmed_start_for_refused_variants() -> Result<(), String>
+{
     // #10001 negative control: the status warning is derived from the same
-    // admission as `ripr check`, so a finding check refuses keeps the claim
-    // that check offers no `ripr agent repair` start.
+    // admission as `ripr check`. For a refused finding it does not invent a
+    // start or claim certainty about why one is unavailable.
     let toml = "[languages]\nenabled = [\"typescript\"]\n";
     for variant in [
         "variant-let-binding",
@@ -1110,10 +1449,13 @@ fn typescript_status_warning_keeps_the_no_start_claim_for_refused_variants() -> 
         need(&status, "pilot_routed_to_check_no_repair_target", variant)?;
         need(
             &status,
-            "offers no `ripr agent repair` start",
+            "status could not confirm a gap-bound start",
             "a refused variant keeps the warning",
         )?;
-        if status.contains("prints the gap-bound start") || gap_start_tokens(&status).is_some() {
+        if status.contains("prints the gap-bound start")
+            || status.contains("offers no `ripr agent repair` start")
+            || gap_start_tokens(&status).is_some()
+        {
             return Err(format!("{variant}: status names a start:\n{status}"));
         }
         decoy_untouched(&decoy)?;
@@ -1141,6 +1483,341 @@ fn typescript_excluded_by_config_is_not_a_clean_result() -> Result<(), String> {
         "names the enabling config",
     )?;
     Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn check_findings_verify_rejects_changed_test_scope() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "scope-identity",
+        Some(
+            "[languages]\nenabled = [\"typescript\"]\n[analysis]\ninclude_unchanged_tests = true\n",
+        ),
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    let dir = root.join("target/ripr");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let produce = |name: &str,
+                   override_scope: bool,
+                   mode: &str|
+     -> Result<(PathBuf, serde_json::Value), String> {
+        let mut args = vec![
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            &base,
+            "--mode",
+            mode,
+            "--format",
+            "check-findings-json",
+        ];
+        if override_scope {
+            args.push("--no-unchanged-tests");
+        }
+        let output = ripr_output(&decoy, &args)?;
+        if !output.status.success() {
+            return Err(format!(
+                "producer failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        if value["analysis_outcome"]["analysis_complete"] != true
+            || value["findings"].as_array().is_none_or(Vec::is_empty)
+        {
+            return Err(format!(
+                "fixture must yield complete nonempty findings: {value}"
+            ));
+        }
+        let path = dir.join(name);
+        std::fs::write(&path, output.stdout).map_err(|e| e.to_string())?;
+        Ok((path, value))
+    };
+    let (before, before_value) = produce("before.json", false, "deep")?;
+    std::fs::write(root.join("scope-marker.txt"), "next revision\n").map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "scope-marker.txt"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "next revision"])?;
+    let (same_scope, same_value) = produce("same.json", false, "deep")?;
+    assert_eq!(
+        before_value["artifact"]["analysis"]["input_identity"],
+        same_value["artifact"]["analysis"]["input_identity"]
+    );
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"typescript\"]\n[analysis]\ninclude_unchanged_tests = false\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let (changed_scope, changed_value) = produce("changed.json", false, "deep")?;
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"typescript\"]\n[analysis]\ninclude_unchanged_tests = true\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let (overridden, override_value) = produce("override.json", true, "deep")?;
+    assert_eq!(
+        changed_value["artifact"]["analysis"]["input_identity"],
+        override_value["artifact"]["analysis"]["input_identity"],
+        "config and CLI resolving to the same scope agree"
+    );
+    let (different_mode, _) = produce("mode.json", false, "draft")?;
+    std::fs::write(root.join("ripr.toml"), "[languages]\nenabled = [\"typescript\", \"rust\"]\n[analysis]\ninclude_unchanged_tests = true\n").map_err(|e| e.to_string())?;
+    let (different_languages, _) = produce("languages.json", false, "deep")?;
+    let verify = |after: &Path| {
+        ripr_output(
+            &decoy,
+            &[
+                "agent",
+                "verify",
+                "--json",
+                "--root",
+                &root_arg,
+                "--before",
+                &before.to_string_lossy(),
+                "--after",
+                &after.to_string_lossy(),
+            ],
+        )
+    };
+    let control = verify(&same_scope)?;
+    if !control.status.success() {
+        return Err(format!(
+            "same-scope control: {}",
+            String::from_utf8_lossy(&control.stderr)
+        ));
+    }
+    // Adversarial version marker: v4 did not bind the resolved inputs. The
+    // validator must reject it before considering any content commitment.
+    let legacy = dir.join("legacy.json");
+    let current = std::fs::read_to_string(&same_scope).map_err(|e| e.to_string())?;
+    let old = current.replacen("input:v5:", "input:v4:", 1);
+    if old == current {
+        return Err("producer did not emit v5".to_string());
+    }
+    std::fs::write(&legacy, old).map_err(|e| e.to_string())?;
+    let refused_legacy = verify(&legacy)?;
+    if refused_legacy.status.success() {
+        return Err("legacy identity was accepted".to_string());
+    }
+    need(
+        &String::from_utf8_lossy(&refused_legacy.stderr),
+        "unsupported input identity version",
+        "v4 refusal",
+    )?;
+    let mismatch = verify(&changed_scope)?;
+    if mismatch.status.success() {
+        return Err(format!(
+            "different effective test scope was accepted; identities before={} after={}; output={}",
+            before_value["artifact"]["analysis"]["input_identity"],
+            changed_value["artifact"]["analysis"]["input_identity"],
+            String::from_utf8_lossy(&mismatch.stdout)
+        ));
+    }
+    need(
+        &String::from_utf8_lossy(&mismatch.stderr),
+        "incomparable",
+        "scope mismatch",
+    )?;
+    for (label, path) in [
+        ("CLI scope override", overridden),
+        ("mode", different_mode),
+        ("languages", different_languages),
+    ] {
+        let refused = verify(&path)?;
+        if refused.status.success() {
+            return Err(format!("{label} movement was accepted"));
+        }
+        need(
+            &String::from_utf8_lossy(&refused.stderr),
+            "incomparable",
+            label,
+        )?;
+    }
+    decoy_untouched(&decoy)
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn check_findings_public_renderer_binds_analyzed_config() -> Result<(), String> {
+    use ripr::app::{CheckInput, OutputFormat, check_workspace_with_config, render_check};
+    use ripr::config::RiprConfig;
+    use ripr::domain::LanguageId;
+    let (_guard, root, _) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "public-config",
+        None,
+    )?;
+    let input = CheckInput {
+        root,
+        base: Some("HEAD~1".to_string()),
+        ..CheckInput::default()
+    };
+    let mut config = RiprConfig::default();
+    config.languages.enabled = vec![LanguageId::TypeScript];
+    let render = |config: &RiprConfig| -> Result<serde_json::Value, String> {
+        let output = check_workspace_with_config(input.clone(), config)?;
+        if output.findings.is_empty() {
+            return Err("fixture must produce a finding".to_string());
+        }
+        serde_json::from_str(&render_check(&output, &OutputFormat::CheckFindingsJson)?)
+            .map_err(|e| e.to_string())
+    };
+    let first = render(&config)?;
+    let same = render(&config)?;
+    config.typescript.resolve_tsconfig_paths = false;
+    let changed = render(&config)?;
+    assert_eq!(
+        first["artifact"]["analysis"]["input_identity"],
+        same["artifact"]["analysis"]["input_identity"]
+    );
+    assert_ne!(
+        first["artifact"]["analysis"]["input_identity"],
+        changed["artifact"]["analysis"]["input_identity"],
+        "identity must bind the config consumed by analysis, even when the public renderer supplies defaults"
+    );
+    Ok(())
+}
+
+#[cfg(all(feature = "lang-typescript", feature = "lang-perl"))]
+#[test]
+fn check_findings_binds_perl_language_selection_without_packet() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "language-identity",
+        Some("[languages]\nenabled = [\"typescript\"]\n"),
+    )?;
+    let root_arg = root.to_string_lossy();
+    let base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    let produce = || -> Result<(serde_json::Value, Vec<u8>), String> {
+        let output = ripr_output(
+            &decoy,
+            &[
+                "check",
+                "--root",
+                &root_arg,
+                "--base",
+                &base,
+                "--format",
+                "check-findings-json",
+            ],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "producer: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        if value["findings"].as_array().is_none_or(Vec::is_empty) {
+            return Err(format!("expected nonempty findings: {value}"));
+        }
+        Ok((value, output.stdout))
+    };
+    let (before, before_bytes) = produce()?;
+    assert_eq!(before["analysis_outcome"]["analysis_complete"], true);
+    let snapshot_dir = root.join("target/ripr");
+    std::fs::create_dir_all(&snapshot_dir).map_err(|e| e.to_string())?;
+    let before_path = snapshot_dir.join("before-languages.json");
+    std::fs::write(&before_path, before_bytes).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("marker.txt"), "next\n").map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "marker.txt"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "next"])?;
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"typescript\", \"perl\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let (after, after_bytes) = produce()?;
+    assert_eq!(after["analysis_outcome"]["analysis_complete"], false);
+    assert_ne!(
+        before["artifact"]["analysis"]["input_identity"],
+        after["artifact"]["analysis"]["input_identity"],
+        "Perl selection must move identity even without packet-specific config changes"
+    );
+    let after_path = snapshot_dir.join("after-languages.json");
+    std::fs::write(&after_path, after_bytes).map_err(|e| e.to_string())?;
+    let verify = ripr_output(
+        &decoy,
+        &[
+            "agent",
+            "verify",
+            "--json",
+            "--root",
+            &root_arg,
+            "--before",
+            &before_path.to_string_lossy(),
+            "--after",
+            &after_path.to_string_lossy(),
+        ],
+    )?;
+    if verify.status.success() {
+        return Err("different language sets were accepted".to_string());
+    }
+    need(
+        &String::from_utf8_lossy(&verify.stderr),
+        "incomplete",
+        "missing Perl packet",
+    )?;
+    decoy_untouched(&decoy)
+}
+
+#[cfg(all(feature = "lang-typescript", feature = "lang-perl"))]
+#[test]
+fn check_findings_refuses_consumed_perl_packet() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "packet-identity",
+        Some("[languages]\nenabled = [\"typescript\"]\n"),
+    )?;
+    let packet = root.join("packet.json");
+    std::fs::write(&packet, r#"{"schema_version":"ripr-perl-facts-v1","packet_id":"lifecycle-empty","packet_status":"complete","packet_fingerprint":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","producer":{"name":"perl-ripr-facts","version":"lifecycle-fixture","capabilities":["syntax","workspace","test_facts"]},"root":{"repo_relative":".","vcs_head":null,"path_style":"repo_relative"},"input":{"base":null,"head":"HEAD","diff_id":null,"requested_fact_classes":["owners","changes","tests","oracles"]},"files":[],"owners":[],"changes":[],"tests":[],"oracles":[],"relations":[],"dynamic_boundaries":[],"verify_commands":[],"limitations":[],"provenance":[]}"#).map_err(|e| e.to_string())?;
+    let root_arg = root.to_string_lossy();
+    let packet_arg = packet.to_string_lossy();
+    let run = |format| {
+        ripr_output(
+            &decoy,
+            &[
+                "check",
+                "--root",
+                &root_arg,
+                "--base",
+                "HEAD~1",
+                "--perl-facts",
+                &packet_arg,
+                "--format",
+                format,
+            ],
+        )
+    };
+    let ordinary = run("json")?;
+    if !ordinary.status.success() {
+        return Err(format!(
+            "ordinary report failed: {}",
+            String::from_utf8_lossy(&ordinary.stderr)
+        ));
+    }
+    let findings = run("check-findings-json")?;
+    if findings.status.success() || !findings.stdout.is_empty() {
+        return Err("unbound packet produced a findings artifact".to_string());
+    }
+    need(
+        &String::from_utf8_lossy(&findings.stderr),
+        "cannot bind the consumed Perl facts packet",
+        "packet refusal",
+    )?;
+    decoy_untouched(&decoy)
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -1517,6 +2194,70 @@ fn finished_gap_attempt_detects_changed_bound_test_bytes() -> Result<(), String>
 }
 
 #[cfg(feature = "lang-typescript")]
+#[test]
+fn finished_attempt_keeps_non_owned_operational_directory_bytes_bound() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-bound-operational-neighbors")?;
+    let directories = [
+        "target/ripr/repair-attempts",
+        "target/ripr/workflow",
+        "target/ripr/reports",
+        "target/ripr/cache",
+    ];
+    let mut paths = Vec::new();
+    for directory in directories {
+        let directory = attempt.root.join(directory);
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let path = directory.join("not-owned-by-this-invocation.dat");
+        std::fs::write(&path, b"bound non-owned file\n").map_err(|error| error.to_string())?;
+        paths.push(path);
+    }
+    attempt.edit_closing_test()?;
+    let output = attempt.after(true)?;
+    expect_exit(
+        output.status.success(),
+        true,
+        "finish with operational neighbors",
+    )?;
+    let current = || -> Result<Option<bool>, String> {
+        let (ok, text) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "status with operational neighbors")?;
+        let doc: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| format!("parse status: {error}: {text}"))?;
+        let row = doc["repair_attempts"]
+            .as_array()
+            .ok_or("missing attempts")?
+            .iter()
+            .find(|row| row["attempt_id"] == attempt.attempt_id)
+            .ok_or("selected attempt missing")?;
+        if row["disposition"] != "finished" {
+            return Err(format!("attempt not finished: {row}"));
+        }
+        Ok(row["head_current"].as_bool())
+    };
+    assert_eq!(current()?, Some(true), "nonempty finished positive control");
+    for path in paths {
+        std::fs::write(&path, b"changed non-owned file\n").map_err(|error| error.to_string())?;
+        assert_eq!(
+            current()?,
+            Some(false),
+            "directory membership hid drift in {}",
+            path.display()
+        );
+        std::fs::write(&path, b"bound non-owned file\n").map_err(|error| error.to_string())?;
+        assert_eq!(
+            current()?,
+            Some(true),
+            "exact restoration did not restore {}",
+            path.display()
+        );
+    }
+    decoy_untouched(&attempt.decoy)
+}
+
+#[cfg(feature = "lang-typescript")]
 fn check_bound_test_drift(committed: bool) -> Result<(), String> {
     let attempt = GapAttempt::start(if committed {
         "ts-bound-committed"
@@ -1781,7 +2522,9 @@ fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<
     let absent_current = current();
     std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
     if !absent_current? || !current()? {
-        return Err("proven projection cleanup or restoration made the attempt stale".to_string());
+        return Err(
+            "retained projection cleanup or restoration made the attempt stale".to_string(),
+        );
     }
     let after = workflow.join("after.check-findings.json");
     let bytes = std::fs::read(&after).map_err(|error| error.to_string())?;
@@ -1901,6 +2644,40 @@ fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<
     if forged? {
         return Err("forged retained evidence established custody".to_string());
     }
+
+    // Intact issued evidence remains readable when live HEAD is unavailable.
+    // The earlier unknown-HEAD control deliberately used corrupt evidence.
+    let saved_head = std::fs::read(&head_path).map_err(|error| error.to_string())?;
+    std::fs::write(&head_path, b"ref: refs/heads/missing-history-head\n")
+        .map_err(|error| error.to_string())?;
+    let history_read = (|| -> Result<(), String> {
+        let (ok, status) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "intact history at unknown HEAD")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&status).map_err(|error| error.to_string())?;
+        let row = document["repair_attempts"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["attempt_id"].as_str() == Some(attempt.attempt_id.as_str()))
+            })
+            .ok_or("missing history row")?;
+        if !row["head_current"].is_null()
+            || row["receipt"]["issued_for_attempt"] != true
+            || row["receipt"]["unavailable"] != false
+            || row["receipt"]["shows_gap_closed"] != true
+        {
+            return Err(format!(
+                "unknown HEAD erased issued history or claimed currentness: {status}"
+            ));
+        }
+        Ok(())
+    })();
+    std::fs::write(&head_path, saved_head).map_err(|error| error.to_string())?;
+    history_read?;
 
     // A legacy retained pair without the new snapshot role cannot establish
     // custody after projections disappear.
@@ -2927,6 +3704,27 @@ fn after_preserves_original_when_backup_creation_is_denied() -> Result<(), Strin
         .permissions();
     std::fs::set_permissions(&workflow, std::fs::Permissions::from_mode(0o555))
         .map_err(|e| e.to_string())?;
+    // A privileged user can bypass mode bits. Check the actual premise rather
+    // than treating a successful write under that identity as a product bug.
+    let probe = workflow.join("backup-permission-probe");
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(file) => {
+            drop(file);
+            std::fs::set_permissions(&workflow, permissions).map_err(|e| e.to_string())?;
+            std::fs::remove_file(&probe).map_err(|e| e.to_string())?;
+            eprintln!("permission-denial premise unavailable: workflow directory is writable");
+            return Ok(());
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+        Err(error) => {
+            std::fs::set_permissions(&workflow, permissions).map_err(|e| e.to_string())?;
+            return Err(format!("permission probe failed unexpectedly: {error}"));
+        }
+    }
     let result = attempt.after(true);
     std::fs::set_permissions(&workflow, permissions).map_err(|e| e.to_string())?;
     let output = result?;
@@ -2945,7 +3743,8 @@ fn after_preserves_original_when_backup_creation_is_denied() -> Result<(), Strin
 
 /// Model the durable states observed after killing the CLI immediately after
 /// finish, then immediately after receipt publication. This is a state-based
-/// control; the separate Linux process probe establishes the crash windows.
+/// control; the separate Linux process probe establishes exclusion while a
+/// backup exists, not an exact post-finish or post-receipt crash window.
 #[cfg(feature = "lang-typescript")]
 #[test]
 fn pending_terminal_recovery_requires_published_receipt() -> Result<(), String> {

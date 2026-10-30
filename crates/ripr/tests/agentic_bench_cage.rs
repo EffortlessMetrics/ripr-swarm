@@ -1175,6 +1175,15 @@ fn status_shares_one_worktree_capture_across_finished_attempts() -> Result<(), S
             "two finished attempts under one policy must share one worktree capture, saw {first_captures}"
         ));
     }
+    // Each finished attempt binds the identities of paths in its delta, not
+    // just HEAD. Finishing B changes B's manifest already bound by A, so A
+    // need not remain current. B must be current after its own producer-owned
+    // workflow backups are cleaned up; those temporary files are not edits.
+    if !finished_current.contains(&(attempt_b.clone(), "true".to_string())) {
+        return Err(format!(
+            "latest finished attempt {attempt_b} must remain current after producer cleanup:\n{first}"
+        ));
+    }
     // An edit after the first call is not hidden by it: the next call
     // recaptures and the drift changes what status reports.
     edit_out_of_surface(&journey.root)?;
@@ -1184,10 +1193,9 @@ fn status_shares_one_worktree_capture_across_finished_attempts() -> Result<(), S
             "each status call captures once, saw {second_captures} on the second"
         ));
     }
-    if currentness(&second) == finished_current {
+    if !currentness(&second).contains(&(attempt_b.clone(), "false".to_string())) {
         return Err(format!(
-            "an edit between status calls must change the reported currentness:\nbefore {finished_current:?}\nafter {:?}",
-            currentness(&second)
+            "an authored edit must make latest finished attempt {attempt_b} stale:\n{second}"
         ));
     }
     Ok(())

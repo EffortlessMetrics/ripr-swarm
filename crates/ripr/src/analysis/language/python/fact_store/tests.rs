@@ -4,9 +4,11 @@
 //! a damaged entry is never served.
 
 use super::super::{
-    AnalysisOptions, ChangedFile, FactLookup, LanguageAdapter, LanguageDiffResult, OraclePolicy,
-    PythonAdapter, extract_source_facts, stored_or_extracted_facts,
+    AnalysisOptions, ChangedFile, LanguageAdapter, LanguageDiffResult, OraclePolicy, PythonAdapter,
+    extract_source_facts,
 };
+#[cfg(unix)]
+use super::super::{FactLookup, stored_or_extracted_facts};
 use super::*;
 use crate::analysis::diff::ChangedLine;
 

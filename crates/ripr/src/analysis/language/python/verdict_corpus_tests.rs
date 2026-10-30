@@ -40,9 +40,11 @@ fn classify_finding_with_delta(
 ) -> Result<crate::domain::Finding, String> {
     let mut owners = extract_owners(Path::new(OWNER_FILE), owner);
     // The workspace pass fills the star-export fact from the module source.
-    reexports::apply_package_reexports(&mut owners, |file| {
-        (file == Path::new(OWNER_FILE)).then_some(owner)
-    });
+    reexports::apply_package_reexports(
+        &mut owners,
+        |file| (file == Path::new(OWNER_FILE)).then_some(owner),
+        &|_| None,
+    );
     let tests = extract_tests(Path::new(TEST_FILE), test_source);
     let new_line = owner
         .lines()

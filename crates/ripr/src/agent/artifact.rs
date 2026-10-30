@@ -28,6 +28,9 @@ pub(crate) const ARTIFACT_IDENTITY_SCHEMA_VERSION: &str = "1";
 /// before/after pair compares. A tracked lockfile, and every manifest, still
 /// moves the identity.
 pub(crate) const INPUT_IDENTITY_VERSION: &str = "v4";
+// Check findings v5 binds the actual selected languages and test scope.
+// Reject v4 findings artifacts, which omitted those run inputs.
+const CHECK_FINDINGS_INPUT_IDENTITY_VERSION: &str = "v5";
 pub(crate) const CONTENT_COMMITMENT_CANONICALIZATION: &str = "raw_json_placeholder_v1";
 pub(crate) const CONTENT_SHA256_PLACEHOLDER: &str =
     "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -95,6 +98,7 @@ impl RepoExposureArtifactContext {
             base_revision,
             crate::config::repo_exposure_config_identity_hash(config),
             REPO_EXPOSURE_ANALYSIS_FORMAT,
+            INPUT_IDENTITY_VERSION,
         )
     }
 
@@ -114,6 +118,7 @@ impl RepoExposureArtifactContext {
             base_revision,
             crate::config::repo_exposure_config_identity_hash(config),
             REPO_SEAMS_ANALYSIS_FORMAT,
+            INPUT_IDENTITY_VERSION,
         )
     }
 
@@ -125,17 +130,31 @@ impl RepoExposureArtifactContext {
         root: PathBuf,
         mode: String,
         base_revision: Option<String>,
-        config: &crate::config::RiprConfig,
+        inputs: &crate::analysis_outcome::CheckFindingsInputs,
     ) -> Result<Self, String> {
         // The diff check consumes language selection and TypeScript settings
         // the Rust-only inventory never reads, so its identity covers every
         // finding-affecting field.
+        if inputs.perl_facts_used {
+            return Err("check-findings-json cannot bind the consumed Perl facts packet yet; use another report until packet identity is available".to_string());
+        }
+        let mut languages = inputs
+            .languages
+            .iter()
+            .map(|language| language.as_str())
+            .collect::<Vec<_>>();
+        languages.sort_unstable();
+        let config_identity = format!(
+            "{};unchanged_tests={};languages={:?}",
+            inputs.config_identity, inputs.include_unchanged_tests, languages
+        );
         Self::for_analysis_format(
             root,
             mode,
             base_revision,
-            crate::config::check_artifact_config_identity_hash(config),
+            config_identity,
             CHECK_FINDINGS_ANALYSIS_FORMAT,
+            CHECK_FINDINGS_INPUT_IDENTITY_VERSION,
         )
     }
 
@@ -145,6 +164,7 @@ impl RepoExposureArtifactContext {
         base_revision: Option<String>,
         config_identity: String,
         analysis_format: &str,
+        identity_version: &str,
     ) -> Result<Self, String> {
         let canonical_root = canonical_root(&root)?;
         let (manifest_identity, lockfile_identity) =
@@ -154,7 +174,7 @@ impl RepoExposureArtifactContext {
             );
         let input_canonical = format!(
             "identity_version={};mode={};profile={};base={:?};format={};manifest={:?};lockfile={:?};config={};analyzer={}",
-            INPUT_IDENTITY_VERSION,
+            identity_version,
             mode,
             mode,
             base_revision,
@@ -166,7 +186,7 @@ impl RepoExposureArtifactContext {
         );
         let input_identity = format!(
             "input:{}:{}",
-            INPUT_IDENTITY_VERSION,
+            identity_version,
             crate::config::config_fingerprint(&input_canonical)
         );
         Ok(Self {
@@ -545,12 +565,14 @@ struct ArtifactIdentitySpec {
     kind: &'static str,
     format: &'static str,
     command: &'static str,
+    input_identity_version: &'static str,
 }
 
 const REPO_EXPOSURE_IDENTITY_SPEC: ArtifactIdentitySpec = ArtifactIdentitySpec {
     kind: "repo_exposure",
     format: REPO_EXPOSURE_ANALYSIS_FORMAT,
     command: REPO_EXPOSURE_PRODUCER_COMMAND,
+    input_identity_version: INPUT_IDENTITY_VERSION,
 };
 
 /// Validate one `agent verify` snapshot with the authority its declared
@@ -584,6 +606,7 @@ const CHECK_FINDINGS_IDENTITY_SPEC: ArtifactIdentitySpec = ArtifactIdentitySpec 
     kind: "check_findings",
     format: CHECK_FINDINGS_ANALYSIS_FORMAT,
     command: CHECK_FINDINGS_PRODUCER_COMMAND,
+    input_identity_version: CHECK_FINDINGS_INPUT_IDENTITY_VERSION,
 };
 
 /// One finding of a validated `check-findings-json` artifact, reduced to the
@@ -616,27 +639,70 @@ pub(crate) fn validate_check_findings_artifact(
     raw: &str,
     label: &str,
 ) -> Result<ValidatedCheckFindings, String> {
-    let document: CheckFindingsDocument = serde_json::from_str(raw).map_err(|err| {
-        format!("agent verify {label} artifact is not a canonical check-findings artifact: {err}")
-    })?;
     let CheckFindingsDocument {
-        schema_version,
         artifact: identity,
         analysis_outcome,
         analysis_scope,
         run_limitations,
         findings,
-    } = document;
-    if schema_version.trim().is_empty() {
-        return Err(format!(
-            "agent verify {label} artifact has an empty check schema version"
-        ));
-    }
+        ..
+    } = parse_check_findings_document(raw, label)?;
     let artifact =
         validate_artifact_identity(root, raw, label, identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
     check_findings_run_is_whole(label, analysis_scope.as_ref(), run_limitations.as_deref())?;
     let gaps = check_findings_gaps(label, analysis_outcome, &findings)?;
     Ok(ValidatedCheckFindings { artifact, gaps })
+}
+
+fn parse_check_findings_document(raw: &str, label: &str) -> Result<CheckFindingsDocument, String> {
+    let document: CheckFindingsDocument = serde_json::from_str(raw).map_err(|err| {
+        format!("agent verify {label} artifact is not a canonical check-findings artifact: {err}")
+    })?;
+    if document.schema_version.trim().is_empty() {
+        return Err(format!(
+            "agent verify {label} artifact has an empty check schema version"
+        ));
+    }
+    Ok(document)
+}
+
+/// Commitment-validated issued history, deliberately without any currentness
+/// field. Only an already-bound terminal reader may use this result; issuance
+/// and missing-projection reconstruction still require the live validator.
+pub(crate) struct IssuedCheckFindingsCommitment {
+    pub(crate) repository_head: String,
+    pub(crate) base_revision: Option<String>,
+    pub(crate) content_sha256: String,
+}
+
+pub(crate) fn validate_issued_check_findings_commitment(
+    root: &Path,
+    raw: &str,
+    label: &str,
+    recorded_producer_version: &str,
+) -> Result<IssuedCheckFindingsCommitment, String> {
+    let CheckFindingsDocument {
+        artifact: identity,
+        analysis_outcome,
+        analysis_scope,
+        run_limitations,
+        findings,
+        ..
+    } = parse_check_findings_document(raw, label)?;
+    validate_artifact_identity_shape(label, &identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
+    if identity.producer.version != recorded_producer_version {
+        return Err(format!(
+            "agent verify {label} artifact producer does not match the issued attempt"
+        ));
+    }
+    validate_artifact_commitment(root, raw, label, &identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
+    check_findings_run_is_whole(label, analysis_scope.as_ref(), run_limitations.as_deref())?;
+    check_findings_gaps(label, analysis_outcome, &findings)?;
+    Ok(IssuedCheckFindingsCommitment {
+        repository_head: identity.repository.head,
+        base_revision: identity.analysis.base_revision,
+        content_sha256: identity.content_sha256,
+    })
 }
 
 /// Prefix of every typed refusal from [`evaluate_gap_closure`]; the CLI maps
@@ -800,6 +866,70 @@ fn validate_artifact_identity(
     spec: &ArtifactIdentitySpec,
 ) -> Result<ValidatedArtifact, String> {
     let subject = format!("agent verify {label} artifact");
+    validate_artifact_identity_shape(label, &identity, spec)?;
+    // #9500: the envelope's producer version must be this executable's. A
+    // forged or foreign version used to pass because only non-emptiness and
+    // before/after equality were checked. Fail closed on any other version
+    // (conservative: an artifact from another RIPR build, even a patch
+    // release, is regenerated rather than trusted).
+    if identity.producer.version != env!("CARGO_PKG_VERSION") {
+        return Err(foreign_producer_refusal(
+            root,
+            &subject,
+            &identity.producer.version,
+        ));
+    }
+    let expected_root = validate_artifact_commitment(root, raw, label, &identity, spec)?;
+
+    let actual_head = git_output(&expected_root, &["rev-parse", "HEAD"])?;
+    let actual_head = actual_head.trim();
+    let actual_worktree_dirty = git_worktree_dirty(&expected_root)?;
+    // Lineage presence (#2922 PR A): a well-formed head that does not name a
+    // commit held by the checked repository is rejected, not merely disclosed
+    // as historical. Git liveness is established by the HEAD and status reads
+    // above, so a failed `cat-file` here means the object is absent.
+    match git_object_type(&expected_root, &identity.repository.head)? {
+        Some(kind) if kind == "commit" => {}
+        Some(kind) => {
+            return Err(format!(
+                "agent verify {label} artifact repository head `{}` names a {kind}, not a commit",
+                identity.repository.head
+            ));
+        }
+        None => {
+            return Err(format!(
+                "agent verify {label} artifact repository head `{}` is not present in the checked repository",
+                identity.repository.head
+            ));
+        }
+    }
+    let currentness = if actual_head == identity.repository.head {
+        if identity.analysis.worktree == "dirty" || actual_worktree_dirty {
+            ArtifactCurrentness::DirtyWorktree
+        } else {
+            ArtifactCurrentness::Current
+        }
+    } else {
+        ArtifactCurrentness::Historical
+    };
+    Ok(ValidatedArtifact {
+        currentness,
+        base_revision: identity.analysis.base_revision,
+        input_identity: identity.analysis.input_identity,
+        snapshot_identity: identity.snapshot_identity,
+        repository_head: identity.repository.head,
+        producer_version: identity.producer.version,
+        analysis_mode: identity.analysis.mode,
+        analysis_profile: identity.analysis.profile,
+        content_sha256: identity.content_sha256,
+    })
+}
+
+fn validate_artifact_identity_shape(
+    label: &str,
+    identity: &ArtifactIdentity,
+    spec: &ArtifactIdentitySpec,
+) -> Result<(), String> {
     if identity.kind != spec.kind
         || identity.schema_version != ARTIFACT_IDENTITY_SCHEMA_VERSION
         || identity.canonicalization != CONTENT_COMMITMENT_CANONICALIZATION
@@ -819,18 +949,18 @@ fn validate_artifact_identity(
             "agent verify {label} artifact has invalid or unknown producer identity"
         ));
     }
-    // #9500: the envelope's producer version must be this executable's. A
-    // forged or foreign version used to pass because only non-emptiness and
-    // before/after equality were checked. Fail closed on any other version
-    // (conservative: an artifact from another RIPR build, even a patch
-    // release, is regenerated rather than trusted).
-    if identity.producer.version != env!("CARGO_PKG_VERSION") {
-        return Err(foreign_producer_refusal(
-            root,
-            &subject,
-            &identity.producer.version,
-        ));
-    }
+    Ok(())
+}
+
+/// Structural and commitment authority shared by live evidence and already
+/// issued history. It resolves only filesystem roots, not live Git state.
+fn validate_artifact_commitment(
+    root: &Path,
+    raw: &str,
+    label: &str,
+    identity: &ArtifactIdentity,
+    spec: &ArtifactIdentitySpec,
+) -> Result<PathBuf, String> {
     // #7369: a present stamp must carry the same `unix_ms:` millisecond
     // disclosure shape the producer pins, or the producer's documented
     // `unavailable` fallback for a clock that predates the Unix epoch. A
@@ -846,13 +976,13 @@ fn validate_artifact_identity(
         ));
     }
     // Version gate (#2823): only the current input-identity algorithm
-    // validates as current evidence. A previous-version identity (for example
+    // validates as live evidence or issued history. A previous-version identity (for example
     // the v1 `input:<digest>` form that embedded the absolute checkout root)
     // is rejected with an explicit bounded reason rather than silently
     // accepted; a compatibility/migration boundary for earlier versions is
     // deferred until a real migration producer exists (#2921 deferred
     // negatives — no fabricated migration authority here).
-    let supported_prefix = format!("input:{INPUT_IDENTITY_VERSION}:");
+    let supported_prefix = format!("input:{}:", spec.input_identity_version);
     let Some(algorithm_and_digest) = identity
         .analysis
         .input_identity
@@ -934,48 +1064,7 @@ fn validate_artifact_identity(
         ));
     }
 
-    let actual_head = git_output(&expected_root, &["rev-parse", "HEAD"])?;
-    let actual_head = actual_head.trim();
-    let actual_worktree_dirty = git_worktree_dirty(&expected_root)?;
-    // Lineage presence (#2922 PR A): a well-formed head that does not name a
-    // commit held by the checked repository is rejected, not merely disclosed
-    // as historical. Git liveness is established by the HEAD and status reads
-    // above, so a failed `cat-file` here means the object is absent.
-    match git_object_type(&expected_root, &identity.repository.head)? {
-        Some(kind) if kind == "commit" => {}
-        Some(kind) => {
-            return Err(format!(
-                "agent verify {label} artifact repository head `{}` names a {kind}, not a commit",
-                identity.repository.head
-            ));
-        }
-        None => {
-            return Err(format!(
-                "agent verify {label} artifact repository head `{}` is not present in the checked repository",
-                identity.repository.head
-            ));
-        }
-    }
-    let currentness = if actual_head == identity.repository.head {
-        if identity.analysis.worktree == "dirty" || actual_worktree_dirty {
-            ArtifactCurrentness::DirtyWorktree
-        } else {
-            ArtifactCurrentness::Current
-        }
-    } else {
-        ArtifactCurrentness::Historical
-    };
-    Ok(ValidatedArtifact {
-        currentness,
-        base_revision: identity.analysis.base_revision,
-        input_identity: identity.analysis.input_identity,
-        snapshot_identity: identity.snapshot_identity,
-        repository_head: identity.repository.head,
-        producer_version: identity.producer.version,
-        analysis_mode: identity.analysis.mode,
-        analysis_profile: identity.analysis.profile,
-        content_sha256: identity.content_sha256,
-    })
+    Ok(expected_root)
 }
 
 /// Classify only the old repo-exposure shape after canonical parsing refused it.
@@ -1141,9 +1230,15 @@ pub(crate) fn validate_verify_movement(
         && before.currentness == ArtifactCurrentness::Current
         && after.currentness == ArtifactCurrentness::Current
     {
+        // #11026: the leading clause is matched by the CLI as a named refusal
+        // (`AGENT_VERIFY_NO_MOVEMENT_PREFIX`), so only the tail is plain
+        // language: the repository has not changed since the before phase.
+        let short = before
+            .repository_head
+            .get(..7)
+            .unwrap_or(&before.repository_head);
         return Err(format!(
-            "no repository movement between before and after artifacts: both are current at revision {}",
-            before.repository_head
+            "no repository movement between before and after artifacts: the repository is still at {short}, so nothing has changed since the before phase and there is nothing to compare yet"
         ));
     }
     Ok(())
@@ -3261,6 +3356,12 @@ mod tests {
         assert!(matches!(
             validate_verify_movement(&before, &after),
             Err(error) if error.contains("no repository movement")
+                && error.contains("the repository is still at aaaaaaa")
+                && error.contains("nothing has changed since the before phase and there is nothing to compare yet")
+                // The old internal wording and the full 40-character
+                // revision must not come back.
+                && !error.contains("both are current")
+                && !error.contains(&"a".repeat(40))
         ));
 
         // A disclosed non-current observation stays admissible at this layer.
@@ -4417,7 +4518,12 @@ mod tests {
                     root.clone(),
                     "draft".to_string(),
                     None,
-                    config,
+                    &crate::analysis_outcome::CheckFindingsInputs {
+                        config_identity: crate::config::check_artifact_config_identity_hash(config),
+                        include_unchanged_tests: true,
+                        languages: vec![crate::domain::LanguageId::Rust],
+                        perl_facts_used: false,
+                    },
                 )
             };
             let exposure = |config: &crate::config::RiprConfig| {
@@ -4443,6 +4549,56 @@ mod tests {
         result?;
         cleanup?;
         Ok(())
+    }
+
+    #[test]
+    fn check_findings_binds_resolved_languages_and_refuses_unbound_packets() -> Result<(), String> {
+        use crate::analysis_outcome::CheckFindingsInputs;
+        use crate::domain::LanguageId;
+        let root = temporary_git_root()?;
+        let result = (|| {
+            commit_fixture_file(&root)?;
+            let config = crate::config::RiprConfig::default();
+            let inputs = CheckFindingsInputs {
+                config_identity: crate::config::check_artifact_config_identity_hash(&config),
+                include_unchanged_tests: true,
+                languages: vec![LanguageId::Rust],
+                perl_facts_used: false,
+            };
+            let identity = |inputs: &CheckFindingsInputs| {
+                RepoExposureArtifactContext::for_check_findings(
+                    root.clone(),
+                    "draft".to_string(),
+                    None,
+                    inputs,
+                )
+            };
+            let base = identity(&inputs)?.input_identity;
+            let mut changed = inputs.clone();
+            changed.languages.push(LanguageId::Perl);
+            assert_ne!(
+                base,
+                identity(&changed)?.input_identity,
+                "language selection is bound even when config fields stay fixed"
+            );
+            let reordered = CheckFindingsInputs {
+                languages: vec![LanguageId::Perl, LanguageId::Rust],
+                ..changed.clone()
+            };
+            assert_eq!(
+                identity(&changed)?.input_identity,
+                identity(&reordered)?.input_identity,
+                "language order is not semantic"
+            );
+            changed.perl_facts_used = true;
+            assert!(
+                identity(&changed).is_err(),
+                "an unbound consumed packet must not be certified"
+            );
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"))?;
+        result
     }
 
     /// (#2823 test 4) Movement of every semantic input — mode, base, config,
@@ -5132,3 +5288,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "artifact_issued_history_tests.rs"]
+mod issued_history_tests;

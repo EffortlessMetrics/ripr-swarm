@@ -378,6 +378,17 @@ pub(crate) struct AnalysisOutcome {
     pub(crate) counts: AnalysisOutcomeCounts,
     pub(crate) limitations: Vec<AnalysisLimitation>,
     pub(crate) claim_boundary: String,
+    /// Run-local producer inputs, never reconstructed from a serialized outcome.
+    #[serde(skip)]
+    pub(crate) check_findings_inputs: Option<CheckFindingsInputs>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckFindingsInputs {
+    pub(crate) config_identity: String,
+    pub(crate) include_unchanged_tests: bool,
+    pub(crate) languages: Vec<crate::domain::LanguageId>,
+    pub(crate) perl_facts_used: bool,
 }
 
 #[derive(Deserialize)]
@@ -433,6 +444,7 @@ impl AnalysisOutcome {
             counts,
             limitations,
             claim_boundary: ANALYSIS_OUTCOME_CLAIM_BOUNDARY.to_string(),
+            check_findings_inputs: None,
         })
     }
 

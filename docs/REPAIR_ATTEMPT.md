@@ -242,6 +242,16 @@ The after phase also retains the terminal static result under the attempt direct
 
 The class is never stronger than the receipt the attempt retained. `finished_current` requires a digest-bound attempt-local receipt whose reading shows the gap closed at the current `HEAD`; a moved `HEAD` downgrades the same retained result to `finished_historical`, which stays readable but is never presented as current proof. Missing, tampered, or unbound attempt-local terminal evidence reads `corrupt_or_unavailable` and never falls back to another attempt's compatibility receipt. Legacy manifests without `terminal_artifacts` read `legacy_compatibility_only`: the one-slot compatibility projection is exactly the strength they earned. A missing or malformed selected manifest is also typed `corrupt_or_unavailable` naming the refused artifact, so one bad row cannot hide or strengthen the store's other rows.
 
+An already issued gap receipt remains readable when live `HEAD` is unavailable
+or the reader uses a newer RIPR version. Its retained snapshot must still match
+the attempt's recorded producer version, root, after head, immutable base,
+verify and receipt commitments, and the same structural/completeness rules,
+including the supported v5 run-owned findings identity. Earlier findings
+identity versions remain refused; historical readability is not a migration.
+This historical reading carries no live currentness authority: promotion,
+receipt reissue and reconstruction of missing workflow projections still use
+the full current executable and Git-provenance validation.
+
 Status is read-only on both surfaces: inspecting an attempt cannot finish, restart, rewrite, or delete it, and a resumed attempt receives no stronger state than its receipt shows. Human Markdown and normalized JSON derive from one DTO, so both surfaces agree and reordered directory traversal produces byte-stable output. See `docs/OUTPUT_SCHEMA.md` ("Exact attempt selection") for the field contract.
 
 ## Compatibility outputs

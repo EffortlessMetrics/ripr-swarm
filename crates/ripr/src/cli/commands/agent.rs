@@ -1371,6 +1371,9 @@ fn run_agent_repair_with_identity_ctx(
     // Keep the repository-wide lock until after the shared projections have
     // been resolved, not merely until the attempt manifest is committed.
     let _workflow_lock = if options.phase == AgentRepairPhase::After {
+        if let Err(error) = ensure_command_root(&options.root, "agent repair --phase after") {
+            return (Err(CommandError::Failure(error)), false);
+        }
         match crate::cli::lock_repair_workflow(&options.root) {
             Ok(lock) => Some(lock),
             Err(error) => return (Err(CommandError::Failure(error)), false),
@@ -1825,6 +1828,25 @@ impl SharedWorkflowArtifacts {
         })
     }
 
+    /// A captured after-phase projection must fit the same bound used to
+    /// restore and validate it. Reject before touching the destination so a
+    /// producer-sized payload cannot leave an unresolvable transaction.
+    fn write(&mut self, path: &Path, bytes: &[u8]) -> Result<(), String> {
+        if !self.paths.iter().any(|tracked| tracked == path) {
+            return Err(format!("untracked workflow output {}", path.display()));
+        }
+        if bytes.len() as u64 > crate::edit_cage::MAX_CAPTURE_FILE_BYTES {
+            return Err(format!(
+                "workflow output {} exceeds capture limit of {} bytes",
+                path.display(),
+                crate::edit_cage::MAX_CAPTURE_FILE_BYTES
+            ));
+        }
+        output::file_write::write(path, bytes)
+            .map_err(|error| format!("publish {} failed: {error}", path.display()))?;
+        self.note_write(path, bytes)
+    }
+
     fn note_write(&mut self, path: &Path, bytes: &[u8]) -> Result<(), String> {
         let index = self
             .paths
@@ -2209,7 +2231,31 @@ fn run_agent_repair_phase(
             }
             let mut policy =
                 crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
-                    .map_err(|error| before_phase_refusal(&seam_id, &root, &error))?;
+                    .map_err(|error| {
+                        // Only a packet that names no editable test target gets
+                        // the plain next-step text; a malformed packet or an
+                        // invalid edit surface keeps its own diagnostic.
+                        if !crate::app::task_first::is_missing_edit_target_error(&error) {
+                            return error;
+                        }
+                        // #10978: say where the change is and what to do next.
+                        // The exact diagnostic stays last, because `ripr agent
+                        // card` reports the same text as its blocker.
+                        let seam = before_report
+                            .classified
+                            .iter()
+                            .find(|entry| entry.seam.id().as_str() == seam_id);
+                        let source = seam.and_then(|entry| {
+                            std::fs::read_to_string(root.join(entry.seam.file())).ok()
+                        });
+                        let plain = crate::app::task_first::no_test_route_refusal(
+                            &root,
+                            &seam_id,
+                            seam,
+                            source.as_deref(),
+                        );
+                        format!("{plain} (Detail: {error})")
+                    })?;
             crate::app::repair_attempt::include_explicit_store_operational_write(
                 &mut policy,
                 &root,
@@ -2275,6 +2321,7 @@ fn run_agent_repair_phase(
                 &before_config,
                 before_report,
                 &before,
+                None,
             )?;
 
             let packet_path = root.join("target/ripr/workflow/agent-packet.json");
@@ -2300,6 +2347,7 @@ fn run_agent_repair_phase(
             // Internal artifact paths are passed to consumers that resolve
             // relative paths against the root. Anchor the root once so a
             // caller's relative spelling is not applied a second time.
+            let caller_root = root.clone();
             let root = root.canonicalize().map_err(|error| {
                 format!(
                     "canonicalize agent repair root {} failed: {error}",
@@ -2310,7 +2358,9 @@ fn run_agent_repair_phase(
                 crate::app::repair_attempt::complete_pending_terminal_retention_from(
                     &root, store_ref, id,
                 )
-                .map_err(|error| repair_attempt_input_error(&root, store_ref, Some(id), error))?;
+                .map_err(|error| {
+                    repair_attempt_input_error(&caller_root, store_ref, Some(id), error)
+                })?;
             }
             let attempt = crate::app::repair_attempt::resolve_awaiting_repair_attempt_from(
                 &root,
@@ -2319,7 +2369,7 @@ fn run_agent_repair_phase(
                 seam_id.as_deref(),
             )
             .map_err(|error| {
-                repair_attempt_input_error(&root, store_ref, attempt_id.as_deref(), error)
+                repair_attempt_input_error(&caller_root, store_ref, attempt_id.as_deref(), error)
             })?;
             refusal.selected_attempt =
                 Some((root.clone(), store.clone(), attempt.attempt_id.clone()));
@@ -2327,7 +2377,7 @@ fn run_agent_repair_phase(
                 "ripr: agent repair --phase after for attempt `{}` (seam `{}`) at {}",
                 attempt.attempt_id.as_str(),
                 attempt.seam_id,
-                crate::output::path::human_path(&root)
+                crate::output::path::human_path(&caller_root)
             );
             // A C2a-era gap marker recorded only the symbolic base. It is not
             // re-resolved as if it were the original immutable base: the
@@ -2335,7 +2385,7 @@ fn run_agent_repair_phase(
             if attempt.gap_base.is_some() && attempt.gap_base_commit.is_none() {
                 let store_flag = crate::app::repair_attempt::quoted_store_flag(store_ref);
                 let start = crate::app::gap_bound_repair::repair_start_command(
-                    &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+                    &crate::agent::loop_commands::bound_root(&caller_root.to_string_lossy()),
                     &store_flag,
                     &attempt.seam_id,
                     attempt.gap_base.as_deref(),
@@ -2359,13 +2409,13 @@ fn run_agent_repair_phase(
                 &attempt.attempt_id,
             )
             .map_err(|error| {
-                repair_attempt_input_error(&root, store_ref, attempt_id.as_deref(), error)
+                repair_attempt_input_error(&caller_root, store_ref, attempt_id.as_deref(), error)
             })?;
             if prior_refusals.state == crate::app::repair_attempt::RepairAttemptState::AwaitingEdit
                 && crate::app::repair_attempt::after_refusal_budget_exhausted(&prior_refusals)
             {
                 for line in repair_after_retry_budget_lines(
-                    &root,
+                    &caller_root,
                     store_ref,
                     &attempt,
                     crate::app::repair_attempt::after_refusal_total(&prior_refusals),
@@ -2414,12 +2464,11 @@ fn run_agent_repair_phase(
                     .join("target/ripr/workflow")
                     .join(crate::app::gap_bound_repair::GAP_BOUND_AFTER_SNAPSHOT_FILE);
                 let snapshot = super::check::gap_check_findings_snapshot(&root, base_commit)?;
-                write_text_file(&after, &snapshot.rendered)?;
                 refusal
                     .workflow_artifacts
                     .as_mut()
                     .ok_or("workflow tracking missing")?
-                    .note_write(&after, snapshot.rendered.as_bytes())?;
+                    .write(&after, snapshot.rendered.as_bytes())?;
                 gap_analysis_outcome = Some(snapshot.rendered);
                 after
             } else {
@@ -2502,7 +2551,9 @@ fn run_agent_repair_phase(
                         current_head,
                     } => {
                         for line in crate::app::repair_attempt::diverged_head_recovery_for_subject(
-                            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+                            &crate::agent::loop_commands::bound_root(
+                                &caller_root.to_string_lossy(),
+                            ),
                             attempt.attempt_id.as_str(),
                             &attempt.seam_id,
                             &attempt.repository_head,
@@ -2532,17 +2583,14 @@ fn run_agent_repair_phase(
             let outcome_path =
                 root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT);
             let outcome_bytes = match &gap_analysis_outcome {
-                Some(rendered) => {
-                    write_text_file(&outcome_path, rendered)?;
-                    rendered.as_bytes().to_vec()
-                }
-                None => write_agent_analysis_outcome(&root)?,
+                Some(rendered) => rendered.as_bytes().to_vec(),
+                None => render_agent_analysis_outcome(&root)?,
             };
             refusal
                 .workflow_artifacts
                 .as_mut()
                 .ok_or("workflow tracking missing")?
-                .note_write(&outcome_path, &outcome_bytes)?;
+                .write(&outcome_path, &outcome_bytes)?;
 
             let verify_options = AgentVerifyOptions {
                 root: root.clone(),
@@ -2566,7 +2614,9 @@ fn run_agent_repair_phase(
                     // (exit 2) even though the attempt was already selected.
                     if agent_verify_error_is_typed_refusal(&error) {
                         if error == AGENT_VERIFY_INPUT_DRIFT_ERROR {
-                            for line in repair_after_input_drift_lines(&root, store_ref, &attempt) {
+                            for line in
+                                repair_after_input_drift_lines(&caller_root, store_ref, &attempt)
+                            {
                                 refusal.narrate(line);
                             }
                         } else if error
@@ -2577,7 +2627,7 @@ fn run_agent_repair_phase(
                             // the same retry budget as a no-movement refusal.
                             refusal.narrate(format!("{error}."));
                             for line in repair_after_no_movement_lines(
-                                &root,
+                                &caller_root,
                                 store_ref,
                                 &attempt,
                                 &cage_policy,
@@ -2587,7 +2637,7 @@ fn run_agent_repair_phase(
                             }
                         } else if error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX) {
                             for line in repair_after_no_movement_lines(
-                                &root,
+                                &caller_root,
                                 store_ref,
                                 &attempt,
                                 &cage_policy,
@@ -2601,12 +2651,11 @@ fn run_agent_repair_phase(
                     return Err(error);
                 }
             };
-            write_text_file(&verify_json, &rendered_verify)?;
             refusal
                 .workflow_artifacts
                 .as_mut()
                 .ok_or("workflow tracking missing")?
-                .note_write(&verify_json, rendered_verify.as_bytes())?;
+                .write(&verify_json, rendered_verify.as_bytes())?;
 
             // With --json, stdout carries exactly one JSON document on every
             // path, like every other agent command. The verify outcome is held until the
@@ -2680,9 +2729,12 @@ fn run_agent_repair_phase(
                         if crate::app::repair_attempt::repair_attempt_commit_error_is_retry_refusal(
                             &error,
                         ) {
-                            for line in
-                                repair_after_commit_busy_lines(&root, store_ref, &attempt, &error)
-                            {
+                            for line in repair_after_commit_busy_lines(
+                                &caller_root,
+                                store_ref,
+                                &attempt,
+                                &error,
+                            ) {
                                 refusal.narrate(line);
                             }
                             refusal.typed = true;
@@ -2710,7 +2762,7 @@ fn run_agent_repair_phase(
                     cage_after.verdict.status
                 );
                 for line in repair_after_cage_recovery_lines(
-                    &root,
+                    &caller_root,
                     store_ref,
                     &attempt.seam_id,
                     &attempt.repository_head,
@@ -2886,7 +2938,10 @@ fn run_agent_repair_phase(
                     && error.contains(crate::app::repair_attempt::TRUSTED_SURFACE_REFUSAL_TAIL)
                 {
                     for line in repair_after_trusted_surface_recovery_lines(
-                        &root, store_ref, &attempt, error,
+                        &caller_root,
+                        store_ref,
+                        &attempt,
+                        error,
                     ) {
                         refusal.narrate(line);
                     }
@@ -2968,7 +3023,8 @@ fn run_agent_repair_phase(
                     &verify_json,
                 ));
             }
-            refusal.success_receipt_path = Some(receipt_path);
+            refusal.success_receipt_path =
+                Some(caller_root.join("target/ripr/reports/agent-receipt.json"));
             Ok(())
         }
         AgentRepairPhase::Verify => {
@@ -3015,7 +3071,7 @@ fn run_agent_repair_phase(
     }
 }
 
-fn write_agent_analysis_outcome(root: &Path) -> Result<Vec<u8>, String> {
+fn render_agent_analysis_outcome(root: &Path) -> Result<Vec<u8>, String> {
     let (mut input, config) = load_root_input_and_config(root)?;
     // Match the bare `ripr check --root <root> --format json` route used by
     // generated workflows: default-base resolution remains owned by the
@@ -3025,17 +3081,22 @@ fn write_agent_analysis_outcome(root: &Path) -> Result<Vec<u8>, String> {
     input.git_timeout = Some(app::default_cli_git_timeout());
     let output = app::check_workspace_with_config(input, &config)?;
     let rendered = app::render_check_with_config(&output, &OutputFormat::Json, &config)?;
-    write_text_file(
-        &root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
-        &rendered,
-    )?;
     Ok(rendered.into_bytes())
 }
 
 fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<Vec<u8>, String> {
     let config = load_for_root(root)?;
     let report = analysis::inventory_classified_seams_report_at_with_config(root, &config)?;
-    write_agent_repo_exposure_snapshot_with_report(root, &config, report, path)
+    write_agent_repo_exposure_snapshot_with_report(
+        root,
+        &config,
+        report,
+        path,
+        Some(crate::edit_cage::MAX_CAPTURE_FILE_BYTES),
+    )?;
+    read_workflow_file(path)?
+        .map(|(bytes, _)| bytes)
+        .ok_or_else(|| format!("snapshot {} disappeared after publication", path.display()))
 }
 
 /// `write_agent_repo_exposure_snapshot` over one caller-supplied inventory
@@ -3050,7 +3111,8 @@ fn write_agent_repo_exposure_snapshot_with_report(
     config: &RiprConfig,
     report: analysis::ClassifiedSeamsReport,
     path: &Path,
-) -> Result<Vec<u8>, String> {
+    max_capture_bytes: Option<u64>,
+) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(root, &report.classified);
     let python_guidance =
         output::render::detect_python_repo_exposure_guidance_pub(root, &report.classified);
@@ -3073,14 +3135,10 @@ fn write_agent_repo_exposure_snapshot_with_report(
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
     }
-    let temporary_path = path.with_extension(format!("json.tmp-{}", std::process::id()));
-    let write_result = (|| -> Result<(), String> {
-        // An interrupted run can leave this pid-named file; removing a planted link
-        // removes only the link.
-        let _ = std::fs::remove_file(&temporary_path);
-        let file = output::file_write::create_exclusive(&temporary_path)
-            .map_err(|err| format!("create {} failed: {err}", temporary_path.display()))?;
-        let mut writer = BufWriter::new(file);
+    // The before-phase snapshot is streamed without the bounded after-phase
+    // backup reader. The shared output owner keeps the previous destination
+    // intact if rendering or atomic publication fails.
+    publish_agent_snapshot(path, max_capture_bytes, |writer| {
         output::repo_exposure::write_repo_exposure_json_with_context(
             &report.classified,
             report.limit_info.as_ref(),
@@ -3088,38 +3146,33 @@ fn write_agent_repo_exposure_snapshot_with_report(
             python_guidance.as_ref(),
             generated_skip.as_ref(),
             &context,
-            &mut writer,
-        )?;
-        writer
-            .flush()
-            .map_err(|err| format!("flush {} failed: {err}", temporary_path.display()))?;
-        Ok(())
-    })();
-    if let Err(err) = write_result {
-        let _ = std::fs::remove_file(&temporary_path);
-        return Err(err);
-    }
+            writer,
+        )
+    })
+}
 
-    let rendered = match read_workflow_file(&temporary_path) {
-        Ok(Some((bytes, _))) => bytes,
-        Ok(None) => {
-            return Err(format!(
-                "snapshot {} disappeared before publication",
-                temporary_path.display()
-            ));
+fn publish_agent_snapshot(
+    path: &Path,
+    max_capture_bytes: Option<u64>,
+    write_snapshot: impl FnOnce(&mut BufWriter<&mut std::fs::File>) -> Result<(), String>,
+) -> Result<(), String> {
+    output::file_write::write_with(path, |file| {
+        let mut writer = BufWriter::new(&mut *file);
+        write_snapshot(&mut writer).map_err(std::io::Error::other)?;
+        writer.flush()?;
+        drop(writer);
+        // The after route must reject an uncapturable snapshot before the
+        // atomic replacement, not after changing the tracked destination.
+        if let Some(limit) = max_capture_bytes
+            && file.metadata()?.len() > limit
+        {
+            return Err(std::io::Error::other(format!(
+                "workflow snapshot exceeds capture limit of {limit} bytes"
+            )));
         }
-        Err(error) => {
-            let _ = std::fs::remove_file(&temporary_path);
-            return Err(error);
-        }
-    };
-    // Atomic replacement preserves the prior destination if publication
-    // fails, including on Windows; never unlink it before the replacement.
-    let published = output::file_write::write(path, &rendered)
-        .map_err(|error| format!("publish {} failed: {error}", path.display()));
-    let _ = std::fs::remove_file(&temporary_path);
-    published?;
-    Ok(rendered)
+        Ok(())
+    })
+    .map_err(|error| format!("publish {} failed: {error}", path.display()))
 }
 
 /// Narration for the repair after phase: the receipt's summary, or a line
@@ -3759,29 +3812,6 @@ fn run_gap_bound_before_phase(
         );
     }
     Ok(())
-}
-
-/// A before phase refused because the seam's repair packet cannot bound a
-/// test-only edit. Names the seam and the reason in plain words, says that
-/// nothing was started, states the observable packet field (#4332 — the
-/// producer-jargon cause alone leaves the agent guessing what to look at),
-/// points at the surfaces that only offer a repair start for seams that
-/// pass this check, names the root-pinned `agent stub` forward route for
-/// the same state (#7735 — the pick-another-seam advice is a dead end when
-/// no seam can start a repair; `--root` keeps the route usable from any
-/// directory because the before phase does not require the shell to sit at
-/// the workspace, and `--kind` pins the probe family so a line holding
-/// several gap families cannot stub another seam), states the inline-test
-/// boundary with its remedy — an ambiguous multi-module inline layout
-/// proposes no target, while one governed inline module would qualify
-/// (#5210) — and points at the repair help carrying the scope boundary.
-fn before_phase_refusal(seam_id: &str, root: &Path, error: &str) -> String {
-    use crate::agent::loop_commands::{bound_root, shell_arg};
-
-    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
-    format!(
-        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface). Pick a seam whose `ripr pilot` output or review card shows a repair start; when none does — for example a crate whose inline tests are spread over several `#[cfg(test)]` modules, where the ambiguous layout proposes no target and one governed inline module would qualify — add a `tests/`-surface test file, or move this gap forward with `ripr agent stub --root {root_arg} --at FILE:LINE --kind KIND` (FILE:LINE and KIND are the finding location and probe family `ripr check` prints for the same state). Repair scope, including the inline-test boundary, is in `ripr agent repair --help`. Cause: {error}"
-    )
 }
 
 /// What the before phase prints on stdout once its attempt is published: with
@@ -5512,6 +5542,29 @@ mod repair_summary_tests {
             .permissions();
         std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o555))
             .map_err(|error| error.to_string())?;
+        let probe = directory.join("restore-permission-probe");
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+        {
+            Ok(file) => {
+                drop(file);
+                std::fs::set_permissions(directory, permissions)
+                    .map_err(|error| error.to_string())?;
+                std::fs::remove_file(&probe).map_err(|error| error.to_string())?;
+                tracked.resolve(false, true, true)?;
+                let _ = std::fs::remove_dir_all(&root);
+                eprintln!("permission-denial premise unavailable: workflow directory is writable");
+                return Ok(());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Err(error) => {
+                std::fs::set_permissions(directory, permissions)
+                    .map_err(|error| error.to_string())?;
+                return Err(format!("permission probe failed unexpectedly: {error}"));
+            }
+        }
         let result = tracked.resolve(false, true, true);
         std::fs::set_permissions(directory, permissions).map_err(|error| error.to_string())?;
         let backup = path.with_extension("json.ripr-preattempt-backup");
@@ -5552,6 +5605,89 @@ mod repair_summary_tests {
         if !restored {
             return Err("prior bytes or mode not restored".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn tracked_byte_outputs_refuse_oversize_before_mutation_and_resolve_cleanly()
+    -> Result<(), String> {
+        let oversized = vec![b'x'; crate::edit_cage::MAX_CAPTURE_FILE_BYTES as usize + 1];
+        for gap_bound in [false, true] {
+            for existed in [false, true] {
+                let root = temp_root("tracked-output-size")?;
+                std::fs::create_dir_all(root.join("target/ripr/workflow"))
+                    .map_err(|error| error.to_string())?;
+                let paths = [
+                    root.join("target/ripr/workflow").join(if gap_bound {
+                        "after.check-findings.json"
+                    } else {
+                        "after.repo-exposure.json"
+                    }),
+                    root.join("target/ripr/workflow/agent-verify.json"),
+                    root.join("target/ripr/workflow/analysis-outcome.json"),
+                ];
+                if existed {
+                    for path in &paths {
+                        std::fs::write(path, b"prior").map_err(|error| error.to_string())?;
+                    }
+                }
+                let mut tracked = SharedWorkflowArtifacts::track(&root, gap_bound)?;
+                for path in &paths {
+                    assert!(tracked.write(path, &oversized).is_err());
+                    if existed {
+                        assert_eq!(
+                            std::fs::read(path).map_err(|error| error.to_string())?,
+                            b"prior"
+                        );
+                    } else {
+                        assert!(
+                            !path.exists(),
+                            "oversized output created {}",
+                            path.display()
+                        );
+                    }
+                }
+                tracked.resolve(false, false, false)?;
+                // A clean retry must not encounter an abandoned backup.
+                SharedWorkflowArtifacts::track(&root, gap_bound)?.resolve(true, false, false)?;
+                std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_publication_streams_before_and_bounds_after_before_replacement()
+    -> Result<(), String> {
+        use std::io::Write as _;
+        let root = temp_root("snapshot-size-boundary")?;
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let path = root.join("snapshot.json");
+        let limit = crate::edit_cage::MAX_CAPTURE_FILE_BYTES;
+        let render = |writer: &mut std::io::BufWriter<&mut std::fs::File>| -> Result<(), String> {
+            let block = [b'x'; 8192];
+            for _ in 0..(limit / block.len() as u64) {
+                writer
+                    .write_all(&block)
+                    .map_err(|error| error.to_string())?;
+            }
+            writer.write_all(b"x").map_err(|error| error.to_string())
+        };
+        super::publish_agent_snapshot(&path, None, render)?;
+        assert_eq!(
+            std::fs::metadata(&path)
+                .map_err(|error| error.to_string())?
+                .len(),
+            limit + 1
+        );
+        std::fs::write(&path, b"prior snapshot").map_err(|error| error.to_string())?;
+        let refused = super::publish_agent_snapshot(&path, Some(limit), render);
+        assert!(refused.is_err(), "oversized after snapshot must refuse");
+        assert_eq!(
+            std::fs::read(&path).map_err(|error| error.to_string())?,
+            b"prior snapshot"
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
         Ok(())
     }
 

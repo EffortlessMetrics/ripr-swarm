@@ -427,7 +427,7 @@ fn uncertainty_next_step(
         crate::domain::ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP.to_string()
     } else {
         match class {
-            ExposureClass::InfectionUnknown => "Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings.",
+            ExposureClass::InfectionUnknown => "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings.",
             ExposureClass::PropagationUnknown => "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes.",
             _ => "Inspect the changed behavior and its existing tests; ripr has not established a test gap.",
         }.to_string()
@@ -565,9 +565,7 @@ mod tests {
         )
         .unwrap_or_default();
         assert!(
-            step.starts_with(
-                "Open the related test and trace its input through the local or computed operand"
-            ),
+            step.starts_with("Open the related test, check whether it reaches the changed code"),
             "{step}"
         );
         assert!(

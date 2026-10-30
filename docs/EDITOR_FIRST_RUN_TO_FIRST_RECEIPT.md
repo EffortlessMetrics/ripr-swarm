@@ -116,7 +116,7 @@ Use one of the bounded editor actions:
 - `Copy Repo Gap Map` when you need read-only orientation across actionable,
   report-only, static-limit-only, preview, receipt, and no-action states.
 - `Open related test` when the path is workspace-local and same-language.
-- `Copy first repair packet` when the gap identity, repair route, verify
+- `Copy repair instructions for an AI agent` when the gap identity, repair route, verify
   command, and receipt command are all present.
 - `Copy verify command` and `Copy receipt command` when you want the command
   chain separately.

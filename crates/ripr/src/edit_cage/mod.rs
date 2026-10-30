@@ -26,6 +26,9 @@ use std::time::{Duration, Instant};
 )]
 pub(crate) mod inline_test_region;
 
+#[cfg(test)]
+mod binding_omission_tests;
+
 const MAX_CAPTURE_PATHS: usize = 10_000;
 pub(crate) const MAX_CAPTURE_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CAPTURE_TOTAL_FILE_BYTES: u64 = 64 * 1024 * 1024;
@@ -385,7 +388,7 @@ pub(crate) struct MissingWorkflowProjection {
     pub(crate) bytes: Vec<u8>,
 }
 
-/// Enumerate the bounded executable-bit possibilities for absent, proven
+/// Enumerate the bounded executable-bit possibilities for absent, retained
 /// projections against one real capture. The caller must accept only a
 /// unique candidate whose *whole* delta digest and verdict match the durable
 /// finish; this function itself does not establish provenance or currentness.

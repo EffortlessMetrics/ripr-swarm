@@ -13,6 +13,11 @@ use std::path::PathBuf;
 
 const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change; a test may still reach it through paths ripr cannot follow.";
 const PROXIMITY_ONLY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.";
+/// The same inspection step when the finding's own missing-check line says no
+/// boundary input was detected (#10978): the step names that missing input
+/// instead of leaving the two lines to read as unrelated.
+const PROXIMITY_ONLY_BOUNDARY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner, and no test input that exercises the changed condition was detected. Inspect existing tests, doctests and examples for a call whose input makes that condition both true and false before changing assertions; add a test only if that inspection finds none.";
+const NO_BOUNDARY_INPUT_MISSING: &str = "No detected boundary input for the changed predicate";
 
 #[cfg(test)]
 pub(in crate::analysis) fn build_finding(
@@ -61,6 +66,11 @@ pub(in crate::analysis) fn build_finding_with_origins(
         reaching_summaries
     };
     let mut stop_reasons = stop_reasons(context.probe, context.owner_fn, &test_summaries);
+    // RIPR-SPEC-0048: a constant decided by evaluation has a reader and tests
+    // the evaluation read, so "no changed Rust line" no longer describes it.
+    if context.const_flow.is_some() {
+        stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
+    }
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
     let exact_oracle_covers_direct_sink = evidence.discriminate.state == StageState::Yes
         && matches!(
@@ -156,7 +166,13 @@ pub(in crate::analysis) fn build_finding_with_origins(
         // Proximity is an inspection pointer, not a finding that an
         // existing assertion is broad or missing. Unindexed doctests
         // and examples may already constrain this owner (#7593).
-        Some(PROXIMITY_ONLY_INSPECTION_NEXT_STEP.to_string())
+        Some(
+            if missing.iter().any(|line| line == NO_BOUNDARY_INPUT_MISSING) {
+                PROXIMITY_ONLY_BOUNDARY_INSPECTION_NEXT_STEP.to_string()
+            } else {
+                PROXIMITY_ONLY_INSPECTION_NEXT_STEP.to_string()
+            },
+        )
     } else if class == ExposureClass::StaticUnknown
         && evidence.reach.state == StageState::No
         && !context.owner_assertion_shaped
@@ -286,6 +302,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
     let (activation, files) = evidence.activation.into_public();
     let finding = Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: context.probe.id.0.clone(),
         canonical_gap: None,
         probe: context.probe.clone(),

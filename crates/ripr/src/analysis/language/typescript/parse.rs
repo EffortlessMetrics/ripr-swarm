@@ -152,6 +152,7 @@ pub(crate) fn unsupported_syntax_finding(
 
     Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: probe.id.0.clone(),
         canonical_gap: None,
         probe,
@@ -257,6 +258,7 @@ pub(crate) fn enum_member_finding(
     );
     Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: probe.id.0.clone(),
         canonical_gap: None,
         probe,

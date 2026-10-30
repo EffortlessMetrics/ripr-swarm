@@ -693,7 +693,14 @@ fn retained_missing_gap_projections(
     };
     let verify = read_role(TERMINAL_VERIFY_ROLE, true)?;
     let after = read_role(TERMINAL_GAP_AFTER_ROLE, true)?;
-    validate_retained_gap_after(root, manifest, &receipt, &verify, &after)?;
+    validate_retained_gap_after(
+        root,
+        manifest,
+        &receipt,
+        &verify,
+        &after,
+        RetainedGapAfterUse::CurrentEvidence,
+    )?;
     let recorded_root = receipt
         .pointer("/provenance/repo_root")
         .and_then(serde_json::Value::as_str)
@@ -1014,12 +1021,19 @@ pub(crate) fn validate_issued_receipt_evidence(
 /// Bind a retained gap snapshot to the same attempt-local verify and receipt.
 /// This establishes origin at the recorded after head, not applicability at
 /// the live HEAD. A later currentness check still evaluates the whole delta.
+#[derive(Clone, Copy)]
+enum RetainedGapAfterUse {
+    CurrentEvidence,
+    IssuedHistory,
+}
+
 fn validate_retained_gap_after(
     root: &Path,
     manifest: &RepairAttemptManifest,
     receipt: &serde_json::Value,
     verify_bytes: &[u8],
     after_bytes: &[u8],
+    usage: RetainedGapAfterUse,
 ) -> Result<(), String> {
     let gap = manifest
         .gap_binding
@@ -1076,9 +1090,29 @@ fn validate_retained_gap_after(
     }
     let raw = std::str::from_utf8(after_bytes)
         .map_err(|error| format!("retained gap snapshot is not UTF-8: {error}"))?;
-    let snapshot =
-        crate::agent::artifact::validate_check_findings_artifact(root, raw, "retained after")?
+    let snapshot = match usage {
+        RetainedGapAfterUse::CurrentEvidence => {
+            let live = crate::agent::artifact::validate_check_findings_artifact(
+                root,
+                raw,
+                "retained after",
+            )?
             .artifact;
+            crate::agent::artifact::IssuedCheckFindingsCommitment {
+                repository_head: live.repository_head,
+                base_revision: live.base_revision,
+                content_sha256: live.content_sha256,
+            }
+        }
+        RetainedGapAfterUse::IssuedHistory => {
+            crate::agent::artifact::validate_issued_check_findings_commitment(
+                root,
+                raw,
+                "retained after",
+                &manifest.producer_version,
+            )?
+        }
+    };
     if snapshot.repository_head != after.repository_head
         || snapshot.base_revision.as_deref() != Some(base_commit)
         || field(&verify, "/inputs/after_content_sha256") != Some(snapshot.content_sha256.as_str())
@@ -1938,7 +1972,14 @@ pub(crate) fn load_attempt_terminal_receipt(
                     crate::edit_cage::MAX_CAPTURE_FILE_BYTES,
                 )
                 .and_then(|after| {
-                    validate_retained_gap_after(root, manifest, &value, &verify_bytes, &after)
+                    validate_retained_gap_after(
+                        root,
+                        manifest,
+                        &value,
+                        &verify_bytes,
+                        &after,
+                        RetainedGapAfterUse::IssuedHistory,
+                    )
                 });
                 if let Err(reason) = checked {
                     return AttemptTerminalReceipt::Unavailable {
@@ -2241,7 +2282,14 @@ pub(crate) fn retain_terminal_evidence_from(
         )?;
         let receipt: serde_json::Value = serde_json::from_slice(&receipt_bytes)
             .map_err(|error| format!("decode retained receipt failed: {error}"))?;
-        validate_retained_gap_after(&root, &manifest, &receipt, &verify_bytes, &after_bytes)?;
+        validate_retained_gap_after(
+            &root,
+            &manifest,
+            &receipt,
+            &verify_bytes,
+            &after_bytes,
+            RetainedGapAfterUse::CurrentEvidence,
+        )?;
     }
     if !manifest.terminal_artifacts.is_empty() && manifest.terminal_artifacts != retained {
         return Err(format!(
