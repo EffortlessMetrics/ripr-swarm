@@ -471,7 +471,9 @@ comments, strings, and docstrings:
   bindings: a builtin shadowed by an import, a module or test-local binding
   (including tuple and annotated targets), or a receiver rebound by a chained,
   bracketed (spaced or nested too: `( r), x = ...`, `((r), x) = ...`,
-  `for ((r), x) in ...`; #9178), loop, `with`, walrus or augmented target
+  `for ((r), x) in ...`; #9178; non-adjacent single-line targets
+  `(x, (r)) = ...`, `[a, [r]] = ...`, outer/chained targets and inline
+  loop/with header targets too; #9531), loop, `with`, walrus or augmented target
   (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
   is not credited, as is an augmented assignment after a header or `;`
   (`if c: r += 1`), an `import r` or `nonlocal r`, and any `case` pattern line that
@@ -486,7 +488,9 @@ comments, strings, and docstrings:
   retains earlier lines for multiline literals while searching only the current
   line; an unterminated literal supplies no parsed test or protocol-entry credit.
   Known limits, none of
-  them closed by this: a multi-line tuple target whose earlier elements sit on
+  them closed by this: a non-adjacent assignment inside an inline compound
+  body (`if c: (x, (r)) = ...`) is outside the complete-target fallback;
+  a multi-line tuple target whose earlier elements sit on
   other lines (`(x,\n r) = ...`) is not seen, so the receiver stays credited
   (the credit-keeping direction); and a dict key at the start of a continuation
   line (`{\n (r): 1\n}`) reads as an annotated target and withholds credit
