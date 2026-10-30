@@ -591,7 +591,7 @@ See [provider observation fields](OUTPUT_SCHEMA.md#github-pr-status-provider-obs
 ### Review conversation inventory
 
 For unresolved inline conversations and their next actions, use the read-only
-[finish-pr conversation inventory](../.agents/skills/finish-pr/references/review-conversations.md).
+[finish-pr conversation inventory](agent-context/review-conversations.md).
 It paginates threads and keeps outdated unresolved findings visible; it does not
 replace substantive review or change merge protections.
 Use [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md) for polling
