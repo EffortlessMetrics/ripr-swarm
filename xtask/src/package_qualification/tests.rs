@@ -331,6 +331,48 @@ fn extra_passed_row_cannot_hide_a_missing_required_row() -> Result<(), String> {
 }
 
 #[test]
+fn wrong_payload_target_fails_required_row() -> Result<(), String> {
+    let mut value = valid_receipt_value();
+    value["payload"]["target"] = json!("aarch64-unknown-linux-gnu");
+    let gate = evaluate_value(&value)?;
+    assert_eq!(
+        gate.verdict,
+        GateVerdict::Failed,
+        "wrong payload target must fail"
+    );
+    assert_eq!(gate.required_row_results[0].disposition, "target_mismatch");
+    assert!(
+        gate.failures
+            .iter()
+            .any(|failure| failure.contains("x86_64-unknown-linux-gnu")
+                && failure.contains("aarch64-unknown-linux-gnu")),
+        "{:#?}",
+        gate.failures
+    );
+    Ok(())
+}
+
+#[test]
+fn failed_subject_count_fails_even_when_required_row_passes() -> Result<(), String> {
+    let mut value = valid_receipt_value();
+    value["subjects"]["failed"] = json!(1);
+    let gate = evaluate_value(&value)?;
+    assert_eq!(
+        gate.verdict,
+        GateVerdict::Failed,
+        "failed subjects cannot yield pass"
+    );
+    assert!(
+        gate.failures
+            .iter()
+            .any(|failure| failure.contains("failed")),
+        "{:#?}",
+        gate.failures
+    );
+    Ok(())
+}
+
+#[test]
 fn not_run_required_row_fails_the_aggregate() -> Result<(), String> {
     let mut value = valid_receipt_value();
     value["rows"][0]["status"] = json!("not_run");
@@ -522,7 +564,7 @@ fn declared_full_matrix_without_an_explicit_target_list_fails_closed() -> Result
 }
 
 #[test]
-fn declared_full_matrix_passes_only_when_every_required_target_is_present() -> Result<(), String> {
+fn declared_full_matrix_cannot_reuse_one_payload_for_multiple_targets() -> Result<(), String> {
     let mut value = valid_receipt_value();
     value["selection_scope"] = json!("declared_full_matrix");
     value["required_rows"] = json!([
@@ -556,13 +598,34 @@ fn declared_full_matrix_passes_only_when_every_required_target_is_present() -> R
         }
     ]);
     let gate = evaluate_value(&value)?;
+    assert_eq!(gate.verdict, GateVerdict::Failed, "{:#?}", gate.failures);
+    assert!(
+        gate.failures
+            .iter()
+            .any(|failure| failure.contains("aarch64-unknown-linux-gnu")
+                && failure.contains("payload target")),
+        "{:#?}",
+        gate.failures
+    );
+    assert!(matches!(
+        gate.selection_scope,
+        SelectionScope::DeclaredFullMatrix
+    ));
+    Ok(())
+}
+
+#[test]
+fn single_target_full_matrix_can_pass_with_matching_payload() -> Result<(), String> {
+    let mut value = valid_receipt_value();
+    value["selection_scope"] = json!("declared_full_matrix");
+    let receipt = parse_value(&value)?;
+    let gate = evaluate(&GateInput {
+        receipt: &receipt,
+        expected: &ExpectedIdentity::default(),
+        full_matrix_targets: &["x86_64-unknown-linux-gnu".to_string()],
+    });
     assert_eq!(gate.verdict, GateVerdict::Passed, "{:#?}", gate.failures);
-    match gate.selection_scope {
-        SelectionScope::DeclaredFullMatrix => Ok(()),
-        SelectionScope::ExplicitSubset => {
-            Err("full matrix rendered as an explicit subset".to_string())
-        }
-    }
+    Ok(())
 }
 
 #[test]
