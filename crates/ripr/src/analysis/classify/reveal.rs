@@ -4157,8 +4157,14 @@ fn assertion_matches_probe_detail_with_literals(
     // owner-scoped token counts only when the assertion is bound to the
     // owner's result: it calls the owner, or names a test `let` bound from
     // an owner call (`let value = score(1); assert!(matches!(value, 2))`).
+    // Return-value confirmation must use the assertion's operands, not its
+    // diagnostic arguments. Keep the full text for association and rendering.
+    let return_operands = matches!(family, ProbeFamily::ReturnValue)
+        .then(|| crate::analysis::extract::assertion_oracle_text(&assertion.text))
+        .flatten();
+    let confirmation_text = return_operands.as_deref().unwrap_or(&assertion.text);
     let confirming_token_match = probe_tokens.iter().any(|token| {
-        contains_as_whole_word(&assertion.text, token)
+        contains_as_whole_word(confirmation_text, token)
             && (owner_bound || !owner_scoped_tokens.contains(token))
     });
     let effect_literal_match = !effect_literals.is_empty()
