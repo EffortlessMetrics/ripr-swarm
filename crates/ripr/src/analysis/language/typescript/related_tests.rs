@@ -2100,7 +2100,7 @@ fn spies_on_member_named(body_text: &str, name: &str) -> bool {
 /// callee(...)` where nothing follows the call's closing parenthesis on its
 /// statement, and the local is never written again or declared twice.
 fn factory_receiver_names(body: &str, callees: &[String]) -> Vec<String> {
-    let writes = super::tests_extract::identifier_writes(body);
+    let writes = super::tests_extract::strict_identifier_writes(body);
     let mut receivers = Vec::new();
     for keyword in ["const", "let", "var"] {
         for (idx, _) in body.match_indices(keyword) {
@@ -2158,7 +2158,7 @@ fn method_parameter_binds(body: &str, name: &str) -> bool {
         };
         let between = rest[..brace].trim();
         if !(between.is_empty()
-            || (between.starts_with(':') && !between.contains([';', '=', '(', ')'])))
+            || (between.starts_with(':') && !between.replace("=>", "->").contains([';', '='])))
         {
             return false;
         }

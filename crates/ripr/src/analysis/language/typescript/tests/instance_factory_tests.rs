@@ -496,6 +496,31 @@ fn closed_rule_refuses_indirection_shapes() -> Result<(), String> {
         ),
         ("computed-assignment", "(box as any)['val' + 'ue'] = 1;"),
         ("set-prototype", "Object.setPrototypeOf(box, {});"),
+        ("cast-rebind", "(box as any) = { value: 1 };"),
+        ("non-null-rebind", "box! = { value: 1 };"),
+        (
+            "parenthesized-conditional-rebind",
+            "if (runs === 0) (box) = { value: 1 };",
+        ),
+        (
+            "sinon-getter-stub",
+            "sinon.stub(Cached.prototype, 'value').get(() => 1);",
+        ),
+        (
+            "sinon-replace-getter",
+            "sinon.replaceGetter(obj, 'value', () => 1);",
+        ),
+        (
+            "sinon-namespace-stub",
+            "sinon.stub(ns, 'cached').returns(box);",
+        ),
+        ("td-replace", "td.replace('../src/cache');"),
+        ("proxyquire", "const m = proxyquire('../src/cache', {});"),
+        ("rewire", "const m = rewire('../src/cache');"),
+        (
+            "stub-instance",
+            "const s = sinon.createStubInstance(Cached);",
+        ),
         (
             "mocked-computed",
             "vi.mocked(m['ca' + 'ched']).mockReturnValueOnce({ value: 1 } as never);",
@@ -538,6 +563,14 @@ fn method_parameters_shadow_the_receiver() -> Result<(), String> {
             "  const box = cached(() => 1);\n  const h = {\n    m(box: { value: number }) {\n      expect(box.value).toBe(1);\n    },\n  };\n  h.m({ value: 1 });",
         ),
         (
+            "object-method-paren-return",
+            "  const box = cached(() => 1);\n  const o = {\n    m(box: any): () => number {\n      expect(box.value).toBe(1);\n      return () => 1;\n    },\n  };\n  o.m({ value: 1 });",
+        ),
+        (
+            "class-method-paren-return",
+            "  const box = cached(() => 1);\n  class H {\n    m(box: any): () => number {\n      expect(box.value).toBe(1);\n      return () => 1;\n    }\n  }\n  new H().m({ value: 1 });",
+        ),
+        (
             "class-method",
             "  const box = cached(() => 1);\n  class H {\n    run(box: { value: number }): void {\n      expect(box.value).toBe(1);\n    }\n  }\n  new H().run({ value: 1 });",
         ),
@@ -561,6 +594,31 @@ fn ordinary_spies_and_destructuring_do_not_over_refuse() -> Result<(), String> {
 
 #[test]
 fn owner_side_casts_and_decorators_record_no_entry() {
+    for (label, extra) in [
+        (
+            "static-block-key",
+            "static { const k = 'value'; Object.defineProperty(this.prototype, k, { get: () => 1 }); }",
+        ),
+        (
+            "reflect-define",
+            "Reflect.defineProperty(Cached.prototype, 'value', {});",
+        ),
+        (
+            "spaced-define",
+            "Object.defineProperty (Cached.prototype, 'value', {});",
+        ),
+        (
+            "spaced-define-many",
+            "Object.defineProperties (Cached.prototype, {});",
+        ),
+        (
+            "module-level-variable-key",
+            "const k = 'value';\nObject.defineProperty(Object.getPrototypeOf(cached(() => 1)), k, {});",
+        ),
+    ] {
+        let owner = format!("{CACHE}{extra}\n");
+        assert!(factory_entry_names(&owner).is_empty(), "{label}");
+    }
     let class_cast = format!("{CACHE}(Cached as any) = null;\n");
     assert!(factory_entry_names(&class_cast).is_empty(), "class cast");
     let factory_cast = format!("{CACHE}(cached as any) = null;\n");

@@ -297,20 +297,18 @@ fn class_cannot_replace_getter(
     }) {
         return false;
     }
-    if file_text.contains(&format!("{class_name}.prototype"))
-        || file_text.contains("setPrototypeOf")
-    {
-        return false;
-    }
-    !["defineProperty(", "defineProperties("].iter().any(|call| {
-        file_text.match_indices(call).any(|(idx, _)| {
-            let window: String = file_text[idx..].chars().take(240).collect();
-            ['\'', '"', '`']
-                .iter()
-                .any(|quote| window.contains(&format!("{quote}{name}{quote}")))
-                || window.contains(&format!("{{ {name}:"))
-        })
-    })
+    // Closed rule: any mention of a property-replacement API in the owner
+    // file refuses, whatever its arguments or spacing.
+    !(file_text.contains(&format!("{class_name}.prototype"))
+        || [
+            "defineProperty",
+            "defineProperties",
+            "setPrototypeOf",
+            "replaceProperty",
+            "__proto__",
+        ]
+        .iter()
+        .any(|word| file_text.contains(word)))
 }
 
 fn collect_statement<'a>(

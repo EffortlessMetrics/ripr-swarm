@@ -1572,7 +1572,12 @@ the masker.
     and crediting a call of the factory without a getter read. Known limit: an
     `expect(...)` on a different object elsewhere in the same test can still
     donate its oracle, as for a constructed receiver. A class or accessor
-    decorator refuses; a decorator on another declaration is not examined.
+    decorator refuses; a decorator on another declaration is not examined. Helper or setup
+    modules (an imported local helper, jest `setupFilesAfterEnv`, vitest
+    `setupFiles`, an owner-module `patch()` export) that patch the prototype
+    are not scanned, as for a constructed receiver; obfuscated spellings
+    (`Object["define" + "Property"]`) and a mid-line shadow of the factory
+    name are not detected.
 
 ### Counted removal receiver witness (#10157)
 

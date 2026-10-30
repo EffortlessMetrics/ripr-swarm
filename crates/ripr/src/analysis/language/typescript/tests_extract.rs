@@ -5844,9 +5844,23 @@ pub(crate) fn member_replacement_names(source: &str) -> Vec<String> {
         "replaceProperty",
         "__proto__",
     ];
+    // Other stubbing libraries (sinon, testdouble, proxyquire, rewire).
+    const TOOL_MENTION: [&str; 5] = [
+        "replaceGetter",
+        "replaceSetter",
+        "proxyquire",
+        "rewire",
+        "createStubInstance",
+    ];
+    // Calls whose arguments are scanned for names; a bare mention is ignored.
+    const CALL_ONLY: [&str; 4] = ["stub", "replace", "mockImplementation", "mockReturnValue"];
     const MAX_ARGUMENT_BYTES: usize = 8192;
     let mut names = std::collections::BTreeSet::new();
-    if ANY_MENTION.iter().any(|word| source.contains(word)) {
+    if ANY_MENTION
+        .iter()
+        .chain(TOOL_MENTION.iter())
+        .any(|word| source.contains(word))
+    {
         return vec![MEMBER_REPLACEMENT_ANY.to_string()];
     }
     let refuse_all = || vec![MEMBER_REPLACEMENT_ANY.to_string()];
@@ -5857,7 +5871,17 @@ pub(crate) fn member_replacement_names(source: &str) -> Vec<String> {
             }
         }
     };
-    for word in ["spyOn", "mocked", "mock", "doMock", "stubGlobal"] {
+    for word in [
+        "spyOn",
+        "mocked",
+        "mock",
+        "doMock",
+        "stubGlobal",
+        "stub",
+        "replace",
+        "mockImplementation",
+        "mockReturnValue",
+    ] {
         for (idx, _) in source.match_indices(word) {
             let before = source[..idx].chars().next_back();
             let after = source[idx + word.len()..].chars().next();
@@ -5867,7 +5891,16 @@ pub(crate) fn member_replacement_names(source: &str) -> Vec<String> {
                 continue;
             }
             let rest = &source[idx + word.len()..];
+            // testdouble's `td.replace('../module')` swaps a whole module.
+            if word == "replace"
+                && (source[..idx].ends_with("td.") || source[..idx].ends_with("testdouble."))
+            {
+                return refuse_all();
+            }
             let Some(args) = rest.trim_start().strip_prefix('(') else {
+                if CALL_ONLY.contains(&word) {
+                    continue;
+                }
                 return refuse_all();
             };
             let Some(end) = super::classifier::balanced_close_offset(args) else {
