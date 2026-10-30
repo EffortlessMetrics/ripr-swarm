@@ -120,3 +120,92 @@ fn a_test_that_rebinds_the_runner_or_overrides_it_keeps_the_limit() -> Result<()
     );
     Ok(())
 }
+
+#[test]
+fn a_workspace_local_or_relative_clirunner_is_not_the_inert_tool() -> Result<(), String> {
+    // `from ..click.testing import CliRunner` in tests/conftest.py resolves to
+    // the dotted path `click.testing` but names a workspace-local module.
+    for (case, import) in [
+        ("relative", "from ..click.testing import CliRunner"),
+        ("renamed", "from click.testing import CliRunner as Runner"),
+        ("module import", "import click.testing"),
+    ] {
+        let conftest = CONFTEST.replace("from click.testing import CliRunner", import);
+        let conftest = if case == "module import" {
+            conftest.replace("CliRunner()", "click.testing.CliRunner()")
+        } else {
+            conftest
+        };
+        assert_limited(&classify_total(&conftest, TEST)?, case);
+    }
+    Ok(())
+}
+
+#[test]
+fn patching_the_runner_class_keeps_the_limit() -> Result<(), String> {
+    let patched_conftest = format!("{CONFTEST}\n\nCliRunner.invoke = lambda self, *a, **k: None\n");
+    assert_limited(
+        &classify_total(&patched_conftest, TEST)?,
+        "class patched in the conftest",
+    );
+    let patched_test = format!("{TEST}\n\nCliRunner.invoke = lambda self, *a, **k: None\n");
+    assert_limited(
+        &classify_total(CONFTEST, &patched_test)?,
+        "class patched in the test module",
+    );
+    Ok(())
+}
+
+#[test]
+fn a_nearer_conftest_or_a_class_method_test_keeps_the_limit() -> Result<(), String> {
+    let (owners, tests) = workspace(&[
+        ("shop/__init__.py", SHOP),
+        ("tests/conftest.py", CONFTEST),
+        (
+            "tests/sub/conftest.py",
+            "import pytest\n\n\n@pytest.fixture\ndef runner():\n    return object()\n",
+        ),
+        ("tests/sub/test_shop.py", TEST),
+    ]);
+    let nearer = classify_change(
+        Path::new("shop/__init__.py"),
+        2,
+        "    return amount * 3",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "the changed line must classify".to_string())?;
+    assert_limited(&nearer, "nearer conftest override");
+    let method = "from shop import total\n\n\nclass TestShop:\n    def test_total(self, runner):\n        assert runner is not None\n        assert total(3) == 6\n";
+    assert_limited(&classify_total(CONFTEST, method)?, "class-method test");
+    Ok(())
+}
+
+#[test]
+fn an_imported_autouse_fixture_that_takes_the_runner_keeps_the_limit() -> Result<(), String> {
+    // `from helpers import prime` registers an autouse fixture that can seed
+    // the runner before the test reads it; without that import the same
+    // scope reads as inert.
+    let helpers = "import pytest\n\n\n@pytest.fixture(autouse=True)\ndef prime(runner):\n    runner.expected = 9\n";
+    let with_import = format!("from helpers import prime\n{TEST}");
+    let build = |test: &str| {
+        let (owners, tests) = workspace(&[
+            ("shop/__init__.py", SHOP),
+            ("tests/conftest.py", CONFTEST),
+            ("tests/helpers.py", helpers),
+            ("tests/test_shop.py", test),
+        ]);
+        classify_change(
+            Path::new("shop/__init__.py"),
+            2,
+            "    return amount * 3",
+            &owners,
+            &tests,
+        )
+        .ok_or_else(|| "the changed line must classify".to_string())
+    };
+    assert_limited(&build(&with_import)?, "imported autouse fixture");
+    let control = build(TEST)?;
+    assert_eq!(control.static_limit_kind, None, "{:?}", control.evidence);
+    Ok(())
+}

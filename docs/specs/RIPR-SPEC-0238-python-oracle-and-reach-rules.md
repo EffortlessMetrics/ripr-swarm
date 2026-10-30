@@ -490,6 +490,20 @@ This order is the existing behavior and is normative:
   later statement names the fixture, rebinds a target name or defines a
   nested scope. The test then reads as `@pytest.mark.parametrize` over the
   target names with the rows as cases, and the unpack is not a rebinding.
+  A fixture is also resolved when it is an inert test tool (#11016, a
+  `click.testing.CliRunner` fixture such as pallets/click's `runner`): its
+  only decorator is `@pytest.fixture` or `@pytest.fixture(scope="function")`,
+  the def is synchronous and takes nothing or a lone `request` it does not
+  read, and its body is an optional docstring and `return CliRunner(<literals>)`
+  with `CliRunner` imported by an absolute, unaliased `from click.testing`
+  (or `typer.testing`) import and bound once. The test is a module-level
+  pytest test that takes the fixture without a default, does not rebind it,
+  and carries no decorator other than a pytest mark. The scope rules above
+  hold, and in addition no scope file assigns, deletes or loops into an
+  attribute of `CliRunner` (`CliRunner.invoke = fake`), and no workspace
+  module a scope `from` import names spells the fixture in a fixture or
+  compound statement or is opaque. The runner only invokes commands, so it
+  hides no discriminator or expected value.
   Any other shape keeps the limit; a third-party plugin fixture outside
   the workspace is not visible to this read;
 - L9: `opaque_custom_assertion_helper`: an eligible candidate has a

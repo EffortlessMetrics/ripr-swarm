@@ -86,7 +86,7 @@ pub(super) fn collect_fixture_defs(
             imports: test_imports(file, module_imports, body),
             literal_construction: literal_construction(stmt, statements, source, &aliases, false),
             inert_tool: literal_construction(stmt, statements, source, &aliases, true)
-                .filter(|class| is_inert_tool_import(module_imports, class)),
+                .filter(|class| is_inert_tool_import(statements, class)),
             literal_params: super::param_fixtures::literal_params(
                 stmt,
                 statements,
@@ -411,6 +411,10 @@ pub(super) struct FixtureSideEffects {
     /// (`getfixturevalue`, `fixturenames`, `funcargs`, `node`), a `global`
     /// rebinding inside a def, or a module that only partly parsed.
     pub(super) opaque: bool,
+    /// Names whose attributes the module assigns, deletes or loops into
+    /// (`CliRunner.invoke = fake`): a class patched this way no longer builds
+    /// the object a fixture's shape suggests (#11016).
+    pub(super) class_writes: Vec<String>,
 }
 
 /// Request and item attributes through which a fixture reaches other
@@ -438,6 +442,7 @@ pub(super) fn collect_fixture_side_effects(
             })
             .cloned()
             .collect(),
+        class_writes: super::module_constants::assigned_attribute_bases(statements),
         ..FixtureSideEffects::default()
     };
     for stmt in statements {
@@ -573,6 +578,10 @@ pub(super) fn mark_isolated_fixture_defs(
                                         .map(|import| (file.clone(), import.clone())),
                                 );
                                 if side.opaque
+                                    || def
+                                        .inert_tool
+                                        .as_ref()
+                                        .is_some_and(|class| side.class_writes.contains(class))
                                     || side
                                         .texts
                                         .iter()
@@ -589,6 +598,19 @@ pub(super) fn mark_isolated_fixture_defs(
                                 })
                             })
                         });
+                    // A name imported into the scope can be an autouse fixture
+                    // defined in a workspace module that spells this one (#11016);
+                    // the tool read refuses it, unlike the owner-module rule.
+                    let isolated = isolated
+                        && (def.inert_tool.is_none()
+                            || !scope_imports.iter().any(|(_, import)| {
+                                imported_module_may_touch_fixture(
+                                    import,
+                                    &def.name,
+                                    defs_by_file,
+                                    side_by_file,
+                                )
+                            }));
                     (isolated, scope_imports)
                 })
                 .clone();
@@ -596,6 +618,41 @@ pub(super) fn mark_isolated_fixture_defs(
             def.scope_imports = scope_imports;
         }
     }
+}
+
+/// Whether the workspace module a `from M import y` names spells `fixture` in
+/// a fixture or compound statement, or cannot be read through (opaque). An
+/// imported autouse fixture that takes `fixture` could change what it hands
+/// the test, so the scope is not isolated. A module outside the workspace
+/// is not visible to this read.
+fn imported_module_may_touch_fixture(
+    import: &PythonImport,
+    fixture: &str,
+    defs_by_file: &BTreeMap<PathBuf, Vec<PythonFixtureDef>>,
+    side_by_file: &BTreeMap<PathBuf, FixtureSideEffects>,
+) -> bool {
+    if import.source_module.is_empty() {
+        return false;
+    }
+    let module = import.source_module.replace('.', "/");
+    let names_module = |file: &Path| {
+        let path = super::normalized_path(file);
+        [format!("{module}.py"), format!("{module}/__init__.py")]
+            .iter()
+            .any(|suffix| path == *suffix || path.ends_with(&format!("/{suffix}")))
+    };
+    side_by_file.iter().any(|(file, side)| {
+        names_module(file)
+            && (side.opaque
+                || side
+                    .texts
+                    .iter()
+                    .any(|text| mentions_identifier(text, fixture))
+                || defs_by_file.get(file).is_some_and(|defs| {
+                    defs.iter()
+                        .any(|def| mentions_identifier(&def.body_text, fixture))
+                }))
+    })
 }
 
 /// A fixture that hands the test a fresh `OwnerClass(<literals>)` (#9619):
@@ -668,19 +725,33 @@ const INERT_TOOL_CLASSES: [(&str, &str); 2] = [
     ("typer.testing", "CliRunner"),
 ];
 
-/// Whether the file imports `class` under its own name from an inert tool
-/// module.
-fn is_inert_tool_import(imports: &[PythonImport], class: &str) -> bool {
-    imports
-        .iter()
-        .rev()
-        .find(|import| import.alias == class)
-        .is_some_and(|import| {
-            import.imported == class
-                && INERT_TOOL_CLASSES
-                    .iter()
-                    .any(|(module, name)| *module == import.source_module && *name == class)
-        })
+/// Whether the file's last top-level binding of `class` is an absolute
+/// `from <inert tool module> import class` (no alias, no relative level: a
+/// workspace-local `click/testing.py` reached through `from ..click.testing`
+/// resolves to the same dotted path but is not click's runner).
+fn is_inert_tool_import(statements: &[Stmt], class: &str) -> bool {
+    let mut absolute = false;
+    for stmt in statements {
+        let Stmt::ImportFrom(import) = stmt else {
+            continue;
+        };
+        for alias in &import.names {
+            let bound = alias.asname.as_ref().unwrap_or(&alias.name);
+            if bound.as_str() != class {
+                continue;
+            }
+            let level = import.level.as_ref().map_or(0, |level| level.to_usize());
+            absolute = level == 0
+                && alias.asname.is_none()
+                && alias.name.as_str() == class
+                && import.module.as_ref().is_some_and(|module| {
+                    INERT_TOOL_CLASSES.iter().any(|(tool_module, name)| {
+                        *tool_module == module.as_str() && *name == class
+                    })
+                });
+        }
+    }
+    absolute
 }
 
 /// A fixture that hands the test a fresh `CliRunner()` (#11016): an isolated
