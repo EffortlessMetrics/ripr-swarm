@@ -809,6 +809,7 @@ scope = "out"
 reason = "Rust analyzer transfer rule over Rust syntax; a Python case cannot label it"
 
 # Rust spec 0154
+# Assertion-form parity
 [[spec]]
 id = "RIPR-SPEC-0154"
 scope = "out"
@@ -837,18 +838,6 @@ reason = "Rust analyzer transfer rule over Rust syntax; a Python case cannot lab
 id = "RIPR-SPEC-0165"
 scope = "out"
 reason = "Rust analyzer transfer rule over Rust syntax; a Python case cannot label it"
-
-# Rust source-role layout rules over Cargo targets
-[[spec]]
-id = "RIPR-SPEC-0153"
-scope = "out"
-reason = "Rust source-role layout rules over Cargo targets; a Python case cannot label it"
-
-# Rust source-role composition over cfg(test) module edges
-[[spec]]
-id = "RIPR-SPEC-0169"
-scope = "out"
-reason = "Rust source-role composition over cfg(test) module edges; a Python case cannot label it"
 
 # Rust unsafe boundary probes
 [[spec]]
