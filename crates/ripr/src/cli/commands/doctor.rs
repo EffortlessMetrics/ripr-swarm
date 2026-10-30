@@ -3806,6 +3806,25 @@ mod tests {
     }
 
     #[test]
+    fn header_keeps_the_build_msrv_off_the_first_screen() {
+        // #11114 / #10696: ripr's own build MSRV stays in the JSON report; the
+        // header line beside the analyzed root must not read as the
+        // workspace's MSRV.
+        let report = passing_report();
+        let environment = empty_environment();
+        let lines = render_screen(&report, &environment, false, true);
+        assert_eq!(
+            lines.get(1).map(String::as_str),
+            Some("Root: ."),
+            "{lines:?}"
+        );
+        assert!(
+            !lines.iter().take(3).any(|line| line.contains("MSRV")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
     fn default_screen_warns_when_config_launches_ripr_missing_from_path() {
         // #10347: advisory `~` line on the default screen, quiet without a
         // dependent config, and the exit decision (`passed`) is untouched.

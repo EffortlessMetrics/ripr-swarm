@@ -3309,9 +3309,7 @@ fn diagnostic_for_finding_with_causal(
         "probe_id": finding.probe.id.to_string(),
         "classification": finding.class.as_str(),
         "probe_family": finding.probe.family.as_str(),
-        // #10717: f32 -> f64 widening prints 0.4000000059604645; round to the
-        // two decimals every other surface renders.
-        "confidence": (f64::from(finding.confidence) * 100.0).round() / 100.0,
+        "confidence": crate::domain::contract_confidence(finding.confidence),
         "source_range": {
             "file": file,
             "line": finding.probe.location.line,
@@ -3362,6 +3360,12 @@ fn diagnostic_for_finding_with_causal(
                 "explain_command".to_string(),
                 serde_json::Value::String(witness.explain_command.clone()),
             );
+            let mut value = value;
+            if let Some(confidence) = witness.confidence.value
+                && let Some(slot) = value.pointer_mut("/confidence/value")
+            {
+                *slot = serde_json::json!(crate::domain::contract_confidence(confidence));
+            }
             obj.insert("witness".to_string(), value);
             let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
             if let Ok(summary_value) = serde_json::to_value(&summary) {
@@ -6857,6 +6861,34 @@ mod lsp_next_step_parity_tests {
             !message.contains("no actionable repair packet is emitted until"),
             "LSP diagnostic must NOT contain blocked-case tail for complete packet; got: {message}"
         );
+    }
+
+    /// #10717: the diagnostic `data` carries the two-decimal contract value
+    /// that `ripr check` prints, not the widened `f32` (`0.4000000059604645`),
+    /// both for the finding and for its witness.
+    #[test]
+    fn lsp_diagnostic_data_confidence_uses_contract_precision() -> Result<(), String> {
+        for (stored, printed) in [
+            (0.4_f32, "0.4"),
+            (0.92, "0.92"),
+            (0.6, "0.6"),
+            (0.75, "0.75"),
+        ] {
+            let mut finding = complete_ts_finding();
+            finding.confidence = stored;
+            let diagnostic =
+                super::diagnostic_for_finding(std::path::Path::new("/workspace"), &finding);
+            let data = diagnostic.data.ok_or("diagnostic must carry data")?;
+            let top = serde_json::to_string(&data["confidence"]).map_err(|e| e.to_string())?;
+            let witness = serde_json::to_string(&data["witness"]["confidence"]["value"])
+                .map_err(|e| e.to_string())?;
+            if top != printed || witness != printed {
+                return Err(format!(
+                    "stored {stored}: data.confidence {top}, witness value {witness}; want {printed}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// PARITY: blocked packet → LSP diagnostic message must STILL contain the

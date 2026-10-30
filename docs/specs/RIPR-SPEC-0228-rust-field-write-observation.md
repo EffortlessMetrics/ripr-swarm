@@ -615,7 +615,19 @@ changes `self.count += 2` to `self.count += 1`.
   definition embeds one (followed four levels deep, `custom_eq.rs`), is not
   credited: its `eq` may ignore the changed field. A literal whose type has no
   `struct` or `enum` definition in the workspace (`Self`, an alias, a macro)
-  fails closed the same way. Derived `PartialEq` is taken to compare every
+  fails closed the same way. So does an embedded field type that no workspace file defines and
+  std does not own (`outside::Sku`, also inside `Vec<..>`/`Option<..>`): its
+  `PartialEq` may live in a dependency the index does not read (#10684). The
+  item's own generic parameters, enum variant names and discriminants,
+  attributes and array lengths are not field types. A std/core container or
+  string (`String`, `Vec`, `Option`, `Box`, ..) keeps the credit only as a
+  bare name no non-std `use` imports (including an alias or a glob from
+  outside the workspace's own paths) or as a path rooted at `std`, `core` or
+  `alloc`: `outside::String` is a foreign type that shares a std basename and
+  fails closed. A braced `use` group is read leaf by leaf with its prefix, so a std path
+  beside a foreign one (`use {std::io, outside::String};`) does not hide
+  the foreign import and a std-only group (`use std::{fmt, path::PathBuf};`)
+  keeps the std reading. Derived `PartialEq` is taken to compare every
   field. In reveal the credit also needs the expected side to be a second
   binding built by hand (example 21), outside `#[should_panic]` tests.
 - Field assignments (`self.f = ..`, `self.f op= ..`, every compound

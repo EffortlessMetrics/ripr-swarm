@@ -1597,6 +1597,16 @@ start-here, the report index, and the changed-line annotations, each as a log
 group named after the step it replaced. `ripr help reports` lists its
 failure rules, and `--step NAME` reruns one step locally.
 
+The PR-guidance producer runs its `ripr check --format json` child with the
+findings-array byte budget disabled (`RIPR_CHECK_FINDINGS_BYTES=0`, #11143):
+`review-comments` needs the complete document and applies its own brief caps
+before anything reaches the PR, while the default 1 MB budget would hand it a
+findings-bounded (`limited_findings_bound`) prefix that it — and every other
+gate-denominator consumer — must refuse fail-closed. The override covers only
+that child, so hand-run `ripr check` output keeps the ambient budget; set
+`RIPR_CHECK_FINDINGS_BYTES=0` yourself (or raise the byte value) when an
+outside-the-packet hand-off needs the full findings array.
+
 ```yaml
       - name: Run RIPR
         run: ripr reports ci-packet --root .
