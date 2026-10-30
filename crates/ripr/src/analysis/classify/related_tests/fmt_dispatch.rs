@@ -919,21 +919,25 @@ fn constructs_self(expr: &str, self_type: &str) -> bool {
     };
     let opens = matches!(next, Some(b'(' | b'{'));
     match segments.as_slice() {
-        // `Site(..)` / `m::Site { .. }`: only module (lowercase) prefixes may
+        // `Site(..)` / `crate::Site { .. }`: only an in-crate prefix may
         // precede the type, so `Error::Site(..)` (a variant named like the
-        // type) is not a `Site`.
-        [prefix @ .., last]
-            if opens
-                && *last == self_type
-                && prefix
-                    .iter()
-                    .all(|segment| segment.starts_with(|c: char| c.is_ascii_lowercase())) =>
-        {
-            true
+        // type) and `other_crate::Site { .. }` (a foreign type sharing the
+        // name) are not a `Site`.
+        [prefix @ .., last] if opens && *last == self_type && in_crate_prefix(prefix) => true,
+        [prefix @ .., ty, variant] => {
+            *ty == self_type && is_variant_name(variant) && in_crate_prefix(prefix)
         }
-        [.., ty, variant] => *ty == self_type && is_variant_name(variant),
         _ => false,
     }
+}
+
+/// Whether a path prefix keeps naming the local type: empty, or only
+/// `crate`, `self` or `super` (the rule `binding_has_type` applies to
+/// annotations).
+fn in_crate_prefix(prefix: &[&str]) -> bool {
+    prefix
+        .iter()
+        .all(|segment| matches!(*segment, "crate" | "self" | "super"))
 }
 
 /// What a macro argument can be typed from: the statements finished before
@@ -1040,10 +1044,7 @@ fn binding_has_type(scope: Scope<'_>, binding: &str, self_type: &str) -> bool {
         // of another crate or module that merely shares the local type's
         // name; only an in-crate prefix keeps the annotation the local type.
         return type_head(&pattern[colon + 1..]).is_some_and(|(segments, _)| {
-            segments.last() == Some(&self_type)
-                && segments[..segments.len() - 1]
-                    .iter()
-                    .all(|segment| matches!(*segment, "crate" | "self" | "super"))
+            segments.last() == Some(&self_type) && in_crate_prefix(&segments[..segments.len() - 1])
         });
     }
     let init = statement[eq + 1..].trim();
@@ -1431,6 +1432,14 @@ mod tests {
                 "let merge = Merge;\nassert_eq!(format!(\"{:?}\", merge), \"a\");",
                 "let merge = Merge::new(vec![]);\nassert_eq!(merge.to_string(), \"a\");",
                 "let merge = Merge;\nassert_eq!(merge.len(), 0);",
+                // A path-qualified initializer names the local type only
+                // with an in-crate prefix, like an annotation.
+                "let merge = crate::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = self::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = super::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = other_crate::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = other_crate::Merge(vec![]);\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = other_crate::Merge::Variant;\nassert_eq!(merge.to_string(), \"a\");",
                 // A path-qualified annotation names the local type only with
                 // an in-crate prefix.
                 "let merge: crate::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
@@ -1443,7 +1452,11 @@ mod tests {
             .filter(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
             .map(|(name, _)| name.as_str())
             .collect();
-        assert_eq!(helper_calls, ["t0", "t1", "t6"], "{reasons:?}");
+        assert_eq!(
+            helper_calls,
+            ["t0", "t1", "t12", "t6", "t7", "t8"],
+            "{reasons:?}"
+        );
         assert!(
             !reasons
                 .iter()
@@ -2084,13 +2097,17 @@ mod tests {
         for body in [
             "format!(\"{:?}\", Error::DecodeError(inner));".to_string(),
             "let e = Error::DecodeError(inner);\nformat!(\"{:?}\", e);".to_string(),
+            // A module prefix may be another crate's module (#8999): only
+            // bare, `crate`, `self` and `super` prefixes name the local type.
+            "format!(\"{:?}\", m::DecodeError(inner));".to_string(),
+            "let e = crate::m::DecodeError(inner);\nformat!(\"{:?}\", e);".to_string(),
         ] {
             assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
         }
         for body in [
             "format!(\"{:?}\", DecodeError(inner));",
-            "format!(\"{:?}\", m::DecodeError(inner));",
-            "let e = crate::m::DecodeError(inner);\nformat!(\"{:?}\", e);",
+            "format!(\"{:?}\", crate::DecodeError(inner));",
+            "let e = super::DecodeError(inner);\nformat!(\"{:?}\", e);",
         ] {
             assert!(direct(&reasons(&owner, 0, &[body]), "t0"), "{body}");
         }
