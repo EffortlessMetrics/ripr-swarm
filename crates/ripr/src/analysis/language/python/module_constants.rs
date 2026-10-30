@@ -296,14 +296,45 @@ fn without_test_bodies(source: &str, statements: &[Stmt]) -> String {
         }
         String::from_utf8(blanked).unwrap_or_else(|_| source.to_string())
     };
-    // A kept helper's body can name another helper, so repeat to a fixpoint.
+    // A helper named anywhere outside a blanked body keeps its body, and a
+    // kept body can name another helper. Count words once and follow the
+    // names a kept body adds, so the work stays linear in the module size.
     let mut blanked = blank(&helpers);
-    loop {
-        let before = helpers.len();
-        helpers.retain(|(name, _)| identifier_offsets(&blanked, name).count() <= 1);
-        if helpers.len() == before {
-            break;
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for word in words(&blanked) {
+        *counts.entry(word).or_insert(0) += 1;
+    }
+    let mut by_name: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+    for (index, (name, _)) in helpers.iter().enumerate() {
+        by_name.entry(name).or_default().push(index);
+    }
+    let mut pending: Vec<usize> = helpers
+        .iter()
+        .enumerate()
+        .filter(|(_, (name, _))| counts.get(name).copied().unwrap_or(0) > 1)
+        .map(|(index, _)| index)
+        .collect();
+    let mut kept = vec![false; helpers.len()];
+    while let Some(index) = pending.pop() {
+        if std::mem::replace(&mut kept[index], true) {
+            continue;
         }
+        let (start, end) = helpers[index].1;
+        let body = source.get(start..end.min(source.len())).unwrap_or_default();
+        for word in words(body) {
+            let count = counts.entry(word).or_insert(0);
+            *count += 1;
+            if *count > 1 {
+                pending.extend(by_name.get(word).into_iter().flatten().copied());
+            }
+        }
+    }
+    if kept.iter().any(|&keep| keep) {
+        let mut index = 0;
+        helpers.retain(|_| {
+            index += 1;
+            !kept[index - 1]
+        });
         blanked = blank(&helpers);
     }
     // A test function named anywhere but its own `def` (called at import,
@@ -1244,6 +1275,13 @@ fn walrus_target_names(text: &str) -> std::collections::HashSet<&str> {
 /// Whether `text` holds `identifier` as a whole word.
 pub(super) fn mentions_identifier(text: &str, identifier: &str) -> bool {
     identifier_offsets(text, identifier).next().is_some()
+}
+
+/// The identifier-like words of `text`, split on anything that is not
+/// alphanumeric or `_` (the same boundary [`identifier_offsets`] uses).
+fn words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .filter(|word| !word.is_empty())
 }
 
 /// End offsets of every whole-word occurrence of `identifier` in `text`.
