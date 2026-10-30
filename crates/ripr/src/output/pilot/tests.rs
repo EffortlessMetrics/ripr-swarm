@@ -895,7 +895,7 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     ];
     let artifacts = pilot_artifacts();
     let context = pilot_context(&artifacts);
-    let ranked = "the rest are in target/ripr/pilot/pilot-summary.md; --max-seams N shows more";
+    let ranked = "more are in target/ripr/pilot/pilot-summary.md; --max-seams N shows more";
 
     let terminal = render_pilot_terminal(&entries, context);
     assert!(
@@ -1255,6 +1255,33 @@ fn pilot_terminal_keeps_unchecked_count_guidance_when_limit_cut_an_empty_ranking
     assert!(
         unlimited.contains("so there is no test to add"),
         "{unlimited}"
+    );
+}
+
+/// #10694 review: declined Rust files keep the limited-result closing line.
+#[test]
+fn pilot_terminal_qualifies_empty_ranking_when_rust_files_were_declined() {
+    use crate::domain::LanguageId;
+    let artifacts = pilot_artifacts();
+    let declined = vec![crate::analysis::DeclinedRustFile {
+        path: PathBuf::from("src/deep.rs"),
+        reason: "static limit rust_nesting_budget".to_string(),
+    }];
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[])
+            .with_declined_rust_files(declined);
+    let context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains("were not checked and may hold gaps"),
+        "{terminal}"
+    );
+    assert!(
+        !terminal.contains("so there is no test to add"),
+        "{terminal}"
     );
 }
 
@@ -3072,7 +3099,7 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
     );
     assert!(
         terminal.contains(&format!(
-            "python: 1 file (preview; checked from the diff only)\n    route: {command}\n"
+            "python: 1 file (preview; run the command below to check the diff)\n    route: {command}\n"
         )),
         "{terminal}"
     );

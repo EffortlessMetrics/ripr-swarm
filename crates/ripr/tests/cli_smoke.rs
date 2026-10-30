@@ -19693,7 +19693,8 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
         true
     );
     assert!(
-        enabled_stdout.contains("typescript: 2 files (preview; checked from the diff only)\n"),
+        enabled_stdout
+            .contains("typescript: 2 files (preview; run the command below to check the diff)\n"),
         "{enabled_stdout}"
     );
     assert_pilot_headline_names_supported_check_route(
@@ -19769,7 +19770,7 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
     assert_eq!(exposure["metrics"]["seams_total"], 0);
     assert!(
         stdout.contains(&format!(
-            "python: 2 files (preview; checked from the diff only)\n    route: {command}\n"
+            "python: 2 files (preview; run the command below to check the diff)\n    route: {command}\n"
         )),
         "{stdout}"
     );

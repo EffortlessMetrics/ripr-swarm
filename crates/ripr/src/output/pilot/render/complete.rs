@@ -638,7 +638,7 @@ pub(crate) fn render_pilot_terminal(
         let noun = if actionable == 1 { "gap" } else { "gaps" };
         if actionable > 1 {
             out.push_str(&format!(
-                "  {totals} {noun} to fix; showing the top 1 (the rest are in {brief}; --max-seams N shows more)\n",
+                "  {totals} {noun} to fix; showing the top 1 (more are in {brief}; --max-seams N shows more)\n",
                 brief = display_path(&context.artifacts.pilot_summary_md)
             ));
         } else {
@@ -901,6 +901,9 @@ pub(crate) fn render_pilot_terminal(
                 limit.total.saturating_sub(limit.analyzed),
                 limit.total
             )),
+            None if !declined_rust_files(context).is_empty() => out.push_str(
+                "No gap was found in the files ripr could read, but the Rust files listed above were not checked and may hold gaps: split them as described, then rerun `ripr pilot`.\n",
+            ),
             None => out.push_str(
                 "No gap was found, so there is no test to add; rerun `ripr pilot` after the code or its tests change.\n",
             ),
@@ -1508,7 +1511,7 @@ fn terminal_rank_label(label: &str) -> &'static str {
 fn terminal_route_status_label(route: &PilotLanguageRoute) -> &'static str {
     match (route.available, route.enabled) {
         (false, _) => "not available in this build",
-        (true, true) => "preview; checked from the diff only",
+        (true, true) => "preview; run the command below to check the diff",
         (true, false) => "preview; turn it on in ripr.toml [languages] to check it",
     }
 }
@@ -1521,8 +1524,10 @@ fn terminal_grip_phrase(class: crate::analysis::seams::SeamGripClass) -> &'stati
     match class {
         Class::StronglyGripped => "tests check this",
         Class::WeaklyGripped => "tests only loosely check this",
-        Class::Ungripped => "no test reaches this",
-        Class::ReachableUnrevealed => "tests reach this but would not notice a change",
+        Class::Ungripped => "ripr found no test that reaches this",
+        Class::ReachableUnrevealed => {
+            "tests reach this, but ripr found nothing that would notice a change"
+        }
         Class::ActivationUnknown
         | Class::PropagationUnknown
         | Class::ObservationUnknown
@@ -1587,7 +1592,8 @@ fn terminal_why_line(entry: &ClassifiedSeam) -> String {
 
 const TERMINAL_NO_REPAIR_TARGET_TEST: &str = "none: `ripr agent repair` has no test file to use for this gap (for example, the only tests are inline `#[cfg(test)]` in a file outside the test paths, or live in another crate), so it will not start a repair here";
 
-const TERMINAL_NO_REPAIR_START_LINE: &str = "not available for this gap (ripr cannot name a safe test file to change); add the test by hand";
+const TERMINAL_NO_REPAIR_START_LINE: &str =
+    "not available for this gap (ripr did not start a repair here); add the test by hand";
 
 fn file_count_label(count: usize) -> String {
     if count == 1 {

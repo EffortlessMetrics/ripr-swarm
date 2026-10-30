@@ -184,7 +184,7 @@ One seam per owner per round (cap 1).
    N = 1). When more than one actionable seam exists, the terminal
    gap-count line (`N gaps to fix; showing the top 1 (...)`) also
    discloses the actionable total and points to the written Markdown
-   brief for the full ranked list, naming `--max-seams` as the control
+   brief for more ranked gaps (up to `--max-seams`), naming `--max-seams` as the control
    that lengthens that list (the terminal itself always shows 1). The
    total reads `at least N` when a seam limit cut the classified seams
    or Rust files were declined by parse limits — the same lower-bound
