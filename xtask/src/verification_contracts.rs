@@ -2636,7 +2636,9 @@ mod tests {
         let negative = validate_json_file_against_schema(&root, "value.json", "schema.json");
         let _ = fs::remove_dir_all(&root);
         positive?;
-        assert!(negative.is_err(), "fractional source bytes must fail");
+        if negative.is_ok() {
+            return Err("fractional source bytes must fail".into());
+        }
         Ok(())
     }
 

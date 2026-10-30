@@ -155,7 +155,7 @@ impl std::fmt::Display for Value {
             Self::String(v) => write!(
                 f,
                 "{}",
-                serde_json::to_string(v).map_err(|_| std::fmt::Error)?
+                serde_json::to_string(v).map_err(|_error| std::fmt::Error)?
             ),
             Self::Array(v) => {
                 write!(f, "[")?;
@@ -176,7 +176,7 @@ impl std::fmt::Display for Value {
                     write!(
                         f,
                         "{}:{item}",
-                        serde_json::to_string(key).map_err(|_| std::fmt::Error)?
+                        serde_json::to_string(key).map_err(|_error| std::fmt::Error)?
                     )?;
                 }
                 write!(f, "}}")
@@ -224,6 +224,14 @@ fn convert(value: json_syntax::Value) -> Value {
 mod tests {
     use super::*;
 
+    fn expect_parse(bytes: &[u8], valid: bool) -> Result<(), String> {
+        match (parse(bytes), valid) {
+            (Ok(_), true) | (Err(_), false) => Ok(()),
+            (Err(error), true) => Err(format!("expected valid input: {error}")),
+            (Ok(_), false) => Err("expected invalid input to be rejected".into()),
+        }
+    }
+
     #[test]
     fn exact_parser_preserves_numbers_and_objects() -> Result<(), String> {
         let value = parse(br#"{"$serde_json::private::Number":"42","n":1.00000000000000001}"#)?;
@@ -259,31 +267,32 @@ mod tests {
     fn duplicate_escaped_keys_keep_last_and_invalid_discarded_values_fail() -> Result<(), String> {
         let value = parse(br#"{"a":1,"\u0061":1.5}"#)?;
         assert_eq!(value.get("a").and_then(Value::as_number), Some("1.5"));
-        assert!(parse(br#"{"a":"\uD800","a":1}"#).is_err());
+        expect_parse(br#"{"a":"\uD800","a":1}"#, false)?;
         Ok(())
     }
 
     #[test]
     fn preflight_counts_nodes_before_duplicate_collapse() -> Result<(), String> {
         let at_limit = format!("[{}0]", "0,".repeat(MAX_JSON_NODES - 2));
-        assert!(parse(at_limit.as_bytes()).is_ok());
+        expect_parse(at_limit.as_bytes(), true)?;
         let over_limit = format!("[{}0]", "0,".repeat(MAX_JSON_NODES - 1));
-        assert!(parse(over_limit.as_bytes()).is_err());
+        expect_parse(over_limit.as_bytes(), false)?;
         let duplicates = format!("{{{}\"x\":0}}", "\"x\":0,".repeat(MAX_JSON_NODES - 1));
-        assert!(parse(duplicates.as_bytes()).is_err());
+        expect_parse(duplicates.as_bytes(), false)?;
         Ok(())
     }
 
     #[test]
-    fn parser_preflight_rejects_unsupported_input() {
-        assert!(parse(b"1e400").is_err());
-        assert!(parse(br#""\uD800""#).is_err());
-        assert!(parse(br#""\uD83D\uDE00""#).is_ok());
-        assert!(parse(b"1 trailing").is_err());
-        assert!(parse(&vec![b' '; 16 * 1024 * 1024 + 1]).is_err());
+    fn parser_preflight_rejects_unsupported_input() -> Result<(), String> {
+        expect_parse(b"1e400", false)?;
+        expect_parse(br#""\uD800""#, false)?;
+        expect_parse(br#""\uD83D\uDE00""#, true)?;
+        expect_parse(b"1 trailing", false)?;
+        expect_parse(&vec![b' '; 16 * 1024 * 1024 + 1], false)?;
         let within_depth = format!("{}0{}", "[".repeat(127), "]".repeat(127));
-        assert!(parse(within_depth.as_bytes()).is_ok());
+        expect_parse(within_depth.as_bytes(), true)?;
         let deep = format!("{}0{}", "[".repeat(129), "]".repeat(129));
-        assert!(parse(deep.as_bytes()).is_err());
+        expect_parse(deep.as_bytes(), false)?;
+        Ok(())
     }
 }
