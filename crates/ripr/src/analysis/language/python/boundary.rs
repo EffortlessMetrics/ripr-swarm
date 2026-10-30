@@ -20,6 +20,10 @@
 //! - otherwise the boundary is missing. An operand that is neither a literal
 //!   nor a parameter (`item.on_hand`, a computed `len(items)`, a comprehension
 //!   local) is unresolved and never counts as observed, so this fails closed.
+//!   The one derivable local is a once-bound `visible = len(text)` over an
+//!   unrebound parameter that a call binds to a plain string literal (#11103):
+//!   it resolves to that literal's length, so the gate can name the equality
+//!   input shape instead of declining the repair card.
 //!
 //! A module-scope constant (`DISCOUNT_THRESHOLD = 10_000`) that nothing in the
 //! module can rebind resolves to its literal, like a literal operand; a test
@@ -38,7 +42,7 @@
 
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::discriminators::{is_literal_python_model_field_value, python_string_literal_value};
-use super::guard_activation::name_rebound_in_owner;
+use super::guard_activation::{name_rebound_in_owner, owner_binding_lines};
 use super::module_constants::PythonModuleConstant;
 use super::no_behavior::{
     call_arglists_with_offsets, call_segment_keyword_name, matching_call_paren,
@@ -177,7 +181,20 @@ pub(super) fn python_boundary_evidence(
         .map(|(left, right)| format!("{left} == {right}"));
 
     let constants = unrebound_constants(owner, related_candidates);
-    let rows = strong_owner_call_rows(owner, &constants, related_candidates, focus);
+    let mut rows = strong_owner_call_rows(owner, &constants, related_candidates, focus);
+    // A once-bound `local = len(param)` takes the length of the literal string
+    // each call passes, so the comparison against it is readable (#11103).
+    let mut derived_locals: Vec<String> = Vec::new();
+    if let (Some((left, right)), Some(source)) = (&operands, owner_source) {
+        for operand in [left, right] {
+            if static_operand(operand, &constants).is_none()
+                && let Some(parameter) = len_local_parameter(source, owner, operand, line_text)
+                && derive_len_local(&mut rows, operand, &parameter)
+            {
+                derived_locals.push(operand.clone());
+            }
+        }
+    }
     if let (Some((left, right)), Some(old)) = (&operands, old_line_text)
         && reversing_flip(&condition, old, left, right)
         && rows.iter().any(|row| {
@@ -228,7 +245,9 @@ pub(super) fn python_boundary_evidence(
         .flat_map(|row| {
             row.bindings
                 .iter()
-                .filter(|(_, binding)| !binding.from_default)
+                .filter(|(parameter, binding)| {
+                    !binding.from_default && !derived_locals.contains(parameter)
+                })
                 .map(|(parameter, binding)| ValueFact {
                     file: Some(row.file.clone()),
                     line: row.line,
@@ -458,6 +477,81 @@ pub(super) fn python_boundary_evidence(
         observed_values,
         reason,
     })
+}
+
+/// The owner parameter `local` measures when its single binding in the owner
+/// is a plain `local = len(parameter)` that precedes the changed line and the
+/// parameter is never rebound. Anything else (a second binding, a loop target,
+/// a computed argument, a rebound parameter, a binding after the predicate) is
+/// not derivable and the operand stays unresolved (#11103; rebound and
+/// loop-carried shapes stay with #9733 and #9426).
+fn len_local_parameter(
+    owner_source: &str,
+    owner: &PythonOwner,
+    local: &str,
+    changed_line_text: &str,
+) -> Option<String> {
+    if !is_simple_operand(local) || local.contains('.') {
+        return None;
+    }
+    let bindings = owner_binding_lines(owner_source, owner, local);
+    let [(binding_index, binding)] = bindings.as_slice() else {
+        return None;
+    };
+    let value = binding
+        .strip_prefix(local)?
+        .trim_start()
+        .strip_prefix('=')?
+        .trim();
+    let argument = value.strip_prefix("len(")?.strip_suffix(')')?.trim();
+    let parameter_ok = !argument.is_empty()
+        && argument.chars().all(is_python_identifier_char)
+        && !argument.starts_with(|ch: char| ch.is_ascii_digit())
+        && argument != local
+        && owner
+            .parameters
+            .iter()
+            .any(|parameter| parameter.name == argument)
+        && !name_rebound_in_owner(owner_source, owner, argument);
+    if !parameter_ok {
+        return None;
+    }
+    let changed_index = owner_source
+        .lines()
+        .enumerate()
+        .skip(owner.start_line)
+        .take(owner.end_line.saturating_sub(owner.start_line))
+        .find(|(_, line)| line.trim() == changed_line_text.trim())
+        .map(|(index, _)| index)?;
+    (*binding_index < changed_index).then(|| argument.to_string())
+}
+
+/// Bind `local` in every row whose call passes `parameter` a plain string
+/// literal to that literal's length in characters. All or nothing: a row whose
+/// call passes a prefixed, escaped, concatenated or non-literal argument (or
+/// none) could sit on the boundary unseen, so any such row leaves the operand
+/// unresolved for every row. Returns whether the local was derived.
+fn derive_len_local(rows: &mut [CallRow], local: &str, parameter: &str) -> bool {
+    let lengths: Option<Vec<String>> = rows
+        .iter()
+        .map(|row| {
+            let body = python_string_literal_value(&row.bindings.get(parameter)?.value)?;
+            (!body.contains(['\\', '\r'])).then(|| body.chars().count().to_string())
+        })
+        .collect();
+    let Some(lengths) = lengths.filter(|lengths| !lengths.is_empty()) else {
+        return false;
+    };
+    for (row, value) in rows.iter_mut().zip(lengths) {
+        row.bindings.insert(
+            local.to_string(),
+            Binding {
+                value,
+                from_default: false,
+            },
+        );
+    }
+    true
 }
 
 /// Whether ONE related row's own calls provably leave the changed predicate
