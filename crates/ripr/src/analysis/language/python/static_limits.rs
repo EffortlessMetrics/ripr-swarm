@@ -319,7 +319,9 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or determine whether it already observes the changed discriminator.".to_string(),
         });
     }
-    if line_uses_imported_symbol(&without_calls(trimmed, &substituted_calls), &owner.imports) {
+    if line_uses_imported_symbol(&without_calls(trimmed, &substituted_calls), &owner.imports)
+        && !old_line_text.is_some_and(|old| integer_literal_swap(old.trim(), trimmed))
+    {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::MissingImportGraph,
             evidence: "static_limit missing_import_graph: changed line calls an imported symbol"
@@ -1389,6 +1391,28 @@ fn owner_called_inside_lambda(body_text: &str, owner: &PythonOwner) -> bool {
                 })
         })
     })
+}
+
+/// #9226: the edit changes only the value of integer literals. Every other
+/// token is identical, so no callee, keyword, operator or operand moved and the
+/// imported symbol the line calls is the same before and after. The line is
+/// then read like any other literal edit instead of abstaining on the import.
+pub(super) fn integer_literal_swap(old: &str, new: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let tokens = |text: &str| -> Option<Vec<Tok>> {
+        lex(text, Mode::Module)
+            .map(|result| result.ok().map(|(token, _)| token))
+            .collect()
+    };
+    let (Some(old), Some(new)) = (tokens(old), tokens(new)) else {
+        return false;
+    };
+    old.len() == new.len()
+        && old != new
+        && old
+            .iter()
+            .zip(&new)
+            .all(|(a, b)| a == b || matches!((a, b), (Tok::Int { .. }, Tok::Int { .. })))
 }
 
 pub(super) fn line_uses_imported_symbol(text: &str, imports: &[PythonImport]) -> bool {
