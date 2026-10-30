@@ -1141,9 +1141,15 @@ pub(crate) fn validate_verify_movement(
         && before.currentness == ArtifactCurrentness::Current
         && after.currentness == ArtifactCurrentness::Current
     {
+        // #11026: the leading clause is matched by the CLI as a named refusal
+        // (`AGENT_VERIFY_NO_MOVEMENT_PREFIX`), so only the tail is plain
+        // language: the repository has not changed since the before phase.
+        let short = before
+            .repository_head
+            .get(..7)
+            .unwrap_or(&before.repository_head);
         return Err(format!(
-            "no repository movement between before and after artifacts: both are current at revision {}",
-            before.repository_head
+            "no repository movement between before and after artifacts: the repository is still at {short}, so nothing has changed since the before phase and there is nothing to compare yet"
         ));
     }
     Ok(())
@@ -3261,6 +3267,12 @@ mod tests {
         assert!(matches!(
             validate_verify_movement(&before, &after),
             Err(error) if error.contains("no repository movement")
+                && error.contains("the repository is still at aaaaaaa")
+                && error.contains("nothing has changed since the before phase")
+                // The old internal wording and the full 40-character
+                // revision must not come back.
+                && !error.contains("both are current")
+                && !error.contains(&"a".repeat(40))
         ));
 
         // A disclosed non-current observation stays admissible at this layer.
