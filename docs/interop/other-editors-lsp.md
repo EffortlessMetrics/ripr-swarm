@@ -83,8 +83,8 @@ from a scripted client):
 | Workspace | What the client shows |
 | --- | --- |
 | Git repository with an edited, saved Rust file | Observed with a scripted LSP client: a `weakly_exposed`-style diagnostic on the changed line within about a second |
-| Git repository with **nothing changed** against the base | Observed with a scripted LSP client: no diagnostics, and hover shows the generic "ripr estimates static RIPR exposure" text. This is the normal clean state, not a broken server: edit a branch condition, save, and the diagnostic appears. Set `baseRef` to compare against another branch |
-| **Not a Git work tree** | Observed with a scripted LSP client: a `window/showMessage` warning, "workspace analysis failed ... not inside a Git work tree", whose text is shortened by the client. The full message with the remedy is in the server log: diff-scoped analysis needs Git, so use `ripr pilot --root .` to explore without history |
+| Git repository with **nothing changed** against the base | Observed with a scripted LSP client: no diagnostics, and hover shows the generic "ripr estimates static RIPR exposure" text. This is the normal clean state, not a broken server. Expected, not observed in an editor: edit a branch condition, save, and the diagnostic appears. Set `baseRef` to compare against another branch |
+| **Not a Git work tree** | Observed with a scripted LSP client: a `window/showMessage` warning, "workspace analysis failed ... not inside a Git work tree", whose text ripr itself bounds to 240 characters (ending in `…` when cut, with absolute paths redacted), so a remedy may be cut off. Diff-scoped analysis needs Git: run `ripr doctor` for the full remedy, or use `ripr pilot --root .` to explore without history |
 | `ripr` not on the client's `PATH` | Typical editor behavior; wording varies. Clients generally report a failed server start (places to look: Helix `:log-open`, Neovim `:checkhealth vim.lsp`, Zed language server status). Use an absolute path in `cmd` / `command` |
 
 A first-open diagnostic of `ripr-diagnostic-analysis-pending` means the first
