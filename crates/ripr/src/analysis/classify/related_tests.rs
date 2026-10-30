@@ -4953,15 +4953,11 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
         return false;
     }
     // The index-owned syntax owner keeps the workspace macro scan to one pass
-    // per run; a poisoned lock or an index-less probe uses a private owner.
+    // per run; an index-less probe uses a private owner.
     let private_syntax;
-    let shared_syntax;
-    let pin_syntax = match index.map(|index| index.call_identity_memos.receiver_pin_syntax.lock()) {
-        Some(Ok(guard)) => {
-            shared_syntax = guard;
-            &*shared_syntax
-        }
-        _ => {
+    let pin_syntax = match index {
+        Some(index) => &index.call_identity_memos.receiver_pin_syntax,
+        None => {
             private_syntax = super::OwnerPinSyntax::default();
             &private_syntax
         }
@@ -4997,8 +4993,10 @@ pub(in crate::analysis) fn free_helper_call_resolves(
     if helper.item.container != FunctionContainer::Free {
         return false;
     }
-    let syntax = super::OwnerPinSyntax::default();
-    executable_call_resolves(caller, Some(index), &syntax, &|node, _| {
+    // The index-owned owner, so the workspace trusted-macro scan behind the
+    // binding check is paid once per run, not once per (seam, helper) hop.
+    let syntax = &index.call_identity_memos.receiver_pin_syntax;
+    executable_call_resolves(caller, Some(index), syntax, &|node, _| {
         let Some(call) = ast::CallExpr::cast(node) else {
             return false;
         };
