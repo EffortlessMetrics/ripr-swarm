@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_class_getter_factory_rebound (3)
+
+Reason:
+RIPR-SPEC-0243: regenerate after merging main so findings carry a confidence basis
+
+Command:
+`cargo xtask goldens bless ts_class_getter_factory_rebound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
