@@ -432,11 +432,29 @@ impl PacketRun {
     }
 
     fn spawn_env(&self, args: &[String], stdout: Stdio, env: &[(&str, &str)]) -> StageResult {
+        match self.spawn_code(args, stdout, env)? {
+            Some(0) => Ok(()),
+            Some(code) => Err(format!("`ripr {}` exited {code}", args.join(" "))),
+            None => Err(format!(
+                "`ripr {}` was terminated by a signal",
+                args.join(" ")
+            )),
+        }
+    }
+
+    /// Runs one child and returns its exit code (`None` when a signal ended
+    /// it). A recorded run reports `Some(0)`.
+    fn spawn_code(
+        &self,
+        args: &[String],
+        stdout: Stdio,
+        env: &[(&str, &str)],
+    ) -> Result<Option<i32>, String> {
         if let Some(recorded) = &self.recorded {
             recorded
                 .borrow_mut()
                 .push(format!("ripr {}", args.join(" ")));
-            return Ok(());
+            return Ok(Some(0));
         }
         let _ = std::io::stdout().flush();
         let mut command = Command::new(&self.exe);
@@ -453,14 +471,7 @@ impl PacketRun {
         let status = OwnedProcess::spawn(command)
             .and_then(|mut child| child.wait())
             .map_err(|err| format!("`{shown}` could not run: {err}"))?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(match status.code() {
-                Some(code) => format!("`{shown}` exited {code}"),
-                None => format!("`{shown}` was terminated by a signal"),
-            })
-        }
+        Ok(status.code())
     }
 
     fn all_stages(&mut self) {
@@ -1175,7 +1186,7 @@ impl PacketRun {
         // creates both output directories itself.
         self.mkdir("target/ripr/workflow")?;
         self.mkdir("target/ripr/agent")?;
-        self.ripr(&args(&[
+        let start = args(&[
             "agent",
             "start",
             "--root",
@@ -1184,7 +1195,28 @@ impl PacketRun {
             seam,
             "--out",
             "target/ripr/workflow",
-        ]))?;
+        ]);
+        match self.spawn_code(&start, Stdio::inherit(), &[])? {
+            Some(0) => {}
+            // Exit 3 is "ripr declined" (docs/EXIT_CODES.md): ripr ran and
+            // chose not to start a repair for this seam. That is an expected
+            // outcome, not a failure; there is no brief to package (#11206).
+            Some(3) => {
+                println!(
+                    "RIPR agent loop skipped: `ripr agent start` declined seam {seam} (exit 3). \
+                     This is an expected decline, not a failure; the output above says why. \
+                     No agent brief or packet was written for this seam."
+                );
+                return Ok(());
+            }
+            Some(code) => return Err(format!("`ripr {}` exited {code}", start.join(" "))),
+            None => {
+                return Err(format!(
+                    "`ripr {}` was terminated by a signal",
+                    start.join(" ")
+                ));
+            }
+        }
         let pending = format!("{WORKFLOW_AGENT_PACKET_ARTIFACT}.partial");
         let rendered = self.ripr_to(
             &args(&[
@@ -2231,6 +2263,60 @@ mod tests {
             !commands.iter().any(|line| line.starts_with("ripr pilot")),
             "{commands:?}"
         );
+        Ok(())
+    }
+
+    /// A real child that exits `code` for `agent start`, so the stage's exit
+    /// handling (not the recorded seam) is what the tests exercise.
+    #[cfg(unix)]
+    fn agent_loop_after_start_exit(
+        code: i32,
+        tag: &str,
+    ) -> Result<(bool, Result<(), String>), String> {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "ripr-ci-packet-start-exit-{tag}-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        let exe = root.join("fake-ripr.sh");
+        fs::write(&exe, format!("#!/bin/sh\nexit {code}\n")).map_err(|err| err.to_string())?;
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o755))
+            .map_err(|err| err.to_string())?;
+        let mut run = PacketRun {
+            root: root.clone(),
+            exe,
+            settings: CiSettings::default(),
+            only: Vec::new(),
+            seen: Vec::new(),
+            top_seam: None,
+            failed: Vec::new(),
+            recorded: None,
+        };
+        let result = run.agent_loop("seam-1");
+        let wrote_brief = root.join(EDITOR_AGENT_BRIEF_ARTIFACT).exists();
+        let _ = fs::remove_dir_all(&root);
+        Ok((wrote_brief, result))
+    }
+
+    /// #11206: `ripr agent start` exiting 3 is a decline, not a failure.
+    #[cfg(unix)]
+    #[test]
+    fn agent_start_decline_is_not_a_failed_step() -> Result<(), String> {
+        let (wrote_brief, result) = agent_loop_after_start_exit(3, "decline")?;
+        assert_eq!(result, Ok(()));
+        assert!(!wrote_brief, "a declined start writes no editor brief");
+        Ok(())
+    }
+
+    /// Discriminating negative for the decline above: any other nonzero exit
+    /// from `agent start` stays a failure that names its exit code.
+    #[cfg(unix)]
+    #[test]
+    fn agent_start_operational_error_stays_a_failed_step() -> Result<(), String> {
+        let (_, result) = agent_loop_after_start_exit(2, "error")?;
+        let message = result.err().ok_or("exit 2 must remain an error")?;
+        assert!(message.contains("exited 2"), "{message}");
         Ok(())
     }
 
