@@ -23,7 +23,7 @@ mod nightly;
 #[cfg(test)]
 mod tests;
 
-use judge::{Limits, Verdict, judge};
+use judge::{Limits, Verdict, evidence_failure, judge};
 
 const DEFAULT_OUT: &str = "target/ripr/reports";
 const DEFAULT_WORK: &str = "target/ripr/warm-ab";
@@ -77,6 +77,11 @@ struct Packet {
 }
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
+    // Fail fast on the wrong host before the nightly path builds two
+    // release binaries; `build_packet` keeps the same check for direct use.
+    if !cfg!(unix) {
+        return Err("warm-ab runs on a Unix host only".to_string());
+    }
     let options = parse_args(args)?;
     match &options.nightly {
         Some(plan) => nightly::run(&options, plan),
@@ -254,6 +259,16 @@ fn prepare(source: &Path, name: &str, run_root: &Path) -> Result<Prepared, Strin
     })
 }
 
+/// A report without a `findings` array is malformed evidence, not a
+/// zero-finding result: reject it rather than counting it as zero.
+fn findings_count(report: &serde_json::Value, label: &str) -> Result<usize, String> {
+    report
+        .get("findings")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        .ok_or_else(|| format!("{label} report has no findings array"))
+}
+
 struct Timed {
     millis: u128,
     findings: usize,
@@ -319,10 +334,7 @@ fn check_once(
     }
     let report: serde_json::Value = serde_json::from_slice(&timed.stdout)
         .map_err(|error| format!("{label} stdout is not a JSON report: {error}"))?;
-    let findings = report
-        .get("findings")
-        .and_then(serde_json::Value::as_array)
-        .map_or(0, Vec::len);
+    let findings = findings_count(&report, label)?;
     Ok(Timed {
         millis: timed.duration.as_millis(),
         findings,
@@ -346,6 +358,8 @@ fn measure_pair(
     let cand_cold = check_once(&candidate, tree, diff, &home, "candidate cold check")?;
     let mut base_warm = Vec::new();
     let mut cand_warm = Vec::new();
+    let mut base_counts = vec![base_cold.findings];
+    let mut cand_counts = vec![cand_cold.findings];
     let mut base_last = None;
     let mut cand_last = None;
     // Alternate sides so a drifting runner touches both alike.
@@ -361,6 +375,8 @@ fn measure_pair(
         );
         base_warm.push(base.millis);
         cand_warm.push(cand.millis);
+        base_counts.push(base.findings);
+        cand_counts.push(cand.findings);
         base_last = Some(base);
         cand_last = Some(cand);
     }
@@ -368,16 +384,11 @@ fn measure_pair(
         return Err("no warm run was taken".to_string());
     };
     let judged = judge(&base_warm, &cand_warm, &options.limits);
-    // A fast pair that analyzed nothing measured nothing.
-    let nothing = base_last.findings == 0 && cand_last.findings == 0;
-    let (verdict, detail) = if nothing {
-        (
-            Verdict::Fail,
-            "neither binary reported a finding for the pinned diff; nothing was analyzed"
-                .to_string(),
-        )
-    } else {
-        (judged.verdict, judged.detail)
+    // Positive evidence is required independently on each side in every
+    // measured check; a one-sided empty report measured nothing.
+    let (verdict, detail) = match evidence_failure(&base_counts, &cand_counts) {
+        Some(failure) => (Verdict::Fail, failure),
+        None => (judged.verdict, judged.detail),
     };
     let identical = base_last.stdout_sha256 == cand_last.stdout_sha256;
     Ok(Packet {

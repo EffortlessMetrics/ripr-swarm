@@ -176,7 +176,7 @@ id = "size-scaling"
 posture = "advisory"
 workflow = ".github/workflows/size-scaling.yml"
 jobs = ["size-scaling", "warm-ab"]
-commands = ["cargo build --release --locked -p ripr", "rm -rf target/ripr/size-scaling", "cargo xtask size-scaling --binary target/release/ripr --base-kib 512", "cargo xtask warm-ab --baseline-ref <ref> --candidate-ref <ref> --pins <id=commit>"]
+commands = ["cargo build --release --locked -p ripr", "rm -rf target/ripr/size-scaling", "cargo xtask size-scaling --binary target/release/ripr --base-kib 512", "rm -rf target/ripr/warm-ab", "cargo xtask warm-ab --baseline-ref <ref> --candidate-ref <ref> --pins <id=commit>"]
 estimated_lem = 60
 artifact_families = ["size-scaling", "warm-ab"]
 description = "Nightly hostile-input size gate: runs ripr check on generated Rust, Python and TypeScript files at 1x, 2x and 4x a base size against a release binary; fails when cost stops being linear in file size, a step exceeds the ceiling, or a run analyzes nothing. The warm-ab job times a warm check of two pinned diffs of this repository with a baseline and a candidate build on one runner and fails when the candidate exceeds 1.5x the baseline. Wall time only."

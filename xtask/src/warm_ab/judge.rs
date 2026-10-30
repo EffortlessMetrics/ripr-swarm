@@ -69,6 +69,37 @@ fn fail(detail: String) -> Judged {
     }
 }
 
+/// Positive analyzed evidence must hold independently on each measured
+/// side: every measured check (cold and warm) must report at least one
+/// finding. A one-sided zero — a fast empty candidate against a nonempty
+/// baseline, or the reciprocal — means that side analyzed nothing, so the
+/// timing comparison measured nothing. Returns the failure detail, or
+/// `None` when both sides carry positive evidence in every check.
+pub(crate) fn evidence_failure(
+    baseline_counts: &[usize],
+    candidate_counts: &[usize],
+) -> Option<String> {
+    if baseline_counts.is_empty() {
+        return Some("baseline has no measured checks; nothing was analyzed".to_string());
+    }
+    if candidate_counts.is_empty() {
+        return Some("candidate has no measured checks; nothing was analyzed".to_string());
+    }
+    if baseline_counts.contains(&0) {
+        return Some(
+            "baseline reported no findings in a measured check; nothing was analyzed on the baseline side"
+                .to_string(),
+        );
+    }
+    if candidate_counts.contains(&0) {
+        return Some(
+            "candidate reported no findings in a measured check; nothing was analyzed on the candidate side"
+                .to_string(),
+        );
+    }
+    None
+}
+
 /// Compares warm wall times taken on one runner in one job, so runner class
 /// and load cancel. Fails on a ratio over the limit that also exceeds the
 /// noise floor, or on a candidate over the absolute ceiling.

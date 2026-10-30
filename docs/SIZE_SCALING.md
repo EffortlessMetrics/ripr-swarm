@@ -93,8 +93,10 @@ and load cancel because the comparison is inside one job. It fails when:
   the baseline's and the difference is over a 2 s noise floor;
 - the candidate's median exceeds `--ceiling-secs` (default 300);
 - a run times out (10 minutes), ends on a signal, exits with a code other than
-  0 or 1, or prints a report that is not JSON;
-- neither binary reports a finding for the pinned diff, so nothing was analyzed.
+  0 or 1, or prints a report that is not JSON or has no `findings` array;
+- either binary reports no finding in any measured check (cold or warm) for
+  the pinned diff, so that side analyzed nothing. A one-sided empty report
+  fails even when the other side still finds something.
 
 The report (`warm-ab-<pin>.{json,md}`) records both binaries' sha256, cold and
 warm milliseconds, finding counts, and whether the two findings reports are
@@ -119,4 +121,10 @@ build as baseline: it must fail the `xtask-tests` pin. Run locally on 2026-10-26
 test on the #10489 shape (about 31 s against about 64 s).
 
 Not claimed: wall time only; a regression under the ratio or the noise floor
-passes; two pinned diffs do not cover other shapes of change.
+passes; two pinned diffs do not cover other shapes of change. The default
+baseline is the newest first-parent commit at least 24 hours older than the
+candidate, so the detection window is a single night: if one nightly run is
+missed, skipped or never acted on, the next baseline can be the regression
+itself and the gate compares it against itself. Scheduled and dispatched
+runs use separate concurrency groups so a manual dispatch cannot cancel the
+nightly mid-measurement, but a missed night still consumes the window.

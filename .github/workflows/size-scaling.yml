@@ -31,7 +31,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: size-scaling-${{ github.ref }}
+  # Scheduled and dispatched runs use separate groups so a manual dispatch
+  # cannot cancel the nightly mid-measurement and consume its baseline window.
+  group: size-scaling-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -79,7 +81,11 @@ jobs:
   # the negative control (a pre-fix build as candidate) can run on a hosted runner.
   warm-ab:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # Worst case: 2 pins x (2 cold + 2x3 warm checks) x the 10-minute check
+    # deadline is 160 minutes, plus two cold release builds and checkout /
+    # toolchain setup; the report is written per pin, so the job must
+    # outlive that worst case rather than lose the verdict to the cap.
+    timeout-minutes: 200
     steps:
       - uses: actions/checkout@v6
         with:
@@ -94,11 +100,16 @@ jobs:
         with:
           cache-on-failure: true
 
+      # A run terminated at the timeout or cancelled by the concurrency group never
+      # reaches the command's own cleanup, and rust-cache saves target/ on
+      # failure, so reclaim earlier runs' pid-scoped workspaces first.
       - name: Time the pinned diffs against a baseline build
         env:
           INPUT_BASELINE: ${{ inputs.baseline_ref }}
           INPUT_CANDIDATE: ${{ inputs.candidate_ref }}
-        run: cargo xtask warm-ab --baseline-ref "$INPUT_BASELINE" --candidate-ref "$INPUT_CANDIDATE" --pins xtask-tests=a58975de,product-rust=af8136f7
+        run: |
+          rm -rf target/ripr/warm-ab
+          cargo xtask warm-ab --baseline-ref "$INPUT_BASELINE" --candidate-ref "$INPUT_CANDIDATE" --pins xtask-tests=a58975de,product-rust=af8136f7
 
       - name: Upload warm-ab report
         if: always()
