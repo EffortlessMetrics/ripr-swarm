@@ -324,6 +324,83 @@ fn repair_without_actionable_item_creates_no_attempt() -> Result<(), String> {
     Ok(())
 }
 
+/// An explicit check base is not retained by bare repair. A clean main branch
+/// can therefore have a real diff gap even when the seam inventory is empty.
+#[test]
+fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(), String> {
+    let fixture = Fixture::dir("repair-explicit-check-base")?;
+    let root = &fixture.root;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("pricing.py"),
+        "def price(amount):\n    return amount - 10 if amount >= 100 else amount\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import price\n\ndef test_below():\n    assert price(99) == 99\n\ndef test_above():\n    assert price(101) == 91\n").map_err(|e| e.to_string())?;
+    init_repo(root)?;
+    run_git(root, &["branch", "-M", "main"])?;
+    run_git(root, &["add", "."])?;
+    git_commit(root, "base")?;
+    std::fs::write(
+        root.join("pricing.py"),
+        "def price(amount):\n    return amount - 10 if amount > 100 else amount\n",
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "pricing.py"])?;
+    git_commit(root, "change")?;
+
+    let check = run_ripr(root, &["check", "--base", "HEAD^"])?;
+    assert_exit(&check, 0, "explicit-base check");
+    let check_out = stdout_text(&check);
+    let gap = "gap:python:pricing.py:price:predicate_boundary:predicate:amount-10_if_amount>100_else_amount";
+    assert!(
+        check_out.contains("amount == 100")
+            && check_out.contains(gap)
+            && check_out.contains("--phase before"),
+        "check must print this gap and start:\n{check_out}"
+    );
+    let repair = run_ripr(root, &["repair"])?;
+    assert_exit(&repair, 3, "bare repair");
+    let stderr = stderr_text(&repair);
+    assert!(
+        stderr.contains("does not reuse the diff or base")
+            && stderr.contains("start printed by that check")
+            && stderr.contains("original --base"),
+        "repair must preserve the original diff route:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("analyze the workspace before starting"),
+        "must not claim analysis is missing:\n{stderr}"
+    );
+    assert!(
+        stdout_text(&repair).is_empty() && attempt_ids(root).is_empty(),
+        "bare repair must not start an inferred gap"
+    );
+
+    let start = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            gap,
+            "--base",
+            "HEAD^",
+            "--root",
+            &root.to_string_lossy(),
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&start, 0, "printed gap start");
+    assert_eq!(
+        attempt_ids(root).len(),
+        1,
+        "the exact check subject must start"
+    );
+    Ok(())
+}
+
 /// #10682: when the changed code is Python or TypeScript, `ripr repair` says
 /// repair start covers Rust only and points at `ripr check`'s manual route
 /// instead of looping through `ripr pilot`.
