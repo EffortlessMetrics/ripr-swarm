@@ -256,38 +256,163 @@ fn neutralize_plain_language_wording(bytes: &[u8]) -> Vec<u8> {
 /// historical capture keeps its original bytes:
 ///
 /// - NoBindingSeam (old capture or current producer text) becomes a fixed slot.
+///   Since #10702 the same check-side no-start line may also read the exposed
+///   opening ("nothing to repair here ... (exposed)") or the counted
+///   "ripr found N seam(s) in this finding's file, but could not tie one"
+///   opening. They get DISTINCT slots here; `bind_advisory_transition` then
+///   lets the retained no-binding slot become the exposed slot only on a
+///   capture whose own Static exposure is exposed, and the counted slot only
+///   on one that is not. Any other advisory stays byte-exact.
 /// - Not-ready (RouteNotReady) keeps its producer-owned missing-evidence list:
 ///   the old `(missing evidence: LIST); run ...` form and the current
 ///   `still missing: LIST; follow ...` form both become
 ///   `<not-ready missing=LIST>`, so the list is still compared byte-exact and
-///   a wrong list fails. A line in neither shape is left untouched.
+///   a wrong list fails.
+/// - #10701: a changed return value or error variant now starts a repair. A
+///   not-ready list that is exactly that single discriminator, and a printed
+///   `ripr repair <id> --root ...` start (only in a capture whose canonical
+///   gaps are all `return_value` or `error_variant`), both project to
+///   `<return-value-or-error-gap>`; any other list stays byte-exact. The
+///   start contract lives in `return_value_repair_start.rs`.
 ///
 /// Every other advisory line stays byte-exact. Returns the projected bytes and
 /// how many lines were normalized.
+const NO_BINDING_SLOT: &str = "  no repair start offered: <no-binding-seam advisory>";
+const EXPOSED_SLOT: &str = "  no repair start offered: <exposed advisory>";
+const UNTIED_SLOT: &str = "  no repair start offered: <untied-seams advisory>";
+
+/// Whether a human capture's own findings all read `Static exposure: exposed`.
+fn capture_is_exposed(normalized: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(normalized);
+    let mut lines = text
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("Static exposure: "))
+        .peekable();
+    lines.peek().is_some() && lines.all(|rest| rest.starts_with("exposed"))
+}
+
+/// Bind the permitted transition of a retained no-binding advisory to the
+/// capture's own evidence (#10702). Only these live rewrites are accepted, and
+/// only where the retained capture holds the no-binding slot:
+/// - the capture reads exposed: the live exposed slot stands for it, and a
+///   counted-untied slot does not;
+/// - the capture does not read exposed: the live counted-untied slot stands
+///   for it, and an exposed slot does not.
+///
+/// Everything else (including a rejected live slot) is left as the live
+/// producer printed it, so the byte comparison fails.
+fn bind_advisory_transition(expected: &[u8], actual: &[u8]) -> Vec<u8> {
+    let expected_text = String::from_utf8_lossy(expected);
+    if !expected_text.contains(NO_BINDING_SLOT) {
+        return actual.to_vec();
+    }
+    let allowed = if capture_is_exposed(expected) {
+        EXPOSED_SLOT
+    } else {
+        UNTIED_SLOT
+    };
+    String::from_utf8_lossy(actual)
+        .replace(allowed, NO_BINDING_SLOT)
+        .into_bytes()
+}
+
 fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
     const NO_BINDING: [&str; 2] = [
         "  no repair start offered: no seam in the finding's file binds this finding;",
         "  no repair start offered: ripr found no seam in this finding's file to bind it to,",
     ];
+    const EXPOSED_ADVISORY: &str = "  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)";
+    const COUNTED_START: &str = "  no repair start offered: ripr found ";
+    const COUNTED_REST: &str =
+        " in this finding's file, but could not tie one to this finding's changed line,";
+    let counted_untied = |line: &str| -> bool {
+        line.strip_prefix(COUNTED_START).is_some_and(|rest| {
+            let digits = rest.chars().take_while(char::is_ascii_digit).count();
+            let after = &rest[digits..];
+            digits > 0
+                && (after.starts_with(&format!(" seam{COUNTED_REST}"))
+                    || after.starts_with(&format!(" seams{COUNTED_REST}")))
+        })
+    };
     const OLD_NOT_READY: &str =
         "  no repair start offered: repair route not ready (missing evidence: ";
     const OLD_LIST_END: &str = "); run `";
     const NEW_NOT_READY: &str = "  no repair start offered: ripr cannot build a repair packet for this \
          finding yet because it is still missing: ";
     const NEW_LIST_END: &str = "; follow the Next step above";
+    const MOVED_GAP_LISTS: [&str; 4] = [
+        "producer-owned missing discriminator fact: return_value",
+        "producer-owned missing discriminator fact: error_variant",
+        "a test assertion that checks the changed return value",
+        "a test assertion that observes the changed error variant",
+    ];
+    const MOVED_GAP_SLOT: &str = "  no repair start offered: <return-value-or-error-gap>\n";
     let list_between = |line: &str, start: &str, end: &str| -> Option<String> {
         let rest = line.strip_prefix(start)?;
         let list = &rest[..rest.find(end)?];
+        if MOVED_GAP_LISTS.contains(&list) {
+            return Some(MOVED_GAP_SLOT.to_string());
+        }
         Some(format!(
             "  no repair start offered: <not-ready missing={list}>\n"
         ))
     };
+    // A printed start is the moved return-value or error-variant slot only in
+    // the single-start/single-value-gap shape the bounded screen produces
+    // for its selected finding (#10948 item 7): one drill-in block whose
+    // route the pipeline bound to the selected finding id
+    // (`repair_route_for`). The capture text itself carries no start-to-gap
+    // identity — the start names a 16-hex seam hash while the gap line names
+    // a canonical gap id — so this projection cannot detect a producer
+    // misbinding (gap A beside a start for seam B in the 1/1 shape still
+    // masks; see the wrong-gap 1/1 control below). That binding is
+    // established producer-side instead
+    // (`bounded_human_output_prints_repair_only_for_the_routed_top_finding`:
+    // a route for another finding prints no repair line). Every other shape
+    // stays byte-exact (fail-closed): a wrong-kind gap, mixed gaps, extra
+    // starts, or extra gaps (including equal-count multi-gap captures where
+    // a start could name another seam) are never masked. A wrongly started
+    // boundary (or any other) seam is never masked either.
+    let text = String::from_utf8_lossy(bytes);
+    let gaps: Vec<&str> = text
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            // The plain-language neutralization turns the gap label into a slot.
+            line.strip_prefix("Canonical gap: ")
+                .or_else(|| line.strip_prefix("<gap-id-label>: "))
+        })
+        .collect();
+    let value_gaps = gaps
+        .iter()
+        .filter(|gap| gap.contains(":return_value:") || gap.contains(":error_variant:"))
+        .count();
+    // One start only in the single-start/single-value-gap shape the bounded
+    // screen produces for its selected finding. Shape only: the text cannot
+    // pair the start with its gap (16-hex seam hash vs canonical gap id),
+    // so the 1/1 shape masks even when the producer bound the wrong seam —
+    // the wrong-gap 1/1 control below locks in that documented blind spot
+    // rather than claiming detection. Start-to-gap binding is established
+    // producer-side (`repair_route_for` answers only for its own finding
+    // id); multi-finding captures stay exact per the equal-count control.
+    let is_start_line =
+        |line: &str| line.starts_with("  ripr repair ") && line.contains(" --root ");
+    let value_gaps_only = !gaps.is_empty()
+        && value_gaps == 1
+        && gaps.len() == 1
+        && text.lines().filter(|line| is_start_line(line)).count() == 1;
     let mut normalized = 0;
-    let projected = String::from_utf8_lossy(bytes)
+    let projected = text
         .split_inclusive('\n')
         .map(|line| {
             let replacement = if NO_BINDING.iter().any(|prefix| line.starts_with(prefix)) {
-                Some("  no repair start offered: <no-binding-seam advisory>\n".to_string())
+                Some(format!("{NO_BINDING_SLOT}\n"))
+            } else if value_gaps_only && is_start_line(line) {
+                Some(MOVED_GAP_SLOT.to_string())
+            } else if line.starts_with(EXPOSED_ADVISORY) {
+                Some(format!("{EXPOSED_SLOT}\n"))
+            } else if counted_untied(line) {
+                Some(format!("{UNTIED_SLOT}\n"))
             } else {
                 list_between(line, OLD_NOT_READY, OLD_LIST_END)
                     .or_else(|| list_between(line, NEW_NOT_READY, NEW_LIST_END))
@@ -303,6 +428,83 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
         .collect::<String>()
         .into_bytes();
     (projected, normalized)
+}
+
+/// A printed start is projected to the moved return-value slot only in the
+/// single-start/single-value-gap shape the bounded screen produces for its
+/// selected finding; a boundary seam's start stays exact. Masking is shape
+/// only (#10948 item 7): a second start, a second gap (even an equal-count
+/// one), or a wrong-kind gap beside the value gap all stay exact. The 1/1
+/// shape itself cannot detect a producer misbinding — gap A beside a start
+/// for seam B still masks, and the wrong-gap 1/1 control locks in that
+/// documented blind spot instead of claiming detection. Start-to-gap
+/// binding is established producer-side (`repair_route_for` answers only
+/// for its own finding id).
+#[test]
+fn moved_repair_start_projection_masks_only_the_single_shape() {
+    let start = "  ripr repair 0123456789abcdef --root /x\n";
+    let capture = |gap: &str| format!("  <gap-id-label>: {gap}\n{start}");
+    let (value, slots) = normalize_moved_repair_advisories(
+        capture("gap:rust:src/lib.rs:f:return_value:r:x").as_bytes(),
+    );
+    assert_eq!(slots, 1);
+    assert!(!String::from_utf8_lossy(&value).contains("ripr repair"));
+    for other in [
+        "gap:rust:src/lib.rs:f:predicate_boundary:p:x > 1",
+        "gap:rust:src/lib.rs:f:match_arm:m:x",
+    ] {
+        let (kept, slots) = normalize_moved_repair_advisories(capture(other).as_bytes());
+        assert_eq!(slots, 0, "{other}");
+        assert!(String::from_utf8_lossy(&kept).contains(start), "{other}");
+    }
+    let (mixed, slots) = normalize_moved_repair_advisories(
+        format!(
+            "  <gap-id-label>: gap:rust:a.rs:f:return_value:r:x\n  Canonical gap: gap:rust:a.rs:g:predicate_boundary:p:y\n{start}"
+        )
+        .as_bytes(),
+    );
+    assert_eq!(slots, 0);
+    assert!(String::from_utf8_lossy(&mixed).contains(start));
+    // The 1-gap/1-start blind-spot control: a value gap for seam A beside a
+    // start line still masks, because the text pairs no start with its own
+    // gap (16-hex seam hash vs canonical gap id). This locks in the
+    // documented limitation — misbinding detection belongs producer-side
+    // (`repair_route_for` answers only for its own finding id), not to this
+    // text projection — instead of claiming this test detects it.
+    let wrong_gap = capture("gap:rust:other.rs:g:return_value:r:y");
+    let (masked, slots) = normalize_moved_repair_advisories(wrong_gap.as_bytes());
+    assert_eq!(
+        slots, 1,
+        "the 1/1 shape masks; identity is not checked here"
+    );
+    assert!(!String::from_utf8_lossy(&masked).contains("ripr repair"));
+    // A start for a different return_value/error_variant seam is never
+    // masked by shape: two starts beside one value gap, and one
+    // start beside two value gaps, both stay exact. The two-gaps/two-starts
+    // equal-count shape stays exact too: the count matches but the capture
+    // text pairs no start with its own gap (the start names a 16-hex seam
+    // hash, the gap line a canonical gap id), and one of the starts could
+    // name another seam.
+    let two_starts =
+        format!("  <gap-id-label>: gap:rust:src/lib.rs:f:return_value:r:x\n{start}{start}");
+    let (kept, slots) = normalize_moved_repair_advisories(two_starts.as_bytes());
+    assert_eq!(slots, 0);
+    assert_eq!(kept.as_slice(), two_starts.as_bytes());
+    let two_gaps = format!(
+        "  <gap-id-label>: gap:rust:a.rs:f:return_value:r:x\n  <gap-id-label>: gap:rust:b.rs:g:error_variant:e:y\n{start}"
+    );
+    let (kept, slots) = normalize_moved_repair_advisories(two_gaps.as_bytes());
+    assert_eq!(slots, 0);
+    assert!(String::from_utf8_lossy(&kept).contains(start));
+    let equal_counts = format!(
+        "  <gap-id-label>: gap:rust:a.rs:f:return_value:r:x\n  <gap-id-label>: gap:rust:b.rs:g:error_variant:e:y\n{start}{start}"
+    );
+    let (kept, slots) = normalize_moved_repair_advisories(equal_counts.as_bytes());
+    assert_eq!(
+        slots, 0,
+        "equal counts do not establish start-to-gap identity"
+    );
+    assert_eq!(kept.as_slice(), equal_counts.as_bytes());
 }
 
 /// The independent contract is score(1) == 2. Original/wrong sources differ
@@ -532,7 +734,7 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                             actual_slots, expected_slots,
                             "{id}: each moved repair advisory must appear on both sides"
                         );
-                        (actual, expected)
+                        (bind_advisory_transition(&expected, &actual), expected)
                     } else {
                         (actual, expected_bytes)
                     };
@@ -753,4 +955,35 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
     })();
     let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
     result.and(cleanup)
+}
+
+/// #10702: the no-binding slot may become the exposed slot only on an exposed
+/// capture and the counted-untied slot only on an unexposed one.
+#[test]
+fn advisory_transition_is_bound_to_the_captures_own_exposure() {
+    let capture = |exposure: &str, slot: &str| {
+        format!("  Static exposure: {exposure} (severity: info)\n{slot}\n").into_bytes()
+    };
+    let bound = |exposure: &str, live_slot: &str| {
+        bind_advisory_transition(
+            &capture(exposure, NO_BINDING_SLOT),
+            &capture(exposure, live_slot),
+        ) == capture(exposure, NO_BINDING_SLOT)
+    };
+    assert!(bound("exposed", EXPOSED_SLOT), "exposed capture -> exposed");
+    assert!(
+        !bound("exposed", UNTIED_SLOT),
+        "counted-untied on an exposed capture is rejected"
+    );
+    assert!(bound("weakly_exposed", UNTIED_SLOT), "unexposed -> untied");
+    assert!(
+        !bound("weakly_exposed", EXPOSED_SLOT),
+        "an unexposed capture gaining the exposed advisory is rejected"
+    );
+    // No retained no-binding slot: nothing is rewritten.
+    let retained = capture("exposed", EXPOSED_SLOT);
+    assert_eq!(
+        bind_advisory_transition(&retained, &capture("exposed", UNTIED_SLOT)),
+        capture("exposed", UNTIED_SLOT)
+    );
 }

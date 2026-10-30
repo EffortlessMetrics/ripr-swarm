@@ -89,10 +89,6 @@ case = "idiom-fixture-builder-total"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
-case = "idiom-hand-mock-exact-line"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "idiom-result-test-sum-accumulate"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -201,10 +197,6 @@ case = "old-deps-type-path-aliased-import"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
-case = "old-deps-type-path-glob-import"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "old-head-unsafe-shared-edge-line"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -246,10 +238,6 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "roles-cfg-test-helper-input"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "roles-limit-const-value"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
@@ -457,6 +445,10 @@ case = "spec-b-0159-path-qualified-call-site"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
+case = "spec-b-0159-path-qualified-imported-module"
+reason = "RIPR-SPEC-0159 example 5: the discriminating test reaches the helper through an imported module qualifier whose identity remains unestablished (#8999)."
+
+[[entry]]
 case = "spec-b-0163-bare-identifier-state"
 reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0163 case (static_unknown, fail-closed); added with the case in #10308. Delete this entry when the row credits."
 
@@ -501,10 +493,6 @@ case = "spec-b-0169-raw-path-cfg-test-helper"
 reason = "A test-only helper edit: the spec (RIPR-SPEC-0153/0169) requires silence because the edited file is test source with no production probe, though the mutant is caught by its tests; abstaining is the required outcome, not a regression (#10126)."
 
 [[entry]]
-case = "spec0048-label-rendered-observed"
-reason = "Measured row whose initializer-call and const shape abstains today; analyzer fix tracked in #9871."
-
-[[entry]]
 case = "spec0096-named-binding-used"
 reason = "Measured row whose initializer-call and const shape abstains today; analyzer fix tracked in #9871."
 
@@ -514,10 +502,6 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "spec0114-test-calls-owner-macro"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "spec0115-integration-outer-inner"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]

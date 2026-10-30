@@ -117,7 +117,7 @@ Rust repair receipt:
 3. add a `ripr: Diagnose Setup` command;
 4. smoke first-run and no-output states through VS Code;
 5. link existing receipt artifacts into Show Status;
-6. add a bounded "Copy first repair packet" action;
+6. add a bounded "Copy repair instructions for an AI agent" action;
 7. fixture-pin first-run usability states;
 8. write the first-run-to-first-receipt guide;
 9. record dogfood receipts;

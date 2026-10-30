@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/typescript_rejects_reexport_shadow/input
 config: <cwd>/fixtures/typescript_rejects_reexport_shadow/input/ripr.toml
 
-Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 2 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 1
 
@@ -48,7 +48,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
-    - src/load.ts:5 (weak)
+    - src/load.ts:5 (unknown); kind: return_value; reason: The change to `load` is a `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return. No assertion…
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -632,6 +632,11 @@ pub struct Finding {
     pub class: ExposureClass,
     pub ripr: RiprEvidence,
     pub confidence: f32,
+    /// Why `confidence` is held at its value, for preview-adapter findings
+    /// (#10700). Empty for Rust, whose score is not a per-class constant.
+    /// Explains the number only; no decision helper reads it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub confidence_basis: Vec<crate::domain::ConfidenceCap>,
     pub evidence: Vec<String>,
     pub missing: Vec<String>,
     pub flow_sinks: Vec<FlowSinkFact>,
@@ -799,6 +804,11 @@ pub const SOURCE_CURRENTNESS_VALUES: [&str; 4] = [
     "moved_or_renamed",
     "unresolved_subject",
 ];
+
+/// This producer reason requires a fresh physical source observation and cannot
+/// be safely reused from a check artifact's diff/config-only identity.
+pub(crate) const LIVE_PYTHON_TRUTHINESS_ALIGNMENT: &str =
+    "strong_oracle_observes_dunder_truthiness";
 
 /// Controlled enum values for [`Finding::oracle_alignment`]. Registered in
 /// `policy/output_contracts.txt` and documented in `docs/OUTPUT_SCHEMA.md`.

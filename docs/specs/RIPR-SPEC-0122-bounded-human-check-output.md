@@ -396,6 +396,11 @@ An empty list renders as `nearest: none`. A suffix selector searches reported
 gaps rather than every seam shape; an empty list must not claim that a filtered
 family has no seam in the file.
 
+A stub owner parameter typed `impl Into<T>` (plain, non-generic `T`) is declared
+as `T`, and `impl AsRef<str>` / `impl AsRef<[u8]>` as `&str` / `&[u8]` (#8361).
+Any other `impl Trait` parameter, including `impl AsRef<Path>` whose `Path`
+could be shadowed, still refuses as `parameter_unsupported`.
+
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
 (`selector_ambiguous`). Both remain decisions (exit 3), with the schema
@@ -557,7 +562,7 @@ the `ripr check` rerun; a finding no seam binds to says ripr found no seam in
 its file to bind it to and sends the reader to the Next step above; several binding seams say `ripr repair` needs the ID of
 the chosen seam without promising a listing; a repair route that is not ready
 says ripr cannot build a repair packet for the finding yet, lists the
-producer-owned missing evidence (or says the static evidence is not complete
+producer-owned missing evidence in plain words (an `incomplete evidence stage: <stage>` code reads as the test evidence that stage still needs, #11025; or says the static evidence is not complete
 enough to name a safe test target when the list is empty; when the
 finding is a weakly exposed predicate whose infection stage detected a related
 test input at the changed boundary, whose own credited oracle is a weak one
@@ -702,9 +707,10 @@ structured finding and JSON keep the machine value (#9929).
 
 For an `infection_unknown` finding whose related-test inputs ripr cannot map to
 the changed operand, the Next step text states a concrete action: open the
-related test, trace its input through the local or computed operand (including
-default and empty cases) to see which side of the changed condition it
-exercises, then name an input that would exercise the other side. It does not
+related test, check whether it reaches the changed code and inspect other
+existing tests. Trace their inputs through the local or computed operand
+(including default and empty cases) to see which side of the changed condition
+they exercise, then name an input that would exercise the other side. It does not
 restate that the classification is unknown as the instruction, and it keeps the
 existing statement that `ripr.toml` has no fixture/builder value mappings and
 the instruction to add or strengthen a test only when the inspection finds a
@@ -767,6 +773,40 @@ not a head-only row and prints no note.
   commit-or-stash requirement, naming the test route only when a stub is
   rendered. The predicate is the edit cage's own committed-file law, deferring
   (no hold) when it cannot be established.
+- Tests for the return-value repair start (#10701): a weak
+  assertion on a changed return value or error variant, with a direct owner
+  call and an editable test target, prints one `ripr repair <id>` start; a
+  lone equality pin (`assert!(f(x) == lit)`, the terminal Err-return guard), a
+  strong exact assertion, a statically contradicted assertion, a function-value
+  or executor-helper reach, a changed struct literal, a related `#[ignore]` or
+  `#[should_panic]` test, a returned type that may have a non-plain `Drop`
+  (read through `Self`, `use .. as` and `use Type::{self as Name}` renames, and
+  the fields of every workspace struct, enum or union of that name; an
+  unresolved type alias, a return type naming a generic parameter of the
+  function or of a preceding `impl` or `trait` header, `Self` in a generic
+  `impl`, an `impl Trait` or `dyn Trait` return, or a workspace with a macro,
+  `extern crate` or outside-crate item also withholds), a test that
+  pins the owner call, or a local bound from it through `let` or a tuple
+  destructure, with `==`, `.eq(`, `!(.. != ..)` or a closed `>= .. && .. <=`
+  range, an exact error-variant assertion that names a different variant (whole
+  identifier match), a test that only discards the result, and a test with no
+  direct owner call stay refused
+  with one plain-language reason and the manual `ripr agent stub` route
+  (`crates/ripr/tests/return_value_repair_start.rs`). Not recognized as pins,
+  so they still start: a bool local (`let ok = v == 6; assert!(ok)`), an open
+  range (`v > 5 && v < 7`) and `(6..=6).contains(&v)`. The `Drop` read does
+  not follow a lowercase type name or an implementor behind a trait object;
+  the latter withholds only through the `dyn`/`impl` rule. A trait default
+  method with `where Self: Sized` also withholds (an over-withhold).
+  An assertion observes the owner only through a bare call (free owner), a
+  method call (method owner), or a path-qualified call whose qualifier
+  resolves to the owner (its crate, module path or self type; a same-named
+  function, type or primitive elsewhere, or an unreadable qualifier, does not),
+  and a later `let` rebinding of a bound name drops it.
+  Known limits (#10948): method receiver types, scoped `let` shadowing,
+  non-indexed rival types, and `Self::`, `<W as T>::`, turbofish and `use .. as`
+  type spellings are not resolved (the last over-withhold); a bare call of a
+  name the test file defines itself never counts.
 - Format parsing tests for `human-full` and `text-full`.
 - CLI unit tests for repo-scope warnings with `--base` and `--diff`, and no
   warning for diff-scoped JSON.

@@ -119,6 +119,17 @@ summary with `affected_items: 12`. The limited outcome remains explicit and
 recovery names the configured read caps. This bounds emitted entries without
 changing read admission, cap defaults, or TypeScript's support tier (#7868).
 
+### Diff with no analyzable file
+
+A diff whose changed files include no TypeScript or JavaScript file the adapter
+would analyze (accepted extension, not generated, not under an excluded
+directory unless declared hand-written) and no Rust file a Bun bridge profile
+reads against the TypeScript tests does not index the workspace. The adapter
+returns the empty complete result: no findings, no changed-file count and none
+of the workspace-wide limitations above (read caps, discovery cap, skipped
+links), because those describe files the diff never consulted. Any diff that
+does include such a file reads the workspace as before (#10931).
+
 ### Reality baseline (what already exists)
 
 ```text
@@ -411,6 +422,9 @@ PR 13 reports          TypeScript limitation leaderboard + route-quality slice
 - `typescript_limitation_leaderboard_reports` — `ripr reports ts-limitations`
   can aggregate existing check-output limitation evidence by kind without
   rerunning analysis or promoting TypeScript/JavaScript preview authority.
+  A findings-bounded input must disclose incomplete counts and rankings in
+  both report formats, retain the supplied findings as its denominator, and
+  name `RIPR_CHECK_FINDINGS_BYTES=0` as the full-document recovery route.
 - `language_adapter_typescript_false_actionable_audit` — the checked
   TypeScript-family preview false-actionable audit corpus and the dogfood/report
   projections track whether rows that must remain non-actionable accidentally

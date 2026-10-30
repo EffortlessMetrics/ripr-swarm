@@ -190,17 +190,28 @@ Each `classify_probe_with_candidate_index_and_origins` invocation owns its
 recording scope, including when one Rayon worker handles several probes.
 `IndexFiles::get/get_key_value` record `file` or `absent`; `iter/values` and
 file-set length record `universe(files)`; `functions/tests` record their
-conservative whole-set views. A view is a whole-set dependency even when the
+conservative whole-set views, while `RustIndex::test_at` reads one test fact by
+position and records a `test` read named `file:start_line:name` instead. That
+keyed read names the fact only: what the fact was derived from (for a
+macro-generated test, definitions in other files) is still unsealed. A view is a whole-set dependency even when the
 caller later narrows it. The site names the calling Rust source location.
 
 Rows contain a probe id when representable, reads grouped by kind/subject/site
 and count, `universe_observed`, and observed/dropped event counts. Repeated
 reads at one site are counted. Identity and subject text is retained only when
 UTF-8 and at most 512 bytes; it is never truncated into another path. At most
-64 distinct read entries are retained per invocation. The JSON body is capped
+64 distinct read entries are retained per invocation. Reads past that detail
+cap are not lost from the row: `sites` carries, for each kind and calling
+site, the event count and the number of distinct subjects (a hash count, kept
+for at most 8192 subjects per site, after which `distinct_is_lower_bound` is
+true; a hash collision can undercount by one and is not specified further; a
+site first seen after 64 sites are held is not recorded, only its events are
+added to `dropped_site_events`). These
+totals say how many different facts a site read; they do not name them or seal
+what they were derived from. The JSON body is capped
 at 32 KiB; if its escaped encoding exceeds that bound, all read detail is
-omitted with an explicit flag and dropped-event count. The whole-set flag
-survives either bound. A failed stderr write may leave missing or incomplete
+omitted with an explicit flag and dropped-event count; `sites` is kept. The
+whole-set flag survives either bound. A failed stderr write may leave missing or incomplete
 trace data; it does not change analysis or panic. Reject an incomplete JSON
 line rather than counting it as a finished observation.
 
@@ -217,9 +228,21 @@ emit only some observations, or none; it supplies no complete denominator.
 The useful first measurement is a lower bound on observed whole-set reads and
 their sites. Preserve unknown and dropped-detail counts. Do not use these rows
 to report the complete no-whole-set-read fraction, claim invalidation or enable
-Phase C. Remaining Phase A work must record memo dependencies on every read
-(including warm hits and pre-primed answers), replace direct scalar access with
-recording accessors, and cover or explicitly refuse the named disk inputs.
+Phase C. The syntax run memo (`syntax/run_memo.rs`: `memoize`, `memoize_with`
+and `memoize_many`) now records a `memo` read, named `product:key-digest`, on
+every consultation inside a memo scope, hit or build, attributed to the calling
+site. The digest is of the key (source text, discriminator and query), not of
+the produced value, and the other memos in the table above are not yet
+recorded. The run memo has four consumers (the external-docs scan in
+`classify/reach.rs`, the renamed foreign-entry import query in
+`classify/helper_transfer.rs`, function-oracle extraction in `syntax/ra.rs`
+and local test macro expansion); which of them run inside a probe's
+classification scope depends on the input. The unit control covers the
+recording and its attribution. No end-to-end fixture asserts a memo read from
+a real classification: the CLI fixture, with and without a helper chain,
+produced none. Remaining Phase A work must record those memo dependencies on every
+read (including warm hits and pre-primed answers), replace direct scalar access
+with recording accessors, and cover or explicitly refuse the named disk inputs.
 
 The controls compare actual traced and untraced findings plus private
 `ValueOrigins`, exercise real index hits/misses and whole-set views, isolate

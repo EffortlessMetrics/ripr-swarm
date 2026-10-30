@@ -1934,6 +1934,29 @@ pub(crate) fn ts_predicate_boundary_row_activation(
     )
 }
 
+/// A zero or empty expected value is treated as matching a field's initial
+/// state, so pinning it cannot show an update ran: a scalar
+/// zero/empty/false/null/undefined, or an array holding only such values
+/// (`[]`, `[0, 0]`, `[[], '']`). Conservative by design: an array of zero-like
+/// values may under-credit a real pin, never over-credit one.
+pub(crate) fn ts_expected_is_zero_like(expected: &str) -> bool {
+    let compact: String = expected.split_whitespace().collect();
+    if matches!(
+        compact.as_str(),
+        "0" | "\"\"" | "''" | "``" | "false" | "null" | "undefined"
+    ) {
+        return true;
+    }
+    if !(compact.starts_with('[') && compact.ends_with(']')) {
+        return false;
+    }
+    let mut rest = compact;
+    for token in ["\"\"", "''", "``", "false", "null", "undefined", "0"] {
+        rest = rest.replace(token, "");
+    }
+    rest.chars().all(|ch| matches!(ch, '[' | ']' | ','))
+}
+
 /// RIPR-SPEC-0243 decision 18: whether some strong, pinned, exact-value assertion
 /// of an oracle relation reads the updated field from an instance the test
 /// called the owner method on.
@@ -1981,12 +2004,7 @@ pub(crate) fn ts_field_update_witnessed(
             if assertion
                 .expected_value_or_variant
                 .as_deref()
-                .is_some_and(|expected| {
-                    matches!(
-                        expected.trim(),
-                        "0" | "\"\"" | "''" | "``" | "false" | "null" | "undefined"
-                    )
-                })
+                .is_some_and(ts_expected_is_zero_like)
             {
                 return false;
             }
@@ -4980,7 +4998,17 @@ pub(crate) fn expected_side_is_live(
     expected: &str,
 ) -> Option<bool> {
     let source = owner.source_text.as_deref()?;
-    let expected_value = signed_numeric_expected_value(expected)?;
+    // An array literal is never a scalar branch value; it is judged below,
+    // once the branches are known to be scalar-foldable.
+    let expected_is_array = {
+        let trimmed = expected.trim();
+        trimmed.starts_with('[') && trimmed.ends_with(']')
+    };
+    let expected_value = if expected_is_array {
+        None
+    } else {
+        Some(signed_numeric_expected_value(expected)?)
+    };
     let operator = changed_comparison_operator(line_text)?;
     let lines: Vec<&str> = source.lines().collect();
     // Locate the changed line inside the owner body. Uniqueness runs before
@@ -5029,6 +5057,11 @@ pub(crate) fn expected_side_is_live(
     };
     let new_value = fold_numeric_expression(new_expr, &bindings)?;
     let old_value = fold_numeric_expression(old_expr, &bindings)?;
+    // Both branches fold to numbers, so an array expectation equals neither:
+    // the pin is dead on both versions and cannot show the change.
+    let Some(expected_value) = expected_value else {
+        return Some(false);
+    };
     // Jest `toBe` uses `Object.is`, which distinguishes `+0` from `-0`.
     // Epsilon equality would credit `toBe(-0)` against a `return 0` branch.
     if expected_value == 0.0 || new_value == 0.0 || old_value == 0.0 {
@@ -6194,6 +6227,9 @@ pub(crate) struct OwnerLineContext<'a> {
     pub(crate) mock_paths: Vec<String>,
     pub(crate) named_limitations_from_ownership: Vec<TypeScriptNamedLimitation>,
     pub(crate) named_limitations_from_spy: Vec<TypeScriptNamedLimitation>,
+    /// Whole-file one-for-one replacement established by the diff-owning driver.
+    /// A per-line old counterpart alone cannot rule out other removed calls.
+    pub(crate) single_line_replacement: bool,
 }
 
 pub(crate) fn owner_line_context<'a>(
@@ -6239,6 +6275,7 @@ pub(crate) fn owner_line_context<'a>(
         mock_paths,
         named_limitations_from_ownership,
         named_limitations_from_spy,
+        single_line_replacement: false,
     }
 }
 
@@ -6609,6 +6646,33 @@ pub(crate) fn classify_resolved_owner(
     } else {
         probe_shape
     };
+    // #10157: additional credit only after receiver identity and spy order
+    // have been established together. Generic oracle projection is unchanged.
+    let counted_removal = !probe_shape.specific
+        && context.single_line_replacement
+        && super::call_removal_guard::removed_method_call(line_text, old_line_text).is_some_and(
+            |removed| {
+                super::call_removal_guard::call_count_pins_removed_call(
+                    &removed,
+                    line_text,
+                    owner,
+                    related_candidates,
+                    alias_map,
+                    workspace_root,
+                ) && owner.source_text.as_deref().is_some_and(|source| {
+                    super::mock_payload_guard::runs_changed_line_once(
+                        source,
+                        &owner.name,
+                        line_text,
+                    )
+                })
+            },
+        );
+    let probe_shape = if counted_removal {
+        TypeScriptProbeShape::new(ProbeFamily::CallDeletion, DeltaKind::Effect)
+    } else {
+        probe_shape
+    };
     let mut related = related_tests_for_candidates(related_candidates, Some(&probe_shape.family));
     let bun_array_buffer_facts = collect_related_bun_array_buffer_facts(related_candidates);
     let bun_bridge_hints = collect_related_bun_bridge_hints(&bun_array_buffer_facts);
@@ -6659,7 +6723,7 @@ pub(crate) fn classify_resolved_owner(
     // there is no static_limit. We always compute them; they are empty when there
     // are no oracle-eligible candidates or no qualifying assertions.
     let named_limitations_from_oracle =
-        named_limitations_for_oracle_candidates(owner, related_candidates);
+        named_limitations_for_oracle_candidates(owner, related_candidates, &probe_shape.family);
     // Oracle metadata evidence lines (RIPR-SPEC-0085 §PR5).
     // Emitted from the strongest owner-call-observing assertion across
     // candidates. ADDITIVE: does not change oracle_kind, oracle_strength,
@@ -7125,30 +7189,27 @@ pub(crate) fn classify_resolved_owner(
     // callback, is what static analysis cannot resolve (#10438, #10501).
     let conditional_registration_unknown =
         ladder_unresolved_unknown && only_conditionally_registered_tests(related_candidates);
-    ts_apply_post_ladder_rules(
-        &mut verdict,
-        &mut static_limit,
-        &TsPostLadderContext {
-            all_tests,
-            line,
-            probe_shape: &probe_shape,
-            line_text,
-            old_line_text,
-            owner,
-            candidates: related_candidates,
-            ladder: Rule8LadderFacts {
-                boundary: &predicate_boundary,
-                activations: &predicate_activations,
-                error_facts: &error_facts,
-                mock_facts: &mock_facts,
-                pin_facts: &pin_facts,
-                changed_field: changed_field.as_ref(),
-            },
-            mock_paths: &context.mock_paths,
-            alias_map,
-            workspace_root,
+    let post_ladder_context = TsPostLadderContext {
+        all_tests,
+        line,
+        probe_shape: &probe_shape,
+        line_text,
+        old_line_text,
+        owner,
+        candidates: related_candidates,
+        ladder: Rule8LadderFacts {
+            boundary: &predicate_boundary,
+            activations: &predicate_activations,
+            error_facts: &error_facts,
+            mock_facts: &mock_facts,
+            pin_facts: &pin_facts,
+            changed_field: changed_field.as_ref(),
         },
-    );
+        mock_paths: &context.mock_paths,
+        alias_map,
+        workspace_root,
+    };
+    ts_apply_post_ladder_rules(&mut verdict, &mut static_limit, &post_ladder_context);
     // RIPR-SPEC-0246 rule 7: a setup hook that calls the owner outside every
     // test body. It reads an actionable gap, never a credit.
     let hook_owner_unknown = !ladder_exposed
@@ -7196,12 +7257,65 @@ pub(crate) fn classify_resolved_owner(
             owner.name
         )];
     }
+    // #10704: infection the adapter can state. An unmodeled change shape
+    // fails closed to `infection_unknown`; a changed line under an `if` arm
+    // no related test call enters reads `reachable_unrevealed` with infection
+    // `no`, never `weakly_exposed` with an "assertion too weak" row.
+    let mut infection: Option<TsInfectionVerdict> = None;
+    if static_limit.is_none() {
+        let weak = matches!(verdict.class, ExposureClass::WeaklyExposed);
+        let exposed = matches!(verdict.class, ExposureClass::Exposed);
+        let is_predicate = matches!(probe_shape.family, ProbeFamily::Predicate);
+        // The stronger fact wins: a changed line no test input enters is
+        // infection `no`, whatever shape the edit has.
+        let untaken = if weak && !is_predicate {
+            ts_unentered_guard(&post_ladder_context)
+        } else {
+            None
+        };
+        if let Some(guard) = untaken {
+            verdict.class = ExposureClass::ReachableUnrevealed;
+            verdict.discriminate_state = StageState::Unknown;
+            verdict.missing = vec![format!(
+                "The change to `{}` sits inside `{}`, and no related test call enters it: {}. The changed line never runs under the tests, so no assertion can observe it. Add a test input that enters the guard.",
+                owner.name, guard.condition, guard.observed
+            )];
+            infection = Some(TsInfectionVerdict {
+                state: StageState::No,
+                shape: "branch_not_entered",
+                summary: format!(
+                    "No related test call enters `{}`: {}.",
+                    guard.condition, guard.observed
+                ),
+            });
+        } else if let Some(shape) =
+            super::infection_shape::ts_unmodeled_infection(old_line_text, line_text, is_predicate)
+            && (weak || (exposed && shape.behavior_neutral))
+        {
+            verdict.class = ExposureClass::InfectionUnknown;
+            verdict.observe_state = StageState::Unknown;
+            verdict.discriminate_state = StageState::Unknown;
+            verdict.missing = vec![format!(
+                "The change to `{}` is a `{}` edit: {}. No assertion is requested until a test input is shown to change the behavior.",
+                owner.name, shape.shape, shape.reason
+            )];
+            infection = Some(TsInfectionVerdict {
+                state: StageState::Unknown,
+                shape: shape.shape,
+                summary: format!(
+                    "TypeScript preview adapter does not model infection for this `{}` edit: {}.",
+                    shape.shape, shape.reason
+                ),
+            });
+        }
+    }
     let TsLadderVerdict {
         class,
         observe_state,
         discriminate_state,
         mut missing,
     } = verdict;
+    let infection_unknown_class = matches!(class, ExposureClass::InfectionUnknown);
     let static_unknown_by_mock = matches!(class, ExposureClass::StaticUnknown)
         && !ladder_unresolved_unknown
         && !ladder_entry_unknown
@@ -7314,11 +7428,16 @@ pub(crate) fn classify_resolved_owner(
         related_count, owner.name
     );
     let reach = StageEvidence::new(reach_state.clone(), Confidence::Low, &reach_summary);
-    let infect = StageEvidence::new(
-        StageState::Unknown,
-        Confidence::Low,
-        "TypeScript preview adapter does not yet model infection.",
-    );
+    let infect = match &infection {
+        Some(verdict) => {
+            StageEvidence::new(verdict.state.clone(), Confidence::Low, &verdict.summary)
+        }
+        None => StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "TypeScript preview adapter does not yet model infection.",
+        ),
+    };
     let propagate = StageEvidence::new(
         StageState::Unknown,
         Confidence::Low,
@@ -7330,7 +7449,13 @@ pub(crate) fn classify_resolved_owner(
         strongest_strength
     );
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
-    let discriminate_summary = if static_unknown_by_mock {
+    let discriminate_summary = if let Some(verdict) = &infection {
+        format!(
+            "TypeScript preview adapter: infection is `{}` for this `{}` edit, so whether an assertion discriminates the change is not asked (#10704).",
+            verdict.state.as_str(),
+            verdict.shape
+        )
+    } else if static_unknown_by_mock {
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
     } else if loop_count_unknown {
         "TypeScript preview adapter: the changed counted-loop header is observed only through a mock call count; the iteration count is not modeled, so discriminate unknown (RIPR-SPEC-0246 rule 8).".to_string()
@@ -7409,6 +7534,12 @@ pub(crate) fn classify_resolved_owner(
         ExposureClass::Exposed => {
             "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.".to_string()
         }
+        ExposureClass::InfectionUnknown if infection.is_some() => {
+            "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.".to_string()
+        }
+        ExposureClass::ReachableUnrevealed if infection.is_some() => {
+            "TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted.".to_string()
+        }
         ExposureClass::StaticUnknown if ladder_entry_unknown => {
             "TypeScript preview advisory: the related test reaches the changed owner only through a same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
         }
@@ -7463,6 +7594,13 @@ pub(crate) fn classify_resolved_owner(
     let mut evidence = vec![format!("owner: {}", owner.name)];
     if !probe_shape.specific {
         evidence.push("probe_fact: ambiguous_fallback".to_string());
+    }
+    if let Some(verdict) = &infection {
+        evidence.push(format!(
+            "typescript_infection: {} ({})",
+            verdict.state.as_str(),
+            verdict.shape
+        ));
     }
     for discriminator in &missing_discriminators {
         evidence.push(format!("missing_discriminator: {}", discriminator.value));
@@ -7583,6 +7721,7 @@ pub(crate) fn classify_resolved_owner(
             },
         },
         confidence: confidence_value,
+        confidence_basis: Vec::new(),
         evidence,
         missing,
         flow_sinks: flow_sink.into_iter().collect(),
@@ -7590,7 +7729,9 @@ pub(crate) fn classify_resolved_owner(
             observed_values: Vec::new(),
             missing_discriminators,
         },
-        stop_reasons: if static_unknown_by_mock {
+        stop_reasons: if infection_unknown_class {
+            vec![StopReason::InfectionEvidenceUnknown]
+        } else if static_unknown_by_mock {
             vec![StopReason::StaticProbeUnknown]
         } else if unresolved_callback_unknown || loop_count_unknown {
             vec![StopReason::GapEvidenceUnresolved]
@@ -7613,6 +7754,13 @@ pub(crate) fn classify_resolved_owner(
         // Resolved above, before the probe moved into the finding (#3281).
         source_currentness,
     })
+}
+
+/// Infection the classifier could state for a change (#10704).
+struct TsInfectionVerdict {
+    state: StageState,
+    shape: &'static str,
+    summary: String,
 }
 
 /// The ladder's verdict fields a post-ladder rule may rewrite.
@@ -9111,6 +9259,8 @@ fn observed_evidence_label(related: &[RelatedTest]) -> &'static str {
     }
 }
 
+/// Describe the missing static relation without inferring that no test exists.
+/// The ordinary-owner fallback has no specific import-resolution failure cause.
 pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
     match owner.owner_kind {
         OwnerKind::Method => format!(
@@ -9126,7 +9276,7 @@ pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
             owner.name
         ),
         _ => format!(
-            "No test references `{}(` — add a test that calls the changed owner.",
+            "No statically linked test call to `{}(` was established; inspect existing test calls and their import/export paths.",
             owner.name
         ),
     }
@@ -9144,7 +9294,17 @@ pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
             "TypeScript preview advisory: module initializer observer is missing context; add a direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer when safe, and keep helper-derived or dynamic initialization evidence advisory.".to_string()
         }
         _ => {
-            "TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.".to_string()
+            // #10708: NoStaticPath establishes no statically linked test
+            // call, not the universal absence of a test, so the wording
+            // first asks for inspection of existing calls and imports. Add
+            // a relevant test only if needed, then verify and refresh.
+            // No exact test file or verify command is named: neither is
+            // evidenced for an owner with no static link. Repair readiness
+            // stays suppressed on the finding itself.
+            format!(
+                "TypeScript preview advisory: no statically linked test calls `{}(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding.",
+                owner.name
+            )
         }
     }
 }

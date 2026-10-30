@@ -130,6 +130,17 @@ pub(crate) fn selected_triage_finding<'a>(
     triage::select_human_triage(output, config).selected
 }
 
+/// The selected subject and only the eligible rows inside the displayed
+/// Hidden window. The app resolves these before rendering, without inventing
+/// a second selection/currentness policy.
+pub(crate) fn stub_route_subjects<'a>(
+    output: &'a CheckOutput,
+    config: &RiprConfig,
+) -> (Option<&'a Finding>, Vec<&'a Finding>) {
+    let triage = triage::select_human_triage(output, config);
+    (triage.selected, triage::hidden_stub_route_findings(&triage))
+}
+
 /// Project the check producer's canonical next action for a navigation-aware
 /// render. `None` when the producer cannot bind a subject; JSON callers omit
 /// the member rather than inventing a committed-source default or executable
@@ -685,7 +696,8 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
 }
 
 /// Emit a per-language changed-file breakdown only when a non-Rust language
-/// adapter counted at least one file (#2103). Pure-Rust runs emit nothing, so
+/// has at least one changed file, whether its adapter counted it or the
+/// path-routed count was recorded because no adapter did (#2103, #10719). Pure-Rust runs emit nothing, so
 /// Rust-only output stays byte-identical. `changed_rust_files` itself now
 /// carries the Rust adapter's count only; this line shows the full split.
 fn render_language_file_breakdown(out: &mut String, output: &CheckOutput) {
@@ -1406,6 +1418,7 @@ mod tests {
                 base_ref: base.to_string(),
                 base_commit: Some("1a2b3c4d5e6f".to_string()),
                 merge_base_commit: None,
+                loaded_diff_origin: None,
                 head_commit: Some("1a2b3c4d5e6f".to_string()),
                 working_tree: false,
             }),
@@ -1431,6 +1444,7 @@ mod tests {
             base_ref: "HEAD".to_string(),
             base_commit: Some("1a2b3c4d5e6f".to_string()),
             merge_base_commit: None,
+            loaded_diff_origin: None,
             head_commit: Some("1a2b3c4d5e6f".to_string()),
             working_tree: true,
         });
@@ -2992,11 +3006,15 @@ mod tests {
         let rendered = render(&bounded_output_with_findings(findings));
 
         assert!(
-            rendered.contains("    - src/f1.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/f1.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/f2.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/f2.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
     }
@@ -3038,11 +3056,15 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base_0.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/base_0.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base_1.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/base_1.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
         assert!(
@@ -3185,7 +3207,9 @@ mod tests {
             "base-side evidence must not read as lower-priority:\n{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/base.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
     }
@@ -3219,11 +3243,11 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base.rs:1 (weak, base-side)\n"),
+            rendered.contains("    - src/base.rs:1 (weak, base-side); kind: predicate; reason: missing strong oracle\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lower.rs:1 (weak, lower-priority candidate)\n"),
+            rendered.contains("    - src/lower.rs:1 (weak, lower-priority candidate); kind: predicate; reason: missing strong oracle\n"),
             "{rendered}"
         );
     }
@@ -3688,6 +3712,24 @@ mod tests {
             rendered.contains("Changed file(s) by language: python = 5\n"),
             "zero-count languages are omitted; got:\n{rendered}"
         );
+
+        // #10719: a routed-only entry (its adapter errored or was not
+        // enabled) renders exactly like an adapter-counted one.
+        python_only.summary.changed_files_by_language = vec![
+            LanguageFileCount {
+                language: "perl".to_string(),
+                files: 1,
+            },
+            LanguageFileCount {
+                language: "rust".to_string(),
+                files: 0,
+            },
+        ];
+        let rendered = render(&python_only);
+        assert!(
+            rendered.contains("Changed file(s) by language: perl = 1\n"),
+            "a routed-only count renders; got:\n{rendered}"
+        );
     }
 
     #[test]
@@ -3983,6 +4025,7 @@ mod tests {
                 base_ref: "main".to_string(),
                 base_commit: Some("1a2b3c4d5e6f".to_string()),
                 merge_base_commit: None,
+                loaded_diff_origin: None,
                 head_commit: Some("1a2b3c4d5e6f".to_string()),
                 working_tree: true,
             }),
@@ -4661,12 +4704,14 @@ mod tests {
 
     // #4216 review: an unknown-class closed packet (for example a Bun-bridge
     // cross-language visibility limit: StaticUnknown, no static_limit_kind,
-    // missing fields present) is not a known weak test, so the manual step is
-    // the Python static-limit check, not a test edit. A long validator reason
-    // is bounded; the routing and manual-step parts stay whole.
+    // missing fields present), or a missing static path, is not a known weak
+    // test. The manual step is the Python static-limit check, not a test edit.
+    // A long validator reason is bounded; the routing and manual-step parts
+    // stay whole.
     #[test]
-    fn preview_limited_closed_packet_unknown_class_asks_for_manual_check() {
+    fn preview_limited_closed_packet_missing_path_or_unknown_class_asks_for_manual_check() {
         for class in [
+            ExposureClass::NoStaticPath,
             ExposureClass::StaticUnknown,
             ExposureClass::InfectionUnknown,
             ExposureClass::PropagationUnknown,
@@ -5723,6 +5768,7 @@ mod tests {
                 uninspected_changed_lines_lower_bound: 180,
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
                 next_file_changed_lines: Some(60),
+                whole_diff_budgets: None,
                 partition_identity: "c".repeat(64),
             }),
             analyzed_revisions: None,
@@ -5813,6 +5859,7 @@ mod tests {
                 uninspected_changed_lines_lower_bound: uninspected_lines,
                 stop_reason,
                 next_file_changed_lines,
+                whole_diff_budgets: None,
                 partition_identity: "c".repeat(64),
             }),
             analyzed_revisions: None,
@@ -5924,6 +5971,7 @@ mod tests {
                 uninspected_changed_lines_lower_bound: 1,
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
                 next_file_changed_lines: Some(60),
+                whole_diff_budgets: None,
                 partition_identity: "c".repeat(64),
             }),
             analyzed_revisions: None,
@@ -8020,6 +8068,7 @@ mod tests {
     pub(super) fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:sample.rs:7:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -8097,6 +8146,7 @@ mod tests {
     fn unknown_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
             canonical_gap: None,
             probe: Probe {

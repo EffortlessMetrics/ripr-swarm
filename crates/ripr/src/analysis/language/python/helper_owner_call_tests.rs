@@ -821,3 +821,48 @@ fn given_an_ordinary_literal_after_an_identifier_suffix_then_it_is_never_scanned
         "x = 1 if f\"\"\"\n{\nhelper(1)\n}\n\"\"\" else 2\n"
     ));
 }
+
+#[test]
+fn given_a_large_test_set_then_the_parallel_scan_keeps_the_first_caller_per_test()
+-> Result<(), String> {
+    // Above the parallel threshold the per-caller scan runs on the rayon
+    // workers; the fold must still credit each test to the first caller in
+    // hop order and list every reaching test once.
+    let source = "def leaf(x):\n    return x > 0\n\n\ndef mid(x):\n    return leaf(x)\n\n\ndef top(x):\n    return mid(x)\n";
+    let mut tests = String::from("from src.version import mid, top\n\n");
+    for index in 0..600 {
+        let call = match index % 3 {
+            0 => "mid(1)",
+            1 => "top(1)",
+            _ => "1 == 1",
+        };
+        tests.push_str(&format!("\ndef test_{index:03}():\n    assert {call}\n\n"));
+    }
+    tests.push_str("\ndef test_both():\n    assert mid(1)\n    assert top(1)\n");
+    let owners = extract_owners(Path::new("src/version.py"), source);
+    let parsed = extract_tests(Path::new("tests/test_version.py"), &tests);
+    assert_eq!(parsed.len(), 601, "fixture must parse every test");
+    let leaf = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "leaf")
+        .ok_or("fixture must parse owner `leaf`")?;
+    let before = related_tests::PARALLEL_HELPER_SCANS.with(std::cell::Cell::get);
+    let found = related_tests::helper_owner_call_candidates(leaf, &owners, &parsed);
+    assert_eq!(
+        related_tests::PARALLEL_HELPER_SCANS.with(std::cell::Cell::get) - before,
+        2,
+        "each of the two callers must scan on the rayon workers"
+    );
+
+    assert_eq!(found.len(), 401, "200 mid + 200 top + test_both");
+    let callers: std::collections::BTreeMap<&str, &str> = found
+        .iter()
+        .map(|helper| (helper.candidate.test.name.as_str(), helper.caller.as_str()))
+        .collect();
+    assert_eq!(callers.len(), 401, "each test is listed once");
+    assert_eq!(callers.get("test_both"), Some(&"mid"));
+    assert_eq!(callers.get("test_000"), Some(&"mid"));
+    assert_eq!(callers.get("test_001"), Some(&"top"));
+    assert_eq!(callers.get("test_002"), None);
+    Ok(())
+}

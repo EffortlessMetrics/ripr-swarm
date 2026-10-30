@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ mod a {
+     pub fn gate(input: u32) -> bool {
+-        input > 10
++        input >= 10
+     }
+ }

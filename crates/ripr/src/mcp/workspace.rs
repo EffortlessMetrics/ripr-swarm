@@ -91,7 +91,23 @@ pub(crate) const RECOVERY_TOO_LONG: &str = "literal recovery is unavailable beca
 pub(crate) struct GapListWindow {
     pub(crate) offset: usize,
     pub(crate) limit: Option<usize>,
+    /// Start index within the stored omission disclosure (#9360). The
+    /// omission list pages on its own axis, [`OMITTED_WINDOW`] entries at a
+    /// time, so a large truncated selection cannot make the shell outgrow
+    /// the wire bound.
+    pub(crate) omitted_offset: usize,
 }
+
+/// Omitted identities disclosed inline per response. Each entry is a short
+/// identity plus a reason token, so this keeps the omission window well under
+/// the page ceiling; the remainder is reached through `omitted_page`.
+pub(crate) const OMITTED_WINDOW: usize = 200;
+
+/// Serialized-byte budget for one omission window. The entry cap alone does
+/// not bound size (canonical identities embed paths and qualified owners), so
+/// the window also stops once this many bytes are emitted; the first entry
+/// always ships so the walk makes progress.
+pub(crate) const OMITTED_WINDOW_BYTES: usize = 16 * 1024;
 
 /// Caller-narrowed filters over already-projected commit-time facts
 /// (#7464): `file` (exact, prefix, or trailing-segment match after `./`
@@ -206,6 +222,8 @@ struct GapListScope<'a> {
 /// full stored-selection count while `page.returned` counts this page.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct GapPage {
+    /// Requested start of the omission window; see [`GapListWindow`].
+    omitted_offset: usize,
     offset: usize,
     limit: Option<usize>,
     returned: usize,
@@ -788,6 +806,10 @@ impl WorkspaceSession {
         // item summaries; its measured size sets the page budget. The
         // reserve absorbs the small byte difference between this shell's
         // zeroed page fields and the filled ones the caller receives.
+        let shell_page = GapPage {
+            omitted_offset: window.omitted_offset,
+            ..GapPage::default()
+        };
         let shell = {
             let scope = GapListScope {
                 selection,
@@ -795,7 +817,7 @@ impl WorkspaceSession {
                 filter,
                 filtered,
             };
-            self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?
+            self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
         };
         let shell_bytes = document_bytes(&shell)?;
         // The same shell with an empty filter echo isolates the echo's
@@ -811,7 +833,7 @@ impl WorkspaceSession {
                 filter: &GapListFilter::default(),
                 filtered,
             };
-            self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?
+            self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
         };
         let shell_without_filter_bytes = document_bytes(&shell_without_filter)?;
         let shell_envelope_overflows =
@@ -881,6 +903,7 @@ impl WorkspaceSession {
         // keep it whole when it fits; only then bisect the strictly
         // monotone continuation prefixes for the largest fitting page.
         let page_fields = |count: usize| GapPage {
+            omitted_offset: window.omitted_offset,
             // The window echoes the requested offset; a past-end request is
             // an empty disclosed page at that offset, not a renumbered one.
             offset: window.offset,
@@ -995,21 +1018,63 @@ impl WorkspaceSession {
             "tool": "ripr_get_gap",
             "resource_template": "ripr://gap/{canonical_id}",
         });
-        if let Some(next_offset) = page.next_offset {
-            // The generated route pins the snapshot identity and the caller
-            // filters: a refresh between pages fails closed with
-            // stale_snapshot instead of silently mixing snapshots, and the
-            // narrowed walk resumes narrowed (#6021 review, #7464).
+        // The omission list is windowed independently of the item page: a
+        // past-end offset is an empty disclosed window, never a renumbered
+        // one (#9360).
+        let omitted_start = page.omitted_offset.min(selection.omitted.len());
+        let mut omitted_window = Vec::new();
+        let mut omitted_bytes = 0usize;
+        for item in &selection.omitted[omitted_start..] {
+            let entry = json!({
+                "canonical_id": item.canonical_id,
+                "reason": omitted_reason_as_str(item.reason),
+            });
+            // One byte per joining comma keeps the accounting exact.
+            let cost = document_bytes(&entry)?.saturating_add(1);
+            if omitted_window.len() >= OMITTED_WINDOW
+                || (!omitted_window.is_empty()
+                    && omitted_bytes.saturating_add(cost) > OMITTED_WINDOW_BYTES)
+            {
+                break;
+            }
+            omitted_bytes = omitted_bytes.saturating_add(cost);
+            omitted_window.push(entry);
+        }
+        let omitted_end = omitted_start + omitted_window.len();
+        let omitted_next = (omitted_end < selection.omitted.len()).then_some(omitted_end);
+        // Both continuation routes replay the caller's whole request and
+        // advance only their own axis: the snapshot pin, filters, and the
+        // limit carry over so following either route never silently changes
+        // the other window (#9360 review).
+        let replay_arguments = |offset: usize, omitted_offset: usize| {
             let mut arguments = json!({
                 "snapshot_id": snapshot.snapshot_id,
-                "offset": next_offset,
+                "offset": offset,
             });
+            if omitted_offset > 0 {
+                arguments["omitted_offset"] = json!(omitted_offset);
+            }
             for (name, value) in filter.arguments().as_object().cloned().unwrap_or_default() {
                 arguments[name] = value;
             }
             if let Some(limit) = page.limit {
                 arguments["limit"] = json!(limit);
             }
+            arguments
+        };
+        if let Some(next_omitted) = omitted_next {
+            continuation["next_omitted_page"] = json!({
+                "tool": "ripr_list_gaps",
+                "arguments": replay_arguments(page.offset, next_omitted),
+            });
+        }
+        if let Some(next_offset) = page.next_offset {
+            // The generated route pins the snapshot identity and the caller
+            // filters: a refresh between pages fails closed with
+            // stale_snapshot instead of silently mixing snapshots, and the
+            // narrowed walk resumes narrowed (#6021 review, #7464). It also
+            // keeps the requested omission window (#9360 review).
+            let arguments = replay_arguments(next_offset, page.omitted_offset);
             continuation["next_page"] = json!({
                 "tool": "ripr_list_gaps",
                 "arguments": arguments,
@@ -1059,14 +1124,13 @@ impl WorkspaceSession {
                 "has_more": page.has_more,
                 "next_offset": page.next_offset,
             },
-            "omitted_items": selection
-                .omitted
-                .iter()
-                .map(|item| json!({
-                    "canonical_id": item.canonical_id,
-                    "reason": omitted_reason_as_str(item.reason),
-                }))
-                .collect::<Vec<_>>(),
+            "omitted_items": omitted_window,
+            "omitted_page": {
+                "offset": page.omitted_offset,
+                "returned": omitted_window.len(),
+                "has_more": omitted_next.is_some(),
+                "next_offset": omitted_next,
+            },
             "continuation": continuation,
             "claim_boundary": "Bounded working-set projection over one completed snapshot. Selection is the shared CLI/LSP budget authority; omitted identities and reasons are disclosed, never silently truncated, and no business-risk ranking is inferred. Filters narrow the stored selection over commit-time facts before paging; they never widen it.",
             "limitations": [
@@ -1689,55 +1753,82 @@ pub(crate) fn run_check(
     base: Option<&str>,
     source: RefreshSource,
 ) -> Result<Snapshot, AttemptFailure> {
-    let config = crate::config::load_for_root(root).map_err(|error| {
-        AttemptFailure::new(
-            CODE_CONFIG_INVALID,
-            format!("the workspace configuration could not be loaded: {error}"),
-            format!(
-                "address the configuration error above (the detail names the cause), then {}",
-                check_retry_recovery(root, base, source)
-            ),
-        )
-    })?;
-    let input = crate::app::CheckInput {
-        root: PathBuf::from(root),
-        base: base.map(str::to_string),
-        git_timeout: Some(crate::app::default_cli_git_timeout()),
-        ..Default::default()
+    // Config refusal is a terminal attempt too: install its context before
+    // loading configuration so a pending signal cannot poison later retries.
+    let attempt = || -> Result<Snapshot, AttemptFailure> {
+        let config = crate::config::load_for_root(root).map_err(|error| {
+            AttemptFailure::new(
+                CODE_CONFIG_INVALID,
+                format!("the workspace configuration could not be loaded: {error}"),
+                format!(
+                    "address the configuration error above (the detail names the cause), then {}",
+                    check_retry_recovery(root, base, source)
+                ),
+            )
+        })?;
+        let input = crate::app::CheckInput {
+            root: PathBuf::from(root),
+            base: base.map(str::to_string),
+            git_timeout: Some(crate::app::default_cli_git_timeout()),
+            ..Default::default()
+        };
+        if source == RefreshSource::Worktree {
+            return run_worktree_check(input, &config, root_identity, base);
+        }
+        let (output, language_view) = crate::app::check_workspace_with_config_typed(input, &config)
+            .map_err(|error| check_failure(&error, root, base, RefreshSource::Committed))?;
+        // The seam inventory is gathered once inside this bounded attempt and
+        // feeds both consumers: the shared repair validator that decides each
+        // item's repair readiness (#8717) and the repair-card seam bindings
+        // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
+        // is computed, so the identity binds the admission decision.
+        let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
+        let admission = super::repair_admission::SeamAdmission::evaluate(
+            &output.findings,
+            &inventory.candidate_seams,
+            crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
+            &inventory.completeness,
+        );
+        let mut snapshot = Snapshot::from_output_admitted(
+            &output,
+            root_identity,
+            &admission,
+            RefreshSource::Committed,
+        )?;
+        snapshot.base = base.map(str::to_string);
+        snapshot.language_view = language_view;
+        // Bind the repair-card producers inside the same bounded attempt, after
+        // the shared check authority completed: the snapshot commits complete —
+        // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
+        // The card producers consume the same resolved workspace configuration
+        // as the findings (#6825 review), so one committed snapshot cannot
+        // disagree with itself across the two producers.
+        super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
+        Ok(snapshot)
     };
-    if source == RefreshSource::Worktree {
-        return run_worktree_check(input, &config, root_identity, base);
+    #[cfg(unix)]
+    if let Some(interrupted) = crate::cli::interrupt::server_interrupt_flag() {
+        use crate::analysis::cancellation::{
+            self, AnalysisAbortKind, AnalysisCancellation, AnalysisCancellationToken,
+        };
+        let token = AnalysisCancellationToken::with_server_interrupt(interrupted.clone());
+        let result = cancellation::with_token(&token, attempt);
+        // This exchange is the terminal boundary. A signal observed even after
+        // the final child/checkpoint refuses success; a later signal remains
+        // pending for the next attempt. Preserve a prior diagnostic on errors.
+        return crate::cli::interrupt::settle_server_attempt(&interrupted, result, || {
+            check_failure(
+                &AnalysisCancellation {
+                    kind: AnalysisAbortKind::Cancelled,
+                }
+                .into(),
+                root,
+                base,
+                source,
+            )
+        });
     }
-    let (output, language_view) = crate::app::check_workspace_with_config_typed(input, &config)
-        .map_err(|error| check_failure(&error, root, base, RefreshSource::Committed))?;
-    // The seam inventory is gathered once inside this bounded attempt and
-    // feeds both consumers: the shared repair validator that decides each
-    // item's repair readiness (#8717) and the repair-card seam bindings
-    // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
-    // is computed, so the identity binds the admission decision.
-    let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
-    let admission = super::repair_admission::SeamAdmission::evaluate(
-        &output.findings,
-        &inventory.candidate_seams,
-        crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
-        &inventory.completeness,
-    );
-    let mut snapshot = Snapshot::from_output_admitted(
-        &output,
-        root_identity,
-        &admission,
-        RefreshSource::Committed,
-    )?;
-    snapshot.base = base.map(str::to_string);
-    snapshot.language_view = language_view;
-    // Bind the repair-card producers inside the same bounded attempt, after
-    // the shared check authority completed: the snapshot commits complete —
-    // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
-    // The card producers consume the same resolved workspace configuration
-    // as the findings (#6825 review), so one committed snapshot cannot
-    // disagree with itself across the two producers.
-    super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
-    Ok(snapshot)
+    attempt()
 }
 
 /// The saved tracked-worktree refresh (#7357): the shared worktree check
@@ -2341,12 +2432,21 @@ mod tests {
     /// shared gaps test finding with per-index identities. No analysis runs:
     /// the session contract is exercised against typed producer output.
     fn session_with_findings(count: usize) -> Result<WorkspaceSession, String> {
+        session_with_padded_findings(count, 0)
+    }
+
+    /// Like [`session_with_findings`], with `id_pad` filler bytes in every
+    /// canonical gap identity so omission windows can be byte-bound.
+    fn session_with_padded_findings(
+        count: usize,
+        id_pad: usize,
+    ) -> Result<WorkspaceSession, String> {
         let findings = (0..count)
             .map(|index| {
                 let mut finding = gaps::test_finding()?;
                 finding.id = format!("finding:test:{index}");
                 if let Some(gap) = finding.canonical_gap.as_mut() {
-                    gap.id = format!("gap:test:{index}");
+                    gap.id = format!("gap:test:{index}:{}", "x".repeat(id_pad));
                 }
                 finding.probe.id = crate::domain::ProbeId(format!("probe:test:{index}"));
                 // Distinct files: the shared budget caps items per document,
@@ -2799,6 +2899,7 @@ mod tests {
                 GapListWindow {
                     offset: 0,
                     limit: Some(1),
+                    ..GapListWindow::default()
                 },
                 &file("src/checkout.rs"),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -2836,6 +2937,7 @@ mod tests {
                 GapListWindow {
                     offset: 1,
                     limit: Some(1),
+                    ..GapListWindow::default()
                 },
                 &file("src/checkout.rs"),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3024,6 +3126,197 @@ mod tests {
         Ok(())
     }
 
+    /// #9360: the omission disclosure pages on its own axis. A selection with
+    /// more omitted identities than one window used to render all of them
+    /// inside the non-pageable shell, so enough omissions failed the whole
+    /// listing with `result_too_large`. Now each response carries at most
+    /// [`OMITTED_WINDOW`] identities and `omitted_page` walks the rest
+    /// exactly once.
+    #[test]
+    fn omission_disclosure_pages_independently_of_items() -> Result<(), String> {
+        let session = session_with_findings(700)?;
+        let list = |omitted_offset: usize| -> Result<Value, String> {
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow {
+                        limit: Some(1),
+                        omitted_offset,
+                        ..GapListWindow::default()
+                    },
+                    &GapListFilter::default(),
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        let first = list(0)?;
+        let total = first["omitted"].as_u64().ok_or("missing omitted count")? as usize;
+        if total <= OMITTED_WINDOW {
+            return Err(format!(
+                "fixture must omit more than one window ({OMITTED_WINDOW}), got {total}"
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut document = first;
+        let mut windows = 0usize;
+        loop {
+            let ids = document["omitted_items"]
+                .as_array()
+                .ok_or("omitted_items must be an array")?;
+            if ids.len() > OMITTED_WINDOW {
+                return Err(format!("window exceeded the cap: {}", ids.len()));
+            }
+            if document["omitted_page"]["returned"] != json!(ids.len()) {
+                return Err(format!("returned must count the window: {document}"));
+            }
+            for item in ids {
+                let id = item["canonical_id"].as_str().ok_or("omitted id")?;
+                if !seen.insert(id.to_string()) {
+                    return Err(format!("omitted identity repeated across windows: {id}"));
+                }
+            }
+            windows += 1;
+            let page = &document["omitted_page"];
+            match page["next_offset"].as_u64() {
+                Some(next) => {
+                    if page["has_more"] != json!(true)
+                        || document["continuation"]["next_omitted_page"]["arguments"]["omitted_offset"]
+                            != json!(next)
+                    {
+                        return Err(format!(
+                            "continuation must name the next window: {document}"
+                        ));
+                    }
+                    document = list(next as usize)?;
+                }
+                None => {
+                    if page["has_more"] != json!(false)
+                        || !document["continuation"]["next_omitted_page"].is_null()
+                    {
+                        return Err(format!("last window must close the route: {document}"));
+                    }
+                    break;
+                }
+            }
+        }
+        if seen.len() != total || windows < 2 {
+            return Err(format!(
+                "walk must cover every omission once: saw {} of {total} in {windows} windows",
+                seen.len()
+            ));
+        }
+        // A past-end window is an empty disclosed window at the echoed offset.
+        let past = list(total + 50)?;
+        if past["omitted_items"] != json!([])
+            || past["omitted_page"]["offset"] != json!(total + 50)
+            || past["omitted_page"]["has_more"] != json!(false)
+        {
+            return Err(format!("past-end window must be empty and closed: {past}"));
+        }
+        Ok(())
+    }
+
+    /// #9360 review: the omission window is byte-bound as well as
+    /// count-bound. Long canonical identities used to make a 200-entry
+    /// window outgrow the document ceiling; now the window stops at its byte
+    /// budget and the walk still covers every omission once.
+    #[test]
+    fn long_omitted_identities_are_byte_fitted_and_fully_walked() -> Result<(), String> {
+        let session = session_with_padded_findings(700, 600)?;
+        let list = |omitted_offset: usize| -> Result<Value, String> {
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow {
+                        limit: Some(1),
+                        omitted_offset,
+                        ..GapListWindow::default()
+                    },
+                    &GapListFilter::default(),
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| format!("window at {omitted_offset} failed: {}", failure.detail))
+        };
+        let mut document = list(0)?;
+        let total = document["omitted"]
+            .as_u64()
+            .ok_or("missing omitted count")?;
+        let mut seen = std::collections::BTreeSet::new();
+        let mut shortened = false;
+        loop {
+            let ids = document["omitted_items"]
+                .as_array()
+                .ok_or("omitted_items must be an array")?;
+            if ids.is_empty() {
+                return Err(format!("a window must make progress: {document}"));
+            }
+            shortened |=
+                ids.len() < OMITTED_WINDOW && document["omitted_page"]["has_more"] == json!(true);
+            for item in ids {
+                let id = item["canonical_id"].as_str().ok_or("omitted id")?;
+                if !seen.insert(id.to_string()) {
+                    return Err(format!("omitted identity repeated: {id}"));
+                }
+            }
+            match document["omitted_page"]["next_offset"].as_u64() {
+                Some(next) => {
+                    let next = usize::try_from(next).map_err(|error| error.to_string())?;
+                    document = list(next)?;
+                }
+                None => break,
+            }
+        }
+        if !shortened {
+            return Err("fixture must exercise the byte budget, not only the count cap".into());
+        }
+        if seen.len() as u64 != total {
+            return Err(format!("walk saw {} of {total} omissions", seen.len()));
+        }
+        Ok(())
+    }
+
+    /// #9360 review: each continuation route replays the whole request and
+    /// advances only its own axis. Following `next_page` keeps the requested
+    /// omission window; following `next_omitted_page` keeps the filters and
+    /// item window.
+    #[test]
+    fn continuation_routes_preserve_the_other_axis() -> Result<(), String> {
+        let session = session_with_findings(700)?;
+        let filter = GapListFilter {
+            file: Some("src".to_string()),
+            ..GapListFilter::default()
+        };
+        let document = session
+            .list_gaps(
+                None,
+                GapListWindow {
+                    offset: 1,
+                    limit: Some(2),
+                    omitted_offset: 5,
+                },
+                &filter,
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let next_page = &document["continuation"]["next_page"]["arguments"];
+        if next_page["omitted_offset"] != json!(5) || next_page["file"] != json!("src") {
+            return Err(format!(
+                "next_page lost the omission window or filter: {next_page}"
+            ));
+        }
+        let next_omitted = &document["continuation"]["next_omitted_page"]["arguments"];
+        if next_omitted["offset"] != json!(1)
+            || next_omitted["limit"] != json!(2)
+            || next_omitted["file"] != json!("src")
+            || next_omitted["snapshot_id"] != document["snapshot_id"]
+        {
+            return Err(format!(
+                "next_omitted_page lost the item window or filter: {next_omitted}"
+            ));
+        }
+        Ok(())
+    }
+
     /// #6021: an aggregate listing too large for one wire response degrades
     /// to disclosed pages. The old behavior returned the whole budget-
     /// approved document and let the tool envelope fail `result_too_large`
@@ -3141,6 +3434,7 @@ mod tests {
                     GapListWindow {
                         offset,
                         limit: None,
+                        ..GapListWindow::default()
                     },
                     &GapListFilter::default(),
                     crate::mcp::MAX_RESPONSE_BYTES,
@@ -3192,6 +3486,7 @@ mod tests {
                 GapListWindow {
                     offset: 0,
                     limit: Some(1),
+                    ..GapListWindow::default()
                 },
                 &GapListFilter::default(),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3215,6 +3510,7 @@ mod tests {
                 GapListWindow {
                     offset: requested_offset,
                     limit: None,
+                    ..GapListWindow::default()
                 },
                 &GapListFilter::default(),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3291,6 +3587,7 @@ mod tests {
                 GapListWindow {
                     offset: 10,
                     limit: None,
+                    ..GapListWindow::default()
                 },
                 &GapListFilter::default(),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3365,6 +3662,7 @@ mod tests {
         let window = |offset: usize| GapListWindow {
             offset,
             limit: None,
+            ..GapListWindow::default()
         };
         let echo = |len: usize| GapListFilter {
             file: Some("x".repeat(len)),

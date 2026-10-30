@@ -1130,6 +1130,32 @@ fn a_module_name_holding_a_parametrize_mark_parametrizes_the_test() {
     }
 }
 
+/// #10867: the literal cases come from the same pytest mark the routing read
+/// accepts. A spelled mark whose root may be another library's records no
+/// rows; pytest's mark reached through an alias does.
+#[test]
+fn parametrize_cases_follow_the_routing_read_of_the_mark() {
+    let cases = |import: &str| -> Vec<Option<usize>> {
+        let source = format!(
+            "{import}\n\n@{root}.mark.parametrize(\"account\", [1, 2])\ndef test_a(account):\n    pass\n",
+            root = if import.contains(" as pt") {
+                "pt"
+            } else {
+                "pytest"
+            }
+        );
+        extract_tests(Path::new("tests/test_account.py"), &source)
+            .into_iter()
+            .map(|test| test.parametrize.map(|found| found.cases.len()))
+            .collect()
+    };
+    assert_eq!(cases("import pytest"), vec![Some(2)]);
+    assert_eq!(cases("import pytest as pt"), vec![Some(2)]);
+    for import in ["import mylib as pytest", "import pytest\nimport pytest"] {
+        assert_eq!(cases(import), vec![None], "{import}");
+    }
+}
+
 #[test]
 fn extract_tests_recognizes_pytest_parametrize_and_unittest() {
     let tests = extract_tests(
@@ -4583,6 +4609,7 @@ fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), Str
                 body_text: "def caplog():\n    return Recorder()\n".to_string(),
                 imports: Vec::new(),
                 literal_construction: None,
+                inert_tool: None,
                 literal_params: None,
                 isolated: false,
                 scope_imports: Vec::new(),
@@ -5963,6 +5990,132 @@ fn classify_change_unresolved_pytest_fixture_fails_closed() -> Result<(), String
             .iter()
             .any(|entry| entry.contains("Static limit `unresolved_pytest_fixture`"))
     );
+    // The blocker is named so the reader knows which fixture to open (#10979).
+    assert!(
+        finding.evidence.iter().any(|entry| entry
+            == "unresolved_fixtures: discount_case (test_apply_discount_fixture_case)"),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// Classify the changed predicate against a parametrized pytest test whose
+/// module text is `module_text` (#10979).
+fn classify_parametrized_module(module_text: &str) -> Result<Finding, String> {
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+    );
+    let tests = extract_tests(Path::new("tests/test_pricing.py"), module_text);
+    assert_eq!(
+        tests.len(),
+        1,
+        "fixture must parse exactly one test: {tests:?}"
+    );
+    assert_eq!(
+        tests[0].direct_parametrized,
+        vec!["amount".to_string(), "expected".to_string()],
+        "fixture must read both parametrize argnames"
+    );
+    classify_change(
+        Path::new("src/pricing.py"),
+        2,
+        "    if amount >= threshold:",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed predicate inside owner should classify".to_string())
+}
+
+const PARAMETRIZED_TEST: &str = "@pytest.mark.parametrize((\"amount\", \"expected\"), [(5, 5), (50, 40)])\ndef test_apply_discount(amount, expected):\n    assert apply_discount(amount, 10) == expected\n";
+
+#[test]
+fn classify_change_parametrize_argnames_survive_prose_that_names_dynamic_writers()
+-> Result<(), String> {
+    // Words such as `vars` and `reload` in a docstring or a comment write
+    // nothing (#10979): the parametrize argnames are still values pytest
+    // passes to the test, not fixtures.
+    let module_text = format!(
+        "import pytest\nfrom src.pricing import apply_discount\n\n# Flask --reload/--no-reload and setattr are only prose here.\n{PARAMETRIZED_TEST}\ndef helper_other():\n    \"\"\"Env vars are plain strings; globals() and exec are not called.\"\"\"\n    assert apply_discount(5, 10) == 5\n"
+    );
+    let finding = classify_parametrized_module(&module_text)?;
+    assert_ne!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::UnresolvedPytestFixture),
+        "{:?}",
+        finding.evidence
+    );
+    assert_ne!(finding.class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn classify_change_parametrize_argnames_stay_unsettled_when_code_writes_the_namespace()
+-> Result<(), String> {
+    // The discriminating negative: the same module with a real dynamic
+    // writer in code, an f-string expression, or `sys.modules` keeps the
+    // fail-closed fixture limit.
+    for writer in [
+        "vars()\n",
+        "globals()[\"pytest\"] = object()\n",
+        "label = f\"{globals()}\"\n",
+        "import sys\nsys . modules[\"pytest\"] = object()\n",
+        "setattr(object(), \"x\", 1)\n",
+        "eval(\"globals().update(x=1)\")\n",
+        "import pydoc\npydoc.locate(\"importlib.reload\")(object())\n",
+        "getattr(object(), \"__setattr__\")(\"x\", 1)\n",
+    ] {
+        let module_text = format!(
+            "import pytest\nfrom src.pricing import apply_discount\n\n{writer}\n{PARAMETRIZED_TEST}"
+        );
+        let finding = classify_parametrized_module(&module_text)?;
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::UnresolvedPytestFixture),
+            "writer {writer:?} must keep the limit: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn classify_change_names_unsettled_indirect_values_apart_from_known_fixtures() -> Result<(), String>
+{
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+    );
+    // `indirect=` is a call ripr cannot read: `amount` is a parametrize value
+    // that may or may not pass through a fixture, while `rate` is a plain
+    // fixture the test takes (#10979).
+    let tests = extract_tests(
+        Path::new("tests/test_pricing.py"),
+        "import pytest\nfrom src.pricing import apply_discount\n\n@pytest.mark.parametrize(\"amount\", [5], indirect=flag())\ndef test_apply_discount(amount, rate):\n    assert apply_discount(amount, rate) == 5\n",
+    );
+    let finding = classify_change(
+        Path::new("src/pricing.py"),
+        2,
+        "    if amount >= threshold:",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed predicate inside owner should classify".to_string())?;
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::UnresolvedPytestFixture)
+    );
+    for expected in [
+        "unresolved_fixtures: rate (test_apply_discount)",
+        "unsettled_indirect_params: amount (test_apply_discount)",
+    ] {
+        assert!(
+            finding.evidence.iter().any(|entry| entry == expected),
+            "{expected} missing from {:?}",
+            finding.evidence
+        );
+    }
     Ok(())
 }
 
@@ -8911,6 +9064,109 @@ fn protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited() 
 }
 
 #[test]
+fn protocol_entry_quoted_for_membership_reads_keep_receiver_credit() -> Result<(), String> {
+    for literal in [
+        "'word'",
+        "'for'",
+        r#""for""#,
+        "r'for'",
+        "u'for'",
+        "b'for'",
+        "f'for'",
+        "'''for'''",
+        r#""""for""""#,
+        "rf'''for'''",
+        "\"\"\"prefix\nfor\"\"\"",
+        "r'''prefix\nfor'''",
+        // The extra quote makes the receiver visible to the line-local mask;
+        // only full-prefix masking can identify `for` as literal text here.
+        "\"\"\"prefix\nfor\" \"\"\"",
+        "r'''prefix\nfor' '''",
+        "\"\"\"é prefix\nfor for\" \"\"\"",
+        "'é for for'",
+        "'foré'",
+    ] {
+        let test_src = format!(
+            "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(1)\n    assert {literal} and ((r)) in [r]\n    assert list(reversed(r)) == [0]\n"
+        );
+        let (finding, relations) = classify_reversed_guard(&test_src)?;
+        assert_eq!(
+            relations,
+            vec![("test_reads".to_string(), "protocol_entry_call")],
+            "{test_src}"
+        );
+        assert_eq!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_real_for_targets_still_withhold_receiver_credit() -> Result<(), String> {
+    for (target, items) in [
+        ("(r)", "[[1]]"),
+        ("((r))", "[[1]]"),
+        ("(( r ))", "[[1]]"),
+        ("[r]", "[[[1]]]"),
+        ("(\n        (r)\n    )", "[[1]]"),
+        ("[\n        r\n    ]", "[[[1]]]"),
+    ] {
+        let test_src = format!(
+            "from src.nr import numeric_range\n\n\ndef test_rebound():\n    r = numeric_range(0)\n    note = 'for'\n    for {target} in {items}:\n        pass\n    assert list(reversed(r)) == [1]\n"
+        );
+        let (finding, relations) = classify_reversed_guard(&test_src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert!(
+            relations
+                .iter()
+                .all(|(_, kind)| *kind != "protocol_entry_call"),
+            "{test_src}: {relations:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_unterminated_literals_do_not_invent_receiver_credit() -> Result<(), String> {
+    for delimiter in ["\"\"\"", "'''", "r\"\"\"", "rf'''"] {
+        let source = format!(
+            "from src.nr import numeric_range\n\ndef test_unterminated():\n    r = numeric_range(1)\n    note = {delimiter}prefix\nfor ((r)) in [[1]]:\n    assert list(reversed(r)) == [0]\n"
+        );
+        for needle in ["for ((r))", "r)) in", "reversed(r)"] {
+            let at = source
+                .find(needle)
+                .ok_or_else(|| format!("missing {needle}"))?;
+            assert!(super::related_tests::python_text_hides_code(&source, at));
+        }
+        let facts =
+            super::source_facts::extract_source_facts(Path::new("tests/test_nr.py"), &source);
+        assert!(super::source_facts::source_facts_syntax_parse_error(&facts).is_some());
+        assert!(
+            facts.tests.is_empty(),
+            "malformed source must retain no test facts"
+        );
+        let file = Path::new("src/nr.py");
+        let owners = extract_owners(file, REVERSED_OWNER);
+        let owner = owners
+            .iter()
+            .find(|owner| owner.name == "__reversed__")
+            .ok_or_else(|| "missing __reversed__ owner".to_string())?;
+        assert!(candidate_relations(owner, &facts.tests).is_empty());
+        let finding = classify_change_with_old(
+            file,
+            6,
+            "        if not self.stop:",
+            Some("        if self.stop:"),
+            &owners,
+            &facts.tests,
+        )
+        .ok_or_else(|| "missing reversed guard finding".to_string())?;
+        assert_ne!(finding.class, ExposureClass::Exposed);
+    }
+    Ok(())
+}
+
+#[test]
 fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<(), String> {
     for test_src in [
         // Another dunder's entry point does not reach `__reversed__`.
@@ -10695,4 +10951,109 @@ fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
     ] {
         assert!(!binds_in_target_list(body, "r"), "{body:?}");
     }
+}
+
+const ORDER_SOURCE: &str = "def make_order(qty):\n    return {\"qty\": qty, \"total\": qty * 3}\n";
+
+#[test]
+fn name_prefilter_skips_a_test_that_never_spells_the_owner() {
+    // The name prefilter returns None without scanning a test that spells the
+    // owner nowhere; the debug cross-check runs the full scan to confirm it.
+    let owners = extract_owners(Path::new("src/orders.py"), ORDER_SOURCE);
+    let tests = extract_tests(
+        Path::new("tests/test_orders.py"),
+        "from src.orders import cancel_order\n\n\ndef test_cancel():\n    assert cancel_order(1) is None\n",
+    );
+    assert_eq!(owners[0].name, "make_order");
+    assert_eq!(tests.len(), 1);
+    assert_eq!(related_test_relation(&tests[0], &owners[0]), None);
+}
+
+#[test]
+fn name_prefilter_keeps_a_fixture_only_mention() {
+    // Only the conftest fixture the test requests spells `make_order`; the
+    // prefilter must read fixture bodies and imports and still relate it.
+    let owners = extract_owners(Path::new("src/orders.py"), ORDER_SOURCE);
+    let conftest_imports = extract_tests(
+        Path::new("tests/conftest.py"),
+        "from src.orders import make_order\n\n\ndef test_probe():\n    pass\n",
+    )
+    .first()
+    .map(|test| test.imports.clone())
+    .unwrap_or_default();
+    let mut tests = extract_tests(
+        Path::new("tests/test_orders.py"),
+        "def test_total(order):\n    assert order[\"total\"] == 3\n",
+    );
+    for test in &mut tests {
+        test.fixture_defs.push(PythonFixtureDef {
+            name: "order".to_string(),
+            binding: "order".to_string(),
+            file: PathBuf::from("tests/conftest.py"),
+            body_text: "def order():\n    return make_order(1)\n".to_string(),
+            imports: conftest_imports.clone(),
+            literal_construction: None,
+            inert_tool: None,
+            literal_params: None,
+            isolated: false,
+            scope_imports: Vec::new(),
+        });
+    }
+    assert_eq!(owners[0].name, "make_order");
+    assert!(!conftest_imports.is_empty());
+    assert_eq!(tests.len(), 1);
+    assert!(!tests[0].body_text.contains("make_order"));
+    assert!(tests[0].imports.is_empty());
+    assert_eq!(
+        related_test_relation(&tests[0], &owners[0]),
+        Some(PythonRelationKind::FixtureOwnerCall)
+    );
+}
+
+#[test]
+fn comprehension_boundary_values_retain_each_test_file() -> Result<(), String> {
+    let owner_file = Path::new("src/agg.py");
+    let owners = extract_owners(owner_file, FILTER_BOUNDARY_OWNER);
+    let source = "import asyncio\nfrom src.agg import fetch_total\n\ndef test_total():\n    assert asyncio.run(fetch_total([3, 1, 4])) == 7\n";
+    let classify = |paths: &[&str]| -> Result<Vec<(Option<std::path::PathBuf>, usize)>, String> {
+        let tests: Vec<_> = paths
+            .iter()
+            .flat_map(|file| extract_tests(Path::new(file), source))
+            .collect();
+        assert_eq!(tests.len(), 2);
+        let mut origins = crate::value_origins::ValueOrigins::default();
+        let finding = classify::classify_change_with_value_origins(
+            owner_file,
+            6,
+            "    return sum(p for p in prices if p > 1)",
+            None,
+            &owners,
+            &tests,
+            PythonNoBehaviorContext::default(),
+            Some(FILTER_BOUNDARY_OWNER),
+            &mut origins,
+            None,
+        )
+        .ok_or_else(|| "filter change should classify".to_string())?;
+        assert_eq!(finding.class, ExposureClass::Exposed);
+        let files = origins
+            .files(&finding)
+            .ok_or_else(|| "missing value origins".to_string())?;
+        let element_files: Vec<_> = finding
+            .activation
+            .observed_values
+            .iter()
+            .zip(files)
+            .filter(|(fact, _)| fact.value == "prices = [3, 1, 4]")
+            .map(|(fact, file)| (file.clone(), fact.line))
+            .collect();
+        Ok(element_files)
+    };
+    let expected = vec![
+        (Some("tests/a.py".into()), 5),
+        (Some("tests/b.py".into()), 5),
+    ];
+    assert_eq!(classify(&["tests/a.py", "tests/b.py"])?, expected);
+    assert_eq!(classify(&["tests/b.py", "tests/a.py"])?, expected);
+    Ok(())
 }

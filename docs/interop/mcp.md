@@ -168,7 +168,7 @@ runs no tests or verification and grants no execution or edit authority.
 | --- | --- |
 | Tool (no arguments) | `ripr_workspace_status` |
 | Tool (`base?`, `source?`) | `ripr_refresh` |
-| Tool (`snapshot_id?`, `offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
+| Tool (`snapshot_id?`, `offset?`, `omitted_offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
 | Tool (`attempt_id`) | `ripr_get_repair_attempt` |
@@ -244,12 +244,13 @@ zero-config language auto-enable, and a present-but-unreadable or unparseable
 config fails the attempt closed with `config_invalid`. Provider
 configuration stays unloaded.
 
-Gap-list responses use `ripr-mcp-gap-list-v3`, including typed refusals.
+Gap-list responses use `ripr-mcp-gap-list-v4`, including typed refusals.
 The prior v1 success schema forbids unknown top-level properties, so the new
 `filtered` and `filters` fields required the v2 change; v3 adds the snapshot's
 typed `outcome` block (`kind`, a plain label, and the outcome limitation
-kinds), so a `partial_with_limitations` run never reads as clean. Strict v1
-readers must rediscover `tools/list`, accept v3 explicitly and validate
+kinds), so a `partial_with_limitations` run never reads as clean; v4 adds the
+independently windowed omission disclosure (`omitted_page`, `omitted_offset`). Strict v1
+readers must rediscover `tools/list`, accept v4 explicitly and validate
 against the advertised `outputSchema`; callers may still omit all filter
 arguments.
 
@@ -262,7 +263,7 @@ validate every document the server emits:
 | Session block | `ripr-mcp-session-v1` | workspace status/session documents |
 | Snapshot block | `ripr-mcp-snapshot-v1` | snapshot resource |
 | Refresh-time attempt document | `ripr-mcp-refresh-v1` | `ripr_refresh` tool result |
-| Gap list | `ripr-mcp-gap-list-v3` | `ripr_list_gaps` result |
+| Gap list | `ripr-mcp-gap-list-v4` | `ripr_list_gaps` result |
 | Single gap | `ripr-mcp-gap-v1` | `ripr_get_gap` result |
 | Repair attempt list | `ripr-mcp-repair-attempt-list-v1` | durable attempt discovery |
 | Repair packet | `ripr-mcp-repair-packet-v1` | `ripr_prepare_repair` result |
@@ -327,10 +328,20 @@ selection exactly once. Pages are sized so the complete structured result
 under the 128-KiB response bound, including empty pages whose echoed filters
 can overflow the structured envelope while the raw document still fits.
 Those pages return the existing typed `result_too_large` refusal with the
-current snapshot identity. Only a listing that cannot fit even one
-page — an omission disclosure alone over the ceiling — fails closed with
-`result_too_large` naming `ripr://snapshot/{snapshot_id}` as the identity
-route. Other tool responses carry the document once at full fidelity:
+current snapshot identity. The omission disclosure no longer makes a listing
+unservable by itself (#9360): `omitted_items` carries at most 200 identities
+and at most 16 KiB per response (identities embed paths, so the byte budget
+is the real bound; the first entry always ships), `omitted_page` (`offset`,
+`returned`, `has_more`, `next_offset`) discloses the window, and
+`continuation.next_omitted_page` names the `ripr_list_gaps` call that reads
+the next window. Each continuation route replays the whole request, advancing
+only its own axis: `next_omitted_page` keeps the snapshot pin, filters, item
+`offset` and `limit`; `next_page` keeps the requested `omitted_offset`.
+Walking `omitted_page.next_offset` covers every omitted identity exactly
+once; a past-end `omitted_offset` is an empty disclosed window. Only a listing whose remaining non-pageable disclosure
+(for example an oversized filter echo) cannot fit even one page fails closed
+with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
+identity route. Other tool responses carry the document once at full fidelity:
 `content[0].text` is the compact JSON serialization, and
 `structuredContent` repeats it in every successful response. Each tool
 advertises an `outputSchema`, so a success never ships without its
@@ -392,6 +403,13 @@ omission), `seam_ambiguous` (several seams name the item), `seam_not_found`
 seam inventory is truncated by the seam limit, or its completeness could not
 be established, so `ripr repair` refuses every item; widen the budget with
 `RIPR_REPO_EXPOSURE_SEAM_LIMIT`).
+When that gate refuses an item, its reason is the item's first failing gate,
+ahead of the producer-side reasons such as `fix_site_not_established` (the one
+exception is a saved-worktree snapshot, #7357, whose withheld verdict is a
+snapshot-level fact, so a finding-level gate stays first there), so
+`ripr_prepare_repair` and `ripr repair` name the same cause for the same item
+(#10718). The producer-side reasons remain for items the gate admits or when
+no seam evaluation ran.
 
 The truncation refusal covers repair readiness (`ripr_list_gaps`,
 `ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` reads the same
@@ -516,9 +534,15 @@ reachable on the repair-card read (an item no seam owner-discriminated binds,
 an unnameable portable workspace identity, a card over its detail budget, a
 truncated or unverified repo-wide seam inventory). The card uses the CLI-pinned
 `incomplete_inventory` code, while the list/get/prepare readiness fields keep
-`seam_inventory_truncated`. `policy_omitted` and
-`witness_unavailable` stay named for wire stability even though this adapter
-cannot reach them; the rest stay reserved for the slices that own those
+`seam_inventory_truncated`. `policy_omitted` is reachable on the same read
+(#10718): the card applies the repository's agent policy to the seam's class
+exactly like `ripr agent card`, so an already-gripped seam the policy omits
+refuses with `policy_omitted`, and an item the repair-subject resolver maps to
+no seam (for example a Python finding, since the seam inventory covers Rust
+files only) refuses with `seam_not_found` carrying the CLI's own cause text.
+The MCP policy gate uses the configuration captured at `ripr_refresh`, while
+the CLI reads configuration at call time. `witness_unavailable` stays named for
+wire stability even though this adapter cannot reach it; the rest stay reserved for the slices that own those
 states (they are named now so the wire contract
 stays stable). Tool argument shape violations use standard Invalid Params;
 unknown tools use Invalid Params (MCP: the `tools/call` method exists; the
@@ -575,7 +599,7 @@ only it is the mapping, not an observed `resources/read` response.
 | `unsupported_profile` | `-32603` | operator action; tool-path only, not produced by `resources/read` (`ripr_refresh`) | the workspace input is unsupported; narrow the diff and retry `ripr_refresh` |
 | `config_invalid` | `-32603` | operator action; tool-path only, not produced by `resources/read` (`ripr_refresh`) | repair `ripr.toml`, then `ripr_refresh` |
 | `stale_inventory` | `-32603` | retryable after refresh; tool-path only, not produced by `resources/read` (`ripr_list_repair_attempts`) | re-list the attempt inventory |
-| `policy_omitted` | `-32603` | named, unreachable here | reserved for wire stability |
+| `policy_omitted` | `-32603` | operator action; reachable on the repair-card read (#10718) | the agent policy omits this seam's class; inspect it with `ripr agent brief --seam-id <seam> --json` |
 | `witness_unavailable` | `-32603` | named, unreachable here | reserved for wire stability |
 | `workspace_ambiguous` | `-32603` | reserved | reserved for a later slice |
 | `static_limitation` | `-32603` | reserved | reserved for a later slice |

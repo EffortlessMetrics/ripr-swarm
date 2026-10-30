@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 const PREFIX: &str = "ripr_probe_read_trace ";
 const STREAM_CAP: u64 = 1024 * 1024;
-const SOURCE: &str = "pub fn price(qty: u32) -> u32 {\n    if qty > 10 { 90 } else { 100 }\n}\n#[cfg(test)] mod tests { use super::*; #[test] fn boundary() { assert_eq!(price(10), 90); } }\n";
+const SOURCE: &str = "pub fn price(qty: u32) -> u32 {\n    if qty > 10 { 90 } else { 100 }\n}\npub fn op(bytes: &[u8]) -> bool {\n    bytes.contains(&b'=')\n}\npub mod alpha {\n    use super::op;\n    pub fn parse(bytes: &[u8]) -> bool {\n        op(bytes)\n    }\n}\npub mod beta {\n    pub fn parse(bytes: &[u8]) -> bool {\n        !bytes.is_empty()\n    }\n}\n";
 
 struct Fixture(PathBuf);
 impl Fixture {
@@ -35,11 +35,20 @@ impl Fixture {
         std::fs::create_dir(&root).map_err(|error| error.to_string())?;
         let fixture = Self(root);
         std::fs::create_dir(fixture.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::create_dir(fixture.0.join("tests")).map_err(|error| error.to_string())?;
         std::fs::create_dir_all(fixture.0.join(".scratch")).map_err(|error| error.to_string())?;
         std::fs::write(fixture.0.join("Cargo.toml"), "[package]\nname=\"probe_trace_fixture\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n").map_err(|error| error.to_string())?;
         std::fs::write(fixture.0.join(".gitignore"), "/target/\n/.scratch/\n")
             .map_err(|error| error.to_string())?;
         std::fs::write(fixture.0.join("src/lib.rs"), SOURCE).map_err(|error| error.to_string())?;
+        // #10933: the ambiguous entry's caller lives in an integration test
+        // whose import binds the twin, so the `op` probe keeps no related
+        // test while the uniqueness stop is still entered by a bare call.
+        std::fs::write(
+            fixture.0.join("tests/ambiguous_entry.rs"),
+            "use probe_trace_fixture::beta::parse;\n#[test]\nfn ambiguous_entry_is_called() {\n    assert!(parse(b\"=1.0\"));\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
         fixture_git_ok(&fixture.0, &["init", "-q", "-b", "main"])?;
         fixture_git_ok(&fixture.0, &["add", "."])?;
         fixture_git_ok(
@@ -54,7 +63,9 @@ impl Fixture {
                 "base",
             ],
         )?;
-        let changed = SOURCE.replace("qty > 10", "qty >= 10");
+        let changed = SOURCE
+            .replace("qty > 10", "qty >= 10")
+            .replace("bytes.contains(&b'=')", "bytes.contains(&b'>')");
         assert_ne!(changed, SOURCE, "fixture must change the actual predicate");
         std::fs::write(fixture.0.join("src/lib.rs"), changed).map_err(|error| error.to_string())?;
         Ok(fixture)
@@ -206,6 +217,23 @@ fn real_check_trace_is_opt_in_and_preserves_nonempty_json() -> Result<(), String
     assert!(
         rows.iter().any(|row| row["universe_observed"] == true),
         "fixture must reach a real whole-set view"
+    );
+    // #10933: the `op` probe's uniqueness-stop chain is entered by the
+    // integration test's bare `parse(` call, so `source_imports_foreign_entry`
+    // runs inside that probe's classification scope; at least one traced row
+    // carries a `memo`-kind read for the `foreign_entry_import` product.
+    // (The caller lives in `tests/` with a twin-binding import, so the probe
+    // keeps no related test and classifies `no_static_path` instead of
+    // reaching the owner unseen — see `tests_call_matching` and the
+    // uniqueness-stop withhold.)
+    assert!(
+        rows.iter().any(|row| row["reads"]
+            .as_array()
+            .is_some_and(|reads| reads.iter().any(|entry| entry["kind"] == "memo"
+                && entry["subject"]
+                    .as_str()
+                    .is_some_and(|subject| subject.starts_with("foreign_entry_import:"))))),
+        "no traced probe row records a foreign_entry_import memo read"
     );
     assert_eq!(
         std::fs::read(fixture.0.join("src/lib.rs")).map_err(|error| error.to_string())?,

@@ -17,7 +17,7 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: unknown (severity: note, confidence 0.20)
-  Why unknown: the analysis could not determine a static exposure state
+  Why unknown: test `test_apply_discount_fixture_case` takes pytest fixture `discount_case` that ripr does not read, so it cannot tell what it supplies; open the fixture to see whether it passes the changed input
   Changed behavior: if amount >= threshold:
   Analyzer limit: Static limit `unresolved_pytest_fixture`: a related pytest test depends on
     fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies

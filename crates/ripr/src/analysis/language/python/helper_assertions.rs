@@ -13,6 +13,8 @@
 //! top-level statement of the test body resolve; the helper comes from the
 //! test's own module or a `from M import name` of a workspace module.
 
+mod field_admission;
+
 use super::admission::{PythonAssertionAdmission, bound_names};
 use super::oracles::collect_assertions_from_statements;
 use super::owners_tests::collect_imports_from_statements;
@@ -23,9 +25,10 @@ use super::{PythonAssertion, PythonOracleShape, PythonTest};
 use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// A module-level def that is nothing but `assert <comparison of params>`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonAssertionHelper {
     name: String,
     params: Vec<String>,
@@ -34,10 +37,13 @@ pub(super) struct PythonAssertionHelper {
     /// `(start, end, parameter index)` of each parameter use, as byte offsets
     /// into `expr_text`.
     slots: Vec<(usize, usize, usize)>,
+    field_observer: bool,
+    executable_retained: bool,
+    replaced_attributes: Arc<Vec<String>>,
 }
 
 /// The assertion helpers of one module and every name the module binds.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonHelperModule {
     pub(super) helpers: Vec<PythonAssertionHelper>,
     /// Module-level defs that call their one callable argument inside a
@@ -57,6 +63,13 @@ pub(super) fn collect_helper_module(
     // A star import may rebind any name, wrapper included.
     let star_import = imports.iter().any(|import| import.imported == "*");
     let imported: BTreeSet<String> = imports.into_iter().map(|import| import.alias).collect();
+    let bindings = super::module_constants::ModuleBindingFacts::of(source, statements);
+    let attributes = Arc::new(super::module_constants::assigned_attribute_names(
+        statements,
+    ));
+    let executable_retained = !["__code__", "__globals__", "__setattr__", "__getattribute__"]
+        .iter()
+        .any(|name| super::mentions_python_name(source, name));
     for (index, stmt) in statements.iter().enumerate() {
         let Stmt::FunctionDef(function) = stmt else {
             continue;
@@ -81,10 +94,13 @@ pub(super) fn collect_helper_module(
         if others.contains(&name) {
             continue;
         }
-        if reraiser {
+        if let Some(mut helper) = helper {
+            helper.executable_retained &= executable_retained && bindings.bound_once(&name);
+            helper.replaced_attributes = Arc::clone(&attributes);
+            module.helpers.push(helper);
+        } else {
             module.reraisers.insert(name);
         }
-        module.helpers.extend(helper);
     }
     module
 }
@@ -134,11 +150,18 @@ fn helper_of(
     if !only_params(test, &params, base, &mut slots) {
         return None;
     }
+    let field_observer = field_admission::reads_field(test);
     Some(PythonAssertionHelper {
         name: function.name.to_string(),
         params,
         expr_text: text_for_range(source, test.range()),
         slots,
+        field_observer,
+        replaced_attributes: Arc::default(),
+        executable_retained: !field_observer
+            || (function.returns.is_none()
+                && function.type_params.is_empty()
+                && args.args.iter().all(|arg| arg.def.annotation.is_none())),
     })
 }
 
@@ -381,7 +404,18 @@ fn resolve_test(test: &mut PythonTest, modules: &BTreeMap<PathBuf, PythonHelperM
         assertion.line = call_line;
         assertion.source_range = Some(call.range);
         assertion.observed_operands.clear();
-        assertion.helper_derived = true;
+        assertion.helper_origin = if !helper.field_observer || helper.executable_retained {
+            field_admission::origin(
+                test,
+                function,
+                &assertion.gate_text,
+                helper.field_observer,
+                &helper.replaced_attributes,
+                &source,
+            )
+        } else {
+            super::PythonHelperOrigin::FieldHelperRefused
+        };
         let recognized = assertion.oracle_shape != PythonOracleShape::UnknownCustomHelper;
         // An `assert_*` helper name already reads as an unknown custom helper
         // at this line; the resolved body replaces that reading.

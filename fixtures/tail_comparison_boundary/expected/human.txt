@@ -12,7 +12,7 @@ Start here:
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:3
   Static exposure: weak (severity: warning, confidence 0.92)
-  Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
+  Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart
   Gap ID (for scripts): gap:rust:src/lib.rs:ships_free:predicate_boundary:predicate:items==10
   Changed behavior: items >= 10
   Missing check: items == 10
@@ -36,14 +36,14 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/tail_comparison_boundary/input --diff <cwd>/fixtures/tail_comparison_boundary/diff.patch --mode fast probe:src_lib.rs:predicate:ca3e18b4
   ripr context --root <cwd>/fixtures/tail_comparison_boundary/input --diff <cwd>/fixtures/tail_comparison_boundary/diff.patch --mode fast --at probe:src_lib.rs:predicate:ca3e18b4
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/tail_comparison_boundary/input --at src/lib.rs:3 --kind predicate
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (weak)
-    - ./src/lib.rs:17 (exposed)
-    - ./src/lib.rs:17 (exposed)
+    - ./src/lib.rs:3 (weak); kind: return_value; reason: Missing discriminator value: items == 10
+    - ./src/lib.rs:17 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/lib.rs:17 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

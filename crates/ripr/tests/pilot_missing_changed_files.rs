@@ -1094,9 +1094,7 @@ fn pilot_does_not_probe_absent_rust_source_when_rust_is_disabled() -> Result<(),
         result.summary
     );
     assert!(
-        result
-            .stdout
-            .contains("Excluded from pilot's Rust seam scan:"),
+        result.stdout.contains("Not scanned by pilot:\n  rust:"),
         "{}",
         result.stdout
     );

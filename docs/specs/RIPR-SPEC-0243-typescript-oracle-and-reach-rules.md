@@ -251,11 +251,13 @@ descended. The dropped-registration disclosure no longer fires for these shapes.
 **Rule 22. A test inside `describe.skipIf(cond)` / `describe.runIf(cond)` is reached, never credited (#10629).**
 Vitest's conditional suite factories take a runtime condition static analysis
 does not evaluate. A `describe.skipIf(cond)('name', () => { ... })` or
-`describe.runIf(cond)(...)` is indexed for reach with the
+`describe.runIf(cond)(...)` — including the untitled callback-only form
+`describe.runIf(cond)(() => { ... })` (#10982) — is indexed for reach with the
 factory call as its guard (`describe.skipIf(!existsSync(dist))`; nested guards
 join with `&&`). Its tests keep no assertion, their admission stays
 unresolved, and findings read as under Rule 20. A non-literal title is named
-as for any suite; another root (`runner.skipIf`) is not descended. An options
+as for any suite; an untitled suite is named like a non-literal title; another
+root (`runner.skipIf`) is not descended. An options
 object that skips the suite (`{ skip: true }`) is honored as for `describe`, and
 strict mode is read from the callback, not the title.
 
@@ -666,6 +668,19 @@ passes on the old code reaches it and fails on the edit. Both cases need the cha
   smoke, and unknown otherwise. A non-literal matcher argument (including
   a regex) adds `typescript_dynamic_assertion_unresolved` and does not
   change the class.
+  (Amended 2026-10-30, #10682: the limitation is added only for an assertion
+  in the changed seam's oracle family (RIPR-SPEC-0104
+  `ts_oracle_kind_matches_seam`); a dynamic error-family expectation on a
+  value or predicate seam, and the reverse, adds nothing, because it cannot
+  hide that seam's discriminator. An all-literal array (`[]`, `[1, 'a', [2]]`)
+  is a concrete expected value for deep-equality matchers only (AVA
+  `deepEqual`; Jest `toEqual` / `toStrictEqual`), so those assertions read
+  `typescript_oracle_confidence: high`; `toBe`, `toMatchObject`, AVA
+  `is` / `strictEqual` / `equal` and arrays holding an identifier, call,
+  spread, hole, object or `-x` stay dynamic. `typescript_table_case_unresolved`
+  keeps its own unconditional rule. A pinned `[]` / all-zero-like array does not
+  witness a field update, and an array expectation is a dead witness against
+  scalar changed arms and scalar branch values.)
 
 ### Reach
 
@@ -1523,6 +1538,35 @@ the masker.
     how many calls run (a count sees both), an aliased or optional-chained count,
     and `mock.calls[0].arguments` pins, which keep their reading.
 
+### Counted removal receiver witness (#10157)
+
+This bounded successor to #9667's removed-call rule 19 adds call-deletion
+credit for a whole `receiver.method(...)` statement replaced by `void local;`.
+The complete file diff must contain exactly one removed line and one added line
+at the same replacement coordinate. Multi-edit files and unavailable full diff
+facts withhold this bounded credit, so multiple old invocations cannot borrow
+a count-of-one witness from a replacement owner with no calls.
+A direct imported owner must run on a straight-line path after a `node:test`
+spy registration and before an exact positive count of one. The receiver is
+either a parsed const object passed in the receiver parameter position, or
+a direct exported const binding with an unshadowed named import resolved to the owner's complete module identity
+through the existing import resolver. Parsed declarations handle legal
+whitespace. Reassignment, enclosing shadows, reset/restore, intervening calls,
+conditional execution and unresolved identity withhold this additional credit.
+The owner module contains only the direct exported function and optional
+receiver object; the test file contains only trusted imports and one direct,
+two-argument `test` registration with a literal title. Extra setup/imports,
+suites and sibling functions/tests are outside this bounded witness.
+Nonreceiver arguments must be primitive literals; owner statements cannot
+replace the receiver or invoke opaque code. Removed-call identifier arguments
+must be initialized parameters or admitted earlier locals at the unique changed
+statement; unknown and later bindings withhold credit. The selected mocked
+method must exist exactly once. A default spy admits only a synchronous,
+nonthrowing no-op original (no default/destructured/rest parameters or opaque
+statements); an explicit admitted no-op replacement can bypass the original
+body check, but cannot supply a missing method. This does not change generic
+call-count oracle projection (#10174).
+
 ## Required Evidence
 
 - Each Problem table row reads as the acceptance examples state, in JSON
@@ -1886,6 +1930,19 @@ keys); do not take the next number.
   reading and its controls. Corpus row `ts-trap-mocked-send` moves from
   credited to gap.
 
+- #10157: `call_removal_tests.rs::counted_removal_receiver_identity_controls`
+  covers the four executable controls from #9667 comment 6371144187 and the
+  passed-parameter and same-module positives. `counted_removal_refuses_unresolved_execution`
+  covers wrong arguments, resets, conditional registration and zero counts.
+  The same module's remaining tests pin early returns/default parameters,
+  opaque reads, export aliases, mock API replacement and registration argument
+  effects; `counted_removal_retained_corpus_shape_is_exposed` reuses the retained
+  corpus source and test without rewriting their spy. The target-method and
+  removed-argument regressions pin throwing/absent/duplicate methods, imported
+  and parameter receivers, valid explicit replacements, and earlier/later local
+  bindings. Four dedicated call-removal fixtures also pin `weakly_exposed` in
+  the cross-language evidence-promotion-honesty corpus.
+
 - #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
   pins each shape's credit and the fallbacks that reach the rule (a weak
   oracle, a curried or comparing arrow, a branch, a second return, another
@@ -2024,6 +2081,9 @@ keys); do not take the next number.
   `ts-trap-wrapped-swallow` stay `gap`.
 
 ## Implementation Mapping
+
+- #10157: `call_removal_guard.rs` owns parsed receiver/order witnesses;
+  `classifier.rs` admits only its additional call-deletion credit.
 
 - #9685 (decision 20): `oracle.rs` (`catch_only_rethrows_caught_error` in
   the `TryStatement` arm) and `rethrow_wrapper.rs` (`expand_rethrow_wrappers`,
