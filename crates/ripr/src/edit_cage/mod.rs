@@ -381,6 +381,129 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     Ok((delta, verdict))
 }
 
+/// Retained, independently validated producer bytes for one absent workflow
+/// projection. This is never an authorization to replace a present path.
+pub(crate) struct MissingWorkflowProjection {
+    pub(crate) path: PathBuf,
+    pub(crate) bytes: Vec<u8>,
+}
+
+/// Enumerate the bounded executable-bit possibilities for absent, retained
+/// projections against one real capture. The caller must accept only a
+/// unique candidate whose *whole* delta digest and verdict match the durable
+/// finish; this function itself does not establish provenance or currentness.
+pub(crate) fn visit_reconstructed_workflow_deltas(
+    baseline: &AttemptBaseline,
+    movement: HeadMovement,
+    projections: &[MissingWorkflowProjection],
+    mut visit: impl FnMut(AttemptDelta) -> Result<(), String>,
+) -> Result<(), String> {
+    const MAX_PROJECTIONS: usize = 6;
+    if projections.is_empty() || projections.len() > MAX_PROJECTIONS {
+        return Err("invalid number of missing workflow projections".to_string());
+    }
+    let after = reevaluation_capture(baseline)?;
+    let committed = match movement {
+        HeadMovement::RequireBaselineHead => (baseline.head == after.head).then(Vec::new),
+        HeadMovement::AdmitDescendantCommits => {
+            committed_changes(&baseline.root, &baseline.head, &after.head)?
+        }
+    };
+    // At most 64 candidates over the existing capture path budget, including
+    // the committed-path side; refuse rather than amplify a larger delta.
+    if baseline.paths.len() > MAX_CAPTURE_PATHS
+        || after.paths.len() > MAX_CAPTURE_PATHS
+        || committed
+            .as_ref()
+            .is_some_and(|paths| paths.len() > MAX_CAPTURE_PATHS)
+    {
+        return Err(
+            "workflow projection reconstruction exceeds the capture path budget".to_string(),
+        );
+    }
+    let policy = baseline.policy();
+    let mut entries = Vec::with_capacity(projections.len());
+    let mut names = BTreeSet::new();
+    for projection in projections {
+        let path = normalize_repo_relative_path(&projection.path)?;
+        if !names.insert(path.clone())
+            || projection.bytes.len() as u64 > MAX_CAPTURE_FILE_BYTES
+            || baseline.index_entry(&path).is_some()
+            || after.paths.contains_key(&path)
+            || policy.selected_target.matches(&path)
+            || policy
+                .allowed_edit_surface
+                .iter()
+                .any(|rule| rule.matches(&path))
+            || policy
+                .forbidden_paths
+                .iter()
+                .any(|rule| rule.matches(&path))
+            || !policy
+                .expected_operational_writes
+                .iter()
+                .any(|rule| rule.matches(&path))
+            || !writable_path_components_are_safe(&baseline.root, &path)?
+        {
+            return Err(format!(
+                "missing workflow projection `{path}` is not eligible for reconstruction"
+            ));
+        }
+        if baseline
+            .paths
+            .get(&path)
+            .is_some_and(|state| !matches!(&state.worktree_identity, WorktreeIdentity::File { .. }))
+        {
+            return Err(format!(
+                "baseline workflow projection `{path}` is not a regular file"
+            ));
+        }
+        match fs::symlink_metadata(baseline.root.join(&path)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            _ => return Err(format!("workflow projection `{path}` is not absent")),
+        }
+        entries.push((
+            path,
+            format!("{:x}", Sha256::digest(&projection.bytes)),
+            eol_normalized_file_digest(&projection.bytes),
+        ));
+    }
+    for mask in 0..(1usize << entries.len()) {
+        let overrides = entries
+            .iter()
+            .enumerate()
+            .map(|(index, (path, digest, eol))| {
+                (
+                    path.clone(),
+                    RepositoryPathState {
+                        index_entry: None,
+                        worktree_identity: WorktreeIdentity::File {
+                            digest: digest.clone(),
+                            executable: mask & (1 << index) != 0,
+                            eol_normalized_digest: eol.clone(),
+                        },
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut delta = delta_from_repository_states_with_overrides(
+            baseline,
+            &after,
+            committed.as_deref(),
+            &overrides,
+        );
+        if let Some(region) = &baseline.inline_test_region
+            && delta.changes.iter().any(|change| {
+                normalize_repo_relative_path(&change.path).is_ok_and(|path| path == region.path)
+            })
+        {
+            delta.inline_test_region = Some(observe_inline_target(baseline, &after, region)?);
+        }
+        visit(delta)?;
+    }
+    Ok(())
+}
+
 /// Captures taken for re-evaluations inside one [`ReevaluationMemoScope`].
 #[derive(Default)]
 struct ReevaluationMemo {
@@ -1273,17 +1396,27 @@ fn delta_from_repository_states(
     after: &AttemptBaseline,
     committed: Option<&[AttemptPathChange]>,
 ) -> AttemptDelta {
+    delta_from_repository_states_with_overrides(before, after, committed, &BTreeMap::new())
+}
+
+fn delta_from_repository_states_with_overrides(
+    before: &AttemptBaseline,
+    after: &AttemptBaseline,
+    committed: Option<&[AttemptPathChange]>,
+    overrides: &BTreeMap<String, RepositoryPathState>,
+) -> AttemptDelta {
     let mut changes = Vec::new();
     let paths = before
         .paths
         .keys()
         .chain(after.paths.keys())
+        .chain(overrides.keys())
         .cloned()
         .collect::<BTreeSet<_>>();
     let mut changed_symlink = false;
     for path in paths {
         let old = before.paths.get(&path);
-        let new = after.paths.get(&path);
+        let new = overrides.get(&path).or_else(|| after.paths.get(&path));
         if old == new {
             continue;
         }
@@ -1356,7 +1489,10 @@ fn delta_from_repository_states(
     );
     for change in &mut changes {
         if let Ok(path) = normalize_repo_relative_path(&change.path) {
-            change.after_state = after.paths.get(&path).cloned();
+            change.after_state = overrides
+                .get(&path)
+                .or_else(|| after.paths.get(&path))
+                .cloned();
         }
     }
     AttemptDelta {
@@ -1565,10 +1701,20 @@ pub(crate) fn reconstruct_receipt_projection(
 /// path, so it only adds a `changed_paths` entry. Every other change is kept,
 /// so an edit to a source, test, forbidden, or authored path after the bind,
 /// or the disappearance of a bound change, still moves the recomputed delta.
+#[cfg(test)]
 pub(crate) fn without_later_operational_writes(
     policy: &EditCagePolicy,
     delta: &AttemptDelta,
     bound_changed_paths: &[String],
+) -> AttemptDelta {
+    without_later_operational_writes_protecting(policy, delta, bound_changed_paths, &[])
+}
+
+pub(crate) fn without_later_operational_writes_protecting(
+    policy: &EditCagePolicy,
+    delta: &AttemptDelta,
+    bound_changed_paths: &[String],
+    protected_paths: &[&str],
 ) -> AttemptDelta {
     let operational_only = |path: &str| {
         policy
@@ -1591,7 +1737,9 @@ pub(crate) fn without_later_operational_writes(
             .filter(|change| {
                 let later_output = change.kind != AttemptPathChangeKind::Renamed
                     && normalize_repo_relative_path(&change.path).is_ok_and(|path| {
-                        operational_only(&path) && !bound_changed_paths.contains(&path)
+                        operational_only(&path)
+                            && !bound_changed_paths.contains(&path)
+                            && !protected_paths.contains(&path.as_str())
                     });
                 !later_output
             })
