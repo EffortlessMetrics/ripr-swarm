@@ -12,6 +12,8 @@ jobs:
       fail-fast: false
       matrix:
         row: ['upper:own', 'upper:sibling', 'lower:own', 'lower:sibling']
+    env:
+      RIPR_GLOB_PROBE_RESULT: ${{ runner.temp }}\selector-result.json
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -28,6 +30,7 @@ jobs:
           npx tsc -p .
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run selector row
+        continue-on-error: true
         working-directory: editors/vscode
         shell: pwsh
         env:
@@ -37,3 +40,20 @@ jobs:
         run: |
           node -e 'const path = require("path"); require("@vscode/test-electron").runTests({version:"1.91.0", extensionDevelopmentPath:process.cwd(), extensionTestsPath:path.resolve("out/test/suite/index"), launchArgs:["--disable-extensions", "--disable-workspace-trust"]}).catch(e => { console.error(e); process.exitCode=1; });'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify host reached selector and version
+        shell: pwsh
+        run: |
+          if (-not (Test-Path $env:RIPR_GLOB_PROBE_RESULT)) { throw 'selector result absent' }
+          $result = Get-Content $env:RIPR_GLOB_PROBE_RESULT -Raw | ConvertFrom-Json
+          if ($result.version -ne '1.91.0' -or $result.scores.Count -ne 2) { throw 'unexpected VS Code version or result shape' }
+      - name: Verify selected assertion row
+        shell: pwsh
+        env:
+          ROW: ${{ matrix.row }}
+        run: |
+          $result = Get-Content $env:RIPR_GLOB_PROBE_RESULT -Raw | ConvertFrom-Json
+          $parts = $env:ROW.Split(':')
+          $entry = $result.scores | Where-Object spelling -eq $parts[0]
+          if ($null -eq $entry) { throw 'missing spelling' }
+          $expected = $parts[1] -eq 'own'
+          if ($entry.($parts[1]) -ne $expected) { throw 'selector row does not meet expectation' }

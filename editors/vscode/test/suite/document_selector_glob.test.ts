@@ -61,6 +61,9 @@ suite('Document selector workspace-root glob escaping', () => {
       ];
       const selected = process.env.RIPR_GLOB_PROBE_ROW;
       if (selected) {
+        if (process.env.RIPR_GLOB_PROBE_RESULT) {
+          fs.writeFileSync(process.env.RIPR_GLOB_PROBE_RESULT, JSON.stringify({ version: vscode.version, scores }));
+        }
         const [spelling, field] = selected.split(':');
         assert.ok((spelling === 'upper' || spelling === 'lower') && (field === 'own' || field === 'sibling'));
         const index = spelling === 'upper' ? 0 : 1;
