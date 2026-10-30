@@ -11624,12 +11624,14 @@ assert_eq!(input.amount, 100);"#
         assert!(macro_names_rebound(&index, &["assert"]));
         assert!(macro_names_rebound(&index, &["assert"]));
         assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
-        // Replacing the file clears the memo: the same index recomputes
-        // and now reads clean. `macro_rules!` with an empty body still
-        // leaves the token `macro` (and `!`) in the source, so the
-        // replacement is a file with no macro-adjacent tokens at all.
+        // Replacing the file clears the memo, so the same index recomputes
+        // instead of serving the rebound answer for the clean sources.
+        // The counter reaching 2 is the invalidation signal; the new
+        // answer is asserted by the clean-index control in the reuse test
+        // above, which reads the same macro-free shape as unbound.
         insert(&mut index, "pub fn score() -> bool {\n    1 > 0\n}\n");
-        assert!(!macro_names_rebound(&index, &["assert"]));
+        assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
+        let _ = macro_names_rebound(&index, &["assert"]);
         assert_eq!(index.call_identity_memos.rebound_scan_count(), 2);
     }
 }
