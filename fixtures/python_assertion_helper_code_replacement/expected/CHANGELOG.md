@@ -142,3 +142,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_assertion_helper_code_replacement (12)
+
+Reason:
+RIPR-SPEC-0209 / RIPR-SPEC-0238 (#4518, #11050): bind the Bash verification
+action to the analyzed repository with `cd -P --`, retaining the existing
+`tests/test_stats.py::test_writes` selector. This manual human-output
+reconciliation leaves fixture inputs, `expected/check.json` and the
+`weakly_exposed` classification unchanged.
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`
