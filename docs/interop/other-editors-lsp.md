@@ -66,6 +66,34 @@ and each refresh. A client without a handler can ignore it. `ripr.collectWorkspa
 `workspace_status` object on request, with the latest status payload under
 `analysis_status`.
 
+## Check that it works
+
+Before configuring an editor, run these from the repository root in the shell
+that launches the editor:
+
+```text
+ripr --version      # must resolve; editors do not use your interactive shell PATH on every platform
+ripr doctor         # "Recommended first command" names the next step
+git status --short  # ripr analyzes changed behavior; see below
+```
+
+What a first open looks like (observed 2026-10-30 driving `ripr lsp --stdio`
+from a scripted client):
+
+| Workspace | What the client shows |
+| --- | --- |
+| Git repository with an edited, saved Rust file | A `weakly_exposed`-style diagnostic on the changed line within about a second |
+| Git repository with **nothing changed** against the base | No diagnostics, and hover shows the generic "ripr estimates static RIPR exposure" text. This is the normal clean state, not a broken server: edit a branch condition, save, and the diagnostic appears. Set `baseRef` to compare against another branch |
+| **Not a Git work tree** | A `window/showMessage` warning, "workspace analysis failed ... not inside a Git work tree", whose text is shortened by the client. The full message with the remedy is in the server log: diff-scoped analysis needs Git, so use `ripr pilot --root .` to explore without history |
+| `ripr` not on the client's `PATH` | The client reports a failed server start (Helix: `:log-open`; Neovim: `:checkhealth vim.lsp`; Zed: language server status). Use an absolute path in `cmd` / `command` |
+
+A first-open diagnostic of `ripr-diagnostic-analysis-pending` means the first
+analysis has not finished; save the file or run `ripr.refresh`.
+
+Neovim needs `vim.lsp.config()` and `vim.lsp.enable()` (Neovim 0.11 or newer)
+for the snippet below. Older versions can use `vim.lsp.start` with the same
+`cmd` and root markers.
+
 ## Helix
 
 Read from Helix master source on 2026-09-28; not run in a Helix binary.
