@@ -431,6 +431,53 @@ pub(crate) struct SafeGatePredicate {
     pub(crate) static_unknown_only: bool,
 }
 
+/// #10733: the saved ledger's schema keeps no `analysis_scope`, so a refusal
+/// disclosed only under the source's `analysis_scope` would be lost in the
+/// saved document and the gate would read a healthy ledger. Stamp the
+/// explicit `downstream_consumable: false` marker into the propagated
+/// `run_limitations` position the gate's generic non-consumable check reads.
+/// Producer entries keep their members; only the marker is added, and only
+/// when no propagated entry already carries an explicit false. Typed
+/// entries naming the refusal are stamped; with no typed status (or no
+/// matching entry) a marker-only record is appended, so the retention is
+/// visible as retention rather than a silent edit of producer diagnostics.
+fn retain_non_consumable_marker(run_limitations: &mut Option<Value>, refusal_status: Option<&str>) {
+    let has_marker = |entries: &[Value]| {
+        entries
+            .iter()
+            .any(|entry| entry.get("downstream_consumable").and_then(Value::as_bool) == Some(false))
+    };
+    match run_limitations {
+        Some(Value::Array(entries)) => {
+            if has_marker(entries) {
+                return;
+            }
+            let mut stamped = false;
+            if let Some(status) = refusal_status {
+                for entry in entries.iter_mut() {
+                    let names_refusal = entry.get("category").and_then(Value::as_str)
+                        == Some(status)
+                        || entry.get("run_status").and_then(Value::as_str) == Some(status);
+                    if names_refusal && let Some(object) = entry.as_object_mut() {
+                        object.insert("downstream_consumable".to_string(), Value::Bool(false));
+                        stamped = true;
+                    }
+                }
+            }
+            if !stamped {
+                entries.push(serde_json::json!({"downstream_consumable": false}));
+            }
+        }
+        // A non-array run_limitations member is malformed producer data; it
+        // cannot carry the marker honestly and is left for the downstream
+        // validators to reject.
+        Some(_) => {}
+        None => {
+            *run_limitations = Some(serde_json::json!([{"downstream_consumable": false}]));
+        }
+    }
+}
+
 pub(crate) fn build_gap_decision_ledger_report(
     input: GapDecisionLedgerInput,
 ) -> GapDecisionLedgerReport {
@@ -489,6 +536,62 @@ pub(crate) fn build_gap_decision_ledger_report(
             Vec::new()
         }
     };
+
+    // #10733: a producer refusal envelope (exit 2, empty findings,
+    // `downstream_consumable: false`) parses cleanly to zero records, but it
+    // is not a healthy empty run — nothing was analyzed. Admitting it as
+    // `no_records` lets a saved refusal ride into a gate pass as an empty
+    // denominator; refuse admission with the typed reason and land on
+    // `blocked`, the ledger's existing rejected-input status. The marker
+    // counts from EITHER position the check schema opens for it —
+    // `analysis_scope` or `run_limitations[]` — and it must be explicit: a
+    // known refusal status without the flag is the healthy complete shape
+    // (RIPR-SPEC-0362 identity) and keeps its ordinary admission. Bounded,
+    // partial and incomplete documents keep their existing handling: the
+    // gate refuses them by their own typed names, so the ledger does not
+    // steal that vocabulary (a bounded envelope also carries an explicit
+    // false flag, which is exactly why the exclusion is required here).
+    let refusal_status = source_value_snapshot
+        .as_ref()
+        .and_then(crate::output::gate::refusal_run_status);
+    let refuses_typed_handling = source_value_snapshot.as_ref().is_some_and(|value| {
+        crate::output::gate::discloses_limited_findings_bound(value)
+            || crate::output::gate::discloses_limited_partial_scope(value)
+            || crate::output::gate::discloses_incomplete_analysis_outcome(value)
+    });
+    if !refuses_typed_handling
+        && source_value_snapshot
+            .as_ref()
+            .is_some_and(crate::output::gate::discloses_non_consumable_record)
+    {
+        match refusal_status {
+            Some(status) => {
+                warnings.push(format!(
+                    "gap decision ledger input {} is a producer refusal (run_status: {status}, \
+                     downstream_consumable: false): nothing was analyzed, so no gap records can \
+                     be derived; follow the refusal's repair_route (narrower diff or scope \
+                     budget), re-run the check, and rebuild this ledger before gating",
+                    input.records_path,
+                ));
+            }
+            None => {
+                warnings.push(format!(
+                    "gap decision ledger input {} discloses a non-consumable producer record \
+                     (downstream_consumable: false) with no known typed run status: nothing \
+                     was analyzed, so no gap records can be derived; follow its repair_route \
+                     and re-run before gating",
+                    input.records_path,
+                ));
+            }
+        }
+        parsed_cleanly = false;
+        // The saved ledger's schema keeps no `analysis_scope`, so a refusal
+        // disclosed only there would be lost in the saved document — the
+        // gate would read a healthy ledger and pass it. Retain the marker in
+        // the propagated `run_limitations` position the gate's generic
+        // non-consumable check reads, whichever source position disclosed it.
+        retain_non_consumable_marker(&mut run_limitations, refusal_status);
+    }
 
     if input.source_kind == GapDecisionLedgerSourceKind::CheckOutput {
         attach_check_output_preview_receipt_routes(&mut records, &input.root);
@@ -3890,6 +3993,302 @@ mod tests {
         assert_eq!(empty.status, "no_records");
         assert_eq!(empty.summary.records_total, 0);
         assert!(empty.warnings.is_empty());
+    }
+
+    /// #10733: a producer refusal envelope (`diff_scope_oversized`, exit 2,
+    /// `downstream_consumable: false`, empty findings) parses cleanly to zero
+    /// records, but it is not a healthy empty run — nothing was analyzed.
+    /// Admitting it as `no_records` lets a saved refusal ride into a gate
+    /// pass; it must land on `blocked` with a warning naming the typed
+    /// refusal and the non-consumable flag.
+    #[test]
+    fn gap_decision_ledger_refuses_diff_scope_oversized_refusal_envelope() {
+        let report = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {
+                "changed_rust_files": 0,
+                "probes": 0,
+                "findings": 0,
+                "exposed": 0,
+                "weakly_exposed": 0,
+                "reachable_unrevealed": 0,
+                "no_static_path": 0,
+                "infection_unknown": 0,
+                "propagation_unknown": 0,
+                "static_unknown": 0,
+                "changed_files_by_language": []
+            },
+            "findings": [],
+            "analysis_scope": {
+                "scope": "diff",
+                "run_status": "diff_scope_oversized",
+                "basis": "rust_diff_scope_budget",
+                "downstream_consumable": false,
+                "limitation": "diff_scope_oversized",
+                "repair_route": "analysis/diff-scope-budget"
+            },
+            "run_limitations": [
+                {
+                    "category": "diff_scope_oversized",
+                    "run_status": "diff_scope_oversized",
+                    "basis": "rust_diff_scope_budget",
+                    "downstream_consumable": false,
+                    "message": "diff_scope_oversized: changed Rust exceeds the diff scope budget",
+                    "repair_route": "analysis/diff-scope-budget"
+                }
+            ]
+        }));
+        assert_eq!(report.status, "blocked");
+        assert_eq!(report.summary.records_total, 0);
+        assert!(
+            report.warnings.iter().any(|warning| {
+                warning.contains("diff_scope_oversized")
+                    && warning.contains("downstream_consumable")
+            }),
+            "refusal admission must name the typed run status and the consumable flag: {:?}",
+            report.warnings
+        );
+    }
+
+    /// The repo-scope guard emits the same non-consumable refusal envelope
+    /// with only the scope identity different (#2109); admission refuses it
+    /// identically (#10733).
+    #[test]
+    fn gap_decision_ledger_refuses_repo_scope_oversized_refusal_envelope() {
+        let report = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"changed_rust_files": 0, "probes": 0, "findings": 0},
+            "findings": [],
+            "analysis_scope": {
+                "scope": "repo",
+                "run_status": "repo_scope_oversized",
+                "basis": "rust_repo_scope_budget",
+                "downstream_consumable": false,
+                "limitation": "repo_scope_oversized",
+                "repair_route": "analysis/repo-scope-budget"
+            },
+            "run_limitations": [
+                {
+                    "category": "repo_scope_oversized",
+                    "run_status": "repo_scope_oversized",
+                    "basis": "rust_repo_scope_budget",
+                    "downstream_consumable": false,
+                    "message": "repo_scope_oversized: indexed Rust files exceed the repo scope budget",
+                    "repair_route": "analysis/repo-scope-budget"
+                }
+            ]
+        }));
+        assert_eq!(report.status, "blocked");
+        assert!(
+            report.warnings.iter().any(|warning| {
+                warning.contains("repo_scope_oversized")
+                    && warning.contains("downstream_consumable")
+            }),
+            "refusal admission must name the typed run status and the consumable flag: {:?}",
+            report.warnings
+        );
+    }
+
+    /// #10733 review repair: the refusal marker counts from EITHER position
+    /// the check schema opens for it. When only `analysis_scope` carries the
+    /// explicit `downstream_consumable: false`, the old admission either
+    /// missed the refusal entirely (unknown status) or saved a ledger whose
+    /// schema keeps no `analysis_scope` — the saved document degraded to a
+    /// healthy `no_records` ledger the gate then passed. Admission must
+    /// refuse and the saved ledger must retain a marker the gate's generic
+    /// non-consumable check reads.
+    #[test]
+    fn gap_decision_ledger_refuses_refusal_flagged_only_in_analysis_scope() -> Result<(), String> {
+        let report = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"findings": 0},
+            "findings": [],
+            "analysis_scope": {
+                "scope": "diff",
+                "run_status": "diff_scope_oversized",
+                "basis": "rust_diff_scope_budget",
+                "downstream_consumable": false,
+                "limitation": "diff_scope_oversized",
+                "repair_route": "analysis/diff-scope-budget"
+            },
+            "run_limitations": [
+                {
+                    "category": "diff_scope_oversized",
+                    "run_status": "diff_scope_oversized",
+                    "basis": "rust_diff_scope_budget",
+                    "message": "diff_scope_oversized: changed Rust exceeds the diff scope budget",
+                    "repair_route": "analysis/diff-scope-budget"
+                }
+            ]
+        }));
+        assert_eq!(
+            report.status, "blocked",
+            "the typed refusal must land on blocked when only analysis_scope \
+             carries the flag: {:?}",
+            report.warnings
+        );
+        assert!(
+            report.warnings.iter().any(|warning| {
+                warning.contains("diff_scope_oversized")
+                    && warning.contains("downstream_consumable")
+            }),
+            "refusal admission must name the typed run status and the consumable flag: {:?}",
+            report.warnings
+        );
+        let saved = saved_ledger_value(&report)?;
+        assert!(
+            crate::output::gate::discloses_non_consumable_record(&saved),
+            "the saved ledger must retain the non-consumable marker when only \
+             analysis_scope carried it: {saved}"
+        );
+        Ok(())
+    }
+
+    /// The same either-location retention for a refusal under a status this
+    /// reader does not know (for example the post-argv-parse guard
+    /// `base_unresolvable`): with no `run_limitations` entry at all, the flag
+    /// lived only in `analysis_scope`, and the saved ledger used to lose it
+    /// entirely — a healthy `no_records` ledger the gate passed.
+    #[test]
+    fn gap_decision_ledger_refuses_generic_flag_retained_from_analysis_scope() -> Result<(), String>
+    {
+        let report = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"findings": 0},
+            "findings": [],
+            "analysis_scope": {
+                "scope": "diff",
+                "run_status": "base_unresolvable",
+                "basis": "analysis/base-resolution",
+                "downstream_consumable": false,
+                "limitation": "base_unresolvable",
+                "repair_route": "analysis/base-resolution"
+            }
+        }));
+        assert_eq!(
+            report.status, "blocked",
+            "the generic non-consumable refusal must land on blocked when only \
+             analysis_scope carries the flag: {:?}",
+            report.warnings
+        );
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("downstream_consumable")),
+            "generic refusal landing must name the consumable flag: {:?}",
+            report.warnings
+        );
+        let saved = saved_ledger_value(&report)?;
+        assert!(
+            crate::output::gate::discloses_non_consumable_record(&saved),
+            "the saved ledger must retain the non-consumable marker when only \
+             analysis_scope carried it: {saved}"
+        );
+        Ok(())
+    }
+
+    /// #10733 review repair (RIPR-SPEC-0362 identity): a known refusal run
+    /// status WITHOUT an explicit `downstream_consumable: false` is the
+    /// healthy complete shape — the producer never writes the member on a
+    /// complete run — so the ledger admits it as the ordinary
+    /// healthy `no_records` state instead of refusing it.
+    #[test]
+    fn gap_decision_ledger_admits_known_status_without_explicit_false_as_healthy() {
+        let report = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"findings": 0},
+            "findings": [],
+            "run_status": "diff_scope_oversized"
+        }));
+        assert_eq!(
+            report.status, "no_records",
+            "a known refusal status without the explicit false flag is admitted \
+             as the healthy complete shape: {:?}",
+            report.warnings
+        );
+        assert!(
+            report.warnings.is_empty(),
+            "the healthy complete shape carries no refusal warning: {:?}",
+            report.warnings
+        );
+    }
+
+    /// Render a ledger report to the exact saved JSON and parse it back, so
+    /// retention assertions see what a downstream gate reader would read.
+    fn saved_ledger_value(report: &GapDecisionLedgerReport) -> Result<serde_json::Value, String> {
+        let rendered = render_gap_decision_ledger_json(report)?;
+        serde_json::from_str(&rendered).map_err(|error| format!("parse saved ledger: {error}"))
+    }
+
+    /// Refusal admission is narrow: a complete run with an empty
+    /// `run_limitations` array and zero findings stays the healthy
+    /// `no_records` state, and a bounded document keeps its existing
+    /// handling (the gate refuses it by its typed `limited_findings_bound`
+    /// name — the ledger does not steal that vocabulary).
+    #[test]
+    fn gap_decision_ledger_refusal_admission_keeps_healthy_controls() {
+        let empty_limitations = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"findings": 0},
+            "findings": [],
+            "run_limitations": []
+        }));
+        assert_eq!(empty_limitations.status, "no_records");
+        assert!(empty_limitations.warnings.is_empty());
+
+        let bounded = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"findings": 2},
+            "findings": [
+                {"id": "rendered-prefix-finding", "classification": "reachable_unrevealed"}
+            ],
+            "run_limitations": [
+                {
+                    "category": "limited_findings_bound",
+                    "run_status": "limited_findings_bound",
+                    "basis": "check_findings_byte_budget",
+                    "downstream_consumable": false,
+                    "message": "rendered 1 of 2 findings within the findings-array byte budget",
+                    "repair_route": "output/check-findings-budget"
+                }
+            ]
+        }));
+        assert_ne!(
+            bounded.status, "blocked",
+            "a findings-bounded document keeps its existing ledger handling: {:?}",
+            bounded.warnings
+        );
+        assert!(
+            bounded
+                .run_limitations
+                .as_ref()
+                .is_some_and(|limitations| limitations
+                    .to_string()
+                    .contains("limited_findings_bound")),
+            "bounded run_limitations keep propagating unchanged"
+        );
     }
 
     #[test]

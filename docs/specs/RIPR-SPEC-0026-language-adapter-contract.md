@@ -94,6 +94,17 @@ Additive optional fields:
   `rust_integration_public_api_path_unresolved`,
   `rust_macro_reach_unresolved`,
   `python_transitive_reach_unresolved`).
+- `confidence_basis` (list of `{code, summary}`) and `confidence_why_capped`
+  (one line): why a preview finding's per-class constant `confidence` is
+  capped (#10700). Omitted when empty, which is always the case for Rust.
+  Stable `code` values: `preview_stages_not_modeled` and
+  `syntax_first_no_type_resolution` (every preview finding), then at most one
+  evidence reason chosen in this order: `discriminator_not_established`
+  (`static_unknown`), `no_related_test`, `oracle_below_strong` (no strong
+  oracle, including for `exposed`), `boundary_input_not_matched`,
+  `observation_not_confirmed`. The basis explains the score only: it never
+  changes the score, the class, actionability or repair-packet readiness, and
+  a preview score is not on the same scale as Rust's `confidence`.
 
 Reports gaining these fields:
 
@@ -261,6 +272,9 @@ Follow-up fixtures and tests cover:
 - Rust fixture/golden regression suite (must remain unchanged).
 - Additive optional field roundtrip tests for `language`,
   `language_status`, `owner_kind`, and `static_limit_kind`.
+- `confidence_basis` reason selection per class and oracle state, wire
+  rendering (empty writes nothing; non-empty is valid escaped JSON), and
+  serde skip-when-empty on `Finding`.
 - Language router fixtures for `.rs`, `.ts`, `.tsx`, `.mts`, `.cts`,
   `.js`, `.jsx`, `.mjs`, `.cjs`, `.py`, unmatched extensions, and excluded
   paths.

@@ -26,8 +26,11 @@ use std::time::{Duration, Instant};
 )]
 pub(crate) mod inline_test_region;
 
+#[cfg(test)]
+mod binding_omission_tests;
+
 const MAX_CAPTURE_PATHS: usize = 10_000;
-const MAX_CAPTURE_FILE_BYTES: u64 = 16 * 1024 * 1024;
+pub(crate) const MAX_CAPTURE_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CAPTURE_TOTAL_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_CAPTURE_TOTAL_WORK_BYTES: u64 = 384 * 1024 * 1024;
 const IGNORED_FILE_SAMPLE_BYTES: u64 = 4 * 1024;
@@ -1367,26 +1370,34 @@ fn delta_from_repository_states(
     }
 }
 
-/// Whether a path's byte identity may be left out of the bound delta: only
-/// an untracked operational write that is neither the selected target nor
-/// an authored or forbidden path. Such a path still contributes its
-/// path/kind movement; only its bytes are unbound.
-fn identity_is_omittable(baseline: &AttemptBaseline, path: &str) -> bool {
+/// The selected attempt manifest contains the delta digest itself, so its
+/// pre-finish bytes cannot be part of that digest. Exclude only this exact
+/// manifest's identity, not its path/kind or other operational files. A
+/// tracked or authored/forbidden manifest path never receives the exception.
+pub(crate) fn omit_attempt_manifest_identity(
+    delta: &mut AttemptDelta,
+    baseline: &AttemptBaseline,
+    manifest_path: &Path,
+) -> Result<(), String> {
+    let path = normalize_repo_relative_path(manifest_path)?;
     let policy = baseline.policy();
-    baseline.index_entry(path).is_none()
-        && !policy.selected_target.matches(path)
-        && !policy
+    if baseline.index_entry(&path).is_some()
+        || policy.selected_target.matches(&path)
+        || policy
             .allowed_edit_surface
             .iter()
-            .any(|rule| rule.matches(path))
-        && !policy.forbidden_paths.iter().any(|rule| rule.matches(path))
-        && policy
+            .any(|rule| rule.matches(&path))
+        || policy
+            .forbidden_paths
+            .iter()
+            .any(|rule| rule.matches(&path))
+        || !policy
             .expected_operational_writes
             .iter()
-            .any(|rule| rule.matches(path))
-}
-
-fn omit_path_identity(delta: &mut AttemptDelta, path: &str) -> Result<(), String> {
+            .any(|rule| rule.matches(&path))
+    {
+        return Ok(());
+    }
     for change in &mut delta.changes {
         if normalize_repo_relative_path(&change.path)? == path
             && change
@@ -1400,67 +1411,45 @@ fn omit_path_identity(delta: &mut AttemptDelta, path: &str) -> Result<(), String
     Ok(())
 }
 
-/// An attempt manifest contains the delta digest itself, so its pre-finish
-/// bytes cannot be part of that digest. The same holds for every other
-/// attempt manifest in the same store: a sibling attempt finishing is
-/// normal multi-attempt operation, not drift in this attempt's evidence.
-/// Exclude only those manifests' identities, not their path/kind or other
-/// operational files. A tracked or authored/forbidden manifest path never
-/// receives the exception.
-pub(crate) fn omit_attempt_manifest_identity(
+/// Omit only backup files this invocation exclusively created, and only when
+/// their captured regular-file bytes still match that invocation's copy. A
+/// baseline file, tracked path, authored surface or forbidden path is never
+/// eligible. The later cleanup of such a temporary copy must not stale the
+/// verdict which was measured while it existed.
+pub(crate) fn omit_owned_workflow_backups(
     delta: &mut AttemptDelta,
     baseline: &AttemptBaseline,
-    manifest_path: &Path,
+    backups: &[(PathBuf, String, bool)],
 ) -> Result<(), String> {
-    let path = normalize_repo_relative_path(manifest_path)?;
-    if !identity_is_omittable(baseline, &path) {
-        return Ok(());
-    }
-    let manifest = Path::new(&path);
-    let store = manifest.parent().and_then(Path::parent);
-    let file_name = manifest.file_name();
-    let mut paths = vec![path.clone()];
-    if let (Some(store), Some(file_name)) = (store, file_name) {
-        for change in &delta.changes {
-            let change_path = normalize_repo_relative_path(&change.path)?;
-            let candidate = Path::new(&change_path);
-            if candidate.file_name() == Some(file_name)
-                && candidate.parent().and_then(Path::parent) == Some(store)
-                && !paths.contains(&change_path)
-            {
-                paths.push(change_path);
-            }
+    for (path, digest, executable) in backups {
+        let path = normalize_repo_relative_path(path)?;
+        let policy = baseline.policy();
+        if baseline.paths.contains_key(&path)
+            || policy.selected_target.matches(&path)
+            || policy
+                .allowed_edit_surface
+                .iter()
+                .any(|rule| rule.matches(&path))
+            || policy
+                .forbidden_paths
+                .iter()
+                .any(|rule| rule.matches(&path))
+            || !policy
+                .expected_operational_writes
+                .iter()
+                .any(|rule| rule.matches(&path))
+        {
+            continue;
         }
-    }
-    for path in &paths {
-        omit_path_identity(delta, path)?;
-    }
-    Ok(())
-}
-
-/// Files under the loop's own directories (the attempt store, the shared
-/// workflow and report projections, and the analysis cache) are rewritten
-/// by later commands as a matter of course: a sibling attempt finishing,
-/// a receipt being issued, or a cache entry being refreshed. Their bytes
-/// are not authored evidence, so they do not bind the delta, under the
-/// same guard as the attempt manifest. A loose operational file outside
-/// those directories is written by no command and stays bound.
-pub(crate) fn omit_command_owned_directory_identity(
-    delta: &mut AttemptDelta,
-    baseline: &AttemptBaseline,
-    directory: &Path,
-) -> Result<(), String> {
-    let directory = normalize_repo_relative_path(directory)?;
-    let prefix = format!("{directory}/");
-    let paths = delta
-        .changes
-        .iter()
-        .map(|change| normalize_repo_relative_path(&change.path))
-        .collect::<Result<Vec<_>, _>>()?;
-    for path in paths {
-        if path.starts_with(&prefix) && identity_is_omittable(baseline, &path) {
-            omit_path_identity(delta, &path)?;
-        }
+        delta.changes.retain(|change| {
+            let owned = normalize_repo_relative_path(&change.path).is_ok_and(|name| name == path)
+                && change.kind == AttemptPathChangeKind::Added
+                && change.after_state.as_ref().is_some_and(|state| {
+                    state.index_entry.is_none()
+                        && matches!(&state.worktree_identity, WorktreeIdentity::File { digest: observed, executable: observed_executable, .. } if observed == digest && observed_executable == executable)
+                });
+            !owned
+        });
     }
     Ok(())
 }
@@ -1551,6 +1540,13 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
         }
     }
     Ok(true)
+}
+
+pub(crate) fn workflow_path_components_are_safe(
+    root: &Path,
+    relative: &Path,
+) -> Result<bool, String> {
+    writable_path_components_are_safe(root, &normalize_repo_relative_path(relative)?)
 }
 
 #[cfg(windows)]
@@ -1933,13 +1929,13 @@ fn open_regular_file_no_follow_with_write_sharing(
 }
 
 #[cfg(unix)]
-fn same_file_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+pub(crate) fn same_file_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt as _;
     left.dev() == right.dev() && left.ino() == right.ino()
 }
 
 #[cfg(windows)]
-fn same_file_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+pub(crate) fn same_file_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt as _;
     // Stable Rust does not expose Windows file IDs. OPEN_REPARSE_POINT keeps
     // link replacement from being followed; compare the strongest stable
@@ -1951,7 +1947,7 @@ fn same_file_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn same_file_object(_left: &fs::Metadata, _right: &fs::Metadata) -> bool {
+pub(crate) fn same_file_object(_left: &fs::Metadata, _right: &fs::Metadata) -> bool {
     false
 }
 
@@ -2978,6 +2974,68 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
         })
+    }
+
+    #[test]
+    fn owned_backup_omission_requires_exact_new_untracked_identity() -> Result<(), String> {
+        let fixture = git_fixture("owned-backup")?;
+        let path = "target/ripr/workflow/after.json.ripr-preattempt-backup";
+        let neighbor = "target/ripr/workflow/unrelated.json";
+        fs::create_dir_all(fixture.root.join("target/ripr/workflow"))
+            .map_err(|error| error.to_string())?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::write(fixture.root.join(path), b"prior").map_err(|error| error.to_string())?;
+        fs::write(fixture.root.join(neighbor), b"neighbor").map_err(|error| error.to_string())?;
+        let (delta, _) = evaluate_repository_edit_cage_with_head_movement(
+            &baseline,
+            HeadMovement::RequireBaselineHead,
+        )?;
+        let digest = format!("{:x}", Sha256::digest(b"prior"));
+        let executable = is_executable(
+            &fs::metadata(fixture.root.join(path)).map_err(|error| error.to_string())?,
+        );
+        let mut wrong = delta.clone();
+        omit_owned_workflow_backups(
+            &mut wrong,
+            &baseline,
+            &[(path.into(), "wrong".into(), executable)],
+        )?;
+        assert_eq!(wrong, delta, "a mismatched identity must stay in the delta");
+        let mut exact = delta.clone();
+        omit_owned_workflow_backups(&mut exact, &baseline, &[(path.into(), digest, executable)])?;
+        assert!(
+            !exact
+                .changes
+                .iter()
+                .any(|change| change.path == Path::new(path))
+        );
+        assert!(
+            exact
+                .changes
+                .iter()
+                .any(|change| change.path == Path::new(neighbor))
+        );
+
+        // A baseline file cannot be reclassified as an invocation-owned new
+        // backup, even if its new bytes happen to match the supplied digest.
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::write(fixture.root.join(path), b"changed").map_err(|error| error.to_string())?;
+        let (mut changed, _) = evaluate_repository_edit_cage_with_head_movement(
+            &baseline,
+            HeadMovement::RequireBaselineHead,
+        )?;
+        let expected = changed.clone();
+        omit_owned_workflow_backups(
+            &mut changed,
+            &baseline,
+            &[(
+                path.into(),
+                format!("{:x}", Sha256::digest(b"changed")),
+                executable,
+            )],
+        )?;
+        assert_eq!(changed, expected);
+        Ok(())
     }
 
     /// #8991: the predicate is bound to the real producer. An unparseable

@@ -1,0 +1,30 @@
+# Shared workflow publication retains before-phase streaming and rejects an
+# uncapturable after snapshot before atomic replacement.
+[[extend]]
+id = "RIPR-SPEC-0311"
+tests = [
+  "crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::tracked_byte_outputs_refuse_oversize_before_mutation_and_resolve_cleanly",
+  "crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::snapshot_publication_streams_before_and_bounds_after_before_replacement",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/src/edit_cage/mod.rs::tests::owned_backup_omission_requires_exact_new_untracked_identity",
+  "crates/ripr/src/edit_cage/binding_omission_tests.rs::non_owned_attempt_store_file_remains_bound",
+  "crates/ripr/src/edit_cage/binding_omission_tests.rs::non_owned_explicit_store_file_remains_bound",
+  "crates/ripr/src/edit_cage/binding_omission_tests.rs::non_owned_workflow_file_remains_bound",
+  "crates/ripr/src/edit_cage/binding_omission_tests.rs::non_owned_report_file_remains_bound",
+  "crates/ripr/src/edit_cage/binding_omission_tests.rs::non_owned_cache_file_remains_bound",
+  "crates/ripr/src/edit_cage/binding_omission_tests.rs::selected_manifest_exception_never_spreads_to_sibling_eligibility_classes",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::finished_attempt_keeps_non_owned_operational_directory_bytes_bound",
+  "crates/ripr/src/cli/mod.rs::tests::repair_workflow_lock_survives_workflow_cleanup",
+  "crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::tracking_refuses_unknown_backup_without_touching_either_file",
+  "crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::tracking_preserves_backup_when_another_writer_changes_projection",
+  "crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::later_conflict_preserves_every_previously_validated_backup",
+  "crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::failed_restore_keeps_the_original_backup",
+  "crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::tracking_restores_original_mode_on_refusal",
+  "crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::tracking_refuses_an_oversized_projection_without_mutating_it",
+  "crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::tracking_refuses_a_symlinked_workflow_ancestor",
+  "crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::tracking_removes_readonly_backup_after_unchanged_phase",
+]

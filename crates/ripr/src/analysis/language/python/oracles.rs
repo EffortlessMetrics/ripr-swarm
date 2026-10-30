@@ -170,6 +170,7 @@ fn known_equality_candidate(
             callee,
             left: operand(&subject.args[0]),
             right: operand(&call.args[0]),
+            established: None,
         });
     }
     let callee = plain_dotted_name(call.func.as_ref())?;
@@ -192,6 +193,7 @@ fn known_equality_candidate(
         callee,
         left: operand(&call.args[0]),
         right: operand(&call.args[1]),
+        established: None,
     })
 }
 
@@ -539,7 +541,7 @@ fn assertion_from_assert(
     PythonAssertion {
         text: text_for_range(source, assert_stmt.range).trim().to_string(),
         callable_call: None,
-        helper_derived: false,
+        helper_origin: super::PythonHelperOrigin::Inline,
         // The failure message observes nothing (RIPR-SPEC-0238 rule 4).
         gate_text: format!(
             "assert {}",
@@ -692,7 +694,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         return Some(PythonAssertion {
             gate_text: format!("{text}\n{callable_call}"),
             callable_call: Some(callable_call),
-            helper_derived: false,
+            helper_origin: super::PythonHelperOrigin::Inline,
             text,
             source_range: Some(call.range),
             observed_operands: Vec::new(),
@@ -718,7 +720,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         text,
         gate_text,
         callable_call: None,
-        helper_derived: false,
+        helper_origin: super::PythonHelperOrigin::Inline,
         source_range: Some(call.range),
         observed_operands: compared_operands(call)
             .map(|(left, right)| {

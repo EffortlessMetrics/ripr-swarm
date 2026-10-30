@@ -273,3 +273,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_node_ordinary_test_control (22)
+
+Reason:
+RIPR-SPEC-0027 (#10704): an unmodeled TypeScript change shape (literal return, fallback/default literal, identity no-op, comment-only edit) reads infection_unknown with an infection_evidence_unknown stop reason and no repair packet instead of weakly_exposed/exposed decided by oracle strength alone; a changed line under an if arm no related test enters reads reachable_unrevealed with infection no
+
+Command:
+`cargo xtask goldens bless ts_node_ordinary_test_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

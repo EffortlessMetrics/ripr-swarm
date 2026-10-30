@@ -13033,3 +13033,41 @@ fn comparison_macro_imports_must_name_the_macro_as_a_direct_item_of_its_crate() 
     assert!(!imported("use float_cmp::{inner::approx_eq};\n"));
     assert!(!imported("use float_cmp::{inner::{x, approx_eq, y}};\n"));
 }
+
+/// The memoized rename answer must equal the direct scan for every spelling,
+/// including raw identifiers, casts, qualified paths and macro arguments.
+#[test]
+fn memoized_file_renames_to_matches_the_direct_scan() {
+    let sources = [
+        "use foreign::Other as Widget;",
+        "use a::b as r#Widget; fn f() {}",
+        "extern crate foo as bar;",
+        "fn f(x: u8) -> u32 { x as u32 }",
+        "fn f() { <T as Clone>::clone(&t); }",
+        "import!(other::Fake as u32);",
+        "#[cfg(x)] use a::B as C;",
+        "use a::{B as C, D as r#E};",
+        "// use a::B as Widget;\nfn f() {}",
+        "const S: &str = \"use a::B as Widget;\";",
+        "use a::B as\n    Widget;",
+        "use a::B as Widget2;",
+        "use a::B as Fooé;",
+        "use a::B as ;",
+        "use a::B as r#",
+    ];
+    let names = [
+        "Widget", "r#Widget", "r", "u32", "Clone", "Fake", "bar", "C", "E", "r#E", "Widget2",
+        "Wid", "Missing", "", "Foo", "r#r",
+    ];
+    for source in sources {
+        for name in names {
+            // Twice: the second call answers from the memo.
+            let _ = file_renames_to(source, name);
+            assert_eq!(
+                file_renames_to(source, name),
+                source.contains(name) && file_renames_to_uncached(source, name),
+                "{source:?} / {name:?}"
+            );
+        }
+    }
+}

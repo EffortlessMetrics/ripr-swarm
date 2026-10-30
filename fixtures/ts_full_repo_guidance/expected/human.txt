@@ -5,6 +5,8 @@ config: <cwd>/fixtures/ts_full_repo_guidance/input/ripr.toml
 
 Summary: 0 changed behaviors checked
 
+Changed file(s) by language: typescript = 1
+
 Analysis outcome: limitations below (analysis incomplete)
   Zero findings is not a clean result because the analyzed scope is incomplete.
   Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze (see the note below).

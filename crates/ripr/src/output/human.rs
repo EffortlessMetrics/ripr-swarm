@@ -696,7 +696,8 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
 }
 
 /// Emit a per-language changed-file breakdown only when a non-Rust language
-/// adapter counted at least one file (#2103). Pure-Rust runs emit nothing, so
+/// has at least one changed file, whether its adapter counted it or the
+/// path-routed count was recorded because no adapter did (#2103, #10719). Pure-Rust runs emit nothing, so
 /// Rust-only output stays byte-identical. `changed_rust_files` itself now
 /// carries the Rust adapter's count only; this line shows the full split.
 fn render_language_file_breakdown(out: &mut String, output: &CheckOutput) {
@@ -1417,6 +1418,7 @@ mod tests {
                 base_ref: base.to_string(),
                 base_commit: Some("1a2b3c4d5e6f".to_string()),
                 merge_base_commit: None,
+                loaded_diff_origin: None,
                 head_commit: Some("1a2b3c4d5e6f".to_string()),
                 working_tree: false,
             }),
@@ -1442,6 +1444,7 @@ mod tests {
             base_ref: "HEAD".to_string(),
             base_commit: Some("1a2b3c4d5e6f".to_string()),
             merge_base_commit: None,
+            loaded_diff_origin: None,
             head_commit: Some("1a2b3c4d5e6f".to_string()),
             working_tree: true,
         });
@@ -4004,6 +4007,7 @@ mod tests {
                 base_ref: "main".to_string(),
                 base_commit: Some("1a2b3c4d5e6f".to_string()),
                 merge_base_commit: None,
+                loaded_diff_origin: None,
                 head_commit: Some("1a2b3c4d5e6f".to_string()),
                 working_tree: true,
             }),
@@ -8046,6 +8050,7 @@ mod tests {
     pub(super) fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:sample.rs:7:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -8123,6 +8128,7 @@ mod tests {
     fn unknown_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
             canonical_gap: None,
             probe: Probe {

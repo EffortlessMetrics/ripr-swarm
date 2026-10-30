@@ -713,6 +713,8 @@ const PORTABLE_TESTS: &[&str] = &[
     "agent_help_makes_repair_primary_without_removing_control_surfaces",
     "agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve",
     "agent_repair_help_names_the_primary_transaction_and_its_limits",
+    "agent_repair_default_and_later_phase_selectors_match_help",
+    "agent_repair_later_phases_require_existing_attempts_without_writes",
     "agent_repair_phase_refusals_render_scoped_recovery_without_writes",
     "agent_status_help_names_the_selected_store_and_exact_attempt_selection",
     "agent_subcommand_typos_render_scoped_recovery",

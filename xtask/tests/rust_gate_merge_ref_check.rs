@@ -1,4 +1,4 @@
-//! Run the `Base still merges cleanly` step of rust-gates.yml against real Git (#10341).
+//! Real-Git merge-ref controls (#10341) and reviewed-slice readback checks (#11094).
 //!
 //! `actions/checkout` tests GitHub's merge ref as it stood when the run was admitted.
 //! When the base has moved and now conflicts with the PR head, the long test step
@@ -29,7 +29,7 @@ fn run_block() -> Result<String, String> {
         .join("\n"))
 }
 
-fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+fn git_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let out = Command::new("git")
         .args(args)
         .current_dir(dir)
@@ -47,7 +47,13 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    Ok(out.stdout)
+}
+
+fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    Ok(String::from_utf8_lossy(&git_bytes(dir, args)?)
+        .trim()
+        .to_string())
 }
 
 fn commit_file(dir: &Path, name: &str, text: &str, message: &str) -> Result<(), String> {
@@ -194,5 +200,212 @@ fn step_is_pull_request_only_and_precedes_the_test_run() -> Result<(), String> {
         block.contains("        if: github.event_name == 'pull_request'"),
         "push and manual runs have no merge ref to re-check"
     );
+    Ok(())
+}
+
+fn verify_slice_carrier(
+    repo: &Path,
+    reference: &str,
+    head: &str,
+    parent: &str,
+    tree: &str,
+    raw_diff: &[u8],
+) -> Result<(), String> {
+    if git(
+        repo,
+        &["rev-parse", "--verify", &format!("{reference}^{{commit}}")],
+    )? != head
+    {
+        return Err("carrier reference changed".to_string());
+    }
+    if git(repo, &["show", "-s", "--format=%P", head])? != parent {
+        return Err("carrier parents differ".to_string());
+    }
+    if git(repo, &["rev-parse", &format!("{head}^{{tree}}")])? != tree {
+        return Err("carrier tree differs".to_string());
+    }
+    if git_bytes(
+        repo,
+        &[
+            "diff",
+            "--raw",
+            "-z",
+            "--no-renames",
+            "--no-abbrev",
+            parent,
+            head,
+        ],
+    )? != raw_diff
+    {
+        return Err("carrier paths, modes or deletions differ".to_string());
+    }
+    Ok(())
+}
+
+fn require_slice_refusal(result: Result<(), String>, expected: &str) -> Result<(), String> {
+    match result {
+        Err(reason) if reason == expected => Ok(()),
+        Err(reason) => Err(format!("expected {expected:?}, got {reason:?}")),
+        Ok(()) => Err("mismatched slice carrier was accepted".to_string()),
+    }
+}
+
+/// Disposable Git semantics, not a real hosted transfer or assembler admission.
+#[test]
+fn reviewed_slice_carrier_readback_and_refusals() -> Result<(), String> {
+    let root = std::env::temp_dir().join(format!("slice-carrier-{}", std::process::id()));
+    // Refuse a pre-existing directory rather than deleting unknown work.
+    fs::create_dir(&root).map_err(|e| format!("{}: {e}", root.display()))?;
+    let producer = root.join("producer");
+    let remote = root.join("remote.git");
+    let consumer = root.join("consumer");
+    fs::create_dir(&producer).map_err(|e| e.to_string())?;
+    fs::create_dir(&remote).map_err(|e| e.to_string())?;
+    git(&remote, &["init", "-q", "--bare", "-b", "main"])?;
+    git(&producer, &["init", "-q", "-b", "main"])?;
+    fs::write(producer.join("gone"), b"delete\n").map_err(|e| e.to_string())?;
+    fs::write(producer.join("keep"), b"base\n").map_err(|e| e.to_string())?;
+    git(&producer, &["add", "."])?;
+    git(&producer, &["commit", "-qm", "base"])?;
+    let base = git(&producer, &["rev-parse", "HEAD"])?;
+    fs::remove_file(producer.join("gone")).map_err(|e| e.to_string())?;
+    fs::write(producer.join("keep"), b"changed\0bytes\n").map_err(|e| e.to_string())?;
+    fs::write(producer.join("new\nfile"), b"new\n").map_err(|e| e.to_string())?;
+    git(&producer, &["add", "-A"])?;
+    git(&producer, &["commit", "-qm", "slice"])?;
+    let head = git(&producer, &["rev-parse", "HEAD"])?;
+    let tree = git(&producer, &["rev-parse", "HEAD^{tree}"])?;
+    let raw = git_bytes(
+        &producer,
+        &[
+            "diff",
+            "--raw",
+            "-z",
+            "--no-renames",
+            "--no-abbrev",
+            &base,
+            &head,
+        ],
+    )?;
+    let entries: Vec<_> = raw.split(|byte| *byte == 0).collect();
+    assert_eq!(entries.len(), 7, "three complete NUL-delimited entries");
+    assert_eq!(entries[1], b"gone");
+    assert_eq!(entries[3], b"keep");
+    assert_eq!(entries[5], b"new\nfile");
+    assert!(entries[0].ends_with(b" D"));
+    assert!(entries[2].ends_with(b" M"));
+    assert!(entries[4].ends_with(b" A"));
+    assert!(entries[4].starts_with(b":000000 100644 "));
+    let remote_path = remote.to_string_lossy();
+    let consumer_path = consumer.to_string_lossy();
+    git(&producer, &["remote", "add", "origin", &remote_path])?;
+    git(
+        &producer,
+        &["push", "-q", "origin", "HEAD:refs/heads/carrier"],
+    )?;
+    git(
+        &root,
+        &["clone", "-q", "--no-checkout", &remote_path, &consumer_path],
+    )?;
+    git(
+        &consumer,
+        &[
+            "fetch",
+            "-q",
+            "origin",
+            "refs/heads/carrier:refs/remotes/origin/carrier",
+        ],
+    )?;
+    let reference = "refs/remotes/origin/carrier";
+    verify_slice_carrier(&consumer, reference, &head, &base, &tree, &raw)?;
+    assert_eq!(
+        git_bytes(&consumer, &["cat-file", "blob", &format!("{head}:keep")])?,
+        b"changed\0bytes\n"
+    );
+    assert_eq!(
+        git_bytes(
+            &consumer,
+            &["cat-file", "blob", &format!("{head}:new\nfile")]
+        )?,
+        b"new\n"
+    );
+    match git(&consumer, &["cat-file", "-e", &format!("{head}:gone")]) {
+        Err(_) => {}
+        Ok(_) => return Err("deleted path remained in the carrier".to_string()),
+    }
+    let merge = git(
+        &producer,
+        &[
+            "commit-tree",
+            &tree,
+            "-p",
+            &base,
+            "-p",
+            &head,
+            "-m",
+            "merge",
+        ],
+    )?;
+    git(&producer, &["update-ref", "refs/heads/merge-test", &merge])?;
+    git(
+        &producer,
+        &["push", "-q", "origin", "refs/heads/merge-test"],
+    )?;
+    git(
+        &consumer,
+        &[
+            "fetch",
+            "-q",
+            "origin",
+            "refs/heads/merge-test:refs/remotes/origin/merge-test",
+        ],
+    )?;
+    require_slice_refusal(
+        verify_slice_carrier(
+            &consumer,
+            "refs/remotes/origin/merge-test",
+            &merge,
+            &base,
+            &tree,
+            &raw,
+        ),
+        "carrier parents differ",
+    )?;
+    require_slice_refusal(
+        verify_slice_carrier(&consumer, reference, &base, &base, &tree, &raw),
+        "carrier reference changed",
+    )?;
+    require_slice_refusal(
+        verify_slice_carrier(&consumer, reference, &head, &head, &tree, &raw),
+        "carrier parents differ",
+    )?;
+    require_slice_refusal(
+        verify_slice_carrier(&consumer, reference, &head, &base, &base, &raw),
+        "carrier tree differs",
+    )?;
+    let text = String::from_utf8(raw.clone()).map_err(|e| e.to_string())?;
+    let wrong_path = text.replace("gone\0", "other\0").into_bytes();
+    let wrong_mode = text.replacen("100644", "100755", 1).into_bytes();
+    let deletion_end = raw
+        .iter()
+        .enumerate()
+        .filter(|(_, byte)| **byte == 0)
+        .nth(1)
+        .map(|(index, _)| index + 1)
+        .ok_or("missing deletion entry")?;
+    let missing_deletion = &raw[deletion_end..];
+    for changed in [&wrong_path[..], &wrong_mode[..], missing_deletion] {
+        assert_ne!(changed, &raw[..]);
+        require_slice_refusal(
+            verify_slice_carrier(&consumer, reference, &head, &base, &tree, changed),
+            "carrier paths, modes or deletions differ",
+        )?;
+    }
+    git(&consumer, &["update-ref", reference, &base])?;
+    require_slice_refusal(
+        verify_slice_carrier(&consumer, reference, &head, &base, &tree, &raw),
+        "carrier reference changed",
+    )?;
+    fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
     Ok(())
 }

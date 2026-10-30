@@ -1575,7 +1575,7 @@ fn pilot_python_repair_card_message(
         return message;
     }
     message.push_str(&format!(
-        "; `ripr agent repair` targets ranked seams only, and running pilot again unchanged records the same card. Follow the card from `ripr first-pr --root {root}`, which names the test to strengthen and its verify command",
+        "; status could not confirm a gap-bound start, and running pilot again unchanged records the same card. Run `ripr check --root {root}` for the current route and any reason it is unavailable; the card from `ripr first-pr --root {root}` names the test and its verify command",
         root = shell_arg(root_display)
     ));
     if let Some(verify) = &card.verify_command {
@@ -1818,8 +1818,8 @@ struct PilotCheckRoutes {
 /// Reads the retained pilot summary (#4216, Python and TypeScript
 /// re-walks): `status: complete`, empty `top_actionable_seams`, an explicit
 /// null `next.repair_command`, `language_routes.state: required` (pilot
-/// itself sends the code to `ripr check`, which offers no `ripr agent
-/// repair` start), and no repair card (`python_first_use` absent, null, or
+/// itself sends the code to `ripr check`), and no repair card
+/// (`python_first_use` absent, null, or
 /// a no-repair-card status). Sending the user back to pilot then only routes
 /// them to `ripr check` again, for any routed language. A missing,
 /// unreadable, timed-out, seam-ranking, repair-card-bearing,
@@ -1906,9 +1906,9 @@ fn routed_code_phrase(languages: &[String]) -> String {
 /// print, or `None` (#10001). Status consults the same admission check uses
 /// ([`default_check_gap_start`], which ends in the shared agent-packet
 /// validator) rather than assuming the route offers no start; only a
-/// TypeScript-family or Python route can be admitted (#10373), and anything
-/// undecidable keeps
-/// the "offers no start" wording (fail-closed).
+/// TypeScript-family or Python route can be admitted (#10373). An unconfirmed
+/// route is reported as such instead of claiming there is no
+/// start (fail-closed).
 ///
 /// [`default_check_gap_start`]: crate::app::gap_bound_repair::default_check_gap_start
 fn pilot_routed_gap_start(
@@ -1989,7 +1989,7 @@ fn pilot_routed_to_check_message(
                 ))
             }
             None => message.push_str(&format!(
-                ": it routed {code} to {commands}, which reviews changes diff-first and offers no `ripr agent repair` start, and running pilot again unchanged routes there again. Read the findings from {commands}, add or strengthen a test for the changed behavior by hand, then rerun {commands} to see whether static evidence now finds a discriminator"
+                ": it routed {code} to {commands}, which reviews changes diff-first; status could not confirm a gap-bound start. Running pilot again unchanged routes there again. Run {commands} for the current finding and any reason a start is unavailable"
             )),
         }
     }
@@ -6153,7 +6153,7 @@ mod tests {
             // hint status generates binds the selected root (#4000).
             for expected in [
                 "routed the typescript, python code to `ripr check --root .`".to_string(),
-                "add or strengthen a test for the changed behavior by hand, then rerun `ripr check --root .`".to_string(),
+                "status could not confirm a gap-bound start".to_string(),
                 format!(
                     "If the workspace changed since that run, rerun `{}`",
                     pilot_select_command(&bound_root("."))
@@ -6706,14 +6706,21 @@ mod tests {
         let commit = "git -C . --literal-pathspecs commit -m \"<message>\" -- src/pricing.py";
 
         // A decoy-cwd user needs the commit anchored at the analyzed root.
+        // The expectation goes through the same production quoting the
+        // producer uses (`shell_arg` renders console-quoted on Windows and
+        // single-quoted on Unix, the #10833 expectation pattern), so the
+        // anchored commit step stays discriminated on both hosts (#10996).
         let anchored = PilotGapStart::from_route("/repo root", &route(&["src/[ab].py"]));
         let anchored_message =
             pilot_routed_to_check_message(&routes, "/repo root", Some(&anchored));
+        let anchored_commit = format!(
+            "git -C {} --literal-pathspecs commit -m \"<message>\" -- {}",
+            shell_arg("/repo root"),
+            shell_arg("src/[ab].py")
+        );
         assert!(
-            anchored_message.contains(
-                "git -C '/repo root' --literal-pathspecs commit -m \"<message>\" -- 'src/[ab].py'"
-            ),
-            "{anchored_message}"
+            anchored_message.contains(&anchored_commit),
+            "Expected message to contain:\n{anchored_commit}\n\nActual message:\n{anchored_message}"
         );
 
         let clean_routed = pilot_routed_to_check_message(&routes, ".", Some(&clean));

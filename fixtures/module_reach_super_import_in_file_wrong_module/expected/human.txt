@@ -12,7 +12,7 @@ Start here:
   Safe next action: look at the reason below before adding a test
   File: ./src/lib.rs:2
   Static exposure: weak (severity: warning, confidence 0.66)
-  Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
+  Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart
   Changed behavior: 10 <= qty
   Analyzer limit: A test may reach this change through an internal helper-call chain ripr cannot
     fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named

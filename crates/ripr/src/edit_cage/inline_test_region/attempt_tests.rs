@@ -282,9 +282,20 @@ fn a_later_production_edit_moves_the_recomputed_delta() -> Result<(), String> {
         &baseline,
         HeadMovement::RequireBaselineHead,
     )?;
-    // The bound path now carries its post-change byte identity
-    // (`after_state`), so the later production edit moves `changes` itself,
-    // not only the region observation beside it.
+    let changed_paths = |delta: &AttemptDelta| {
+        delta
+            .changes
+            .iter()
+            .map(|change| {
+                (
+                    change.path.clone(),
+                    change.kind,
+                    change.previous_path.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(changed_paths(&bound), changed_paths(&recomputed));
     assert_ne!(bound.changes, recomputed.changes);
     assert_ne!(bound, recomputed);
     assert_eq!(verdict.status, EditCageVerdictStatus::Violated);
