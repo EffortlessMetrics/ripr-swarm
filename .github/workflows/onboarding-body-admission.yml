@@ -1,0 +1,70 @@
+name: Onboarding PR body admission (non-shipping)
+on:
+  push:
+    branches: [codex/onboarding-focused-proof-10993-10994]
+    paths: [.github/workflows/onboarding-body-admission.yml]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  body:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 0fa8f926d10d2592510ecce994f8cea7464ba5f4
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          shared-key: ripr-swarm-rust-small-${{ runner.os }}
+          save-if: 'false'
+      - name: Read and bind the actual selected PR bodies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/onboarding-body-admission"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          mkdir -p "$EVIDENCE"
+          gh api repos/EffortlessMetrics/ripr-swarm/pulls/11074 > "$EVIDENCE/11074.json"
+          gh api repos/EffortlessMetrics/ripr-swarm/pulls/11077 > "$EVIDENCE/11077.json"
+          python3 - <<'PY'
+          import json, os, hashlib
+          from pathlib import Path
+          root = Path(os.environ['EVIDENCE'])
+          for number, sha in [('11074','f5dc763a3b993e5b71ebe04173d6feeeb467d817'), ('11077','0fa8f926d10d2592510ecce994f8cea7464ba5f4')]:
+              pr = json.loads((root/(number+'.json')).read_text())
+              assert pr['head']['sha'] == sha, 'subject changed before body admission'
+              body = pr['body']
+              (root/(number+'-identity.json')).write_text(json.dumps({'number': int(number), 'head': sha, 'body_sha256': hashlib.sha256(body.encode()).hexdigest(), 'updated_at': pr['updated_at']}, indent=2)+'\n')
+          PY
+          git rev-parse HEAD > "$EVIDENCE/validator-source.txt"
+          rustc +1.95.0 -Vv > "$EVIDENCE/compiler.txt"
+      - name: Native body and fragment policy
+        run: |
+          set -euo pipefail
+          failed=0
+          for number in 11074 11077; do
+            set +e
+            timeout --signal=TERM --kill-after=30s 1200s cargo +1.95.0 run --locked -p xtask -- check-pr-shape --body-file "$EVIDENCE/$number.json" > "$EVIDENCE/$number.stdout" 2> "$EVIDENCE/$number.stderr"
+            code=$?
+            set -e
+            echo "$number exit=$code" | tee -a "$EVIDENCE/status.txt"
+            cat "$EVIDENCE/$number.stdout"
+            if [ "$code" -ne 0 ]; then tail -n 100 "$EVIDENCE/$number.stderr"; failed=1; fi
+          done
+          exit "$failed"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: onboarding-body-admission-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/onboarding-body-admission
+          if-no-files-found: error
+          retention-days: 14
