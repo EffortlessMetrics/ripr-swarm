@@ -3868,7 +3868,11 @@ fn missing_check_suffix(finding: &Finding, base: &str) -> Option<String> {
     }
     let witness = DiagnosticWitness::from_finding(finding)?;
     let missing = witness.missing_discriminators.first()?.value.trim();
-    if missing.is_empty() || missing.len() > 80 || base.contains(missing) {
+    if missing.is_empty()
+        || missing.chars().count() > 80
+        || missing.contains(['`', '\n'])
+        || base.contains(missing)
+    {
         return None;
     }
     Some(format!("Missing check: `{missing}`."))
@@ -5830,6 +5834,46 @@ mod diagnostic_policy_tests {
         finding.recommended_next_step = Some("Add a test.".to_string());
         finding.activation.missing_discriminators.clear();
         assert_eq!(lsp_message(&finding), "Add a test.");
+
+        let with_value = |finding: &mut Finding, value: String| {
+            finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+                value,
+                reason: "no test uses it".to_string(),
+                flow_sink: None,
+            }];
+            lsp_message(finding)
+        };
+        // Whitespace-only values add nothing; padding is trimmed.
+        assert_eq!(with_value(&mut finding, "   ".to_string()), "Add a test.");
+        assert_eq!(
+            with_value(&mut finding, " age == 18 ".to_string()),
+            "Add a test. Missing check: `age == 18`."
+        );
+        // The 80-character limit counts characters, not bytes.
+        assert_eq!(
+            with_value(&mut finding, "x".repeat(81)),
+            "Add a test.",
+            "81 characters is over the limit"
+        );
+        assert_eq!(
+            with_value(&mut finding, "x".repeat(80)),
+            format!("Add a test. Missing check: `{}`.", "x".repeat(80))
+        );
+        assert_eq!(
+            with_value(&mut finding, "é".repeat(40)),
+            format!("Add a test. Missing check: `{}`.", "é".repeat(40))
+        );
+        // Values that would break the Markdown code span are left out.
+        assert_eq!(with_value(&mut finding, "a`b".to_string()), "Add a test.");
+        assert_eq!(with_value(&mut finding, "a\nb".to_string()), "Add a test.");
+
+        // Preview findings keep their own wording.
+        finding.language_status = Some(LanguageStatus::Preview);
+        let preview = with_value(&mut finding, "age == 18".to_string());
+        assert!(
+            !preview.contains("Missing check"),
+            "preview findings must not gain the suffix: {preview}"
+        );
     }
 
     #[test]
