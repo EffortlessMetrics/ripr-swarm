@@ -1,0 +1,9 @@
+diff --git a/rates/table.py b/rates/table.py
+--- a/rates/table.py
++++ b/rates/table.py
+@@ -1,4 +1,4 @@
+-MISSING_TABLE = {1: 5, 2: 5}
++MISSING_TABLE = {1: 5, 2: 6}
+ 
+ def price(tier):
+     return MISSING_TABLE.get(tier, MISSING_TABLE[2])

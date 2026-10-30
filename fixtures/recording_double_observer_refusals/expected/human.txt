@@ -1,0 +1,68 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/recording_double_observer_refusals/input
+
+Summary: 16 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 16 unclear. 16 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 8 changed file(s), 16 changed line(s), 8 candidate line(s), 16 changed behavior(s) checked, 16 finding(s)
+
+Start here:
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
+  File: ./src/assertion_message.rs:13
+  Static exposure: unknown (severity: note, confidence 0.92)
+  Why unknown: the analysis could not determine a static exposure state
+  Changed behavior: sink.send(format!("n={n}"))
+  Analyzer limit: A related Rust test checks this code through a test-framework idiom that ripr does
+    not evaluate (an environment variable the test sets or removes, a mockall closure that reads the
+    call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a
+    helper-built receiver under a changed closure, a hand-written recording double, or an async
+    owner driven by an executor helper in the test's file), so ripr cannot say whether the check
+    notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
+  Related test: src/assertion_message.rs:19 exact_line (ripr could not confirm that this assertion observes the changed behavior)
+  Next step: `exact_line` (src/assertion_message.rs:19) passes the owner a test double and compares
+    what the double recorded, and ripr does not follow the changed value through the double's own
+    method into that field, so ripr does not report a gap. Check that the test's setup reaches the
+    changed code and that its expectation differs between the old and the new behavior; add a test
+    only if either fails
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach report_assertion_message: exact_line
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 10 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_assertion_message.rs:call_deletion:24b7502f
+  ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_assertion_message.rs:call_deletion:24b7502f
+  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
+
+Hidden:
+  15 lower-priority finding(s) omitted from default human output.
+    - ./src/assertion_message.rs:13 (unknown); kind: side_effect; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+    - ./src/dyn_inherent.rs:13 (unknown); kind: call_deletion; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+    - ./src/dyn_inherent.rs:13 (unknown); kind: side_effect; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+    - ./src/let_else.rs:13 (unknown); kind: call_deletion; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+    - ./src/let_else.rs:13 (unknown); kind: side_effect; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+    - ./src/owned_clone.rs:13 (unknown); kind: call_deletion; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+    - ./src/owned_clone.rs:13 (unknown); kind: side_effect; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+    - ./src/push_dispatch.rs:13 (unknown); kind: call_deletion; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+    - ./src/push_dispatch.rs:13 (unknown); kind: side_effect; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+    - ./src/raw_binding.rs:13 (unknown); kind: call_deletion; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+    - ./src/raw_binding.rs:13 (unknown); kind: side_effect; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+    - ./src/raw_receiver.rs:13 (unknown); kind: call_deletion; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+    - ./src/raw_receiver.rs:13 (unknown); kind: side_effect; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+    - ./src/unicode_binding.rs:13 (unknown); kind: call_deletion; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+    - ./src/unicode_binding.rs:13 (unknown); kind: side_effect; reason: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

@@ -86,7 +86,9 @@ use tower_lsp_server::ls_types::{
 use tower_lsp_server::{LspService, Server};
 
 mod analysis_thread_routing_tests;
+mod bare_cr_origin_tests;
 mod consumed_source_tests;
+mod progress_completion_tests;
 mod progress_create_liveness_tests;
 mod progress_notification_isolation_tests;
 mod shutdown_clear_tests;
@@ -977,6 +979,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
     };
     let finding = crate::domain::Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: format!("probe:{file}:10:predicate:aabbccdd"),
         canonical_gap: None,
         probe: Probe {
@@ -1606,7 +1609,7 @@ fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(), 
             .as_str()
             .ok_or_else(|| "expected seam hover markdown value".to_string())?;
         assert!(
-            hover_value.contains("## Missing discriminator"),
+            hover_value.contains("## Missing value or check"),
             "expected seam hover to name missing discriminator, got {hover_value}"
         );
         assert!(
@@ -2693,7 +2696,7 @@ fn finding_diagnostic_and_hover_include_canonical_gap_id() -> Result<(), String>
 
     match hover.contents {
         HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("## Canonical Gap"));
+            assert!(markup.value.contains("## Gap ID"));
             assert!(markup.value.contains(
                 "ID: `gap:python:src/pricing.py:apply_discount:predicate_boundary:predicate:amount>=threshold`"
             ));
@@ -2781,7 +2784,7 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
     let HoverContents::Markup(markup) = hover.contents else {
         return Err("expected witness hover markdown".to_string());
     };
-    assert!(markup.value.contains("## Discriminator witness"));
+    assert!(markup.value.contains("## Missing check details"));
     assert!(markup.value.contains("PricingError::Boundary"));
     assert!(markup.value.contains("tests/pricing.rs:10"));
     assert!(markup.value.contains("suggested_assertion_unavailable"));
@@ -3053,8 +3056,9 @@ fn hover_for_position_adds_snapshot_status_to_seam_hover() -> Result<(), String>
 
     match hover.contents {
         HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** behavioral seam"));
-            assert!(markup.value.contains("`weakly_gripped`"));
+            assert!(markup.value.contains("**ripr** changed behavior"));
+            assert!(markup.value.contains("Tests only loosely check this"));
+            assert!(!markup.value.contains("weakly_gripped"));
             assert!(markup.value.contains("Analysis snapshot: generated "));
             assert!(markup.value.contains(" ago; last refresh took 11 ms."));
             Ok(())
@@ -3958,10 +3962,16 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
             .map(|(title, command, _)| (title.as_str(), command.as_str()))
             .collect::<Vec<_>>(),
         vec![
-            ("Copy first repair packet", COPY_CONTEXT_COMMAND),
+            (
+                "Copy repair instructions for an AI agent",
+                COPY_CONTEXT_COMMAND
+            ),
             ("Agent handoff: copy Python packet", COPY_CONTEXT_COMMAND),
             ("Inspect gap: copy repair packet", COPY_CONTEXT_COMMAND),
-            ("Copy Python repair card", COPY_TARGETED_TEST_BRIEF_COMMAND),
+            (
+                "Copy Python repair instructions for an AI agent",
+                COPY_TARGETED_TEST_BRIEF_COMMAND
+            ),
             (
                 "Write targeted test: open best related test",
                 OPEN_RELATED_TEST_COMMAND
@@ -4141,14 +4151,14 @@ fn gap_code_actions_suppress_first_repair_packet_without_verify_or_receipt_comma
     let commands = code_action_commands(&actions)?;
 
     assert!(
-        commands
-            .iter()
-            .all(|(title, _, args)| title != "Copy first repair packet"
+        commands.iter().all(
+            |(title, _, args)| title != "Copy repair instructions for an AI agent"
                 && title != "Agent handoff: copy Python packet"
                 && args
                     .first()
                     .is_none_or(|arg| arg["label"] != "first_repair_packet"
-                        && arg["label"] != "python_agent_packet")),
+                        && arg["label"] != "python_agent_packet")
+        ),
         "packet actions must be suppressed when receipt command is missing: {commands:?}"
     );
     assert!(
@@ -4204,7 +4214,7 @@ fn gap_code_actions_suppress_first_repair_packet_without_producer_discriminator(
 
     assert!(
         commands.iter().all(|(title, _, args)| {
-            title != "Copy first repair packet"
+            title != "Copy repair instructions for an AI agent"
                 && title != "Agent handoff: copy Python packet"
                 && args.first().is_none_or(|arg| {
                     arg["label"] != "first_repair_packet" && arg["label"] != "python_agent_packet"
@@ -4402,13 +4412,14 @@ fn gap_code_actions_project_python_pytest_skeleton_and_target_file() -> Result<(
     assert!(
         commands
             .iter()
-            .any(|(title, _, _)| title == "Copy first repair packet"),
+            .any(|(title, _, _)| title == "Copy repair instructions for an AI agent"),
         "pytest verify commands should be safe enough for first repair packets: {commands:?}"
     );
     let repair_card = commands
         .iter()
         .find(|(title, command, _)| {
-            title == "Copy Python repair card" && command == COPY_TARGETED_TEST_BRIEF_COMMAND
+            title == "Copy Python repair instructions for an AI agent"
+                && command == COPY_TARGETED_TEST_BRIEF_COMMAND
         })
         .and_then(|(_, _, args)| args.first())
         .ok_or_else(|| format!("missing Python repair-card action: {commands:?}"))?;
@@ -4818,7 +4829,7 @@ fn gap_code_actions_suppress_python_repair_card_without_target_file() -> Result<
     assert!(
         commands
             .iter()
-            .all(|(title, _, _)| title != "Copy Python repair card"),
+            .all(|(title, _, _)| title != "Copy Python repair instructions for an AI agent"),
         "Python repair card must not surface without a bounded target file: {commands:?}"
     );
     Ok(())
@@ -4864,10 +4875,16 @@ fn editor_adoption_baseline_pins_gap_repair_action_contract() -> Result<(), Stri
             .map(|(title, command, _)| (title.as_str(), command.as_str()))
             .collect::<Vec<_>>(),
         vec![
-            ("Copy first repair packet", COPY_CONTEXT_COMMAND),
+            (
+                "Copy repair instructions for an AI agent",
+                COPY_CONTEXT_COMMAND
+            ),
             ("Agent handoff: copy Python packet", COPY_CONTEXT_COMMAND),
             ("Inspect gap: copy repair packet", COPY_CONTEXT_COMMAND),
-            ("Copy Python repair card", COPY_TARGETED_TEST_BRIEF_COMMAND),
+            (
+                "Copy Python repair instructions for an AI agent",
+                COPY_TARGETED_TEST_BRIEF_COMMAND
+            ),
             (
                 "Write targeted test: open best related test",
                 OPEN_RELATED_TEST_COMMAND
@@ -8644,7 +8661,7 @@ fn editor_lsp_workflow_lsp_goldens_match_production() -> Result<(), String> {
     let hover = std::fs::read_to_string(&hover_path)
         .map_err(|err| format!("failed to read {}: {err}", hover_path.display()))?;
     for heading in [
-        "## Missing discriminator",
+        "## Missing value or check",
         "## Suggested test shape",
         "## Handoff, verify, and receipt commands",
     ] {
@@ -15834,6 +15851,7 @@ fn finding_projection_emits_one_limited_diagnostic_for_mixed_canonical_group() -
 pub(super) fn sample_finding() -> Finding {
     Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: "probe:pricing:88:predicate".to_string(),
         canonical_gap: None,
         probe: Probe {
@@ -16166,7 +16184,7 @@ fn finding_hover_with_named_missing_discriminator_spells_markers_in_words() -> R
     }
     for needle in [
         "* discriminator missing: `amount == threshold`, `other`; related oracle: strong oracle, changed value never named\n",
-        "- missing discriminator: `amount == threshold` \u{2014} input unexecuted\n",
+        "- missing value or check: `amount == threshold` \u{2014} input unexecuted\n",
         "`raise ValueError(\"observation_unverified\")`.",
     ] {
         if !text.contains(needle) {
@@ -16798,7 +16816,7 @@ fn typescript_preview_finding_hover_shows_actionability_before_evidence() -> Res
             for needle in [
                 "Language: typescript",
                 "Status: preview",
-                "Repair packet: not ready",
+                "Repair instructions for an AI agent: not ready",
                 "State: advisory",
                 "Category: missing_context",
                 "Why not actionable: verify command and receipt command are not inferred for TypeScript preview",
@@ -22760,6 +22778,7 @@ fn partition_partial_scope() -> crate::analysis::PartialDiffScope {
         uninspected_changed_lines_lower_bound: 1,
         stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
         next_file_changed_lines: Some(1),
+        whole_diff_budgets: None,
         partition_identity: "sha256:partition".to_string(),
     }
 }
@@ -23362,6 +23381,7 @@ async fn workspace_status_keeps_outside_partition_reason_when_both_apply() -> Re
         uninspected_changed_lines_lower_bound: 1,
         stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
         next_file_changed_lines: Some(1),
+        whole_diff_budgets: None,
         partition_identity: "sha256:partition".to_string(),
     };
     backend
@@ -28223,7 +28243,7 @@ fn actionable_line_hover_names_editor_neutral_full_profile_routes() -> Result<()
 fn exclusive_vscode_setting_route_is_rejected_as_insufficient() {
     // Pre-fix wording from origin/main: the VS Code settings-UI name as the
     // only instruction. A non-VS Code user following it has no such setting.
-    let exclusive_vscode_route = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing discriminator and a fix site), so these are not diagnostics. Set `ripr.diagnosticProfile` to `full` to publish them with their Inspect finding quick fix.";
+    let exclusive_vscode_route = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing value or check and a fix site), so these are not diagnostics. Set `ripr.diagnosticProfile` to `full` to publish them with their Inspect finding quick fix.";
     let defects = actionable_line_hover_route_defects(exclusive_vscode_route);
     assert!(
         defects.contains(&"missing LSP server key `diagnosticProfile`"),
@@ -28466,7 +28486,11 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
         let (server_read, server_write) = tokio::io::split(server_io);
-        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let (builder, mut publications) =
+            progress_completion_tests::with_publication_barrier(LspService::build(|client| {
+                Backend::new(client, PathBuf::from("."))
+            }));
+        let (service, socket) = builder.finish();
         let mut server_task = tokio::spawn(async move {
             Server::new(server_read, server_write, socket)
                 .serve(service)
@@ -28497,7 +28521,21 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             }),
         )
         .await?;
-        let limited = run_wire_refresh_collecting(&mut client_read, &mut client_write, 2).await?;
+        let publication = progress_completion_tests::arm_publication(
+            &mut client_read,
+            &mut client_write,
+            &mut publications,
+            90,
+        )
+        .await?;
+        let (limited_generation, limited) = progress_completion_tests::run_started_refresh(
+            &mut client_read,
+            &mut client_write,
+            publication,
+            2,
+            "limited",
+        )
+        .await?;
         let statuses = analysis_status_params(&limited);
         let status = statuses
             .last()
@@ -28536,6 +28574,10 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             "one accepted limited refresh must end exactly once"
         );
         assert_eq!(
+            ends[0]["params"]["token"],
+            format!("ripr-analysis-{limited_generation}")
+        );
+        assert_eq!(
             ends[0]["params"]["value"]["message"],
             "analysis completed with limited evidence"
         );
@@ -28551,6 +28593,13 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
         assert_eq!(workspace_status["result"]["diagnostics"]["findings"], 0);
         assert_eq!(workspace_status["result"]["run_status"], "limited");
 
+        let publication = progress_completion_tests::arm_publication(
+            &mut client_read,
+            &mut client_write,
+            &mut publications,
+            91,
+        )
+        .await?;
         // The real configuration notification restores the normal deadline.
         // It owns one automatic refresh; await that run instead of adding
         // another explicit request that could create a second progress token.
@@ -28562,34 +28611,15 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             }),
         )
         .await?;
-        let mut recovered = Vec::new();
-        tokio::time::timeout(Duration::from_mins(1), async {
-            loop {
-                let message = read_lsp_message(&mut client_read).await?;
-                if message["method"] == "window/workDoneProgress/create" {
-                    let id = message
-                        .get("id")
-                        .cloned()
-                        .ok_or("create request carried no id")?;
-                    write_lsp_message(
-                        &mut client_write,
-                        serde_json::json!({
-                            "jsonrpc": "2.0", "id": id, "result": null
-                        }),
-                    )
-                    .await?;
-                    continue;
-                }
-                let ended = message["method"] == "$/progress"
-                    && message["params"]["value"]["kind"] == "end";
-                recovered.push(message);
-                if ended {
-                    return Ok::<(), String>(());
-                }
-            }
-        })
-        .await
-        .map_err(|error| format!("normal-timeout recovery did not finish: {error}"))??;
+        let (recovered_generation, recovered) =
+            progress_completion_tests::read_started_refresh_until_settled(
+                &mut client_read,
+                &mut client_write,
+                publication,
+                None,
+                "seams_deferred",
+            )
+            .await?;
         write_lsp_message(
             &mut client_write,
             serde_json::json!({
@@ -28613,9 +28643,31 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             })
             .count();
         assert_eq!(recovered_ends, 1);
+        for end in recovered.iter().filter(|message| {
+            message["method"] == "$/progress" && message["params"]["value"]["kind"] == "end"
+        }) {
+            assert_eq!(
+                end["params"]["token"],
+                format!("ripr-analysis-{recovered_generation}")
+            );
+        }
         // Configuration changes request Interactive analysis. A separate
         // explicit request is required to establish a full recovered run.
-        let full = run_wire_refresh_collecting(&mut client_read, &mut client_write, 5).await?;
+        let publication = progress_completion_tests::arm_publication(
+            &mut client_read,
+            &mut client_write,
+            &mut publications,
+            92,
+        )
+        .await?;
+        let (full_generation, full) = progress_completion_tests::run_started_refresh(
+            &mut client_read,
+            &mut client_write,
+            publication,
+            5,
+            "full",
+        )
+        .await?;
         let full_statuses = analysis_status_params(&full);
         let full_status = full_statuses
             .last()
@@ -28631,6 +28683,14 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             full_ends, 1,
             "one explicit full refresh must end exactly once"
         );
+        for end in full.iter().filter(|message| {
+            message["method"] == "$/progress" && message["params"]["value"]["kind"] == "end"
+        }) {
+            assert_eq!(
+                end["params"]["token"],
+                format!("ripr-analysis-{full_generation}")
+            );
+        }
         write_lsp_message(
             &mut client_write,
             serde_json::json!({

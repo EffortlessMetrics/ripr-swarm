@@ -62,6 +62,28 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     )
 }
 
+/// An inherent-method owner reached through an `async fn` hop is not executed
+/// by a test that only calls that hop: the call constructs a future and
+/// nothing here establishes polling (#7415, the same refusal
+/// `inherent_helper_path_reaches_owner` applies to the compact path). Hops
+/// run owner-upward, so the chain keeps the synchronous hops below the first
+/// `async` caller and a test that calls one of those still relates.
+/// Unknown or ambiguous declarations fail closed like an `async` one.
+fn without_async_hops_for_inherent_owner(
+    owner: Option<&crate::analysis::facts::FunctionSummary>,
+    mut chain: super::classify::HelperChain,
+    index: &RustIndex,
+) -> super::classify::HelperChain {
+    if owner.is_some_and(super::classify::requires_inherent_receiver_identity)
+        && let Some(first_async) = chain.hops.iter().position(|hop| {
+            super::classify::function_declaration_is_async(&hop.caller, index) != Some(false)
+        })
+    {
+        chain.hops.truncate(first_async);
+    }
+    chain
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "classification inputs plus explicit run-local origin context"
@@ -76,6 +98,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
     value_origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
 ) -> Finding {
+    let read_trace = super::probe_read_trace::Scope::begin(probe);
     let owner_fn = resolve_owner_function(probe, index);
     // #3296: one chain resolution per probe, shared by the relation
     // stage and the activation rows (single authority, single scan).
@@ -85,6 +108,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
         .map(|owner| super::classify::resolve_chain(&owner.name, index, workspace_complete, &[]));
     let helper_chain = resolved_chain
         .clone()
+        .map(|chain| without_async_hops_for_inherent_owner(owner_fn, chain, index))
         .filter(|chain| !chain.hops.is_empty());
     let mut related_tests = find_related_tests_with_candidate_index(
         probe,
@@ -191,6 +215,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
     }
+    read_trace.finish();
     finding
 }
 

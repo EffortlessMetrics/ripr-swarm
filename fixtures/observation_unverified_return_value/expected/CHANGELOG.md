@@ -406,3 +406,50 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_unverified_return_value (35)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless observation_unverified_return_value --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — observation_unverified_return_value (36)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless observation_unverified_return_value --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — observation_unverified_return_value (37)
+
+Reason:
+RIPR-SPEC-0122: #10701 a weak assertion on a changed return value or error with a direct caller test now reaches a repair start
+
+Command:
+`cargo xtask goldens bless observation_unverified_return_value --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — observation_unverified_return_value (38)
+
+Reason:
+RIPR-SPEC-0197: #10916 relational sibling downgrade now fires for this fixture; infection reads weak (0.84) with the truth-value summary instead of yes (0.92)
+
+Command:
+`cargo xtask goldens bless observation_unverified_return_value --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

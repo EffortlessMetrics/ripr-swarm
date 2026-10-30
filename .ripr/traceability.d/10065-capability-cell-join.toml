@@ -1,0 +1,27 @@
+[[behavior]]
+id = "RIPR-SPEC-0365"
+name = "Capability manifest cell identity join"
+spec = "docs/specs/RIPR-SPEC-0365-capability-manifest-cell-join.md"
+tests = [
+  "xtask/src/policy/capability_cells/tests.rs::explicit_inline_and_multiline_cells_parse_and_join",
+  "xtask/src/policy/capability_cells/tests.rs::optional_per_entry_does_not_disable_global_completeness",
+  "xtask/src/policy/capability_cells/tests.rs::near_identity_cannot_claim_a_registered_cell",
+  "xtask/src/policy/capability_cells/tests.rs::a_new_registry_cell_needs_an_explicit_claim",
+  "xtask/src/policy/capability_cells/tests.rs::product_status_and_semantic_support_remain_separate",
+  "xtask/src/policy/capability_cells/tests.rs::duplicate_claim_in_one_entry_is_rejected_but_shared_membership_is_valid",
+  "xtask/src/policy/capability_cells/tests.rs::malformed_cell_fields_fail_parsing",
+  "xtask/src/policy/capability_cells/tests.rs::incomplete_or_malformed_registry_cannot_pass_the_join",
+]
+code = [
+  "xtask/src/types.rs",
+  "xtask/src/main.rs",
+  "xtask/src/policy/capability_cells.rs",
+  "crates/ripr/src/domain/language_capability.rs",
+  "crates/ripr/src/output/language_capabilities.rs",
+]
+outputs = [
+  "metrics/capabilities.toml",
+  "docs/CAPABILITY_MATRIX.md",
+  "docs/CI.md",
+]
+metrics = ["unit_test_pass_rate"]

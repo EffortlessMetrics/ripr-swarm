@@ -87,6 +87,10 @@ pub(super) fn sequence_oracle_observes_row(
 ) -> bool {
     use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 
+    // `row.text` is the evidence excerpt (truncated at CALL_ROW_TEXT_LIMIT),
+    // not the original source: an over-long or multi-line assert never parses
+    // as exactly one Assert here and the walk refuses. That under-credit is
+    // fail-closed; do not widen it without re-pinning this boundary.
     let Ok(Mod::Module(module)) = super::source_facts::parse_module_result(
         std::path::Path::new("<generator-oracle>"),
         &row.text,
