@@ -26,6 +26,7 @@ fn rust_source(op: &str) -> String {
     )
 }
 
+#[cfg(feature = "lang-python")]
 fn python_source(op: &str) -> String {
     format!(
         "def discounted_total(amount, limit):\n    if amount {op} limit:\n        return amount - 10\n    return amount\n"
@@ -102,6 +103,7 @@ impl Fixture {
         Self::create(name, &base, &[("src/lib.rs", rust_source(">"))])
     }
 
+    #[cfg(feature = "lang-python")]
     fn python(name: &str, test: &str) -> Result<Self, String> {
         let base = [
             (
@@ -390,6 +392,9 @@ fn route_not_ready_seam_is_seam_gate_refused_not_a_producer_gate() -> Result<(),
     Ok(())
 }
 
+// The Python fixture needs the Python adapter compiled in to yield a listed
+// item at all (the Rust-only feature lane builds without it).
+#[cfg(feature = "lang-python")]
 #[test]
 fn item_no_seam_resolves_carries_the_cli_cause_on_prepare_and_card() -> Result<(), String> {
     for (name, test) in [
