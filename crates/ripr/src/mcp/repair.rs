@@ -83,15 +83,19 @@ pub(crate) struct RepairTransaction {
 }
 
 /// Extract the attempt id from a `ripr://repair-attempt/{attempt_id}` URI.
+/// One trailing slash is normalized away (#9895, `trim_one_trailing_slash`).
 pub(crate) fn repair_attempt_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://repair-attempt/")
+        .map(super::gaps::trim_one_trailing_slash)
         .filter(|id| !id.is_empty() && !id.contains('/'))
 }
 
 /// Extract the receipt id from a `ripr://receipt/{receipt_id}` URI. Receipt
 /// ids are attempt-bound: one retained receipt per durable attempt identity.
+/// One trailing slash is normalized away (#9895, `trim_one_trailing_slash`).
 pub(crate) fn receipt_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://receipt/")
+        .map(super::gaps::trim_one_trailing_slash)
         .filter(|id| !id.is_empty() && !id.contains('/'))
 }
 
@@ -316,9 +320,15 @@ fn durable_attempt_document(
     root_identity: Option<&str>,
 ) -> Value {
     let current_head = crate::agent::artifact::current_git_head(root).ok();
+    // The CLI binds the selected repository in every next-action display
+    // (paste-and-run from any working directory); this bounded MCP projection
+    // renders the same actions with the portable root `.`, exactly like the
+    // repair card's next-action display (ADR 0022): the host-local checkout
+    // path is intentionally not projected and the display is never execution
+    // authority.
     let selected = crate::app::agent_status::selected_attempt_status_reading(
         root,
-        root,
+        &crate::agent::loop_commands::root_display(crate::agent::command_specs::PORTABLE_ROOT),
         crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY,
         "",
         manifest,
@@ -359,6 +369,11 @@ fn durable_attempt_document(
     });
     let mut limitations = manifest.limitations.clone();
     limitations.extend(route_limitations);
+    // Ordinary next-action displays bind the portable root, like the repair
+    // card: presentation only, never execution authority (ADR 0022).
+    // Trust-bound or store-qualified continuations keep the persisted
+    // advanced spelling verbatim, exactly like the CLI renderer.
+    limitations.push("ordinary next-action displays bind the portable root `.` and are presentation only; the host-local root path is intentionally not projected and a display is never execution authority; trust-bound or store-qualified continuations keep their persisted advanced spelling".to_string());
     // #8766: a restart the shared repair gate refuses is named as by-hand work.
     limitations.extend(selected.restart_withheld.clone());
     json!({
@@ -660,6 +675,7 @@ impl WorkspaceSession {
         let readiness = &item.repair_readiness;
         if !readiness.ready {
             let reason = readiness.ineligibility.unwrap_or("repair_not_established");
+            let finding_guidance = super::gaps::finding_guidance(item);
             let document = json!({
                 "schema_version": REPAIR_PACKET_SCHEMA_VERSION,
                 "snapshot_id": snapshot_id,
@@ -674,8 +690,9 @@ impl WorkspaceSession {
                     "detail": readiness.detail(),
                 },
                 "attempt": Value::Null,
+                "finding_guidance": finding_guidance,
                 "recovery": if reason.starts_with("seam_") {
-                    "the shared repair gate refused this seam; ripr_prepare_repair does not override it. Change the code or tests, then re-run ripr_refresh"
+                    "the shared repair gate refused this seam; ripr_prepare_repair does not override it. Change the code or tests as `finding_guidance` (the item's `missing` and `recommended_next_step`) describes, then re-run ripr_refresh"
                 } else {
                     "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field"
                 },
@@ -780,25 +797,37 @@ impl WorkspaceSession {
         };
         // Bound the in-memory map: transactions bound to an older snapshot can
         // never be served as live again, so evict them (one bounded packet
-        // each, up to 128 KiB) and keep only an attempt_id → snapshot_id
+        // each, up to 128 KiB) and keep only an attempt_id -> snapshot_id
         // tombstone that preserves the typed `superseded` failure.
-        let mut evicted = Vec::new();
-        self.repairs.retain(|id, existing| {
-            if existing.snapshot_id != snapshot_id {
-                evicted.push((id.clone(), existing.snapshot_id.clone()));
-                false
-            } else {
-                true
-            }
-        });
-        self.repairs.insert(attempt_id, transaction);
+        //
+        // Unwind-safe order (#11116): the tombstones are recorded BEFORE the
+        // stale transactions are removed, and the new transaction is inserted
+        // last. A panic at any point between these steps (contained at the
+        // tool boundary, so the session outlives it) leaves every old attempt
+        // reachable as `superseded`: either still in `repairs` under an older
+        // snapshot (read as superseded by the snapshot comparison) or already
+        // tombstoned. Removing first and tombstoning after would turn a
+        // panic in between into `attempt_not_found`.
+        let evicted: Vec<(String, String)> = self
+            .repairs
+            .iter()
+            .filter(|(_, existing)| existing.snapshot_id != snapshot_id)
+            .map(|(id, existing)| (id.clone(), existing.snapshot_id.clone()))
+            .collect();
         for (id, old_snapshot) in evicted {
             self.insert_superseded_tombstone(id, old_snapshot);
         }
+        #[cfg(test)]
+        injected_prepare_panic::fire(root_identity, "after_tombstones");
+        self.repairs
+            .retain(|_, existing| existing.snapshot_id == snapshot_id);
+        #[cfg(test)]
+        injected_prepare_panic::fire(root_identity, "after_eviction");
+        self.repairs.insert(attempt_id, transaction);
         Ok(packet)
     }
 
-    /// Records one evicted transaction's tombstone, keeping the map bounded
+    /// Records one superseded transaction's tombstone, keeping the map bounded
     /// so long sessions cannot grow it without limit (#5254 item 7).
     /// Eviction is oldest-first: the queue holds keys in insertion order,
     /// so a recent supersede is never the one dropped (#6291).
@@ -978,8 +1007,48 @@ fn fix_site_file(item: &GapItem) -> String {
         .unwrap_or_default()
 }
 
+/// Test-only fault injection inside `prepare_repair`, keyed by root identity
+/// and stage so concurrent tests never see each other's arming (#11116).
 #[cfg(test)]
-mod tests {
+pub(super) mod injected_prepare_panic {
+    use std::collections::BTreeSet;
+    use std::sync::Mutex;
+
+    static ARMED: Mutex<BTreeSet<(String, String)>> = Mutex::new(BTreeSet::new());
+
+    /// Disarms on drop.
+    pub(in crate::mcp) struct Armed(String, String);
+
+    impl Drop for Armed {
+        fn drop(&mut self) {
+            if let Ok(mut armed) = ARMED.lock() {
+                armed.remove(&(self.0.clone(), self.1.clone()));
+            }
+        }
+    }
+
+    pub(in crate::mcp) fn arm(root_identity: &str, stage: &str) -> Armed {
+        if let Ok(mut armed) = ARMED.lock() {
+            armed.insert((root_identity.to_string(), stage.to_string()));
+        }
+        Armed(root_identity.to_string(), stage.to_string())
+    }
+
+    pub(super) fn fire(root_identity: Option<&str>, stage: &str) {
+        let due = root_identity.is_some_and(|identity| {
+            ARMED
+                .lock()
+                .map(|armed| armed.contains(&(identity.to_string(), stage.to_string())))
+                .unwrap_or(false)
+        });
+        if due {
+            std::panic::resume_unwind(Box::new("injected prepare_repair panic (#11116)"));
+        }
+    }
+}
+
+#[cfg(test)]
+pub(super) mod tests {
     use super::super::workspace::CODE_STALE_SNAPSHOT;
     use super::*;
     use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind};
@@ -1003,6 +1072,7 @@ mod tests {
             Vec::new(),
         )?;
         Ok(crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
@@ -1025,7 +1095,7 @@ mod tests {
         })
     }
 
-    fn session_with(
+    pub(in crate::mcp) fn session_with(
         findings: &[crate::domain::Finding],
         root_identity: &str,
     ) -> Result<WorkspaceSession, String> {
@@ -1040,6 +1110,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1056,6 +1127,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         };
         for index in 0..MAX_SUPERSEDED_TOMBSTONES + 10 {
@@ -1088,6 +1160,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         };
         let total = MAX_SUPERSEDED_TOMBSTONES + 10;
@@ -1283,6 +1356,26 @@ mod tests {
             return Err(format!(
                 "a producer-named missing discriminator must stay the typed refusal: {document}"
             ));
+        }
+        // #11213: the refusal carries the finding's own guidance (the fields
+        // ripr_get_gap serves) so no second call is needed to learn the fix.
+        let guidance = document
+            .get("finding_guidance")
+            .ok_or_else(|| format!("refusal lost finding_guidance: {document}"))?;
+        if guidance.pointer("/gap_route/tool").and_then(Value::as_str) != Some("ripr_get_gap")
+            || guidance
+                .pointer("/gap_route/arguments/canonical_id")
+                .is_none()
+            || guidance.get("missing").is_none()
+            || guidance.get("recommended_next_step").is_none()
+        {
+            return Err(format!("guidance incomplete: {guidance}"));
+        }
+        if !document["recovery"]
+            .as_str()
+            .is_some_and(|r| r.contains("finding_guidance") || r.contains("producer"))
+        {
+            return Err(format!("recovery must point at the guidance: {document}"));
         }
         Ok(())
     }
@@ -2719,6 +2812,32 @@ mod tests {
         ] {
             assert_eq!(repair_attempt_resource_id(other), None, "{other}");
             assert_eq!(receipt_resource_id(other), None, "{other}");
+        }
+    }
+
+    /// #9895: the attempt and receipt routes tolerate exactly one trailing
+    /// slash; a second slash or a slash leaving the id empty still misses.
+    #[test]
+    fn resource_id_routes_tolerate_one_trailing_slash() {
+        for (uri, expected) in [
+            (
+                "ripr://repair-attempt/repair-attempt-abc/",
+                Some("repair-attempt-abc"),
+            ),
+            ("ripr://repair-attempt/repair-attempt-abc//", None),
+            ("ripr://repair-attempt//", None),
+        ] {
+            assert_eq!(repair_attempt_resource_id(uri), expected, "{uri}");
+        }
+        for (uri, expected) in [
+            (
+                "ripr://receipt/repair-attempt-abc/",
+                Some("repair-attempt-abc"),
+            ),
+            ("ripr://receipt/repair-attempt-abc//", None),
+            ("ripr://receipt//", None),
+        ] {
+            assert_eq!(receipt_resource_id(uri), expected, "{uri}");
         }
     }
 }

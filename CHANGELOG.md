@@ -11,6 +11,23 @@ are scoped or reviewed.
 
 ### Changed
 
+- `ripr cache status|export|clear --help` now open with the command's catalog
+  summary before the `Usage:` line, and `ripr policy|reports|baseline|pr-comments
+  <leaf> --help` lead with that leaf's catalog summary (the sentence
+  `ripr help --all` shows) instead of the group's lead sentence (#11431).
+- `ripr pilot` no longer classifies seams it will not rank. With
+  `RIPR_REPO_EXPOSURE_SEAM_LIMIT` unset, the built-in inventory cap follows the
+  pilot artifact budget (2000, via `RIPR_PILOT_SEAM_BUDGET`) instead of 10000.
+  The cut is still disclosed as the pilot budget (`pilot_seam_budget_applied`,
+  `RIPR_PILOT_SEAM_BUDGET`, `limit_source: "default"`), and `seams_total` is now
+  the real inventory, including when seams of the current change past the cap
+  were added. Before, it reported the 10000 cap, so for a repo over 10000 seams
+  the disclosed total understated the inventory (a deliberate improvement).
+  Seams of the current change past the cap are still classified. Measured on
+  tokio (12,754 seams, one-line edit): about 48 s down to about 16 s with
+  identical pilot output. The cut pilot snapshot carries no comparable artifact
+  identity, as for any budget cut. An explicit `RIPR_REPO_EXPOSURE_SEAM_LIMIT`
+  (including `0`) is unchanged (#10726).
 - LSP scale-degradation disclosures now say what the run actually did at
   all three surfaces where they previously overclaimed. An opened document
   whose changed lines sit outside the analyzed partial-diff partition is

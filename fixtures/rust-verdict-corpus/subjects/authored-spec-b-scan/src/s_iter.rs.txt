@@ -1,0 +1,34 @@
+//! The scanned symbols depend on the data, not only on the input text.
+
+pub fn scan_iter(input: &str) -> &'static str {
+    let mut state = "text";
+    for symbol in input.chars().filter(|c| !c.is_ascii_digit()) {
+        state = match (state, symbol) {
+            ("text", ' ') => "text",
+            ("text", _) => "word",
+            ("word", ' ') => "text",
+            (_, _) => "word",
+        };
+    }
+    state
+}
+
+pub fn classify_iter(input: &str) -> &'static str {
+    let final_state = scan_iter(input);
+    if final_state == "word" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_reads_the_last_state_s_iter() {
+        assert_eq!(classify_iter("ab"), "word");
+        assert_eq!(classify_iter("ab "), "blank");
+    }
+}

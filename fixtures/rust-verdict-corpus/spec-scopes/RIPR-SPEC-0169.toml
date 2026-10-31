@@ -1,0 +1,6 @@
+id = "RIPR-SPEC-0169"
+scope = "in"
+
+[[waived]]
+example = 6
+reason = "resolution-order/crate-root identity and composed provenance are not projected into a verdict row. Files under tests/ remain silent by layout even if composition is lost, so helper edits cannot distinguish that order property. role_composition::sibling_files_share_the_resolved_manifest_answer directly asserts both root identities and the child CfgTestModule role"

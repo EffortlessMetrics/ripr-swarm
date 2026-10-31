@@ -2,23 +2,33 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/tail_comparison_boundary/input
 
-Summary: 4 probes (2 exposed, 2 weak, 0 unrevealed, 0 no path); 4 of 4 findings unsuppressed
+Summary: 4 changed behaviors checked: 2 appear noticed by tests, 2 partly noticed, 0 reached but not noticed, 0 no test path. 4 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 4 probe(s), 4 finding(s)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 4 changed behavior(s) checked, 4 finding(s)
 
 Start here:
   State: a test gap to inspect or repair
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:3
   Static exposure: weak (severity: warning, confidence 0.92)
-  Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
-  Canonical gap: gap:rust:src/lib.rs:ships_free:predicate_boundary:predicate:items==10
+  Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart
+  Gap ID (for scripts): gap:rust:src/lib.rs:ships_free:predicate_boundary:predicate:items==10
   Changed behavior: items >= 10
-  Missing discriminator: items == 10
+  Missing check: items == 10
   Related test (1 of 4 matched rows): tests/orders.rs:4 big_order_ships_free (no test input reaches `items == 10`)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
     - 16 more detail line(s) in --format human-full
@@ -26,14 +36,17 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/tail_comparison_boundary/input --diff <cwd>/fixtures/tail_comparison_boundary/diff.patch --mode fast probe:src_lib.rs:predicate:ca3e18b4
   ripr context --root <cwd>/fixtures/tail_comparison_boundary/input --diff <cwd>/fixtures/tail_comparison_boundary/diff.patch --mode fast --at probe:src_lib.rs:predicate:ca3e18b4
-  no repair start offered: repair route not ready (missing evidence: incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:ca3e18b4 --root <cwd>/fixtures/tail_comparison_boundary/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/tail_comparison_boundary/input --at src/lib.rs:3 --kind predicate
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (weak)
-    - ./src/lib.rs:17 (exposed)
-    - ./src/lib.rs:17 (exposed)
+    - ./src/lib.rs:3 (weak); kind: return_value; reason: Missing discriminator value: items == 10
+    - ./src/lib.rs:17 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/lib.rs:17 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
+  Hidden classes:
+    exposed = tests appear to notice the change
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

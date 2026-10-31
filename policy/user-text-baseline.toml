@@ -1,0 +1,133 @@
+# Ceilings for banned plain-language terms in default human output (#10697).
+# Each number is a ceiling on output lines containing the term; for `golden-human`
+# it is the most lines any single golden may hold. `main` above a ceiling is
+# reported as a warning.
+# Golden rows gate each PR on its own per-file delta against the merge-base, so
+# a PR never edits this file to pass; a golden over its ceiling is only a
+# warning. Live-surface rows fail above their ceiling (raising one needs an
+# explicit reviewed reason), as do golden rows when the merge-base is
+# unreadable (shallow clone).
+# Lower ceilings with `cargo xtask check-user-text --ratchet` (lowering only);
+# never raise one. A term with no row has a ceiling of 0.
+# See docs/USER_TEXT_GLOSSARY.md.
+schema_version = "1.0"
+
+[[ceiling]]
+surface = "agent-card-unknown-id"
+term = "seam"
+max_lines = 1
+
+[[ceiling]]
+surface = "agent-repair-refusal"
+term = "seam"
+max_lines = 1
+
+[[ceiling]]
+surface = "check"
+term = "discriminator"
+max_lines = 4
+
+[[ceiling]]
+surface = "golden-human"
+term = "admitted"
+max_lines = 1
+
+[[ceiling]]
+surface = "golden-human"
+term = "delegatable"
+max_lines = 1
+
+[[ceiling]]
+surface = "golden-human"
+term = "discriminator"
+max_lines = 10
+
+[[ceiling]]
+surface = "golden-human"
+term = "probe"
+max_lines = 1
+
+[[ceiling]]
+surface = "golden-human"
+term = "seam"
+max_lines = 3
+
+[[ceiling]]
+surface = "golden-human"
+term = "state token"
+max_lines = 5
+
+[[ceiling]]
+surface = "help-agent"
+term = "seam"
+max_lines = 8
+
+[[ceiling]]
+surface = "help-all"
+term = "probe"
+max_lines = 2
+
+[[ceiling]]
+surface = "help-all"
+term = "seam"
+max_lines = 3
+
+[[ceiling]]
+surface = "help-check"
+term = "seam"
+max_lines = 1
+
+[[ceiling]]
+surface = "help-check"
+term = "state token"
+max_lines = 1
+
+[[ceiling]]
+surface = "help-doctor"
+term = "probe"
+max_lines = 1
+
+[[ceiling]]
+surface = "help-doctor"
+term = "state token"
+max_lines = 1
+
+[[ceiling]]
+surface = "help-explain"
+term = "probe"
+max_lines = 1
+
+[[ceiling]]
+surface = "help-pilot"
+term = "seam"
+max_lines = 10
+
+[[ceiling]]
+surface = "help-repair"
+term = "seam"
+max_lines = 10
+
+[[ceiling]]
+surface = "help-top"
+term = "seam"
+max_lines = 1
+
+[[ceiling]]
+surface = "pilot"
+term = "seam"
+max_lines = 1
+
+[[ceiling]]
+surface = "repair-commit-first"
+term = "seam"
+max_lines = 1
+
+[[ceiling]]
+surface = "repair-refusal"
+term = "seam"
+max_lines = 1
+
+[[ceiling]]
+surface = "status"
+term = "seam"
+max_lines = 2

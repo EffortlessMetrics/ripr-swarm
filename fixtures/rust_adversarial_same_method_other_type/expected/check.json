@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/rust_adversarial_same_method_other_type/input",
-  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":1,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:ebc0ed0bf12769e3cbad5f10ecc6d77f7dff24c315712e96c883745d070139c3","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -23,7 +23,7 @@
         "normalized_discriminator": "0_some_self.remaining"
 
       },
-      "classification": "weakly_exposed",
+      "classification": "reachable_unrevealed",
       "severity": "warning",
       "confidence": 0.66,
       "probe": {
@@ -38,15 +38,15 @@
         "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling size_hint; tests share only its file or a name token: combinations_inexact_size_hints"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: (0, Some(self.remaining))"},
-        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
-      "evidence_path": ["reach weak: No test is seen calling size_hint; tests share only its file or a name token: combinations_inexact_size_hints", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: (0, Some(self.remaining))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: (0, Some(self.remaining)) (line 22)", "related test tests/size_hints.rs:4 combinations_inexact_size_hints uses strong exact value oracle: assert_eq!(it.size_hint().1, Some(3));", "related test tests/size_hints.rs:4 combinations_inexact_size_hints uses strong exact value oracle: assert_eq!(it.size_hint().0, 3);", "related test tests/size_hints.rs:4 combinations_inexact_size_hints uses smoke only oracle: assert!(it.size_hint().1.is_some());", "related test tests/size_hints.rs:4 combinations_inexact_size_hints uses strong exact value oracle: assert_eq!(it.size_hint(), (3, Some(3)));", "related test tests/size_hints.rs:4 combinations_inexact_size_hints uses weak relational check oracle: assert!(it.size_hint().1 == Some(3));", "source assertion argument value 3 at line 6", "source assertion argument value 3 at line 7", "source assertion argument value 3 at line 9"],
+      "evidence_path": ["reach weak: No test is seen calling size_hint; tests share only its file or a name token: combinations_inexact_size_hints", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: (0, Some(self.remaining))", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: (0, Some(self.remaining)) (line 22)", "related test tests/size_hints.rs:4 combinations_inexact_size_hints uses strong exact value oracle: assert_eq!(it.size_hint().1, Some(3));", "related test tests/size_hints.rs:4 combinations_inexact_size_hints uses strong exact value oracle: assert_eq!(it.size_hint().0, 3);", "related test tests/size_hints.rs:4 combinations_inexact_size_hints uses smoke only oracle: assert!(it.size_hint().1.is_some());", "related test tests/size_hints.rs:4 combinations_inexact_size_hints uses strong exact value oracle: assert_eq!(it.size_hint(), (3, Some(3)));", "related test tests/size_hints.rs:4 combinations_inexact_size_hints uses weak relational check oracle: assert!(it.size_hint().1 == Some(3));", "source assertion argument value 3 at line 6", "source assertion argument value 3 at line 7", "source assertion argument value 3 at line 9"],
       "flow_sinks": [
         {"kind":"return_value","text":"(0, Some(self.remaining))","line":22}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: (0, Some(self.remaining))", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No test is seen calling size_hint; tests share only its file or a name token: combinations_inexact_size_hints", "Reachable tests can plausibly activate this changed behavior"],
-      "missing": ["No strong discriminator was detected"],
+      "evidence": ["Complete propagation witness reaches returned value: (0, Some(self.remaining))", "No assertion found on related tests", "No test is seen calling size_hint; tests share only its file or a name token: combinations_inexact_size_hints", "Reachable tests can plausibly activate this changed behavior", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
+      "missing": ["No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
       "assertion_texts": {
         "6": "assert_eq!(it.size_hint().1, Some(3));",
         "7": "assert_eq!(it.size_hint().0, 3);",
@@ -103,8 +103,8 @@
           "oracle": "assert_eq!(it.size_hint().1, Some(3));",
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "combinations_inexact_size_hints",
@@ -115,8 +115,8 @@
           "oracle": "assert_eq!(it.size_hint().0, 3);",
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "combinations_inexact_size_hints",
@@ -127,8 +127,8 @@
           "oracle": "assert!(it.size_hint().1.is_some());",
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
-          "miss": "weak_assertion",
-          "why": "assertion too weak to tell the old behavior from the new"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "combinations_inexact_size_hints",
@@ -139,8 +139,8 @@
           "oracle": "assert_eq!(it.size_hint(), (3, Some(3)));",
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         },
         {
           "name": "combinations_inexact_size_hints",
@@ -151,8 +151,8 @@
           "oracle": "assert!(it.size_hint().1 == Some(3));",
           "relation_reason": "weak_token_substring",
           "relation_confidence": "low",
-          "miss": "weak_assertion",
-          "why": "assertion too weak to tell the old behavior from the new"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         }
       ],
       "stop_reasons": [],

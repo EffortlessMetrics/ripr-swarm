@@ -26,29 +26,44 @@ pub(crate) mod index_build_probe {
     }
 }
 mod doctests;
+mod execution_context;
 pub(crate) use build::CachedRustIndex;
 use build::MissAttribution;
 #[cfg(test)]
 pub(crate) use build::streamed_source_bytes;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
 pub(crate) use doctests::SYNTHETIC_NAME as DOCTEST_FUNCTION_NAME;
+pub(crate) use execution_context::ExecutionContext;
 pub(crate) mod cfg_predicates;
 pub(crate) mod drop_in;
 mod harness_registry;
 mod includes;
 mod index;
+mod local_test_alias;
 mod macro_generated_tests;
+pub(crate) mod macro_visibility;
 
 /// The index builder's macro-generated test registration, for fixtures that
 /// assemble an index by hand.
 #[cfg(test)]
 pub(crate) fn register_macro_generated_tests_for_test(index: &mut model::RustIndex) {
-    macro_generated_tests::register_macro_generated_tests(index);
+    // Fixtures install no cancellation token, so the registration cannot
+    // abort here.
+    let _ = macro_generated_tests::register_macro_generated_tests(index);
 }
 pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
+mod proptest;
+#[cfg(test)]
+mod proptest_tests;
 mod role_composition;
+mod stray_files;
+
+#[cfg(test)]
+pub(crate) fn compose_fixture_source_roles(index: &mut RustIndex, root: &Path) {
+    role_composition::compose_index_source_roles(index, root);
+}
 mod test_helpers;
 mod test_styles;
 pub(crate) use test_styles::BUILT_IN_TEST_ATTRIBUTE_PATHS;
@@ -68,6 +83,8 @@ pub(crate) fn normalize_reconstructed_source_roles(
     parameterized_tests::promote_explicit_test_case_functions(index);
     index.refresh_memberships()?;
     test_styles::normalize_index_test_styles(index)?;
+    index.refresh_memberships()?;
+    proptest::register_proptest_tests(index, root)?;
     index.refresh_memberships()?;
     harness_registry::apply_registrations(index, root, registrations);
     index.finalize()
@@ -99,7 +116,11 @@ pub fn build_index_with_test_harnesses(
     // bounded shape. After the style normalizer, which rebuilds
     // tests from parsed functions and has none for a generated test.
     index_phase("index_macro_generated_tests", || {
-        macro_generated_tests::register_macro_generated_tests(&mut index);
+        macro_generated_tests::register_macro_generated_tests(&mut index)?;
+        index.refresh_memberships()
+    })?;
+    index_phase("index_proptest_tests", || {
+        proptest::register_proptest_tests(&mut index, root)?;
         index.refresh_memberships()
     })?;
     // Composition runs strictly after the normalizer: the normalizer
@@ -187,6 +208,26 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
     files: &[(PathBuf, Vec<u8>)],
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
+    // Provider, target and runner configuration can change with unchanged
+    // Rust bytes. Rebuild the post-parse authority from cached raw facts; do
+    // not reuse a formerly admitted or formerly refused property generation.
+    if !cached.index.proptest_receipts.is_empty()
+        || cached.index.files().iter().any(|(_, file)| {
+            file.unresolved_property_macros.iter().any(|property| {
+                matches!(
+                    property.name.as_str(),
+                    "proptest::proptest" | "::proptest::proptest"
+                )
+            })
+        })
+    {
+        return build_cached_index_with_test_harnesses(
+            root,
+            files,
+            registrations,
+            MissAttribution::Skipped,
+        );
+    }
     let kept: std::collections::BTreeSet<&Path> =
         files.iter().map(|(path, _)| path.as_path()).collect();
     let mut extras: Vec<(PathBuf, Vec<u8>)> = Vec::new();
@@ -320,7 +361,11 @@ fn post_process_cached_index(
     // bounded shape. After the style normalizer, which rebuilds
     // tests from parsed functions and has none for a generated test.
     index_phase("index_macro_generated_tests", || {
-        macro_generated_tests::register_macro_generated_tests(&mut cached.index);
+        macro_generated_tests::register_macro_generated_tests(&mut cached.index)?;
+        cached.index.refresh_memberships()
+    })?;
+    index_phase("index_proptest_tests", || {
+        proptest::register_proptest_tests(&mut cached.index, root)?;
         cached.index.refresh_memberships()
     })?;
     index_phase("index_role_composition", || {
@@ -374,6 +419,7 @@ pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses(
 // by every role surface (diff seeding, seam inventory, LSP scope) so a
 // misdeclared registration degrades identically everywhere.
 pub(crate) use harness_registry::validated_file_wide_harness_targets;
+pub(crate) use test_helpers::expanded_assertion_view;
 pub(crate) use test_styles::attributes_define_test;
 
 // Keep compilation-unit rebasing available at the facts facade for index consumers.

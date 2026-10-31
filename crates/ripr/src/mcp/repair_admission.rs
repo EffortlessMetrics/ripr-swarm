@@ -41,6 +41,10 @@ pub(crate) const SEAM_NOT_FOUND: &str = "seam_not_found";
 /// could not be established. The CLI errors before resolving any item in
 /// that state, so no item may be repair-ready (#9108).
 pub(crate) const SEAM_INVENTORY_TRUNCATED: &str = "seam_inventory_truncated";
+/// #7357: a saved tracked-worktree snapshot carries no consumed-source
+/// commitment spanning its findings and the live seam inventory, so repair
+/// readiness is refused rather than claimed current.
+pub(crate) const SEAM_WORKTREE_SOURCE: &str = "worktree_source_not_committed";
 
 /// Whether the repo-wide seam inventory that `ripr repair` resolves against
 /// is complete. The MCP admission resolves over a diff-scoped inventory that
@@ -75,7 +79,7 @@ impl InventoryCompleteness {
         }
     }
 
-    fn refusal_detail(&self) -> Option<String> {
+    pub(crate) fn refusal_detail(&self) -> Option<String> {
         match self {
             Self::Complete => None,
             Self::Truncated { analyzed, total } => Some(format!(
@@ -122,6 +126,29 @@ impl SeamAdmission {
         Self::default()
     }
 
+    /// Refuse every finding with one typed reason without consulting any
+    /// seam inventory (#7357): a saved tracked-worktree snapshot whose source
+    /// custody was not established cannot trust its inventory, so no verdict
+    /// is derived from it.
+    pub(crate) fn withheld(findings: &[Finding], code: &'static str, detail: &str) -> Self {
+        let by_finding = findings
+            .iter()
+            .map(|finding| {
+                (
+                    finding.id.clone(),
+                    SeamVerdict::Refused {
+                        code,
+                        detail: detail.to_string(),
+                    },
+                )
+            })
+            .collect();
+        Self {
+            evaluated: true,
+            by_finding,
+        }
+    }
+
     /// Run the shared repair-subject resolver for every finding over the
     /// refresh's classified seam inventory.
     pub(crate) fn evaluate(
@@ -142,8 +169,12 @@ impl SeamAdmission {
                         detail: detail.clone(),
                     },
                     None => verdict_for(
-                        resolve_repair_subject_in(candidate_seams, policy, &finding.id),
+                        // The server's verdicts are consumed relative to its
+                        // own workspace root, so no `--root` is worded into an
+                        // emitted next command here.
+                        resolve_repair_subject_in(candidate_seams, policy, &finding.id, None),
                         candidate_seams,
+                        &finding.id,
                     ),
                 };
                 (finding.id.clone(), verdict)
@@ -195,7 +226,11 @@ fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) -> SeamVerd
     }
 }
 
-fn verdict_for(outcome: RepairSubjectOutcome, candidate_seams: &[ClassifiedSeam]) -> SeamVerdict {
+fn verdict_for(
+    outcome: RepairSubjectOutcome,
+    candidate_seams: &[ClassifiedSeam],
+    item: &str,
+) -> SeamVerdict {
     match outcome {
         RepairSubjectOutcome::Seam(seam_id) => inline_verdict(&seam_id, candidate_seams),
         RepairSubjectOutcome::Ineligible {
@@ -218,9 +253,16 @@ fn verdict_for(outcome: RepairSubjectOutcome, candidate_seams: &[ClassifiedSeam]
                 seam_ids.len()
             ),
         },
+        // #10718: the CLI's own words for an item that names no seam, so a
+        // listed item that the inventory cannot resolve (a Python finding:
+        // the seam inventory covers Rust files only) is refused with the same
+        // cause on both surfaces instead of a bare "no classified seam".
         RepairSubjectOutcome::Unknown => SeamVerdict::Refused {
             code: SEAM_NOT_FOUND,
-            detail: "the shared repair gate (`ripr repair`) resolves this item to no classified seam in the snapshot's seam inventory".to_string(),
+            detail: format!(
+                "the shared repair gate (`ripr repair`) refuses this item: {}",
+                crate::app::task_first::unknown_repair_item_reason(None, item)
+            ),
         },
     }
 }

@@ -181,7 +181,10 @@ fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
 }
 
 fn print_help() {
-    println!("{PR_SUMMARY_HELP}");
+    println!(
+        "{}",
+        crate::cli::help::render_command_help(PR_SUMMARY_HELP, &[])
+    );
 }
 
 /// Help body for `ripr pr-summary`. Also the flag source for unknown-argument

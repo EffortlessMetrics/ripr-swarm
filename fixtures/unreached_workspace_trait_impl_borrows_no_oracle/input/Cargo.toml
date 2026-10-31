@@ -1,0 +1,8 @@
+[package]
+name = "unreached_workspace_trait_impl_borrows_no_oracle_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "unreached_workspace_trait_impl_borrows_no_oracle_fixture"
+path = "src/lib.rs"

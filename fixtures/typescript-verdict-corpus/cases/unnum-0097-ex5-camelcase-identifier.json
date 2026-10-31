@@ -1,0 +1,47 @@
+{
+  "case_id": "unnum-0097-ex5-camelcase-identifier",
+  "subject_id": "authored-ts-vitest-unnum",
+  "diff": "cases/unnum-0097-ex5-camelcase-identifier.diff",
+  "anchor": {
+    "file": "src/parserIdent.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_message",
+  "test_shape": "vitest_tothrow_camelcase_identifier",
+  "hard_case": "`toThrow(message)` passes a camelCase identifier, which could be a class or a variable; here it is a loose regular expression",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "throw new Error(\"no user\");",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the edit changes the owner's observable behavior"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The test declares `const message = /user/` and asserts `toThrow(message)`. The pattern matches any message that mentions the user, so the new message \"no user\" passes. RIPR-SPEC-0097 example 5 (must stay `weakly_exposed`): ripr cannot tell that `message` is a class rather than a variable, and here the weak reading is also the true one.",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0097#5"
+  ]
+}

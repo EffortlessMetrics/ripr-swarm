@@ -410,10 +410,11 @@ pub(crate) fn probe_work_tree_root(root: &Path) -> Result<WorkTreeRootProbe, Str
 ///
 /// `Ok(true)` means the enclosing repository ships at least one file there.
 /// `Ok(false)` means no tracked file, or no Git work tree to ship one: a
-/// directory outside any repository, or Git missing from `PATH`, which cannot
-/// be told apart from an extracted archive. `Err` is every other outcome
-/// (dubious ownership, a damaged repository, a deadline, output past the
-/// cap): the caller cannot establish the answer and must not assume `false`.
+/// directory outside any repository, or Git missing from `PATH` with no
+/// validated `.git` marker above it, as in an extracted archive. `Err` is
+/// every other outcome (dubious ownership, a damaged repository, a deadline,
+/// output past the cap, or Git missing inside a marked work tree): the
+/// caller cannot establish the answer and must not assume `false`.
 ///
 /// Answers for the repository containing `dir` itself, not an inherited
 /// `GIT_DIR`, so a hook or wrapper cannot point the probe elsewhere.
@@ -435,7 +436,21 @@ pub(crate) fn tracked_files_under(dir: &Path) -> Result<bool, String> {
         &describe,
     ) {
         Ok(output) => output,
-        Err(error) if is_git_not_found_on_path(&error.to_string()) => return Ok(false),
+        Err(error) if is_git_not_found_on_path(&error.to_string()) => {
+            // Git is missing, so the index cannot be consulted. A validated
+            // `.git` marker above `dir` is still repository evidence: refuse
+            // rather than admit a possibly repository-shipped cache. Plain
+            // directories and extracted archives carry no marker and keep
+            // the warm path (#7780).
+            if git_marker_above(dir).is_some() {
+                return Err(format!(
+                    "git is unavailable and {} lies inside a Git work tree, \
+                     so tracked files under it cannot be ruled out",
+                    dir.display()
+                ));
+            }
+            return Ok(false);
+        }
         Err(error) => return Err(error.to_string()),
     };
     if output.status.success() {
@@ -449,6 +464,134 @@ pub(crate) fn tracked_files_under(dir: &Path) -> Result<bool, String> {
         "{describe} failed: {}",
         stderr.lines().next().unwrap_or("no diagnostic").trim()
     ))
+}
+
+/// Nearest validated `.git` marker at or above `dir`, without running Git.
+///
+/// A directory named `.git` is a marker. A regular file named `.git` is a
+/// marker only when it is a gitfile (`gitdir: <path>`), as linked worktrees
+/// and submodules write; a stray file of that name is not authority. Used
+/// only when the git binary itself is missing: presence proves a work tree
+/// exists, never that any particular file is tracked, so callers must fail
+/// closed rather than treat it as a tracked-file answer.
+fn git_marker_above(dir: &Path) -> Option<PathBuf> {
+    // Resolve symlinks first: a cache dir linked into a work tree carries
+    // the tree's marker only on its canonical path, not its lexical one.
+    let canonical;
+    let start: &Path = match std::fs::canonicalize(dir) {
+        Ok(path) => {
+            canonical = path;
+            &canonical
+        }
+        Err(_) => dir,
+    };
+    for ancestor in start.ancestors() {
+        let marker = ancestor.join(".git");
+        if marker.is_dir() {
+            return Some(marker);
+        }
+        if marker.is_file()
+            && std::fs::read_to_string(&marker).is_ok_and(|text| text.starts_with("gitdir:"))
+        {
+            return Some(marker);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod missing_git_marker_tests {
+    use super::git_marker_above;
+    use std::path::PathBuf;
+
+    fn scratch(label: &str) -> PathBuf {
+        let name = format!("ripr-missing-git-{label}-{}", std::process::id());
+        let temp = std::env::temp_dir();
+        let candidate = temp.join(&name);
+        if candidate
+            .parent()
+            .is_none_or(|parent| git_marker_above(parent).is_none())
+        {
+            let _ = std::fs::remove_dir_all(&candidate);
+            return candidate;
+        }
+        // The test harness can redirect the temp dir inside a work tree
+        // (this repo's `target/`), where the enclosing marker would defeat
+        // the no-marker cases. Move the scratch beside that work tree: the
+        // first ancestor carrying no marker above it.
+        for ancestor in temp.ancestors() {
+            if git_marker_above(ancestor).is_none() {
+                let dir = ancestor.join(&name);
+                let _ = std::fs::remove_dir_all(&dir);
+                return dir;
+            }
+        }
+        candidate
+    }
+
+    fn setup(label: &str, base_rel: &str) -> Result<(PathBuf, PathBuf), String> {
+        let root = scratch(label);
+        let base = root.join(base_rel);
+        std::fs::create_dir_all(&base)
+            .map_err(|err| format!("create scratch base {}: {err}", base.display()))?;
+        Ok((root, base))
+    }
+
+    #[test]
+    fn missing_git_dotgit_directory_above_base_is_a_marker() -> Result<(), String> {
+        let (root, base) = setup("dir-marker", "target/ripr/cache")?;
+        std::fs::create_dir_all(root.join(".git"))
+            .map_err(|err| format!("create .git marker: {err}"))?;
+        assert!(git_marker_above(&base).is_some());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_git_plain_directory_without_marker_stays_admitted() -> Result<(), String> {
+        // Extracted archives and exported trees have this shape.
+        let (root, base) = setup("plain", "cache")?;
+        assert!(git_marker_above(&base).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_git_gitfile_with_gitdir_prefix_is_a_marker() -> Result<(), String> {
+        // Linked worktrees and submodules: `.git` is a file.
+        let (root, base) = setup("gitfile", "cache")?;
+        std::fs::write(root.join(".git"), "gitdir: /elsewhere/.git/worktrees/w\n")
+            .map_err(|err| format!("write gitfile: {err}"))?;
+        assert!(git_marker_above(&base).is_some());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_git_stray_dotgit_file_is_not_authority() -> Result<(), String> {
+        let (root, base) = setup("stray", "cache")?;
+        std::fs::write(root.join(".git"), "not a gitfile\n")
+            .map_err(|err| format!("write stray .git: {err}"))?;
+        assert!(git_marker_above(&base).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_git_symlinked_base_resolves_to_marked_tree() -> Result<(), String> {
+        // A cache dir linked into a work tree: the marker exists only on
+        // the canonical path, so the lexical walk must not miss it.
+        let (root, _base) = setup("symlink", "tree/cache")?;
+        std::fs::create_dir_all(root.join(".git"))
+            .map_err(|err| format!("create .git marker: {err}"))?;
+        let link = root.join("link");
+        std::os::unix::fs::symlink(root.join("tree"), &link)
+            .map_err(|err| format!("link cache base: {err}"))?;
+        assert!(git_marker_above(&link.join("cache")).is_some());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
 }
 
 fn work_tree_root_probe_error(error: CoreError) -> String {
@@ -600,6 +743,21 @@ pub(crate) fn run_git_output_with_optional_deadline_and_limit(
     )
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_PROCESS_SPAWNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Successful subprocess spawns through this module's deadline-limited output
+/// collectors (`collect_output_with_optional_deadline_and_limit` and
+/// `collect_output_with_deadline`) on this test thread. The long-lived
+/// `CatFileBatch` session is not counted. Snapshots exclude concurrent tests
+/// without changing process-wide environment or Git behavior.
+#[cfg(test)]
+pub(crate) fn test_process_spawns() -> usize {
+    TEST_PROCESS_SPAWNS.with(std::cell::Cell::get)
+}
+
 fn collect_output_with_optional_deadline_and_limit(
     mut command: Command,
     timeout: Option<Duration>,
@@ -616,6 +774,8 @@ fn collect_output_with_optional_deadline_and_limit(
     let spawn_site = SpawnSite::of(&command);
     let mut child =
         OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
+    #[cfg(test)]
+    TEST_PROCESS_SPAWNS.with(|count| count.set(count.get() + 1));
     let stdout_reader = child
         .stdout_pipe()
         .take()
@@ -1208,6 +1368,8 @@ fn collect_output_with_deadline(
     let spawn_site = SpawnSite::of(&command);
     let mut child =
         OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
+    #[cfg(test)]
+    TEST_PROCESS_SPAWNS.with(|count| count.set(count.get() + 1));
     let stdout_reader = child.stdout_pipe().take().map(spawn_pipe_reader);
     let stderr_reader = child.stderr_pipe().take().map(spawn_pipe_reader);
 
@@ -1344,22 +1506,31 @@ fn terminate_then_classify(
     }
 }
 
+type PipeReader = (
+    std::thread::JoinHandle<()>,
+    mpsc::Receiver<Result<Vec<u8>, String>>,
+);
+
 /// Read one piped child stream to EOF on a helper thread so the poll loop
 /// never deadlocks against a full OS pipe buffer.
-fn spawn_pipe_reader(
-    mut pipe: impl std::io::Read + Send + 'static,
-) -> (std::thread::JoinHandle<()>, mpsc::Receiver<Vec<u8>>) {
+fn spawn_pipe_reader(mut pipe: impl std::io::Read + Send + 'static) -> PipeReader {
     let (sender, receiver) = mpsc::channel();
     let handle = std::thread::spawn(move || {
         let mut buffer = Vec::new();
-        let _ = pipe.read_to_end(&mut buffer);
-        let _ = sender.send(buffer);
+        // A read error after a valid prefix is not EOF (the bounded reader
+        // at spawn_bounded_pipe_reader keeps the same contract): forward it
+        // so the drain cannot present truncated output as complete.
+        let result = pipe
+            .read_to_end(&mut buffer)
+            .map(|_| buffer)
+            .map_err(|error| error.to_string());
+        let _ = sender.send(result);
     });
     (handle, receiver)
 }
 
 fn drain_pipe_reader(
-    reader: Option<(std::thread::JoinHandle<()>, mpsc::Receiver<Vec<u8>>)>,
+    reader: Option<PipeReader>,
     timed_out: bool,
     deadline: Option<Instant>,
     stream_name: &str,
@@ -1375,11 +1546,13 @@ fn drain_pipe_reader(
             .map_err(|_receive_error| mpsc::RecvTimeoutError::Disconnected),
     };
     match received {
-        Ok(buffer) => {
+        Ok(result) => {
             handle.join().map_err(|_panic_payload| {
                 format!("{stream_name} pipe reader panicked while collecting {describe}")
             })?;
-            Ok(buffer)
+            result.map_err(|error| {
+                format!("failed while reading {stream_name} from {describe}: {error}")
+            })
         }
         Err(mpsc::RecvTimeoutError::Timeout) if timed_out => {
             // The process was already terminated and reaped. Dropping the
@@ -2534,6 +2707,34 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
 
         let reader = spawn_bounded_pipe_reader(PrefixThenError { emitted: false }, 1_024);
         let error = drain_bounded_pipe_reader(Some(reader), false, None, "stdout", "error-test")
+            .err()
+            .ok_or_else(|| "pipe read error was accepted as EOF".to_string())?;
+        if !error.contains("injected pipe failure") {
+            return Err(format!("unexpected pipe read error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unbounded_pipe_reader_propagates_error_after_valid_prefix() -> Result<(), String> {
+        struct PrefixThenError {
+            emitted: bool,
+        }
+
+        impl std::io::Read for PrefixThenError {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.emitted {
+                    return Err(std::io::Error::other("injected pipe failure"));
+                }
+                self.emitted = true;
+                let prefix = b"complete\0";
+                buffer[..prefix.len()].copy_from_slice(prefix);
+                Ok(prefix.len())
+            }
+        }
+
+        let reader = spawn_pipe_reader(PrefixThenError { emitted: false });
+        let error = drain_pipe_reader(Some(reader), false, None, "stdout", "error-test")
             .err()
             .ok_or_else(|| "pipe read error was accepted as EOF".to_string())?;
         if !error.contains("injected pipe failure") {

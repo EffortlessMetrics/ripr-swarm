@@ -51,7 +51,7 @@ Policy impact:
 
 RIPR already ships a TypeScript adapter. It is **not** greenfield and it is
 **not** a regex pile: it is built on the `oxc` AST (`oxc_parser` / `oxc_ast`
-/ `oxc_span`, gated behind the `lang-typescript` feature, blessed by ADR
+/ `oxc_span` / `oxc_ast_visit`, gated behind the `lang-typescript` feature, blessed by ADR
 0008), and it already performs *preview-grade* test discovery, oracle
 extraction (`toBe` / `toEqual` / `toThrow` / `rejects.toThrow`), owner and
 related-test inference, a Bun cross-language bridge, static limits, and
@@ -118,6 +118,17 @@ order. More than eight refusals add one summary with the true total in
 summary with `affected_items: 12`. The limited outcome remains explicit and
 recovery names the configured read caps. This bounds emitted entries without
 changing read admission, cap defaults, or TypeScript's support tier (#7868).
+
+### Diff with no analyzable file
+
+A diff whose changed files include no TypeScript or JavaScript file the adapter
+would analyze (accepted extension, not generated, not under an excluded
+directory unless declared hand-written) and no Rust file a Bun bridge profile
+reads against the TypeScript tests does not index the workspace. The adapter
+returns the empty complete result: no findings, no changed-file count and none
+of the workspace-wide limitations above (read caps, discovery cap, skipped
+links), because those describe files the diff never consulted. Any diff that
+does include such a file reads the workspace as before (#10931).
 
 ### Reality baseline (what already exists)
 
@@ -231,7 +242,7 @@ t.notEqual / t.notStrictEqual       -> relational_check (weak)   # tape / node:t
 t.deepEqual                         -> exact_value (strong)      # shared
 t.notDeepEqual                      -> relational_check (weak)   # shared
 t.truthy / t.falsy / t.pass / t.fail / t.assert / t.ok / t.notOk -> smoke_only (smoke)
-t.throws / t.throwsAsync / t.notThrows / t.notThrowsAsync -> broad_error (weak)
+t.throws / t.throwsAsync / t.notThrows / t.notThrowsAsync -> broad_error (weak)  # except RIPR-SPEC-0243 rule 10 (AVA message object)
 t.regex / t.notRegex / t.like / t.notLike -> relational_check (weak)
 <any other t.method>                -> not an oracle (fail-closed)
 ```
@@ -411,6 +422,9 @@ PR 13 reports          TypeScript limitation leaderboard + route-quality slice
 - `typescript_limitation_leaderboard_reports` — `ripr reports ts-limitations`
   can aggregate existing check-output limitation evidence by kind without
   rerunning analysis or promoting TypeScript/JavaScript preview authority.
+  A findings-bounded input must disclose incomplete counts and rankings in
+  both report formats, retain the supplied findings as its denominator, and
+  name `RIPR_CHECK_FINDINGS_BYTES=0` as the full-document recovery route.
 - `language_adapter_typescript_false_actionable_audit` — the checked
   TypeScript-family preview false-actionable audit corpus and the dogfood/report
   projections track whether rows that must remain non-actionable accidentally

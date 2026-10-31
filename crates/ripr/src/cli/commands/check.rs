@@ -75,7 +75,7 @@ fn validate_repo_scope_diff_inputs(
     } else {
         Err(crate::core_error::CoreError::base_unresolvable(format!(
             "check: base revision {base:?} does not resolve to a commit in {}",
-            input.root.display()
+            crate::output::path::human_path(&input.root)
         )))
     }
 }
@@ -671,6 +671,7 @@ fn check_inner(
     // diff (`<base>...HEAD`) even when the working tree is dirty. Without it
     // or `--worktree`, a dirty tree is analyzed as a working tree.
     let mut committed_explicitly_provided = false;
+    let mut legend_requested = false;
     // #4535: the output selection that argv made, spelled as the user wrote
     // it, so a second selection that disagrees is refused by name instead of
     // silently winning.
@@ -737,6 +738,8 @@ fn check_inner(
                 scope_explicitly_provided = true;
                 worktree_explicitly_provided = true;
             }
+            // #10481: print the Evidence legend even after the first run.
+            "--legend" => legend_requested = true,
             "--committed" => {
                 // Not a scope provider: it picks how the default or explicit
                 // base is diffed, not what the base is.
@@ -1553,7 +1556,10 @@ fn check_inner(
                         input.base.clone(),
                         &config,
                     )?
-                    .with_rust_corpus_key(report.corpus_key.as_ref());
+                    .with_rust_inventory(
+                        report.corpus_key.as_ref(),
+                        &report.analyzed_production_files,
+                    );
                 analysis::cancellation::begin_cli_publication()?;
                 let stdout = std::io::stdout();
                 let mut handle = stdout.lock();
@@ -1846,8 +1852,9 @@ fn check_inner(
     let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
         // #8547: both routes read seams of the selected finding's file
         // (the repair route adds its related-test evidence files); they
-        // share one bounded seam index built once for this invocation,
-        // repair first so its wider file set covers the stub route's.
+        // share a bounded seam index, repair first. Selected and listed
+        // hidden stub subjects reuse covered files; an uncovered file may
+        // replace the index. Hidden work is bounded by the displayed window.
         let mut seam_index = None;
         let repair_route = crate::app::task_first::check_repair_route(
             &limited_check_input.root,
@@ -1855,14 +1862,14 @@ fn check_inner(
             &output,
             &mut seam_index,
         );
-        let stub_route = app::test_stub::check_stub_route(
+        let stub_routes = app::test_stub::check_stub_routes(
             &limited_check_input.root,
             &config,
             &output,
             &mut seam_index,
         );
         navigation
-            .with_stub_route(stub_route)
+            .with_stub_routes(stub_routes)
             // #8166 Slice C: the repair line reuses the producer-owned
             // admission gate over the live seam inventory, for the same
             // live-files reason as the stub route above. Other formats
@@ -1942,26 +1949,25 @@ fn check_inner(
         }
         return Ok(());
     }
-    write_stdout_chunked(
-        &app::render_check_with_config_and_navigation_and_progress(
-            &output,
-            &format,
-            &config,
-            Some(&drill_in),
-            progress_sink,
-            provenance,
-        )
-        .map_err(|err| {
-            super::check_fanout::refuse(
-                super::check_fanout::refusal_destination(
-                    fanout_custody.as_ref(),
-                    output_dir.as_deref(),
-                ),
-                &envelope_input,
-                effective_format,
-                err,
-            )
-        })?,
+    // #10481: the ten-line Evidence legend explains the digest to a first-time
+    // reader; later runs keep one pointer line. "Seen" is a marker beside the
+    // reports, so a clean build tree sees the legend again.
+    let legend_marker = matches!(format, OutputFormat::Human)
+        .then(|| human_legend_marker(&limited_check_input.root))
+        .flatten();
+    let legend_seen = legend_marker
+        .as_ref()
+        .is_some_and(|marker| marker.is_file());
+    if legend_seen && !legend_requested {
+        config.reports.human_legend = crate::config::HumanLegend::Pointer;
+    }
+    let rendered = app::render_check_with_config_and_navigation_and_progress(
+        &output,
+        &format,
+        &config,
+        Some(&drill_in),
+        progress_sink,
+        provenance,
     )
     .map_err(|err| {
         super::check_fanout::refuse(
@@ -1974,6 +1980,28 @@ fn check_inner(
             err,
         )
     })?;
+    write_stdout_chunked(&rendered).map_err(|err| {
+        super::check_fanout::refuse(
+            super::check_fanout::refusal_destination(
+                fanout_custody.as_ref(),
+                output_dir.as_deref(),
+            ),
+            &envelope_input,
+            effective_format,
+            err,
+        )
+    })?;
+    // Record only a legend that was actually printed: a root whose name echoes
+    // a legend line must not count, so match the renderer's whole block.
+    // An explicit `--legend` is a lookup, not a first run: it must not write
+    // state, which also keeps pinned fixture workspaces free of `target/`.
+    if !legend_seen
+        && !legend_requested
+        && rendered.contains(crate::output::human::HUMAN_EVIDENCE_LEGEND)
+        && let Some(marker) = legend_marker.as_ref()
+    {
+        record_human_legend_seen(&limited_check_input.root, marker);
+    }
     // The producer's unsupported result is already on stdout. Keep that
     // report, including retained findings and coverage identity; appending a
     // refusal here would corrupt machine output. Genuine partial reports
@@ -1985,6 +2013,21 @@ fn check_inner(
         sink.commit_success();
     }
     Ok(())
+}
+
+/// Where `check` records that the Evidence legend was shown. `None` when the
+/// workspace output tree is not safe to write (a link resolving outside it).
+fn human_legend_marker(root: &Path) -> Option<PathBuf> {
+    crate::atomic_file::ensure_report_output_contained(root).ok()?;
+    Some(root.join("target/ripr/legend-seen"))
+}
+
+/// Best effort: a read-only tree just shows the legend again.
+fn record_human_legend_seen(root: &Path, marker: &Path) {
+    if crate::atomic_file::ensure_report_output_contained(root).is_err() {
+        return;
+    }
+    let _ = crate::atomic_file::write(marker, b"1\n", "legend marker");
 }
 
 /// The stderr warning for an empty default-base result when the default base
@@ -2101,7 +2144,43 @@ fn render_check_gap_ledger_badge(
     }
 }
 
+/// The diff-scoped check run behind a gap-bound repair start (#9103,
+/// RIPR-SPEC-0311): the analyzed output, whose findings the gap id resolves
+/// against, and its `check-findings-json` rendering.
+pub(super) struct GapCheckSnapshot {
+    pub(super) output: app::CheckOutput,
+    pub(super) rendered: String,
+}
+
+/// Run the same diff-scoped analysis `ripr check --base <base>` runs for the
+/// default human report (the live diff source selection included) and render
+/// it through the same `check-findings-json` producer `ripr check --format
+/// check-findings-json` uses, so the before snapshot of a gap-bound attempt
+/// is byte-comparable with the artifact `ripr agent verify --gap-id` reads.
+pub(super) fn gap_check_findings_snapshot(
+    root: &Path,
+    base: &str,
+) -> Result<GapCheckSnapshot, String> {
+    let config = load_for_root(root).map_err(|error| config_load_refusal(root, error))?;
+    let output = app::gap_bound_repair::default_check_output(root, Some(base), &config)?;
+    let rendered = output::render::render_check_with_config_and_progress(
+        &output,
+        &OutputFormat::CheckFindingsJson,
+        &config,
+        None,
+    )?;
+    Ok(GapCheckSnapshot { output, rendered })
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "check_argv_refusal_tests.rs"]
+mod argv_refusal_tests;
+
+#[cfg(test)]
+#[path = "check_gap_ledger_legend_tests.rs"]
+mod gap_ledger_legend_tests;
 
 #[cfg(test)]
 mod candidate_tree_tests {

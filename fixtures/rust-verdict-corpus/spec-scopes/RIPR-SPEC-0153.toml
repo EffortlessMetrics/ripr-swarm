@@ -1,0 +1,6 @@
+id = "RIPR-SPEC-0153"
+scope = "in"
+
+[[waived]]
+example = 8
+reason = "the example asserts that the criterion_main! runner invocation is harness plumbing, not a production obligation. Verdict rows label changed behavior using named runtime-test outcomes; mutating the runner registration does not label that no-obligation classification. Executable bench-helper edits are measured separately. diff_analysis_treats_cargo_benches_as_evidence_not_production directly pins the macro/probe boundary"

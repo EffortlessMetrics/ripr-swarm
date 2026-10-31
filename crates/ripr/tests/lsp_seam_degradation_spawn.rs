@@ -911,9 +911,13 @@ fn spawned_server_with_invalid_seam_limit_degrades_seam_inventory_through_produc
     }
     completed_seam_identity(status)?;
     let recovery = seam["recovery"].as_str().unwrap_or("");
-    if !recovery.contains("ripr.refreshDiagnostics") {
+    // #9895: this session advertises no `riprEditor` block, so the recovery
+    // is the server-executed route and never the VS Code-only palette command.
+    if !recovery.contains("ripr.refresh (workspace/executeCommand)")
+        || recovery.contains("refreshDiagnostics")
+    {
         return Err(format!(
-            "the degraded outcome must name a concrete recovery route: {seam}"
+            "the degraded outcome must name a client-appropriate recovery route: {seam}"
         ));
     }
     // The outcome message must name the forcing variable and value: a
@@ -1056,4 +1060,146 @@ fn spawned_server_saved_edit_refresh_changes_identity_and_retires_obsolete_findi
     reject_substituted_seam_identities(status)?;
     require_retired_lib_findings(&lib_uri, &after)?;
     shutdown_exit_and_wait(&mut session)
+}
+
+/// Recovery text must name an actually negotiated client command (#9895).
+/// A version-only profile can parse successfully while supporting no command.
+#[test]
+fn spawned_server_refresh_recovery_requires_negotiated_command() -> Result<(), String> {
+    let fixture = seeded_git_fixture_root("refresh-capability-negotiation")?;
+    let root_uri = file_uri_for_fixture(&fixture.path)?;
+    let server_recovery = "retry ripr.refresh (workspace/executeCommand)";
+    let editor_recovery = "retry ripr.refreshDiagnostics";
+    let cases = [
+        ("absent", serde_json::json!({}), server_recovery),
+        (
+            "empty",
+            serde_json::json!({"experimental":{"riprEditor":{}}}),
+            server_recovery,
+        ),
+        (
+            "null",
+            serde_json::json!({"experimental":{"riprEditor":null}}),
+            server_recovery,
+        ),
+        (
+            "scalar",
+            serde_json::json!({"experimental":{"riprEditor":"yes"}}),
+            server_recovery,
+        ),
+        (
+            "version_only",
+            serde_json::json!({"experimental":{"riprEditor":{"version":"0.11.0"}}}),
+            server_recovery,
+        ),
+        (
+            "empty_commands",
+            serde_json::json!({"experimental":{"riprEditor":{"version":"0.11.0","commands":[]}}}),
+            server_recovery,
+        ),
+        (
+            "unrelated_command",
+            serde_json::json!({"experimental":{"riprEditor":{"version":"0.11.0","commands":["ripr.copyContext"]}}}),
+            server_recovery,
+        ),
+        (
+            "malformed_commands",
+            serde_json::json!({"experimental":{"riprEditor":{"version":"0.11.0","commands":"yes"}}}),
+            server_recovery,
+        ),
+        (
+            "malformed_member",
+            serde_json::json!({"experimental":{"riprEditor":{"version":"0.11.0","commands":[42]}}}),
+            server_recovery,
+        ),
+        (
+            "explicit_refresh",
+            serde_json::json!({"experimental":{"riprEditor":{"version":"0.11.0","commands":["ripr.refreshDiagnostics"]}}}),
+            editor_recovery,
+        ),
+    ];
+    let mut mismatches = Vec::new();
+    for (label, capabilities, expected) in cases {
+        let mut session = SpawnSession::spawn(Some(INVALID_SEAM_LIMIT))?;
+        let initialize = session.request("initialize", serde_json::json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "initializationOptions": {"baseRef":"HEAD","checkMode":"instant","diagnosticProfile":"full"},
+            "capabilities": capabilities,
+        }))?;
+        let initialized = expect_result(&initialize, "initialize")?;
+        let commands = initialized["capabilities"]["executeCommandProvider"]["commands"]
+            .as_array()
+            .ok_or_else(|| format!("{label}: missing command registration"))?;
+        if !commands.contains(&serde_json::json!("ripr.refresh"))
+            || commands.contains(&serde_json::json!("ripr.refreshDiagnostics"))
+        {
+            return Err(format!(
+                "{label}: server/client command boundary changed: {commands:?}"
+            ));
+        }
+        session.notify("initialized", Some(serde_json::json!({})))?;
+        let (notifications, refresh) = collect_refresh(&mut session)?;
+        expect_result(&refresh, "ripr.refresh")?;
+        let statuses = analysis_status_params(&notifications);
+        let status = statuses
+            .last()
+            .ok_or_else(|| format!("{label}: no status"))?;
+        completed_seam_identity(status)?;
+        let seam = status["components"]
+            .as_array()
+            .and_then(|components| {
+                components
+                    .iter()
+                    .find(|outcome| outcome["component"] == "seam_inventory")
+            })
+            .ok_or_else(|| format!("{label}: no seam outcome"))?;
+        if status["run_status"] != "limited"
+            || seam["state"] != "failed"
+            || seam["kind"] != "seam_inventory_failed"
+        {
+            return Err(format!(
+                "{label}: forcing did not reach the production outcome: {seam}"
+            ));
+        }
+        let workspace = session.request(
+            "workspace/executeCommand",
+            serde_json::json!({
+                "command":"ripr.collectWorkspaceStatus", "arguments":[]
+            }),
+        )?;
+        let workspace = expect_result(&workspace, "ripr.collectWorkspaceStatus")?;
+        if workspace["analysis_status"]["components"] != status["components"] {
+            return Err(format!(
+                "{label}: embedded and pushed component status differ"
+            ));
+        }
+        let warnings = log_messages_of_type(&notifications, 2)
+            .into_iter()
+            .filter(|message| message.contains("seam_inventory failed"))
+            .collect::<Vec<_>>();
+        if seam["recovery"] != expected || warnings.len() != 1 || !warnings[0].contains(expected) {
+            mismatches.push(format!(
+                "{label}: expected {expected}; got {seam}; warnings {warnings:?}"
+            ));
+        }
+        let palette = session.request(
+            "workspace/executeCommand",
+            serde_json::json!({
+                "command":"ripr.refreshDiagnostics", "arguments":[]
+            }),
+        )?;
+        if palette["error"]["code"] != -32602 {
+            return Err(format!(
+                "{label}: client palette command became a server command: {palette}"
+            ));
+        }
+        let (_, retry) = collect_refresh(&mut session)?;
+        expect_result(&retry, "ripr.refresh after unsupported palette command")?;
+        shutdown_exit_and_wait(&mut session)?;
+    }
+    if !mismatches.is_empty() {
+        return Err(mismatches.join("\n"));
+    }
+    Ok(())
 }

@@ -3,12 +3,12 @@ mode: fast
 root: fixtures/typescript_probe_facts/input
 config: <cwd>/fixtures/typescript_probe_facts/input/ripr.toml
 
-Summary: 10 probes (0 exposed, 10 weak, 0 unrevealed, 0 no path); 10 of 10 findings unsuppressed
+Summary: 10 changed behaviors checked: 0 appear noticed by tests, 10 partly noticed, 0 reached but not noticed, 0 no test path. 10 found, 0 suppressed by your settings
 
 Changed file(s) by language: javascript = 2, typescript = 5
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 7 changed file(s), 20 changed line(s), 10 candidate line(s), 10 probe(s), 10 finding(s)
+  Counts: 7 changed file(s), 20 changed line(s), 10 candidate line(s), 10 changed behavior(s) checked, 10 finding(s)
 
 Start here:
   State: preview language, advisory only
@@ -17,12 +17,24 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: const total = applyDiscount(amount, threshold);
-  Missing discriminator: Only heuristic TypeScript test links were found for `summarize`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
+  Missing check: Only heuristic TypeScript test links were found for `summarize`; verify the
+    suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
   Related test: tests/ambiguous.test.ts:1 summarize smoke
   Next step — TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach weak: 1 related test(s) found for owner `summarize`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 4 more detail line(s) in --format human-full
@@ -30,19 +42,21 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_probe_facts/input --diff <cwd>/fixtures/typescript_probe_facts/diff.patch --mode fast probe:src_ambiguous.ts:typescript_preview:ba5968cd
   ripr context --root <cwd>/fixtures/typescript_probe_facts/input --diff <cwd>/fixtures/typescript_probe_facts/diff.patch --mode fast --at probe:src_ambiguous.ts:typescript_preview:ba5968cd
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_ambiguous.ts:typescript_preview:ba5968cd --root <cwd>/fixtures/typescript_probe_facts/input` for the full gate's answer
+  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   9 lower-priority finding(s) omitted from default human output (TypeScript preview: 7, JavaScript preview: 2).
-    - src/ambiguous.ts:5 (weak)
-    - src/errors.ts:3 (weak)
-    - src/notify.js:2 (weak)
-    - src/pricing.ts:2 (weak)
-    - src/pricing.ts:3 (weak)
-    - src/profile.ts:4 (weak)
-    - src/profile.ts:5 (weak)
-    - src/view.jsx:2 (weak)
-    - src/widget.tsx:4 (weak)
+    - src/ambiguous.ts:5 (weak); kind: side_effect; reason: Dynamic dispatch (trait objects or virtual calls) hides which implementation runs, so ripr cannot statically resolve whether a test reaches this change.
+    - src/errors.ts:3 (weak); kind: error_path; reason: Only heuristic TypeScript test links were found for `parseToken`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+    - src/notify.js:2 (weak); kind: side_effect; reason: Only heuristic TypeScript test links were found for `notify`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+    - src/pricing.ts:2 (weak); kind: predicate; reason: Only heuristic TypeScript test links were found for `discountedTotal`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+    - src/pricing.ts:3 (weak); kind: return_value; reason: Only heuristic TypeScript test links were found for `discountedTotal`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+    - src/profile.ts:4 (weak); kind: field_construction; reason: Only heuristic TypeScript test links were found for `updateProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+    - src/profile.ts:5 (weak); kind: side_effect; reason: Only heuristic TypeScript test links were found for `updateProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+    - src/view.jsx:2 (weak); kind: side_effect; reason: Only heuristic TypeScript test links were found for `StatusView`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+    - src/widget.tsx:4 (weak); kind: field_construction; reason: Only heuristic TypeScript test links were found for `PriceBadge`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+  Hidden classes:
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

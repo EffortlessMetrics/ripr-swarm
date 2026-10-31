@@ -70,7 +70,7 @@ packets use, emitting it into:
 - the JSON output (`typescript_repair_packet` alongside
   `typescript_preview_card`);
 - the LSP hover (a "Repair packet" section when `repair_packet_ready: true`);
-- the LSP code-action surface ("Copy TypeScript repair packet" command).
+- the LSP code-action surface ("Copy TypeScript repair instructions for an AI agent" command).
 
 For a **blocked** (non-actionable) finding the human output names the
 limitation and why the packet is not emitted — no partial packet, no implied
@@ -113,7 +113,7 @@ directly contradicts the complete packet. Specifically, when actionable:
   boundaries are available" text;
 - the `evidence needed:` line is omitted entirely (nothing is needed);
 - the `Next step` line drops the "; no actionable repair packet is emitted until
-  ... available" tail and confirms the packet is complete and delegatable.
+  ... available" tail and confirms the packet is complete and names `ripr context --at <finding-id>`; the seam-based `ripr repair` covers Rust files only (#10682).
 
 The blocked cases are unchanged: they keep `why not actionable`, `repair route`,
 and `evidence needed`. The JSON `preview_actionability` object keeps its stable
@@ -132,6 +132,12 @@ refs. It must not retain the blocked `gap_state: advisory`,
 `actionability_category: incomplete_repair_packet`, `why_not_actionable:`,
 `repair_route:`, `missing_actionability_fields:`, or non-empty
 `evidence_needed_to_promote:` lines for that packet-ready finding.
+
+The context packet's `missing` array uses the same validator-backed projection:
+when packet-ready, it omits the provisional preview packet-availability summary
+but retains actual missing discriminators and independent limitations. Blocked,
+unsupported, or stale-source findings retain their original missing entries.
+The projection does not infer a verdict from RIPR stage states or execute tests.
 
 ### Human output (explain + check human)
 
@@ -202,18 +208,18 @@ When `preview_actionability.repair_packet_ready == true`, the hover adds a
 `## Repair packet` section:
 
 ```markdown
-## Repair packet (TypeScript preview, advisory)
+## Repair instructions (TypeScript preview, advisory)
 Verify: `<verify_command>`
 Receipt: `<receipt_command>`
 Edit surface: `<test_file>`
 Must not change: <n items>
 Canonical gap: `<canonical_gap_id>`
-Authority: preview_advisory_only
+Authority: preview advisory only
 ```
 
 ### LSP code action
 
-A new code action `"Copy TypeScript repair packet"` is added when the
+A new code action `"Copy TypeScript repair instructions for an AI agent"` is added when the
 diagnostic's `data.preview_actionability.repair_packet_ready == true`. It
 copies the same verify/receipt/edit-surface payload to the clipboard (via the
 existing `COPY_CONTEXT_COMMAND` mechanism).
@@ -234,9 +240,9 @@ separate projection step. This is additive — the field already exists in
   verify, receipt, edit surface, must_not_change, canonical_gap_id, and authority.
 - At least one non-actionable golden (human.txt) with the named limitation section
   (`status: not actionable`, `limitation:`, `next capability needed:`).
-- LSP hover integration evidence: `## Repair packet (TypeScript preview, advisory)`
+- LSP hover integration evidence: `## Repair instructions (TypeScript preview, advisory)`
   section visible when `repair_packet_ready: true`.
-- LSP code-action evidence: "Copy TypeScript repair packet (advisory)" action present
+- LSP code-action evidence: "Copy TypeScript repair instructions for an AI agent (advisory)" action present
   when `repair_packet_ready: true`.
 - All four surfaces built from the same `GapRecord` returned by
   `typescript_gap_record_for` — no parallel projection.
@@ -351,6 +357,37 @@ fixtures/ts_repair_packet_complete   — complete contract (additive golden)
 fixtures/ts_static_limit             — named limitation (additive golden)
 fixtures/ts_no_verify_command        — named limitation (additive golden)
 ```
+
+## One recommended route and consistent card wording (#10709)
+
+For a Python or TypeScript preview gap whose packet the shared validator
+accepts, three surfaces agree on one recommended follow-through:
+
+- `ripr check` prints `Recommended follow-through (start the repair):` before
+  the gap-bound `ripr agent repair --gap-id ... --phase before` line, and its
+  `Safe next action` names that start (under `Next`) as the recommended route
+  with the by-hand test edit as the single alternative. When the start is
+  withheld (static limit, incomplete run, validator refusal), no route is
+  recommended and the by-hand `Safe next action` stands alone.
+- `ripr first-pr`'s top-gap `Safe next action` and
+  `selected.recommended_repair_command` name one command, built only when
+  the ledger record parses as a `GapRecord`, passes
+  `validate_agent_gap_record_packet` (which includes a current candidate),
+  has a canonical gap id no other record shares, and the ledger's recorded
+  analysis outcome is complete (the predicate `check` uses); otherwise the
+  field is absent. first-pr judges the ledger record and its recorded
+  outcome. It cannot see the working tree, and `check` may print the resolved
+  dirty origin as `--base` where first-pr prints its own, so the two can
+  differ in that one argument; the start itself still refuses a dirty tree.
+- A TypeScript preview card whose `repair_packet_ready` is `true` no longer
+  states "This card is advisory and is not a repair packet."; it says the card
+  is an advisory summary and the complete packet is projected separately. A
+  card whose packet is not ready keeps the original sentence.
+
+No new validator is introduced: `check` reads the existing
+`gap_repair_route_for` result and `first-pr` reads the shared validator and
+analysis-outcome predicate, and either one withholds the recommendation when
+its input is missing.
 
 ## Implementation Mapping
 

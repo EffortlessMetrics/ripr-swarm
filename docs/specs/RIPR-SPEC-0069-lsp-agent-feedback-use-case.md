@@ -88,6 +88,11 @@ explicit LSP diagnostic profile:
   refresh", never a hard failure);
 - `GapRecord` projections from validated gap artifacts.
 
+When stdin is a terminal rather than an editor pipe, `ripr lsp` writes a
+one-line stderr hint (it is a language server started by an editor; Ctrl-D
+exits) before serving. The hint never touches stdout, so the LSP stream is
+unchanged, and an unwritable stderr is ignored.
+
 The exposed command vocabulary is closed (`crates/ripr/src/lsp.rs`):
 
 - `ripr.copyContext`
@@ -131,6 +136,23 @@ The user should be able to answer:
    -> copyable verify command and receipt command.
 ```
 
+### Producer-owned finding coordinates
+
+Rust finding origins use captured analysis bytes, not a later filesystem read.
+Editor rows end at LF, CRLF or bare CR; the analyzer's recorded rows end at LF.
+For a file containing a standalone CR, a current parser anchor that matches the
+captured facts and expression bytes within its recorded analyzer row selects
+the expression's editor row. The origin stays coarse and zero-width in every
+encoding; numeric LSP projection renders that row's whole-line range. Exact
+standalone-CR columns are not admitted. LF/CRLF exact spans remain unchanged.
+
+Missing, stale, lexical-fallback or invalid anchors retain only the first editor
+row of the recorded analyzer row. A trailing LF also creates an empty analyzer
+row: removed-only evidence at that EOF coordinate maps to the terminal editor
+row, including when an earlier bare CR shifts editor row numbers. Absent input
+or an analyzer row beyond EOF retains the missing-input refusal. A duplicate
+expression on an earlier editor row cannot override a valid parser byte anchor.
+
 ### What the LSP must expose
 
 For the agent-cockpit contract, the surface must expose:
@@ -155,6 +177,22 @@ oracle source location when available, explain command, confidence basis, and
 named limitations. The same typed witness is projected into diagnostic data,
 hover, context packets, and copy-context actions without renderer-specific
 derivation.
+
+The typed witness must round-trip through its own JSON representation,
+including when `limitations` is empty and omitted. An absent `limitations`
+field decodes as an empty array; explicit `null` or a malformed array is
+rejected. Optional facts retain present values, including empty strings and
+zero confidence. On `DiagnosticWitness`, `DiagnosticFixSite`, and
+`DiagnosticConfidence`, absent or `null` optional fields decode as unavailable
+and serialize as omitted fields. Nested fact types keep their existing JSON
+representation; the reader does not invent missing evidence.
+This compatibility is tested inside the complete context packet produced by
+the public renderer. Unknown optional witness properties must not prevent
+reading known evidence, but the typed witness does not retain them for
+reserialization. Forwarders must keep the opaque JSON document to retain
+extensions. Unknown limitation kinds retain their producer-supplied kind and
+detail strings. The existing envelope shape is a compatibility control; its
+null-witness documentation correction remains owned separately by #5082.
 
 The server also emits the versioned `ripr/analysisStatus` notification and
 returns the same `analysis_status` object from `ripr.collectWorkspaceStatus`.
@@ -350,6 +388,34 @@ the only word about a live finding:
   `withheld_unknown=N` beside the existing `findings` and `diagnostics`
   counts.
 
+Preview-language withholding (#11296): the same discipline covers Python,
+TypeScript and other `language_status = "preview"` findings of a gap class
+(`weakly_exposed`, `reachable_unrevealed`, `no_static_path`) that the
+`actionable` profile withholds because they carry no producer-backed fix
+route. Eligibility is unchanged and fail-closed: nothing is promoted to a
+diagnostic, and under `full` such a finding publishes as an `INFORMATION`
+diagnostic. Under `actionable` the disclosure is additive: `ripr/analysisStatus`
+`withheld_findings` counts them in `count`/`classes` with a separate
+`preview_count`; the pull-channel disclosure and the completion log
+(`withheld_preview=N`) name them, so `findings=N, diagnostics=0` is never the
+only word about a live preview finding. These findings are disjoint from the
+`*_unknown` set and remain listed under `hidden_gaps` by
+`ripr/listActionableItems`.
+
+The editor surface must not end on an empty list either. Each file with
+withheld preview gap findings carries exactly one passive Hint diagnostic,
+code `ripr-diagnostic-preview-withheld`, anchored on the first withheld
+finding, with a `preview:`-prefixed message such as `preview: 1 preview python
+finding(s) not shown in the editor; set diagnosticProfile: full or run
+`ripr check``. It carries no finding identity, repair data, witness,
+`delivery_eligible` or `preview_actionability`, offers no code action beyond
+refresh, and is exempt from the diagnostic delivery budget: it takes no slot
+and the eligible-diagnostic caps are unchanged. It exists only under the
+`actionable` profile (the `full` profile publishes the real INFORMATION
+diagnostics instead), is replaced with the snapshot so it clears when no
+withheld preview gap remains, and is withdrawn with the document's other
+diagnostics while the buffer is quarantined.
+
 ## Non-Goals
 
 - No autonomous edits. The LSP never modifies source; every command
@@ -424,10 +490,16 @@ these states as an actionable offer:
 
 ## Test Mapping
 
-- None yet. This spec is docs-only; traceability entries are added
-  when the implementation slices land tests against the packet
-  contract, the closed command vocabulary, and the reject list
-  above.
+- Existing feedback surfaces are registered in `.ripr/traceability.toml`.
+- `lsp::tests::bare_cr_origin_tests::rust_analysis_origins_project_editor_rows_for_bare_cr`:
+  real Rust origins, five line-ending layouts, three encodings and changed disk bytes.
+- `lsp::tests::bare_cr_origin_tests::rust_analysis_deleted_eof_origins_keep_the_terminal_editor_row`:
+  real context-bearing Git diff-file analysis with removed-only EOF findings,
+  an earlier bare CR and LF/CRLF final terminators. Ordinary zero-context
+  worktree deletion instead retains the preceding analyzer row's coordinate.
+- `analysis::diagnostic_origin::tests::standalone_cr_bounds_untrusted_or_missing_anchors`,
+  `standalone_cr_deleted_eof_preserves_the_terminal_editor_row`, and
+  `standalone_cr_duplicate_expression_uses_the_parser_anchor`: refusal and identity controls.
 
 ## Implementation Mapping
 
@@ -443,6 +515,8 @@ these states as an actionable offer:
   `crates/ripr/src/lsp/actions.rs`,
   `crates/ripr/src/lsp/gap_artifacts.rs`,
   `crates/ripr/src/lsp/hover.rs`, `crates/ripr/src/lsp/state.rs`.
+- Finding coordinates: `crates/ripr/src/analysis/diagnostic_origin.rs`;
+  numeric range projection: `crates/ripr/src/lsp/position.rs`.
 
 ## Metrics
 

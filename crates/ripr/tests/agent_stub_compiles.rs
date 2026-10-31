@@ -109,6 +109,11 @@ pub fn rename(name: &mut str, n: usize) -> usize {
     if n > 14 { n } else { name.len() }
 }
 
+pub fn tag(name: impl Into<String>, path: impl AsRef<str>, n: u8) -> usize {
+    let name: String = name.into();
+    if n > 15 { name.len() } else { path.as_ref().len() }
+}
+
 pub mod shapes {
     pub struct S {
         pub v: u8,
@@ -292,6 +297,9 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         ("n > 12", Expect::StopsAtRiprTodo),
         ("n > 13", Expect::StopsAtRiprTodo),
         ("n > 14", Expect::StopsAtRiprTodo),
+        // `impl Into<String>` / `impl AsRef<str>` parameters are declared
+        // with the concrete `String` / `&str` the argument accepts (#8361).
+        ("n > 15", Expect::StopsAtRiprTodo),
         // A trait method with a `&self` receiver is called through
         // `<Parser as std::fmt::Display>::fmt(&subject, ..)`.
         ("self.max > 3", Expect::StopsAtRiprTodo),
@@ -336,7 +344,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
             Expect::Refused(kind) => {
                 assert_eq!(output.status.code(), Some(3), "{needle}: {stdout}{stderr}");
                 let (envelope, _) = split_refusal_envelope(&stdout, &stderr)?;
-                assert_eq!(envelope["schema_version"], "0.2");
+                assert_eq!(envelope["schema_version"], "0.4");
                 assert_eq!(envelope["state"], "refused");
                 assert!(
                     stdout.contains(&format!("\"kind\": \"{kind}\"")),
@@ -353,7 +361,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                 assert!(output.status.success(), "{needle}: {stdout}{stderr}");
                 let ready: serde_json::Value =
                     serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
-                assert_eq!(ready["schema_version"], "0.2");
+                assert_eq!(ready["schema_version"], "0.4");
                 let document: serde_json::Value = serde_json::from_str(&stdout)
                     .map_err(|error| format!("{needle}: stub JSON: {error}: {stdout}"))?;
                 assert_eq!(document["written"], true, "{needle}");
@@ -646,10 +654,10 @@ fn check_prints_the_stub_route_only_when_the_printed_command_yields_a_stub() -> 
 
 /// #8361: families beyond predicate/return_value/error_path/match_arm used to
 /// print neither a route nor a reason. A field_construction finding whose
-/// owner takes `impl Into<String>` now prints the stub producer's refusal.
+/// owner takes `impl Display` now prints the stub producer's refusal.
 #[test]
 fn check_prints_the_stub_refusal_for_a_field_construction_finding() -> Result<(), String> {
-    const FIELD_LIB: &str = "pub struct Opts { pub jobs: usize }\nimpl Opts { pub fn new(name: impl Into<String>) -> Self { let _n: String = name.into(); Self { jobs: 2 } } }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn builds() {\n        let _ = Opts::new(\"x\");\n    }\n}\n";
+    const FIELD_LIB: &str = "pub struct Opts { pub jobs: usize }\nimpl Opts { pub fn new(name: impl std::fmt::Display) -> Self { let _n = name.to_string(); Self { jobs: 2 } } }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn builds() {\n        let _ = Opts::new(\"x\");\n    }\n}\n";
     let scratch = Scratch::new()?;
     let root = scratch.directory.clone();
     std::fs::write(
@@ -763,6 +771,51 @@ fn check_prints_no_route_when_the_nearest_gap_line_is_ambiguous() -> Result<(), 
         printed_stub_args(&stdout).is_none(),
         "an ambiguous nearest gap must not print a stub command: {stdout}"
     );
+    scratch.cleanup()
+}
+
+/// #10683: a weak-oracle boundary finding must not advertise a stub command
+/// that `agent stub` now refuses. `check` prints the refusal reason instead,
+/// and running the stub at the finding's own location agrees with it.
+#[test]
+fn check_prints_no_stub_command_for_a_weak_oracle_boundary_finding() -> Result<(), String> {
+    const LIB: &str = "pub fn discount(price: u32, qty: u32) -> u32 {\n    if qty > 10 { price * 10 / 100 } else { 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn at_ten() {\n        assert!(discount(10, 10) > 0);\n    }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_weak_oracle\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), LIB).map_err(|error| error.to_string())?;
+    let diff = one_line_diff(
+        &scratch,
+        "src/lib.rs",
+        "    if qty >= 10 { price * 10 / 100 } else { 0 }",
+        "    if qty > 10 { price * 10 / 100 } else { 0 }",
+    )?;
+    let stdout = check_human(&root, &diff)?;
+    assert!(
+        stdout.contains("src/lib.rs:2"),
+        "the finding is on line 2: {stdout}"
+    );
+    assert!(
+        printed_stub_args(&stdout).is_none() && !stdout.contains("Write a test for it:"),
+        "a weak-oracle boundary must not print a stub command: {stdout}"
+    );
+    assert!(
+        stdout.contains("No test stub here:") && stdout.contains("Related test: src/lib.rs"),
+        "the refusal reason names the existing test: {stdout}"
+    );
+    let mut stub = ripr_command();
+    stub.args(["agent", "stub", "--root"]).arg(&root).args([
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "predicate",
+    ]);
+    let output = run_bounded(stub, &root, "stub", Duration::from_mins(2))?;
+    assert_eq!(output.status.code(), Some(3), "agent stub agrees: refuses");
     scratch.cleanup()
 }
 
@@ -1005,7 +1058,7 @@ fn split_refusal_envelope<'a>(
 }
 
 fn assert_selector_refusal(envelope: &serde_json::Value, kind: &str) {
-    assert_eq!(envelope["schema_version"], "0.2");
+    assert_eq!(envelope["schema_version"], "0.4");
     assert_eq!(envelope["kind"], "rust_test_stub");
     assert_eq!(envelope["state"], "refused");
     assert_eq!(envelope["refusal"]["kind"], kind);
@@ -1030,6 +1083,7 @@ fn fixture_files(root: &Path) -> Result<std::collections::BTreeMap<PathBuf, Vec<
                     "ambiguous-files-repeat",
                     "ambiguous-seams",
                     "ambiguous-seams-repeat",
+                    "filtered-family",
                 ]
                 .iter()
                 .any(|label| {
@@ -1084,7 +1138,7 @@ fn absent_selectors_keep_not_found_and_explicit_disclosures() -> Result<(), Stri
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
-        assert_eq!(envelope["schema_version"], "0.2");
+        assert_eq!(envelope["schema_version"], "0.4");
         assert_eq!(envelope["state"], "refused");
         assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
         for field in ["owner", "grip_class", "classification"] {
@@ -1181,7 +1235,7 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
             );
             let ready: serde_json::Value =
                 serde_json::from_slice(&control.stdout).map_err(|error| error.to_string())?;
-            assert_eq!(ready["schema_version"], "0.2");
+            assert_eq!(ready["schema_version"], "0.4");
             assert_eq!(ready["state"], "ready");
             assert_eq!(
                 ready["owner"],
@@ -1190,6 +1244,409 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
             assert_eq!(ready["written"], false);
         }
     }
+    scratch.cleanup()
+}
+
+#[test]
+fn limited_journey_check_names_ambiguous_stub_seams() -> Result<(), String> {
+    let scratch = kind_refusal_crate(
+        "pub fn pair(a: u32, b: u32) -> u32 {\n    if a >= 10 && b > 20 { 1 } else { 0 }\n}\n",
+    )?;
+    let root = scratch.directory.clone();
+    let diff = one_line_diff(
+        &scratch,
+        "src/lib.rs",
+        "    if a > 10 && b > 20 { 1 } else { 0 }",
+        "    if a >= 10 && b > 20 { 1 } else { 0 }",
+    )?;
+    let stdout = check_human(&root, &diff)?;
+    assert!(stdout.contains("src/lib.rs:2"), "{stdout}");
+    assert!(!stdout.contains("Write a test for it:"), "{stdout}");
+    // #10192: preserve the ambiguity and offer explicit, runnable selectors.
+    let seam_ids = stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ripr agent stub "))
+        .filter_map(|line| line.split_once("--seam-id ").map(|(_, id)| id.trim()))
+        .collect::<Vec<_>>();
+    assert_eq!(seam_ids.len(), 2, "{stdout}");
+    assert_ne!(seam_ids[0], seam_ids[1]);
+    assert!(
+        stdout.contains("do not establish a repair binding"),
+        "{stdout}"
+    );
+    for id in seam_ids {
+        let mut command = ripr_command();
+        command
+            .args(["agent", "stub", "--root"])
+            .arg(&root)
+            .args(["--seam-id", id, "--json"]);
+        let selected = run_bounded(command, &root, "check-seam-choice", Duration::from_mins(2))?;
+        assert!(
+            selected.status.success(),
+            "{}",
+            String::from_utf8_lossy(&selected.stderr)
+        );
+        let ready: serde_json::Value =
+            serde_json::from_slice(&selected.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(ready["seam_id"], id);
+        assert_eq!(ready["state"], "ready");
+        assert_eq!(ready["written"], false);
+    }
+
+    scratch.cleanup()
+}
+
+#[test]
+fn limited_journey_mixed_grip_choices_print_only_the_validated_stub() -> Result<(), String> {
+    const SOURCE: &str = "pub fn pair(a: u32, b: u32) -> u32 {\n    if a >= 10 { return 1; } if b >= 20 { return 2; } 0\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn pins_a() {\n        assert_eq!(pair(9, 0), 0);\n        assert_eq!(pair(10, 0), 1);\n        assert_eq!(pair(11, 0), 1);\n    }\n}\n";
+    let scratch = kind_refusal_crate(SOURCE)?;
+    let root = &scratch.directory;
+    let diff = one_line_diff(
+        &scratch,
+        "src/lib.rs",
+        "    if a >= 10 { return 1; } if b > 20 { return 2; } 0",
+        "    if a >= 10 { return 1; } if b >= 20 { return 2; } 0",
+    )?;
+    // Establish real classified subjects before checking selector wording.
+    let mut inventory = ripr_command();
+    inventory
+        .args(["check", "--root"])
+        .arg(root)
+        .args(["--format", "repo-exposure-json"]);
+    let inventory = run_bounded(
+        inventory,
+        root,
+        "mixed-grip-inventory",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        inventory.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inventory.stderr)
+    );
+    let inventory: serde_json::Value =
+        serde_json::from_slice(&inventory.stdout).map_err(|error| error.to_string())?;
+    let seams = inventory["seams"]
+        .as_array()
+        .ok_or("missing seam inventory")?;
+    let mut subjects = Vec::new();
+    for (expression, class, eligible) in [
+        ("a >= 10", "strongly_gripped", false),
+        ("b >= 20", "weakly_gripped", true),
+    ] {
+        let matching = seams
+            .iter()
+            .filter(|seam| seam["kind"] == "predicate_boundary" && seam["expression"] == expression)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            1,
+            "one real subject for {expression}: {inventory}"
+        );
+        let seam = matching[0];
+        assert_eq!(seam["owner"], "src/lib.rs::pair");
+        assert_eq!(seam["grip_class"], class);
+        assert_eq!(seam["headline_eligible"], eligible);
+        let id = seam["seam_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or("classified subject has no nonempty seam ID")?;
+        subjects.push((id.to_string(), class, eligible));
+    }
+    assert_ne!(subjects[0].0, subjects[1].0);
+    let stdout = check_human(root, &diff)?;
+    assert!(!stdout.contains("may refuse"), "{stdout}");
+    let mut choices = stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ripr agent stub "))
+        .filter_map(|line| {
+            line.split_once("--seam-id ")
+                .map(|(_, id)| id.trim().to_string())
+        })
+        .collect::<Vec<_>>();
+    choices.sort();
+    // #10710: only the seam whose `--seam-id` stub succeeds is printed; the
+    // strongly gripped seam (which refuses `not_a_gap` below) is withheld.
+    let expected = subjects
+        .iter()
+        .filter(|(_, _, eligible)| *eligible)
+        .map(|(id, _, _)| id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        choices, expected,
+        "only the validated stub identity is printed:\n{stdout}"
+    );
+    for (id, class, eligible) in subjects {
+        let mut command = ripr_command();
+        command
+            .args(["agent", "stub", "--root"])
+            .arg(root)
+            .args(["--seam-id", &id, "--json"]);
+        let outcome = run_bounded(command, root, "mixed-grip-choice", Duration::from_mins(2))?;
+        assert_eq!(outcome.status.code(), Some(if eligible { 0 } else { 3 }));
+        let document: serde_json::Value =
+            serde_json::from_slice(&outcome.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(document["seam_id"], id);
+        assert_eq!(document["grip_class"], class);
+        if eligible {
+            assert_eq!(document["state"], "ready");
+            assert_eq!(document["classification"], "weakly_exposed");
+            assert_eq!(document["written"], false);
+            assert!(
+                document["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("b >= 20"))
+            );
+        } else {
+            assert_eq!(document["state"], "refused");
+            assert_eq!(document["classification"], "exposed");
+            assert_eq!(document["refusal"]["kind"], "not_a_gap");
+        }
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        SOURCE
+    );
+    scratch.cleanup()
+}
+
+#[test]
+fn limited_journey_public_api_helper_boundary_stays_limited() -> Result<(), String> {
+    let scratch = kind_refusal_crate(include_str!(
+        "../../../fixtures/rust_transitive_reach_positive/input/src/lib.rs"
+    ))?;
+    let root = &scratch.directory;
+    std::fs::write(root.join("Cargo.toml"), "[package]\nname='rust_transitive_reach_positive_fixture'\nversion='0.0.0'\nedition='2024'\n").map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/internal.rs"),
+        "pub(crate) fn inner(a: i32, b: i32) -> i32 {\n    if a >= b { a - b } else { b }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("tests/it.rs"), "use rust_transitive_reach_positive_fixture::outer;\n#[test]\nfn public_api_exact_boundary() { assert_eq!(outer(3, 3), 0); }\n").map_err(|error| error.to_string())?;
+    let diff = one_line_diff(
+        &scratch,
+        "src/internal.rs",
+        "    if a > b { a - b } else { b }",
+        "    if a >= b { a - b } else { b }",
+    )?;
+    let text = check_human(root, &diff)?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        text.contains("Tests cannot close this static-analysis limitation"),
+        "{text}"
+    );
+    assert!(text.contains("entry `outer` -> owner `inner`"), "{text}");
+    assert!(
+        text.contains("restricted-visibility helper `inner` behind public entry point `outer`"),
+        "{text}"
+    );
+    assert!(!text.contains("Write a test for it:"), "{text}");
+    let mut check_json = ripr_command();
+    check_json
+        .args(["check", "--root"])
+        .arg(root)
+        .arg("--diff")
+        .arg(&diff)
+        .arg("--json");
+    let output = run_bounded(check_json, root, "limited-json", Duration::from_mins(2))?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())?;
+    let findings = report["findings"].as_array().ok_or("missing findings")?;
+    assert_eq!(findings.len(), 1, "{report}");
+    let finding = &findings[0];
+    assert_eq!(finding["classification"], "no_static_path", "{report}");
+    assert_eq!(
+        finding["static_limitation"]["first_unresolved_edge"],
+        "entry `outer` -> owner `inner` through a transitive Rust helper path",
+        "canonical edge is stable: {report}"
+    );
+    let evidence = finding["evidence"].as_array().ok_or("missing evidence")?;
+    assert!(evidence.iter().any(|line| line.as_str() == Some("limitation_helper_boundary: restricted-visibility helper `inner` behind public entry point `outer`; candidate path only")), "{report}");
+    let mut explain = ripr_command();
+    explain
+        .args(["explain", "--root"])
+        .arg(root)
+        .arg("--diff")
+        .arg(&diff)
+        .arg("src/internal.rs:2");
+    let output = run_bounded(explain, root, "limited-explain", Duration::from_mins(2))?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let explanation = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        explanation.contains("Tests cannot close this static-analysis limitation"),
+        "{explanation}"
+    );
+    assert!(
+        !explanation.contains("To change the verdict, a test needs to:"),
+        "{explanation}"
+    );
+    scratch.cleanup()
+}
+
+#[test]
+fn limited_journey_hidden_predicate_ambiguity_keeps_identity_and_refuses_stale_bytes()
+-> Result<(), String> {
+    const SOURCE: &str = "pub fn pair(a: u32, b: u32) -> bool {\n    a >= 10 && b > 20\n}\n";
+    let scratch = kind_refusal_crate(SOURCE)?;
+    let root = &scratch.directory;
+    let diff = one_line_diff(
+        &scratch,
+        "src/lib.rs",
+        "    a > 10 && b > 20",
+        "    a >= 10 && b > 20",
+    )?;
+    let stdout = check_human(root, &diff)?;
+    assert!(
+        stdout.contains("--kind return_value") && stdout.contains("kind: predicate"),
+        "two-finding control: {stdout}"
+    );
+    let mut report_command = ripr_command();
+    report_command
+        .args(["check", "--root"])
+        .arg(root)
+        .arg("--diff")
+        .arg(&diff)
+        .arg("--json");
+    let report = run_bounded(
+        report_command,
+        root,
+        "hidden-identity",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        report.status.success(),
+        "{}",
+        String::from_utf8_lossy(&report.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&report.stdout).map_err(|error| error.to_string())?;
+    let findings = report["findings"].as_array().ok_or("missing findings")?;
+    assert_eq!(findings.len(), 2, "{report}");
+    let predicate = findings
+        .iter()
+        .find(|finding| finding["probe"]["family"] == "predicate")
+        .ok_or("missing predicate")?;
+    let identity = predicate["id"]
+        .as_str()
+        .ok_or("missing predicate identity")?;
+    assert!(
+        stdout.contains(&format!("Choose a test-stub seam for {identity}:")),
+        "{stdout}"
+    );
+    // Inspect the emitted route itself before reconstructing any argv below:
+    // an explicit root in the harness must not mask a missing printed root.
+    let expected_root = if cfg!(windows) {
+        root.to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .replace('\\', "/")
+    } else {
+        root.to_string_lossy().into_owned()
+    };
+    let printed = stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ripr agent stub "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        printed
+            .iter()
+            .filter(|line| line.contains("--seam-id "))
+            .count(),
+        2,
+        "two nonempty hidden choices: {stdout}"
+    );
+    for command in printed {
+        assert!(command.contains("--root "), "root omitted: {command}");
+        assert!(command.contains(&expected_root), "wrong root: {command}");
+    }
+    let mut ids = stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ripr agent stub "))
+        .filter_map(|line| {
+            line.split_once("--seam-id ")
+                .map(|(_, id)| id.trim().to_string())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ids.len(), 2, "{stdout}");
+    assert_ne!(ids[0], ids[1]);
+    let selector = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("predicate")),
+        root,
+        "hidden-selector",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(selector.status.code(), Some(3));
+    let (envelope, _) = split_refusal_envelope(
+        &String::from_utf8_lossy(&selector.stdout),
+        &String::from_utf8_lossy(&selector.stderr),
+    )?;
+    assert_selector_refusal(&envelope, "selector_ambiguous");
+    let reason = envelope["refusal"]["reason"]
+        .as_str()
+        .ok_or("missing selector reason")?;
+    let mut expected = reason
+        .split("--seam-id ")
+        .skip(1)
+        .map(|tail| tail.split(',').next().unwrap_or(tail).trim().to_string())
+        .collect::<Vec<_>>();
+    ids.sort();
+    expected.sort();
+    assert_eq!(ids, expected);
+    for id in &ids {
+        let mut command = ripr_command();
+        command
+            .args(["agent", "stub", "--root"])
+            .arg(root)
+            .args(["--seam-id", id, "--json"]);
+        let output = run_bounded(command, root, "hidden-choice", Duration::from_mins(2))?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let ready: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(ready["seam_id"], id.as_str());
+        assert_eq!(ready["state"], "ready");
+        assert_eq!(ready["written"], false);
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        SOURCE
+    );
+    std::fs::write(
+        root.join("src/lib.rs"),
+        format!(
+            "{}\npub mod a;\n",
+            SOURCE.replace("a >= 10 && b > 20", "a >= 11 && b > 21")
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    // Keep a separate, correctly bound changed owner ahead of the stale
+    // predicate so the disk guard is exercised for an actual hidden row.
+    std::fs::write(root.join("src/a.rs"), "pub fn seen(n: u32) -> u32 {\n    n + 2\n}\n#[cfg(test)] mod tests { use super::*; #[test] fn calls_seen() { let _ = seen(1); } }\n").map_err(|error| error.to_string())?;
+    let previous = std::fs::read_to_string(&diff).map_err(|error| error.to_string())?;
+    std::fs::write(&diff, format!("{previous}diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -2 +2 @@\n-    n + 1\n+    n + 2\n")).map_err(|error| error.to_string())?;
+    let stale = check_human(root, &diff)?;
+    assert!(
+        stale.contains("kind: predicate"),
+        "the stale control must retain its hidden subject: {stale}"
+    );
+    assert!(
+        !stale.contains("Choose a test-stub seam"),
+        "stale bytes must not gain a route: {stale}"
+    );
     scratch.cleanup()
 }
 
@@ -1244,7 +1701,7 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
         );
         let ready: serde_json::Value =
             serde_json::from_slice(&selected.stdout).map_err(|error| error.to_string())?;
-        assert_eq!(ready["schema_version"], "0.2");
+        assert_eq!(ready["schema_version"], "0.4");
         assert_eq!(ready["state"], "ready");
         assert_eq!(ready["seam_id"], id);
         assert_eq!(ready["written"], false);
@@ -1271,7 +1728,7 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
     );
     let ready: serde_json::Value =
         serde_json::from_slice(&nested.stdout).map_err(|error| error.to_string())?;
-    assert_eq!(ready["schema_version"], "0.2");
+    assert_eq!(ready["schema_version"], "0.4");
     assert_eq!(ready["state"], "ready");
     assert_eq!(ready["owner"], "src/lib.rs::fallible");
     scratch.cleanup()
@@ -1341,7 +1798,9 @@ const STRONGLY_GRIPPED_CLAMP: &str = "pub fn clamp_to(x: i32) -> i32 {\n    if x
 
 /// #7290: `ripr agent stub --at --kind` still yields a ready scaffold for a
 /// seam inventory classifies `strongly_gripped`, and both JSON and human
-/// output disclose that class with the packet/repair omission reason.
+/// output disclose that class. #8891: the disclosure names the real reason
+/// (the seam is exposed; nothing was configured off), not the packet/brief
+/// "configured off" wording.
 #[test]
 fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String> {
     let scratch = kind_refusal_crate(STRONGLY_GRIPPED_CLAMP)?;
@@ -1376,10 +1835,13 @@ fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String
         .as_str()
         .ok_or_else(|| format!("warning must be a string: {document}"))?;
     assert!(
-        warning.contains(
-            "is configured off for strongly_gripped seams and is not included in agent results"
-        ),
+        warning.contains("is strongly_gripped")
+            && warning.contains("existing tests already discriminate it"),
         "{warning}"
+    );
+    assert!(
+        !warning.contains("configured off"),
+        "nothing was configured off for an exposed seam: {warning}"
     );
 
     let mut human = ripr_command();
@@ -1403,15 +1865,84 @@ fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String
     );
     let stdout = String::from_utf8_lossy(&human.stdout);
     assert!(
-        stdout.contains(
-            "is configured off for strongly_gripped seams and is not included in agent results"
-        ),
+        stdout.contains("is strongly_gripped")
+            && stdout.contains("existing tests already discriminate it"),
         "{stdout}"
+    );
+    assert!(
+        !stdout.contains("configured off"),
+        "nothing was configured off for an exposed seam: {stdout}"
     );
     assert!(
         stdout.contains("Test stub"),
         "scaffold text remains after the disclosure: {stdout}"
     );
+    scratch.cleanup()
+}
+
+#[test]
+fn kind_suffix_refusal_does_not_claim_filtered_family_is_absent() -> Result<(), String> {
+    let scratch = Scratch::new()?;
+    let root = &scratch.directory;
+    let member = root.join("crates/a");
+    std::fs::create_dir_all(member.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/a\"]\nresolver = \"3\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        member.join("Cargo.toml"),
+        "[package]\nname = \"a\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let source = format!("{STRONGLY_GRIPPED_CLAMP}\npub fn other(n: u8) -> u8 {{ n + 1 }}\n");
+    std::fs::write(member.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+    let other_line = source.lines().count();
+    for (at, kind, owner) in [
+        ("crates/a/src/lib.rs:2".to_string(), "predicate", "clamp_to"),
+        (format!("src/lib.rs:{other_line}"), "return_value", "other"),
+    ] {
+        let ready = run_bounded(
+            kind_refusal_command(root, &at, Some(kind)),
+            root,
+            owner,
+            Duration::from_mins(2),
+        )?;
+        assert!(
+            ready.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ready.stderr)
+        );
+        let document: serde_json::Value =
+            serde_json::from_slice(&ready.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(document["state"], "ready");
+        assert_eq!(document["owner"], format!("crates/a/src/lib.rs::{owner}"));
+        assert_eq!(document["written"], false);
+        if kind == "predicate" {
+            assert_eq!(document["grip_class"], "strongly_gripped");
+        }
+    }
+
+    // The suffix uses reported gaps, which omit the existing gripped predicate.
+    // Its empty nearest list cannot establish that the family has no seam.
+    let before = fixture_files(root)?;
+    let mut command = kind_refusal_command(root, "src/lib.rs:2", Some("predicate"));
+    command.arg("--write");
+    let refused = run_bounded(command, root, "filtered-family", Duration::from_mins(2))?;
+    assert_eq!(refused.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
+    assert_selector_refusal(&envelope, "seam_not_found");
+    assert_eq!(
+        envelope["refusal"]["reason"],
+        "no predicate reported gap is in the function at src/lib.rs:2; nearest: none"
+    );
+    assert!(prose.starts_with(
+        "ripr: agent stub: no predicate reported gap is in the function at src/lib.rs:2; nearest: none. Run "
+    ), "{prose}");
+    assert_eq!(fixture_files(root)?, before);
     scratch.cleanup()
 }
 
@@ -1576,12 +2107,12 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
         .split_once(". Run ")
         .ok_or_else(|| format!("the refusal needs its follow-up route: {stderr}"))?;
     assert_eq!(
-        nearest, "",
+        nearest, "none",
         "a file with only other families must not offer their seams: {stderr}"
     );
     assert!(
         prose.starts_with(
-            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
+            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: none",
         ),
         "{stderr}"
     );
@@ -1987,34 +2518,30 @@ fn first_action_real_callee_only_wrapper_keeps_its_refusal() -> Result<(), Strin
         wrapper_card["seam"]["expression"],
         "try_parse_summary(raw).map_err(|error| error.to_string().into())"
     );
-    let seam_id = wrapper_card["seam_id"]
+    wrapper_card["seam_id"]
         .as_str()
         .filter(|id| !id.is_empty())
         .ok_or("the genuine wrapper card must carry its identity")?;
-    // Preserve the producer's global suppression evidence; this does
-    // not attribute a per-card suppression cause.
+    // The producer's "configured off for strongly_gripped" warnings name other
+    // seams (lines 7, 8 and 10, not this card's line 14) and `suppressed[]` is
+    // empty, so nothing is suppressed: the only card is a static limitation
+    // with no repair start, which is a refusal, not an action. The report must
+    // not call it "suppressed" (RIPR-SPEC-0020) and must not invent a repair.
+    assert_eq!(wrapper_card["gap_state"], "static_limitation");
+    assert_eq!(wrapper_guidance["suppressed"], serde_json::json!([]));
     let (action, markdown) = repair_start_action(&scratch, &wrapper_guidance, "callee-action")?;
     assert_eq!(action["schema_version"], "0.1");
     assert_eq!(action["kind"], "first_useful_action");
     assert!(action["commands"].get("repair").is_none(), "{action}");
-    assert_eq!(action["status"], "suppressed", "{action}");
+    assert_eq!(action["status"], "no_actionable_seam", "{action}");
     assert_eq!(action["action_kind"], "no_action");
-    assert_eq!(action["fallback"]["kind"], "suppressed");
-    assert_eq!(action["why"], "The seam is suppressed or configured off.");
-    assert_eq!(action["selected"]["source"], "pr_guidance");
-    assert_eq!(action["selected"]["seam_id"], seam_id);
-    assert_eq!(action["selected"]["path"], "src/lib.rs");
-    assert_eq!(action["selected"]["line"], 14);
-    assert_eq!(action["selected"]["seam_kind"], "return_value");
-    assert_eq!(action["selected"]["classification"], "no_static_path");
+    assert_eq!(action["fallback"]["kind"], "no_actionable_seam");
     assert_eq!(
-        action["selected"]["changed_behavior"],
-        "try_parse_summary(raw).map_err(|error| error.to_string().into())"
+        action["why"],
+        "Fresh inputs do not contain a PR-local actionable seam."
     );
-    assert_eq!(
-        markdown.lines().find(|line| line.starts_with("- Why: ")),
-        Some("- Why: The seam is suppressed or configured off.")
-    );
+    assert!(action["selected"].is_null(), "{action}");
+    assert!(!markdown.contains("suppressed"), "{markdown}");
     assert!(!markdown.contains("## Start Repair"));
     scratch.cleanup()
 }

@@ -9,6 +9,7 @@ use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::CONFIG_FILE_NAME;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::output;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use crate::cli::commands_options::*;
@@ -146,6 +147,7 @@ pub(super) use capabilities::capabilities;
 
 #[path = "commands/doctor.rs"]
 mod doctor;
+pub(crate) use doctor::detect_languages;
 pub(super) use doctor::doctor;
 
 #[path = "commands/gate.rs"]
@@ -167,6 +169,8 @@ use init_workflow::generated_github_actions_workflow;
 
 #[path = "commands/pilot.rs"]
 mod pilot;
+#[path = "commands/pilot_timings.rs"]
+mod pilot_timings;
 pub(super) use pilot::pilot;
 
 pub(super) fn outcome(args: &[String]) -> Result<(), String> {
@@ -271,7 +275,7 @@ pub(super) fn zero(args: &[String]) -> Result<(), String> {
 
 pub(super) fn policy(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_policy_help();
+        help::print_group_help("policy", args);
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
@@ -323,7 +327,7 @@ pub(super) fn pr_ledger(args: &[String]) -> Result<(), String> {
 
 pub(super) fn pr_comments(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_pr_comments_help();
+        help::print_group_help("pr-comments", args);
         return Ok(());
     }
     // `plan` is implied when the command runs bare: `ripr pr-comments`
@@ -506,12 +510,18 @@ pub(super) fn first_action(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    // Missing-input warnings ride stderr like every other advisory surface
+    // (#9856): a run that routed from nothing must not look like a healthy
+    // run in the terminal or in `2>&1` CI logs.
+    emit_report_warnings(output::first_useful_action::first_useful_action_warnings(
+        &report,
+    ));
     Ok(())
 }
 
 pub(super) fn reports(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_reports_help();
+        help::print_group_help("reports", args);
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
@@ -745,6 +755,10 @@ fn ripr_zero_status(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    // Missing-input warnings ride stderr like every other advisory surface
+    // (#9856): a run that routed from nothing must not look like a healthy
+    // run in the terminal or in `2>&1` CI logs.
+    emit_report_warnings(output::ripr_zero_status::ripr_zero_status_warnings(&report));
     Ok(())
 }
 
@@ -2771,6 +2785,33 @@ fn read_optional_text_for_report(label: &str, path: &Path) -> Result<String, Str
     })
 }
 
+/// Render report warnings in the sibling `baseline create` stderr style
+/// (#9824): a `Warnings: <n>` count line followed by one `Warning: <text>`
+/// line per entry. Returns an empty string when there is nothing to warn
+/// about. Split from emission so tests can pin the non-empty-stderr contract
+/// without capturing process stderr.
+fn render_report_warnings(warnings: &[String]) -> String {
+    if warnings.is_empty() {
+        return String::new();
+    }
+    let mut out = format!("Warnings: {}\n", warnings.len());
+    for warning in warnings {
+        out.push_str(&format!("Warning: {warning}\n"));
+    }
+    out
+}
+
+/// Echo a report's warnings to stderr. The recovery-router commands (#9856)
+/// reuse this so a run that routed from missing inputs is visible to
+/// interactive users and `2>&1` CI logs, not only inside the written report.
+/// Exit codes and report contents are unchanged.
+pub(super) fn emit_report_warnings(warnings: &[String]) {
+    let rendered = render_report_warnings(warnings);
+    if !rendered.is_empty() {
+        eprint!("{rendered}");
+    }
+}
+
 fn read_optional_manifest_for_report(
     root: &Path,
     manifest: &Path,
@@ -3032,8 +3073,12 @@ fn parse_diff_format(value: &str) -> Result<DiffReportFormat, String> {
     match value {
         "human" | "text" | "md" | "markdown" => Ok(DiffReportFormat::Human),
         "json" => Ok(DiffReportFormat::Json),
-        _ => Err(format!(
-            "unknown diff format {value:?}; expected `human`, `text`, `md`, `markdown`, or `json`"
+        // Share the enum-value diagnostic and near-miss suggestion with
+        // pilot and outcome without changing diff's accepted aliases.
+        _ => Err(unknown_value(
+            "diff format",
+            value,
+            &["human", "text", "md", "markdown", "json"],
         )),
     }
 }
@@ -3427,7 +3472,26 @@ pub(super) fn drill_in_scope_conflict(
 }
 
 pub(super) fn lsp(args: &[String]) -> Result<(), String> {
-    lsp_with_serve(args, crate::lsp::serve)
+    lsp_with_serve(args, || {
+        write_lsp_terminal_hint(
+            std::io::stdin().is_terminal(),
+            &mut std::io::stderr().lock(),
+        );
+        crate::lsp::serve()
+    })
+}
+
+/// A person who typed `ripr lsp --stdio` at a prompt would otherwise see a
+/// silent hang; an editor pipes stdin, so the hint never reaches one. stderr
+/// only (stdout carries LSP framing), and best effort so an unwritable stderr
+/// cannot keep the server from starting (issue #10347).
+fn write_lsp_terminal_hint(stdin_is_terminal: bool, stderr: &mut impl std::io::Write) {
+    if stdin_is_terminal {
+        let _ = writeln!(
+            stderr,
+            "ripr lsp: waiting for an editor on stdin (this is a language server, not an interactive command); start it from your editor, or press Ctrl-D to exit."
+        );
+    }
 }
 
 /// Argument dispatch for `ripr lsp`, separated from the blocking stdio
@@ -3678,6 +3742,9 @@ mod tests {
                 // CodeQL flake must not fail a gate the analysis passed.
                 "Upload RIPR diff findings",
                 "Upload RIPR repo seams",
+                // #11145: continue-on-error hides a failed upload, so this
+                // step says why and what to change.
+                "Explain failed SARIF upload",
             ],
             forbidden_fragments: &[
                 "fail-on-new-warning",
@@ -3795,6 +3862,35 @@ mod tests {
                     .to_string()
             )
         );
+    }
+
+    #[test]
+    fn reports_gap_ledger_hinted_recovery_route_parses_and_root_only_does_not() -> Result<(), String>
+    {
+        // #9851 review follow-up: the producer command named in the
+        // missing-gap-ledger diagnostics must parse — the old root-only
+        // example was rejected by this parser, so following the hint
+        // reached another usage error and wrote nothing.
+        let options = parse_gap_decision_ledger_options(&args(&[
+            "--root",
+            ".",
+            "--repo-exposure",
+            "target/ripr/reports/repo-exposure.json",
+            "--out",
+            "gap-ledger.json",
+        ]))
+        .map_err(|err| format!("hinted recovery route must parse: {err}"))?;
+        assert_eq!(options.out, std::path::PathBuf::from("gap-ledger.json"));
+        // Negative control: the retired root-only example still returns
+        // the required-source diagnostic.
+        assert_eq!(
+            parse_gap_decision_ledger_options(&args(&["--root", "."])),
+            Err(
+                "reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH"
+                    .to_string()
+            )
+        );
+        Ok(())
     }
 
     #[test]
@@ -6264,10 +6360,20 @@ language = "rust"
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--mode", "post"])),
+            Err("unknown pr-comments plan mode \"post\". Accepted: off, plan, inline.".to_string())
+        );
+        assert_eq!(
+            parse_pr_comments_plan_options(&args(&["--mode", "inlin"])),
             Err(
-                "unknown pr-comments plan mode \"post\"; expected `off`, `plan`, or `inline`"
+                "unknown pr-comments plan mode \"inlin\". Did you mean `inline`? Accepted: off, plan, inline."
                     .to_string()
             )
+        );
+        // #11146: an empty mode is named as empty (not as an unknown value
+        // `""`) and says how to publish nothing.
+        assert_eq!(
+            parse_pr_comments_plan_options(&args(&["--mode", ""])),
+            Err("pr-comments plan mode is empty; expected `off`, `plan`, or `inline` (leave `--mode` out, or pass `off`, to publish no comments)".to_string())
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--pr-guidance", ""])),
@@ -6295,7 +6401,7 @@ language = "rust"
         let out_md = dir.join("comment-publish-plan.md");
         std::fs::write(
             &comments,
-            r#"{"comments":[{"id":"ripr-review-a","dedupe_key":"ripr:a","placement":{"path":"src/lib.rs","line":7,"side":"RIGHT","mode":"exact_seam_line"},"reason":"add focused assertion"}],"summary_only":[],"suppressed":[]}"#,
+            r#"{"comments":[{"id":"ripr-review-a","dedupe_key":"ripr:a","gap_state":"actionable","placement":{"path":"src/lib.rs","line":7,"side":"RIGHT","mode":"exact_seam_line"},"reason":"add focused assertion"}],"summary_only":[],"suppressed":[]}"#,
         )
         .map_err(|err| format!("write comments: {err}"))?;
 
@@ -6459,6 +6565,128 @@ language = "rust"
 
         std::fs::remove_dir_all(&dir)
             .map_err(|err| format!("remove first-action gap-record dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn render_report_warnings_is_empty_without_warnings() {
+        assert_eq!(render_report_warnings(&[]), "");
+    }
+
+    #[test]
+    fn render_report_warnings_names_the_missing_input() {
+        // The exact stderr surface a missing-input router run must produce
+        // (#9856): non-empty, count line, one line per warning, each naming
+        // the input the run could not read.
+        let rendered = render_report_warnings(&[
+            "required baseline debt delta input missing.json is invalid: not found".to_string(),
+        ]);
+        assert_eq!(
+            rendered,
+            "Warnings: 1\nWarning: required baseline debt delta input missing.json is invalid: not found\n"
+        );
+        assert!(rendered.contains("missing.json"), "{rendered}");
+    }
+
+    #[test]
+    fn first_action_missing_input_completes_with_warnings() -> Result<(), String> {
+        // A missing required input must keep the documented exit-0 contract
+        // (docs/EXIT_CODES.md: the command completed its typed answer) while
+        // the warning that was previously report-only becomes visible: the
+        // report carries it and the CLI echoes the same text to stderr
+        // (#9856).
+        let dir = unique_command_test_dir("first-action-missing-input");
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| format!("create first-action missing-input dir: {err}"))?;
+        let missing = dir.join("missing-pr-guidance.json");
+        let out = dir.join("first-useful-action.json");
+        let out_md = dir.join("first-useful-action.md");
+        first_action(&args(&[
+            "--pr-guidance",
+            &missing.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))
+        .map_err(|err| format!("missing-input first-action must complete (exit 0): {err}"))?;
+        let json = std::fs::read_to_string(&out)
+            .map_err(|err| format!("read first-action JSON: {err}"))?;
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|err| format!("first-action JSON must parse: {err}"))?;
+        let warnings = value
+            .get("warnings")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("first-action JSON must carry a warnings array")?;
+        assert!(!warnings.is_empty(), "warnings must not be empty: {json}");
+        let missing_display = output::first_useful_action::display_path(&missing);
+        assert!(
+            warnings.iter().any(|warning| warning
+                .as_str()
+                .is_some_and(|text| text.contains(&missing_display))),
+            "warnings must name the missing input {missing_display}: {json}"
+        );
+        // The stderr surface renders the same warnings: non-empty and naming
+        // the missing input.
+        let texts: Vec<String> = warnings
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::to_string)
+            .collect();
+        let rendered = render_report_warnings(&texts);
+        assert!(!rendered.is_empty(), "stderr warnings must be non-empty");
+        assert!(rendered.contains(&missing_display), "{rendered}");
+        std::fs::remove_dir_all(&dir)
+            .map_err(|err| format!("remove first-action missing-input dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn zero_status_missing_delta_completes_with_warnings() -> Result<(), String> {
+        // Same #9856 contract as first-action: exit 0, report keeps its
+        // warnings, and stderr renders the same non-empty warning text.
+        let dir = unique_command_test_dir("zero-status-missing-delta");
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| format!("create zero status missing-delta dir: {err}"))?;
+        let missing = dir.join("missing-delta.json");
+        let out = dir.join("ripr-zero-status.json");
+        let out_md = dir.join("ripr-zero-status.md");
+        zero(&args(&[
+            "status",
+            "--delta",
+            &missing.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))
+        .map_err(|err| format!("missing-input zero status must complete (exit 0): {err}"))?;
+        let json =
+            std::fs::read_to_string(&out).map_err(|err| format!("read zero status JSON: {err}"))?;
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|err| format!("zero status JSON must parse: {err}"))?;
+        let warnings = value
+            .get("warnings")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("zero status JSON must carry a warnings array")?;
+        assert!(!warnings.is_empty(), "warnings must not be empty: {json}");
+        let missing_display = output::ripr_zero_status::display_path(&missing);
+        assert!(
+            warnings.iter().any(|warning| warning
+                .as_str()
+                .is_some_and(|text| text.contains(&missing_display))),
+            "warnings must name the missing input {missing_display}: {json}"
+        );
+        let texts: Vec<String> = warnings
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::to_string)
+            .collect();
+        let rendered = render_report_warnings(&texts);
+        assert!(!rendered.is_empty(), "stderr warnings must be non-empty");
+        assert!(rendered.contains(&missing_display), "{rendered}");
+        std::fs::remove_dir_all(&dir)
+            .map_err(|err| format!("remove zero status missing-delta dir: {err}"))?;
         Ok(())
     }
 
@@ -7067,7 +7295,12 @@ language = "rust"
         assert_missing_snapshot_named_capture(
             &missing_before,
             &missing_before_display,
-            &format!("ripr check --format repo-exposure-json > {missing_before_display}"),
+            // The redirect operand keeps the native spelling (#8240); only the
+            // prose path uses `display_path`.
+            &format!(
+                "ripr check --format repo-exposure-json > {}",
+                crate::agent::loop_commands::shell_arg(&missing_before_path.to_string_lossy())
+            ),
             &["cargo mutants"],
         );
         assert!(
@@ -7089,7 +7322,12 @@ language = "rust"
         assert_missing_snapshot_named_capture(
             &missing_after,
             &missing_after_display,
-            &format!("ripr check --format repo-exposure-json > {missing_after_display}"),
+            // The redirect operand keeps the native spelling (#8240); only the
+            // prose path uses `display_path`.
+            &format!(
+                "ripr check --format repo-exposure-json > {}",
+                crate::agent::loop_commands::shell_arg(&missing_after_path.to_string_lossy())
+            ),
             &["cargo mutants"],
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -7297,7 +7535,12 @@ language = "rust"
         assert_missing_snapshot_named_capture(
             &repo_message,
             &missing_repo_display,
-            &format!("ripr check --format repo-exposure-json > {missing_repo_display}"),
+            // The redirect operand keeps the native spelling (#8240); only the
+            // prose path uses `display_path`.
+            &format!(
+                "ripr check --format repo-exposure-json > {}",
+                crate::agent::loop_commands::shell_arg(&missing_repo.to_string_lossy())
+            ),
             &["cargo mutants", "ripr check --json"],
         );
 
@@ -8285,8 +8528,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 175,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, and #4452 added step env bindings"
+            line_count <= 181,
+            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, and #11145 added the failed-SARIF-upload explanation"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -8459,6 +8702,49 @@ language = "rust"
                 "`{step}` must stay gated by RIPR_UPLOAD_SARIF"
             );
         }
+        // #11145: `continue-on-error` turns a rejected upload (private
+        // repository without Code Security, code scanning off, read-only fork
+        // token) into a green step. The explanation fires on the upload
+        // steps' own outcome, so it names both ids, names the fix, and does
+        // not fire when no upload ran.
+        let upload_ids = [
+            ("Upload RIPR diff findings", "id: sarif_findings"),
+            ("Upload RIPR repo seams", "id: sarif_seams"),
+        ];
+        for (step, id) in upload_ids {
+            assert!(
+                workflow_step(&workflow, step).contains(id),
+                "`{step}` needs `{id}`"
+            );
+        }
+        let explain = workflow_step(&workflow, "Explain failed SARIF upload");
+        assert!(
+            explain.contains("steps.sarif_findings.outcome == 'failure'")
+                && explain.contains("steps.sarif_seams.outcome == 'failure'"),
+            "{explain}"
+        );
+        assert!(explain.contains("always()"), "{explain}");
+        assert!(explain.contains("continue-on-error: true"), "{explain}");
+        assert!(
+            explain.contains("set RIPR_UPLOAD_SARIF to false")
+                && explain.contains("GitHub Code Security"),
+            "{explain}"
+        );
+        // Failure only: the whole `if:` is exactly this condition, so no
+        // success/skipped/`!=` branch can be added without failing here. The
+        // behavior (failure runs it; success, skipped, cancelled do not) is
+        // pinned by `explain_failed_sarif_upload_condition_follows_the_upload_outcomes`.
+        assert!(
+            explain.contains(
+                "if: always() && (steps.sarif_findings.outcome == 'failure' || steps.sarif_seams.outcome == 'failure')\n"
+            ),
+            "{explain}"
+        );
+        assert!(
+            explain.contains("Usual causes include")
+                && explain.contains("log of the failed upload step"),
+            "the warning must hedge the cause and point at the failed step's log: {explain}"
+        );
         // The SARIF renders stay gated by RIPR_UPLOAD_SARIF inside the packet.
         assert!(packet.contains("--format sarif"));
         assert!(packet.contains("--format repo-sarif"));
@@ -8782,6 +9068,37 @@ language = "rust"
             lsp_with_serve(&args(&["--stdio"]), || Err("transport down".to_string())),
             Err("transport down".to_string())
         );
+    }
+
+    #[test]
+    fn lsp_terminal_hint_is_written_only_for_terminal_stdin() {
+        let mut shown = Vec::new();
+        write_lsp_terminal_hint(true, &mut shown);
+        let text = String::from_utf8_lossy(&shown);
+        assert!(
+            text.starts_with("ripr lsp: waiting for an editor on stdin"),
+            "{text}"
+        );
+        assert!(text.contains("Ctrl-D"), "{text}");
+        assert_eq!(text.matches('\n').count(), 1, "single line: {text}");
+
+        let mut piped = Vec::new();
+        write_lsp_terminal_hint(false, &mut piped);
+        assert!(piped.is_empty());
+    }
+
+    #[test]
+    fn lsp_terminal_hint_survives_an_unwritable_stderr() {
+        struct Closed;
+        impl std::io::Write for Closed {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+        }
+        write_lsp_terminal_hint(true, &mut Closed);
     }
 
     #[test]

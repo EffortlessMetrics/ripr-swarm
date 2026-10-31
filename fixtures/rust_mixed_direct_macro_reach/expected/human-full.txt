@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_mixed_direct_macro_reach/input
 
-Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 WARNING ./src/lib.rs:14
   id: probe:src_lib.rs:return_value:acafd82e
@@ -14,9 +19,10 @@ Changed
   before: x * 3
   after:  3 * x
 
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::inner
 
 Static exposure
@@ -27,7 +33,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: 3 * x
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: 3 * x (line 14)
   - related test src/lib.rs:27 inner_is_positive uses weak relational check oracle: assert!(inner(2) > 0); misses: assertion too weak to tell the old behavior from the new
   - related test src/lib.rs:22 outer_triples uses strong exact value oracle: assert_eq!(outer(4), 12); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
@@ -39,10 +45,12 @@ Weakness
   - A test may reach this change through a Rust macro path ripr cannot expand. The macro edge is unresolved; this is a named limitation, not a coverage claim
 
 Stop reasons:
-  - macro_reach_unresolved — a candidate test path stops at a same-repo macro ripr does not expand
+  - a candidate test path stops at a same-repo macro ripr does not expand (macro_reach_unresolved)
+    Next: Call the changed owner directly from a plain `#[test]` body if tests can name it; if it sits behind a macro ripr does not expand, the edge stays unresolved even with an exact assertion.
 
 Static limitation
   rust_macro_reach_unresolved — A test may reach this change through a Rust macro path ripr cannot expand. The macro edge is unresolved; this is a named limitation, not a coverage claim.
+  Next: Call the changed owner directly from a plain `#[test]` body if tests can name it; if it sits behind a macro ripr does not expand, the edge can stay unresolved even with an exact assertion.
 
 Where to look
   For example, the test `outer_triples` (src/lib.rs:22) calls `outer`, and `outer` invokes macro `call_inner!` at src/lib.rs:10 whose definition lexically mentions the changed owner name. The macro path may lead here. Inspect it to judge whether this change is observed.

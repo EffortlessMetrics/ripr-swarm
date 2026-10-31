@@ -5,8 +5,9 @@
 //! `crate::domain` / `crate::repair_card_budget`. This module owns entry
 //! resolution, policy omission checks, and the two output shapes: the
 //! versioned `RepairCardV1` JSON document (`--json`) and the compact human
-//! summary (default), which presents typed fields verbatim and never
-//! re-derives or enhances them.
+//! summary (default), which words the currentness, instruction and done-when
+//! enums in plain language (#9244) and never re-derives or enhances them; the
+//! wire spellings and `schema_version` stay in `--json`.
 //!
 //! #5007 (RIPR-SPEC-0202): the adapter also owns the typed-refusal envelope.
 //! Every deliberate named refusal of the handoff — seam-not-found,
@@ -25,7 +26,11 @@ use crate::cli::CommandError;
 use crate::cli::agent::AgentCardOptions;
 use crate::cli::commands_context::{ensure_command_root, write_stdout_refusal_json};
 use crate::config::load_for_root;
-use crate::domain::{AgentCardRefusalKind, RepairCardTarget, RepairCardV1};
+use crate::domain::{
+    AgentCardRefusalKind, CardCurrentnessGoal, EditCageGoal, FixInstructionState,
+    FocusedExecutionGoal, MutationConfirmationGoal, RepairCardDoneWhen,
+    RepairCardSnapshotCurrentness, RepairCardTarget, RepairCardV1, StaticMovementGoal,
+};
 use crate::output;
 
 use super::agent::{
@@ -86,7 +91,14 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
     let packet_command =
         crate::app::repair_card_handoff::bound_packet_command(&options.root, &options.seam_id);
     let mut rendered = String::new();
-    for line in agent_card_prose_lines(&card, &packet_command, Some(&options.root)) {
+    // Default: the short plain brief. `--verbose` keeps the full field ledger
+    // (producer, subject, non-claim, detail routes); `--json` is the contract.
+    let lines = if crate::is_verbose() {
+        agent_card_prose_lines(&card, &packet_command, Some(&options.root))
+    } else {
+        agent_card_plain_lines(&card, &packet_command, Some(&options.root))
+    };
+    for line in lines {
         rendered.push_str(&line);
         rendered.push('\n');
     }
@@ -224,9 +236,10 @@ fn truncated_inventory_refusal(
     })
 }
 
-/// The default human output: the card's typed fields, in card order,
-/// presented verbatim. The renderer never re-derives values, never reorders
-/// evidence, and routes every omitted family to its typed reference. The one
+/// The default human output projects the card's typed fields without
+/// re-deriving them. Detail families sharing a state and destination appear
+/// together at the first such reference, with their family order preserved;
+/// every omitted family keeps its typed reference. The one
 /// enhancement over a raw field dump is the explicit non-actionable reason
 /// when the card carries no next action, because a silent absence there reads
 /// as a bug, not a gate decision.
@@ -253,7 +266,9 @@ pub(crate) fn agent_card_prose_lines(
 ) -> Vec<String> {
     let mut lines = Vec::new();
     lines.push(format!("Repair card {}", card.repair_card_id));
-    lines.push(format!("  schema: {}", card.schema_version));
+    // The `repair_card.v1` schema identity is a machine contract: `--json`
+    // carries it as `schema_version`. A newcomer cannot act on it, so the
+    // human summary leaves it out (#9244).
     let mut subject = format!("  seam: {}", card.subject.seam_id);
     if let Some(finding_id) = &card.subject.finding_id {
         subject.push_str(&format!(" (finding {finding_id})"));
@@ -263,18 +278,25 @@ pub(crate) fn agent_card_prose_lines(
         "  snapshot: {} @ {} ({})",
         card.snapshot.workspace_identity,
         card.snapshot.repository_head,
-        wire_name(&card.snapshot.currentness)
+        snapshot_currentness_words(card.snapshot.currentness)
     ));
     lines.push(format!(
         "  instruction: {} (fix site: {}, suggested assertion: {})",
-        wire_name(&card.instruction.state),
+        instruction_state_words(card.instruction.state),
         yes_no(card.instruction.has_fix_site),
         yes_no(card.instruction.has_suggested_assertion)
     ));
+    // #10644: this readiness line renders for a human reader, so translate
+    // the internal evidence codes; the card's wire data keeps them stable.
     let missing = if card.readiness.missing_evidence.is_empty() {
         "none".to_string()
     } else {
-        card.readiness.missing_evidence.join("; ")
+        card.readiness
+            .missing_evidence
+            .iter()
+            .map(|evidence| analysis::repair_route::humanize_evidence(evidence))
+            .collect::<Vec<_>>()
+            .join("; ")
     };
     lines.push(format!(
         "  readiness: repair_ready={} (missing evidence: {missing})",
@@ -349,26 +371,35 @@ pub(crate) fn agent_card_prose_lines(
             card.forbidden_files.join(", ")
         ));
     }
-    lines.push(format!(
-        "  done when: static movement {}, focused test {}, edit cage {}, mutation {}, currentness {}",
-        wire_name(&card.done_when.static_movement),
-        wire_name(&card.done_when.focused_test_execution),
-        wire_name(&card.done_when.edit_cage),
-        wire_name(&card.done_when.mutation_confirmation),
-        wire_name(&card.done_when.currentness)
-    ));
+    lines.push(done_when_line(&card.done_when));
     for stop in &card.stop_conditions {
         lines.push(format!("  stop: {stop}"));
     }
-    for reference in &card.detail_references {
+    // Group only references with identical destination, state and reason.
+    // Each family remains named, and a stale or missing reference cannot be
+    // merged into a current one merely because its route is the same.
+    let same_detail = |a: &crate::domain::RepairCardDetailRef,
+                       b: &crate::domain::RepairCardDetailRef| {
+        a.state == b.state && a.route == b.route && a.unavailable_reason == b.unavailable_reason
+    };
+    for (index, reference) in card.detail_references.iter().enumerate() {
+        if card.detail_references[..index]
+            .iter()
+            .any(|earlier| same_detail(earlier, reference))
+        {
+            continue;
+        }
+        let families = card.detail_references[index..]
+            .iter()
+            .filter(|other| same_detail(other, reference))
+            .map(|other| wire_name(&other.family))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let state = wire_name(&reference.state);
         match &reference.route {
-            Some(route) => lines.push(format!(
-                "  detail [{}]: {route}",
-                wire_name(&reference.family)
-            )),
+            Some(route) => lines.push(format!("  detail [{families}] ({state}): {route}")),
             None => lines.push(format!(
-                "  detail [{}]: unavailable ({})",
-                wire_name(&reference.family),
+                "  detail [{families}] ({state}): unavailable ({})",
                 reference
                     .unavailable_reason
                     .as_deref()
@@ -411,6 +442,209 @@ pub(crate) fn agent_card_prose_lines(
         lines.push(format!("  (PowerShell) {form}"));
     }
     lines
+}
+
+/// The default human card: a short brief a first-time reader can act on.
+/// Every line is projected from a typed card field; nothing is re-derived and
+/// the JSON card is untouched. The ledger rows (producer, subject, non-claim,
+/// detail routes, hashes) live in [`agent_card_prose_lines`] under
+/// `--verbose`.
+pub(crate) fn agent_card_plain_lines(
+    card: &RepairCardV1,
+    packet_command: &str,
+    paste_root: Option<&std::path::Path>,
+) -> Vec<String> {
+    let mut lines = vec![format!("Repair brief for gap {}", card.subject.seam_id)];
+    lines.push(format!("  Changed behavior: {}", card.changed_behavior));
+    if card.readiness.repair_ready {
+        lines.push("  Ready to repair.".to_string());
+    } else {
+        let missing = card
+            .readiness
+            .missing_evidence
+            .iter()
+            .map(|evidence| analysis::repair_route::humanize_evidence(evidence))
+            .collect::<Vec<_>>()
+            .join("; ");
+        // Plain evidence words first; the producer's blocker string can carry
+        // internal vocabulary, so it is only the fallback.
+        let reason = (!missing.is_empty()).then_some(missing).or_else(|| {
+            card.exact_blocker
+                .clone()
+                .filter(|blocker| !blocker.is_empty())
+        });
+        lines.push(match reason {
+            Some(reason) => format!("  Not ready to repair yet: {reason}"),
+            None => "  Not ready to repair yet.".to_string(),
+        });
+    }
+    lines.push(format!(
+        "  Suggested assertion: {}",
+        match (
+            &card.assertion_goal_detail,
+            card.instruction.has_suggested_assertion
+        ) {
+            (Some(detail), true) => detail.clone(),
+            _ => instruction_plain_words(card.instruction.state).to_string(),
+        }
+    ));
+    match &card.selected_target {
+        Some(RepairCardTarget::Existing { file, line, .. }) => {
+            lines.push(format!("  Test to extend: {file}:{line}"));
+        }
+        Some(RepairCardTarget::Proposed { file, .. }) => {
+            lines.push(format!("  Add a test in: {file}"));
+        }
+        None => {}
+    }
+    match &card.canonical_next_action {
+        Some(action) => {
+            lines.extend(
+                crate::output::next_action::render_next_action_plain_at_root(action, paste_root),
+            );
+        }
+        None => match &card.next_action {
+            Some(action) => lines.push(format!("  Next: {}", action.display)),
+            None => lines.push(
+                "  Next: ripr has no ready command for this gap (see --verbose).".to_string(),
+            ),
+        },
+    }
+    if !card.allowed_files.is_empty() {
+        lines.push(format!(
+            "  Files you may change: {}",
+            card.allowed_files.join(", ")
+        ));
+    }
+    if !card.forbidden_files.is_empty() {
+        lines.push(format!(
+            "  Do not change: {} (ripr rejects the repair if these change)",
+            card.forbidden_files.join(", ")
+        ));
+    }
+    lines.push(plain_done_when_line(&card.done_when));
+    if let Some(attempt) = &card.attempt {
+        lines.push(format!("  Repair in progress: {}", attempt.attempt_id));
+    }
+    let already_shown: &[String] = card
+        .canonical_next_action
+        .as_ref()
+        .map_or(&[], |action| action.limitations());
+    let limits: Vec<&str> = already_shown
+        .iter()
+        .chain(
+            card.limitations
+                .iter()
+                .filter(|l| !already_shown.contains(l)),
+        )
+        .map(String::as_str)
+        .collect();
+    if !limits.is_empty() {
+        // Keep the brief short: two limits inline, the rest behind --verbose.
+        let shown = limits
+            .iter()
+            .take(2)
+            .copied()
+            .collect::<Vec<_>>()
+            .join("; ");
+        let more = limits.len().saturating_sub(2);
+        lines.push(if more == 0 {
+            format!("  Limits: {shown}")
+        } else {
+            format!("  Limits: {shown}; and {more} more (see --verbose)")
+        });
+    }
+    lines.push("  This is a suggestion; ripr has not run or verified anything.".to_string());
+    lines.push(format!(
+        "  Machine-readable details (JSON): {packet_command}"
+    ));
+    if let Some(form) = crate::output::markdown::powershell_text_variant(packet_command) {
+        lines.push(format!("  (PowerShell) {form}"));
+    }
+    lines.push("  More fields: add --verbose.".to_string());
+    lines
+}
+
+/// Plain spelling of what a missing suggestion means; exhaustive so a new
+/// instruction state must choose its wording.
+fn instruction_plain_words(value: FixInstructionState) -> &'static str {
+    match value {
+        FixInstructionState::FixSiteReady => {
+            "ripr found where the fix goes but has no exact assertion to suggest."
+        }
+        FixInstructionState::StaticLimitation => "ripr has no bounded repair route for this gap.",
+        FixInstructionState::Stale => "this brief is out of date; rerun ripr check first.",
+        FixInstructionState::InspectOnly => "inspect only; there is nothing to fix here.",
+        FixInstructionState::Unavailable => "none; ripr has no suggested assertion for this gap.",
+    }
+}
+
+/// The plain done-when line: the same typed axes as [`done_when_line`], minus
+/// the internal ones (edit surface, mutation, snapshot), which stay in
+/// `--verbose` and JSON.
+fn plain_done_when_line(done: &RepairCardDoneWhen) -> String {
+    let test = match done.focused_test_execution {
+        FocusedExecutionGoal::VerifiedPass => "the new test passes",
+        FocusedExecutionGoal::ExplicitlyNotRun => {
+            "you have run the new test yourself (ripr does not)"
+        }
+    };
+    let gap = match done.static_movement {
+        StaticMovementGoal::ClosedBySelectedRoute => "the gap no longer shows in `ripr check`",
+        StaticMovementGoal::ImprovedAccordingToSelectedRoute => {
+            "`ripr check` shows the gap improved"
+        }
+    };
+    format!("  Done when: {test} and {gap}.")
+}
+
+/// Plain-language spelling of the snapshot currentness for the human summary.
+/// The wire value stays in `--json`; the match is exhaustive so a new variant
+/// must choose its wording.
+fn snapshot_currentness_words(value: RepairCardSnapshotCurrentness) -> &'static str {
+    match value {
+        RepairCardSnapshotCurrentness::Current => "committed HEAD",
+        RepairCardSnapshotCurrentness::AcceptedDirtyDraft => "your uncommitted working tree",
+    }
+}
+
+fn instruction_state_words(value: FixInstructionState) -> &'static str {
+    match value {
+        FixInstructionState::FixSiteReady => "fix site found, no exact edit ready",
+        FixInstructionState::StaticLimitation => "static limitation, no bounded repair route",
+        FixInstructionState::Stale => "stale, refresh the analysis first",
+        FixInstructionState::InspectOnly => "inspect only, nothing to fix",
+        FixInstructionState::Unavailable => "no witness available",
+    }
+}
+
+/// One sentence-fragment list per done-when axis, in plain words. The five
+/// axes stay separate (#3166); the wire spellings remain in `--json`.
+fn done_when_line(done: &RepairCardDoneWhen) -> String {
+    let static_movement = match done.static_movement {
+        StaticMovementGoal::ClosedBySelectedRoute => "the selected route closes the gap",
+        StaticMovementGoal::ImprovedAccordingToSelectedRoute => {
+            "the selected route improves the gap"
+        }
+    };
+    let focused = match done.focused_test_execution {
+        FocusedExecutionGoal::VerifiedPass => "the focused test passes",
+        FocusedExecutionGoal::ExplicitlyNotRun => "ripr does not run the focused test",
+    };
+    let cage = match done.edit_cage {
+        EditCageGoal::Compliant => "edits stay inside the edit cage",
+    };
+    let mutation = match done.mutation_confirmation {
+        MutationConfirmationGoal::NotRequested => "mutation testing is not requested",
+        MutationConfirmationGoal::OptionalSeparateConfirmation => {
+            "mutation confirmation is optional and separate"
+        }
+    };
+    let currentness = match done.currentness {
+        CardCurrentnessGoal::Current => "the snapshot is current",
+        CardCurrentnessGoal::AcceptedDirtyDraft => "the uncommitted draft snapshot is accepted",
+    };
+    format!("  done when: {static_movement}; {focused}; {cage}; {mutation}; {currentness}")
 }
 
 fn yes_no(value: bool) -> &'static str {
@@ -682,6 +916,151 @@ mod tests {
         )
     }
 
+    #[test]
+    fn prose_groups_equal_detail_routes_without_hiding_state() -> Result<(), String> {
+        use crate::domain::{
+            RepairCardDetailFamily as Family, RepairCardDetailRef, RepairCardDetailState as State,
+            RepairCardOmissionClass as Omission,
+        };
+        let reference =
+            |family, state, route: Option<&str>, reason: Option<&str>| RepairCardDetailRef {
+                family,
+                state,
+                route: route.map(str::to_string),
+                unavailable_reason: reason.map(str::to_string),
+                detail_digest: String::new(),
+                omitted_bytes: 0,
+                ordinal: 0,
+                omission_class: if route.is_some() {
+                    Omission::AuthorityOwnedDetail
+                } else {
+                    Omission::Unavailable
+                },
+            };
+        let mut card = prose_test_card();
+        card.detail_references = vec![
+            reference(
+                Family::CanonicalPacket,
+                State::Current,
+                Some("packet"),
+                None,
+            ),
+            reference(
+                Family::RelatedTestCandidates,
+                State::Current,
+                Some("packet"),
+                None,
+            ),
+            reference(Family::StaticMovement, State::Stale, Some("packet"), None),
+            reference(
+                Family::RepairAttemptStatus,
+                State::Malformed,
+                Some("attempt"),
+                None,
+            ),
+            reference(
+                Family::WitnessStageEvidence,
+                State::WrongRoot,
+                Some("witness"),
+                None,
+            ),
+            reference(
+                Family::FocusedProofReceipt,
+                State::Missing,
+                Some("receipt"),
+                None,
+            ),
+            reference(
+                Family::FixInstruction,
+                State::Unavailable,
+                None,
+                Some("unknown witness"),
+            ),
+            reference(
+                Family::LimitationDetail,
+                State::Unavailable,
+                None,
+                Some("other reason"),
+            ),
+            reference(
+                Family::MutationCalibration,
+                State::Unavailable,
+                None,
+                Some("unknown witness"),
+            ),
+        ];
+        let all = card.detail_references.clone();
+        // Empty and partial inventories must not invent families; a bounded
+        // producer's full nine-family inventory must preserve each mapping.
+        for count in [0, 1, 8, 9] {
+            card.detail_references = all[..count].to_vec();
+            let mut actual = std::collections::BTreeMap::new();
+            for line in agent_card_prose_lines(&card, "full", None) {
+                let Some(detail) = line.strip_prefix("  detail [") else {
+                    continue;
+                };
+                let (families, rest) = detail
+                    .split_once("] (")
+                    .ok_or_else(|| format!("bad detail: {detail}"))?;
+                let (state, destination) = rest
+                    .split_once("): ")
+                    .ok_or_else(|| format!("bad state: {rest}"))?;
+                for family in families.split(", ") {
+                    if actual
+                        .insert(
+                            family.to_string(),
+                            (state.to_string(), destination.to_string()),
+                        )
+                        .is_some()
+                    {
+                        return Err(format!("duplicate family {family}"));
+                    }
+                }
+            }
+            let expected: std::collections::BTreeMap<_, _> = card
+                .detail_references
+                .iter()
+                .map(|r| {
+                    let destination = r.route.clone().unwrap_or_else(|| {
+                        format!(
+                            "unavailable ({})",
+                            r.unavailable_reason
+                                .as_deref()
+                                .unwrap_or("no reason recorded")
+                        )
+                    });
+                    (wire_name(&r.family), (wire_name(&r.state), destination))
+                })
+                .collect();
+            if actual != expected {
+                return Err(format!(
+                    "detail mappings differ: {actual:?} != {expected:?}"
+                ));
+            }
+        }
+        let text = agent_card_prose_lines(&card, "full", None).join("\n");
+        if !text.contains("detail [canonical_packet, related_test_candidates] (current): packet")
+            || !text.contains("detail [static_movement] (stale): packet")
+        {
+            return Err(format!(
+                "equal routes grouped across different states or not grouped: {text}"
+            ));
+        }
+        // Malformed input with no reason must retain an explicit unknown,
+        // rather than inventing a cause or dropping the family.
+        card.detail_references = vec![reference(
+            Family::FixInstruction,
+            State::Unavailable,
+            None,
+            None,
+        )];
+        let text = agent_card_prose_lines(&card, "full", None).join("\n");
+        if !text.contains("(unavailable): unavailable (no reason recorded)") {
+            return Err(text);
+        }
+        Ok(())
+    }
+
     /// #6304: the card prose renders the canonical decision's block, so the
     /// human section and the wire DTO share one authority.
     #[test]
@@ -725,6 +1104,83 @@ mod tests {
         Ok(())
     }
 
+    /// #10693: the default brief is short, plain, and projects the same typed
+    /// fields; the ledger rows and internal vocabulary are `--verbose` only.
+    #[test]
+    fn plain_brief_not_ready_uses_plain_words_and_stays_capped() -> Result<(), String> {
+        let mut card = prose_test_card();
+        card.readiness.repair_ready = false;
+        card.readiness.missing_evidence =
+            vec!["producer-owned missing discriminator fact: boundary_value".to_string()];
+        card.exact_blocker = Some("witness: sink_localization_incomplete".to_string());
+        card.allowed_files = vec!["tests/t.rs".to_string()];
+        card.forbidden_files = vec!["src/lib.rs".to_string()];
+        card.limitations = (0..6).map(|i| format!("limit {i}")).collect();
+        let lines = agent_card_plain_lines(&card, "ripr agent packet --root 'a b' --json", None);
+        let text = lines.join("\n");
+        if !text.contains("Not ready to repair yet: a test assertion that pins the changed boundary value exactly") {
+            return Err(format!("not-ready reason not plain:\n{text}"));
+        }
+        if text.contains("witness") || text.contains("sink_localization") {
+            return Err(format!("internal blocker leaked:\n{text}"));
+        }
+        if !text.contains("and 4 more") || lines.len() > 18 {
+            return Err(format!("limits/cap wrong ({} lines):\n{text}", lines.len()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn plain_brief_is_short_and_free_of_ledger_vocabulary() -> Result<(), String> {
+        let mut card = prose_test_card();
+        card.allowed_files = vec!["tests/t.rs".to_string()];
+        card.forbidden_files = vec!["src/lib.rs".to_string()];
+        let lines =
+            agent_card_plain_lines(&card, "ripr agent packet --seam-id seam:demo --json", None);
+        let text = lines.join("\n");
+        for needle in [
+            "Repair brief for gap ",
+            "  Files you may change: tests/t.rs",
+            "  Do not change: src/lib.rs",
+            "  Done when: ",
+            "  This is a suggestion; ripr has not run or verified anything.",
+            "ripr agent packet --seam-id seam:demo --json",
+        ] {
+            if !text.contains(needle) {
+                return Err(format!("plain brief lost {needle:?}:\n{text}"));
+            }
+        }
+        for absent in [
+            "producer:",
+            "subject:",
+            "non-claim",
+            "edit cage",
+            "allowed_edit_surface",
+            "witness",
+            "detail [",
+            "repair_ready=",
+            "Repair card ",
+        ] {
+            if text.contains(absent) {
+                return Err(format!("plain brief printed {absent:?}:\n{text}"));
+            }
+        }
+        if lines.len() > 18 {
+            return Err(format!(
+                "plain brief is not short ({} lines):\n{text}",
+                lines.len()
+            ));
+        }
+        // The verbose ledger keeps the rows the brief hides.
+        let verbose =
+            agent_card_prose_lines(&card, "ripr agent packet --seam-id seam:demo --json", None)
+                .join("\n");
+        if !verbose.contains("  edit cage: allowed=") || !verbose.contains("  seam: seam:demo") {
+            return Err(format!("verbose ledger lost its rows:\n{verbose}"));
+        }
+        Ok(())
+    }
+
     /// Cards minted before the canonical field keep the legacy
     /// reference-only rendering.
     #[test]
@@ -751,16 +1207,60 @@ mod tests {
         if !text.contains("  next action: none (instruction fix_site_ready") {
             return Err(format!("legacy refusal line lost:\n{text}"));
         }
-        // #9604 follow-up: prose never prints a Debug spelling; every typed
-        // value renders at its wire spelling like the JSON card does.
+        Ok(())
+    }
+
+    /// #9244: the human summary words the currentness, instruction and
+    /// done-when enums for a newcomer and drops the schema line. The JSON card
+    /// keeps every wire value and `schema_version`.
+    #[test]
+    fn prose_words_enums_for_a_newcomer_and_omits_the_schema_line() -> Result<(), String> {
+        let card = prose_test_card();
+        let text =
+            agent_card_prose_lines(&card, "ripr agent packet --seam-id seam:demo --json", None)
+                .join("\n");
         for expected in [
-            "  instruction: fix_site_ready (fix site: yes, suggested assertion: no)",
-            "  done when: static movement closed_by_selected_route, focused test verified_pass, edit cage compliant, mutation not_requested, currentness current",
+            "  snapshot: workspace:demo @ abc123 (committed HEAD)",
+            "  instruction: fix site found, no exact edit ready (fix site: yes, suggested assertion: no)",
+            "  done when: the selected route closes the gap; the focused test passes; edits stay inside the edit cage; mutation testing is not requested; the snapshot is current",
         ] {
             if !text.contains(expected) {
-                return Err(format!(
-                    "prose leaked a non-wire spelling; missing {expected:?}:\n{text}"
-                ));
+                return Err(format!("missing plain wording {expected:?}:\n{text}"));
+            }
+        }
+        // Discriminating negatives: no schema line, no raw snake_case enum
+        // spelling on the lines this change owns.
+        if text.contains("schema:") || text.contains("repair_card.v1") {
+            return Err(format!("the schema line must not print:\n{text}"));
+        }
+        for owned in ["  snapshot: ", "  instruction: ", "  done when: "] {
+            let line = text
+                .lines()
+                .find(|line| line.starts_with(owned))
+                .ok_or_else(|| format!("missing {owned:?} line:\n{text}"))?;
+            let words = line.split_whitespace().any(|word| {
+                word.contains('_') && word.chars().all(|ch| ch.is_ascii_lowercase() || ch == '_')
+            });
+            if words {
+                return Err(format!("raw enum spelling on an owned line: {line}"));
+            }
+        }
+        // Another variant of each axis words differently, so the mapping is
+        // exercised and not one constant string.
+        let mut other = prose_test_card();
+        other.snapshot.currentness = RepairCardSnapshotCurrentness::AcceptedDirtyDraft;
+        other.done_when.focused_test_execution = FocusedExecutionGoal::ExplicitlyNotRun;
+        other.done_when.currentness = CardCurrentnessGoal::AcceptedDirtyDraft;
+        let text =
+            agent_card_prose_lines(&other, "ripr agent packet --seam-id seam:demo --json", None)
+                .join("\n");
+        for expected in [
+            "(your uncommitted working tree)",
+            "ripr does not run the focused test",
+            "the uncommitted draft snapshot is accepted",
+        ] {
+            if !text.contains(expected) {
+                return Err(format!("missing alternate wording {expected:?}:\n{text}"));
             }
         }
         Ok(())

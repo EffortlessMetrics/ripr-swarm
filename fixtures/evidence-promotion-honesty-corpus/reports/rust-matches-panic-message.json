@@ -1,0 +1,22 @@
+{
+  "kind": "matches_eligibility_test_projection",
+  "summary": {
+    "findings": 2
+  },
+  "findings": [
+    {
+      "case": "mismatched_expected_message",
+      "classification": "static_unknown",
+      "probe": {
+        "family": "error_path"
+      }
+    },
+    {
+      "case": "mismatched_expected_message",
+      "classification": "static_unknown",
+      "probe": {
+        "family": "return_value"
+      }
+    }
+  ]
+}

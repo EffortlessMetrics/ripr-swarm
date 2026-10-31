@@ -243,6 +243,13 @@ pub(crate) fn load_findings_for_reuse_core(
         .map_err(crate::core_error::CoreError::check_artifact_unusable)?;
     verify_identity(&artifact, &current, path)
         .map_err(crate::core_error::CoreError::check_artifact_unusable)?;
+    if artifact.findings.iter().any(|finding| {
+        finding.alignment_reason.as_deref() == Some(crate::domain::LIVE_PYTHON_TRUTHINESS_ALIGNMENT)
+    }) {
+        return Err(crate::core_error::CoreError::check_artifact_unusable(
+            "Python truthiness evidence requires a fresh physical source audit; run `ripr explain` or `ripr context` without `--from`",
+        ));
+    }
     Ok(artifact.findings)
 }
 
@@ -315,7 +322,10 @@ fn build_identity_at_load(
 }
 
 /// Compare the recomputed identity against the recording, field by field,
-/// and fail closed naming every mismatched field.
+/// and fail closed naming every mismatched field. An `analyzer_version`
+/// mismatch names both identities, recorded and current, so a binary
+/// swapped between the artifact's write and read execs is self-describing
+/// (#11197).
 fn verify_identity(
     artifact: &CheckArtifactV1,
     current: &CheckArtifactIdentityV1,
@@ -354,18 +364,26 @@ fn verify_identity(
     if recorded.config_identity_hash != current.config_identity_hash {
         mismatched.push("config_identity_hash");
     }
-    if artifact.analyzer_version != crate::build_identity::cache_identity() {
+    let current_analyzer_version = crate::build_identity::cache_identity();
+    if artifact.analyzer_version != current_analyzer_version {
         mismatched.push("analyzer_version");
     }
     if mismatched.is_empty() {
         return Ok(());
+    }
+    let mut fields = mismatched.join(", ");
+    if mismatched.contains(&"analyzer_version") {
+        fields.push_str(&format!(
+            " (analyzer_version recorded `{}` vs current `{}`)",
+            artifact.analyzer_version, current_analyzer_version
+        ));
     }
     Err(format!(
         "check artifact at {} cannot be reused: identity mismatch on {}. \
          The artifact was produced from a different analysis input; \
          re-run `ripr check --write-artifact` with the current input.",
         path.display(),
-        mismatched.join(", ")
+        fields
     ))
 }
 
@@ -604,6 +622,8 @@ mod raw_path_tests {
     fn raw_byte_finding() -> Finding {
         let raw = PathBuf::from(OsStr::from_bytes(b"pricing_\xff.rs"));
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:pricing:1:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -649,6 +669,8 @@ mod raw_path_tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: None,

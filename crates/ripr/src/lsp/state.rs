@@ -2,8 +2,9 @@ use super::component_outcome::ComponentOutcome;
 use super::gap_artifacts::{GapArtifactRejection, ValidatedGapArtifact};
 use super::input_identity::LspAnalysisInputIdentity;
 use super::uri::{file_uri_relative_to_root, file_uris_match, path_from_file_uri};
+use crate::analysis::language_outcome::{LanguageCompletenessView, LanguageDisclosure};
 use crate::analysis::{ClassifiedSeam, PreviewLanguageAdvisory};
-use crate::analysis_outcome::{AnalysisLimitationKind, AnalysisOutcome};
+use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::Mode;
 use crate::config::LspDiagnosticProfile;
 use crate::domain::{Finding, LanguageId};
@@ -738,6 +739,11 @@ pub(super) struct AnalysisSnapshot {
     /// Distinct from [`Self::partial_scope`] / #5998: disabled-language
     /// files are skipped before the selector can record a budget stop.
     pub(super) unavailable_adapter: UnavailableAdapterCoverage,
+    /// Mixed-language completeness view of the run's sealed aggregate
+    /// (#6475). The per-language disposition (a language the run did not
+    /// select) is read from here, not re-derived from limitation text.
+    /// `None` when the producer returned no view (no analysis ran).
+    pub(super) language_view: Option<LanguageCompletenessView>,
 }
 
 /// Changed-file coverage for languages the run did not analyze because the
@@ -801,10 +807,10 @@ impl UnavailableAdapterCoverage {
     pub(super) fn not_enabled_language(
         &self,
         relative: &Path,
-        outcome: Option<&AnalysisOutcome>,
+        view: Option<&LanguageCompletenessView>,
     ) -> Option<LanguageId> {
         let language = route_unavailable_adapter_document(relative)?;
-        if !limitation_covers_language(outcome, language) {
+        if !view_not_selected(view, language) {
             return None;
         }
         let normalized = normalize_unavailable_adapter_path(relative);
@@ -827,17 +833,22 @@ impl UnavailableAdapterCoverage {
     }
 }
 
-fn limitation_covers_language(outcome: Option<&AnalysisOutcome>, language: LanguageId) -> bool {
-    let Some(outcome) = outcome else {
-        return false;
-    };
-    let prefix = format!("{} changed", language.as_str());
-    outcome.limitations.iter().any(|limitation| {
-        limitation.kind == AnalysisLimitationKind::LanguageAdapterUnavailable
-            && limitation
-                .bounded_detail
-                .as_deref()
-                .is_some_and(|detail| detail.starts_with(&prefix))
+/// Whether the run's aggregate records `language` as not selected (adapter
+/// disabled or not compiled in). The aggregate owns this disposition; the
+/// `language_adapter_unavailable` limitation is its typed public echo.
+fn view_not_selected(view: Option<&LanguageCompletenessView>, language: LanguageId) -> bool {
+    // The shared router sends JavaScript documents to the TypeScript adapter
+    // family, while the aggregate keeps `javascript` as its own label.
+    view.is_some_and(|view| {
+        view.rows.iter().any(|row| {
+            row.disclosure == LanguageDisclosure::AdvisoryOnly
+                && match language {
+                    LanguageId::TypeScript | LanguageId::JavaScript => {
+                        matches!(row.label.as_str(), "typescript" | "javascript")
+                    }
+                    other => row.label == other.as_str(),
+                }
+        })
     })
 }
 
@@ -953,6 +964,34 @@ impl AnalysisSnapshot {
                 )
             })
             .count();
+        // Not-analyzed markers (#10715) are governed, code-marked disclosures
+        // for a changed file whose language adapter is not enabled; they are
+        // not findings, seams, or gap records.
+        let language_not_analyzed_disclosures = self
+            .diagnostics_by_uri
+            .values()
+            .flatten()
+            .filter(|diagnostic| {
+                diagnostic_has_code(
+                    diagnostic,
+                    super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE,
+                )
+            })
+            .count();
+        // Preview-withheld markers (#11296) are governed, code-marked
+        // disclosures for a file whose preview findings the actionable
+        // profile withheld; they are not findings, seams, or gap records.
+        let preview_withheld_disclosures = self
+            .diagnostics_by_uri
+            .values()
+            .flatten()
+            .filter(|diagnostic| {
+                diagnostic_has_code(
+                    diagnostic,
+                    super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE,
+                )
+            })
+            .count();
         let published_finding_count = super::diagnostics::canonical_finding_groups(&self.findings)
             .into_iter()
             .filter(|(primary, _)| {
@@ -969,6 +1008,8 @@ impl AnalysisSnapshot {
                 + surfacable_seams
                 + gap_diagnostics
                 + scope_guard_disclosures
+                + language_not_analyzed_disclosures
+                + preview_withheld_disclosures
                 == diagnostic_count
             && self
                 .gap_artifacts
@@ -3002,6 +3043,7 @@ mod tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
+            language_view: None,
         };
 
         if !snapshot.is_consistent() {
@@ -3038,6 +3080,7 @@ mod tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
+            language_view: None,
         };
 
         if snapshot.is_consistent() {
@@ -3084,6 +3127,7 @@ mod tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
+            language_view: None,
         };
 
         if !snapshot.is_consistent() {
@@ -3102,6 +3146,62 @@ mod tests {
         };
 
         if lookalike_snapshot.is_consistent() {
+            return Err("a lookalike code must stay unaccounted".to_string());
+        }
+        Ok(())
+    }
+
+    fn preview_withheld_snapshot(code: &str) -> Result<AnalysisSnapshot, String> {
+        let uri = test_uri("file:///workspace/src/pricing.py")?;
+        let mut marker = plain_diagnostic();
+        marker.code = Some(tower_lsp_server::ls_types::NumberOrString::String(
+            code.to_string(),
+        ));
+        let mut diagnostics_by_uri = BTreeMap::new();
+        diagnostics_by_uri.insert(uri, vec![marker]);
+        Ok(AnalysisSnapshot {
+            root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
+            input_identity: None,
+            base: None,
+            mode: Mode::Draft,
+            refresh: RefreshMetadata::default(),
+            findings: Vec::new(),
+            analysis_outcome: None,
+            diagnostic_profile: LspDiagnosticProfile::Actionable,
+            classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
+            gap_artifacts: Vec::new(),
+            gap_artifact_rejections: Vec::new(),
+            harness_facts: HarnessFactsOnSnapshot::NotRegistered,
+            diagnostics_by_uri,
+            diagnostic_uri_index: None,
+            delivery_selection: None,
+            seams_deferred: false,
+            partial_scope: None,
+            component_outcomes: Vec::new(),
+            out_of_scope_test_file_findings: 0,
+            unavailable_adapter: UnavailableAdapterCoverage::default(),
+            language_view: None,
+        })
+    }
+
+    #[test]
+    fn snapshot_consistency_counts_preview_withheld_marker() -> Result<(), String> {
+        // #11296: the governed marker is accounted without a finding.
+        let snapshot = preview_withheld_snapshot(
+            crate::lsp::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE,
+        )?;
+        if !snapshot.is_consistent() {
+            return Err("the preview-withheld marker should be accounted".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_consistency_rejects_preview_withheld_lookalike() -> Result<(), String> {
+        let lookalike = preview_withheld_snapshot("ripr-diagnostic-preview-withheld-x")?;
+        if lookalike.is_consistent() {
             return Err("a lookalike code must stay unaccounted".to_string());
         }
         Ok(())
@@ -3378,40 +3478,24 @@ mod tests {
         Ok(())
     }
 
-    fn python_unavailable_outcome() -> Result<AnalysisOutcome, String> {
-        use crate::analysis_outcome::{
-            AnalysisIdentity, AnalysisLimitation, AnalysisOutcomeCounts, AnalysisOutcomeKind,
-            AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
-        };
-        let limitation = AnalysisLimitation::new(
-            AnalysisLimitationKind::LanguageAdapterUnavailable,
-            AnalysisStage::LanguageAdapter,
-            AnalysisRecovery::new(
-                AnalysisRecoveryKind::EnableLanguage,
-                "Enable the python preview adapter and re-run the analysis.",
-            )?,
-        )
-        .with_affected_items(1)?
-        .with_detail(
-            "python changed 1 file(s), but the preview adapter was not enabled or available",
-        )?;
-        AnalysisOutcome::new(
-            AnalysisOutcomeKind::PartialWithLimitations,
-            AnalysisIdentity {
-                input_identity: Some("sha256:lsp-7205".to_string()),
-                ..AnalysisIdentity::default()
-            },
-            AnalysisOutcomeCounts {
-                changed_file_count: 2,
-                changed_line_count: 2,
-                ..AnalysisOutcomeCounts::default()
-            },
-            vec![limitation],
-        )
+    /// The view of a run whose python adapter was not selected, beside a
+    /// complete rust sibling. Built from the aggregate, as the producer does.
+    fn python_unavailable_outcome() -> Result<LanguageCompletenessView, String> {
+        use crate::analysis::language_outcome::{LanguageAggregate, LanguageAnalysisOutcomeV1};
+        let mut aggregate = LanguageAggregate::new("full".to_string());
+        aggregate.record(LanguageAnalysisOutcomeV1::not_selected(
+            "python",
+            1,
+            "language not in the effective [languages].enabled set",
+            "full",
+        ));
+        Ok(LanguageCompletenessView::from_aggregate(
+            &aggregate.finish(),
+        ))
     }
 
     #[test]
-    fn unavailable_adapter_named_path_requires_matching_limitation() -> Result<(), String> {
+    fn unavailable_adapter_named_path_requires_matching_aggregate_row() -> Result<(), String> {
         let coverage = UnavailableAdapterCoverage {
             named_paths: vec!["zpy/pricing.py".to_string()],
             incomplete_languages: Vec::new(),
@@ -3420,7 +3504,7 @@ mod tests {
         let relative = Path::new("zpy/pricing.py");
         if coverage.not_enabled_language(relative, None).is_some() {
             return Err(
-                "named paths without a matching limitation must not invent not_analyzed".into(),
+                "named paths without a matching aggregate row must not invent not_analyzed".into(),
             );
         }
         let outcome = python_unavailable_outcome()?;
@@ -3626,6 +3710,96 @@ mod tests {
             return Err(format!(
                 "uppercase-extension identity must follow host file identity, got {mixed:?}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_adapter_language_follows_the_aggregate_row_not_limitation_text()
+    -> Result<(), String> {
+        use crate::analysis::LanguageRunStatus;
+        use crate::analysis::language_outcome::{LanguageAggregate, LanguageAnalysisOutcomeV1};
+        let view_of = |children: Vec<LanguageAnalysisOutcomeV1>| {
+            let mut aggregate = LanguageAggregate::new("full".to_string());
+            for child in children {
+                aggregate.record(child);
+            }
+            LanguageCompletenessView::from_aggregate(&aggregate.finish())
+        };
+        let not_selected = |label: &str| {
+            LanguageAnalysisOutcomeV1::not_selected(
+                label,
+                1,
+                "language not in the effective [languages].enabled set",
+                "full",
+            )
+        };
+        let coverage = UnavailableAdapterCoverage {
+            named_paths: vec![
+                "zpy/a.py".to_string(),
+                "web/a.js".to_string(),
+                "lib/A.pl".to_string(),
+            ],
+            ..Default::default()
+        };
+        // (case, view, document, expected language). Expectations are
+        // literal and independent of the view code under test.
+        let cases: Vec<(
+            &str,
+            Option<LanguageCompletenessView>,
+            &str,
+            Option<LanguageId>,
+        )> = vec![
+            (
+                "python not selected",
+                Some(view_of(vec![not_selected("python")])),
+                "zpy/a.py",
+                Some(LanguageId::Python),
+            ),
+            (
+                "javascript alone not selected; the router sends .js to typescript",
+                Some(view_of(vec![not_selected("javascript")])),
+                "web/a.js",
+                Some(LanguageId::TypeScript),
+            ),
+            (
+                "perl adapter error beside its not-selected row",
+                Some(view_of(vec![
+                    LanguageAnalysisOutcomeV1::from_diff_err(
+                        LanguageId::Perl,
+                        "boom".to_string(),
+                        LanguageRunStatus::Unavailable,
+                        "full",
+                    ),
+                    not_selected("perl"),
+                ])),
+                "lib/A.pl",
+                Some(LanguageId::Perl),
+            ),
+            (
+                "python adapter failed, not unselected",
+                Some(view_of(vec![LanguageAnalysisOutcomeV1::from_diff_err(
+                    LanguageId::Python,
+                    "boom".to_string(),
+                    LanguageRunStatus::Failed,
+                    "full",
+                )])),
+                "zpy/a.py",
+                None,
+            ),
+            (
+                "sibling language not selected",
+                Some(view_of(vec![not_selected("typescript")])),
+                "zpy/a.py",
+                None,
+            ),
+            ("no view", None, "zpy/a.py", None),
+        ];
+        for (case, view, document, expected) in cases {
+            let actual = coverage.not_enabled_language(Path::new(document), view.as_ref());
+            if actual != expected {
+                return Err(format!("{case}: expected {expected:?}, got {actual:?}"));
+            }
         }
         Ok(())
     }

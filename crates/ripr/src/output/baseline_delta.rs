@@ -358,6 +358,7 @@ pub(crate) fn build_baseline_delta_report(input: BaselineDeltaInput) -> Baseline
             None
         }
     };
+    let absence_scope = PreparedAnalysisScope::new(current.analysis_scope.as_ref());
     let mut items = baseline.invalid_items.clone();
     let mut matched_current = BTreeSet::new();
 
@@ -500,7 +501,7 @@ pub(crate) fn build_baseline_delta_report(input: BaselineDeltaInput) -> Baseline
                             items.push(identity_discontinuity_item(baseline_record, discontinuity));
                         }
                         None => match absence_not_evaluated_reason(
-                            current.analysis_scope.as_ref(),
+                            &absence_scope,
                             baseline_record.path.as_deref(),
                         ) {
                             // ISSUE #9301 F2: absence outside the analyzed
@@ -535,6 +536,7 @@ pub(crate) fn build_baseline_delta_report(input: BaselineDeltaInput) -> Baseline
             .then_with(|| left.identity.sort_key().cmp(&right.identity.sort_key()))
     });
 
+    drop(absence_scope);
     let delta = count_items(&items);
     BaselineDeltaReport {
         root: input.root,
@@ -820,6 +822,13 @@ pub(crate) fn render_baseline_delta_markdown(report: &BaselineDeltaReport) -> St
 
 pub(crate) fn baseline_delta_item_count(report: &BaselineDeltaReport) -> usize {
     report.items.len()
+}
+
+/// Advisory warnings the report also carries in its JSON/Markdown bodies; the
+/// CLI echoes them to stderr (#9856) so a run that routed from missing inputs
+/// is visible in terminals and `2>&1` CI logs.
+pub(crate) fn baseline_delta_warnings(report: &BaselineDeltaReport) -> &[String] {
+    &report.warnings
 }
 
 fn parse_baseline_records(path: &str, json_text: Result<String, String>) -> BaselineParse {
@@ -1461,6 +1470,28 @@ fn stale_item(baseline: &BaselineRecord, reason: String) -> DeltaItem {
     }
 }
 
+/// Prepare a gate scope once per artifact, retaining the binding between the
+/// raw disclosure and its validated membership for every absent baseline row.
+pub(super) struct PreparedAnalysisScope<'a> {
+    scope: Option<&'a Value>,
+    analyzed_files: Option<BTreeSet<&'a str>>,
+}
+
+impl<'a> PreparedAnalysisScope<'a> {
+    pub(super) fn new(scope: Option<&'a Value>) -> Self {
+        let analyzed_files = scope
+            .filter(|scope| {
+                scope.get("scope").and_then(Value::as_str) == Some("rust_workspace_complete")
+            })
+            .and_then(|scope| scope.get("corpus"))
+            .and_then(crate::output::gap_source_subject::analyzed_production_files);
+        Self {
+            scope,
+            analyzed_files,
+        }
+    }
+}
+
 /// Whether a baseline entry absent from current evidence may be read as
 /// resolved (issue #9301 F2). Returns `Some(reason)` when it may not.
 ///
@@ -1471,10 +1502,10 @@ fn stale_item(baseline: &BaselineRecord, reason: String) -> DeltaItem {
 /// disclosure fails closed. `baseline update --remove-resolved` shares this
 /// predicate so delta and update cannot disagree.
 pub(super) fn absence_not_evaluated_reason(
-    analysis_scope: Option<&Value>,
+    analysis_scope: &PreparedAnalysisScope<'_>,
     entry_path: Option<&str>,
 ) -> Option<String> {
-    let Some(scope) = analysis_scope.filter(|scope| scope.is_object()) else {
+    let Some(scope) = analysis_scope.scope.filter(|scope| scope.is_object()) else {
         return Some(
             "the current gate decision discloses no analysis_scope, so it is not established that this entry's file was analyzed; regenerate the gate decision with a current build"
                 .to_string(),
@@ -1484,11 +1515,29 @@ pub(super) fn absence_not_evaluated_reason(
         .get("scope")
         .and_then(Value::as_str)
         .unwrap_or("unknown");
-    if kind == "gap_ledger_artifact" {
-        return Some(
-            "a gap-ledger gate decision lists only the ledger's own anchor files, not the files analyzed, so absence is not evidence of resolution (a real analyzed-files disclosure for the ledger path is tracked in #9599)"
-                .to_string(),
+    if kind == "rust_workspace_complete" {
+        return workspace_scope_not_evaluated_reason(
+            scope,
+            analysis_scope.analyzed_files.as_ref(),
+            entry_path,
         );
+    }
+    if kind == "gap_ledger_artifact" {
+        let refused = scope
+            .get("coverage_refused")
+            .and_then(Value::as_array)
+            .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+            .filter(|items| !items.is_empty())
+            .map(|items| {
+                format!(
+                    " (the ledger's workspace coverage was refused at gate time; differing: {})",
+                    items.join(", ")
+                )
+            })
+            .unwrap_or_default();
+        return Some(format!(
+            "a gap-ledger gate decision lists only the ledger's own anchor files, not the files analyzed, so absence is not evidence of resolution{refused} (regenerate the ledger from a complete `ripr check --format repo-exposure-json` run with `reports gap-ledger --repo-exposure` so it discloses workspace coverage, #9599)"
+        ));
     }
     if kind != "diff_scoped_changed_files" {
         return Some(format!(
@@ -1619,6 +1668,68 @@ pub(super) fn absence_not_evaluated_reason(
             "`{path}` is outside the files the current analysis covered (scope `{kind}`)"
         ))
     }
+}
+
+/// Coverage by a producer-disclosed complete whole-Rust-workspace run (#9599,
+/// the gap-ledger path). The disclosure is independent of which records
+/// survive, and `gate evaluate` only emits it while the ledger still holds
+/// exactly the record set it was made for. Any non-Rust path (Python,
+/// TypeScript, Markdown, ...) was never read by that analysis.
+fn workspace_scope_not_evaluated_reason(
+    scope: &Value,
+    analyzed_files: Option<&BTreeSet<&str>>,
+    entry_path: Option<&str>,
+) -> Option<String> {
+    let well_formed = scope.get("run_status").and_then(Value::as_str) == Some("complete")
+        && scope.get("basis").and_then(Value::as_str) == Some("repo_exposure_complete_run")
+        && scope.pointer("/corpus/scope").and_then(Value::as_str) == Some("rust_workspace")
+        && scope.pointer("/corpus/unavailable").is_none()
+        && scope
+            .pointer("/corpus/files_content_hash")
+            .and_then(Value::as_str)
+            .is_some_and(crate::output::gap_source_subject::is_corpus_hash_shape)
+        && scope
+            .pointer("/corpus/cache_schema_version")
+            .is_some_and(Value::is_string)
+        && analyzed_files.is_some()
+        && scope
+            .get("corpus")
+            .and_then(crate::output::gap_source_subject::analysis_inputs)
+            .is_some()
+        && scope.get("records_total").is_some_and(Value::is_u64)
+        && scope
+            .get("records_digest")
+            .and_then(Value::as_str)
+            .is_some_and(|digest| {
+                digest.strip_prefix("sha256:").is_some_and(|hex| {
+                    hex.len() == 64
+                        && hex
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                })
+            });
+    if !well_formed {
+        return Some(
+            "the current gate decision's workspace coverage disclosure is malformed or incomplete, so file coverage is not established"
+                .to_string(),
+        );
+    }
+    let Some(raw) = entry_path.filter(|p| !p.is_empty()) else {
+        return Some(
+            "the baseline entry has no path to join against the analyzed scope".to_string(),
+        );
+    };
+    if let Some(why) = crate::output::gap_source_subject::rust_workspace_path_gap(raw) {
+        return Some(format!(
+            "`{raw}` is not established as a file the complete workspace run analyzed: {why}"
+        ));
+    }
+    if analyzed_files.is_some_and(|files| files.contains(raw)) {
+        return None;
+    }
+    Some(format!(
+        "`{raw}` is not established as a file the complete workspace run analyzed: the producer did not disclose this path as analyzed production source"
+    ))
 }
 
 fn normalize_scope_path(path: &str) -> String {
@@ -2014,8 +2125,8 @@ mod tests {
     }
 
     use super::{
-        BaselineDeltaInput, absence_not_evaluated_reason, build_baseline_delta_report,
-        render_baseline_delta_json, render_baseline_delta_markdown,
+        BaselineDeltaInput, PreparedAnalysisScope, absence_not_evaluated_reason,
+        build_baseline_delta_report, render_baseline_delta_json, render_baseline_delta_markdown,
     };
     use serde_json::{Value, json};
     use std::path::{Path, PathBuf};
@@ -3866,7 +3977,9 @@ mod tests {
             }
             base
         };
-        let reason = |s: &Value, path: Option<&str>| absence_not_evaluated_reason(Some(s), path);
+        let reason = |s: &Value, path: Option<&str>| {
+            absence_not_evaluated_reason(&PreparedAnalysisScope::new(Some(s)), path)
+        };
         // Covered: plain, `./`, and backslash spellings normalize.
         assert!(reason(&scope(json!({})), Some("src/a.rs")).is_none());
         assert!(reason(&scope(json!({})), Some("./src/a.rs")).is_none());
@@ -3919,6 +4032,39 @@ mod tests {
             Some("src/a.rs"),
         );
         assert!(ledger.is_some_and(|r| r.contains("#9599")));
+        // A refused workspace coverage names the differing classes, including
+        // the non-input labels; an empty or absent list adds nothing.
+        for classes in [
+            json!(["config", "membership"]),
+            json!(["records_or_disclosure"]),
+            json!(["config_unloadable"]),
+        ] {
+            let expected = classes
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            let refused = reason(
+                &scope(json!({"scope": "gap_ledger_artifact", "coverage_refused": classes})),
+                Some("src/a.rs"),
+            );
+            assert!(
+                refused.is_some_and(|r| r.contains(&format!("differing: {expected})"))),
+                "{expected}"
+            );
+        }
+        for none in [json!([]), json!("config"), json!([7])] {
+            let plain = reason(
+                &scope(json!({"scope": "gap_ledger_artifact", "coverage_refused": none})),
+                Some("src/a.rs"),
+            );
+            assert!(plain.is_some_and(|r| !r.contains("differing:")));
+        }
         assert!(reason(&scope(json!({"unevaluated_seams": 2})), Some("src/a.rs")).is_some());
         assert!(reason(&scope(json!({"unevaluated_seams": 0})), Some("src/a.rs")).is_none());
         assert!(reason(&scope(json!({"unevaluated_seams": "1"})), Some("src/a.rs")).is_some());
@@ -3988,12 +4134,103 @@ mod tests {
             object.remove("scope");
         }
         assert!(reason(&no_kind, Some("src/a.rs")).is_some_and(|r| r.contains("unknown")));
+        // Complete whole-Rust-workspace coverage from the ledger path (#9599):
+        // Rust paths are covered, non-Rust and malformed disclosures are not.
+        let workspace = json!({
+            "scope": "rust_workspace_complete",
+            "run_status": "complete",
+            "basis": "repo_exposure_complete_run",
+            "corpus": {
+                "scope": "rust_workspace",
+                "cache_schema_version": "1.93",
+                "files_content_hash": "0123456789abcdef",
+                "analyzed_production_files": [
+                    "src/anywhere/new.rs", "crates/a/src/lib.rs", "src/target.rs"
+                ],
+                "analysis_inputs": {"cfg_features_hash": "a", "config_hash": "b", "test_intent_hash": "c", "suppressions_hash": "d", "workspace_manifests_hash": "e", "lockfile_hash": "f", "toolchain_hash": "g", "analyzer_version": "h"},
+            },
+            "records_total": 1,
+            "records_digest": format!("sha256:{}", "0".repeat(64)),
+        });
+        assert!(reason(&workspace, Some("src/anywhere/new.rs")).is_none());
+        assert!(reason(&workspace, Some("crates/a/src/lib.rs")).is_none());
+        assert!(reason(&workspace, Some("src/not-admitted.rs")).is_some());
+        for files in [
+            Value::Null,
+            json!([]),
+            json!([7]),
+            json!(["src/anywhere/new.rs", "src/anywhere/new.rs"]),
+            json!(["src/../anywhere/new.rs"]),
+        ] {
+            let mut malformed = workspace.clone();
+            malformed["corpus"]["analyzed_production_files"] = files;
+            assert!(reason(&malformed, Some("src/anywhere/new.rs")).is_some());
+        }
+        let mut missing = workspace.clone();
+        if let Some(corpus) = missing["corpus"].as_object_mut() {
+            corpus.remove("analyzed_production_files");
+        }
+        assert!(reason(&missing, Some("src/anywhere/new.rs")).is_some());
+        // Spellings that could name a different file than the run saw, and
+        // directories the producer's walk never enters, are not covered.
+        for odd in [
+            "../outside/x.rs",
+            "src/../x.rs",
+            "/abs/y.rs",
+            "vol:/abs/y.rs",
+            "vol:\\abs\\y.rs",
+            "./src/win.rs",
+            "src\\win.rs",
+            "src/./a.rs",
+            "src//a.rs",
+            "src/lib.rs ",
+            " src/lib.rs",
+            "target/debug/build/gen.rs",
+            "crates/a/target/gen.rs",
+            "fixtures/case/src/lib.rs",
+            "node_modules/pkg/x.rs",
+            ".git/hooks/x.rs",
+            ".ripr/x.rs",
+            "src/",
+            "x.rs/",
+        ] {
+            assert!(reason(&workspace, Some(odd)).is_some(), "{odd:?}");
+        }
+        // A file *named* like an ignored directory is still a file.
+        assert!(reason(&workspace, Some("src/target.rs")).is_none());
+        assert!(reason(&workspace, Some("scripts/tool.py")).is_some_and(|r| r.contains("Rust")));
+        assert!(reason(&workspace, None).is_some());
+        for broken in [
+            json!({"run_status": "limited"}),
+            json!({"basis": "other"}),
+            json!({"corpus": {"scope": "other", "files_content_hash": "x"}}),
+            json!({"corpus": {"scope": "rust_workspace"}}),
+            json!({"corpus": {"scope": "rust_workspace", "files_content_hash": "0123456789abcdef"}}),
+            json!({"corpus": {"scope": "rust_workspace", "cache_schema_version": "1.93", "files_content_hash": "DEADBEEF"}}),
+            json!({"records_total": "1"}),
+            json!({"records_digest": "deadbeef"}),
+            json!({"records_digest": "sha256:00"}),
+            json!({"records_digest": format!("sha256:{}", "z".repeat(64))}),
+            json!({"corpus": {"scope": "rust_workspace", "files_content_hash": "x", "unavailable": "root"}}),
+            json!({"records_digest": 7}),
+        ] {
+            let mut scope_value = workspace.clone();
+            if let (Some(target), Some(patch)) = (scope_value.as_object_mut(), broken.as_object()) {
+                for (key, value) in patch {
+                    target.insert(key.clone(), value.clone());
+                }
+            }
+            assert!(reason(&scope_value, Some("src/a.rs")).is_some(), "{broken}");
+        }
         let missing = json!({"scope": "diff_scoped_changed_files"});
         assert!(reason(&missing, Some("src/a.rs")).is_some());
         // Non-object or absent scope fails closed.
-        assert!(absence_not_evaluated_reason(Some(&json!("scoped")), Some("src/a.rs")).is_some());
-        assert!(absence_not_evaluated_reason(Some(&json!([1])), Some("src/a.rs")).is_some());
-        assert!(absence_not_evaluated_reason(None, Some("src/a.rs")).is_some());
+        assert!(reason(&json!("scoped"), Some("src/a.rs")).is_some());
+        assert!(reason(&json!([1]), Some("src/a.rs")).is_some());
+        assert!(
+            absence_not_evaluated_reason(&PreparedAnalysisScope::new(None), Some("src/a.rs"))
+                .is_some()
+        );
     }
 
     #[test]

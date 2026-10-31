@@ -24,8 +24,11 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod boundary_input;
 mod fact_index;
 mod static_limit;
+
+use boundary_input::BoundaryInput;
 
 /// The `ripr-perl-facts-v1` packet schema. Re-uses the canonical declaration
 /// from `app` (Campaign 31 item 5) so the schema version has one source of
@@ -49,6 +52,13 @@ fn is_supported_perl_fact_exporter(name: &str) -> bool {
         PERL_RIPR_FACT_EXPORTER | "perllsp" | PERL_LSP_FACT_EXPORTER
     )
 }
+
+/// Producer capability promising the oracle grading RIPR-SPEC-0235 rule 16
+/// reads: an assertion that carries a matcher for the raised error
+/// (`throws_ok` with a class or regex, `like(dies {...}, ...)`) is
+/// `strong_exact`, a bare `dies_ok` or value `like` stays `weak_broad`, and an
+/// exception block nested in such an assertion is not a separate oracle.
+const PERL_ORACLE_MATCHER_GRADING: &str = "oracle_matcher_grading";
 
 /// Stable reason marker for a *configured* managed Perl facts producer that
 /// was invoked and failed (#6828). The adapter returns this marked reason so
@@ -232,10 +242,15 @@ impl LanguageAdapter for PerlAdapter {
         // C2: convert the packet into Findings, each located on its changed
         // line when the diff settles which line that is.
         let change_lines = change_lines_from_diff(&packet, changed_files);
-        let findings =
+        let mut findings =
             packet_to_findings_with_currentness(&packet, &change_lines, |file, change| {
                 perl_change_currentness(&options.root, changed_files, file, change)
             });
+        findings.extend(unowned_change_findings(
+            &packet,
+            changed_files,
+            &options.root,
+        ));
         // #8661: the count names files this diff changes. A packet change in
         // a file the diff adds no line to still yields its (unresolved)
         // finding, but it is base-side evidence, not a changed file.
@@ -271,6 +286,7 @@ impl LanguageAdapter for PerlAdapter {
         };
 
         Ok(LanguageDiffResult {
+            value_origins: Default::default(),
             findings,
             changed_files,
             candidate_line_count: 0,
@@ -283,6 +299,7 @@ impl LanguageAdapter for PerlAdapter {
             limitations,
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
+            preview_fact_cache: Default::default(),
         })
     }
 
@@ -328,6 +345,7 @@ impl LanguageAdapter for PerlAdapter {
         };
 
         Ok(LanguageRepoResult {
+            value_origins: Default::default(),
             findings,
             production_files,
             skipped_files: 0,
@@ -483,6 +501,18 @@ fn perl_change_currentness(
     file: &FileFact,
     change: &ChangeFact,
 ) -> crate::domain::SourceCurrentness {
+    let lines = change.range.start_line..=change.range.end_line.max(change.range.start_line);
+    perl_lines_currentness(root, changed_files, file, lines)
+}
+
+/// Whether the diff's added line within `lines` of `file` is the line on disk
+/// under `root` (see [`perl_change_currentness`]).
+fn perl_lines_currentness(
+    root: &std::path::Path,
+    changed_files: &[ChangedFile],
+    file: &FileFact,
+    lines: std::ops::RangeInclusive<usize>,
+) -> crate::domain::SourceCurrentness {
     use crate::domain::SourceCurrentness;
     // Resolve symlinks before trusting the on-disk source: a packet path whose
     // directory is a symlink out of the root is not a source ripr observed
@@ -510,7 +540,6 @@ fn perl_change_currentness(
             text
         })
     };
-    let lines = change.range.start_line..=change.range.end_line.max(change.range.start_line);
     let added_in_range = changed_files
         .iter()
         .filter(|changed| changed.path == std::path::Path::new(&file.path))
@@ -524,6 +553,126 @@ fn perl_change_currentness(
     } else {
         SourceCurrentness::UnresolvedSubject
     }
+}
+
+/// RIPR-SPEC-0235 rule 21 (#9420): an added line of a source file that no
+/// packet change or owner covers, in a file whose owner-less dynamic
+/// boundaries name a static limit, reads `static_unknown` with that limit.
+/// The producer emits no change for top-level code such as the table a glob
+/// assignment turns into subs, so without this the line is silent, and silence
+/// reads as "nothing to check".
+fn unowned_change_findings(
+    packet: &PerlFactPacket,
+    changed_files: &[ChangedFile],
+    root: &std::path::Path,
+) -> Vec<crate::domain::Finding> {
+    use crate::domain::{
+        ActivationEvidence, Confidence as RiprConfidence, DeltaKind, ExposureClass,
+        LanguageId as DomainLanguageId, LanguageStatus, Probe, ProbeFamily, ProbeId,
+        RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState,
+    };
+
+    let mut findings = Vec::new();
+    for diff_file in changed_files {
+        let diff_path = normalize_repo_relative(&diff_file.path.to_string_lossy());
+        let Some(file) = packet.files.iter().find(|file| {
+            file.role.contains(&FileRole::Source)
+                && normalize_repo_relative(&file.path) == diff_path
+        }) else {
+            continue;
+        };
+        let Some(limit) = static_limit::file_scope_kind(packet, &file.file_id) else {
+            continue;
+        };
+        for added in &diff_file.added_lines {
+            let text = added.text.trim();
+            if text.is_empty() || text.starts_with('#') {
+                continue;
+            }
+            let line = added.line;
+            // The producer wrote zero-based lines (#3221) and SPEC-0064 reads
+            // one-based ones, so a range covers both readings of its lines.
+            let covers = |range: &RangeFact| {
+                range.start_line <= line && line <= range.end_line.saturating_add(1)
+            };
+            let covered = packet
+                .changes
+                .iter()
+                .filter(|change| change.file_id == file.file_id)
+                .any(|change| covers(&change.range))
+                || packet
+                    .owners
+                    .iter()
+                    .filter(|owner| {
+                        owner.file_id == file.file_id && owner.kind != OwnerKind::Package
+                    })
+                    .any(|owner| covers(&owner.range));
+            if covered {
+                continue;
+            }
+            let probe_id = format!("probe:{}:{line}:perl-unowned", file.path);
+            let unknown = StageEvidence::new(
+                StageState::Unknown,
+                RiprConfidence::Low,
+                "No Perl fact covers this changed line",
+            );
+            findings.push(crate::domain::Finding {
+                analysis_scope: crate::domain::AnalysisScope::Diff,
+                confidence_basis: Vec::new(),
+                id: probe_id.clone(),
+                canonical_gap: None,
+                probe: Probe {
+                    id: ProbeId(probe_id),
+                    location: SourceLocation::new(std::path::PathBuf::from(&file.path), line, 1),
+                    owner: None,
+                    family: ProbeFamily::StaticUnknown,
+                    delta: DeltaKind::Value,
+                    before: None,
+                    after: None,
+                    expression: "unowned_change".to_string(),
+                    expected_sinks: Vec::new(),
+                    required_oracles: Vec::new(),
+                },
+                class: ExposureClass::StaticUnknown,
+                ripr: RiprEvidence {
+                    reach: unknown.clone(),
+                    infect: unknown.clone(),
+                    propagate: unknown.clone(),
+                    reveal: RevealEvidence {
+                        observe: unknown.clone(),
+                        discriminate: unknown,
+                    },
+                },
+                confidence: 0.5,
+                evidence: vec![
+                    "perl_unowned_change: no change or owner fact covers this line, and the file holds dynamic boundaries".to_string(),
+                ],
+                missing: Vec::new(),
+                flow_sinks: Vec::new(),
+                activation: ActivationEvidence {
+                    observed_values: Vec::new(),
+                    missing_discriminators: Vec::new(),
+                },
+                stop_reasons: Vec::new(),
+                related_tests_matched_total: None,
+                related_tests: Vec::new(),
+                recommended_next_step: Some(
+                    "This line is top-level code in a file ripr cannot model statically (generated subs, symbol-table writes or string eval), and the fact producer attributed no owner to it. If a test calls what it defines and asserts the result, no change is needed; otherwise add one."
+                        .to_string(),
+                ),
+                language: Some(DomainLanguageId::Perl),
+                language_status: Some(LanguageStatus::Preview),
+                owner_kind: None,
+                static_limit_kind: Some(limit),
+                changed_sink: None,
+                observed_sink: None,
+                oracle_alignment: None,
+                alignment_reason: None,
+                source_currentness: perl_lines_currentness(root, changed_files, file, line..=line),
+            });
+        }
+    }
+    findings
 }
 
 /// Each finding sits on the line `change_lines` settles for its change (see
@@ -600,6 +749,8 @@ fn packet_to_findings_with_currentness(
                     relation_reason: perl_relation_reason,
                     relation_confidence: perl_relation_confidence,
                     miss: None,
+                    miss_support: None,
+                    role: crate::domain::RelatedTestRole::Contributing,
                 }
             })
             .collect();
@@ -636,6 +787,14 @@ fn packet_to_findings_with_currentness(
             ExposureClass::StaticUnknown
         } else if related.is_empty() {
             ExposureClass::NoStaticPath
+        } else if sink_aligned_evidence
+            .as_ref()
+            .is_some_and(|aligned| aligned.boundary_input == BoundaryInput::Unestablished)
+        {
+            // RIPR-SPEC-0235 rule 22 (#8979): equal sink text on a changed
+            // ordering comparison names the predicate, not an input that
+            // crosses its threshold. Unknown, never `exposed`.
+            ExposureClass::StaticUnknown
         } else if sink_aligned_evidence.is_some() {
             // H2: established sink alignment → already observed. The strongest
             // honest claim in the conservative taxonomy. No repair gap is
@@ -665,11 +824,45 @@ fn packet_to_findings_with_currentness(
                 packet_class
             }
         };
+        // RIPR-SPEC-0235 rule 20 (#9416): a direct owner call no oracle is
+        // linked to, in a test that also asserts through a code reference
+        // (`is($c->(), 5)`), may be observed through a closure the owner
+        // returned. The packet carries no relation from the oracle to the
+        // owner, so this is unknown, not a gap.
+        let coderef_unresolved = class == ExposureClass::ReachableUnrevealed
+            && related_evidence.iter().any(|ev| {
+                ev.class == ExposureClass::ReachableUnrevealed
+                    && ev.relation_kind.supports_positive_reachability()
+                    && ev.reachability_hint == ReachabilityHint::Reachable
+                    && ev.oracle_id.is_none()
+                    && packet.test_asserts_through_code_reference(&ev.test_id)
+            });
+        let class = if coderef_unresolved {
+            ExposureClass::StaticUnknown
+        } else {
+            class
+        };
         let is_already_observed = class == ExposureClass::Exposed;
+        let predicate_input_unestablished = class == ExposureClass::StaticUnknown
+            && !class_blocked
+            && !partial_without_change_link
+            && sink_aligned_evidence
+                .as_ref()
+                .is_some_and(|aligned| aligned.boundary_input == BoundaryInput::Unestablished);
         let observable_unavailable = class == ExposureClass::StaticUnknown
             && !class_blocked
             && !partial_without_change_link
+            && !coderef_unresolved
             && packet.observable_declared_absent(&change.change_id);
+        let pinned_error_unresolved = class == ExposureClass::StaticUnknown
+            && !class_blocked
+            && packet.grades_oracle_matchers()
+            && related_evidence.iter().any(|ev| {
+                ev.class == ExposureClass::StaticUnknown
+                    && ev.reachability_hint == ReachabilityHint::Reachable
+                    && ev.oracle_strength == Some(OracleStrength::StrongExact)
+                    && ev.oracle_shape.as_deref() == Some("exception_observer")
+            });
         let broad_oracle_unresolved = class == ExposureClass::StaticUnknown
             && !class_blocked
             && related_evidence.iter().any(|ev| {
@@ -895,6 +1088,8 @@ fn packet_to_findings_with_currentness(
         );
 
         findings.push(crate::domain::Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: probe_id,
             canonical_gap,
             probe,
@@ -946,6 +1141,17 @@ fn packet_to_findings_with_currentness(
                     "Make the related Perl test runner available, then add a focused assertion for the changed behavior and verify it."
                         .to_string()
                 }
+            } else if predicate_input_unestablished {
+                // RIPR-SPEC-0235 rule 22: say why this is unknown and what
+                // settles it, instead of crediting an input that may sit far
+                // from the threshold.
+                "A related Perl test asserts the value of the changed comparison, but ripr cannot establish that its owner call passes the threshold value (the packet carries no fact saying where the inputs fall), so it cannot tell whether moving the threshold would fail it. If it asserts a value on each side of the boundary, no change is needed; otherwise add one."
+                    .to_string()
+            } else if coderef_unresolved {
+                // RIPR-SPEC-0235 rule 20: say why this is unknown and what
+                // settles it, instead of asking for an assertion that may exist.
+                "A related Perl test calls this code and asserts through a code reference (`$code->()`), so ripr cannot tell whether that assertion pins the changed behavior. If it asserts the value a returned closure produces, no change is needed; otherwise add one."
+                    .to_string()
             } else if broad_oracle_unresolved {
                 // RIPR-SPEC-0235 rule 16: say why this is unknown and what
                 // settles it, instead of asking for an assertion that may exist.
@@ -955,6 +1161,11 @@ fn packet_to_findings_with_currentness(
                 // RIPR-SPEC-0235 rule 18: say why this is unknown instead of
                 // asking for an assertion that may already exist.
                 "The fact producer found no observable for this change, so ripr cannot tell whether a related Perl test's assertion pins it. If an existing assertion checks the changed value, no change is needed; otherwise add one."
+                    .to_string()
+            } else if pinned_error_unresolved {
+                // RIPR-SPEC-0235 rule 16: the assertion pins the raised error,
+                // and static facts do not say whether it pins the boundary.
+                "A related Perl test asserts the error this code raises through a class or message matcher, so ripr cannot tell whether it pins the changed boundary. If it fails when the boundary moves, no change is needed; otherwise add a case on each side of it."
                     .to_string()
             } else if is_already_observed {
                 // H2: the change is already discriminated by an existing test.
@@ -968,7 +1179,9 @@ fn packet_to_findings_with_currentness(
             language: Some(DomainLanguageId::Perl),
             language_status: Some(LanguageStatus::Preview),
             owner_kind: None,
-            static_limit_kind: static_limit_projection.kind,
+            static_limit_kind: static_limit_projection.kind.or(
+                coderef_unresolved.then_some(crate::domain::StaticLimitKind::DynamicDispatch),
+            ),
             // changed_sink uses the concrete discriminator when present;
             // otherwise the behavior-hint label (advisory only, since no
             // canonical gap is attached).
@@ -1646,6 +1859,19 @@ impl PerlFactPacket {
             .collect()
     }
 
+    /// Whether an oracle of `test_id` calls through a code reference
+    /// (`$code->(..)`, `&$code(..)`, `&{$code}(..)`): the call it observes may
+    /// reach code the test never names.
+    fn test_asserts_through_code_reference(&self, test_id: &str) -> bool {
+        self.oracles.iter().any(|oracle| {
+            oracle.test_id == test_id
+                && oracle
+                    .expression
+                    .as_deref()
+                    .is_some_and(|text| text.contains("->(") || has_ampersand_call(text))
+        })
+    }
+
     fn strong_exact_oracles(&self) -> Vec<&OracleFact> {
         self.oracles
             .iter()
@@ -1766,6 +1992,13 @@ impl PerlFactPacket {
         })
     }
 
+    fn grades_oracle_matchers(&self) -> bool {
+        self.producer
+            .capabilities
+            .iter()
+            .any(|capability| capability == PERL_ORACLE_MATCHER_GRADING)
+    }
+
     fn observable_declared_absent(&self, change_id: &str) -> bool {
         self.change(change_id).is_some_and(|change| {
             change.changed_observable.declared_absent()
@@ -1793,7 +2026,13 @@ impl PerlFactPacket {
         let bound = oracle.test_id == relation.test_id
             && oracle.target_owner_id.as_deref() == Some(relation.owner_id.as_str());
         if bound && oracle.is_strong_exact() {
-            if self.observable_declared_absent(&relation.change_id) {
+            if self.grades_oracle_matchers() && oracle.kind == OracleKind::ExceptionObserver {
+                // RIPR-SPEC-0235 rule 16: the producer graded this exception
+                // assertion strong because it carries a matcher for the
+                // error. That pins that an error is raised, not which
+                // boundary raises it, so a gap would be as wrong as right.
+                ExposureClass::StaticUnknown
+            } else if self.observable_declared_absent(&relation.change_id) {
                 // RIPR-SPEC-0235 rule 18: the producer found no changed
                 // observable, so there is nothing for the oracle's sink to
                 // align to and ripr cannot tell whether the strong oracle
@@ -1805,11 +2044,13 @@ impl PerlFactPacket {
             }
         } else if bound
             && oracle.is_broad_unresolved()
+            && !self.grades_oracle_matchers()
             && relation.relation_kind.supports_weak_oracle_credit()
         {
-            // RIPR-SPEC-0235 rule 16 (#6582): the producer grades `throws_ok`,
-            // `dies_ok` and `like(dies {...}, ...)` alike as `weak_broad`, so a
-            // gap here is as likely wrong as right. Unknown, not a gap.
+            // RIPR-SPEC-0235 rule 16 (#6582): without matcher grading the
+            // producer grades `throws_ok`, `dies_ok` and `like(dies {...}, ...)`
+            // alike as `weak_broad`, so a gap here is as likely wrong as
+            // right. Unknown, not a gap.
             ExposureClass::StaticUnknown
         } else {
             ExposureClass::ReachableUnrevealed
@@ -3220,6 +3461,9 @@ struct SinkAlignedObservation {
     test_name: String,
     observed_sink: String,
     oracle_shape: String,
+    /// RIPR-SPEC-0235 rule 22: whether a changed ordering comparison has a
+    /// literal threshold input in this oracle's owner call.
+    boundary_input: BoundaryInput,
 }
 
 /// Whether this row's own evidence earned the finding's weak exposure (a
@@ -3272,7 +3516,17 @@ fn sink_aligned_observation(
         .strip_prefix("return ")
         .unwrap_or(changed_observable)
         .trim();
+    // RIPR-SPEC-0235 rule 19: an exact oracle on one input observes what a
+    // pattern does with that input, not which inputs the pattern accepts, so
+    // a changed pattern is never "already observed" by equal sink text.
+    if matches_a_pattern(changed_observable) {
+        return None;
+    }
 
+    // Rule 22: the first aligned oracle that is not an unestablished ordering
+    // comparison wins; otherwise the first aligned oracle is kept so the caller
+    // can tell "aligned but input unestablished" from "not aligned".
+    let mut unestablished: Option<SinkAlignedObservation> = None;
     for ev in related_evidence {
         // Only a direct owner call with positive reachability can prove
         // observation. Advisory relations (file_proximity, package_reference,
@@ -3295,6 +3549,12 @@ fn sink_aligned_observation(
         if !oracle.is_strong_exact() {
             continue;
         }
+        // RIPR-SPEC-0235 rule 16 matcher grading: a graded exception
+        // assertion pins that an error is raised, not which boundary raises
+        // it, so equal sink text never establishes observation.
+        if packet.grades_oracle_matchers() && oracle.kind == OracleKind::ExceptionObserver {
+            continue;
+        }
         if oracle.target_owner_id.as_deref() != Some(change.owner_id.as_str()) {
             continue;
         }
@@ -3312,17 +3572,85 @@ fn sink_aligned_observation(
         if sink_text_eq(observed_sink, changed_observable)
             || sink_text_eq(observed_sink, normalized_observable)
         {
-            return Some(SinkAlignedObservation {
+            // Any strong exact oracle of the same test may supply the
+            // threshold input: the producer links only some oracles to the
+            // owner, and each is an exact-value assertion on that test's call.
+            let boundary_input = boundary_input::boundary_input_for(
+                changed_observable,
+                &change.owner_id,
+                packet
+                    .oracles
+                    .iter()
+                    .filter(|candidate| {
+                        candidate.test_id == ev.test_id && candidate.is_strong_exact()
+                    })
+                    .filter_map(|candidate| candidate.expression.as_deref()),
+            );
+            let aligned = SinkAlignedObservation {
                 test_name: ev.test_name.clone(),
                 observed_sink: observed_sink.to_string(),
                 oracle_shape: ev
                     .oracle_shape
                     .clone()
                     .unwrap_or_else(|| change.behavior_hint.default_assertion_shape().to_string()),
-            });
+                boundary_input,
+            };
+            if boundary_input == BoundaryInput::Unestablished {
+                unestablished.get_or_insert(aligned);
+            } else {
+                return Some(aligned);
+            }
         }
     }
-    None
+    unestablished
+}
+
+/// Whether `text` applies a pattern: a `=~` or `!~` binding, or a `qr`, `m`,
+/// `s`, `tr`, `y` or `split` word that opens a delimited pattern. It errs
+/// toward true (a hash key `s => 1` is not skipped specially beyond `=>`):
+/// the only effect of a false positive is that a sink stays `weakly_exposed`
+/// instead of `exposed`.
+fn matches_a_pattern(text: &str) -> bool {
+    if text.contains("=~") || text.contains("!~") {
+        return true;
+    }
+    let is_word = |c: char| c == '_' || c.is_alphanumeric();
+    let chars: Vec<char> = text.chars().collect();
+    let mut start = 0;
+    while start < chars.len() {
+        if !is_word(chars[start]) {
+            start += 1;
+            continue;
+        }
+        let mut end = start;
+        while end < chars.len() && is_word(chars[end]) {
+            end += 1;
+        }
+        let word: String = chars[start..end].iter().collect();
+        // A sigil or `->` makes the word a variable or method, not an operator.
+        let named = start > 0 && matches!(chars[start - 1], '$' | '@' | '%' | '&' | '>');
+        if !named && matches!(word.as_str(), "qr" | "m" | "s" | "tr" | "y" | "split") {
+            let mut next = end;
+            if word == "split" {
+                while next < chars.len() && chars[next].is_whitespace() {
+                    next += 1;
+                }
+            }
+            let fat_comma = chars[next..].iter().collect::<String>().starts_with("=>");
+            if !fat_comma
+                && chars.get(next).is_some_and(|c| {
+                    matches!(
+                        c,
+                        '/' | '{' | '[' | '(' | '<' | '|' | '!' | '#' | '\'' | '"' | ','
+                    )
+                })
+            {
+                return true;
+            }
+        }
+        start = end;
+    }
+    false
 }
 
 /// RIPR-SPEC-0235 rule 9: sink text equality that ignores whitespace which
@@ -3918,6 +4246,8 @@ fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
 }
 
 #[cfg(test)]
+mod capability_disposition_tests;
+#[cfg(test)]
 mod fact_index_projection_tests;
 #[cfg(test)]
 mod fact_index_tests;
@@ -3930,3 +4260,14 @@ pub(crate) use tests::{
     EXACT_RETURN_PACKET, only_finding, perl_direct_and_advisory_finding, perl_miss_matrix_findings,
     with_concrete_discriminator,
 };
+
+/// `&$code(...)` or `&{...}(...)`, but not the logical-and operator written
+/// without spaces (`$a&&$b`, `$ok &&{...}`): a `&` that follows or precedes
+/// another `&` is part of `&&`.
+fn has_ampersand_call(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    text.match_indices('&').any(|(index, _)| {
+        let after_amp = index > 0 && bytes.get(index - 1) == Some(&b'&');
+        !after_amp && matches!(bytes.get(index + 1), Some(b'$') | Some(b'{'))
+    })
+}

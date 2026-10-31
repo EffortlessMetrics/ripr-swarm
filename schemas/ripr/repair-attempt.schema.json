@@ -51,6 +51,16 @@
       "minItems": 1,
       "items": { "type": "string", "minLength": 1 }
     },
+    "gap_binding": {
+      "description": "Present only for a gap-bound TypeScript attempt started with `ripr agent repair --gap-id G --base B --phase before` (RIPR-SPEC-0311); seam_id then holds the canonical gap id. Absent for seam attempts, so their bytes and before commitment are unchanged. Included in the before commitment when present.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base"],
+      "properties": {
+        "base": { "type": "string", "minLength": 1, "description": "The base as spelled by the caller." },
+        "base_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$", "description": "The full commit the base resolved to at the before phase; the after phase re-analyzes against it. Absent only on a legacy C2a marker, which the after phase refuses with a fresh-start recipe." }
+      }
+    },
     "after": {
       "oneOf": [
         { "type": "null" },
@@ -70,7 +80,7 @@
       "items": { "$ref": "#/$defs/after_refusal" }
     },
     "terminal_artifacts": {
-      "description": "After-phase static-result artifacts retained under this attempt (`agent_receipt` and the `agent_verify` document it was built from). Absent or empty on legacy manifests. Compatibility projections under target/ripr/reports and target/ripr/workflow are not the sole surviving copy.",
+      "description": "After-phase static-result artifacts retained under this attempt (`agent_receipt` and its `agent_verify`; gap-bound attempts also retain `after_check_findings`). Absent or empty on legacy manifests. Compatibility projections under target/ripr/reports and target/ripr/workflow are not the sole surviving copy.",
       "type": "array",
       "items": { "$ref": "#/$defs/artifact" }
     },
@@ -128,6 +138,22 @@
         "attempt_id": { "type": "string", "pattern": "^repair-attempt-[0-9a-f]{24}$" },
         "repository_head": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" },
         "delta_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "delta_binding": { "enum": ["path-state-v1", null] },
+        "receipt_projection_predecessor": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["attempt_id", "kind", "executable"],
+              "properties": {
+                "attempt_id": { "type": "string", "pattern": "^repair-attempt-[0-9a-f]{24}$" },
+                "kind": { "enum": ["added", "modified"] },
+                "executable": { "type": "boolean" }
+              }
+            }
+          ]
+        },
         "packet_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "current": { "type": "boolean" },
         "verdict": {

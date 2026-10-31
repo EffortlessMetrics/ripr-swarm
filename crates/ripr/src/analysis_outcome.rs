@@ -98,7 +98,7 @@ impl AnalysisLimitationKind {
             Self::ProducerFailure => "part of the analysis failed",
             Self::EolOnlyChurn => "some files changed only in line endings",
             Self::UnevaluatedCondition => {
-                "a credited assertion sits under a condition static analysis cannot evaluate"
+                "a test or credited assertion sits under a condition static analysis cannot evaluate"
             }
         }
     }
@@ -192,7 +192,8 @@ pub(crate) enum AnalysisLimitationKind {
     /// #8714: a credited assertion sits under a branch condition static
     /// analysis cannot evaluate, so the credited oracle may never execute.
     /// The limitation content discloses conditional credit rather than
-    /// unanalyzed files, but unlike `EolOnlyChurn` this kind still marks the
+    /// unanalyzed files (#10438 reuses it for a test registered under an
+    /// unevaluated `if`, which is indexed for reach but not credited), but unlike `EolOnlyChurn` this kind still marks the
     /// outcome incomplete: consumers gating on `analysis_complete` see these
     /// runs as partial (#8714 review). Letting it ride a complete outcome is
     /// a separate, consumer-visible design decision.
@@ -377,6 +378,17 @@ pub(crate) struct AnalysisOutcome {
     pub(crate) counts: AnalysisOutcomeCounts,
     pub(crate) limitations: Vec<AnalysisLimitation>,
     pub(crate) claim_boundary: String,
+    /// Run-local producer inputs, never reconstructed from a serialized outcome.
+    #[serde(skip)]
+    pub(crate) check_findings_inputs: Option<CheckFindingsInputs>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckFindingsInputs {
+    pub(crate) config_identity: String,
+    pub(crate) include_unchanged_tests: bool,
+    pub(crate) languages: Vec<crate::domain::LanguageId>,
+    pub(crate) perl_facts_used: bool,
 }
 
 #[derive(Deserialize)]
@@ -432,6 +444,7 @@ impl AnalysisOutcome {
             counts,
             limitations,
             claim_boundary: ANALYSIS_OUTCOME_CLAIM_BOUNDARY.to_string(),
+            check_findings_inputs: None,
         })
     }
 

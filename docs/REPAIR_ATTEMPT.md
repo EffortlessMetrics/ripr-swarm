@@ -130,7 +130,7 @@ resolve through the default directory. An explicit store outside
 
 The exact filenames follow the command-owned source artifacts. `attempt.json` identifies them by semantic role and binds each retained file by path, byte count, and SHA-256 digest. After-phase `agent_receipt` / `agent_verify` files are recorded in `terminal_artifacts` and are excluded from the before commitment. Attempt identity alone does not bind the verdict: every read that can report `finished` (CLI status, `--attempt` status, and the MCP receipt/attempt documents) re-validates the receipt against its verify document — schema, verify digest linkage, the retained before content commitment, and the seam movement, lifecycle state, and guidance kind the verify document records. A pair that fails any of those checks reads `unconfirmed`/`unavailable` with the reason, never `finished`. Pending retention additionally requires the verify document to pass the same canonical receipt-issuance validation the after phase applies before it promotes the pair.
 
-Repository-global files under `target/ripr/workflow/` and `target/ripr/reports/agent-receipt.json` remain compatibility projections for existing cockpit and review consumers. They are not repair-attempt identity, and they are not the sole surviving copy of a finished attempt's result.
+Repository-global files under `target/ripr/workflow/` and `target/ripr/reports/agent-receipt.json` remain compatibility projections for existing cockpit and review consumers. They are not repair-attempt identity, and they are not the sole surviving copy of a finished attempt's result. A newly finished gap-bound attempt also retains the raw `after_check_findings` snapshot. Its retained receipt, verify and snapshot are cross-bound to the attempt and recorded after head. If exact producer projections are later absent, currentness may reconstruct their identities in memory only when that retained evidence and the complete bound delta agree. Present drift, tracked or authored files, unrelated neighbors, and missing or invalid evidence are not excused. Legacy two-role retention does not establish this snapshot custody. Snapshot validation requires Git access and a matching RIPR producer version; when either is unavailable, cleanup currentness stays unconfirmed rather than being inferred, even if the historical receipt remains readable.
 
 The trust-bound Python verify route still writes repository-global
 `python-repair-driver-verification.json` (and related execution/analysis files)
@@ -188,7 +188,7 @@ Run the project tests between the phases. For a Rust repair, the retained cage p
 - the command-owned `target/ripr` writes;
 - every other ignored path, such as an ignored `.env` or log file.
 
-Static analysis never reads `target/` as source. A Cargo target directory in a non-default location inside the repository (`CARGO_TARGET_DIR` or `build.target-dir`) is not declared, so writes there remain violations. Python attempts keep observing every ignored path.
+Static analysis never reads `target/` as source. A Cargo target directory in a non-default location inside the repository (`CARGO_TARGET_DIR` or `build.target-dir`) is not declared, so writes there remain violations. Python attempts keep observing every ignored path except interpreter and test-runner cache output that running the project's tests writes (#10699): untracked or ignored bytecode under `__pycache__/`, files inside `.pytest_cache/`, `.mypy_cache/` and `.ruff_cache/` other than `.py`, `.pyi`, `.pyc`, `.pyo`, `.so`, `.pyd` and `.pth`, and root-level `.coverage` data. A tracked file, importable source or extension files, or a `.pyc`/`.pyo` outside a `__pycache__/` directory is never exempt. Accepted residual: a `__pycache__` `.pyc` can be forged outside the path filter: a hash-based pyc is loaded when its source hash matches (checked-hash) or with no source check at all (unchecked-hash), so an agent could compile modified production source into `__pycache__` and leave the `.py` untouched, invisible to the cage (and an mtime/size-matching timestamp pyc has the same effect), and the 10,000-path inventory cap is applied before the cache filter (tracked in #10801).
 
 If effective ignore rules change after preparation, build-output paths can still
 be refused by the after phase. Recovery names the declared build directory and
@@ -242,6 +242,16 @@ The after phase also retains the terminal static result under the attempt direct
 
 The class is never stronger than the receipt the attempt retained. `finished_current` requires a digest-bound attempt-local receipt whose reading shows the gap closed at the current `HEAD`; a moved `HEAD` downgrades the same retained result to `finished_historical`, which stays readable but is never presented as current proof. Missing, tampered, or unbound attempt-local terminal evidence reads `corrupt_or_unavailable` and never falls back to another attempt's compatibility receipt. Legacy manifests without `terminal_artifacts` read `legacy_compatibility_only`: the one-slot compatibility projection is exactly the strength they earned. A missing or malformed selected manifest is also typed `corrupt_or_unavailable` naming the refused artifact, so one bad row cannot hide or strengthen the store's other rows.
 
+An already issued gap receipt remains readable when live `HEAD` is unavailable
+or the reader uses a newer RIPR version. Its retained snapshot must still match
+the attempt's recorded producer version, root, after head, immutable base,
+verify and receipt commitments, and the same structural/completeness rules,
+including the supported v5 run-owned findings identity. Earlier findings
+identity versions remain refused; historical readability is not a migration.
+This historical reading carries no live currentness authority: promotion,
+receipt reissue and reconstruction of missing workflow projections still use
+the full current executable and Git-provenance validation.
+
 Status is read-only on both surfaces: inspecting an attempt cannot finish, restart, rewrite, or delete it, and a resumed attempt receives no stronger state than its receipt shows. Human Markdown and normalized JSON derive from one DTO, so both surfaces agree and reordered directory traversal produces byte-stable output. See `docs/OUTPUT_SCHEMA.md` ("Exact attempt selection") for the field contract.
 
 ## Compatibility outputs
@@ -268,7 +278,7 @@ By default the after phase's stdout is a short summary: the movement line (for e
 - the path is not the selected target, an authored edit surface, or a forbidden path;
 - the bound verdict did not list the path.
 
-Such a path cannot satisfy or violate the cage. Any other movement after the after phase still refuses the rerun with `after verdict binding is tampered or stale`. That includes a new or edited source, test, or root file, a changed kind for a bound path, and a bound change that disappeared. Leaving out every operational write would also hide the disappearance of a bound change, so that alternative was rejected. Recording a second digest in the manifest would change the published manifest schema and the Python binding's `patch_sha256`, so that alternative was rejected too.
+Such a path cannot satisfy or violate the cage. Any other movement after the after phase still refuses the rerun with `after verdict binding is tampered or stale`. That includes a new or edited source, test, or root file, a changed kind for a bound path, and a bound change that disappeared. Redirecting a `ripr` command's own stdout or stderr into a repository file while it runs, including a file under `target/ripr`, has been observed to cause this refusal (#11337); write that output outside the repository. The refusal names its possible causes (output redirected into a repository file during the run, or a later edit) and the route per caller: an `agent receipt` retry removes the stray file or the later edit (keeping a copy first) and reruns; the after phase has already recorded its verdict, so only a new attempt recovers it. That new attempt's `--phase before` restart refuses while the repair edit is present (the edit already reads the gap as exposed), so (1) copy the edited test file(s) outside the repository and check the copy is complete before overwriting anything; (2) restore each file's pre-edit content yourself (a newly created test file has none: move it aside or remove it; restoring bytes can leave the repair staged, so unstage it with `git restore --staged <file>` if needed); (3) run the printed restart, and if it fails put your copy back; (4) re-apply the edit and run the new `--attempt` command it prints. Leaving out every operational write would also hide the disappearance of a bound change, so that alternative was rejected. Recording a second digest in the manifest would change the published manifest schema and the Python binding's `patch_sha256`, so that alternative was rejected too.
 
 ## Failure behavior
 
@@ -312,7 +322,7 @@ The original typed error stays intact. Recovery lines appear on stderr, in
 The façade keeps stdout empty on refusal, the attempt stays `awaiting_edit`, and
 no receipt is issued. A successful focused-edit retry clears the refusal.
 
-A failed, incomparable, or stale attempt is terminal: re-running its after phase or `ripr agent receipt` refuses. The recovery narration follows the verdict (#7204). When the cage refused paths, the after phase lists each refused path and the undo route: if you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree); undo the refused changes and set the test edit aside, for example with `git stash`; while the gap still exists, run `ripr agent repair --root . --seam-id <seam-id> --phase before` to prepare a new attempt; restore the test edit, then run the new `--attempt` command. When the verdict is `Incomparable` with an empty violations list, nothing was refused and no undo is narrated: the narration names the incomparability cause — a before-phase baseline recorded `ambiguous: true` when the attempt's baseline artifact carries it — and routes to a fresh attempt from a clean state: set the test edit aside, run the `--phase before` command from the clean state, restore the test edit, then run the new `--attempt` command. Because an incomparable delta is never judged against the edit surface, an empty violations list is not a compliance finding: the narration also names the changed paths the cage did not evaluate and warns that a plain `git stash` leaves untracked files in place, so an outside-surface change is not silently carried into the next baseline.
+A failed, incomparable, or stale attempt is terminal: re-running its after phase or `ripr agent receipt` refuses. The recovery narration follows the verdict (#7204). When the cage refused paths, the after phase lists each refused path and the undo route: if you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree); undo the refused changes and set the test edit aside, for example with `git stash`; while the gap still exists, run `ripr agent repair --root . --seam-id <seam-id> --phase before` to prepare a new attempt; restore the test edit, then run the new `--attempt` command. When the refusal is the inline test region reporting the selected file unparseable after the attempt's edit (the whole file is parsed, so the error may be in the new test or in production code beside it), the narration leads with the plain statement "`<file>` does not parse after this attempt's edit — fix the syntax error and start the attempt again." before that recovery detail (#8991). When the verdict is `Incomparable` with an empty violations list, nothing was refused and no undo is narrated: the narration names the incomparability cause — a before-phase baseline recorded `ambiguous: true` when the attempt's baseline artifact carries it — and routes to a fresh attempt from a clean state: set the test edit aside, run the `--phase before` command from the clean state, restore the test edit, then run the new `--attempt` command. Because an incomparable delta is never judged against the edit surface, an empty violations list is not a compliance finding: the narration also names the changed paths the cage did not evaluate and warns that a plain `git stash` leaves untracked files in place, so an outside-surface change is not silently carried into the next baseline.
 
 RIPR does not select “the latest” attempt, reconstruct an attempt from mutable global files, or continue on partial evidence.
 
@@ -356,3 +366,22 @@ To gain a repair target for such a seam, keep exactly one inline
 test-surface file (a `tests/` path or `*_test.rs` name) in the crate that
 owns the seam, then rerun pilot. Until then, inspect the ranked seams by
 hand: they are still worth reading, just not repairable through RIPR.
+
+### Replacing an issued compatibility receipt
+
+An after phase can replace a previous attempt's issued compatibility receipt
+at `target/ripr/reports/agent-receipt.json`. When that exact slot was already
+bound by the finishing delta, `after.receipt_projection_predecessor` records
+the validated predecessor in the same attempt store, the path kind, and its
+executable state. Currentness recognizes only the producer's exact retained
+replacement bytes, validates both terminal receipt/verify pairs, and requires
+the original whole-delta commitment after reconstructing that one slot.
+Missing or modified retained evidence, user-authored bytes at the same path,
+tracked/authored/forbidden paths, and neighboring files do not gain an
+exception. The predecessor can remain historical; no currentness recursion or
+cross-store lookup occurs. No witness is added for an unowned projection.
+
+For gap-bound attempts, exact receipt replacement and absent workflow
+projections can coexist. Currentness checks both identities in the same
+reconstructed whole delta, accepts only one matching projection candidate,
+and validates declared retained gap evidence on every accepting route.

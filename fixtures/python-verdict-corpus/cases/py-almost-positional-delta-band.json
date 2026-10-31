@@ -1,0 +1,44 @@
+{
+  "case_id": "py-almost-positional-delta-band",
+  "subject_id": "authored-py-unittest-almost",
+  "diff": "cases/py-almost-positional-delta-band.diff",
+  "anchor": {
+    "file": "shop/fees.py",
+    "line": 18
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_unittest_almost_positional_delta",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return x * 3 + 0.5",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the owner returns a different value (the fifth positional argument is delta=1)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 rule 12: the fifth positional argument is delta=1.",
+  "labeling_observation": {
+    "ripr_commit": "602ab7b8",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

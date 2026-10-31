@@ -33,7 +33,10 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::verification_contracts::validate_value_against_schema;
+use crate::exact_schema_json::Value as ExactValue;
+use crate::verification_contracts::{
+    exact_schema_values_equal, validate_exact_value_against_schema,
+};
 
 const REPORT_PATH: &str = "target/ripr/reports/schema-producer-sweep.json";
 const USAGE: &str = "usage: cargo xtask schema-producer-sweep [--rev REV] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...";
@@ -105,6 +108,15 @@ const BINDINGS: &[Binding] = &[
             "fixtures/evidence-quality-benchmark/regex-word-boundary-empty/static/68770-weak.json",
             "fixtures/python-real-repo-evals/werkzeug-multiple-cookie/evidence/effective-check.json",
             "fixtures/python-real-repo-evals/werkzeug-multiple-cookie/evidence/ineffective-check.json",
+            // Retained captures of past `ripr check` runs: the D491 cross-file
+            // integer-truthiness rejection receipts preserved with #9795's
+            // bounded admission slice. They validate against the schema, but
+            // they are not bytes the candidate's build produced, so they stay
+            // edge fixtures.
+            "fixtures/python_dunder_truthiness_integer/evidence/cross-file-direct.report.json",
+            "fixtures/python_dunder_truthiness_integer/evidence/cross-file-generated.report.json",
+            "fixtures/python_dunder_truthiness_integer/evidence/cross-file-hidden.report.json",
+            "fixtures/python_dunder_truthiness_integer/evidence/cross-file-unicode.report.json",
         ],
         excluded: &[(
             "fixtures/evidence-promotion-honesty-corpus/reports/",
@@ -405,10 +417,14 @@ fn sweep(
         malformed,
     } = committed_documents(tree, bindings);
     let mut schemas = BTreeMap::new();
+    let mut exact_schemas = BTreeMap::new();
     for schema_path in &inventory {
         let bytes = &tree.files[schema_path];
         let schema: Value = serde_json::from_slice(bytes)
             .map_err(|error| format!("parse {schema_path} at {}: {error}", tree.commit))?;
+        let exact = crate::exact_schema_json::parse(bytes)
+            .map_err(|error| format!("parse exact {schema_path} at {}: {error}", tree.commit))?;
+        exact_schemas.insert(schema_path.clone(), exact);
         schemas.insert(schema_path.clone(), (schema, sha256(bytes)));
     }
 
@@ -422,13 +438,14 @@ fn sweep(
             ));
             continue;
         };
-        let subschema = match binding.pointer {
-            None => schema,
-            Some(pointer) => match schema.pointer(pointer) {
-                Some(subschema) => subschema,
+        let exact_schema = &exact_schemas[binding.schema_path];
+        let exact_subschema = match binding.pointer {
+            None => exact_schema,
+            Some(pointer) => match exact_schema.pointer(pointer) {
+                Some(value) => value,
                 None => {
                     violations.push(format!(
-                        "{} has no subschema `{pointer}`",
+                        "{} has no exact subschema `{pointer}`",
                         binding.schema_path
                     ));
                     continue;
@@ -459,34 +476,67 @@ fn sweep(
 
         for (path, (value, digest)) in &documents {
             let subjects = corpus_subjects(&binding.corpus, path, value);
-            let unbound_lookalike = subjects.is_empty() && lookalike(binding, schema, path, value);
-            if subjects.is_empty() && !unbound_lookalike {
+            // This cheap shape filter deliberately ignores numeric and compound
+            // constants. Their equality is decided from original bytes below.
+            let possible_lookalike =
+                subjects.is_empty() && possible_lookalike(binding, schema, path, value);
+            if subjects.is_empty() && !possible_lookalike {
                 continue;
             }
-            if let Some((_, reason)) = binding
+            let exclusion = binding
                 .excluded
                 .iter()
-                .find(|(prefix, _)| path.starts_with(prefix))
-            {
+                .find(|(prefix, _)| path.starts_with(prefix));
+            // Bound subjects remain excluded without needing to parse them.
+            // Possible unbound lookalikes must first actually match.
+            if !possible_lookalike && let Some((_, reason)) = exclusion {
                 counts.excluded += 1;
                 counts.subjects.push(
                     json!({ "path": path, "sha256": digest, "role": "excluded", "reason": reason }),
                 );
                 continue;
             }
-            if unbound_lookalike {
+            let exact_document = match crate::exact_schema_json::parse(&tree.files[path]) {
+                Ok(value) => value,
+                Err(error) => {
+                    violations.push(format!("parse exact {path}: {error}"));
+                    continue;
+                }
+            };
+            if possible_lookalike {
+                match exact_lookalike(exact_schema, &exact_document) {
+                    Ok(true) => {
+                        if let Some((_, reason)) = exclusion {
+                            counts.excluded += 1;
+                            counts.subjects.push(json!({ "path": path, "sha256": digest, "role": "excluded", "reason": reason }));
+                        } else {
+                            violations.push(format!("{path} looks like {label} output but no binding claims it; bind it or add a reviewed exclusion"));
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => violations
+                        .push(format!("{path}: cannot determine exact lookalike: {error}")),
+                }
+                continue;
+            }
+            let exact_subjects = corpus_subjects_exact(&binding.corpus, path, &exact_document);
+            if exact_subjects
+                .iter()
+                .map(|(location, _)| location)
+                .ne(subjects.iter().map(|(location, _)| location))
+            {
                 violations.push(format!(
-                    "{path} looks like {label} output but no binding claims it; bind it or add a reviewed exclusion"
+                    "{path}: exact and ordinary subject selection disagree"
                 ));
                 continue;
             }
-            for (location, subject) in subjects {
+            for (location, subject) in exact_subjects {
                 counts.discovered += 1;
                 let before = violations.len();
-                validate_value_against_schema(
+                validate_exact_value_against_schema(
                     subject,
-                    subschema,
-                    schema,
+                    exact_subschema,
+                    exact_schema,
                     location,
                     &mut violations,
                 );
@@ -500,17 +550,24 @@ fn sweep(
         }
 
         for edge in binding.edge_fixtures {
-            let Some((value, digest)) = documents.get(*edge) else {
+            let Some((_value, digest)) = documents.get(*edge) else {
                 violations.push(format!(
                     "{label} names edge fixture {edge}, which does not exist"
                 ));
                 continue;
             };
+            let exact_value = match crate::exact_schema_json::parse(&tree.files[*edge]) {
+                Ok(value) => value,
+                Err(error) => {
+                    violations.push(format!("parse exact {edge}: {error}"));
+                    continue;
+                }
+            };
             let before = violations.len();
-            validate_value_against_schema(
-                value,
-                subschema,
-                schema,
+            validate_exact_value_against_schema(
+                &exact_value,
+                exact_subschema,
+                exact_schema,
                 (*edge).to_string(),
                 &mut violations,
             );
@@ -528,7 +585,7 @@ fn sweep(
         }) {
             let bytes = fs::read(&artifact.file)
                 .map_err(|error| format!("read {}: {error}", artifact.file.display()))?;
-            let value: Value = serde_json::from_slice(&bytes)
+            let value = crate::exact_schema_json::parse(&bytes)
                 .map_err(|error| format!("parse {}: {error}", artifact.file.display()))?;
             let location = format!(
                 "{}{}",
@@ -544,10 +601,10 @@ fn sweep(
                 continue;
             };
             let before = violations.len();
-            validate_value_against_schema(
+            validate_exact_value_against_schema(
                 subject,
-                subschema,
-                schema,
+                exact_subschema,
+                exact_schema,
                 location.clone(),
                 &mut violations,
             );
@@ -714,11 +771,59 @@ fn collect_command_specs<'a>(
     }
 }
 
-/// Whether an unbound document carries every top-level `const` discriminator
-/// and required field of a whole-document schema. Such a document is either
-/// producer output under an unexpected name or stimulus that needs a reviewed
-/// exclusion; leaving it silent is how a producer golden escapes the sweep.
-fn lookalike(binding: &Binding, schema: &Value, path: &str, value: &Value) -> bool {
+fn corpus_subjects_exact<'a>(
+    corpus: &Corpus,
+    path: &str,
+    value: &'a ExactValue,
+) -> Vec<(String, &'a ExactValue)> {
+    match corpus {
+        Corpus::FileName(name) if file_name(path) == *name => vec![(path.to_string(), value)],
+        Corpus::Paths(paths) if paths.contains(&path) => vec![(path.to_string(), value)],
+        Corpus::CommandSpecs { verify } => {
+            let mut subjects = Vec::new();
+            collect_command_specs_exact(value, path.to_string(), *verify, &mut subjects);
+            subjects
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn collect_command_specs_exact<'a>(
+    value: &'a ExactValue,
+    location: String,
+    verify: bool,
+    subjects: &mut Vec<(String, &'a ExactValue)>,
+) {
+    match value {
+        ExactValue::Object(object) => {
+            for (key, child) in object {
+                let child_location = format!("{location}/{key}");
+                if key == "command_specs"
+                    && let Some(specs) = child.as_object()
+                {
+                    for (role, spec) in specs {
+                        if (role == "verify") == verify {
+                            subjects.push((format!("{child_location}/{role}"), spec));
+                        }
+                    }
+                    continue;
+                }
+                collect_command_specs_exact(child, child_location, verify, subjects);
+            }
+        }
+        ExactValue::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                collect_command_specs_exact(item, format!("{location}/{index}"), verify, subjects);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Cheap shape filter for a possible unbound producer. Numeric and compound
+/// constants are deliberately deferred to exact_lookalike, which uses the
+/// original bytes and fails closed when equality cannot be established.
+fn possible_lookalike(binding: &Binding, schema: &Value, path: &str, value: &Value) -> bool {
     if binding.pointer.is_some()
         || matches!(binding.corpus, Corpus::Exempt(_))
         || binding.edge_fixtures.contains(&path)
@@ -734,6 +839,11 @@ fn lookalike(binding: &Binding, schema: &Value, path: &str, value: &Value) -> bo
     let constants_match = properties
         .iter()
         .all(|(key, property)| match property.get("const") {
+            Some(expected)
+                if expected.is_number() || expected.is_object() || expected.is_array() =>
+            {
+                true
+            }
             Some(expected) => object.get(key) == Some(expected),
             None => true,
         });
@@ -747,6 +857,34 @@ fn lookalike(binding: &Binding, schema: &Value, path: &str, value: &Value) -> bo
                 .all(|key| object.contains_key(key))
         });
     constants_match && required_present
+}
+
+fn exact_lookalike(schema: &ExactValue, value: &ExactValue) -> Result<bool, String> {
+    let (Some(object), Some(properties)) = (
+        value.as_object(),
+        schema.get("properties").and_then(ExactValue::as_object),
+    ) else {
+        return Ok(false);
+    };
+    for (key, property) in properties {
+        if let Some(expected) = property.get("const") {
+            let Some(actual) = object.get(key) else {
+                return Ok(false);
+            };
+            if !exact_schema_values_equal(actual, expected)? {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(schema
+        .get("required")
+        .and_then(ExactValue::as_array)
+        .is_some_and(|required| {
+            required
+                .iter()
+                .filter_map(ExactValue::as_str)
+                .all(|key| object.contains_key(key))
+        }))
 }
 
 fn file_name(path: &str) -> &str {
@@ -804,7 +942,8 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
 
 /// Parse committed documents outside `schemas/`. A malformed file selected by
 /// a path or filename binding is a failed producer, not a missing subject.
-/// Other non-JSON files (including JSONC stimulus) are outside this sweep.
+/// Other files rejected by serde_json (including JSONC stimulus and numbers
+/// outside its finite range) cannot be classified as unbound lookalikes.
 struct CommittedDocuments {
     parsed: BTreeMap<String, (Value, String)>,
     malformed: BTreeMap<String, (String, String)>,
@@ -939,6 +1078,201 @@ mod tests {
         let report = sweep_committed(root, bindings, artifacts);
         let _ = fs::remove_dir_all(root);
         report
+    }
+
+    #[test]
+    fn unbound_numeric_const_lookalikes_use_exact_values() -> Result<(), String> {
+        for (number, expect_lookalike) in [
+            ("1", true),
+            ("1.0", true),
+            ("1e0", true),
+            ("1.5", false),
+            ("1.00000000000000001", false),
+            ("\"1\"", false),
+        ] {
+            let schema =
+                include_bytes!("../../schemas/badges/shields-endpoint.schema.json").to_vec();
+            let tree = CandidateTree {
+                commit: "fixture".into(),
+                files: BTreeMap::from([
+                    (EXAMPLE_SCHEMA.into(), schema),
+                    ("bound.json".into(), br#"{"schemaVersion":1,"label":"x","message":"x","color":"blue"}"#.to_vec()),
+                    ("unbound.json".into(), format!(r#"{{"schemaVersion":{number},"label":"x","message":"x","color":"blue"}}"#).into_bytes()),
+                ]),
+            };
+            let report = sweep(&tree, &[binding(Corpus::Paths(&["bound.json"]), &[])], &[])?;
+            assert_eq!(
+                report
+                    .violations
+                    .iter()
+                    .any(|item| item.contains("unbound.json looks like")),
+                expect_lookalike,
+                "{number}: {:?}",
+                report.violations
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unbound_lookalike_comparison_fails_closed_on_unsupported_numbers() -> Result<(), String> {
+        let schema = include_bytes!("../../schemas/badges/shields-endpoint.schema.json").to_vec();
+        let tree = CandidateTree {
+            commit: "fixture".into(),
+            files: BTreeMap::from([
+                (EXAMPLE_SCHEMA.into(), schema),
+                (
+                    "bound.json".into(),
+                    br#"{"schemaVersion":1,"label":"x","message":"x","color":"blue"}"#.to_vec(),
+                ),
+                (
+                    "unbound.json".into(),
+                    br#"{"schemaVersion":1e300,"label":"x","message":"x","color":"blue"}"#.to_vec(),
+                ),
+            ]),
+        };
+        let report = sweep(&tree, &[binding(Corpus::Paths(&["bound.json"]), &[])], &[])?;
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|item| item.contains("cannot determine exact lookalike")),
+            "{:?}",
+            report.violations
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn exclusions_count_only_matching_lookalikes_and_bound_subjects() -> Result<(), String> {
+        let schema = include_bytes!("../../schemas/badges/shields-endpoint.schema.json").to_vec();
+        let tree = CandidateTree {
+            commit: "fixture".into(),
+            files: BTreeMap::from([
+                (EXAMPLE_SCHEMA.into(), schema),
+                (
+                    "bound.json".into(),
+                    br#"{"schemaVersion":1,"label":"x","message":"x","color":"blue"}"#.to_vec(),
+                ),
+                (
+                    "excluded/bound.json".into(),
+                    br#"{"schemaVersion":1.5,"label":"x","message":"x","color":"blue"}"#.to_vec(),
+                ),
+                (
+                    "excluded/match.json".into(),
+                    br#"{"schemaVersion":1.0,"label":"x","message":"x","color":"blue"}"#.to_vec(),
+                ),
+                (
+                    "excluded/mismatch.json".into(),
+                    br#"{"schemaVersion":1.5,"label":"x","message":"x","color":"blue"}"#.to_vec(),
+                ),
+            ]),
+        };
+        let report = sweep(
+            &tree,
+            &[binding(
+                Corpus::Paths(&["bound.json", "excluded/bound.json"]),
+                &[("excluded/", "stimulus")],
+            )],
+            &[],
+        )?;
+        assert!(report.violations.is_empty(), "{:?}", report.violations);
+        assert_eq!(report.packet["rows"][0]["excluded_stimulus"], 2);
+        Ok(())
+    }
+
+    #[test]
+    fn serde_rejected_unbound_documents_cannot_be_classified() {
+        let bytes = br#"{"schemaVersion":1e400,"label":"x","message":"x","color":"blue"}"#;
+        let tree = CandidateTree {
+            commit: "fixture".into(),
+            files: BTreeMap::from([
+                ("bound.json".into(), bytes.to_vec()),
+                ("unbound.json".into(), bytes.to_vec()),
+            ]),
+        };
+        let documents = committed_documents(&tree, &[binding(Corpus::Paths(&["bound.json"]), &[])]);
+        assert!(documents.malformed.contains_key("bound.json"));
+        assert!(!documents.parsed.contains_key("unbound.json"));
+        assert!(!documents.malformed.contains_key("unbound.json"));
+    }
+
+    #[test]
+    fn nested_numeric_constants_have_mathematical_lookalike_equality() -> Result<(), String> {
+        let schema = crate::exact_schema_json::parse(
+            br#"{"required":["k"],"properties":{"k":{"const":{"v":[1,0]}}}}"#,
+        )?;
+        for (input, expected) in [
+            (r#"{"k":{"v":[1.0,-0.0]}}"#, true),
+            (r#"{"k":{"v":[1.00000000000000001,0]}}"#, false),
+            (r#"{"k":{"v":["1",0]}}"#, false),
+        ] {
+            let value = crate::exact_schema_json::parse(input.as_bytes())?;
+            assert_eq!(exact_lookalike(&schema, &value)?, expected, "{input}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sweep_validates_original_decimal_bytes() -> Result<(), String> {
+        for (number, valid) in [("1.0", true), ("1.00000000000000001", false)] {
+            let tree = CandidateTree {
+                commit: "fixture".into(),
+                files: BTreeMap::from([
+                    (EXAMPLE_SCHEMA.into(), br#"{"type":"integer"}"#.to_vec()),
+                    ("fixtures/example.json".into(), number.as_bytes().to_vec()),
+                ]),
+            };
+            let report = sweep(
+                &tree,
+                &[binding(Corpus::FileName("example.json"), &[])],
+                &[],
+            )?;
+            assert_eq!(
+                report.violations.is_empty(),
+                valid,
+                "{number}: {:?}",
+                report.violations
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sweep_selects_exact_nested_producer_and_artifact_values() -> Result<(), String> {
+        let root = temp_dir("schema-exact-artifact");
+        let artifact = root.join("live.json");
+        let tree = CandidateTree {
+            commit: "fixture".into(),
+            files: BTreeMap::from([
+                (EXAMPLE_SCHEMA.into(), br#"{"type":"integer"}"#.to_vec()),
+                (
+                    "producer.json".into(),
+                    br#"{"command_specs":{"verify":1.00000000000000001}}"#.to_vec(),
+                ),
+            ]),
+        };
+        let bindings = [binding(Corpus::CommandSpecs { verify: true }, &[])];
+        write(&artifact, r#"{"a/b":[1.00000000000000001]}"#);
+        let artifacts = [Artifact {
+            schema_path: EXAMPLE_SCHEMA.into(),
+            schema_pointer: None,
+            file: artifact,
+            subject_pointer: Some("/a~1b/0".into()),
+        }];
+        let report = sweep(&tree, &bindings, &artifacts)?;
+        let _ = fs::remove_dir_all(root);
+        assert_eq!(
+            report
+                .violations
+                .iter()
+                .filter(|item| item.contains("expected type integer"))
+                .count(),
+            2,
+            "{:?}",
+            report.violations
+        );
+        Ok(())
     }
 
     #[test]

@@ -191,3 +191,114 @@ fn a_computed_argument_keeps_the_credit() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_relational_sibling_that_holds_on_both_versions_does_not_expose_the_change()
+-> Result<(), String> {
+    // `backoff_ms(3, 100) > backoff_ms(1, 100)` is true before (800 > 200) and after (2700 > 300).
+    let findings = findings(
+        POW,
+        POW_OLD,
+        "use invisible::backoff_ms;\n\n#[test]\nfn first() {\n    assert_eq!(backoff_ms(0, 100), 100);\n}\n\n#[test]\nfn grows() {\n    assert!(backoff_ms(3, 100) > backoff_ms(1, 100));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // The asserted inputs do evaluate differently (800 vs 2700), so the
+    // summary names the unchanged comparison truth, not a missing input
+    // difference (#10916).
+    assert!(
+        finding.ripr.infect.summary.contains("same truth value"),
+        "{finding:?}"
+    );
+    assert!(
+        !finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_rebound_assert_macro_keeps_the_credit() -> Result<(), String> {
+    // Control: the written relational tokens fold the same on both versions,
+    // but the file rebinds `assert!` to an exact-value check the baseline
+    // fails (`2700` after vs `800` before). Ripr reads macro names, not
+    // expansions, so both invisible readings must decline and today's
+    // non-relational reading keeps the finding (#10920 review).
+    let test = "use invisible::backoff_ms;\n\nmacro_rules! assert {\n    ($f:ident($($a:tt)*) > $g:ident($($b:tt)*)) => {\n        std::assert_eq!($f($($a)*), 2700)\n    };\n}\n\n#[test]\nfn first() {\n    assert_eq!(backoff_ms(0, 100), 100);\n}\n\n#[test]\nfn grows() {\n    assert!(backoff_ms(3, 100) > backoff_ms(1, 100));\n}\n";
+    let findings = findings(POW, POW_OLD, test)?;
+    let finding = return_value(&findings)?;
+    assert!(
+        !finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    assert!(
+        !finding.ripr.infect.summary.contains("same truth value"),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_relational_assertion_that_flips_between_versions_keeps_the_credit() -> Result<(), String> {
+    // Control: `backoff_ms(3, 100) > 1000` is true after (2700) and false before (800).
+    let findings = findings(
+        POW,
+        POW_OLD,
+        "use invisible::backoff_ms;\n\n#[test]\nfn first() {\n    assert_eq!(backoff_ms(0, 100), 100);\n}\n\n#[test]\nfn big() {\n    assert!(backoff_ms(3, 100) > 1000);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(
+        !finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    // The flip is a discriminator for the relational reading too, so the
+    // truth-value summary must not appear either (#10920 review).
+    assert!(
+        !finding.ripr.infect.summary.contains("same truth value"),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+const LITERAL: &str = "impl Builder {\n    pub fn build(self) -> Req { Req { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) } }\n\n    pub fn new(url: &str) -> Self { Builder { url: url.to_string(), timeout_ms: None } }\n\n    pub fn timeout_ms(mut self, t: u64) -> Self { self.timeout_ms = Some(t); self }\n}\n\npub struct Builder { url: String, timeout_ms: Option<u64> }\n\n#[derive(Debug)]\npub struct Req { pub url: String, pub timeout_ms: u64 }\n";
+const LITERAL_OLD: &str = "    pub fn build(self) -> Req { Req { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(30_000) } }";
+
+#[test]
+fn an_assertion_on_an_untouched_field_does_not_expose_a_changed_default() -> Result<(), String> {
+    // #10916 case 2: only `timeout_ms` moved. The test reads `url`, and reads
+    // `timeout_ms` only after setting it, so nothing the diff changed reaches
+    // an assertion.
+    let findings = findings(
+        LITERAL,
+        LITERAL_OLD,
+        "use invisible::Builder;\n\n#[test]\nfn url_kept() {\n    assert_eq!(Builder::new(\"http://x\").build().url, \"http://x\");\n}\n\n#[test]\nfn explicit() {\n    let r = Builder::new(\"u\").timeout_ms(500).build();\n    assert_eq!(r.timeout_ms, 500);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn an_assertion_that_reads_the_changed_default_keeps_the_credit() -> Result<(), String> {
+    // Control: the default is read and pinned to the new value.
+    let findings = findings(
+        LITERAL,
+        LITERAL_OLD,
+        "use invisible::Builder;\n\n#[test]\nfn url_kept() {\n    assert_eq!(Builder::new(\"http://x\").build().url, \"http://x\");\n}\n\n#[test]\nfn default() {\n    assert_eq!(Builder::new(\"u\").build().timeout_ms, 3_000);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}

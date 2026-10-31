@@ -1,0 +1,13 @@
+diff --git a/lib/Inventory.pm b/lib/Inventory.pm
+index 3b6d591..06f6458 100644
+--- a/lib/Inventory.pm
++++ b/lib/Inventory.pm
+@@ -6,7 +6,7 @@ use warnings;
+ sub restock {
+     my ($stock, $qty) = @_;
+     my %next = %$stock;
+-    $next{count} = $stock->{count} + $qty;
++    $next{count} = $qty + $stock->{count};
+     return \%next;
+ }
+ 

@@ -1,0 +1,9 @@
+diff --git a/unnum/retrying.py b/unnum/retrying.py
+--- a/unnum/retrying.py
++++ b/unnum/retrying.py
+@@ -16,4 +16,4 @@ def retry(times):
+ 
+ @retry(times=3)
+ def fetch_total(client):
+-    return client.get_total()
++    return client.get_total() + 1

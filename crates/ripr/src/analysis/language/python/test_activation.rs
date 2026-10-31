@@ -5,17 +5,17 @@
 //! except a condition that is itself a boolean literal and so provably inert
 //! (`skipif(False)`), and `importorskip` of a module every interpreter has.
 
-use super::{PythonImport, PythonTest, expr_full_name};
+use super::{PythonFramework, PythonImport, PythonTest, expr_full_name};
 use rustpython_parser::ast::{self, Expr, Stmt};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) enum DeclarationSite {
     Function,
     Class,
     Module,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonActivationControl {
     name: String,
     site: DeclarationSite,
@@ -29,7 +29,7 @@ pub(super) fn activation_control(test: &PythonTest) -> Option<&str> {
             | (
                 "unittest.skip" | "unittest.skipIf" | "unittest.skipUnless",
                 DeclarationSite::Class,
-            ) => test.framework == "unittest",
+            ) => test.framework == PythonFramework::Unittest,
             _ => true,
         })
         .map(|control| control.name.as_str())
@@ -189,6 +189,25 @@ pub(super) fn empty_parametrize_control(decorators: &[Expr]) -> Option<PythonAct
             site: DeclarationSite::Function,
         })
     })
+}
+
+/// A parametrize mark pytest refuses at collection (`indirect=None`, an
+/// unknown `indirect` name, an argname parametrized twice): the test is
+/// reported as a collection error and its body never runs (#10867).
+pub(super) fn parametrize_collection_error_control(
+    site: DeclarationSite,
+) -> PythonActivationControl {
+    PythonActivationControl {
+        name: "pytest.mark.parametrize(collection error)".to_string(),
+        site,
+    }
+}
+
+/// Whether `controls` hold [`parametrize_collection_error_control`].
+pub(super) fn has_collection_error(controls: &[PythonActivationControl]) -> bool {
+    controls
+        .iter()
+        .any(|control| control.name == "pytest.mark.parametrize(collection error)")
 }
 
 /// Module-level controls skip every test in the file: `pytest.importorskip`,

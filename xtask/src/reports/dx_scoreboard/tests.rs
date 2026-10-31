@@ -6,7 +6,7 @@ use super::measure::{
     check_args_without_explicit_mode, check_contradictions, classify_replay, contradiction_outcome,
     extract_commands, hostile_outcome, parse_test_result, permissive_json_exit_zero, probe_result,
     record_warm_check, repo_exposure_contradictions, rss_sample, scan_check_contradictions,
-    warm_check_args, warm_check_subject,
+    warm_check_args, warm_check_envs, warm_check_subject,
 };
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
@@ -306,6 +306,198 @@ fn gate_uses_the_larger_margin_and_skips_other_runner_classes() -> Result<(), St
     Ok(())
 }
 
+/// `MINIMAL` with ceilings on the `serde` row (#10914).
+fn ceilinged_config(ceilings: &str) -> Result<Config, String> {
+    parse_config(&MINIMAL.replacen(
+        "sha = \"dd18663450ec3ee38e35e3a4ee141932614e662c\"\n",
+        &format!(
+            "sha = \"dd18663450ec3ee38e35e3a4ee141932614e662c\"\nceilings = {{ {ceilings} }}\n"
+        ),
+        1,
+    ))
+}
+
+#[test]
+fn a_ceilinged_row_fails_the_gate_above_its_ceiling_whatever_the_baseline() -> Result<(), String> {
+    // #10914: a row cut under a bar stays guarded even when the baseline
+    // cannot compare it (another runner class) or holds no baseline at all.
+    let config = ceilinged_config("\"speed.warm_check_ms\" = 2000")?;
+    let warm = |repo: &str, outcome| vec![sample("speed.warm_check_ms", Some(repo), outcome)];
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &warm("serde", SampleOutcome::Value(1500.0)),
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let gate = |samples: &[Sample], runner: &str, baseline: Option<&Value>| {
+        build_report(
+            &config,
+            &all_boards(),
+            samples,
+            &context(runner),
+            baseline,
+            true,
+        )
+    };
+
+    let under = gate(
+        &warm("serde", SampleOutcome::Value(1999.0)),
+        "runner-a",
+        Some(&baseline),
+    );
+    assert_eq!(
+        under["gate"]["status"].as_str(),
+        Some("pass"),
+        "{}",
+        under["gate"]
+    );
+    // 1500 -> 2100 is inside the 500 ms regression floor, but over the ceiling.
+    for (runner, base) in [
+        ("runner-a", Some(&baseline)),
+        ("runner-b", Some(&baseline)),
+        ("runner-a", None),
+    ] {
+        let over = gate(&warm("serde", SampleOutcome::Value(2100.0)), runner, base);
+        assert_eq!(
+            over["gate"]["status"].as_str(),
+            Some("fail"),
+            "{runner}: {}",
+            over["gate"]
+        );
+        let breaches = over["gate"]["ceiling_breaches"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(breaches.len(), 1, "{breaches:?}");
+        assert_eq!(breaches[0]["repo"], "serde");
+        assert_eq!(breaches[0]["value"], 2100.0);
+        assert!(
+            gate_failure_message(&over).contains("ceiling breached speed.warm_check_ms on serde")
+        );
+        assert!(
+            render_markdown(&over)
+                .contains("**Ceiling breached** `speed.warm_check_ms` on `serde`")
+        );
+    }
+    // A ceilinged row that ran but produced no value is not under its ceiling.
+    let incomplete = gate(
+        &warm("serde", SampleOutcome::Incomplete(900.0)),
+        "runner-a",
+        Some(&baseline),
+    );
+    assert_eq!(incomplete["gate"]["status"].as_str(), Some("fail"));
+    let unmeasured = gate(
+        &warm("serde", SampleOutcome::NotMeasured),
+        "runner-a",
+        Some(&baseline),
+    );
+    assert_eq!(unmeasured["gate"]["status"].as_str(), Some("fail"));
+    // Another row's value, or no sample of the row (a heavy row left out of
+    // the run), is not this row's breach.
+    let other = gate(
+        &warm("tokio", SampleOutcome::Value(9000.0)),
+        "runner-b",
+        Some(&baseline),
+    );
+    assert_eq!(
+        other["gate"]["ceiling_breaches"].as_array().map(Vec::len),
+        Some(0)
+    );
+    // A row the run selected (another of its metrics has a sample) whose
+    // ceilinged metric has no sample at all is a missing measurement.
+    let missing = gate(
+        &[sample(
+            "first_run.friction_events",
+            Some("serde"),
+            SampleOutcome::Value(1.0),
+        )],
+        "runner-a",
+        Some(&baseline),
+    );
+    assert_eq!(
+        missing["gate"]["status"].as_str(),
+        Some("fail"),
+        "{}",
+        missing["gate"]
+    );
+    let breaches = missing["gate"]["ceiling_breaches"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(breaches.len(), 1, "{breaches:?}");
+    assert_eq!(breaches[0]["repo"], "serde");
+    assert!(breaches[0]["value"].is_null());
+    // A row the run selected (recorded in its corpus) with no samples at all
+    // differs from a row the run left out, which has neither.
+    let mut selected = context("runner-a");
+    selected
+        .corpus
+        .push(json!({"id": "serde", "status": "complete"}));
+    let silent = build_report(&config, &all_boards(), &[], &selected, None, true);
+    assert_eq!(
+        silent["gate"]["status"].as_str(),
+        Some("fail"),
+        "{}",
+        silent["gate"]
+    );
+    assert_eq!(
+        silent["gate"]["ceiling_breaches"].as_array().map(Vec::len),
+        Some(1)
+    );
+    let left_out = build_report(
+        &config,
+        &all_boards(),
+        &[],
+        &context("runner-a"),
+        None,
+        true,
+    );
+    assert_eq!(
+        left_out["gate"]["ceiling_breaches"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    // Without --gate a breach is reported but nothing fails.
+    let ungated = build_report(
+        &config,
+        &all_boards(),
+        &warm("serde", SampleOutcome::Value(2100.0)),
+        &context("runner-a"),
+        None,
+        false,
+    );
+    assert_eq!(ungated["gate"]["status"].as_str(), Some("not_run"));
+    Ok(())
+}
+
+#[test]
+fn a_ceiling_must_name_a_measured_per_repo_lower_is_better_metric() -> Result<(), String> {
+    for (ceilings, message) in [
+        (
+            "\"speed.warm_check_mss\" = 2000",
+            "unknown metric `speed.warm_check_mss`",
+        ),
+        (
+            "\"ci.workflow_lines\" = 150",
+            "needs a measured per-repo lower_is_better metric",
+        ),
+        (
+            "\"first_run.friction_events\" = 1",
+            "needs a measured per-repo lower_is_better metric",
+        ),
+        ("\"speed.warm_check_ms\" = 0", "must be a positive number"),
+    ] {
+        match ceilinged_config(ceilings) {
+            Err(error) if error.contains(message) => {}
+            other => return Err(format!("{ceilings}: expected `{message}`, got {other:?}")),
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn gate_fails_on_a_broken_instrument_even_without_baseline() -> Result<(), String> {
     let config = parse_config(MINIMAL)?;
@@ -415,6 +607,41 @@ fn contradiction_rules_fire_only_on_self_inconsistent_rows() -> Result<(), Strin
         {"file": "c.rs", "line": 3, "evidence": {"reach": "yes"}, "related_tests_total": 4},
     ]});
     assert_eq!(repo_exposure_contradictions(&exposure).0, 1);
+
+    // Proximity relations are listed beside `reach: no` by design (#6866).
+    let listed = |reason: &str| {
+        json!({"seams": [{"file": "d.rs", "line": 4, "evidence": {"reach": "no"},
+            "related_tests_total": 1,
+            "related_tests": [{"name": "t", "relation_reason": reason}]}]})
+    };
+    for proximity in ["same_test_file", "same_module", "assertion_target_affinity"] {
+        assert_eq!(
+            repo_exposure_contradictions(&listed(proximity)).0,
+            0,
+            "{proximity}"
+        );
+    }
+    for reaching in [
+        "direct_owner_call",
+        "helper_owner_call",
+        "re_export_chain_followed",
+    ] {
+        assert_eq!(
+            repo_exposure_contradictions(&listed(reaching)).0,
+            1,
+            "{reaching}"
+        );
+    }
+    // A capped window can hide a reaching test ranked behind the listed ones.
+    let capped = json!({"seams": [{"file": "e.rs", "line": 5, "evidence": {"reach": "no"},
+        "related_tests_total": 9,
+        "related_tests": vec![json!({"name": "t", "relation_reason": "same_test_file"}); 8]}]});
+    assert_eq!(repo_exposure_contradictions(&capped).0, 1);
+    // A relation this scan cannot read is not read as clean.
+    assert_eq!(
+        repo_exposure_contradictions(&listed("brand_new_relation")).0,
+        1
+    );
 
     let check = json!({"findings": [
         {"id": "p1", "classification": "no_static_path", "related_tests_total": 2, "evidence": []},
@@ -1847,6 +2074,8 @@ fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
         base_sha: None,
         note: String::new(),
         heavy: false,
+        language: None,
+        ceilings: BTreeMap::new(),
     };
     let full = "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b";
     assert_eq!(validate_corpus(&[entry("a", full)]), Ok(()));
@@ -3185,6 +3414,8 @@ fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_par
         base_sha: None,
         note: String::new(),
         heavy: false,
+        language: None,
+        ceilings: BTreeMap::new(),
     };
 
     let refused = super::measure::prepare_checkout(&entry, &options);
@@ -3344,18 +3575,19 @@ fn spec_example_coverage_resolves_from_the_committed_fixtures() -> Result<(), St
         ));
     };
 
-    // Independent of the coverage function: the ledger floor is the covered
-    // count `verdict-corpus check` protects, so a live board reading must
-    // report that numerator rather than `not_measured`.
-    let ledger = fs::read_to_string(root.join(dir).join("spec-coverage.toml"))
+    // Independent of the coverage function: the lock lists the covered
+    // examples `verdict-corpus check` protects, so a live board reading must
+    // report that count as its numerator rather than `not_measured`.
+    let lock = fs::read_to_string(root.join(dir).join("spec-examples.lock"))
         .map_err(|err| err.to_string())?;
-    let floor: usize = ledger
+    let floor = lock
         .lines()
-        .find_map(|line| line.trim().strip_prefix("floor = ")?.parse().ok())
-        .ok_or("spec-coverage.toml has no floor")?;
+        .filter(|line| !line.trim().is_empty() && !line.trim().starts_with('#'))
+        .count();
+    assert!(floor > 0, "spec-examples.lock lists no example");
     assert!(
         sample.detail.contains(&format!("{pointer}: {floor}/")),
-        "board must report the ledger floor as the covered count: {}",
+        "board must report the locked examples as the covered count: {}",
         sample.detail
     );
     assert!(
@@ -4297,4 +4529,483 @@ fn ingested_identity_fills_an_empty_context_and_never_replaces_a_measured_one() 
     assert!(partial.analyzer_version.is_empty());
     assert_eq!(partial.binary, "target/release/ripr");
     Ok(())
+}
+
+/// #10183: the committed agent-as-user receipt is judged against
+/// `agent-baseline.json` by the required Rust gate, so a receipt commit that
+/// lengthens the agent's path, leaves more non-exposed verdicts or adds
+/// white-box tests fails before merge. The 2026-10-04 receipt is the negative
+/// control: it is worse than the baseline on three metrics.
+const COMMITTED_AGENT_RECEIPT: &str =
+    include_str!("../../../../metrics/public-proof/agent-as-user.json");
+
+fn agent_baseline() -> Result<Value, String> {
+    check_baseline(
+        serde_json::from_str(include_str!(
+            "../../../../metrics/dx-scoreboard/agent-baseline.json"
+        ))
+        .map_err(|err| err.to_string())?,
+    )
+}
+
+fn agent_gate_report(receipt: &Value) -> Result<Value, String> {
+    let config = load_config(&committed_config())?;
+    let samples = parse_ingest(receipt, &config)?;
+    let boards = vec!["agent".to_string()];
+    Ok(build_report(
+        &config,
+        &boards,
+        &samples,
+        &context("local"),
+        Some(&agent_baseline()?),
+        true,
+    ))
+}
+
+/// A metric the receipt stops reporting is `not_measured`, which the generic
+/// gate lists as uncompared and does not fail. Every baseline-measured metric
+/// must therefore keep the same repositories in the current report; metrics
+/// the baseline never measured (stale re-checks, stub calls) stay exempt.
+fn agent_coverage_gaps(report: &Value, baseline: &Value) -> Vec<String> {
+    let repos = |row: &Value| -> Vec<String> {
+        let mut found: Vec<String> = row["samples"]
+            .as_array()
+            .map(|samples| {
+                samples
+                    .iter()
+                    .map(|sample| sample["repo"].as_str().unwrap_or("-").to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        found.sort();
+        found
+    };
+    let mut gaps = Vec::new();
+    for base in baseline["metrics"].as_array().into_iter().flatten() {
+        let Some(id) = base["id"].as_str().filter(|id| id.starts_with("agent.")) else {
+            continue;
+        };
+        if base["status"].as_str() == Some("not_measured") {
+            continue;
+        }
+        match metric(report, id) {
+            Ok(row) if repos(row) == repos(base) => {}
+            Ok(row) => gaps.push(format!(
+                "{id}: samples {:?}, baseline {:?}",
+                repos(row),
+                repos(base)
+            )),
+            Err(err) => gaps.push(err),
+        }
+    }
+    gaps
+}
+
+fn committed_agent_receipt() -> Result<Value, String> {
+    serde_json::from_str(COMMITTED_AGENT_RECEIPT).map_err(|err| err.to_string())
+}
+
+#[test]
+fn committed_agent_receipt_does_not_regress_the_agent_baseline() -> Result<(), String> {
+    let report = agent_gate_report(&committed_agent_receipt()?)?;
+    assert_eq!(
+        report["gate"]["status"].as_str(),
+        Some("pass"),
+        "{}",
+        gate_failure_message(&report)
+    );
+    let gaps = agent_coverage_gaps(&report, &agent_baseline()?);
+    assert!(gaps.is_empty(), "receipt lost baseline coverage: {gaps:?}");
+    Ok(())
+}
+
+#[test]
+fn agent_gate_fails_the_receipt_from_before_the_rerun() -> Result<(), String> {
+    let old: Value = serde_json::from_str(include_str!(
+        "../../../../benchmarks/dx_scoreboard/testdata/10183-agent-receipt-2026-10-04.json"
+    ))
+    .map_err(|err| err.to_string())?;
+    let report = agent_gate_report(&old)?;
+    assert_eq!(report["gate"]["status"].as_str(), Some("fail"));
+    let message = gate_failure_message(&report);
+    for id in [
+        "agent.ripr_commands_to_fix",
+        "agent.tool_steps_to_fix",
+        "agent.white_box_tests_to_satisfy_ripr",
+    ] {
+        assert!(message.contains(id), "{id} not named in: {message}");
+    }
+    Ok(())
+}
+
+/// Dropping evidence passes the generic gate, so the coverage check is the
+/// control: each ratcheted metric, and one repository's sample of a per-repo
+/// metric, must be reported as lost.
+#[test]
+fn agent_coverage_check_names_dropped_metrics_and_samples() -> Result<(), String> {
+    let baseline = agent_baseline()?;
+    for id in [
+        "agent.ripr_commands_to_fix",
+        "agent.tool_steps_to_fix",
+        "agent.false_weak_findings_after_fix",
+        "agent.white_box_tests_to_satisfy_ripr",
+    ] {
+        let mut receipt = committed_agent_receipt()?;
+        let rows = receipt["metrics"].as_array_mut().ok_or("no metrics")?;
+        rows.retain(|row| row["id"].as_str() != Some(id));
+        let report = agent_gate_report(&receipt)?;
+        let gaps = agent_coverage_gaps(&report, &baseline);
+        assert!(
+            gaps.iter().any(|gap| gap.starts_with(id)),
+            "dropping {id} was not reported: {gaps:?}"
+        );
+    }
+
+    let mut receipt = committed_agent_receipt()?;
+    let rows = receipt["metrics"].as_array_mut().ok_or("no metrics")?;
+    let at = rows
+        .iter()
+        .position(|row| row["id"].as_str() == Some("agent.tool_steps_to_fix"))
+        .ok_or("no tool steps row")?;
+    rows.remove(at);
+    let gaps = agent_coverage_gaps(&agent_gate_report(&receipt)?, &baseline);
+    assert!(
+        gaps.iter()
+            .any(|gap| gap.starts_with("agent.tool_steps_to_fix")),
+        "dropping one repository's sample was not reported: {gaps:?}"
+    );
+    Ok(())
+}
+
+/// The nightly `first-run-main` job gates the committed
+/// `first-run-main-baseline.json` against the rows `cargo xtask first-run`
+/// writes. This runs the same comparison on rows built here, so a baseline
+/// refresh or a converter change cannot silently stop failing the lane on a
+/// crate that stops ending decisive (#9276).
+#[test]
+fn first_run_main_gate_fails_a_crate_that_ends_unknown() -> Result<(), String> {
+    let config = load_config(&committed_config())?;
+    let baseline = check_baseline(
+        serde_json::from_str(include_str!(
+            "../../../../metrics/dx-scoreboard/first-run-main-baseline.json"
+        ))
+        .map_err(|err| err.to_string())?,
+    )?;
+    let boards = vec!["first_run".to_string()];
+    let gate = |third: (&str, &str)| -> Result<Value, String> {
+        let mut lines = Vec::new();
+        for (case, verdict, reading) in [
+            ("semver-1.0.23", "exposed", "agrees with the tests"),
+            ("fastrand-2.3.0", "exposed", "agrees with the tests"),
+            ("bytesize-1.3.0", third.0, third.1),
+        ] {
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"secs","value":3.0,"budget":60,"better":"lower"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"verdict","value":"{verdict}","budget":null,"better":"review_on_change"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"verdict_reading","value":"{reading}","budget":null,"better":"review_on_change"}}"#));
+        }
+        let samples = parse_ingest(&parse_ingest_text(&lines.join("\n"))?, &config)?;
+        // A runner class the baseline was not recorded on, as on a hosted
+        // runner: only the verdict rows are compared.
+        Ok(build_report(
+            &config,
+            &boards,
+            &samples,
+            &context("hosted-runner"),
+            Some(&baseline),
+            true,
+        ))
+    };
+    let healthy = gate(("exposed", "agrees with the tests"))?;
+    assert_eq!(
+        healthy["gate"]["status"].as_str(),
+        Some("pass"),
+        "{}",
+        gate_failure_message(&healthy)
+    );
+    let regressed = gate(("infection_unknown", "unresolved"))?;
+    assert_eq!(regressed["gate"]["status"].as_str(), Some("fail"));
+    let message = gate_failure_message(&regressed);
+    // The decisive count is what fails the gate; the changed verdict list
+    // is listed for review on the unknown-verdict row.
+    assert!(
+        message.contains("first_run.decisive_verdicts"),
+        "decisive_verdicts not named in: {message}"
+    );
+    assert!(
+        regressed["gate"]["review"]
+            .to_string()
+            .contains("first_run.unknown_verdicts"),
+        "unknown_verdicts not listed for review: {}",
+        regressed["gate"]["review"]
+    );
+    Ok(())
+}
+
+/// The no-Rust rows exist so the common docs-or-CI commit has its own warm
+/// check trend (#10329). They stay meaningful only while the pinned diff
+/// touches no Rust, so each is a distinct commit from its Rust-editing
+/// sibling and, for the merge commit, names the first parent as its base.
+#[test]
+fn corpus_pins_no_rust_commits() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    validate_corpus(&config.corpus)?;
+    let entry = |id: &str| {
+        config
+            .corpus
+            .iter()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| format!("{id} missing from scoreboards.toml"))
+    };
+    let serde = entry("serde")?;
+    let serde_no_rust = entry("serde-no-rust")?;
+    let cargo = entry("cargo")?;
+    let cargo_no_rust = entry("cargo-no-rust")?;
+    for (rust_editing, no_rust) in [(serde, serde_no_rust), (cargo, cargo_no_rust)] {
+        if rust_editing.url != no_rust.url {
+            return Err(format!("{} must pin the same upstream", no_rust.id));
+        }
+        if rust_editing.sha == no_rust.sha {
+            return Err(format!(
+                "{} pins the Rust-editing commit, so it would not track a no-Rust diff",
+                no_rust.id
+            ));
+        }
+        if !no_rust.note.contains("no Rust") {
+            return Err(format!("{} note must say the diff has no Rust", no_rust.id));
+        }
+    }
+    // The config cannot prove offline that a commit touches no Rust, so the
+    // two commits checked against upstream (serde: only the CI workflow;
+    // cargo: only the book changelog, diffed against the first parent) are
+    // pinned here too. Moving either pin is then a deliberate two-place edit
+    // that re-asks that question, not a drift this test waves through.
+    for (id, sha) in [
+        ("serde-no-rust", "576e2ef9d8b985cb9399fa3a35913ef86503bad4"),
+        ("cargo-no-rust", "523e530d77cce92813eebbf6ac009a04f2df2ac2"),
+    ] {
+        if entry(id)?.sha != sha {
+            return Err(format!(
+                "{id} moved off the commit verified to change no Rust; re-verify the diff before updating this test"
+            ));
+        }
+    }
+    if cargo_no_rust.base_sha.as_deref() != Some("04d22dbe795476cf89d1dc2599cec98e4b227bc3") {
+        return Err("cargo-no-rust base_sha must stay the verified first parent".to_string());
+    }
+    // A merge commit diffed against HEAD~1 would compare with its second
+    // parent, which carries Rust changes; the base must be pinned.
+    let base = cargo_no_rust
+        .base_sha
+        .as_deref()
+        .ok_or("cargo-no-rust must pin the first parent as base_sha")?;
+    if base == cargo_no_rust.sha {
+        return Err("cargo-no-rust base_sha must differ from sha".to_string());
+    }
+    // The cargo row is heavy like the Rust-editing cargo row; the serde row
+    // stays in the light tier so the default run covers a no-Rust diff.
+    if serde_no_rust.heavy || !cargo_no_rust.heavy {
+        return Err("serde-no-rust is light and cargo-no-rust is heavy".to_string());
+    }
+    Ok(())
+}
+
+/// Non-Rust corpus rows (#10338): each names its language, pins full shas and
+/// is a separate population from the Rust rows. An unknown language is
+/// refused so a typo cannot silently fall back to `rust`.
+#[test]
+fn corpus_pins_python_commits_and_rejects_unknown_languages() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    validate_corpus(&config.corpus)?;
+    let python: Vec<_> = config
+        .corpus
+        .iter()
+        .filter(|entry| entry.language() == "python")
+        .collect();
+    let ids: Vec<_> = python.iter().map(|entry| entry.id.as_str()).collect();
+    if ids
+        != [
+            "click-python",
+            "poetry-python",
+            "pandas-python",
+            "django-python",
+        ]
+    {
+        return Err(format!(
+            "expected click, poetry, pandas and django Python rows, got {ids:?}"
+        ));
+    }
+    let shas: Vec<_> = python.iter().map(|entry| entry.sha.as_str()).collect();
+    if shas
+        != [
+            "f67c2bb6c2f055c1c7a57cd46c3697fc26a7742e",
+            "a416efd1be6b6787019e751e7c4f6fa1a0911050",
+            "ecdb4258a39cdfc8ba70ce1aa3edda1615b1defc",
+            "5c13b5a19864807cae7266339554c14e151e5961",
+        ]
+    {
+        return Err(format!(
+            "Python pins moved off the commits verified to edit Python and its test: {shas:?}"
+        ));
+    }
+    if python[0].heavy || python[1..].iter().any(|entry| !entry.heavy) {
+        return Err("click must be the light Python row and the larger ones heavy".to_string());
+    }
+    // #10914: the large Python rows were cut under 2 s and 512 MiB and stay
+    // guarded.
+    for entry in &python[2..] {
+        if entry.ceilings.get("speed.warm_check_ms") != Some(&2000.0) {
+            return Err(format!("{} lost its 2 s warm-check ceiling", entry.id));
+        }
+        if entry.ceilings.get("speed.warm_check_peak_rss_mb") != Some(&512.0) {
+            return Err(format!("{} lost its 512 MiB peak-memory ceiling", entry.id));
+        }
+    }
+    // Rows without a language stay Rust, so existing pins keep their meaning.
+    if config
+        .corpus
+        .iter()
+        .any(|entry| entry.id == "serde" && entry.language() != "rust")
+    {
+        return Err("rows without `language` must read as rust".to_string());
+    }
+    let mut typo = config.corpus.clone();
+    typo[0].language = Some("pyton".to_string());
+    match validate_corpus(&typo) {
+        Err(message) if message.contains("unknown language `pyton`") => Ok(()),
+        other => Err(format!(
+            "an unknown language must be refused, got {other:?}"
+        )),
+    }
+}
+
+/// A manifest `language` of the wrong JSON type must not be read as absent,
+/// which would file the entry's measurements under `rust`.
+#[test]
+fn manifest_language_must_be_a_string_when_present() -> Result<(), String> {
+    let manifest = |language: Value| {
+        json!({
+            "kind": "ripr_rust_corpus_manifest",
+            "corpus_version": "v",
+            "repos": [{
+                "id": "a", "url": "u", "tier": "fast", "language": language,
+                "sha": "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b",
+            }],
+        })
+    };
+    let (_, corpus) = corpus_from_manifest(&manifest(json!("python")))?;
+    if corpus.first().map(CorpusEntry::language) != Some("python") {
+        return Err("a string manifest language must be carried through".to_string());
+    }
+    match corpus_from_manifest(&manifest(json!(123))) {
+        Err(message) if message.contains("`language` must be a string") => Ok(()),
+        other => Err(format!("a numeric language must be refused, got {other:?}")),
+    }
+}
+
+/// The per-repository rows carry the entry's language so a consumer can
+/// group results without joining back to the corpus metadata.
+#[test]
+fn repo_view_rows_carry_the_corpus_language() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let repos = repo_view(&config, &[]);
+    let language = |id: &str| {
+        repos
+            .iter()
+            .find(|row| row["id"] == id)
+            .and_then(|row| row["language"].as_str())
+            .map(str::to_string)
+    };
+    if language("click-python").as_deref() != Some("python") {
+        return Err("click-python row must report python".to_string());
+    }
+    if language("serde").as_deref() != Some("rust") {
+        return Err("a row without `language` must report rust".to_string());
+    }
+    Ok(())
+}
+
+/// TypeScript row (#10338). The exact pin is asserted so moving it is a
+/// deliberate two-place edit that re-asks whether the commit still edits
+/// TypeScript source and its test. Only repositories that complete are pinned
+/// (defu, ky, h3, execa, destr, zod): a repository that stops short fails the
+/// completion gate even when new, so a pinned diff must complete.
+#[test]
+fn corpus_pins_the_typescript_commit() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    validate_corpus(&config.corpus)?;
+    let typescript: Vec<_> = config
+        .corpus
+        .iter()
+        .filter(|entry| entry.language() == "typescript")
+        .map(|entry| (entry.id.as_str(), entry.sha.as_str(), entry.heavy))
+        .collect();
+    let expected = [
+        (
+            "defu-typescript",
+            "11ba02213d4b1c6b02dd686041f75edc479c98e9",
+            false,
+        ),
+        (
+            "ky-typescript",
+            "33462fcbf8f9001fc3d7a08576992098e571c5ff",
+            false,
+        ),
+        (
+            "h3-typescript",
+            "3444ff78970e95c65e481ed2ff9a7d43c880ab1c",
+            false,
+        ),
+        (
+            "execa-typescript",
+            "ed80079bc4e21a259fdc521c5a4b27126b308c9a",
+            false,
+        ),
+        (
+            "destr-typescript",
+            "f9c78d402556aba3e50f94d46176f36a0570acbd",
+            false,
+        ),
+        (
+            "zod-typescript",
+            "680d19f7d1e042e55934209caeb79bc843b94f44",
+            false,
+        ),
+        (
+            "valibot-typescript",
+            "e6b538386cfa4ccf8be6122f7f457ea7d4020325",
+            false,
+        ),
+        (
+            "remeda-typescript",
+            "d02c3bdb5e18cfa53e76f33f4ae525adce515379",
+            false,
+        ),
+        (
+            "hono-typescript",
+            "d54720da80134a180f5fe2dd98a7676cfc8f08b4",
+            false,
+        ),
+    ];
+    if typescript != expected {
+        return Err(format!(
+            "expected only the verified defu, ky, h3, execa, destr, zod, valibot, remeda and hono TypeScript rows, got {typescript:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn warm_check_renders_the_full_findings_set_for_the_contradiction_scan() {
+    let envs = warm_check_envs("/cache");
+    assert!(envs.contains(&("RIPR_CACHE_DIR", "/cache")));
+    assert!(envs.contains(&("RIPR_CHECK_FINDINGS_BYTES", "0")));
 }

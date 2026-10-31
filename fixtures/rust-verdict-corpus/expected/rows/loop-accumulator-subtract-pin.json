@@ -1,0 +1,22 @@
+{
+  "case_id": "loop-accumulator-subtract-pin",
+  "subject_id": "authored-loop-accumulator",
+  "origin": "authored",
+  "anchor": "src/lib.rs:6",
+  "behavior_family": "loop_accumulator",
+  "test_shape": "exact_pin_nonzero_total",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

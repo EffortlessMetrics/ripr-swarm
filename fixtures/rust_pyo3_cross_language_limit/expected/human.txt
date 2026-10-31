@@ -2,23 +2,33 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_pyo3_cross_language_limit/input
 
-Summary: 2 probes (0 exposed, 0 weak, 0 unrevealed, 2 no path); 2 of 2 findings unsuppressed
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 2 no test path. 2 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Start here:
-  State: limited by static analysis
-  Safe next action: inspect the named static limitation before treating this as repair-ready
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
   File: ./src/lib.rs:5
   Static exposure: no path (severity: warning, confidence 0.48)
   Why no path: no related test was found that reaches this change
   Changed behavior: amount >= 100
-  Missing discriminator: No detected boundary input for the changed predicate
+  Missing check: No detected boundary input for the changed predicate
   Next step: This owner is exposed across a language boundary (FFI or binding); whether an
     external-language test observes the change is not statically known — verify the external oracle
     rather than adding a same-language test
   Evidence: reach no · infection unknown · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach no: No static test path found for the changed owner
     - infection unknown: No tests were found, so activation/infection cannot be estimated
     - 4 more detail line(s) in --format human-full
@@ -26,13 +36,15 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_pyo3_cross_language_limit/input --diff <cwd>/fixtures/rust_pyo3_cross_language_limit/diff.patch --mode fast probe:src_lib.rs:predicate:f89fd108
   ripr context --root <cwd>/fixtures/rust_pyo3_cross_language_limit/input --diff <cwd>/fixtures/rust_pyo3_cross_language_limit/diff.patch --mode fast --at probe:src_lib.rs:predicate:f89fd108
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:predicate:f89fd108 --root <cwd>/fixtures/rust_pyo3_cross_language_limit/input` for the full gate's answer
+  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_pyo3_cross_language_limit/input --at src/lib.rs:5 --kind predicate
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:20 (no path)
+    - ./src/lib.rs:20 (no path); kind: predicate; reason: This owner is exposed across a language boundary (FFI or binding); whether an external-language test observes the change is not statically known — verify the external oracle…
+  Hidden classes:
+    no path = no test path was found
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

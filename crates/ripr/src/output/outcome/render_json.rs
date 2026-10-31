@@ -44,6 +44,7 @@ pub(crate) fn render_targeted_test_outcome_json(
     super::super::json::render_pretty_with_newline(&value, "targeted-test outcome")
 }
 
+#[cfg(test)]
 pub(crate) fn render_agent_verify_json_with_currentness(
     report: &TargetedTestOutcomeReport,
     artifact_currentness: Option<&str>,

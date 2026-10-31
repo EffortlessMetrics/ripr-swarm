@@ -1,0 +1,39 @@
+//! The loop body carries a line the scanner grammar does not know.
+
+pub fn scan_body(input: &str) -> &'static str {
+    let mut state = "text";
+    let mut seen = 0;
+    for symbol in input.chars() {
+        seen += 1;
+        state = match (state, symbol) {
+            ("text", ' ') => "text",
+            ("text", _) => "word",
+            ("word", ' ') => "text",
+            (_, _) => "word",
+        };
+    }
+    if seen == 0 {
+        return "text";
+    }
+    state
+}
+
+pub fn classify_body(input: &str) -> &'static str {
+    let final_state = scan_body(input);
+    if final_state == "word" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_reads_the_last_state_s_body() {
+        assert_eq!(classify_body("ab"), "word");
+        assert_eq!(classify_body("ab "), "blank");
+    }
+}

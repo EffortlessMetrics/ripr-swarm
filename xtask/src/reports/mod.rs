@@ -127,7 +127,8 @@ pub(crate) use fixtures::{
     fixture_cache_dir, fixture_contract_violations,
     golden_assistant_loop_health_contract_violations_at, golden_drift_semantics, golden_drift_type,
     goldens_check_failure_message, json_string_values_for_key, next_pending_heading,
-    normalize_golden_text, parse_reason, run_fixture, run_fixture_outputs, validate_bless_reason,
+    normalize_golden_text, parse_reason, ripr_perl_fixture_binary, run_fixture,
+    run_fixture_outputs, validate_bless_reason,
 };
 pub(crate) use index::{reports, reports_index};
 pub(crate) use issue_intake::issue_intake;
@@ -164,6 +165,7 @@ pub(crate) use python_repair_trust::python_repair_trust;
 pub(crate) use real_crate_dogfood::real_crate_dogfood;
 pub(crate) use receipts::{receipts, receipts_write};
 pub(crate) use recommendation::recommendation_calibration;
+pub(crate) use release::candidate_harness::live_head::producer::run as release_manifest_proposal;
 pub(crate) use release::release_readiness;
 pub(crate) use release_control::release_control;
 pub(crate) use release_denominator::release_denominator;

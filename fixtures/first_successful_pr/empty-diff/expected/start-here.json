@@ -49,6 +49,7 @@
     "base": "origin/main",
     "first_action": "target/ripr/reports/first-useful-action.json",
     "gap_ledger": "inputs/reports/gap-decision-ledger.json",
+    "gap_ledger_sha256": "sha256:9bcf13d1a9f325f0af79c1a5b9aeb968c1b9ff7bc9c0d6b238c83fa15dbeeef9",
     "gate_decision": "target/ripr/reports/gate-decision.json",
     "head": "HEAD",
     "receipts_dir": "target/ripr/receipts",

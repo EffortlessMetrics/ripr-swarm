@@ -132,6 +132,8 @@ pub(crate) fn extend_index_from_loaded_files_with_cache(
     ));
     index.package_names = manifest_package_names(root);
     index.macro_owned_crates = macro_owned_crates(root, index);
+    index.workspace_crates = workspace_member_crates(root, index);
+    index.workspace_member_dirs = absolute_member_dirs(root);
     index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
     index.member_crates = super::member_crates::MemberCrates::new(root);
     Ok(stats)
@@ -298,6 +300,8 @@ fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     index.package_names = manifest_package_names(root);
     index.root_library_name = manifest_library_name(root);
     index.macro_owned_crates = macro_owned_crates(root, &index);
+    index.workspace_crates = workspace_member_crates(root, &index);
+    index.workspace_member_dirs = absolute_member_dirs(root);
     index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
     index.member_crates = super::member_crates::MemberCrates::new(root);
     cancellation::checkpoint()?;
@@ -437,15 +441,33 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
                 .collect();
             // Do not replace an observed failure with a deadline noticed
             // only after joining, nor with a sibling's abort (#6721).
-            if let Some(error) = cancellation::select_batch_error(
+            let batch_error = cancellation::select_batch_error(
                 token.as_ref(),
                 results
                     .iter()
                     .filter_map(|(_, result)| result.as_ref().err()),
-            ) {
+            )
+            .or_else(|| cancellation::checkpoint().err());
+            if let Some(error) = batch_error {
+                // #11205: a deadline or cancellation that lands while this
+                // batch is parsing must not discard the files that already
+                // finished. Each fact is keyed by its own content and stays
+                // a valid future hit, so a retry converges instead of
+                // starting cold. An ordinary source failure stores nothing.
+                let ordinary_failure = results
+                    .iter()
+                    .any(|(_, result)| matches!(result, Err(WorkerError::Failed(_))));
+                if !ordinary_failure {
+                    for (position, result) in results {
+                        if let (Ok(facts), Some(Pending::Parse { key })) =
+                            (result, pending.get(position))
+                        {
+                            store_fresh_facts(cache, key, &facts, &batch[position].0, stats);
+                        }
+                    }
+                }
                 return Err(error);
             }
-            cancellation::checkpoint()?;
             for (position, result) in results {
                 parsed[position] = Some(result.map_err(WorkerError::into_message)?);
             }
@@ -462,6 +484,11 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
         // Phase 3 (sequential, input order): store fresh facts, then insert.
         // `pending` and `parsed` are consumed here and dropped at the end of
         // this iteration, before the next batch is admitted.
+        //
+        // #11205: once an abort is noticed here, the remaining parsed misses
+        // are still stored (they are complete and content-keyed) while index
+        // insertion stops; the abort is returned after the batch.
+        let mut abort: Option<String> = None;
         for (position, entry) in pending.into_iter().enumerate() {
             let (file, bytes) = &batch[position];
             // Recorded on cache hits too, so a warm run discloses the same file.
@@ -477,20 +504,42 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
                             root.join(file).display()
                         ));
                     };
-                    cancellation::checkpoint()?;
-                    match cache.store_file_facts(&key, &facts) {
-                        Ok(()) => stats.stores += 1,
-                        Err(error) => stats.record_store_failure(file.clone(), error),
-                    }
+                    store_fresh_facts(cache, &key, &facts, file, stats);
                     facts
                 }
             };
-            cancellation::checkpoint()?;
+            if abort.is_some() {
+                continue;
+            }
+            if let Err(error) = cancellation::checkpoint() {
+                abort = Some(error);
+                continue;
+            }
             insert_file_summary(&mut index, file.clone(), summary);
-            cancellation::checkpoint()?;
+            if let Err(error) = cancellation::checkpoint() {
+                abort = Some(error);
+            }
+        }
+        if let Some(error) = abort {
+            return Err(error);
         }
     }
     Ok((index, content_hash.finish()))
+}
+
+/// Store one freshly parsed file's facts and count the outcome. The cache is
+/// per-file and non-transactional, so a failed store is recorded, not fatal.
+fn store_fresh_facts(
+    cache: &RepoFileFactCache,
+    key: &RepoFileFactCacheKey,
+    facts: &super::FileFacts,
+    file: &Path,
+    stats: &mut FileFactCacheStats,
+) {
+    match cache.store_file_facts(key, facts) {
+        Ok(()) => stats.stores += 1,
+        Err(error) => stats.record_store_failure(file.to_path_buf(), error),
+    }
 }
 
 /// Test-only lifetime instrument for #5029: the most `FileFacts` held
@@ -650,6 +699,8 @@ fn build_index_with_adapters(
     index.package_names = manifest_package_names(root);
     index.root_library_name = manifest_library_name(root);
     index.macro_owned_crates = macro_owned_crates(root, &index);
+    index.workspace_crates = workspace_member_crates(root, &index);
+    index.workspace_member_dirs = absolute_member_dirs(root);
     index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
     index.member_crates = super::member_crates::MemberCrates::new(root);
     cancellation::checkpoint()?;
@@ -732,14 +783,51 @@ fn manifest_library_name(root: &Path) -> Option<String> {
 /// definitions were not scanned.
 fn macro_owned_crates(root: &Path, index: &RustIndex) -> std::collections::BTreeSet<String> {
     let mut names = index.package_names.clone();
+    for directory in workspace_member_directories(root) {
+        if !index.files().iter().any(|(path, _)| {
+            let path = path.strip_prefix(root).unwrap_or(path);
+            path.strip_prefix("./")
+                .unwrap_or(path)
+                .starts_with(&directory)
+        }) {
+            continue;
+        }
+        names.extend(manifest_package_names(&root.join(directory)));
+    }
+    names
+}
+
+/// `index.package_names` plus every `[workspace] members` crate whether or
+/// not a file of it is indexed: a Draft/Fast diff index holds the changed
+/// packages and their dependents, not a dependency such as the member that
+/// declares a trait the changed code implements (#10061).
+fn workspace_member_crates(root: &Path, index: &RustIndex) -> std::collections::BTreeSet<String> {
+    let mut names = index.package_names.clone();
+    for directory in workspace_member_directories(root) {
+        names.extend(manifest_package_names(&root.join(directory)));
+    }
+    names
+}
+
+/// [`workspace_member_directories`] joined onto `root`.
+fn absolute_member_dirs(root: &Path) -> Vec<PathBuf> {
+    workspace_member_directories(root)
+        .into_iter()
+        .map(|directory| root.join(directory))
+        .collect()
+}
+
+/// The `[workspace] members` directories (literal paths and trailing `/*`
+/// globs, minus `exclude`) of the root manifest.
+fn workspace_member_directories(root: &Path) -> Vec<PathBuf> {
     let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
-        return names;
+        return Vec::new();
     };
     let Ok(value) = text.parse::<toml::Table>() else {
-        return names;
+        return Vec::new();
     };
     let Some(workspace) = value.get("workspace").and_then(toml::Value::as_table) else {
-        return names;
+        return Vec::new();
     };
     let patterns = |key: &str| {
         workspace
@@ -770,22 +858,11 @@ fn macro_owned_crates(root: &Path, index: &RustIndex) -> std::collections::BTree
             members.push(pattern);
         }
     }
-    for member in members {
-        if excluded.contains(&member) {
-            continue;
-        }
-        let directory = Path::new(&member);
-        if !index.files().iter().any(|(path, _)| {
-            let path = path.strip_prefix(root).unwrap_or(path);
-            path.strip_prefix("./")
-                .unwrap_or(path)
-                .starts_with(directory)
-        }) {
-            continue;
-        }
-        names.extend(manifest_package_names(&root.join(directory)));
-    }
-    names
+    members
+        .into_iter()
+        .filter(|member| !excluded.contains(member))
+        .map(PathBuf::from)
+        .collect()
 }
 
 /// Source text of one Rust file as the index reads it.

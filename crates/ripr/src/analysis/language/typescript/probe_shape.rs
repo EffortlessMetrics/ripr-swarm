@@ -2,7 +2,7 @@
 
 use super::*;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptProbeShape {
     pub(crate) family: ProbeFamily,
     pub(crate) delta: DeltaKind,
@@ -324,23 +324,91 @@ pub(crate) fn typescript_boundary_discriminator_with_shape(
     // path for it would credit a `null` argument through a boundary that
     // never reads a nullish side (#4213 thread PRRT_kwDOSiSx0c6mUnSc).
     let (expression, nullish) = normalize_ts_comparison_operands(&expression);
-    for operator in COMPARISON_OPERATORS {
-        if let Some(idx) = expression.find(operator) {
-            let left_raw = expression.get(..idx)?.trim();
-            let right_raw = expression.get(idx + operator.len()..)?.trim();
-            if operand_looks_like_call(left_raw) || operand_looks_like_call(right_raw) {
-                return None;
-            }
-            let left = comparison_operand_before(&expression, idx)?;
-            let right = comparison_operand_after(&expression, idx + operator.len())?;
-            if is_simple_typescript_discriminator_operand(&left)
-                && is_simple_typescript_discriminator_operand(&right)
-            {
-                return Some((format!("{left} == {right}"), nullish));
-            }
-        }
+    // Read the comparison in code spans only: an operator inside a string
+    // literal (`kind === "a>=b"`) is never the boundary (#11256). Which
+    // comparison of a compound condition changed is chosen from the old and
+    // new line by `typescript_changed_boundary_text` (#10399), not here.
+    let operators = comparison_operators_in_code(&expression);
+    let (idx, operator) = COMPARISON_OPERATORS.iter().find_map(|operator| {
+        operators
+            .iter()
+            .find(|(_, found)| found == operator)
+            .copied()
+    })?;
+    let left_raw = expression.get(..idx)?.trim();
+    let right_raw = expression.get(idx + operator.len()..)?.trim();
+    if operand_looks_like_call(left_raw) || operand_looks_like_call(right_raw) {
+        return None;
+    }
+    // `typeof input === "function"` tests the KIND of `input`, so
+    // `input == "function"` would name a value the guard never
+    // compares (#11196). Name the kind test or name nothing.
+    if let Some(kind_test) = typeof_kind_test(&expression, idx, operator) {
+        return kind_test.map(|boundary| (boundary, false));
+    }
+    let left = comparison_operand_before(&expression, idx)?;
+    let right = comparison_operand_after(&expression, idx + operator.len())?;
+    if is_simple_typescript_discriminator_operand(&left)
+        && is_simple_typescript_discriminator_operand(&right)
+    {
+        return Some((format!("{left} == {right}"), nullish));
     }
     None
+}
+
+/// The `typeof <operand> == "<kind>"` discriminator of an equality test on
+/// a `typeof` expression. `None` when the comparison does not involve
+/// `typeof`; `Some(None)` when it does but names no checkable kind (two
+/// `typeof` sides, a relational operator, or a non-literal kind), so the
+/// caller withholds the discriminator rather than naming the type-name
+/// string as if it were the input.
+fn typeof_kind_test(expression: &str, idx: usize, operator: &str) -> Option<Option<String>> {
+    let left_raw = expression.get(..idx)?.trim_end();
+    let right_raw = expression.get(idx + operator.len()..)?.trim_start();
+    let left_operand = left_raw
+        .rsplit_once(char::is_whitespace)
+        .and_then(|(head, operand)| head.trim_end().ends_with("typeof").then_some(operand));
+    let right_operand = right_raw
+        .strip_prefix("typeof ")
+        .map(|rest| {
+            let end = rest
+                .find(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$' | '.')))
+                .unwrap_or(rest.len());
+            rest.get(..end).unwrap_or("")
+        })
+        .filter(|operand| !operand.is_empty());
+    if left_operand.is_none() && right_operand.is_none() {
+        return None;
+    }
+    if left_operand.is_some() && right_operand.is_some() {
+        return Some(None);
+    }
+    if !matches!(operator, "===" | "!==" | "==" | "!=") {
+        return Some(None);
+    }
+    let (operand, kind) = match (left_operand, right_operand) {
+        (Some(operand), None) => (
+            operand,
+            comparison_operand_after(expression, idx + operator.len()),
+        ),
+        (None, Some(operand)) => (operand, comparison_operand_before(expression, idx)),
+        _ => return Some(None),
+    };
+    let Some(kind) = kind else {
+        return Some(None);
+    };
+    let quote = kind.chars().next().filter(|ch| matches!(ch, '"' | '\''));
+    let body = quote.and_then(|quote| {
+        kind.strip_prefix(quote)
+            .and_then(|rest| rest.strip_suffix(quote))
+    });
+    let (Some(body), true) = (
+        body.filter(|body| !body.is_empty() && body.chars().all(|ch| ch.is_ascii_alphabetic())),
+        is_simple_typescript_discriminator_operand(operand) && !operand.contains(['"', '\'']),
+    ) else {
+        return Some(None);
+    };
+    Some(Some(format!("typeof {operand} == \"{body}\"")))
 }
 
 /// The boundary condition of a returned predicate: the condition of a
@@ -838,6 +906,15 @@ pub(crate) fn strip_typescript_control_prefix(line_text: &str) -> String {
     for prefix in ["if", "else if", "while", "for", "case", "yield"] {
         if let Some(stripped) = text.strip_prefix(prefix) {
             text = stripped.trim().to_string();
+            // `if (cond) return x;`: the statement after the closing paren is
+            // not part of the condition, so a trailing-paren trim would leave
+            // it in the right operand and the boundary would read as a call.
+            if matches!(prefix, "if" | "else if" | "while")
+                && let Some(condition) = leading_paren_group_before_statement(&text)
+                && is_single_simple_comparison(condition)
+            {
+                text = condition.to_string();
+            }
             break;
         }
     }
@@ -847,6 +924,74 @@ pub(crate) fn strip_typescript_control_prefix(line_text: &str) -> String {
         .trim_end_matches(';')
         .trim()
         .to_string()
+}
+
+/// The inside of a leading `( ... )` group that closes before the end of the
+/// line and is followed by a statement (`(total > 100) return total - 10;`).
+/// `None` when the group wraps the whole text, never closes, or holds an
+/// unterminated quote, so those shapes keep the caller's existing trim.
+fn leading_paren_group_before_statement(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix('(')?;
+    let mut depth = 1usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, ch) in rest.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    let statement = rest.get(idx + 1..)?.trim();
+                    let has_statement = !statement.is_empty()
+                        && statement != "{"
+                        && statement != ";"
+                        && !statement.starts_with("//");
+                    return has_statement.then(|| rest.get(..idx).unwrap_or_default().trim());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The condition of a one-line guard (`if (total > 100) return total - 10;`),
+/// whitespace-insensitive, when the line carries a statement after a single
+/// simple comparison. `None` for any other shape.
+pub(crate) fn inline_guard_condition(line_text: &str) -> Option<String> {
+    let mut text = line_text.trim().trim_start_matches('}').trim();
+    for prefix in ["else if", "if", "while"] {
+        if let Some(stripped) = text.strip_prefix(prefix) {
+            text = stripped.trim();
+            break;
+        }
+    }
+    let condition = leading_paren_group_before_statement(text)?;
+    is_single_simple_comparison(condition)
+        .then(|| condition.chars().filter(|ch| !ch.is_whitespace()).collect())
+}
+
+/// Exactly one comparison between two simple operands (`total >= 100`): no
+/// `&&` / `||` clause that could skip the branch, and no arithmetic around
+/// either side that would shift the boundary a test must hit.
+fn is_single_simple_comparison(condition: &str) -> bool {
+    COMPARISON_OPERATORS.iter().any(|operator| {
+        condition.split_once(operator).is_some_and(|(left, right)| {
+            is_simple_typescript_discriminator_operand(left.trim())
+                && is_simple_typescript_discriminator_operand(right.trim())
+        })
+    })
 }
 
 /// The comparison operators the boundary discriminator probes, in probe
@@ -920,8 +1065,96 @@ fn normalize_ts_comparison_operands(expression: &str) -> (String, bool) {
     (out, saw_nullish)
 }
 
+/// Every comparison operator in the code spans of `expression`, as a byte
+/// offset and the operator. String literals are skipped, so `"a>=b"` holds no
+/// comparison; `=>` is an arrow, not a comparison.
+fn comparison_operators_in_code(expression: &str) -> Vec<(usize, &'static str)> {
+    let mut found = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut skip_until = 0;
+    for (idx, ch) in expression.char_indices() {
+        if idx < skip_until {
+            continue;
+        }
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        if matches!(ch, '"' | '\'' | '`') {
+            quote = Some(ch);
+            continue;
+        }
+        let rest = expression.get(idx..).unwrap_or("");
+        if rest.starts_with("=>") {
+            skip_until = idx + 2;
+            continue;
+        }
+        if let Some(operator) = COMPARISON_OPERATORS
+            .iter()
+            .find(|operator| rest.starts_with(**operator))
+        {
+            found.push((idx, *operator));
+            skip_until = idx + operator.len();
+        }
+    }
+    found
+}
+
+/// The whole quoted string literal that begins `text`, escapes honored.
+fn leading_string_literal(text: &str) -> Option<&str> {
+    let quote = text.chars().next().filter(|ch| matches!(ch, '"' | '\''))?;
+    let mut escaped = false;
+    for (idx, ch) in text.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == quote {
+            return text.get(..idx + 1);
+        }
+    }
+    None
+}
+
+/// The whole quoted string literal that ends `text`.
+fn trailing_string_literal(text: &str) -> Option<&str> {
+    let quote = text
+        .chars()
+        .next_back()
+        .filter(|ch| matches!(ch, '"' | '\''))?;
+    let body = text.get(..text.len() - 1)?;
+    let mut open = None;
+    let mut search_end = body.len();
+    while let Some(idx) = body.get(..search_end)?.rfind(quote) {
+        let backslashes = body
+            .get(..idx)?
+            .chars()
+            .rev()
+            .take_while(|ch| *ch == '\\')
+            .count();
+        if backslashes % 2 == 0 {
+            open = Some(idx);
+            break;
+        }
+        search_end = idx;
+    }
+    text.get(open?..)
+}
+
 fn comparison_operand_before(expression: &str, operator_start: usize) -> Option<String> {
     let left = expression.get(..operator_start)?.trim_end();
+    // A quoted literal is one operand whatever it holds; splitting it at an
+    // embedded `-` or space would name a truncated value (#11256).
+    if let Some(literal) = trailing_string_literal(left) {
+        return Some(literal.to_string());
+    }
     let operand = left
         .rsplit(|ch: char| {
             ch.is_whitespace()
@@ -936,6 +1169,9 @@ fn comparison_operand_before(expression: &str, operator_start: usize) -> Option<
 
 fn comparison_operand_after(expression: &str, operator_end: usize) -> Option<String> {
     let right = expression.get(operator_end..)?.trim_start();
+    if right.starts_with(['"', '\'']) {
+        return leading_string_literal(right).map(str::to_string);
+    }
     let operand = right
         .split(|ch: char| {
             ch.is_whitespace()
@@ -1046,23 +1282,52 @@ fn first_typescript_string_literal(text: &str) -> Option<String> {
 /// Probe ids are content-addressed over (path, family, owner, normalized
 /// expression) with no line number, so two identical added lines in the
 /// same owner (a repeated `total += 1;`, duplicate `if (x > 0) {` guard,
-/// …) collide on one id. Scan findings in diff order and rewrite the
-/// 2nd+ occurrences of a colliding id to append `.2`, `.3`, … — the
-/// first occurrence keeps its ordinal-1 id, so single-line fixtures stay
-/// stable. Without this pass the packet projection's `finding.id` dedupe
+/// …) collide on one id. The 2nd+ occurrences of a colliding id get
+/// `.2`, `.3`, … — the first keeps its ordinal-1 id, so single-line
+/// fixtures stay stable. Distinct expressions that share only the
+/// eight-hex fingerprint (#8838) rank by their full payload digest instead
+/// of diff order, so each keeps the same id whichever the diff lists first.
+/// Without this pass the packet projection's `finding.id` dedupe
 /// fingerprint collapses two distinct changed lines into one, or aliases
 /// receipts for two different lines. Evidence lines captured before this
 /// pass keep the base content fingerprint — both occurrences genuinely
 /// share the same (path, family, owner, expression) content; the ordinal
 /// only disambiguates identity, matching the Rust path's behavior.
-pub(crate) fn dedup_typescript_probe_ids(findings: &mut [Finding]) {
-    use std::collections::HashMap;
-    let mut seen: HashMap<String, u32> = HashMap::new();
-    for finding in findings.iter_mut() {
-        let count = seen.entry(finding.probe.id.0.clone()).or_insert(0);
-        *count += 1;
-        if *count > 1 {
-            let suffixed = format!("{}.{}", finding.probe.id.0, count);
+pub(crate) fn dedup_typescript_probe_ids(
+    findings: &mut [Finding],
+    minted_owners: &std::collections::HashMap<usize, String>,
+) {
+    let keyed = findings
+        .iter()
+        .enumerate()
+        .map(|(index, finding)| {
+            let probe = &finding.probe;
+            // Every TypeScript producer minted its id over
+            // `normalize_expression(probe.expression)` and an owner: the
+            // probe's own, or the `Enum::Member` identity an enum-member
+            // finding was minted with (`minted_owners`, by finding index).
+            let owner = minted_owners
+                .get(&index)
+                .map(String::as_str)
+                .or_else(|| probe.owner.as_ref().map(|owner| owner.0.as_str()))
+                .unwrap_or("");
+            let expression = probes::normalize_expression(&probe.expression);
+            (
+                probe.id.0.clone(),
+                probes::collision_rank_key(&probe.id.0, owner, &expression),
+            )
+        })
+        .collect::<Vec<_>>();
+    let entries = keyed
+        .iter()
+        .map(|(base, key)| (base.as_str(), *key))
+        .collect::<Vec<_>>();
+    for (finding, ordinal) in findings
+        .iter_mut()
+        .zip(probes::collision_ordinals(&entries))
+    {
+        if ordinal > 1 {
+            let suffixed = format!("{}.{}", finding.probe.id.0, ordinal);
             finding.probe.id.0 = suffixed.clone();
             finding.id = suffixed;
         }

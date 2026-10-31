@@ -351,7 +351,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       const diagnostic = vscode.languages.getDiagnostics(uri).find(d => d.source === 'ripr'
         && (typeof d.code === 'object' ? d.code.value : d.code) === 'ripr-seam-weakly-gripped')!;
       assert.strictEqual(diagnostic.message,
-        `Weakly gripped behavioral seam (predicate_boundary): ${expected.changedExpression}`);
+        `Tests only loosely check this: ${expected.changedExpression}`);
       assert.strictEqual(diagnostic.range.start.line, 1);
       const clientIdentity = (observed: LanguageClient | undefined) => {
         if (!observed) { return undefined; }

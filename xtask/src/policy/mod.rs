@@ -1,5 +1,8 @@
 mod all;
 mod allow_attributes;
+mod capability_cells;
+mod capability_docs;
+mod capability_producers;
 mod changelog_fragments;
 mod ci_lane_whitelist;
 mod covered_by;
@@ -19,6 +22,7 @@ mod product_copy;
 pub(crate) mod proof_packs;
 mod release_selection;
 mod release_targets;
+mod user_text;
 
 pub(crate) use release_targets::{CandidateAuthoritySnapshot, capture_candidate_authority};
 mod static_language;
@@ -28,6 +32,9 @@ mod workflows;
 
 pub(crate) use all::check_policy_all;
 pub(crate) use allow_attributes::check_allow_attributes;
+pub(crate) use capability_cells::check_capability_cells;
+pub(crate) use capability_docs::capability_docs;
+pub(crate) use capability_producers::check_capability_producers;
 pub(crate) use changelog_fragments::{
     check_changelog_fragments, check_changelog_fragments_with_args, unfolded_fragment_paths,
 };
@@ -48,6 +55,7 @@ pub(crate) use product_copy::check_product_copy;
 pub(crate) use proof_packs::check_proof_packs;
 pub(crate) use static_language::check_static_language;
 pub(crate) use text_encoding::check_text_encoding;
+pub(crate) use user_text::{check_user_text, check_user_text_full, check_user_text_with_args};
 pub(crate) use workflows::check_workflows;
 
 pub(crate) fn check_release_targets() -> Result<(), String> {
@@ -59,6 +67,9 @@ pub(crate) fn check_release_targets() -> Result<(), String> {
         failures.push(error);
     }
     if let Err(error) = release_selection::check_release_selection() {
+        failures.push(error);
+    }
+    if let Err(error) = crate::version::check_release_version_sync() {
         failures.push(error);
     }
 

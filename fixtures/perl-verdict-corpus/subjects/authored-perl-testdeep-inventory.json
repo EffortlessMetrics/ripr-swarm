@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-perl-testdeep-inventory",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "lib/Inventory.pm",
+      "sha256": "b73ca77ac5af4e3b5724979d9c5a508e26da2099f5dfc8dca2ebd9141e384772"
+    },
+    {
+      "path": "t/inventory.t",
+      "sha256": "54940e0d72a3f29c8f7c45db6b029cd30185515946d407d4e264a7e685dc9199"
+    }
+  ]
+}

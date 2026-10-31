@@ -1,0 +1,99 @@
+//! Constant swaps on a bare equality: which test rows notice that the compared
+//! constant moved (#10680). One owner per row shape.
+
+pub fn word_class(label: &str) -> &'static str {
+    if label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+pub fn other_row_class(label: &str) -> &'static str {
+    if label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+pub fn five_class(n: u32) -> &'static str {
+    if n == 5 {
+        "five"
+    } else {
+        "other"
+    }
+}
+
+pub fn not_alpha_class(label: &str) -> &'static str {
+    if label != "alpha" {
+        "blank"
+    } else {
+        "word"
+    }
+}
+
+pub fn gated_class(label: &str, on: bool) -> &'static str {
+    if label == "alpha" && on {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+pub fn weak_class(label: &str) -> &'static str {
+    if label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+pub fn trimmed_class(label: &str) -> &'static str {
+    let label = label.trim();
+    if label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_old_constant_row_is_word() {
+        assert_eq!(word_class("alpha"), "word");
+    }
+
+    #[test]
+    fn a_row_on_neither_constant_is_blank() {
+        assert_eq!(other_row_class("gamma"), "blank");
+    }
+
+    #[test]
+    fn five_is_five() {
+        assert_eq!(five_class(5), "five");
+    }
+
+    #[test]
+    fn alpha_is_not_blank() {
+        assert_eq!(not_alpha_class("alpha"), "word");
+    }
+
+    #[test]
+    fn a_gated_row_with_the_gate_off_is_blank() {
+        assert_eq!(gated_class("alpha", false), "blank");
+    }
+
+    #[test]
+    fn the_weak_oracle_only_wants_something() {
+        assert!(!weak_class("alpha").is_empty());
+    }
+
+    #[test]
+    fn a_padded_alpha_row_is_word() {
+        assert_eq!(trimmed_class(" alpha "), "word");
+    }
+}

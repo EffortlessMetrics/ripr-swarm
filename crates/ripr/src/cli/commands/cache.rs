@@ -2,6 +2,7 @@ use crate::analysis::seam_cache::{
     CACHE_DIR_ENV, CACHE_LAYER_NAMES, CacheStatus, cache_base_dir_from_env, inspect_cache_dir,
     inspect_cache_root,
 };
+use crate::cli::help;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use serde_json::json;
@@ -12,7 +13,9 @@ const CACHE_STATUS_SCHEMA_VERSION: &str = "0.2";
 
 const CACHE_USAGE: &str = "Inspect, export or clear the disposable analysis cache.\n\nUsage:\n  ripr cache status [--root PATH] [--json]\n  ripr cache export [--root PATH] --out NEW_DIRECTORY\n  ripr cache clear [--root PATH] [--dry-run] [--force]";
 
-pub(in crate::cli) const CACHE_EXPORT_HELP: &str = r#"Usage: ripr cache export [--root PATH] --out NEW_DIRECTORY
+pub(in crate::cli) const CACHE_EXPORT_HELP: &str = r#"Copy a validated current-input cache snapshot without historical generations.
+
+Usage: ripr cache export [--root PATH] --out NEW_DIRECTORY
 
 Copy a qualified current-input cache snapshot, excluding historical keys,
 unreferenced shards, fingerprint mappings and staging files. The live cache
@@ -34,7 +37,9 @@ this cooperative-filesystem contract. No live-cache history is deleted.
 /// Help body for `ripr cache status`. Also the flag source for unknown-argument
 /// suggestions, so `--json` has to appear as an option-list line, not only
 /// inside the usage brackets.
-pub(in crate::cli) const CACHE_STATUS_HELP: &str = r#"Usage: ripr cache status [--root PATH] [--json]
+pub(in crate::cli) const CACHE_STATUS_HELP: &str = r#"Show cache occupancy and entry health.
+
+Usage: ripr cache status [--root PATH] [--json]
 
 Report the resolved analysis cache directory (RIPR_CACHE_DIR when set,
 otherwise target/ripr/cache under the Cargo workspace root).
@@ -60,7 +65,9 @@ The cache is disposable: deleting it only costs a slower next run. Use
 "#;
 /// Help body for `ripr cache clear`. Also the flag source for unknown-argument
 /// suggestions; keep accepted flags on option-list lines.
-pub(in crate::cli) const CACHE_CLEAR_HELP: &str = r#"Usage: ripr cache clear [--root PATH] [--dry-run] [--force]
+pub(in crate::cli) const CACHE_CLEAR_HELP: &str = r#"Evict ripr cache entries.
+
+Usage: ripr cache clear [--root PATH] [--dry-run] [--force]
 
 Removes only recognized ripr cache layers under the resolved cache directory
 (RIPR_CACHE_DIR when set, otherwise target/ripr/cache under the Cargo workspace
@@ -649,7 +656,7 @@ fn run_status(args: &[String]) -> Result<(), String> {
     // Help is positional-free like every sibling command family (#5024):
     // `ripr cache status --json --help` prints this help and exits 0.
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("{CACHE_STATUS_HELP}");
+        println!("{}", help::render_command_help(CACHE_STATUS_HELP, &[]));
         return Ok(());
     }
 
@@ -713,7 +720,7 @@ fn run_clear(args: &[String]) -> Result<(), String> {
     // Help is positional-free like every sibling command family (#5024):
     // `ripr cache clear --dry-run --help` prints this help and exits 0.
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("{CACHE_CLEAR_HELP}");
+        println!("{}", help::render_command_help(CACHE_CLEAR_HELP, &[]));
         return Ok(());
     }
 
@@ -730,12 +737,24 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     // matching siblings); subcommand-level argv keeps its own help handling
     // in `run_status`/`run_clear` (#5024).
     if matches!(args.first(), Some(arg) if arg == "--help" || arg == "-h") {
-        println!("{CACHE_USAGE}");
+        println!(
+            "{}",
+            help::render_command_help(
+                CACHE_USAGE,
+                &["cache status", "cache export", "cache clear"]
+            )
+        );
         return Ok(());
     }
 
     let Some((subcommand, rest)) = args.split_first() else {
-        println!("{CACHE_USAGE}");
+        println!(
+            "{}",
+            help::render_command_help(
+                CACHE_USAGE,
+                &["cache status", "cache export", "cache clear"]
+            )
+        );
         return Ok(());
     };
 
@@ -778,7 +797,7 @@ fn parse_export_args(args: &[String]) -> Result<(Option<PathBuf>, PathBuf), Stri
 
 fn run_export(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("{CACHE_EXPORT_HELP}");
+        println!("{}", help::render_command_help(CACHE_EXPORT_HELP, &[]));
         return Ok(());
     }
     let (root, output) = parse_export_args(args)?;

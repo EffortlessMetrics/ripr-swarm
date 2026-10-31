@@ -12,9 +12,16 @@
   "findings": [
     {
       "id": "probe:src_pricing.ts:typescript_preview:17445ecf",
+      "canonical_gap_id": "gap:typescript:typescript_preview:17445ecf",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "boundary_input_not_matched", "summary": "no observed call supplies the changed boundary input"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_pricing.ts:typescript_preview:17445ecf",
         "family": "predicate",
@@ -69,8 +76,8 @@
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "missing_input",
+          "why": "no input this test passes was seen reaching `amount == DISCOUNT_THRESHOLD`"
         },
         {
           "name": "discounts far above threshold",
@@ -81,8 +88,8 @@
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "missing_input",
+          "why": "no input this test passes was seen reaching `amount == DISCOUNT_THRESHOLD`"
         }
       ],
       "typescript_preview_card": {
@@ -95,7 +102,7 @@
         "limits": [
           "Syntax-first TypeScript/JavaScript preview evidence only.",
           "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
-          "This card is advisory and is not a repair packet."
+          "This card is an advisory summary; the complete repair packet is projected separately and is also advisory."
         ],
         "missing_discriminator": "amount == DISCOUNT_THRESHOLD",
         "oracle_kind": "exact_value",
@@ -176,8 +183,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == DISCOUNT_THRESHOLD`; the repair packet is complete and delegatable (advisory).",
-      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == DISCOUNT_THRESHOLD`; the repair packet is complete and delegatable (advisory).",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == DISCOUNT_THRESHOLD`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only).",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == DISCOUNT_THRESHOLD`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only).",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",

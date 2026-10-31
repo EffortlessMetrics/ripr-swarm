@@ -1,5 +1,5 @@
 //! Manifest-specific budget over the shared observed-snapshot reader.
-const MAX_INPUT_BYTES: u64 = 16 * 1024 * 1024;
+pub(super) const MAX_INPUT_BYTES: u64 = 16 * 1024 * 1024;
 pub(super) const MAX_RETAINED_BYTES: u64 = 64 * 1024 * 1024;
 
 pub(super) fn read_owned(

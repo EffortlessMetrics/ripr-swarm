@@ -1,0 +1,67 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/ts_boundary_local_constant_refused/input
+config: <cwd>/fixtures/ts_boundary_local_constant_refused/input/ripr.toml
+
+Summary: 10 changed behaviors checked: 0 appear noticed by tests, 10 partly noticed, 0 reached but not noticed, 0 no test path. 10 found, 0 suppressed by your settings
+
+Changed file(s) by language: typescript = 10
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 10 changed file(s), 20 changed line(s), 10 candidate line(s), 10 changed behavior(s) checked, 10 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview has owner, related-test, oracle, and changed-behavior evidence but lacks a complete repair packet contract); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  File: src/computedConstant.ts:2
+  Language: typescript
+  Language status: preview
+  Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Changed behavior: if (score >= 50) {
+  Missing check (1 of 2): Related tests reach `computedConstant` with a strong oracle, but no strong
+    assertion observes a `computedConstant(...)` call at the changed predicate boundary `score ==
+    50`; inputs on one side of the boundary do not discriminate the changed comparison
+  Related test: tests/computedConstant.test.ts:5 computed initializer (the preview adapter could not confirm that this assertion observes the changed behavior)
+  Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
+    discriminator `score == 50`; no actionable repair packet is emitted until verify, receipt, and
+    edit-boundary fields are available
+  Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: 1 related test(s) found for owner `computedConstant`
+    - infection unknown: TypeScript preview adapter does not yet model infection
+    - 4 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/ts_boundary_local_constant_refused/input --diff <cwd>/fixtures/ts_boundary_local_constant_refused/diff.patch --mode fast probe:src_computedConstant.ts:typescript_preview:5b45c899
+  ripr context --root <cwd>/fixtures/ts_boundary_local_constant_refused/input --diff <cwd>/fixtures/ts_boundary_local_constant_refused/diff.patch --mode fast --at probe:src_computedConstant.ts:typescript_preview:5b45c899
+  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+
+Hidden:
+  9 lower-priority finding(s) omitted from default human output (TypeScript preview: 9).
+    - src/importedConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `importedConstant` with a strong oracle, but no strong assertion observes a `importedConstant(...)` call at the changed predicate boundary `score == 50`;…
+    - src/innerBlockConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `innerBlockConstant` with a strong oracle, but no strong assertion observes a `innerBlockConstant(...)` call at the changed predicate boundary `score == 50`;…
+    - src/letConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `letConstant` with a strong oracle, but no strong assertion observes a `letConstant(...)` call at the changed predicate boundary `score == 50`; inputs on one…
+    - src/mutatedConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `mutatedConstant` with a strong oracle, but no strong assertion observes a `mutatedConstant(...)` call at the changed predicate boundary `score == 50`; inputs…
+    - src/nestedClosureConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `nestedClosureConstant` with a strong oracle, but no strong assertion observes a `nestedClosureConstant(...)` call at the changed predicate boundary…
+    - src/nestedFunctionConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `nestedFunctionConstant` with a strong oracle, but no strong assertion observes a `nestedFunctionConstant(...)` call at the changed predicate boundary…
+    - src/offValueConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `offValueConstant` with a strong oracle, but no strong assertion observes a `offValueConstant(...)` call at the changed predicate boundary `score == 50`;…
+    - src/reassignedConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `reassignedConstant` with a strong oracle, but no strong assertion observes a `reassignedConstant(...)` call at the changed predicate boundary `score == 50`;…
+    - src/shadowedConstant.ts:2 (weak); kind: predicate; reason: Related tests reach `shadowedConstant` with a strong oracle, but no strong assertion observes a `shadowedConstant(...)` call at the changed predicate boundary `score == 50`;…
+  Hidden classes:
+    weak = tests reach it but check it only loosely
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 10 TypeScript files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

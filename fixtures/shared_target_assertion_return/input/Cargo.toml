@@ -1,0 +1,8 @@
+[package]
+name="context_return_binary_shadow"
+version="0.0.0"
+edition="2024"
+[workspace]
+[lib]
+test=false
+doctest=false

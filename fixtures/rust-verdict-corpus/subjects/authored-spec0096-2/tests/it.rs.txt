@@ -1,0 +1,6 @@
+use spec0096_2::score;
+
+#[test]
+fn score_of_ten_is_ten() {
+    assert_eq!(score(10), 10);
+}

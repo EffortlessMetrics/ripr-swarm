@@ -230,6 +230,11 @@ fn predicate_flow_sinks(
             owner,
         )];
     }
+    // A statement `if` whose arms do the same thing cannot decide any value
+    // the function produces, however the tail then uses it (#10880).
+    if statement_if_arms_repeat(owner_fn, probe.location.line) {
+        return Vec::new();
+    }
     // RIPR-SPEC-0265 rule 3: a comparison that is the whole closure body of
     // an admitted iterator-adaptor tail decides, per element, what the tail
     // (the owner's whole body) returns.
@@ -287,6 +292,63 @@ fn predicate_flow_sinks(
         )];
     }
     Vec::new()
+}
+
+/// Whether the plain `if` / `else` that starts on `probe_line` (one line or
+/// rustfmt layout) has two text-identical arm bodies, so which arm runs is
+/// unobservable for every input. Mirrors the repeat rule of the tail-`if` form
+/// (#9843) for arms that are statements (`r = 1;`) rather than a tail value.
+/// An `else if` ladder is not read: a later arm can still differ from the
+/// first for some inputs. Anything unbalanced or unrecognised answers no,
+/// which leaves the existing sink selection as it is.
+fn statement_if_arms_repeat(owner_fn: Option<&FunctionSummary>, probe_line: usize) -> bool {
+    let Some(function) = owner_fn else {
+        return false;
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(&function.body);
+    let raw = function.body.as_ref();
+    if masked.len() != raw.len() {
+        return false;
+    }
+    let line_start: usize = masked
+        .split_inclusive('\n')
+        .take(probe_line.saturating_sub(function.start_line))
+        .map(str::len)
+        .sum();
+    let from_line = &masked[line_start..];
+    let line = from_line.lines().next().unwrap_or("");
+    if !line.trim_start().starts_with("if ") {
+        return false;
+    }
+    let mut cursor = line_start + from_line.find("if ").unwrap_or(0);
+    let mut arms: Vec<String> = Vec::new();
+    loop {
+        let Some(open) = masked[cursor..].find('{').map(|at| cursor + at) else {
+            return false;
+        };
+        let Some((body, end)) = braced_block_range(&masked[open..]) else {
+            return false;
+        };
+        let text: String = raw[open + body.start..open + body.end]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        arms.push(text);
+        cursor = open + end;
+        let rest = masked[cursor..].trim_start();
+        let Some(after_else) = rest.strip_prefix("else") else {
+            break;
+        };
+        cursor = masked.len() - after_else.len();
+        let after_else = after_else.trim_start();
+        // An `else if` makes a ladder (or an `if` with no final `else`), whose
+        // arms can differ for some inputs; only a bare `else {` closes a pair.
+        if !after_else.starts_with('{') {
+            return false;
+        }
+    }
+    matches!(arms.as_slice(), [then_arm, else_arm]
+        if !then_arm.is_empty() && then_arm == else_arm && !branch_is_diverging(then_arm))
 }
 
 /// The declared name of one generic parameter item (`E: From<X>` -> `E`,
@@ -367,6 +429,20 @@ fn return_value_sink(
             FlowSinkKind::ReturnValue,
             return_sink_text(&return_fact.text),
             return_fact.line,
+            owner,
+        );
+    }
+    // RIPR-SPEC-0360: a zero-initialized accumulator the owner returns as its
+    // tail carries the update's change to the return.
+    if let Some(function) = owner_fn
+        && let Some(offset) = probe.location.line.checked_sub(function.start_line)
+        && let Some(accumulator) =
+            crate::analysis::syntax::loop_accumulator::loop_accumulator_at(&function.body, offset)
+    {
+        return flow_sink(
+            FlowSinkKind::ReturnValue,
+            return_sink_text(&accumulator.local),
+            probe.location.line,
             owner,
         );
     }
@@ -540,15 +616,51 @@ fn tail_if_branch_value(
             .to_string()
     };
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
-    let signature = masked.lines().next()?;
+    let first_line = masked.lines().next()?;
+    let offset = probe.location.line.checked_sub(function.start_line)?;
+    // #10711: a body written on the signature line
+    // (`fn f(x: u32) -> u32 { if x > 1 { 1 } else { 0 } }`) is the same tail
+    // expression as the rustfmt layout, so the layout does not change the
+    // sink. The inline body is the text between the signature's body brace
+    // and the line's closing brace; nothing else may follow.
+    let inline_body = if offset == 0 {
+        // The body brace is the one matching the line's final `}`, found by
+        // walking back with brace depth: a `{` earlier in the signature
+        // (`-> [u32; { N + 1 }]`) is not the body's.
+        let close = first_line.trim_end().strip_suffix('}')?.len();
+        let mut depth = 0usize;
+        let open = first_line[..close]
+            .char_indices()
+            .rev()
+            .find_map(|(at, ch)| match ch {
+                '}' => {
+                    depth += 1;
+                    None
+                }
+                '{' if depth == 0 => Some(at),
+                '{' => {
+                    depth -= 1;
+                    None
+                }
+                _ => None,
+            })?;
+        if masked.lines().nth(1).is_some() {
+            return None;
+        }
+        Some(open + 1..close)
+    } else {
+        None
+    };
+    let signature = inline_body
+        .as_ref()
+        .map_or(first_line, |range| &first_line[..range.start]);
     if !signature_returns_value(signature) {
         return None;
     }
-    let offset = probe.location.line.checked_sub(function.start_line)?;
-    if offset == 0 {
-        return None;
-    }
-    let changed_line = masked.lines().nth(offset)?;
+    let changed_line = match &inline_body {
+        Some(range) => first_line.get(range.clone())?,
+        None => masked.lines().nth(offset)?,
+    };
     let changed = changed_line.trim();
     // The probe must be the `if` condition itself, not text that merely
     // appears inside a branch value on the same line.
@@ -565,24 +677,47 @@ fn tail_if_branch_value(
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
-    if rest != ["}"] {
+    if inline_body.is_none() && rest != ["}"] {
         return None;
     }
     // Branch spans come from the masked line (strings/comments cannot hide a
     // brace there); branch text comes from the raw line at the same offsets,
     // because masking blanks string and char literals that are valid values.
-    let raw_line = function.body.lines().nth(offset).unwrap_or(changed_line);
+    let raw_full = function.body.lines().nth(offset);
+    let raw_line = match &inline_body {
+        Some(range) => raw_full
+            .and_then(|line| line.get(range.clone()))
+            .unwrap_or(changed_line),
+        None => raw_full.unwrap_or(changed_line),
+    };
     let (then_range, after_then) = braced_block_range(changed_line)?;
-    let rest_after_then = &changed_line[after_then..];
-    let trimmed = rest_after_then.trim_start();
-    if !trimmed.starts_with("else") || trimmed[4..].trim_start().starts_with("if ") {
-        return None;
-    }
-    let else_start = after_then + (rest_after_then.len() - trimmed.len()) + 4;
-    let (else_rel, after_else) = braced_block_range(&changed_line[else_start..])?;
-    let else_range = else_start + else_rel.start..else_start + else_rel.end;
-    if !changed_line[else_start + after_else..].trim().is_empty() {
-        return None;
+    // A one-line `else if` ladder is the same tail expression with more arms:
+    // each continuation is `else if <cond> { .. }` until the final
+    // `else { .. }` closes the line. The probe is the first condition, so the
+    // first arm's value is the sink the condition decides.
+    let mut arms = vec![then_range];
+    let mut cursor = after_then;
+    loop {
+        let rest_after = &changed_line[cursor..];
+        let trimmed = rest_after.trim_start();
+        if !trimmed.starts_with("else") {
+            return None;
+        }
+        let after_else = cursor + (rest_after.len() - trimmed.len()) + 4;
+        let following = changed_line[after_else..].trim_start();
+        let following_start = after_else + (changed_line[after_else..].len() - following.len());
+        if following.starts_with("if ") {
+            let (arm_rel, arm_end) = braced_block_range(&changed_line[following_start..])?;
+            arms.push(following_start + arm_rel.start..following_start + arm_rel.end);
+            cursor = following_start + arm_end;
+        } else {
+            let (arm_rel, arm_end) = braced_block_range(&changed_line[after_else..])?;
+            arms.push(after_else + arm_rel.start..after_else + arm_rel.end);
+            if !changed_line[after_else + arm_end..].trim().is_empty() {
+                return None;
+            }
+            break;
+        }
     }
     let branch_text = |range: std::ops::Range<usize>| {
         raw_line
@@ -591,12 +726,12 @@ fn tail_if_branch_value(
             .trim()
             .to_string()
     };
-    let then_text = branch_text(then_range.clone());
-    let else_text = branch_text(else_range.clone());
-    for (masked_branch, raw_branch) in [
-        (&changed_line[then_range], &then_text),
-        (&changed_line[else_range], &else_text),
-    ] {
+    let texts = arms
+        .iter()
+        .map(|range| branch_text(range.clone()))
+        .collect::<Vec<_>>();
+    for (range, raw_branch) in arms.iter().zip(&texts) {
+        let masked_branch = &changed_line[range.clone()];
         if masked_branch.contains(';') || masked_branch.contains('{') || masked_branch.contains('}')
         {
             return None;
@@ -612,15 +747,33 @@ fn tail_if_branch_value(
             return None;
         }
     }
+    // An arm that returns what the first arm returns makes the choice between
+    // them unobservable for some inputs, so the first condition cannot be
+    // read as deciding the returned value (#9843).
+    if texts
+        .iter()
+        .skip(1)
+        .any(|text| *text == texts[0] && !branch_is_diverging(text))
+    {
+        return None;
+    }
     // A diverging branch never produces the returned value; the other branch
-    // is the sink when exactly one diverges, and neither is when both do.
-    let sink_text = match (
-        branch_is_diverging(&then_text),
-        branch_is_diverging(&else_text),
-    ) {
-        (true, true) => return None,
-        (true, false) => else_text,
-        _ => then_text,
+    // is the sink when exactly one diverges, and neither is when both do. A
+    // ladder keeps only a non-diverging first arm: what a diverging first arm
+    // leaves to the later arms is not read here.
+    let sink_text = match texts.as_slice() {
+        [then_text, else_text] => {
+            match (
+                branch_is_diverging(then_text),
+                branch_is_diverging(else_text),
+            ) {
+                (true, true) => return None,
+                (true, false) => else_text.clone(),
+                _ => then_text.clone(),
+            }
+        }
+        [then_text, ..] if !branch_is_diverging(then_text) => then_text.clone(),
+        _ => return None,
     };
     Some(LocalTextFact {
         line: probe.location.line,
@@ -717,6 +870,38 @@ fn nearest_return(owner_fn: Option<&FunctionSummary>, probe_line: usize) -> Opti
     })
 }
 
+/// Whether the value on `value_offset` is repeated by a later arm of the
+/// `} else if .. {` / `} else {` chain that follows it, line by line. An arm
+/// that returns what the first arm returns makes the choice between them
+/// unobservable for some inputs, so the first condition has no returned-value
+/// sink (#10134, the rustfmt layout of #9843). Any other line shape ends the
+/// walk without a repeat.
+fn chain_repeats_adjacent_value(body: &str, value_offset: usize) -> bool {
+    let lines = body.lines().collect::<Vec<_>>();
+    let Some(first) = lines.get(value_offset) else {
+        return false;
+    };
+    let first = first.trim().trim_end_matches(',');
+    if branch_is_diverging(first) || !looks_like_branch_tail_expression(first) {
+        return false;
+    }
+    let mut header = value_offset + 1;
+    while let Some(line) = lines.get(header) {
+        let line = line.trim();
+        if !(line.starts_with("} else") && line.ends_with('{')) {
+            return false;
+        }
+        let Some(value) = lines.get(header + 1) else {
+            return false;
+        };
+        if value.trim().trim_end_matches(',') == first {
+            return true;
+        }
+        header += 2;
+    }
+    false
+}
+
 fn next_branch_value(
     owner_fn: Option<&FunctionSummary>,
     probe_line: usize,
@@ -725,6 +910,9 @@ fn next_branch_value(
     let function = owner_fn?;
     let start_index = probe_line.saturating_sub(function.start_line);
     let adjacent_offset = start_index + 1;
+    if chain_repeats_adjacent_value(&function.body, adjacent_offset) {
+        return None;
+    }
     function
         .body
         .lines()
@@ -1603,6 +1791,77 @@ mod tests {
         assert_eq!(sinks[0].text, "\"high\"");
     }
 
+    /// #10880: arms that assign the same value cannot decide what the tail
+    /// returns, whether or not the tail applies an operator to the binding.
+    #[test]
+    fn statement_if_with_identical_arms_has_no_return_sink() {
+        let layouts = [
+            "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 { r = 1; } else { r = 1; }\n    r + 0\n}",
+            "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 {\n        r = 1;\n    } else {\n        r = 1;\n    }\n    r + 0\n}",
+        ];
+        for body in layouts {
+            let mut owner = function(body);
+            owner.returns = vec![ReturnFact {
+                line: body.lines().count() - 1,
+                text: "r + 0".to_string(),
+            }];
+            let probe = probe(ProbeFamily::Predicate, "x >= 5", 3);
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks
+                    .iter()
+                    .all(|sink| sink.kind != FlowSinkKind::ReturnValue),
+                "{body}: {sinks:?}"
+            );
+        }
+    }
+
+    /// An `else if` with no final `else` is not a two-arm pair: when neither
+    /// condition holds the binding keeps its earlier value.
+    #[test]
+    fn statement_if_ladder_without_a_final_else_keeps_its_return_sink() {
+        let body = "pub fn f(x: i32, y: bool) -> i32 {\n    let mut r = 0;\n    if x >= 5 {\n        r = 1;\n    } else if y {\n        r = 1;\n    }\n    r + 0\n}";
+        let mut owner = function(body);
+        owner.returns = vec![ReturnFact {
+            line: body.lines().count() - 1,
+            text: "r + 0".to_string(),
+        }];
+        let probe = probe(ProbeFamily::Predicate, "x >= 5", 3);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks
+                .iter()
+                .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+            "{sinks:?}"
+        );
+    }
+
+    #[test]
+    fn statement_if_with_distinct_arms_keeps_its_return_sink() {
+        let layouts = [
+            "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 { r = 1; } else { r = 2; }\n    r + 0\n}",
+            "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 {\n        r = 1;\n    } else {\n        r = 2;\n    }\n    r + 0\n}",
+            // A ladder whose last arm repeats the first is observable for some
+            // inputs (x = 3 takes the middle arm), so the first keeps its sink.
+            "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 {\n        r = 1;\n    } else if x > 2 {\n        r = 3;\n    } else {\n        r = 1;\n    }\n    r + 0\n}",
+        ];
+        for body in layouts {
+            let mut owner = function(body);
+            owner.returns = vec![ReturnFact {
+                line: body.lines().count() - 1,
+                text: "r + 0".to_string(),
+            }];
+            let probe = probe(ProbeFamily::Predicate, "x >= 5", 3);
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "{body}: {sinks:?}"
+            );
+        }
+    }
+
     #[test]
     fn tail_if_with_a_diverging_branch_uses_the_returning_branch_as_sink() {
         let owner =
@@ -1614,6 +1873,218 @@ mod tests {
         assert_eq!(sinks.len(), 1);
         assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
         assert_eq!(sinks[0].text, "0");
+    }
+
+    /// #10711: the same tail `if` written on the signature line has the same
+    /// sink as the rustfmt layout, on the owner's own line.
+    #[test]
+    fn tail_if_on_the_signature_line_flows_like_the_rustfmt_layout() {
+        let compact =
+            tail_owner("pub fn grade(score: u32) -> u32 { if score > 50 { 1 } else { 0 } }");
+        let formatted =
+            tail_owner("pub fn grade(score: u32) -> u32 {\n    if score > 50 { 1 } else { 0 }\n}");
+
+        let compact_sinks = local_flow_sinks(
+            &probe(ProbeFamily::Predicate, "score > 50", 1),
+            Some(&compact),
+        );
+        let formatted_sinks = local_flow_sinks(
+            &probe(ProbeFamily::Predicate, "score > 50", 2),
+            Some(&formatted),
+        );
+
+        assert_eq!(compact_sinks.len(), 1);
+        assert_eq!(compact_sinks[0].kind, FlowSinkKind::ReturnValue);
+        assert_eq!(compact_sinks[0].text, "1");
+        assert_eq!(compact_sinks[0].line, 1);
+        assert_eq!(compact_sinks[0].kind, formatted_sinks[0].kind);
+        assert_eq!(compact_sinks[0].text, formatted_sinks[0].text);
+    }
+
+    /// A brace inside the signature (a const-generic array length) is not the
+    /// body's opening brace.
+    #[test]
+    fn tail_if_on_the_signature_line_finds_the_body_brace_past_signature_braces() {
+        let owner = tail_owner(
+            "pub fn pick<const N: usize>(score: u32) -> [u32; { N + 1 }] { if score > 50 { first } else { second } }",
+        );
+
+        let sinks = local_flow_sinks(
+            &probe(ProbeFamily::Predicate, "score > 50", 1),
+            Some(&owner),
+        );
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].text, "first");
+    }
+
+    /// The inline body range is computed on the masked line and applied to the
+    /// raw line. Masking keeps every byte offset (comments and string bytes
+    /// become spaces, one per byte), so non-ASCII text and a trailing comment
+    /// do not shift the extracted branch text.
+    #[test]
+    fn tail_if_on_the_signature_line_keeps_branch_text_with_non_ascii_and_comments() {
+        let owner = tail_owner(
+            "pub fn label(x: i32) -> &'static str { if x > 1 { \"h\u{e9}llo \u{2713}\" } else { \"low\" } } // \u{fc}n\u{ef} } {",
+        );
+
+        let sinks = local_flow_sinks(&probe(ProbeFamily::Predicate, "x > 1", 1), Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].text, "\"h\u{e9}llo \u{2713}\"");
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+        assert_eq!(masked.len(), owner.body.len());
+    }
+
+    #[test]
+    fn tail_if_on_the_signature_line_fails_closed_for_a_unit_owner() {
+        let owner = tail_owner("pub fn bump(score: u32) -> () { if score > 50 { 1 } else { 0 } }");
+
+        let sinks = local_flow_sinks(
+            &probe(ProbeFamily::Predicate, "score > 50", 1),
+            Some(&owner),
+        );
+
+        assert!(
+            sinks
+                .iter()
+                .all(|sink| sink.kind != FlowSinkKind::ReturnValue)
+        );
+    }
+
+    #[test]
+    fn one_line_else_if_ladder_flows_the_first_arm_to_the_returned_value() {
+        let owner = tail_owner(
+            "pub fn tier(units: u32) -> &'static str {\n    if 100 <= units { \"bulk\" } else if units >= 10 { \"pack\" } else { \"single\" }\n}",
+        );
+        let probe = probe(ProbeFamily::Predicate, "100 <= units", 2);
+
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
+        assert_eq!(sinks[0].text, "\"bulk\"");
+        assert_eq!(sinks[0].line, 2);
+    }
+
+    #[test]
+    fn one_line_else_if_ladder_with_several_continuations_keeps_the_first_arm() {
+        let owner = tail_owner(
+            "pub fn tier(units: u32) -> &'static str {\n    if units >= 100 { \"bulk\" } else if units >= 10 { \"pack\" } else if units > 1 { \"few\" } else { \"single\" }\n}",
+        );
+        let first = probe(ProbeFamily::Predicate, "units >= 100", 2);
+        let rival = probe(ProbeFamily::Predicate, "units >= 10", 2);
+
+        let sinks = local_flow_sinks(&first, Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
+        assert_eq!(sinks[0].text, "\"bulk\"");
+        // A later arm's condition is not the first condition, so it has no sink.
+        assert!(local_flow_sinks(&rival, Some(&owner)).is_empty());
+    }
+
+    #[test]
+    fn arms_that_return_the_same_value_leave_the_condition_without_a_sink() {
+        for body in [
+            // Two arms, same value.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 1 } else { 1 }\n}",
+            // The first two arms of a ladder agree.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 1 } else if x > 0 { 1 } else { 3 }\n}",
+            // The last arm repeats the first.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 1 } else if x > 0 { 2 } else { 1 }\n}",
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn later_arms_that_only_agree_with_each_other_keep_the_first_sink() {
+        let owner = tail_owner(
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 1 } else if x > 0 { 2 } else { 2 }\n}",
+        );
+        let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
+
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].text, "1");
+    }
+
+    #[test]
+    fn multi_line_chain_arms_that_repeat_the_first_value_leave_no_sink() {
+        for body in [
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 {\n        1\n    } else {\n        1\n    }\n}",
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 {\n        1\n    } else if x > 0 {\n        1\n    } else {\n        3\n    }\n}",
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 {\n        1\n    } else if x > 0 {\n        2\n    } else {\n        1\n    }\n}",
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_line_chain_with_distinct_or_later_only_equal_arms_keeps_the_first_sink() {
+        for body in [
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 {\n        1\n    } else if x > 0 {\n        2\n    } else {\n        3\n    }\n}",
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 {\n        1\n    } else if x > 0 {\n        2\n    } else {\n        2\n    }\n}",
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 {\n        1\n    } else {\n        2\n    }\n}",
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert_eq!(sinks.len(), 1, "`{body}`: {sinks:?}");
+            assert_eq!(sinks[0].text, "1");
+        }
+    }
+
+    #[test]
+    fn one_line_else_if_ladder_fails_closed_off_plain_value_arms() {
+        for body in [
+            // A statement inside a later arm is not a plain branch value.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 3 } else if x > 0 { log(); 2 } else { 1 }\n}",
+            // The ladder never closes with a final `else`.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 3 } else if x > 0 { 2 }\n}",
+            // Text after the closing `else` arm is not part of the tail.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 3 } else if x > 0 { 2 } else { 1 } + 1\n}",
+            // A diverging first arm leaves the later arms unread.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { panic!() } else if x > 0 { 2 } else { 1 }\n}",
+            // A nested block arm is not a plain branch value.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 3 } else if x > 0 { { 2 } } else { 1 }\n}",
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
     }
 
     #[test]

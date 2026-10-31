@@ -180,18 +180,19 @@ function fixturePlatform(): RiprPlatform {
     : { target: 'fixture-target', executableName: 'ripr-fixture', archiveExtension: 'tar.gz', displayName: 'Fixture' };
 }
 
-function probePayloadPath(): string {
-  if (process.platform === 'win32') {
-    // Composed from SystemDrive so the source carries no local absolute
-    // Windows path (the local-context gate bans that literal).
-    const systemRoot = process.env.SystemRoot ?? path.join(process.env.SystemDrive ?? 'C:', 'Windows');
-    const payload = path.join(systemRoot, 'System32', 'tar.exe');
-    assert.ok(fs.existsSync(payload), `fixture probe payload is missing: ${payload}`);
-    return payload;
-  }
-  assert.ok(fs.existsSync('/bin/echo'), 'fixture probe payload /bin/echo is missing');
-  return '/bin/echo';
+function windowsProbePayloadPath(): string {
+  // Composed from SystemDrive so the source carries no local absolute
+  // Windows path (the local-context gate bans that literal).
+  const systemRoot = process.env.SystemRoot ?? path.join(process.env.SystemDrive ?? 'C:', 'Windows');
+  const payload = path.join(systemRoot, 'System32', 'tar.exe');
+  assert.ok(fs.existsSync(payload), `fixture probe payload is missing: ${payload}`);
+  return payload;
 }
+
+// POSIX payload is a script, not a copy of /bin/echo: coreutils builds that
+// dispatch on argv[0] (multicall) reject a renamed copy with "unknown
+// program 'ripr-fixture'", so the production `--version` probe failed.
+const POSIX_PROBE_SCRIPT = '#!/bin/sh\necho "ripr-fixture 0.0.0"\n';
 
 function sha256File(filePath: string): string {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
@@ -220,7 +221,11 @@ async function buildFixtureArchive(workRoot: string): Promise<{ readonly bytes: 
   await fs.promises.mkdir(staging, { recursive: true });
   const isWindows = process.platform === 'win32';
   const executableName = isWindows ? 'ripr-fixture.exe' : 'ripr-fixture';
-  await fs.promises.copyFile(probePayloadPath(), path.join(staging, executableName));
+  if (isWindows) {
+    await fs.promises.copyFile(windowsProbePayloadPath(), path.join(staging, executableName));
+  } else {
+    await fs.promises.writeFile(path.join(staging, executableName), POSIX_PROBE_SCRIPT, { mode: 0o755 });
+  }
   const archivePath = path.join(workRoot, isWindows ? 'ripr-server.zip' : 'ripr-server.tar.gz');
   if (isWindows) {
     await run('powershell.exe', [

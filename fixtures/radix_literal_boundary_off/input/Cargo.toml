@@ -1,0 +1,4 @@
+[package]
+name = "radix_literal_boundary_off_fixture"
+version = "0.0.0"
+edition = "2024"

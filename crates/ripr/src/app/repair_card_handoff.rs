@@ -37,7 +37,8 @@ use crate::domain::{
 use crate::output::agent_seam_packets::{
     EDIT_CAGE_PRODUCTION_STATEMENT, EDIT_CAGE_TERMINALITY_WARNING, PacketCommandContext,
     TASK_WRITE_TARGETED_TEST, inline_test_module_edit_statement, recommended_inline_test_module,
-    recommended_test_for, render_agent_seam_packet_json_with_context, task_for,
+    recommended_test_for, render_agent_seam_packet_json_with_context,
+    suggested_assertion_for_classified_seam, task_for,
 };
 use crate::output::path::display_path;
 use crate::repair_card_budget::RepairCardDetailSource;
@@ -456,10 +457,16 @@ pub(crate) fn assemble_repair_card(
     let entry = facts.entry;
     let eligibility = repair_packet_eligibility(entry);
     let readiness = &eligibility.readiness;
-    let instruction = facts
+    // The check finding's witness carries no assertion template, but the seam
+    // packet (and `ripr pilot`, hover and the editor actions) name one through
+    // the shared seam producer. The card reads that same producer so a repair
+    // that prints an assertion shape never also says there is none.
+    let seam_assertion = suggested_assertion_for_classified_seam(entry);
+    let mut instruction = facts
         .witness
         .map(FixInstructionSummary::from_witness)
         .unwrap_or_else(FixInstructionSummary::unavailable);
+    instruction.has_suggested_assertion |= seam_assertion.is_some();
 
     // Edit cage: the exact derivation the seam packet states (#4330), so the
     // card cannot promise a different edit surface than the attempt enforces.
@@ -540,7 +547,8 @@ pub(crate) fn assemble_repair_card(
         .is_some_and(|witness| witness.expected_sink.is_some());
     let assertion_goal_detail = facts
         .witness
-        .and_then(|witness| witness.suggested_assertion.clone());
+        .and_then(|witness| witness.suggested_assertion.clone())
+        .or(seam_assertion);
     let limitations: Vec<String> = facts
         .witness
         .map(|witness| {
@@ -846,6 +854,25 @@ pub(crate) fn finding_for_seam<'a>(
         return None;
     }
     Some(hit)
+}
+
+/// Whether `finding` names `entry` by its producer gap's file, owner, probe
+/// family and line, with no canonical gap id involved (#10702). A strongly
+/// gripped seam carries no canonical gap id (only headline-eligible classes
+/// do), so [`finding_for_seam`] can never bind a finding to it; this is the
+/// same producer-structured join and most-specific-claimant rule, asked
+/// without the content-hash ticket. It binds nothing for repair: the caller
+/// uses it only to name why a gap or limit finding sits on an already gripped
+/// seam.
+pub(crate) fn finding_names_seam_by_location(
+    finding: &crate::domain::Finding,
+    entry: &ClassifiedSeam,
+    candidate_seams: &[ClassifiedSeam],
+) -> bool {
+    finding
+        .canonical_gap
+        .as_ref()
+        .is_some_and(|gap| producer_candidate_qualifies(entry, finding, gap, candidate_seams))
 }
 
 /// The canonical gap id of the finding the shared [`finding_for_seam`] join
@@ -1197,6 +1224,55 @@ mod tests {
         }
     }
 
+    /// #10702: the location-only join names a strongly gripped seam only when
+    /// it is the unique most-specific claimant; twins and unrelated seams do
+    /// not bind, so the caller keeps `NoBindingSeam`.
+    #[test]
+    fn location_join_names_only_a_unique_gripped_claimant() {
+        let gripped = |offset: usize, line: usize| {
+            let mut entry = spanned_twin_boundary_entry(
+                offset,
+                line,
+                crate::analysis::seams::SeamSpan {
+                    start_line: line,
+                    end_line: line,
+                    start_column: 1,
+                    end_column: 10,
+                },
+            );
+            entry.class = SeamGripClass::StronglyGripped;
+            entry
+        };
+        let mut finding = producer_gap_finding(
+            "finding:loc",
+            "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate",
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            "predicate",
+        );
+        finding.probe.location.line = 88;
+
+        let sole = gripped(10, 88);
+        assert!(finding_names_seam_by_location(
+            &finding,
+            &sole,
+            std::slice::from_ref(&sole)
+        ));
+        // An unrelated gripped seam elsewhere in the owner does not claim it.
+        let other = gripped(20, 120);
+        assert!(!finding_names_seam_by_location(
+            &finding,
+            &other,
+            &[sole.clone(), other.clone()]
+        ));
+        // Two gripped seams with the identical span are an ambiguous collision:
+        // neither is named.
+        let twin = gripped(30, 88);
+        let pair = [sole.clone(), twin.clone()];
+        assert!(!finding_names_seam_by_location(&finding, &sole, &pair));
+        assert!(!finding_names_seam_by_location(&finding, &twin, &pair));
+    }
+
     /// The rendered packet envelope for this seam: `packets` names the seam,
     /// so the canonical packet family projects as current.
     fn packet_for(entry: &ClassifiedSeam) -> String {
@@ -1234,13 +1310,15 @@ mod tests {
         };
         let mut entry = weakly_gripped_entry();
         entry.evidence.discriminate = stage(StageState::Weak);
-        entry.evidence.observed_values = vec![ValueFact {
-            file: None,
-            line: 120,
-            text: "discounted_total(50, 100)".to_string(),
-            value: "50".to_string(),
-            context: ValueContext::FunctionArgument,
-        }];
+        entry.evidence.observed_values = vec![
+            ValueFact {
+                line: 120,
+                text: "discounted_total(50, 100)".to_string(),
+                value: "50".to_string(),
+                context: ValueContext::FunctionArgument,
+            }
+            .into(),
+        ];
         entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
             value: "discount_threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),
@@ -1418,6 +1496,29 @@ mod tests {
                     "{family:?} must record an exact unavailable reason"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn card_assertion_matches_the_seam_producer_when_the_witness_has_none() -> Result<(), String> {
+        let entry = own_file_inline_entry();
+        let packet = packet_for(&entry);
+        let facts = facts_for(&entry, &packet);
+        if facts.witness.is_some() {
+            return Err("fixture must exercise a card with no witness".to_string());
+        }
+        let expected = suggested_assertion_for_classified_seam(&entry)
+            .ok_or_else(|| "fixture seam must have a seam-producer assertion".to_string())?;
+        let card = assemble_repair_card(&facts)?;
+        if card.assertion_goal_detail.as_deref() != Some(expected.as_str()) {
+            return Err(format!(
+                "card assertion {:?} disagrees with the seam producer {expected:?}",
+                card.assertion_goal_detail
+            ));
+        }
+        if !card.instruction.has_suggested_assertion {
+            return Err("card must report the seam producer's assertion".to_string());
         }
         Ok(())
     }
@@ -1648,6 +1749,8 @@ mod tests {
         // Weakly exposed with an oracle row, so a (wrong) id match would
         // actually produce a witness and fail this control.
         let finding = crate::domain::Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib.rs:predicate:4036edfa".to_string(),
             canonical_gap: Some(FindingCanonicalGap {
                 id: "gap:rust:src/lib.rs:pricing::discounted_total:predicate_boundary:predicate:amount==discount_threshold"
@@ -1698,6 +1801,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: Some(crate::domain::LanguageId::Rust),
@@ -1741,6 +1846,8 @@ mod tests {
             Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
         };
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: id.to_string(),
             canonical_gap: Some(FindingCanonicalGap {
                 id: gap_id.to_string(),
@@ -1790,6 +1897,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: Some(crate::domain::LanguageId::Rust),
@@ -2217,6 +2326,7 @@ mod tests {
             repository_head: repository_head.to_string(),
             producer_version: "test".to_string(),
             seam_id: seam_id.to_string(),
+            gap_binding: None,
             created_unix_ms: 0,
             artifacts: Vec::new(),
             next_command: "ripr agent repair --root . --seam-id seam-a --phase after".to_string(),

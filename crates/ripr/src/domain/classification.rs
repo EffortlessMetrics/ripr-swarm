@@ -8,6 +8,14 @@ A test may already exercise it through macros, helper-call chains, or integratio
 ripr's static model does not yet trace. If none does, add a co-located test that reaches and \
 observes the changed behavior so a discriminator exists.";
 
+/// #9173: a root build script runs under Cargo before the package compiles and
+/// no package source mounts it, so "add a co-located test" cannot close the
+/// gap; point at what can.
+pub(crate) const BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP: &str = "ripr found no static test path to this change \u{2014} this is not a coverage assessment. \
+A Cargo build script runs before the package compiles and no package source includes it, so no package test can call it. \
+Check the change by building the package and inspecting the script's output or effect (its `cargo:` directives or generated files), \
+or move the logic into a library function that a test can call.";
+
 /// RIPR-SPEC-0133: shared one-sentence reason an owner counts as an
 /// assertion-shaped oracle. Kept in `domain/` so the detector
 /// (`analysis::classify::owner_shape`), the `Finding.evidence` disclosure line,
@@ -25,6 +33,10 @@ pub(crate) const ASSERTION_SHAPED_OWNER_REASON: &str =
 pub(crate) const ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP: &str = "The changed owner is itself an assertion helper (its body is dominated by assert*/expect calls and \
 nothing outside tests calls it), so a test that observes it would be a test of the oracle. Sharpen its \
 assertions, or exercise it indirectly through the code it checks.";
+
+/// Weak predicate whose related test already supplies the changed boundary
+/// input (#10622); the advisory keys off this exact Next step.
+pub(crate) const BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP: &str = "A related test already reaches the boundary input, but ripr grades its assertion as a weak check; write it as an exact-value assertion ripr can credit, for example assert_eq!(result, expected), so the old and changed behavior differ.";
 
 pub(crate) const ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP: &str = "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing \
 outside tests calls it), so exact-equality advice for code under test may not apply — boolean invariants \
@@ -77,16 +89,32 @@ pub(crate) const LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX: &str =
     "limitation_first_unresolved_edge: ";
 pub(crate) const LIMITATION_ANALYZER_ROUTE_PREFIX: &str = "limitation_analyzer_route: ";
 pub(crate) const LIMITATION_NON_CLAIM_PREFIX: &str = "limitation_non_claim: ";
+/// Additive declaration context, kept separate from the canonical edge text.
+pub(crate) const LIMITATION_HELPER_BOUNDARY_PREFIX: &str = "limitation_helper_boundary: ";
 
+/// Static exposure classification for a changed behavior.
+///
+/// This is draft static evidence about whether current tests appear to
+/// contain a discriminator for the change; it never claims a test was
+/// executed or that test adequacy was demonstrated. See
+/// `docs/STATIC_EXPOSURE_MODEL.md` for the full model.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExposureClass {
+    /// Static evidence suggests a complete RIPR path to a strong oracle
+    /// that observes the changed sink.
     Exposed,
+    /// A path exists, but infection or discrimination appears weak.
     WeaklyExposed,
+    /// Related tests appear reachable, but no meaningful oracle was found.
     ReachableUnrevealed,
+    /// No static test path was found for the changed owner.
     NoStaticPath,
+    /// Reachability exists, but input or fixture evidence is opaque.
     InfectionUnknown,
+    /// The changed behavior crosses an opaque propagation boundary.
     PropagationUnknown,
+    /// Syntax-first analysis cannot make a credible judgment.
     StaticUnknown,
 }
 
@@ -103,14 +131,20 @@ impl ExposureClass {
         ExposureClass::StaticUnknown,
     ];
 
+    /// The stable snake_case wire token for this class (for example
+    /// `weakly_exposed`), as used in JSON output and configuration.
     pub fn as_str(&self) -> &'static str {
         profile::for_class(self).label
     }
 
+    /// The diagnostic severity associated with this class (`info`,
+    /// `warning`, or `note`).
     pub fn severity(&self) -> &'static str {
         profile::for_class(self).severity
     }
 
+    /// Whether a finding with this class must carry an explicit stop
+    /// reason explaining why static analysis could not judge further.
     pub fn requires_stop_reason(&self) -> bool {
         profile::for_class(self).requires_stop_reason
     }
@@ -128,6 +162,42 @@ impl ExposureClass {
             ExposureClass::InfectionUnknown
             | ExposureClass::PropagationUnknown
             | ExposureClass::StaticUnknown => "unknown",
+        }
+    }
+
+    /// #9373: the plain label for a row that lists a finding without room for a
+    /// full explanation (the default digest's `Hidden:` rows). The shared
+    /// `plain_label` (#8165) is unchanged; the three unknown classes keep the
+    /// word `unknown` and add which stage the analysis could not judge, so a
+    /// reader can tell them apart without rerunning `--format human-full`.
+    pub(crate) fn plain_label_with_stage(&self) -> &'static str {
+        match self {
+            ExposureClass::InfectionUnknown => "unknown: infection unclear",
+            ExposureClass::PropagationUnknown => "unknown: propagation unclear",
+            ExposureClass::StaticUnknown => "unknown: static analysis limited",
+            other => other.plain_label(),
+        }
+    }
+
+    /// #9373: a one-line plain meaning for this class, the vocabulary of
+    /// `plain_label_with_stage`. Prose only, no schema tokens.
+    pub(crate) fn plain_gloss(&self) -> &'static str {
+        match self {
+            ExposureClass::Exposed => "tests appear to notice the change",
+            ExposureClass::WeaklyExposed => "tests reach it but check it only loosely",
+            ExposureClass::ReachableUnrevealed => {
+                "tests reach it but nothing appears to notice a change"
+            }
+            ExposureClass::NoStaticPath => "no test path was found",
+            ExposureClass::InfectionUnknown => {
+                "ripr could not tell what input makes the change take effect"
+            }
+            ExposureClass::PropagationUnknown => {
+                "ripr could not follow the change through an opaque boundary"
+            }
+            ExposureClass::StaticUnknown => {
+                "reading the code was not enough for ripr to judge (analysis limited, not a verdict)"
+            }
         }
     }
 

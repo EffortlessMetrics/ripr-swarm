@@ -37,7 +37,6 @@ impl Drop for Scratch {
 }
 
 fn finding(extension: &str, runner: &str, callback: &str) -> Result<Finding, String> {
-    let scratch = Scratch::create()?;
     let source = "export async function total() {\n  return 30;\n}\n";
     let imports = if runner == "node" {
         "import test from 'node:test';\nimport assert from 'node:assert/strict';"
@@ -47,6 +46,11 @@ fn finding(extension: &str, runner: &str, callback: &str) -> Result<Finding, Str
     let test = format!(
         "{imports}\nimport {{ total }} from '../src/total.{extension}';\ntest('total', {callback});\n"
     );
+    finding_in(extension, source, test)
+}
+
+fn finding_in(extension: &str, source: &str, test: String) -> Result<Finding, String> {
+    let scratch = Scratch::create()?;
     let diff = format!(
         "diff --git a/src/total.{extension} b/src/total.{extension}\n--- a/src/total.{extension}\n+++ b/src/total.{extension}\n@@ -1,3 +1,3 @@\n export async function total() {{\n-  return 20;\n+  return 30;\n }}\n"
     );
@@ -333,5 +337,77 @@ fn hoisted_function_assertions_do_not_confirm_the_imported_owner() -> Result<(),
             }
         }
     }
+    Ok(())
+}
+
+#[test]
+fn a_named_callback_expression_rebinds_the_receiver_to_itself() -> Result<(), String> {
+    for extension in ["ts", "js"] {
+        for runner in ["vitest", "node"] {
+            let assertion = if runner == "node" {
+                "assert.strictEqual(value, 30)"
+            } else {
+                "expect(value).toBe(30)"
+            };
+            // Inside its own body the name `total` is the callback, not the
+            // imported owner, so the receiver `total()` never reaches it.
+            let fake = format!("() => total().then(function total(value) {{ {assertion}; }})");
+            let got = finding(extension, runner, &fake)?;
+            assert_ne!(
+                got.class,
+                ExposureClass::Exposed,
+                "{extension} {runner} {fake}: {got:?}"
+            );
+            // A different function-expression name leaves the owner reachable.
+            let other = format!("() => total().then(function check(value) {{ {assertion}; }})");
+            let got = finding(extension, runner, &other)?;
+            assert_eq!(
+                got.class,
+                ExposureClass::Exposed,
+                "{extension} {runner} {other}: {got:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_declarator_continued_onto_the_next_line_still_shadows_the_receiver() -> Result<(), String> {
+    for extension in ["ts", "js"] {
+        for runner in ["vitest", "node"] {
+            let assertion = if runner == "node" {
+                "assert.strictEqual(total(), 30)"
+            } else {
+                "expect(total()).toBe(30)"
+            };
+            for declaration in [
+                "const unused = 0,\n  total = () => 30;",
+                "let unused = 0,\n  total = () => 30;",
+                "var unused = 0,\n  total = () => 30;",
+                "const unused = 0, // keep\n  total = () => 30;",
+            ] {
+                let callback =
+                    format!("() => total().then(() => {{ {declaration}\n{assertion}; }})");
+                let got = finding(extension, runner, &callback)?;
+                assert_ne!(
+                    got.class,
+                    ExposureClass::Exposed,
+                    "{extension} {runner} {callback}: {got:?}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_block_function_in_a_sloppy_script_never_reads_as_credit() -> Result<(), String> {
+    // Annex B hoists a block-level function to the enclosing function scope in
+    // a sloppy `.cjs` script. Require-based test files receive no oracle
+    // credit today, so this pins the boundary rather than a score change.
+    let source = "export async function total() {\n  return 30;\n}\n";
+    let test = "const { test } = require('node:test');\nconst assert = require('node:assert/strict');\nconst { total } = require('../src/total.cjs');\ntest('total', () => total().then(value => { { function total() { return 30; } } assert.strictEqual(total(), 30); }));\n".to_string();
+    let got = finding_in("cjs", source, test)?;
+    assert_ne!(got.class, ExposureClass::Exposed, "{got:?}");
     Ok(())
 }

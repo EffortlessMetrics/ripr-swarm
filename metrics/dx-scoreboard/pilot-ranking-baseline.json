@@ -80,10 +80,10 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from pilot-ranking: 7 confirmed, 19 refuted of 39 picks (by tier: seam 6/6, line 0/2, owner 1/18) over 5 of 5 repositories, corpus 2026-10-04.1",
+          "detail": "ingested from pilot-ranking: 7 confirmed, 18 refuted of 39 picks (by tier: seam 6/6, line 0/2, owner 1/17) over 5 of 5 repositories, corpus 2026-10-04.1",
           "repo": "pilot-ranking corpus 2026-10-04.1",
           "status": "below_target",
-          "value": 0.2692
+          "value": 0.28
         }
       ],
       "source": "ingest:pilot-ranking",
@@ -91,7 +91,7 @@
       "target": 0.6,
       "title": "Pilot's top 10 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge)",
       "unit": "ratio",
-      "value": 0.2692
+      "value": 0.28
     },
     {
       "baseline": {
@@ -106,10 +106,10 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from pilot-ranking: 7 confirmed, 19 refuted of 39 picks (by tier: seam 6/6, line 0/2, owner 1/18) over 5 of 5 repositories, corpus 2026-10-04.1",
+          "detail": "ingested from pilot-ranking: 7 confirmed, 18 refuted of 39 picks (by tier: seam 6/6, line 0/2, owner 1/17) over 5 of 5 repositories, corpus 2026-10-04.1",
           "repo": "pilot-ranking corpus 2026-10-04.1",
           "status": "below_target",
-          "value": 0.6667
+          "value": 0.641
         }
       ],
       "source": "ingest:pilot-ranking",
@@ -117,7 +117,7 @@
       "target": 0.8,
       "title": "Pilot's top 10 picks a labeled mutant can judge (precision can rise by making picks unjudgeable)",
       "unit": "ratio",
-      "value": 0.6667
+      "value": 0.641
     },
     {
       "baseline": {
@@ -132,10 +132,10 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from pilot-ranking: 29 distinct functions in 39 picks over 5 of 5 repositories, corpus 2026-10-04.1",
+          "detail": "ingested from pilot-ranking: 28 distinct functions in 39 picks over 5 of 5 repositories, corpus 2026-10-04.1",
           "repo": "pilot-ranking corpus 2026-10-04.1",
           "status": "below_target",
-          "value": 0.7436
+          "value": 0.7179
         }
       ],
       "source": "ingest:pilot-ranking",
@@ -143,7 +143,7 @@
       "target": 0.9,
       "title": "Pilot's top 10 picks that land in a function no higher pick named",
       "unit": "ratio",
-      "value": 0.7436
+      "value": 0.7179
     },
     {
       "baseline": {
@@ -158,7 +158,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from pilot-ranking: 7 confirmed, 19 refuted of 39 picks (by tier: seam 6/6, line 0/2, owner 1/18) over 5 of 5 repositories, corpus 2026-10-04.1",
+          "detail": "ingested from pilot-ranking: 7 confirmed, 18 refuted of 39 picks (by tier: seam 6/6, line 0/2, owner 1/17) over 5 of 5 repositories, corpus 2026-10-04.1",
           "repo": "pilot-ranking corpus 2026-10-04.1",
           "status": "below_target",
           "value": 39.0
@@ -236,7 +236,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from pilot-ranking: 7 confirmed, 19 refuted of 39 picks (by tier: seam 6/6, line 0/2, owner 1/18) over 5 of 5 repositories, corpus 2026-10-04.1",
+          "detail": "ingested from pilot-ranking: 7 confirmed, 18 refuted of 39 picks (by tier: seam 6/6, line 0/2, owner 1/17) over 5 of 5 repositories, corpus 2026-10-04.1",
           "repo": "pilot-ranking corpus 2026-10-04.1",
           "status": "below_target",
           "value": 7.0
@@ -262,10 +262,10 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from pilot-ranking: 7 confirmed, 19 refuted of 39 picks (by tier: seam 6/6, line 0/2, owner 1/18) over 5 of 5 repositories, corpus 2026-10-04.1",
+          "detail": "ingested from pilot-ranking: 7 confirmed, 18 refuted of 39 picks (by tier: seam 6/6, line 0/2, owner 1/17) over 5 of 5 repositories, corpus 2026-10-04.1",
           "repo": "pilot-ranking corpus 2026-10-04.1",
           "status": "below_target",
-          "value": 19.0
+          "value": 18.0
         }
       ],
       "source": "ingest:pilot-ranking",
@@ -273,7 +273,7 @@
       "target": 16.0,
       "title": "Pilot's top 10 picks per crate where every judging mutant was caught (pooled count)",
       "unit": "picks",
-      "value": 19.0
+      "value": 18.0
     }
   ],
   "report": "dx-scoreboard",
@@ -339,7 +339,7 @@
       "status": "not_measured"
     }
   ],
-  "revision": "39c25007349c0388dbad00b2657d409200a62b63",
+  "revision": "72e613e3b57a73af62a28af98c4ed382a2d07e96",
   "rollup": {
     "below_target": 9,
     "comparison_failed": 0,

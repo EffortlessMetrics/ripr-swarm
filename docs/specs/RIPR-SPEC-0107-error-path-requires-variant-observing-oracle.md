@@ -223,7 +223,9 @@ Covered by:
 
 ## Acceptance Examples
 
-### Before (incorrect â€” exposed with self-contradiction)
+Before shows the behavior this spec corrects. It is not an example.
+
+Before (incorrect â€” exposed with self-contradiction):
 
 ```
 Static exposure
@@ -240,35 +242,35 @@ Missing
 The finding says `exposed` (discriminated) but simultaneously lists
 `Missing discriminator value: ParseError::TooLong`. Self-contradiction.
 
-### After (correct â€” weakly_exposed, no self-contradiction)
+1. After (correct â€” weakly_exposed, no self-contradiction):
 
-```
-Static exposure
-  weakly_exposed (warning, confidence 0.92)
+   ```
+   Static exposure
+     weakly_exposed (warning, confidence 0.92)
 
-Evidence
-  - discriminator weak: Discriminator unconfirmed: no assertion text references
-    this probe's changed expression (observation_unverified)
+   Evidence
+     - discriminator weak: Discriminator unconfirmed: no assertion text references
+       this probe's changed expression (observation_unverified)
 
-Missing
-  - No exact error variant discriminator was detected
-  - Missing discriminator value: ParseError::TooLong
-```
+   Missing
+     - No exact error variant discriminator was detected
+     - Missing discriminator value: ParseError::TooLong
+   ```
 
-### Variant-pinning positive (must-not-over-correct)
+2. Variant-pinning positive (must-not-over-correct):
 
-```
-// Test: assert_eq!(err, ParseError::TooLong(12));
+   ```
+   // Test: assert_eq!(err, ParseError::TooLong(12));
 
-Static exposure
-  exposed (info, confidence 1.00)
+   Static exposure
+     exposed (info, confidence 1.00)
 
-Evidence
-  - discriminator yes: Strong oracle found: exact error variant assertion
-```
+   Evidence
+     - discriminator yes: Strong oracle found: exact error variant assertion
+   ```
 
-This stays `exposed`. The variant token `TooLong` appears in the assertion text,
-so `has_token_match=true` clears `observation_unverified`.
+   This stays `exposed`. The variant token `TooLong` appears in the assertion text,
+   so `has_token_match=true` clears `observation_unverified`.
 
 ## Test Mapping
 

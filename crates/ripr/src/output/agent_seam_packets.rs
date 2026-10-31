@@ -559,12 +559,15 @@ pub(crate) fn render_agent_seam_packet_json_with_context(
 /// cannot score (#7204): the rendered document discloses it and the plain
 /// summary replaces the after-edit directive with the ambiguity warning
 /// and the clean-state restart route.
+pub(crate) const TYPESCRIPT_TEST_CACHE_GUIDANCE: &str = "Some TypeScript test runners write ignored cache files that the edit cage still observes. To avoid a terminal cache-only refusal, run the focused test after continue succeeds and record its result separately; the receipt reports static evidence and does not record a test run. Cache writes may make that receipt stale in agent status, even if HEAD did not change.";
+
 pub(crate) struct BeforePhaseAttemptContinuation {
     pub(crate) attempt_id: String,
     pub(crate) manifest_path: String,
     pub(crate) next_command: String,
     pub(crate) packet_path: String,
     pub(crate) baseline_ambiguous: bool,
+    pub(crate) typescript_test_cache_guidance: bool,
 }
 
 /// Augment one rendered agent-packet envelope with the additive
@@ -609,6 +612,9 @@ pub(crate) fn render_before_phase_attempt_stdout(
     // attempt's stdout bytes stay exactly as before.
     if continuation.baseline_ambiguous {
         attempt_block["baseline_ambiguous"] = json!(true);
+    }
+    if continuation.typescript_test_cache_guidance {
+        attempt_block["test_runner_cache_guidance"] = json!(TYPESCRIPT_TEST_CACHE_GUIDANCE);
     }
     object.insert("repair_attempt".to_string(), attempt_block);
     let mut rendered = serde_json::to_string_pretty(&value)
@@ -796,6 +802,42 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
         .map_err(|err| format!("render agent gap packet JSON failed: {err}"))?;
     rendered.push('\n');
     Ok(rendered)
+}
+
+/// Render the repair packet a gap-bound TypeScript repair start consumes
+/// (#9103, RIPR-SPEC-0311). This is the shared GapRecord packet builder
+/// ([`render_agent_gap_record_packet_json`]) with the canonical gap id named
+/// as the packet's `seam_id`, so the attempt authority's edit-cage reader
+/// binds the packet to the same identity the attempt records. No second
+/// packet shape and no second validator: the shared
+/// [`validate_agent_gap_record_packet`] runs inside the builder and stays the
+/// only actionability authority, so a record that does not validate yields
+/// no packet. Static evidence only; the packet claims no runtime outcome.
+pub(crate) fn render_gap_bound_repair_packet(
+    gap_ledger_path: &str,
+    record: &GapRecord,
+) -> Result<String, String> {
+    if !matches!(record.language.as_str(), "typescript" | "python") {
+        return Err(
+            "gap-bound repair packets are rendered for TypeScript and Python gaps only".to_string(),
+        );
+    }
+    let canonical = non_empty(&record.canonical_gap_id)
+        .ok_or_else(|| "requires a canonical gap id".to_string())?;
+    let rendered = render_agent_gap_record_packet_json(gap_ledger_path, record)?;
+    let mut envelope: Value = serde_json::from_str(&rendered)
+        .map_err(|error| format!("decode gap-bound packet failed: {error}"))?;
+    let packet = envelope
+        .get_mut("packets")
+        .and_then(Value::as_array_mut)
+        .and_then(|packets| packets.first_mut())
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "gap-bound packet envelope carries no packet".to_string())?;
+    packet.insert("seam_id".to_string(), Value::String(canonical));
+    let mut out = serde_json::to_string_pretty(&envelope)
+        .map_err(|error| format!("render gap-bound packet JSON failed: {error}"))?;
+    out.push('\n');
+    Ok(out)
 }
 
 fn gap_record_command_specs_json(record: &GapRecord) -> Option<serde_json::Value> {
@@ -3650,6 +3692,19 @@ fn has_unescaped_quote(text: &str) -> bool {
     false
 }
 
+/// The input the missing discriminator asks for is the equality value
+/// (#11023): a strict comparison `lhs > rhs` / `lhs < rhs` describes the
+/// changed predicate, but an input "where" it holds excludes the boundary the
+/// hint is for. Spell the equality value for a simple strict comparison; any
+/// other description (`>=`, `<=`, `==`, `!=`, compound) is kept as written.
+fn equality_boundary_description(description: &str) -> String {
+    let tokens: Vec<&str> = description.split_whitespace().collect();
+    match tokens.as_slice() {
+        [lhs, ">" | "<", rhs] => format!("{lhs} == {rhs}"),
+        _ => description.to_string(),
+    }
+}
+
 fn predicate_boundary_assertion_hint(
     required: Option<&RequiredDiscriminator>,
     evidence: &TestGripEvidence,
@@ -3657,7 +3712,10 @@ fn predicate_boundary_assertion_hint(
     if let Some(RequiredDiscriminator::BoundaryValue { description }) = required
         && !description.trim().is_empty()
     {
-        return format!("boundary input where {}", description.trim());
+        return format!(
+            "boundary input where {}",
+            equality_boundary_description(description.trim())
+        );
     }
     if let Some(missing) = evidence.missing_discriminators.first()
         && !missing.value.trim().is_empty()
@@ -3670,6 +3728,57 @@ fn predicate_boundary_assertion_hint(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #11023: the hint beside "candidate value: 5 (equality boundary)" must
+    /// not describe an input that excludes 5.
+    #[test]
+    fn strict_boundary_hint_names_the_equality_value() {
+        for (description, expected) in [
+            (
+                "loyalty_years > 5",
+                "boundary input where loyalty_years == 5",
+            ),
+            ("count < limit", "boundary input where count == limit"),
+            // Operands that are negative, fractional or method calls with no
+            // inner spaces are still one token each.
+            ("x > -5", "boundary input where x == -5"),
+            ("price > 0.5", "boundary input where price == 0.5"),
+            ("v.len() > 0", "boundary input where v.len() == 0"),
+            // Not three whitespace tokens: kept as written (the hint stays
+            // advisory and never guesses a rewrite).
+            ("x>5", "boundary input where x>5"),
+            ("Vec<u8>", "boundary input where Vec<u8>"),
+            ("foo(a, b) > 0", "boundary input where foo(a, b) > 0"),
+            // Already includes or names the equality value, or is not a simple
+            // strict comparison: kept as written.
+            (
+                "amount >= threshold",
+                "boundary input where amount >= threshold",
+            ),
+            (
+                "amount <= threshold",
+                "boundary input where amount <= threshold",
+            ),
+            ("unit == 0", "boundary input where unit == 0"),
+            ("left != right", "boundary input where left != right"),
+            ("a > b && c", "boundary input where a > b && c"),
+        ] {
+            let required = RequiredDiscriminator::BoundaryValue {
+                description: description.to_string(),
+            };
+            let classified = weakly_gripped_classified();
+            let hint = predicate_boundary_assertion_hint(Some(&required), &classified.evidence);
+            assert_eq!(hint, expected, "{description}");
+        }
+        // Discriminating negative: the strict description itself must not
+        // survive into the hint, because an input where `x > 5` excludes 5.
+        let required = RequiredDiscriminator::BoundaryValue {
+            description: "x > 5".to_string(),
+        };
+        let classified = weakly_gripped_classified();
+        let hint = predicate_boundary_assertion_hint(Some(&required), &classified.evidence);
+        assert!(!hint.contains("x > 5"), "{hint}");
+    }
     use crate::agent::loop_commands::anchored_redirect_target;
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
     use crate::analysis::test_grip_evidence::{RelatedTestGrip, RelationReason, TestGripEvidence};
@@ -3805,6 +3914,102 @@ mod tests {
             regeneration: Vec::new(),
         });
         Ok(record)
+    }
+
+    fn typescript_gap_record(eligible: bool) -> Result<GapRecord, String> {
+        crate::output::gap_decision_ledger::parse_gap_records_json(&format!(
+            r#"{{"records":[{{
+              "gap_id": "probe:src/pricing.ts:typescript_preview:1a2b3c4d",
+              "canonical_gap_id": "gap:typescript:typescript_preview:1a2b3c4d",
+              "source_currentness": "candidate_current",
+              "kind":"typescript_preview_boundary",
+              "language":"typescript",
+              "language_status":"preview",
+              "scope":"diff",
+              "evidence_class":"weakly_exposed",
+              "gap_state":"advisory",
+              "policy_state":"preview",
+              "repairability":"repairable",
+              "anchor":{{"file":"src/pricing.ts","line":7,"owner":"discountedTotal","dedupe_fingerprint":"probe:src/pricing.ts:typescript_preview:1a2b3c4d"}},
+              "repair_route":{{
+                "route_kind":"AddBoundaryAssertion",
+                "target_file":"test/pricing.test.ts",
+                "related_test":"test/pricing.test.ts::discounts",
+                "missing_discriminator":"subtotal == DISCOUNT_THRESHOLD",
+                "assertion_shape":"expect(discountedTotal(10000)).toBe(expected)",
+                "stop_conditions":["Stop if the gap record is no longer present."]
+              }},
+              "verification_commands":["npx --no-install vitest run test/pricing.test.ts"],
+              "receipt_command":"ripr receipt write --gap-id gap:typescript:typescript_preview:1a2b3c4d",
+              "projection_eligibility":{{"agent_packet":{{"eligible":{eligible},"reason":"TypeScript preview complete-contract projection"}}}}
+            }}]}}"#
+        ))?
+        .pop()
+        .ok_or_else(|| "expected a TypeScript gap record".to_string())
+    }
+
+    #[test]
+    fn typescript_gap_repair_packet_names_the_canonical_gap_as_its_seam() -> Result<(), String> {
+        let record = typescript_gap_record(true)?;
+        let rendered = render_gap_bound_repair_packet("before.check-findings.json", &record)?;
+        let value = serde_json::from_str::<serde_json::Value>(&rendered)
+            .map_err(|error| format!("packet JSON should parse: {error}"))?;
+        let packet = value["packets"]
+            .as_array()
+            .and_then(|packets| packets.first())
+            .ok_or_else(|| format!("missing packet: {rendered}"))?;
+        assert_eq!(
+            packet["seam_id"],
+            serde_json::json!("gap:typescript:typescript_preview:1a2b3c4d")
+        );
+        assert_eq!(
+            packet["allowed_edit_surface"],
+            serde_json::json!(["test/pricing.test.ts"])
+        );
+        assert_eq!(
+            packet["forbidden_files"],
+            serde_json::json!(["src/pricing.ts"])
+        );
+        assert_eq!(
+            packet["recommended_test"]["file"],
+            serde_json::json!("test/pricing.test.ts")
+        );
+        // Same builder, same envelope: the shared packet minus the seam alias.
+        let shared = render_agent_gap_record_packet_json("before.check-findings.json", &record)?;
+        let mut shared_value = serde_json::from_str::<serde_json::Value>(&shared)
+            .map_err(|error| format!("shared packet JSON should parse: {error}"))?;
+        let packet_mut = shared_value["packets"][0]
+            .as_object_mut()
+            .ok_or_else(|| "shared packet object".to_string())?;
+        packet_mut.insert(
+            "seam_id".to_string(),
+            serde_json::json!("gap:typescript:typescript_preview:1a2b3c4d"),
+        );
+        assert_eq!(shared_value, value);
+        Ok(())
+    }
+
+    #[test]
+    fn typescript_gap_repair_packet_stays_fail_closed() -> Result<(), String> {
+        // The shared validator is the only authority: an ineligible record
+        // yields no packet.
+        let refused = render_gap_bound_repair_packet("p.json", &typescript_gap_record(false)?);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|error| error.contains("not agent-packet eligible")),
+            "{refused:?}"
+        );
+        // A record outside the gap-bound languages never renders through this entry.
+        let rust = typed_gap_record()?;
+        let refused = render_gap_bound_repair_packet("p.json", &rust);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|error| error.contains("TypeScript and Python gaps only")),
+            "{refused:?}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -3973,13 +4178,15 @@ mod tests {
             propagate: stage(StageState::Yes),
             observe: stage(StageState::Yes),
             discriminate: stage(StageState::Yes),
-            observed_values: vec![ValueFact {
-                file: None,
-                line: 12,
-                text: "discounted_total(50, 100)".to_string(),
-                value: "50".to_string(),
-                context: ValueContext::FunctionArgument,
-            }],
+            observed_values: vec![
+                ValueFact {
+                    line: 12,
+                    text: "discounted_total(50, 100)".to_string(),
+                    value: "50".to_string(),
+                    context: ValueContext::FunctionArgument,
+                }
+                .into(),
+            ],
             missing_discriminators: vec![MissingDiscriminatorFact {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values do not include the equality-boundary case".to_string(),

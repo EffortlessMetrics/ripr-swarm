@@ -230,6 +230,48 @@ fn record_review_comments_timeout(
     }
 }
 
+/// Early producer-refusal probe (#11161): a producer refusal envelope carries
+/// no `analysis_outcome`, so it needs neither the diff nor the inventory.
+/// Reading it before that work keeps an earlier diff/inventory/deadline
+/// failure from hiding the refusal and its repair route. Anything that is not
+/// a refusal (unreadable, malformed, bounded, carrying an outcome) returns
+/// `None` and keeps the loader's own validation and error ordering.
+fn early_producer_refusal_error(path: Option<&Path>) -> Option<String> {
+    let path = path?;
+    let text = crate::bounded_input::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    if value.get("analysis_outcome").is_some()
+        || crate::output::gate::discloses_limited_findings_bound(&value)
+        || crate::output::gate::discloses_bounded_analysis_document(&value)
+    {
+        return None;
+    }
+    let refusal = crate::output::gate::producer_refusal(&value)?;
+    Some(review_comments_refusal_error(path, &refusal))
+}
+
+/// The named refusal error for a producer-refusal check document (#11161):
+/// the typed run status when known, the producer's own message, and the
+/// next step. A refusal envelope carries no `analysis_outcome` at all —
+/// nothing was analyzed — so the generic missing-outcome error would hide
+/// the cause.
+fn review_comments_refusal_error(
+    path: &Path,
+    refusal: &crate::output::gate::ProducerRefusal,
+) -> String {
+    let status = refusal
+        .status
+        .as_deref()
+        .unwrap_or("unknown producer refusal");
+    format!(
+        "review-comments --check-output {} is invalid: producer refusal (run_status: {status}); \
+         nothing was analyzed. Producer message: {}. Next step: {}",
+        path.display(),
+        refusal.message,
+        refusal.repair_route,
+    )
+}
+
 fn load_review_comments_analysis_outcome(
     path: Option<&Path>,
     root: &Path,
@@ -305,7 +347,29 @@ fn load_review_comments_analysis_outcome(
             path.display()
         ));
     }
+    // #9010: a findings-bounded check document is a bounded subset, never a complete
+    // outcome; present non-`true` (including malformed) fails closed. Runs
+    // before the outcome checks so a bounded document keeps its own repair
+    // route even when its outcome is absent — a bounded envelope also
+    // carries an explicit non-consumable record, exactly as in the gate
+    // ordering (#11161).
+    if crate::output::gate::discloses_limited_findings_bound(&value)
+        || crate::output::gate::discloses_bounded_analysis_document(&value)
+    {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: findings-bounded check document (document_complete is not true or run_limitations names limited_findings_bound); re-run with RIPR_CHECK_FINDINGS_BYTES=0",
+            path.display()
+        ));
+    }
     let Some(envelope) = value.get("analysis_outcome") else {
+        // #11161: a producer refusal envelope carries no `analysis_outcome`
+        // at all — nothing was analyzed — so name the refusal (its run
+        // status, the producer's own message, and the next step) instead of
+        // the generic missing-outcome error. A consumable envelope without
+        // an outcome keeps the generic error below.
+        if let Some(refusal) = crate::output::gate::producer_refusal(&value) {
+            return Err(review_comments_refusal_error(path, &refusal));
+        }
         return Err(format!(
             "review-comments --check-output {} is invalid: missing analysis_outcome",
             path.display()
@@ -314,16 +378,6 @@ fn load_review_comments_analysis_outcome(
     if envelope.is_null() {
         return Err(format!(
             "review-comments --check-output {} is invalid: analysis_outcome is null",
-            path.display()
-        ));
-    }
-    // #9010: a findings-bounded check document is a prefix, never a complete
-    // outcome; present non-`true` (including malformed) fails closed.
-    if crate::output::gate::discloses_limited_findings_bound(&value)
-        || crate::output::gate::discloses_bounded_analysis_document(&value)
-    {
-        return Err(format!(
-            "review-comments --check-output {} is invalid: findings-bounded check document (document_complete is not true or run_limitations names limited_findings_bound); re-run with RIPR_CHECK_FINDINGS_BYTES=0",
             path.display()
         ));
     }
@@ -588,6 +642,14 @@ fn review_comments_with_admission(
         return Ok(());
     }
 
+    if let Some(error) = early_producer_refusal_error(options.check_output.as_deref()) {
+        return Err(record_review_comments_error(
+            &mut receipt,
+            &receipt_path,
+            "configuration",
+            error,
+        ));
+    }
     receipt.phase("configuration", "diff_discovery");
     receipt.write_atomic(&receipt_path)?;
     let diff_text = analysis::cancellation::with_token(&cancellation, || {
@@ -647,6 +709,8 @@ fn review_comments_with_admission(
                 }),
         )
         .collect::<Vec<_>>();
+    receipt.step("corpus_admission");
+    receipt.write_atomic(&receipt_path)?;
     let corpus_payload = analysis::cancellation::with_token(&cancellation, || {
         analysis::analyzable_corpus_payload_size(&input.root, &config, &owner_files)
     })
@@ -670,6 +734,8 @@ fn review_comments_with_admission(
             error,
         ));
     }
+    receipt.step("test_change_detection");
+    receipt.write_atomic(&receipt_path)?;
     let changed_tests = analysis::cancellation::with_token(&cancellation, || {
         analysis::diff_test_changes(
             &input.root,
@@ -690,7 +756,16 @@ fn review_comments_with_admission(
         options.timeout_ms,
         "language_facts",
     )?;
-    let (changed_owners, enclosing_owners) = attribute_owners(&input.root, &changed_lines);
+    // Owner attribution builds a Rust index over every changed file. Run it
+    // under the same token as the other analysis phases so a large diff
+    // cannot spend the budget here with no interior checkpoint to stop it
+    // (#1604); an expiry inside it surfaces at the deadline check below.
+    receipt.step("owner_attribution");
+    receipt.write_atomic(&receipt_path)?;
+    let (changed_owners, enclosing_owners) =
+        analysis::cancellation::with_token(&cancellation, || {
+            attribute_owners(&input.root, &changed_lines)
+        });
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
@@ -732,11 +807,13 @@ fn review_comments_with_admission(
         if cancellation.observed_abort()
             == Some(analysis::cancellation::AnalysisAbortKind::DeadlineExceeded)
         {
+            receipt.canonical_analysis_progress(selection_builder.observed_seams());
             record_review_comments_timeout(&mut receipt, &receipt_path, "canonical_analysis")
         } else {
             record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
         }
     })?;
+    receipt.canonical_analysis_progress(selection_builder.observed_seams());
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
@@ -1116,6 +1193,114 @@ mod tests {
                     .ok_or_else(|| format!("{shape}: a bounded check document must be refused"))?;
             assert!(error.contains("findings-bounded"), "{shape}: {error}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn check_output_loader_names_producer_refusal_but_keeps_generic_error() -> Result<(), String> {
+        // #11161: a producer-refusal envelope carries no `analysis_outcome`
+        // at all — nothing was analyzed — so the loader must name the
+        // refusal (typed status, producer message, next step) instead of
+        // the generic missing-outcome error. A consumable envelope without
+        // an outcome keeps the generic error.
+        let dir = unique_command_test_dir("review-comments-refusal-check-output");
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let _cleanup = OwnedDeadlineFixture(dir.clone());
+        let root = dir.join("repo");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let diff_text = "diff";
+        let envelope = |refusal: bool| {
+            let mut document = serde_json::json!({
+                "schema_version": "0.2", "tool": "ripr", "mode": "draft",
+                "root": output::outcome::display_path(&root),
+                "base": "main", "summary": {}, "findings": []
+            });
+            if refusal {
+                document["analysis_scope"] = serde_json::json!({
+                    "scope": "diff",
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false,
+                    "repair_route": "analysis/diff-scope-budget"
+                });
+                document["run_limitations"] = serde_json::json!([{
+                    "category": "diff_scope_oversized",
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false,
+                    "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); analysis was not run.",
+                    "repair_route": "analysis/diff-scope-budget"
+                }]);
+            }
+            document
+        };
+        let refusal_path = dir.join("refusal.json");
+        std::fs::write(&refusal_path, envelope(true).to_string())
+            .map_err(|error| error.to_string())?;
+        let error =
+            load_review_comments_analysis_outcome(Some(&refusal_path), &root, "main", diff_text)
+                .err()
+                .ok_or_else(|| "a refusal envelope must be refused".to_string())?;
+        assert!(error.contains("producer refusal"), "{error}");
+        assert!(error.contains("diff_scope_oversized"), "{error}");
+        assert!(
+            error.contains("2878 changed Rust lines"),
+            "the producer's own message must survive: {error}"
+        );
+        assert!(
+            error.contains("analysis/diff-scope-budget"),
+            "the next step must survive: {error}"
+        );
+        assert!(
+            !error.contains("missing analysis_outcome"),
+            "the generic missing-outcome error must not hide the refusal: {error}"
+        );
+        let plain_path = dir.join("plain.json");
+        std::fs::write(&plain_path, envelope(false).to_string())
+            .map_err(|error| error.to_string())?;
+        let error =
+            load_review_comments_analysis_outcome(Some(&plain_path), &root, "main", diff_text)
+                .err()
+                .ok_or_else(|| "an envelope without an outcome must be refused".to_string())?;
+        assert!(
+            error.contains("missing analysis_outcome"),
+            "a non-refusal envelope without an outcome keeps the generic error: {error}"
+        );
+        // #11161 review: a bounded document that also discloses a refusal
+        // keeps the findings-bounded error — the bounded check runs before
+        // the outcome/refusal checks. Moving the bounded check after the
+        // refusal branch would name the refusal here and fail this
+        // assertion. (The producer never emits this mix; it pins guard
+        // order while preserving fail-closed bounded handling.)
+        let mut mixed = envelope(true);
+        mixed["run_limitations"] = serde_json::json!([
+            {
+                "category": "limited_findings_bound",
+                "run_status": "limited_findings_bound",
+                "downstream_consumable": false,
+                "message": "findings array was cut by the byte budget",
+                "repair_route": "analysis/findings-budget"
+            },
+            {
+                "category": "diff_scope_oversized",
+                "run_status": "diff_scope_oversized",
+                "downstream_consumable": false,
+                "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); analysis was not run.",
+                "repair_route": "analysis/diff-scope-budget"
+            }
+        ]);
+        let mixed_path = dir.join("mixed-bounded-refusal.json");
+        std::fs::write(&mixed_path, mixed.to_string()).map_err(|error| error.to_string())?;
+        let error =
+            load_review_comments_analysis_outcome(Some(&mixed_path), &root, "main", diff_text)
+                .err()
+                .ok_or_else(|| "a bounded envelope must be refused".to_string())?;
+        assert!(
+            error.contains("findings-bounded"),
+            "bounded-plus-refusal keeps the bounded repair route: {error}"
+        );
+        assert!(
+            !error.contains("producer refusal"),
+            "the bounded guard must win over the refusal branch: {error}"
+        );
         Ok(())
     }
 
@@ -1953,6 +2138,59 @@ mod tests {
     }
 
     #[test]
+    fn review_comments_producer_refusal_wins_over_diff_failure() -> Result<(), String> {
+        // #11161: the refusal envelope needs neither diff nor inventory, so an
+        // earlier diff failure must not hide the refusal and its repair route.
+        let root = unique_command_test_dir("review-comments-refusal-before-diff");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let refusal = root.join("refusal.json");
+        std::fs::write(
+            &refusal,
+            serde_json::json!({
+                "schema_version": "0.2", "tool": "ripr", "mode": "draft",
+                "root": ".", "base": "main", "summary": {}, "findings": [],
+                "analysis_scope": {
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false,
+                    "repair_route": "analysis/diff-scope-budget"
+                },
+                "run_limitations": [{
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false,
+                    "message": "diff_scope_oversized: too many lines",
+                    "repair_route": "analysis/diff-scope-budget"
+                }]
+            })
+            .to_string(),
+        )
+        .map_err(|err| format!("write refusal: {err}"))?;
+        let out = root.join("target/ripr/review/comments.json");
+        let error = match review_comments_with_diff_loader(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "main",
+                "--head",
+                "HEAD",
+                "--check-output",
+                &refusal.display().to_string(),
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| Err("diff failure must not hide the refusal".into()),
+        ) {
+            Ok(()) => return Err("a refusal envelope must fail".to_string()),
+            Err(err) => err,
+        };
+        assert!(error.contains("producer refusal"), "{error}");
+        assert!(error.contains("analysis/diff-scope-budget"), "{error}");
+        assert!(!error.contains("diff failure"), "{error}");
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn review_comments_gap_ledger_reports_read_and_parse_errors() -> Result<(), String> {
         let root = unique_command_test_dir("review-comments-gap-ledger-errors");
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
@@ -2034,6 +2272,153 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    /// Owner attribution builds a Rust index over every changed file, so it
+    /// must run under the run's cancellation token like the other analysis
+    /// phases (#1604). Without the token its interior checkpoints are inert
+    /// and a large diff can spend the whole budget here before any phase
+    /// boundary notices.
+    #[test]
+    fn review_comments_owner_attribution_runs_under_the_run_token() -> Result<(), String> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let fixture_path = unique_command_test_dir("review-owner-attribution-token");
+        std::fs::create_dir(&fixture_path)
+            .map_err(|error| format!("claim attribution fixture root: {error}"))?;
+        let fixture = OwnedDeadlineFixture(fixture_path);
+        let root = &fixture.0;
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create attribution fixture: {error}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"review_owner_attribution\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| format!("write attribution fixture manifest: {error}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")
+            .map_err(|error| format!("write attribution fixture source: {error}"))?;
+
+        let out = root.join("target/ripr/review/comments.json");
+        let saw_token = AtomicBool::new(false);
+        let start = Instant::now();
+        let _ = review_comments_with_admission(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "BASE",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| {
+                Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn value() -> i32 { 0 }\n+pub fn value() -> i32 { 1 }\n".to_string())
+            },
+            move || start,
+            GuidancePayloadCeiling::from_env,
+            |_root, _lines| {
+                saw_token.store(
+                    analysis::cancellation::current_token().is_some(),
+                    Ordering::SeqCst,
+                );
+                (Vec::new(), Vec::new())
+            },
+        );
+        if !saw_token.load(Ordering::SeqCst) {
+            return Err(
+                "owner attribution ran without the run's cancellation token installed".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// An expiry observed during owner attribution comes back as empty owners
+    /// (the helper swallows the abort), so the guarantee that it cannot be
+    /// published as a complete run rests on the deadline check that follows.
+    /// Pin it: a budget spent inside attribution is a typed timeout and no
+    /// artifacts are written (#1604).
+    #[test]
+    fn review_comments_budget_spent_in_owner_attribution_records_timeout() -> Result<(), String> {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        let fixture_path = unique_command_test_dir("review-owner-attribution-expiry");
+        std::fs::create_dir(&fixture_path)
+            .map_err(|error| format!("claim attribution fixture root: {error}"))?;
+        let fixture = OwnedDeadlineFixture(fixture_path);
+        let root = &fixture.0;
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create attribution fixture: {error}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"review_owner_attribution_expiry\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| format!("write attribution fixture manifest: {error}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")
+            .map_err(|error| format!("write attribution fixture source: {error}"))?;
+
+        let out = root.join("target/ripr/review/comments.json");
+        let attributed = Arc::new(AtomicBool::new(false));
+        let clock_flag = Arc::clone(&attributed);
+        let start = Instant::now();
+        let result = review_comments_with_admission(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "BASE",
+                "--head",
+                "HEAD",
+                "--timeout-ms",
+                "1000",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| {
+                Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn value() -> i32 { 0 }\n+pub fn value() -> i32 { 1 }\n".to_string())
+            },
+            move || {
+                if clock_flag.load(Ordering::SeqCst) {
+                    start + Duration::from_secs(1)
+                } else {
+                    start
+                }
+            },
+            GuidancePayloadCeiling::from_env,
+            move |_root, _lines| {
+                attributed.store(true, Ordering::SeqCst);
+                (Vec::new(), Vec::new())
+            },
+        );
+        let receipt: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(out.with_file_name("run-receipt.json"))
+                .map_err(|error| format!("read attribution expiry receipt: {error}"))?,
+        )
+        .map_err(|error| format!("parse attribution expiry receipt: {error}"))?;
+        if receipt.get("status").and_then(serde_json::Value::as_str) != Some("limited_timeout") {
+            return Err(format!(
+                "budget spent in owner attribution must be a typed timeout: {receipt}; result {result:?}"
+            ));
+        }
+        if result.is_ok() {
+            return Err("run completed after its budget expired in attribution".to_string());
+        }
+        if receipt
+            .get("active_step")
+            .and_then(serde_json::Value::as_str)
+            != Some("owner_attribution")
+        {
+            return Err(format!(
+                "timeout receipt must name the owner_attribution pass: {receipt}"
+            ));
+        }
+        if out.exists() || out.with_extension("md").exists() {
+            return Err("expired attribution published review artifacts".to_string());
+        }
         Ok(())
     }
 
@@ -2125,6 +2510,23 @@ mod tests {
         }
         if result != Err("review-comments timed out during canonical_analysis".to_string()) {
             return Err(format!("unexpected canonical timeout result: {result:?}"));
+        }
+        // Work done is disclosed (none: the budget expired at the first
+        // interior checkpoint) and the receipt says nothing was kept (#11107).
+        if receipt.get("canonical_analysis_evaluated_seams") != Some(&serde_json::json!(0)) {
+            return Err(format!(
+                "canonical timeout must report evaluated seams: {receipt}"
+            ));
+        }
+        let kept_nothing = receipt["non_claims"].as_array().is_some_and(|claims| {
+            claims.iter().any(|claim| {
+                claim == output::review_comments_receipt::CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM
+            })
+        });
+        if !kept_nothing {
+            return Err(format!(
+                "canonical timeout must disclose that nothing is persisted: {receipt}"
+            ));
         }
         if out.exists() || out.with_extension("md").exists() {
             return Err("cancelled inventory published review artifacts".to_string());
@@ -2271,6 +2673,20 @@ mod tests {
         if repair_route != error {
             return Err(format!(
                 "returned error and receipt repair_route diverged: {error} vs {repair_route}"
+            ));
+        }
+        // A failure is not a timeout: it must not claim the timeout-only
+        // retry disclosure or timeout progress field (#11107).
+        if receipt.get("canonical_analysis_evaluated_seams").is_some()
+            || receipt["non_claims"].as_array().is_some_and(|claims| {
+                claims.iter().any(|claim| {
+                    claim
+                        == output::review_comments_receipt::CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM
+                })
+            })
+        {
+            return Err(format!(
+                "ordinary failure must not carry the timeout retry disclosure: {receipt}"
             ));
         }
         if out.exists() || out.with_extension("md").exists() {
@@ -2896,6 +3312,7 @@ mod tests {
         assert_eq!(receipt["status"], "failed");
         assert_eq!(receipt["active_phase"], "language_facts");
         assert_eq!(receipt["last_completed_phase"], "diff_discovery");
+        assert_eq!(receipt["active_step"], "corpus_admission");
         assert_eq!(
             receipt["limitations"][0]["category"],
             "review_guidance_oversized"

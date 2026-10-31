@@ -2,6 +2,9 @@
 //! Run the same tests against correct and deliberately wrong libraries;
 //! compilation success and one executed test precede outcome assertions.
 
+#[path = "owner_pin_execution/shared_execution.rs"]
+mod shared_execution;
+
 use ripr::{
     CheckInput, ExposureClass, Mode, OutputFormat, ProbeFamily, check_workspace, render_check,
 };
@@ -14,6 +17,24 @@ mod field_projected_collection;
 
 #[path = "owner_pin_execution/literal_json_output.rs"]
 mod literal_json_output;
+
+#[path = "owner_pin_execution/operand_callee_identity.rs"]
+mod operand_callee_identity;
+
+#[path = "owner_pin_execution/boundary_call_identity.rs"]
+mod boundary_call_identity;
+
+#[path = "owner_pin_execution/effect_assertion_sweep.rs"]
+mod effect_assertion_sweep;
+#[path = "owner_pin_execution/effect_assertions.rs"]
+mod effect_assertions;
+#[path = "owner_pin_execution/function_pointer.rs"]
+mod function_pointer;
+
+#[path = "owner_pin_execution/matches_panic.rs"]
+mod matches_panic;
+#[path = "owner_pin_execution/polling_helper.rs"]
+mod polling_helper;
 
 struct Scratch(PathBuf);
 
@@ -3375,7 +3396,11 @@ fn trait_shadow_corpus_matches_compiled_owner_dispatch() -> Result<(), String> {
         assert_eq!(finding["probe"]["family"], "return_value", "{fixture_name}");
         assert_eq!(
             finding["classification"],
-            if shadow { "weakly_exposed" } else { "exposed" },
+            if shadow {
+                "reachable_unrevealed"
+            } else {
+                "exposed"
+            },
             "{fixture_name}: {finding}"
         );
         let related = finding["related_tests"]

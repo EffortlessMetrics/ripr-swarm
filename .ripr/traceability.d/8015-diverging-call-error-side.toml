@@ -1,0 +1,6 @@
+# Registers the diverging-call refusal for the result-side oracle producers (#8015) under RIPR-SPEC-0227.
+[[extend]]
+id = "RIPR-SPEC-0227"
+tests = [
+  "crates/ripr/tests/diverging_call_error_side.rs::diverging_calls_before_an_err_side_assertion_never_credit_exposed",
+]

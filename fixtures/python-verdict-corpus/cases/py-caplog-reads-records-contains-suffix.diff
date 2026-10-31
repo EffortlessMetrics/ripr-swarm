@@ -1,0 +1,12 @@
+diff --git a/reads/audit.py b/reads/audit.py
+--- a/reads/audit.py
++++ b/reads/audit.py
+@@ -33,7 +33,7 @@ def frozen(account):
+ 
+ def locked(account):
+     if account == "locked":
+-        log.warning("account locked: %s", account)
++        log.warning("account locked: %s (retry)", account)
+         return False
+     return True
+ 

@@ -1,0 +1,27 @@
+//! A cfg(test) helper panics on a mismatch; the production predicate is the
+//! only probe site.
+
+pub fn size_class(n: u32) -> &'static str {
+    if n > 10 {
+        "big"
+    } else {
+        "small"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expect_class(result: &str, expected: &str) {
+        if result != expected {
+            panic!("expected {expected}, got {result}");
+        }
+    }
+
+    #[test]
+    fn the_boundary_is_eleven_g_cfg_helper() {
+        expect_class(size_class(11), "big");
+        expect_class(size_class(10), "small");
+    }
+}

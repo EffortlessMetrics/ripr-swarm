@@ -1045,7 +1045,7 @@ fn generated_init_config_banner_discloses_defaults_and_language_pin() -> Result<
     let generated = generated_init_config();
     for needle in [
         "every value below is a built-in",
-        "this file pins to [\"rust\"]",
+        "which starts at [\"rust\"] plus any Python or",
         "enables languages it detects from project markers",
         "deleting this file is not identical",
         "ripr config validate",
@@ -2068,7 +2068,7 @@ fn a_recorded_retired_key_names_its_release_and_replacement() -> Result<(), Stri
             replacement: None,
         },
     ];
-    let err = "TOML parse error at line 1, column 1\n  |\n1 | old_mode = 1\n  | ^^^^^^^^\nunknown field `old_mode`, expected one of `analysis`";
+    let err = "unknown field `old_mode`, expected one of `analysis`";
     let hint = retired_key_hint_in(&retired, err)
         .ok_or_else(|| "a recorded retired key must produce a hint".to_string())?;
     assert_eq!(
@@ -2092,11 +2092,11 @@ fn a_recorded_retired_key_names_its_release_and_replacement() -> Result<(), Stri
     );
     // The hint also reads the error the real parser produces, so the lookup is
     // tied to serde's wording and not only to a hand-built string.
-    let Err(real) = parse_config("old_mode = 1\n") else {
+    let Err(real) = toml::from_str::<RawConfig>("old_mode = 1\n") else {
         return Err("an unknown top-level key must be refused".to_string());
     };
     assert_eq!(
-        retired_key_hint_in(&retired, &real),
+        retired_key_hint_in(&retired, real.message()),
         Some("\n`old_mode` was retired in ripr 9.9.0; use `analysis.mode` instead".to_string()),
         "real parser error: {real}"
     );
@@ -2168,6 +2168,67 @@ fn an_unknown_language_error_names_only_the_repair() -> Result<(), String> {
         "expected no internal tracking reference, got {message}"
     );
     Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn javascript_in_languages_enabled_enables_the_typescript_adapter() -> Result<(), String> {
+    let config = parse_config("[languages]\nenabled = [\"javascript\"]\n")?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::TypeScript]
+    );
+    Ok(())
+}
+
+#[test]
+fn javascript_and_typescript_together_are_a_duplicate_alias() -> Result<(), String> {
+    let Err(message) = parse_config("[languages]\nenabled = [\"typescript\", \"javascript\"]\n")
+    else {
+        return Err("typescript plus its javascript alias must be refused".to_string());
+    };
+    assert!(
+        message.contains("`javascript` is an alias for `typescript`"),
+        "expected the alias in the duplicate error, got {message}"
+    );
+    let Err(reversed) = parse_config("[languages]\nenabled = [\"javascript\", \"typescript\"]\n")
+    else {
+        return Err("javascript plus typescript must also be refused".to_string());
+    };
+    assert!(
+        reversed.contains("`javascript` is an alias for `typescript`"),
+        "expected the alias in the reversed duplicate error, got {reversed}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn javascript_twice_is_a_duplicate_and_rust_plus_javascript_parses() -> Result<(), String> {
+    let Err(message) = parse_config("[languages]\nenabled = [\"javascript\", \"javascript\"]\n")
+    else {
+        return Err("javascript listed twice must be refused".to_string());
+    };
+    assert!(
+        message.contains("lists `javascript` more than once"),
+        "expected the generic duplicate error, got {message}"
+    );
+    let config = parse_config("[languages]\nenabled = [\"rust\", \"javascript\"]\n")?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript]
+    );
+    Ok(())
+}
+
+#[cfg(not(feature = "lang-typescript"))]
+#[test]
+fn javascript_without_typescript_feature_names_the_feature() {
+    let result = parse_config("[languages]\nenabled = [\"javascript\"]\n");
+    assert!(
+        matches!(result, Err(ref message) if message.contains("lang-typescript")),
+        "expected missing lang-typescript error, got {result:?}"
+    );
 }
 
 #[test]
@@ -2825,12 +2886,122 @@ fn missing_config_detects_typescript_markers_and_source() -> Result<(), String> 
 
 #[cfg(feature = "lang-typescript")]
 #[test]
-fn missing_config_ignores_package_json_and_plain_javascript() -> Result<(), String> {
+fn missing_config_detects_typescript_one_level_below_root_and_under_workspace_containers()
+-> Result<(), String> {
+    // (label, file that makes the package) per layout.
+    let layouts = [
+        ("ts-nested-tsconfig", "library/tsconfig.json"),
+        ("ts-nested-src", "library/src/schema.ts"),
+        ("ts-nested-tests", "library/tests/schema.test.ts"),
+        ("ts-container-packages", "packages/remeda/tsconfig.json"),
+        ("ts-container-apps", "apps/web/src/main.ts"),
+        ("ts-container-libs", "libs/core/src/index.ts"),
+        ("ts-container-libraries", "libraries/core/tsconfig.json"),
+        ("ts-marker-in-src", "src/tsconfig.json"),
+        ("ts-marker-in-tests", "tests/jsconfig.json"),
+        ("ts-marker-in-container", "packages/tsconfig.json"),
+        ("ts-container-own-src", "packages/src/index.ts"),
+        ("ts-container-own-tests", "apps/tests/foo.ts"),
+    ];
+    for (label, file) in layouts {
+        let root = temp_root(label)?;
+        write_file(&root.join(file), "export {};\n")?;
+        let config = load_for_root(&root)?;
+        assert_eq!(
+            config.languages().enabled_owned(),
+            vec![LanguageId::Rust, LanguageId::TypeScript],
+            "{file} should enable TypeScript preview defaults"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn missing_config_ignores_nested_typescript_that_is_vendored_hidden_too_deep_or_plain_javascript()
+-> Result<(), String> {
+    let negatives = [
+        ("ts-nested-node-modules", "node_modules/pkg/tsconfig.json"),
+        ("ts-nested-vendor", "vendor/pkg/src/index.ts"),
+        ("ts-nested-dist", "dist/tsconfig.json"),
+        ("ts-nested-hidden", ".config/tsconfig.json"),
+        (
+            "ts-nested-container-vendor",
+            "packages/vendor/tsconfig.json",
+        ),
+        (
+            "ts-nested-container-excluded",
+            "packages/node_modules/tsconfig.json",
+        ),
+        ("ts-nested-too-deep", "a/b/tsconfig.json"),
+        ("ts-nested-container-too-deep", "packages/a/b/tsconfig.json"),
+        ("ts-nested-plain-js", "library/src/schema.js"),
+        ("ts-nested-package-json", "library/package.json"),
+        ("ts-nested-declaration", "library/src/types.d.ts"),
+        ("ts-nested-non-container", "tools/pkg/tsconfig.json"),
+        ("ts-nested-hidden-source", "library/src/.private/entry.ts"),
+        (
+            "ts-container-hidden-source",
+            "packages/lib/src/.private/entry.ts",
+        ),
+    ];
+    for (label, file) in negatives {
+        let root = temp_root(label)?;
+        write_file(&root.join(file), "{}")?;
+        let config = load_for_root(&root)?;
+        assert_eq!(
+            config.languages().enabled_owned(),
+            vec![LanguageId::Rust],
+            "{file} must not enable TypeScript preview defaults"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn missing_config_detects_package_source_beside_a_rust_project() -> Result<(), String> {
     let root = temp_root("ts-not-detected")?;
     write_file(&root.join("package.json"), "{}")?;
+    write_file(&root.join("Cargo.toml"), "[package]\nname = \"demo\"\n")?;
     write_file(&root.join("src/app.js"), "export {};\n")?;
     let config = load_for_root(&root)?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript]
+    );
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// A manifest alone, or tooling config files, selects nothing (#10941).
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn missing_config_ignores_a_manifest_with_only_tooling_config() -> Result<(), String> {
+    let root = temp_root("ts-tooling-only")?;
+    write_file(&root.join("package.json"), "{}")?;
+    write_file(&root.join("eslint.config.js"), "export default [];\n")?;
+    let config = load_for_root(&root)?;
     assert_eq!(config.languages().enabled_owned(), vec![LanguageId::Rust]);
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #11336: a plain JavaScript package (manifest plus JavaScript, no Cargo or
+/// Python project) is analyzed without a hand-written `ripr.toml`.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn missing_config_detects_a_javascript_led_package() -> Result<(), String> {
+    let root = temp_root("js-led-detected")?;
+    write_file(&root.join("package.json"), "{}")?;
+    write_file(&root.join("index.js"), "export {};\n")?;
+    let config = load_for_root(&root)?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript]
+    );
     let _ = fs::remove_dir_all(&root);
     Ok(())
 }

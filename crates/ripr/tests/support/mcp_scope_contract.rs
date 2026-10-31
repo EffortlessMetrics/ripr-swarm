@@ -28,10 +28,15 @@ fn status_and_refresh_advertise_committed_scope_variants() -> Result<(), String>
         "properties": {
             "analyzed": {
                 "type": "string",
-                "pattern": "^committed (default-branch diff|diff against base .+)$"
+                "pattern": "^(committed (default-branch diff|diff against base .+)|saved tracked-worktree diff against (the default branch|base .+))$"
             },
-            "uncommitted_edits": { "type": "string", "const": "outside this analysis" },
+            "uncommitted_edits": {
+                "type": "string",
+                "enum": ["outside this analysis", "saved tracked edits included"]
+            },
             "note": { "type": "string" },
+            "consumed_source_commitment": { "type": "string", "enum": ["not_established", "established"] },
+            "repair_cards": { "type": "string", "enum": ["withheld", "available"] },
             "untracked_edits": {
                 "type": "object",
                 "properties": {

@@ -148,6 +148,11 @@ pub(crate) struct GhPrStatusReadiness {
 #[derive(Debug, Default)]
 pub(crate) struct TraceBehavior {
     pub(crate) line: usize,
+    /// An `[[extend]]` entry: it adds array items to the behavior with the
+    /// same `id` and carries no name or spec of its own.
+    pub(crate) extends: bool,
+    /// The manifest file the entry was read from, for violation messages.
+    pub(crate) source: String,
     pub(crate) id: Option<String>,
     pub(crate) name: Option<String>,
     pub(crate) spec: Option<String>,
@@ -167,6 +172,8 @@ pub(crate) struct Capability {
     pub(crate) spec: Option<String>,
     pub(crate) evidence: Vec<String>,
     pub(crate) fixtures: Vec<String>,
+    /// Explicit registry identities; omission means this entry claims no cells.
+    pub(crate) cells: Option<Vec<String>>,
     pub(crate) next: Option<String>,
     pub(crate) metric: Option<String>,
 }

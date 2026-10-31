@@ -9,7 +9,7 @@ use crate::analysis;
 use crate::app::Mode;
 use crate::cli::CommandError;
 use crate::cli::help;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CONFIG_FILE_NAME, DEFAULT_LSP_SEAM_DIAGNOSTICS, RiprConfig};
 use crate::domain::{LanguageId, LanguageStatus};
 use crate::output;
@@ -38,8 +38,10 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     Some("analysis") => output::doctor::DoctorProfile::Analysis,
                     Some("source-build") => output::doctor::DoctorProfile::SourceBuild,
                     Some(other) => {
-                        return Err(CommandError::from(format!(
-                            "unknown doctor profile `{other}`; expected `analysis` or `source-build`"
+                        return Err(CommandError::from(unknown_value(
+                            "doctor profile",
+                            other,
+                            &["analysis", "source-build"],
                         )));
                     }
                     None => {
@@ -120,7 +122,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
         language_detection_elapsed,
     );
     report.segments = environment.facts.segments.clone();
-    let binary = output::doctor_binary::probe_binary_identity();
+    let binary = output::doctor_binary::probe_binary_identity(&root);
     ok &= add_language_runtime_probes(
         &root,
         &detected,
@@ -178,7 +180,7 @@ fn doctor_json(
     let evaluation =
         output::doctor::evaluate_doctor_core_with_config_for_profile(root, detected, profile);
     let mut report = evaluation.report;
-    report.binary = Some(output::doctor_binary::probe_binary_identity());
+    report.binary = Some(output::doctor_binary::probe_binary_identity(root));
     let enabled_languages = enabled_languages(&evaluation.config);
     let _ = add_language_runtime_probes(
         root,
@@ -198,6 +200,9 @@ fn doctor_json(
         language_detection_elapsed,
     );
     report.apply_environment(environment.facts);
+    if let Some(verdict) = mcp_config_verdict(root) {
+        report.add_mcp_config_check(verdict.ok, verdict.text);
+    }
     if profile == output::doctor::DoctorProfile::SourceBuild
         && let Some(advisory) = linker_temp_redirect_advisory(root)
     {
@@ -303,8 +308,9 @@ fn detected_language_entries(
             language: id.as_str().to_string(),
             status: language_status(*id),
             adapter_available: id.is_available(),
-            // JavaScript has no config entry of its own: the `typescript`
-            // entry analyzes it, so enablement is read through the same
+            // JavaScript is analyzed by the `typescript` entry (and
+            // `javascript` is accepted as its alias), so enablement is read
+            // through the same
             // mapping the gaps path uses. `None` (no loaded configuration)
             // stays unknown rather than reading as disabled.
             enabled: enabled.map(|list| list.contains(&config_entry(*id))),
@@ -387,12 +393,21 @@ fn cache_status(root: &Path, perl_cache_dir: Option<&Path>) -> output::doctor::D
         std::env::var(analysis::seam_cache::CACHE_DIR_ENV).is_ok_and(|v| !v.trim().is_empty());
     let size_bytes = dir_size_bytes(&cache_dir);
     let artifact_roots = analysis::ripr_artifact_roots(root, &cache_dir, perl_cache_dir);
+    // #9858: when nothing exists yet, ripr_artifact_ignore has nothing to
+    // probe and reports NoArtifacts; a non-Cargo project then gets no ignore
+    // guidance before its first write, so probe the would-be root anyway.
+    let artifact_ignore = match ripr_artifact_ignore(root, &artifact_roots) {
+        output::doctor::DoctorArtifactIgnore::NoArtifacts => {
+            preemptive_artifact_ignore(root, &artifact_roots)
+        }
+        verdict => verdict,
+    };
     output::doctor::DoctorCacheStatus {
         cache_dir: output::path::human_path(&cache_dir),
         relocated_by_env: relocated,
         size_bytes,
         size_display: format_bytes(size_bytes),
-        artifact_ignore: ripr_artifact_ignore(root, &artifact_roots),
+        artifact_ignore,
         artifact_tracking: ripr_artifact_tracking(root, &artifact_roots),
     }
 }
@@ -481,6 +496,40 @@ fn tool_probe_renderer_fix(evidence: &str) -> Option<&'static str> {
     })
 }
 
+/// The shared reason of a skipped Rust check whose root is not a Rust
+/// project (`<tool> check skipped: Rust not detected ...` or `Rust is not
+/// enabled ...`), so the printer can say it once. Other skip reasons (an
+/// unusable root) keep their per-check lines.
+fn rust_scope_skip_reason(evidence: &str) -> Option<&str> {
+    let (_, reason) = evidence.split_once(" check skipped: ")?;
+    (reason.starts_with("Rust not detected") || reason.starts_with("Rust is not enabled"))
+        .then_some(reason)
+}
+
+/// Plain wording for the analysis-profile cargo/rustc notes on the compact
+/// screen (#10696). The JSON evidence keeps the producer string; this only
+/// rewrites the two known `<state>; <effect>; project verification ...`
+/// shapes and passes anything else through unchanged.
+fn plain_toolchain_note(text: &str) -> String {
+    const BUILD_TAIL: &str = "; project verification and source builds require their own toolchain";
+    let Some(head) = text.strip_suffix(BUILD_TAIL) else {
+        return text.to_string();
+    };
+    let Some((state, effect)) = head.split_once("; ") else {
+        return text.to_string();
+    };
+    let state = state.replace(" timed out after ", " did not answer within ");
+    if effect.contains("does not run rustc") {
+        format!("{state}. ripr does not need rustc to analyze your code; your own builds do.")
+    } else if effect.contains("cargo metadata") {
+        format!(
+            "{state}. ripr still analyzes, but skips test-target details that need `cargo metadata`; your own builds need cargo."
+        )
+    } else {
+        text.to_string()
+    }
+}
+
 fn compact_tilde_line(text: &str) -> String {
     format!("~ {}", display_text(text))
 }
@@ -498,6 +547,11 @@ fn runtime_failure_block(probe: &output::doctor::DoctorRuntimeProbe) -> Vec<Stri
 
 fn primary_runtime_probe(probe: &output::doctor::DoctorRuntimeProbe) -> bool {
     primary_runtime(&probe.language).is_some_and(|(tool, _)| tool == probe.tool)
+}
+
+/// The pytest probe, which only exists when Python is in scope.
+fn pytest_runtime_probe(probe: &output::doctor::DoctorRuntimeProbe) -> bool {
+    probe.language == "python" && probe.tool == "pytest"
 }
 
 fn join_compact(label: &str, parts: &[String]) -> Option<String> {
@@ -549,11 +603,9 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         doctor_profile_name(profile),
         report.ripr_version
     ));
-    lines.push(format!(
-        "Root: {} · Rust {} MSRV",
-        display_path(root),
-        report.ripr_build_msrv
-    ));
+    // The build minimum is ripr's own source-build requirement (#10696); it
+    // stays in the JSON report, not on the first screen.
+    lines.push(format!("Root: {}", display_path(root)));
     lines.push(String::new());
 
     // Failures first, each with its own fix line (#8168).
@@ -600,7 +652,11 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     // substitution.
     if let Some(check) = check_named(report, "git_head") {
         let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
-        lines.push(compact_tilde_line(evidence));
+        if check.status == output::doctor::DoctorCheckStatus::Fail {
+            lines.extend(failure_block(evidence));
+        } else {
+            lines.push(compact_tilde_line(evidence));
+        }
     }
     if let Some(advisory) = generated_workflow_advisory(root) {
         lines.push(compact_tilde_line(&format!(
@@ -613,13 +669,22 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         lines.push(compact_tilde_line(&advisory));
     }
     for warning in &binary.warnings {
-        lines.push(format!("- warning: {}", display_text(warning)));
+        // #10347: a config that launches `ripr` by name with no `ripr` on PATH
+        // is an advisory repair signal, spelled like the other `~` advisories.
+        if binary.compact_path_advisory() == Some(warning.as_str()) {
+            lines.push(compact_tilde_line(warning));
+        } else {
+            lines.push(format!("- warning: {}", display_text(warning)));
+        }
     }
 
     // Compact passing groups, then leftover skip/advisory lines that tests
     // and SPEC-0007 still name by their evidence text.
     let mut workspace = Vec::new();
     let mut toolchains = Vec::new();
+    // One line for the Rust checks a non-Rust root skips (Cargo.toml, cargo,
+    // rustc, ...), instead of one near-identical line per check.
+    let mut rust_skip_emitted = false;
     for name in ["root_directory", "cargo_toml", "git_repository"] {
         if let Some(check) = check_named(report, name) {
             match check.status {
@@ -629,10 +694,15 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
                     ));
                 }
                 output::doctor::DoctorCheckStatus::Skipped => {
-                    lines.push(format!(
-                        "- {}",
-                        display_text(check.evidence.as_deref().unwrap_or(check.name.as_str()))
-                    ));
+                    let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
+                    if let Some(reason) = rust_scope_skip_reason(evidence) {
+                        if !rust_skip_emitted {
+                            rust_skip_emitted = true;
+                            lines.push(format!("- Rust checks skipped: {}", display_text(reason)));
+                        }
+                    } else {
+                        lines.push(format!("- {}", display_text(evidence)));
+                    }
                 }
                 _ => {}
             }
@@ -641,6 +711,10 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     if config.is_ok() {
         if let Some(defaults) = environment.facts.config_defaults.as_ref() {
             match &defaults.source_path {
+                // A root that is not a directory is already reported as the
+                // failure; a parent `ripr.toml` found by upward discovery must
+                // not read as a healthy loaded workspace config.
+                _ if !root.is_dir() => {}
                 Some(path) => {
                     workspace.push(format!("Config: loaded {CONFIG_FILE_NAME}"));
                     lines.push(format!("- Config path: {}", display_text(path)));
@@ -678,6 +752,16 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
                 }
                 output::doctor::DoctorCheckStatus::Skipped
                 | output::doctor::DoctorCheckStatus::Advisory => {
+                    if check.status == output::doctor::DoctorCheckStatus::Skipped
+                        && let Some(reason) =
+                            check.evidence.as_deref().and_then(rust_scope_skip_reason)
+                    {
+                        if !rust_skip_emitted {
+                            rust_skip_emitted = true;
+                            lines.push(format!("- Rust checks skipped: {}", display_text(reason)));
+                        }
+                        continue;
+                    }
                     lines.push(format!(
                         "{} {}",
                         if check.status == output::doctor::DoctorCheckStatus::Advisory {
@@ -685,7 +769,9 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
                         } else {
                             "-"
                         },
-                        display_text(check.evidence.as_deref().unwrap_or(check.name.as_str()))
+                        plain_toolchain_note(&display_text(
+                            check.evidence.as_deref().unwrap_or(check.name.as_str())
+                        ))
                     ));
                 }
                 output::doctor::DoctorCheckStatus::Fail => {}
@@ -726,11 +812,22 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     } else {
         cache.cache_dir.clone()
     };
-    lines.push(format!(
-        "✓ Cache: {} ({})",
-        display_text(&cache_loc),
-        cache.size_display
-    ));
+    let cache_skip_reason = if cache.relocated_by_env {
+        None
+    } else {
+        output::doctor::root_unusable_skip_reason(root)
+    };
+    if let Some(reason) = cache_skip_reason {
+        // The default cache lives under the unusable root; a ✓ would claim
+        // a usable cache for a root that cannot hold one.
+        lines.push(format!("- Cache check skipped: {reason}"));
+    } else {
+        lines.push(format!(
+            "✓ Cache: {} ({})",
+            display_text(&cache_loc),
+            cache.size_display
+        ));
+    }
     // Keep the historical `- Cache location:` / `- Cache size:` spellings on
     // verbose so JSON/human parity still names the same words.
     if !cache.relocated_by_env && !root.is_dir() {
@@ -754,6 +851,14 @@ Point RIPR_CACHE_DIR at a writable directory.",
         lines.push(warning.clone());
     }
 
+    if let Some(verdict) = mcp_config_verdict(root) {
+        lines.push(format!(
+            "{} {}",
+            if verdict.ok { "✓" } else { "~" },
+            verdict.text
+        ));
+    }
+
     lines.extend(preview_language_enable_suggestions(
         environment.preview_enablement.as_ref(),
     ));
@@ -764,10 +869,12 @@ Point RIPR_CACHE_DIR at a writable directory.",
         }
         // Compact keeps enabled primary runtimes visible so source-build
         // still reports them as advisory (RIPR-SPEC-0007). Optional extras
-        // (pnpm, pytest, …) stay behind `-v`.
+        // (pnpm, …) stay behind `-v`; pytest is the Python verify command, so
+        // its found/missing state stays visible whenever it is probed.
         if verbose
             || (probe.required && probe.status == output::doctor::DoctorStatus::Pass)
             || primary_runtime_probe(probe)
+            || pytest_runtime_probe(probe)
         {
             lines.push(language_runtime_probe_display_line(probe));
         }
@@ -1099,6 +1206,7 @@ fn doctor_start_here_lines(
         output::doctor::DoctorFirstCommand::MissingRoot
         | output::doctor::DoctorFirstCommand::OutsideGit
         | output::doctor::DoctorFirstCommand::InvalidConfig
+        | output::doctor::DoctorFirstCommand::DamagedRefs
         | output::doctor::DoctorFirstCommand::FailedPrerequisites => {}
         // #5259: the recommended line above already names the commit-first
         // repair; the advisory `git_head` check line carries the same state.
@@ -1184,7 +1292,7 @@ fn shallow_has_file(root: &Path, name: &str) -> bool {
 /// Detect which languages have concrete file markers in this workspace.
 /// Returns detected `LanguageId`s in a stable order (Rust first, then
 /// TypeScript, JavaScript, Python, Perl).
-fn detect_languages(root: &Path) -> Vec<LanguageId> {
+pub(crate) fn detect_languages(root: &Path) -> Vec<LanguageId> {
     let mut found = Vec::new();
 
     // Rust: Cargo.toml at root OR .rs files in root/src (shared with the
@@ -1551,10 +1659,10 @@ fn preview_languages_to_enable(
     detected: &[LanguageId],
     config: &Result<RiprConfig, String>,
 ) -> Option<PreviewEnablement> {
-    // JavaScript is analyzed by the TypeScript adapter and has no config
-    // entry of its own (`parse_languages_enabled` accepts only `typescript`),
-    // so a detected JavaScript source maps to the `typescript` entry. Using
-    // the scanner id would print `"javascript"`, which config loading rejects.
+    // JavaScript is analyzed by the TypeScript adapter, so a detected
+    // JavaScript source maps to the `typescript` entry. The tip prints the
+    // canonical `typescript` name even though `javascript` is also accepted
+    // as an alias, so one spelling owns the suggestion.
     let mut preview_detected: Vec<LanguageId> = Vec::new();
     for id in detected
         .iter()
@@ -2733,55 +2841,55 @@ fn ripr_artifact_ignore(
     artifact_roots: &[PathBuf],
 ) -> output::doctor::DoctorArtifactIgnore {
     use output::doctor::DoctorArtifactIgnore;
-    let present: Vec<&Path> = artifact_roots
+    let present: Vec<PathBuf> = artifact_roots
         .iter()
         .filter(|relative| root.join(relative).is_dir())
-        .map(PathBuf::as_path)
+        .cloned()
         .collect();
     if present.is_empty() {
         return DoctorArtifactIgnore::NoArtifacts;
     }
-    let mut uncovered: Vec<String> = Vec::new();
-    for relative in &present {
-        let pathspec = analysis::artifact_root_pathspec(relative);
-        // The probe passes the PLAIN root: check-ignore takes pathnames,
-        // not pathspecs — its ignore-rule globs match against the literal
-        // characters of the pathname, so a rule like `/build/cache*/`
-        // covers a directory literally named `build/cache*` only when the
-        // pathname keeps its literal star. The earlier escaped form made
-        // the rule miss and doctor demand an ignore that already existed
-        // (PR #8901 review, coderabbit; verified against git 2.47:
-        // `git check-ignore -- 'build/cache\*'` answers "not ignored"
-        // while `-- 'build/cache*'` is covered). A root without glob
-        // characters is byte-identical in both forms, so ordinary configs
-        // are unaffected. `--no-index` asks only whether ignore RULES
-        // cover the path: without it, a tracked descendant (the exact
-        // state #7663 addresses: ripr reports already committed into
-        // history) makes check-ignore answer "not ignored" even when
-        // `/target/ripr/` is configured, so doctor would demand a rule
-        // that already exists. Exit 1 means the path is positively not
-        // ignored; exit 0 means covered; any other outcome (not a
-        // repository, git unavailable, deadline) keeps doctor honest by
-        // reporting `NotChecked` instead of claiming a checked fact it
-        // could not establish. Tracked descendants are a separate fact the
-        // ignore verdict deliberately does not fold in (#8257 review
-        // follow-up).
-        let probe = match crate::git::run_git_output_with_deadline(
-            root,
-            &["check-ignore", "--no-index", "-q", "--", &pathspec],
-            Some(std::time::Duration::from_secs(5)),
-        ) {
-            Ok(probe) => probe,
-            Err(_) => return DoctorArtifactIgnore::NotChecked,
-        };
-        match probe.status.code() {
-            Some(0) => {}
-            Some(1) => uncovered.push(pathspec),
-            _ => return DoctorArtifactIgnore::NotChecked,
+    // A Cargo project's repair preflight needs the whole build directory
+    // `target/` ignored (a child-only `/target/ripr/` rule is insufficient),
+    // so coverage of the default root is judged by `target/` itself and the
+    // advice names `/target/` (#9006).
+    let cargo_project = root.join("Cargo.toml").is_file();
+    let probe_roots = if cargo_project {
+        let mut roots: Vec<PathBuf> = Vec::new();
+        for relative in &present {
+            let probe = if analysis::artifact_root_pathspec(relative) == "target/ripr" {
+                PathBuf::from("target")
+            } else {
+                relative.clone()
+            };
+            if !roots.contains(&probe) {
+                roots.push(probe);
+            }
         }
-    }
+        roots
+    } else {
+        present
+    };
+    let Some(uncovered) = uncovered_artifact_roots(root, &probe_roots) else {
+        return DoctorArtifactIgnore::NotChecked;
+    };
     if uncovered.is_empty() {
         return DoctorArtifactIgnore::Ignored;
+    }
+    // Only the repair prerequisite is unmet when a child-only rule already
+    // ignores ripr's own reports: do not claim `git add -A` would commit them.
+    if cargo_project
+        && uncovered_artifact_roots(root, &[PathBuf::from("target/ripr")])
+            .is_some_and(|child| child.is_empty())
+    {
+        return DoctorArtifactIgnore::Unignored {
+            warning: format!(
+                "~ ripr's own reports under target/ripr are ignored, but Rust repair \
+                 requires Cargo's whole build directory `target/` to be Git-ignored. \
+                 Add this line to .gitignore: {}",
+                artifact_gitignore_entries(&uncovered),
+            ),
+        };
     }
     DoctorArtifactIgnore::Unignored {
         warning: format!(
@@ -2789,11 +2897,107 @@ fn ripr_artifact_ignore(
              `git add -A` would commit ripr's own reports into your history. \
              Add this line to .gitignore: {}",
             artifact_roots_display(&uncovered),
-            uncovered
-                .iter()
-                .map(|root| analysis::artifact_root_gitignore_entry(Path::new(root)))
-                .collect::<Vec<_>>()
-                .join(", ")
+            artifact_gitignore_entries(&uncovered),
+        ),
+    }
+}
+
+/// The exact `.gitignore` entries for the uncovered roots, one wording on
+/// every surface that names the repair.
+fn artifact_gitignore_entries(uncovered: &[String]) -> String {
+    uncovered
+        .iter()
+        .map(|root| analysis::artifact_root_gitignore_entry(Path::new(root)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The repository-relative artifact roots git positively reports as not
+/// covered by ignore rules. `git check-ignore --no-index` applies the full
+/// ignore semantics (nested `.gitignore` files, `.git/info/exclude`, global
+/// excludes) without letting already-tracked descendants veto the answer, so
+/// it decides coverage rather than a line-by-line reimplementation. The probe
+/// passes the PLAIN root: check-ignore takes pathnames, not pathspecs, and its
+/// ignore-rule globs match the literal characters of the pathname (PR #8901
+/// review, coderabbit; verified against git 2.47). `--no-index` asks only
+/// whether ignore RULES cover the path: without it, a tracked descendant (the
+/// exact state #7663 addresses: ripr reports already committed into history)
+/// makes check-ignore answer "not ignored" even when `/target/ripr/` is
+/// configured, so doctor would demand a rule that already exists. Exit 1 means
+/// the path is positively not ignored; exit 0 means covered; any other outcome
+/// (not a repository, git unavailable, deadline) returns `None` so the caller
+/// reports `NotChecked`/`NoArtifacts` instead of claiming a checked fact it
+/// could not establish. Tracked descendants are a separate fact the ignore
+/// verdict deliberately does not fold in (#8257 review follow-up).
+///
+/// Probing a root that does not exist yet is valid (that is what
+/// `--no-index` is for) and is exactly what the first-run pre-emptive
+/// warning needs (#9858).
+pub(crate) fn uncovered_artifact_roots(
+    root: &Path,
+    artifact_roots: &[PathBuf],
+) -> Option<Vec<String>> {
+    let mut uncovered: Vec<String> = Vec::new();
+    for relative in artifact_roots {
+        let pathspec = analysis::artifact_root_pathspec(relative);
+        // A directory-only ignore rule (`/target/ripr/`) cannot match a path
+        // git cannot see as a directory: on a first run the artifact root
+        // does not exist yet, so probe it with a trailing slash. An existing
+        // root answers identically in both forms (verified against git
+        // 2.47), so the present-artifact verdict is unchanged (#9858).
+        let probe_path = if root.join(relative).is_dir() {
+            pathspec.clone()
+        } else {
+            format!("{pathspec}/")
+        };
+        let probe = match crate::git::run_git_output_with_deadline(
+            root,
+            &["check-ignore", "--no-index", "-q", "--", &probe_path],
+            Some(std::time::Duration::from_secs(5)),
+        ) {
+            Ok(probe) => probe,
+            Err(_) => return None,
+        };
+        match probe.status.code() {
+            Some(0) => {}
+            Some(1) => uncovered.push(pathspec),
+            _ => return None,
+        }
+    }
+    Some(uncovered)
+}
+
+/// #9858: on the first run in a non-Cargo project nothing exists under
+/// `target/ripr` yet, so `ripr_artifact_ignore` reports `NoArtifacts` and the
+/// newcomer who runs `ripr doctor` before anything else gets no ignore
+/// guidance, then `ripr pilot` leaves a `target/` tree their VCS flags, one
+/// `git add .` from being committed. Python/TypeScript templates never ignore
+/// Cargo-conventional `target/`, so probe the would-be root anyway and warn
+/// before the first write. Cargo projects keep the historical first-run
+/// silence: Rust behavior is identical. A probe that cannot establish
+/// coverage (not a git repository, git unavailable, deadline) stays
+/// `NotChecked`-quiet like the existing verdict.
+fn preemptive_artifact_ignore(
+    root: &Path,
+    artifact_roots: &[PathBuf],
+) -> output::doctor::DoctorArtifactIgnore {
+    use output::doctor::DoctorArtifactIgnore;
+    if root.join("Cargo.toml").is_file() {
+        return DoctorArtifactIgnore::NoArtifacts;
+    }
+    let Some(uncovered) = uncovered_artifact_roots(root, artifact_roots) else {
+        return DoctorArtifactIgnore::NotChecked;
+    };
+    if uncovered.is_empty() {
+        return DoctorArtifactIgnore::Ignored;
+    }
+    DoctorArtifactIgnore::Unignored {
+        warning: format!(
+            "~ ripr will write artifacts under {} in this project (not covered by \
+             git ignore rules); `git add -A` would commit ripr's own reports \
+             into your history. Add this line to .gitignore: {}",
+            artifact_roots_display(&uncovered),
+            artifact_gitignore_entries(&uncovered),
         ),
     }
 }
@@ -3205,6 +3409,106 @@ fn generated_workflow_line(root: &Path, workflow: &str, current_version: &str) -
     }
 }
 
+/// Largest `.mcp.json` doctor reads; a real one is a few hundred bytes.
+const MCP_CONFIG_MAX_BYTES: u64 = 1024 * 1024;
+
+/// What doctor found in a root's `.mcp.json` (#10347): whether it wires up
+/// `ripr mcp --stdio` the way `ripr init --mcp` writes it. Advisory only.
+struct McpConfigVerdict {
+    ok: bool,
+    text: String,
+}
+
+/// Judges `<root>/.mcp.json`; `None` when the file is absent (or not a regular
+/// file), because a project without MCP config has nothing to verify.
+fn mcp_config_verdict(root: &Path) -> Option<McpConfigVerdict> {
+    let path = root.join(".mcp.json");
+    if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()) {
+        return None;
+    }
+    let verdict = match crate::bounded_input::read_to_string_with_limit(&path, MCP_CONFIG_MAX_BYTES)
+    {
+        Err(error) => Err((
+            format!(".mcp.json could not be read ({error})"),
+            MCP_REPAIR_FIX_FILE,
+        )),
+        Ok(text) => mcp_config_problem(&text),
+    };
+    Some(match verdict {
+        Ok(()) => McpConfigVerdict {
+            ok: true,
+            text: ".mcp.json: `ripr` MCP server runs `ripr mcp --stdio`".to_string(),
+        },
+        Err((problem, repair)) => McpConfigVerdict {
+            ok: false,
+            text: format!(".mcp.json: {problem}; {repair}"),
+        },
+    })
+}
+
+/// Repair advice per failure category: `ripr init --mcp` refuses to touch a
+/// file that is not a JSON object with an object `mcpServers`, so those need a
+/// manual fix first.
+const MCP_REPAIR_FIX_FILE: &str = "fix or remove the file, then run `ripr init --mcp`";
+const MCP_REPAIR_INIT: &str = "run `ripr init --mcp`";
+const MCP_REPAIR_FORCE: &str = "run `ripr init --mcp --force` to replace the customized entry";
+
+/// `Ok` when the document has a `ripr` server whose command is `ripr` with
+/// args exactly `mcp --stdio` (the entry `ripr init --mcp` writes; `ripr mcp`
+/// rejects any other leading argument). `Err` carries the problem and repair.
+fn mcp_config_problem(text: &str) -> Result<(), (String, &'static str)> {
+    let document: serde_json::Value = serde_json::from_str(text).map_err(|error| {
+        (
+            format!("is not valid JSON ({})", display_text(&error.to_string())),
+            MCP_REPAIR_FIX_FILE,
+        )
+    })?;
+    if !document.is_object() {
+        return Err(("is not a JSON object".to_string(), MCP_REPAIR_FIX_FILE));
+    }
+    // `ripr init --mcp` adds a missing `mcpServers` key but refuses one that
+    // is not an object.
+    let Some(servers) = document.get("mcpServers") else {
+        return Err(("has no `mcpServers` object".to_string(), MCP_REPAIR_INIT));
+    };
+    let servers = servers.as_object().ok_or_else(|| {
+        (
+            "has an `mcpServers` that is not an object".to_string(),
+            MCP_REPAIR_FIX_FILE,
+        )
+    })?;
+    let entry = servers
+        .get("ripr")
+        .ok_or_else(|| ("has no `ripr` server entry".to_string(), MCP_REPAIR_INIT))?;
+    let command = entry.get("command").and_then(serde_json::Value::as_str);
+    let args = entry.get("args").and_then(serde_json::Value::as_array);
+    let exact = args.is_some_and(|args| {
+        args.len() == 2 && args[0].as_str() == Some("mcp") && args[1].as_str() == Some("--stdio")
+    });
+    if command == Some("ripr") && exact {
+        return Ok(());
+    }
+    let shown = args
+        .map(|args| {
+            args.iter()
+                .map(|arg| arg.as_str().map_or_else(|| arg.to_string(), str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Err((
+        format!(
+            "`ripr` server entry runs `{}`, not `ripr mcp --stdio`",
+            display_text(
+                &std::iter::once(command.unwrap_or("<no command>").to_string())
+                    .chain(shown)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        ),
+        MCP_REPAIR_FORCE,
+    ))
+}
+
 /// Workspace-relative Cargo config paths Cargo reads `[env]` from, in Cargo's
 /// own precedence order: the extensionless name wins when both exist ("If
 /// both files exist, Cargo will use the file without the extension", Cargo
@@ -3429,6 +3733,42 @@ mod tests {
     use super::super::tests::{args, unique_command_test_dir};
     use super::*;
 
+    #[test]
+    fn rust_scope_skip_reason_matches_only_non_rust_scope_reasons() {
+        let reason =
+            "Rust not detected at this root (no Cargo.toml or .rs files); in scope: python";
+        assert_eq!(
+            rust_scope_skip_reason(&format!("cargo check skipped: {reason}")),
+            Some(reason)
+        );
+        assert_eq!(
+            rust_scope_skip_reason("Cargo.toml check skipped: Rust is not enabled in [languages]"),
+            Some("Rust is not enabled in [languages]")
+        );
+        // An unusable root keeps its per-check lines.
+        assert_eq!(
+            rust_scope_skip_reason("cargo check skipped: the root directory does not exist"),
+            None
+        );
+        assert_eq!(rust_scope_skip_reason("git version 2.43.0"), None);
+    }
+
+    #[test]
+    fn pytest_probe_is_visible_on_the_compact_screen() {
+        let probe = |language: &str, tool: &str| output::doctor::DoctorRuntimeProbe {
+            language: language.to_string(),
+            tool: tool.to_string(),
+            status: output::doctor::DoctorStatus::Pass,
+            evidence: "pytest 9.1.1".to_string(),
+            required: false,
+            hint: String::new(),
+            elapsed_ms: None,
+        };
+        assert!(pytest_runtime_probe(&probe("python", "pytest")));
+        assert!(!pytest_runtime_probe(&probe("python", "python3")));
+        assert!(!pytest_runtime_probe(&probe("typescript", "pnpm")));
+    }
+
     fn quiet_binary() -> output::doctor_binary::DoctorBinaryIdentity {
         output::doctor_binary::DoctorBinaryIdentity {
             version: "ripr 0.11.0".to_string(),
@@ -3440,6 +3780,7 @@ mod tests {
             path_ripr_is_cargo_build_output: false,
             path_ripr_is_running_executable: None,
             warnings: Vec::new(),
+            missing_path_dependents: Vec::new(),
         }
     }
 
@@ -3536,6 +3877,73 @@ mod tests {
             verbose,
             passed,
         })
+    }
+
+    #[test]
+    fn header_keeps_the_build_msrv_off_the_first_screen() {
+        // #11114 / #10696: ripr's own build MSRV stays in the JSON report; the
+        // header line beside the analyzed root must not read as the
+        // workspace's MSRV.
+        let report = passing_report();
+        let environment = empty_environment();
+        let lines = render_screen(&report, &environment, false, true);
+        assert_eq!(
+            lines.get(1).map(String::as_str),
+            Some("Root: ."),
+            "{lines:?}"
+        );
+        assert!(
+            !lines.iter().take(3).any(|line| line.contains("MSRV")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn default_screen_warns_when_config_launches_ripr_missing_from_path() {
+        // #10347: advisory `~` line on the default screen, quiet without a
+        // dependent config, and the exit decision (`passed`) is untouched.
+        let report = passing_report();
+        let environment = empty_environment();
+        let binary = quiet_binary().with_path_dependents(vec![".mcp.json".to_string()]);
+        let screen = |binary: &output::doctor_binary::DoctorBinaryIdentity, verbose: bool| {
+            render_doctor_human_screen(DoctorHumanScreen {
+                root: Path::new("."),
+                profile: output::doctor::DoctorProfile::Analysis,
+                report: &report,
+                config: &Ok(RiprConfig::default()),
+                environment: &environment,
+                binary,
+                verbose,
+                passed: true,
+            })
+        };
+        let lines = screen(&binary, false);
+        assert!(
+            lines.iter().any(
+                |line| line.starts_with("~ `ripr` is not on this shell's PATH")
+                    && line.contains(".mcp.json")
+            ),
+            "{lines:?}"
+        );
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some("✓ doctor checks passed"),
+            "{lines:?}"
+        );
+        let verbose = screen(&binary, true);
+        assert!(
+            verbose
+                .iter()
+                .any(|line| line.starts_with("~ `ripr` is not on this shell's PATH")),
+            "{verbose:?}"
+        );
+        let quiet = screen(&quiet_binary().with_path_dependents(Vec::new()), false);
+        assert!(
+            !quiet
+                .iter()
+                .any(|line| line.contains("not on this shell's PATH")),
+            "{quiet:?}"
+        );
     }
 
     #[test]
@@ -3669,6 +4077,35 @@ mod tests {
             !lower.contains("install") && !lower.contains("rustup"),
             "timeout is not a missing-tool install: {timeout:?}"
         );
+    }
+
+    /// #10696 review: each recognized evidence shape is rewritten, and any
+    /// other text (older or newer producer wording) passes through unchanged.
+    #[test]
+    fn plain_toolchain_note_rewrites_known_shapes_and_passes_the_rest_through() {
+        let tail = "; project verification and source builds require their own toolchain";
+        let rustc = plain_toolchain_note(&format!(
+            "rustc timed out after 5s; the installed binary's static analysis does not run rustc{tail}"
+        ));
+        assert_eq!(
+            rustc,
+            "rustc did not answer within 5s. ripr does not need rustc to analyze your code; your own builds do."
+        );
+        let cargo = plain_toolchain_note(&format!(
+            "cargo not available; static analysis continues, but evidence that reads `cargo metadata` in the selected root is withheld{tail}"
+        ));
+        assert!(
+            cargo.starts_with("cargo not available. ripr still analyzes"),
+            "{cargo}"
+        );
+        assert!(!cargo.contains("project verification"), "{cargo}");
+        for other in [
+            "git version 2.43.0",
+            "rustc not available; some future effect wording; project verification and source builds require their own toolchain",
+            "rustc not available; the installed binary's static analysis does not run rustc",
+        ] {
+            assert_eq!(plain_toolchain_note(other), other);
+        }
     }
 
     #[test]
@@ -4948,6 +5385,135 @@ mod tests {
     }
 
     #[test]
+    fn ripr_artifact_ignore_advises_the_whole_target_dir_for_a_cargo_project() -> Result<(), String>
+    {
+        use output::doctor::DoctorArtifactIgnore;
+        let root = unique_command_test_dir("artifact-cargo-target");
+        std::fs::create_dir_all(root.join("target/ripr/pilot"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        // The repair preflight needs `target/` itself ignored, so the advice
+        // for a Cargo project is `/target/`, not the child-only `/target/ripr/`.
+        let DoctorArtifactIgnore::Unignored { warning } =
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root))
+        else {
+            return Err("expected Unignored".to_string());
+        };
+        let entry = warning
+            .split_once("Add this line to .gitignore: ")
+            .ok_or("missing advice")?
+            .1;
+        assert_eq!(entry, "/target/", "{warning}");
+        // A child-only `/target/ripr/` rule (the old advice) does not satisfy
+        // the preflight, so doctor still flags it and names `/target/`.
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        let DoctorArtifactIgnore::Unignored { warning } =
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root))
+        else {
+            return Err("expected Unignored for a child-only rule".to_string());
+        };
+        assert!(warning.ends_with("/target/"), "{warning}");
+        assert!(!warning.contains("would commit"), "{warning}");
+        assert!(warning.contains("Rust repair requires"), "{warning}");
+        std::fs::write(root.join(".gitignore"), format!("{entry}\n"))
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::Ignored
+        );
+        let build_output = crate::git::run_git_output_with_deadline(
+            &root,
+            &["check-ignore", "--no-index", "-q", "--", "target"],
+            Some(std::time::Duration::from_secs(5)),
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(build_output.status.code(), Some(0), "{build_output:?}");
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn preemptive_artifact_ignore_warns_before_the_first_write() -> Result<(), String> {
+        use output::doctor::DoctorArtifactIgnore;
+        let root = unique_command_test_dir("artifact-preemptive");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            ["config", "user.email", "ripr@example.invalid"].as_slice(),
+            ["config", "user.name", "ripr tests"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        // Nothing exists yet: the existing verdict has nothing to probe.
+        assert_eq!(
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::NoArtifacts
+        );
+        // A non-Cargo project is warned before the first write, with the
+        // exact entry to add (#9858). The subject clause says ripr *will
+        // write*; the consequence and entry match the existing-artifact
+        // warning word for word.
+        match preemptive_artifact_ignore(&root, &default_artifact_roots(&root)) {
+            DoctorArtifactIgnore::Unignored { warning } => {
+                assert!(
+                    warning.contains("will write artifacts under target/ripr"),
+                    "{warning}"
+                );
+                assert!(warning.contains("/target/ripr/"), "{warning}");
+                assert!(warning.starts_with("~ "), "{warning}");
+            }
+            other => return Err(format!("expected Unignored, got {other:?}")),
+        }
+        // A Cargo project keeps the historical first-run silence: Rust
+        // behavior is unchanged.
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            preemptive_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::NoArtifacts
+        );
+        // The covering entry silences the pre-emptive arm too.
+        std::fs::remove_file(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            preemptive_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::Ignored
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn ripr_artifact_ignore_probes_a_relocated_cache_root() -> Result<(), String> {
         // #8751: when RIPR_CACHE_DIR moves the artifact base inside the
         // repository (e.g. `.ripr-cache` to keep `target/` clean), the
@@ -5631,6 +6197,127 @@ mod tests {
             "when both config names exist the extensionless redirect must win: {conflicting:?}"
         );
         assert_eq!(too_big, None);
+        Ok(())
+    }
+
+    fn mcp_verdict_for(name: &str, text: Option<&str>) -> Result<Option<(bool, String)>, String> {
+        let root = unique_command_test_dir(name);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        if let Some(text) = text {
+            std::fs::write(root.join(".mcp.json"), text)
+                .map_err(|err| format!("write .mcp.json: {err}"))?;
+        }
+        let verdict = mcp_config_verdict(&root).map(|verdict| (verdict.ok, verdict.text));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(verdict)
+    }
+
+    #[test]
+    fn mcp_config_verdict_accepts_what_init_writes_and_names_each_problem() -> Result<(), String> {
+        // Absent file: nothing to verify, no line.
+        assert_eq!(mcp_verdict_for("mcp-cfg-absent", None)?, None);
+
+        // The exact entry `ripr init --mcp` writes, beside another server.
+        let ok = mcp_verdict_for(
+            "mcp-cfg-ok",
+            Some(
+                r#"{"mcpServers":{"other":{"command":"x"},"ripr":{"command":"ripr","args":["mcp","--stdio"]}}}"#,
+            ),
+        )?;
+        assert!(
+            ok.as_ref()
+                .is_some_and(|(ok, text)| *ok && text.contains("runs `ripr mcp --stdio`")),
+            "{ok:?}"
+        );
+
+        let cases = [
+            ("mcp-cfg-bad-json", "{ not json", "is not valid JSON"),
+            (
+                "mcp-cfg-no-servers",
+                r#"{"mcpServers":[]}"#,
+                "`mcpServers` that is not an object",
+            ),
+            ("mcp-cfg-root-array", "[]", "is not a JSON object"),
+            ("mcp-cfg-no-key", "{}", "has no `mcpServers` object"),
+            (
+                "mcp-cfg-other-server",
+                r#"{"mcpServers":{"other":{"command":"ripr","args":["mcp","--stdio"]}}}"#,
+                "no `ripr` server entry",
+            ),
+            (
+                "mcp-cfg-wrong-args",
+                r#"{"mcpServers":{"ripr":{"command":"ripr","args":["mcp"]}}}"#,
+                "runs `ripr mcp`, not `ripr mcp --stdio`",
+            ),
+            (
+                "mcp-cfg-wrong-command",
+                r#"{"mcpServers":{"ripr":{"command":"/opt/ripr","args":["mcp","--stdio"]}}}"#,
+                "runs `/opt/ripr mcp --stdio`, not `ripr mcp --stdio`",
+            ),
+            (
+                "mcp-cfg-extra-leading-arg",
+                r#"{"mcpServers":{"ripr":{"command":"ripr","args":["bogus","mcp","--stdio"]}}}"#,
+                "runs `ripr bogus mcp --stdio`",
+            ),
+            (
+                "mcp-cfg-non-string-arg",
+                r#"{"mcpServers":{"ripr":{"command":"ripr","args":[1,"mcp","--stdio"]}}}"#,
+                "runs `ripr 1 mcp --stdio`",
+            ),
+            (
+                "mcp-cfg-no-command",
+                r#"{"mcpServers":{"ripr":{"args":["mcp","--stdio"]}}}"#,
+                "runs `<no command> mcp --stdio`",
+            ),
+        ];
+        for (name, text, expected) in cases {
+            let verdict = mcp_verdict_for(name, Some(text))?;
+            assert!(
+                verdict
+                    .as_ref()
+                    .is_some_and(|(ok, line)| !*ok && line.contains(expected)),
+                "{name}: {verdict:?}"
+            );
+        }
+        // Repair advice matches what `ripr init --mcp` can actually do.
+        for (name, text, advice) in [
+            ("mcp-cfg-fix-json", "{ not json", "fix or remove the file"),
+            (
+                "mcp-cfg-fix-servers",
+                r#"{"mcpServers":[]}"#,
+                "fix or remove the file",
+            ),
+            (
+                "mcp-cfg-fix-missing",
+                r#"{"mcpServers":{}}"#,
+                "run `ripr init --mcp`",
+            ),
+            ("mcp-cfg-fix-no-key", "{}", "run `ripr init --mcp`"),
+            ("mcp-cfg-fix-root", "[]", "fix or remove the file"),
+            (
+                "mcp-cfg-fix-custom",
+                r#"{"mcpServers":{"ripr":{"command":"x"}}}"#,
+                "`ripr init --mcp --force`",
+            ),
+        ] {
+            let verdict = mcp_verdict_for(name, Some(text))?;
+            assert!(
+                verdict
+                    .as_ref()
+                    .is_some_and(|(_, line)| line.contains(advice)),
+                "{name}: {verdict:?}"
+            );
+            // Advice that only needs `ripr init --mcp` must not tell the user
+            // to fix the file first (that wording also contains the command).
+            if !advice.contains("fix or remove") {
+                assert!(
+                    verdict
+                        .as_ref()
+                        .is_some_and(|(_, line)| !line.contains("fix or remove")),
+                    "{name}: {verdict:?}"
+                );
+            }
+        }
         Ok(())
     }
 

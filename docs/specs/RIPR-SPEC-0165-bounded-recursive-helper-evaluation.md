@@ -75,27 +75,19 @@ recursion unrolls trivially on distinct inputs.
 
 ## Acceptance Examples
 
-```text
-Given:  pub fn label_of(kind: &str) -> &'static str {
-            match kind {
-                "word" => label_of("text"),
-                "text" => "beta",
-                _ => "alpha",
-            }
-        }
-        pub fn classify(input: &str) -> &'static str {
-            let final_label = label_of(input);
-            if final_label == "alpha" { "word" } else { "blank" }
-        }
-Diff:   the equality constant changes "alpha" -> "beta"
-Tests:  assert_eq!(classify("word"), "blank"); assert_eq!(classify("zz"), "word")
-Then:   exposed — label_of("word") unrolls through label_of("text") to
-        "beta" within the bound, the boundary is observed exactly, and
-        the provenance names the helper hop
-Not:    `_ => label_of(kind)` (a repeated state), a d->c->b->a chain
-        (four evaluations), a computed nested argument, or a
-        non-unique nested callee resolves (controls fixture)
-```
+1. Accept: with `label_of` matching `"word" => label_of("text")`,
+   `"text" => "beta"`, `_ => "alpha"` and `classify` comparing
+   `label_of(input)` with `"alpha"`, a diff changing the constant to
+   `"beta"` under
+   `assert_eq!(classify("word"), "blank"); assert_eq!(classify("zz"), "word")`
+   exposes — `label_of("word")` unrolls through `label_of("text")` to
+   `"beta"` within the bound, the boundary is observed exactly, and the
+   provenance names the helper hop.
+2. Reject: `_ => label_of(kind)` (a repeated state) does not resolve
+   (controls fixture).
+3. Reject: a d->c->b->a chain (four evaluations) does not resolve.
+4. Reject: a computed nested argument does not resolve.
+5. Reject: a non-unique nested callee does not resolve.
 
 ## Test Mapping
 

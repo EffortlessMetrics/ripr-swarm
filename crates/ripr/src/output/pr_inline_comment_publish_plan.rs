@@ -25,6 +25,8 @@ const TITLE_FIELD_CHAR_BUDGET: usize = 200;
 /// Skip reason for a comment whose projected published body exceeds
 /// [`PUBLISHED_BODY_BYTE_CEILING`] (#4446).
 const SKIP_REASON_COMMENT_BODY_TOO_LARGE: &str = "comment_body_too_large";
+const SKIP_REASON_NOT_PUBLISHABLE: &str = "not_publishable";
+const GAP_STATE_ACTIONABLE: &str = "actionable";
 /// Hard ceiling on the projected published body of one inline comment.
 ///
 /// GitHub rejects a comment body over 65,536 characters, and the generated
@@ -58,8 +60,15 @@ impl CommentMode {
             "off" => Ok(Self::Off),
             "plan" => Ok(Self::Plan),
             "inline" => Ok(Self::Inline),
-            _ => Err(format!(
-                "unknown pr-comments plan mode {value:?}; expected `off`, `plan`, or `inline`"
+            "" => Err(
+                "pr-comments plan mode is empty; expected `off`, `plan`, or `inline` (leave \
+                 `--mode` out, or pass `off`, to publish no comments)"
+                    .to_string(),
+            ),
+            _ => Err(crate::cli::unknown_value(
+                "pr-comments plan mode",
+                value,
+                &["off", "plan", "inline"],
             )),
         }
     }
@@ -646,6 +655,23 @@ fn add_comment_item_plan(
 ) {
     let source_id = string_field(item, "id");
     let dedupe_key = string_field(item, "dedupe_key");
+    // Fail closed: only a card whose gap_state is `actionable` names a test to
+    // add. Any other state (a static limitation, already observed, internal
+    // only, unknown) and a card with no gap_state are notes about what RIPR
+    // could not follow or has nothing to ask for. Posted as a review comment
+    // they read as ripr's own bookkeeping ("repair route missing") on the
+    // author's code and take a slot from a gap the author can act on. They stay
+    // in comments.md and the summary comment.
+    if string_field(item, "gap_state").as_deref() != Some(GAP_STATE_ACTIONABLE) {
+        report.skipped.push(PlanSkipped {
+            source_collection: "comments".to_string(),
+            source_id,
+            dedupe_key,
+            skip_reason: SKIP_REASON_NOT_PUBLISHABLE.to_string(),
+            message: "RIPR has no test to suggest for this card, so it is not posted as an inline comment.".to_string(),
+        });
+        return;
+    }
     let Some(dedupe_key) = dedupe_key else {
         report.blocked.push(PlanBlocked {
             source_collection: "comments".to_string(),
@@ -957,7 +983,7 @@ fn repair_card_body(
         body.push_str("\n\n");
     }
     body.push_str("Why this matters:\n");
-    body.push_str(&prose(&bounded_field(why.trim(), PROSE_FIELD_CHAR_BUDGET)));
+    body.push_str(&bounded_field(why.trim(), PROSE_FIELD_CHAR_BUDGET));
     if let Some(route) = repair_route {
         body.push_str("\n\nRepair route:\n");
         body.push_str(&inline_prose(&bounded_field(
@@ -966,10 +992,7 @@ fn repair_card_body(
         )));
     }
     body.push_str("\n\nRepair:\n");
-    body.push_str(&prose(&bounded_field(
-        repair.trim(),
-        PROSE_FIELD_CHAR_BUDGET,
-    )));
+    body.push_str(&bounded_field(repair.trim(), PROSE_FIELD_CHAR_BUDGET));
     match next {
         NextStep::Verify(verify) => {
             body.push_str("\n\nVerify:\n");
@@ -989,7 +1012,9 @@ fn repair_card_body(
             );
         }
     }
-    body
+    // Parse in the actual block context: a field can continue the label's
+    // paragraph, and a table-shaped fragment alone may parse differently.
+    prose(&body)
 }
 
 fn repair_route_title(route_kind: &str) -> String {
@@ -1135,6 +1160,13 @@ fn skipped_summary(reason: &str, count: usize) -> String {
         SKIP_REASON_COMMENT_BODY_TOO_LARGE => format!(
             "{count} recommendation was too large to post inline and remains in `comments.md`"
         ),
+        SKIP_REASON_NOT_PUBLISHABLE => {
+            if count == 1 {
+                "1 recommendation has no test to suggest and stays in `comments.md`".to_string()
+            } else {
+                format!("{count} recommendations have no test to suggest and stay in `comments.md`")
+            }
+        }
         "mode_off" => "inline comment planning is disabled".to_string(),
         _ => format!("{count} recommendation was skipped"),
     }
@@ -1237,6 +1269,7 @@ mod tests {
 
         let guidance = serde_json::json!({
             "comments": [{
+                "gap_state": "actionable",
                 "id": "c",
                 "dedupe_key": "ripr:c",
                 "placement": {"path": "src/lib.rs", "line": 1, "side": "RIGHT", "mode": "exact_seam_line"},
@@ -1283,6 +1316,7 @@ mod tests {
         let repair = format!("Assert {span} for @octocat <script>alert(1)</script>.");
         let guidance = serde_json::json!({
             "comments": [{
+                "gap_state": "actionable",
                 "id": "c",
                 "dedupe_key": "ripr:c",
                 "placement": {"path": "src/`@octocat|<b>.rs", "line": 7, "side": "RIGHT", "mode": "exact_seam_line"},
@@ -1359,6 +1393,171 @@ mod tests {
         }
     }
 
+    // RIPR-SPEC-0025: exercise the actual comment-plan producer for both
+    // repair-card prose fields and the older reason fallback.
+    fn planned_prose(field: &str, source: &str) -> Result<String, String> {
+        let mut item = serde_json::json!({
+            "gap_state": "actionable",
+            "id": "prose", "dedupe_key": "ripr:prose",
+            "placement": {"path": "src/lib.rs", "line": 7,
+                "side": "RIGHT", "mode": "exact_seam_line"}
+        });
+        if field == "reason" {
+            item["reason"] = Value::from(source);
+        } else {
+            item["repair_card"] = serde_json::json!({
+                "gap_kind": "MissingBoundaryAssertion", (field): source
+            });
+        }
+        let guidance = serde_json::json!({
+            "comments": [item], "summary_only": [], "suppressed": []
+        });
+        let report = build_comment_publish_plan_report(CommentPublishPlanInput {
+            root: ".".to_string(),
+            generated_at: "2026-05-10T12:00:00Z".to_string(),
+            mode: CommentMode::Plan,
+            max_inline_comments: 3,
+            pr_guidance_path: Some("comments.json".to_string()),
+            pr_guidance_json: Some(Ok(guidance.to_string())),
+            existing_comments_path: None,
+            existing_comments_json: None,
+            permission: CommentPermissionContext::default(),
+        });
+        assert_eq!(report.operations.len(), 1, "nonempty producer subject");
+        report
+            .operations
+            .first()
+            .and_then(|op| op.body.clone())
+            .ok_or_else(|| "comment plan needs one rendered body".to_string())
+    }
+
+    #[test]
+    fn given_block_boundaries_when_comment_prose_is_rendered_then_html_stays_literal()
+    -> Result<(), String> {
+        for field in ["why_this_matters", "repair", "reason"] {
+            for (prefix, boundary, escaped_boundary) in [
+                ("prefix", "\n\n", "\n\n"),
+                ("prefix", "\n \t\n", "\n \t\n"),
+                ("prefix", "\r\n\r\n", "\r\n\r\n"),
+                ("prefix", "\n# ", "\n# "),
+                ("prefix", "\n> ", "\n> "),
+                ("prefix", "\n- ", "\n- "),
+                ("prefix", "\n---\n", "\n---\n"),
+                ("prefix", "\n<div> ", "\n&lt;div> "),
+                ("lead\n\nprefix", " | h\n--- | ---\n", " | h\n--- | ---\n"),
+            ] {
+                let source = format!("{prefix} `left{boundary}@octocat <img src=x>` tail");
+                let expected = format!(
+                    "{prefix} \\`left{escaped_boundary}@\u{2060}octocat &lt;img src=x>\\` tail"
+                );
+                let body = planned_prose(field, &source)?;
+                assert!(body.contains(&expected), "{field} {boundary:?}: {body}");
+                assert!(!body.contains("<img src=x>"), "{body}");
+                assert!(!body.contains("@octocat"), "{body}");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn given_intentional_markdown_when_comment_prose_is_rendered_then_formatting_is_preserved()
+    -> Result<(), String> {
+        for field in ["why_this_matters", "repair", "reason"] {
+            for source in [
+                // Without a blank before the table-shaped fragment, the label
+                // and fragment share a paragraph containing one code span.
+                "prefix `left | h\n--- | ---\n@octocat <img src=x>` tail",
+                "**strong** and *emphasis* [link](https://example.test)",
+                "prefix `left\n@octocat <img src=x>` tail",
+                "prefix ``left` @octocat <img src=x>`` tail",
+                "lead\n\n> `left\n> @octocat <img src=x>` tail",
+                "lead\n\n```text\n@octocat <img src=x>\n```\n\ntail",
+                "lead\n\n    @octocat <img src=x>\n\ntail",
+            ] {
+                let body = planned_prose(field, source)?;
+                assert!(body.contains(source), "{field} {source:?}: {body}");
+            }
+        }
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0025: verify parsed destinations, not just escaped HTML spelling.
+    #[test]
+    fn given_link_destinations_when_comment_prose_is_rendered_then_link_values_are_preserved()
+    -> Result<(), String> {
+        use pulldown_cmark::{Event, Options, Parser, Tag};
+
+        for field in ["why_this_matters", "repair", "reason"] {
+            for (source, destination, title) in [
+                ("[link](<https://example.test>)", "https://example.test", ""),
+                (
+                    "[**link**](<https://example.test/@owner> \"title <x> @owner\")",
+                    "https://example.test/@owner",
+                    "title <x> @owner",
+                ),
+                (
+                    "[link][ref]\n\n[ref]: <https://example.test/a`b>",
+                    "https://example.test/a`b",
+                    "",
+                ),
+                (
+                    "[**@octocat** <img src=x>](<https://example.test>)",
+                    "https://example.test",
+                    "",
+                ),
+                (
+                    "[`@octocat <img src=x>`](<https://example.test>)",
+                    "https://example.test",
+                    "",
+                ),
+                (
+                    "[`code`]\n\n[`code`]: <https://example.test>",
+                    "https://example.test",
+                    "",
+                ),
+                (
+                    "[`@octocat`][]\n\n[`@octocat`]: <https://example.test>",
+                    "https://example.test",
+                    "",
+                ),
+                (
+                    "[**@octocat**][`<img>`]\n\n[`<img>`]: <https://example.test>",
+                    "https://example.test",
+                    "",
+                ),
+            ] {
+                let body = planned_prose(field, source)?;
+                let mut links = Vec::new();
+                for event in Parser::new_ext(&body, Options::ENABLE_TABLES) {
+                    match event {
+                        Event::Start(Tag::Link {
+                            dest_url, title, ..
+                        }) => {
+                            links.push((dest_url.to_string(), title.to_string()));
+                        }
+                        Event::Html(html) | Event::InlineHtml(html) => {
+                            assert!(html.is_empty(), "raw HTML: {body}");
+                        }
+                        Event::Text(text) => assert!(!text.contains("@octocat"), "{body}"),
+                        _ => {}
+                    }
+                }
+                assert_eq!(
+                    links,
+                    [(destination.to_string(), title.to_string())],
+                    "{body}"
+                );
+                assert_eq!(super::super::markdown::prose(&body), body);
+                if source.contains("**") {
+                    assert!(
+                        Parser::new(&body).any(|event| matches!(event, Event::Start(Tag::Strong)))
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// #4446: an oversized expression from user source is bounded per field,
     /// with an elision marker, cut on a char boundary before the code span.
     #[test]
@@ -1412,12 +1611,14 @@ mod tests {
         let guidance = serde_json::json!({
             "comments": [
                 {
+                    "gap_state": "actionable",
                     "id": "big",
                     "dedupe_key": oversized_key,
                     "placement": {"path": "src/lib.rs", "line": 1, "side": "RIGHT", "mode": "exact_seam_line"},
                     "reason": "safe"
                 },
                 {
+                    "gap_state": "actionable",
                     "id": "small",
                     "dedupe_key": "ripr:small",
                     "placement": {"path": "src/lib.rs", "line": 2, "side": "RIGHT", "mode": "exact_seam_line"},
@@ -1544,7 +1745,7 @@ mod tests {
             max_inline_comments: 1,
             pr_guidance_path: Some("comments.json".to_string()),
             pr_guidance_json: Some(Ok(
-                r#"{"comments":[{"id":"one","dedupe_key":"ripr:one","placement":{"path":"src/lib.rs","line":1}},{"id":"two","dedupe_key":"ripr:two","placement":{"path":"src/lib.rs","line":2}}],"summary_only":[],"suppressed":[]}"#
+                r#"{"comments":[{"gap_state":"actionable","id":"one","dedupe_key":"ripr:one","placement":{"path":"src/lib.rs","line":1}},{"gap_state":"actionable","id":"two","dedupe_key":"ripr:two","placement":{"path":"src/lib.rs","line":2}}],"summary_only":[],"suppressed":[]}"#
                     .to_string(),
             )),
             existing_comments_path: None,
@@ -1569,6 +1770,147 @@ mod tests {
     }
 
     #[test]
+    fn a_static_limitation_is_never_planned_as_an_inline_comment() -> Result<(), String> {
+        // Two limitation cards share a line and sit ahead of a real gap, as
+        // they did on a three-file pull request. Only the gap is published,
+        // and the limitations do not use up the cap.
+        let guidance = r#"{"comments":[
+            {"id":"a","gap_state":"static_limitation","dedupe_key":"ripr:a","reason":"RIPR has no test to suggest here.","placement":{"path":"src/parse.rs","line":2}},
+            {"id":"b","gap_state":"static_limitation","dedupe_key":"ripr:b","reason":"RIPR has no test to suggest here.","placement":{"path":"src/parse.rs","line":2}},
+            {"id":"c","gap_state":"actionable","dedupe_key":"ripr:c","missing_discriminator":"20 (equality boundary)","placement":{"path":"src/pricing.rs","line":2}}
+        ],"summary_only":[],"suppressed":[]}"#;
+        let report = build_comment_publish_plan_report(CommentPublishPlanInput {
+            root: ".".to_string(),
+            generated_at: "2026-05-10T12:00:00Z".to_string(),
+            mode: CommentMode::Inline,
+            max_inline_comments: 1,
+            pr_guidance_path: Some("comments.json".to_string()),
+            pr_guidance_json: Some(Ok(guidance.to_string())),
+            existing_comments_path: None,
+            existing_comments_json: None,
+            permission: CommentPermissionContext {
+                pull_request: Some(7),
+                event_name: Some("pull_request".to_string()),
+                head_repo: Some("o/r".to_string()),
+                base_repo: Some("o/r".to_string()),
+                token_available: true,
+                write_permission: true,
+            },
+        });
+
+        assert_eq!(report.summary.publishable, 1);
+        assert_eq!(report.operations.len(), 1);
+        assert_eq!(report.operations[0].source_id, "c");
+        let body = report.operations[0].body.as_deref().ok_or("missing body")?;
+        assert!(body.contains("20 (equality boundary)"), "{body}");
+        let skipped: Vec<(&str, &str)> = report
+            .skipped
+            .iter()
+            .map(|item| {
+                (
+                    item.source_id.as_deref().unwrap_or(""),
+                    item.skip_reason.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            skipped,
+            [("a", "not_publishable"), ("b", "not_publishable")]
+        );
+        // The internal fallback body never reaches a pull request.
+        assert!(
+            !render_comment_publish_plan_json(&report)?.contains("repair route missing"),
+            "a limitation must not fall through to the placeholder repair body"
+        );
+        let markdown = render_comment_publish_plan_markdown(&report);
+        assert!(
+            markdown
+                .contains("2 recommendations have no test to suggest and stay in `comments.md`"),
+            "{markdown}"
+        );
+        Ok(())
+    }
+
+    fn plan_for_guidance(guidance: &str, existing: Option<&str>) -> CommentPublishPlanReport {
+        build_comment_publish_plan_report(CommentPublishPlanInput {
+            root: ".".to_string(),
+            generated_at: "2026-05-10T12:00:00Z".to_string(),
+            mode: CommentMode::Inline,
+            max_inline_comments: 3,
+            pr_guidance_path: Some("comments.json".to_string()),
+            pr_guidance_json: Some(Ok(guidance.to_string())),
+            existing_comments_path: existing.map(|_| "existing.json".to_string()),
+            existing_comments_json: existing.map(|text| Ok(text.to_string())),
+            permission: CommentPermissionContext {
+                pull_request: Some(7),
+                event_name: Some("pull_request".to_string()),
+                head_repo: Some("o/r".to_string()),
+                base_repo: Some("o/r".to_string()),
+                token_available: true,
+                write_permission: true,
+            },
+        })
+    }
+
+    #[test]
+    fn only_an_actionable_gap_state_is_planned_inline() {
+        // Fail closed: every state but `actionable`, and a card that names no
+        // state at all, is kept out of inline comments. Only the actionable
+        // card is published.
+        let guidance = r#"{"comments":[
+            {"id":"unknown","gap_state":"unknown","dedupe_key":"ripr:unknown","placement":{"path":"src/a.rs","line":1}},
+            {"id":"observed","gap_state":"already_observed","dedupe_key":"ripr:observed","placement":{"path":"src/a.rs","line":2}},
+            {"id":"internal","gap_state":"internal_only","dedupe_key":"ripr:internal","placement":{"path":"src/a.rs","line":3}},
+            {"id":"none","dedupe_key":"ripr:none","placement":{"path":"src/a.rs","line":4}},
+            {"id":"ok","gap_state":"actionable","dedupe_key":"ripr:ok","missing_discriminator":"20","placement":{"path":"src/a.rs","line":5}}
+        ],"summary_only":[],"suppressed":[]}"#;
+        let report = plan_for_guidance(guidance, None);
+        let published: Vec<&str> = report
+            .operations
+            .iter()
+            .map(|operation| operation.source_id.as_str())
+            .collect();
+        assert_eq!(published, ["ok"]);
+        let skipped: Vec<(&str, &str)> = report
+            .skipped
+            .iter()
+            .map(|item| {
+                (
+                    item.source_id.as_deref().unwrap_or(""),
+                    item.skip_reason.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            skipped,
+            [
+                ("unknown", "not_publishable"),
+                ("observed", "not_publishable"),
+                ("internal", "not_publishable"),
+                ("none", "not_publishable"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_placeholder_comment_from_an_older_run_is_planned_as_stale_delete() {
+        // An earlier run posted the placeholder body for a card that is now a
+        // static limitation. The card is skipped, so nothing matches the
+        // existing comment and it is planned for deletion.
+        let guidance = r#"{"comments":[
+            {"id":"a","gap_state":"static_limitation","dedupe_key":"ripr:a","placement":{"path":"src/a.rs","line":1}}
+        ],"summary_only":[],"suppressed":[]}"#;
+        let existing = r#"{"comments":[{"comment_id":42,"dedupe_key":"ripr:a"}]}"#;
+        let report = plan_for_guidance(guidance, Some(existing));
+        assert_eq!(report.operations.len(), 1);
+        let operation = &report.operations[0];
+        assert_eq!(operation.operation, "delete");
+        assert_eq!(operation.existing_comment_id, Some(42));
+        assert_eq!(operation.placement.mode, "stale_existing");
+        assert_eq!(report.skipped[0].skip_reason, "not_publishable");
+    }
+
+    #[test]
     fn inline_comment_publish_plan_blocks_missing_dedupe_and_placement() -> Result<(), String> {
         let report = build_comment_publish_plan_report(CommentPublishPlanInput {
             root: ".".to_string(),
@@ -1577,7 +1919,7 @@ mod tests {
             max_inline_comments: 3,
             pr_guidance_path: Some("comments.json".to_string()),
             pr_guidance_json: Some(Ok(
-                r#"{"comments":[{"id":"missing-dedupe","placement":{"path":"src/lib.rs","line":1}},{"id":"missing-placement","dedupe_key":"ripr:x"}],"summary_only":[],"suppressed":[]}"#
+                r#"{"comments":[{"gap_state":"actionable","id":"missing-dedupe","placement":{"path":"src/lib.rs","line":1}},{"gap_state":"actionable","id":"missing-placement","dedupe_key":"ripr:x"}],"summary_only":[],"suppressed":[]}"#
                     .to_string(),
             )),
             existing_comments_path: None,
@@ -1611,7 +1953,7 @@ mod tests {
             max_inline_comments: 3,
             pr_guidance_path: Some("comments.json".to_string()),
             pr_guidance_json: Some(Ok(
-                r#"{"comments":[{"id":"c","dedupe_key":"ripr:c","placement":{"path":"src/lib.rs","line":1,"side":"RIGHT","mode":"exact_seam_line"},"reason":"safe"}],"summary_only":[],"suppressed":[]}"#
+                r#"{"comments":[{"gap_state":"actionable","id":"c","dedupe_key":"ripr:c","placement":{"path":"src/lib.rs","line":1,"side":"RIGHT","mode":"exact_seam_line"},"reason":"safe"}],"summary_only":[],"suppressed":[]}"#
                     .to_string(),
             )),
             existing_comments_path: None,
@@ -1631,6 +1973,26 @@ mod tests {
         assert!(report.summary.safe_to_publish);
         assert!(report.operations[0].safe_to_publish);
         Ok(())
+    }
+
+    /// #11146: the empty-string arm names the empty value and the way to
+    /// publish nothing, apart from the unknown-value arm.
+    #[test]
+    fn comment_mode_parse_names_an_empty_value_apart_from_an_unknown_one() {
+        let empty = CommentMode::parse("").err().unwrap_or_default();
+        assert!(empty.contains("is empty"), "{empty}");
+        assert!(empty.contains("pass `off`"), "{empty}");
+        assert!(!empty.contains("unknown"), "{empty}");
+        let unknown = CommentMode::parse("post").err().unwrap_or_default();
+        assert!(
+            unknown.contains("unknown pr-comments plan mode"),
+            "{unknown}"
+        );
+        assert!(!unknown.contains("is empty"), "{unknown}");
+        assert_eq!(
+            CommentMode::parse("inlin").err().unwrap_or_default(),
+            "unknown pr-comments plan mode \"inlin\". Did you mean `inline`? Accepted: off, plan, inline."
+        );
     }
 
     #[test]
@@ -1769,7 +2131,7 @@ mod tests {
             max_inline_comments: 3,
             pr_guidance_path: Some("comments.json".to_string()),
             pr_guidance_json: Some(Ok(
-                r#"{"comments":[{"id":"one","dedupe_key":"ripr:one","placement":{"path":"src/lib.rs","line":1}},{"id":"two","dedupe_key":"ripr:two","placement":{"path":"src/lib.rs","line":2}}],"summary_only":[],"suppressed":[]}"#
+                r#"{"comments":[{"gap_state":"actionable","id":"one","dedupe_key":"ripr:one","placement":{"path":"src/lib.rs","line":1}},{"gap_state":"actionable","id":"two","dedupe_key":"ripr:two","placement":{"path":"src/lib.rs","line":2}}],"summary_only":[],"suppressed":[]}"#
                     .to_string(),
             )),
             existing_comments_path: None,
@@ -1805,7 +2167,7 @@ mod tests {
             max_inline_comments: 3,
             pr_guidance_path: Some("comments.json".to_string()),
             pr_guidance_json: Some(Ok(
-                r#"{"comments":[{"dedupe_key":"ripr:default","placement":{"path":"src/lib.rs","line":4}}],"summary_only":[],"suppressed":[]}"#
+                r#"{"comments":[{"gap_state":"actionable","dedupe_key":"ripr:default","placement":{"path":"src/lib.rs","line":4}}],"summary_only":[],"suppressed":[]}"#
                     .to_string(),
             )),
             existing_comments_path: Some("existing.json".to_string()),
@@ -2010,5 +2372,72 @@ mod tests {
                 write_permission: true,
             },
         })
+    }
+}
+/// RIPR-SPEC-0025: escaping HTML must not invalidate protected code ranges.
+#[cfg(test)]
+mod context_transition_regression {
+    use super::*;
+    use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+
+    fn body(field: &str, source: &str) -> String {
+        let item = if field == "reason" {
+            serde_json::json!({"reason": source})
+        } else {
+            serde_json::json!({"repair_card": {(field): source}})
+        };
+        comment_body(&item)
+    }
+
+    fn assert_safe_and_idempotent(body: &str) {
+        let mut in_code_block = false;
+        for event in Parser::new_ext(body, Options::ENABLE_TABLES) {
+            match event {
+                Event::Start(Tag::CodeBlock(_)) => in_code_block = true,
+                Event::End(TagEnd::CodeBlock) => in_code_block = false,
+                Event::Html(html) | Event::InlineHtml(html) => {
+                    assert!(
+                        html.is_empty(),
+                        "raw HTML after neutralization: {html:?}; body={body:?}"
+                    );
+                }
+                Event::Text(text) if !in_code_block => {
+                    assert!(
+                        !text.contains("@octocat"),
+                        "live mention after neutralization: {text:?}"
+                    );
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            super::super::markdown::prose(body),
+            body,
+            "output must be idempotent"
+        );
+    }
+
+    #[test]
+    fn given_html_then_indented_code_when_neutralized_then_code_does_not_become_live_prose() {
+        for field in ["why_this_matters", "repair", "reason"] {
+            for html in [
+                "<!-- comment -->",
+                "<script>\n</script>",
+                "<pre>\n</pre>",
+                "<?pi?>",
+            ] {
+                let rendered = body(field, &format!("{html}\n    @octocat <img src=x>"));
+                assert_safe_and_idempotent(&rendered);
+            }
+        }
+    }
+
+    #[test]
+    fn given_blank_before_indented_code_when_neutralized_then_literal_code_is_preserved() {
+        for field in ["why_this_matters", "repair", "reason"] {
+            let rendered = body(field, "<!-- comment -->\n\n    @octocat <img src=x>");
+            assert!(rendered.contains("    @octocat <img src=x>"));
+            assert_safe_and_idempotent(&rendered);
+        }
     }
 }

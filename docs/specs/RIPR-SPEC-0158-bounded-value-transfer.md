@@ -19,6 +19,44 @@ exercised boundary from a missing one.
 - One typed value-transfer interface
   (`analysis/classify/value_transfer.rs`) evaluates a single-line `let`
   initializer over one related-test call row's exact input literals.
+- An owner-call argument is an input row's literal only when nothing computes
+  around it (#10484): the literal itself, behind `&`, `.to_string()`,
+  `.to_owned()`, `.into()` or `String::from(..)`, or inside a constructor,
+  variant, tuple, array or `vec![..]`. A literal inside a call, method call,
+  generic call or macro (`std::env::var("WHO").unwrap_or_default()`,
+  `make_name("Bob")`) is that call's operand, so the call contributes no row and
+  a boundary that depends on it reads as the result of a call.
+  Arithmetic over the test's own literal bindings is the number it computes, so
+  it is a row (`score(base + 1)` after `let base = 9;`): the argument is only
+  decimal literals and at least one binding, `+ - * / %` and parentheses, and every binding
+  is declared by exactly one pattern in the test body (the `let`), which
+  ends before the first place the argument is written, is not `mut`, is never
+  assigned, and has a plain decimal initializer (a suffixed,
+  separated, signed, fractional, text or computed initializer is not read).
+  The shared evaluator folds it and fails closed on a leading sign, overflow,
+  underflow, division by zero or a value at or above `i32::MAX`. A call,
+  method, cast, macro, reference or bound that is not a literal binding
+  keeps the argument unread. A binding that a `for` pattern, a closure
+  parameter, an `if let` or a match arm reuses is a second pattern and is
+  not folded.
+  Two operands outside the test body fold when the test's own file pins them
+  down: an upper-case `const` or `static` the file declares exactly once,
+  with a plain decimal initializer, not `static mut`, not named by a `use`
+  line and not declared again anywhere in the file (a second declaration in
+  the test body counts), and a nullary helper call `name()` whose one
+  declaration in the file is a free `fn name() -> <integer type> { <decimal
+  literal> }` with no parameters, generics, qualifiers beyond visibility,
+  statements or computed body, outside any `impl` or `trait` block, not named
+  by a `use` line, and not rebound by a pattern in the test (a local
+  closure). The declaration must be one the test can see: in the test's own
+  module, or in its parent module when `use super::*` is the file's only glob
+  import. A sibling module's item, an item inside another function, and a
+  name that another glob import may bind instead keep the argument unread.
+  The call is the helper's literal exactly as the literal would
+  have been; a path, method or other qualified call, a call with arguments, a
+  helper declared twice (a test-module copy that shadows the outer one), or
+  a file the index does not hold keeps the argument unread. Both operands
+  combine with literals and bindings under the same arithmetic rules.
 - The value lattice is typed (`Str`, `Char`, `Bool`, `Index`, option
   forms, `CharSeq`); every exact result carries per-step provenance
   (operation family, receiver/argument rendering, chain depth) and the
@@ -26,32 +64,100 @@ exercised boundary from a missing one.
 - Evaluated families: `find`/`rfind` (present, absent, empty,
   multibyte), `len`, `starts_with`/`ends_with`/`contains`,
   `strip_prefix`/`strip_suffix`, `chars().next()`/`next_back()`,
-  `char::len_utf8`, `map_or` with a literal default and the identity
+  `char::len_utf8`, `map_or` with a bounded default and the identity
   closure, `checked_add`/`checked_sub`, and bounded string slicing
   from exact indices. Exact integer arithmetic (`+ - * / %`, with
   precedence and parentheses, failing closed on a leading sign,
   overflow, underflow, division by zero, or an operand or result at or
   above `i32::MAX`),
-  `split_whitespace().count()` and
-  `chars().count()` are credit-only families (#9637): a chain that
+  `split_whitespace().count()`, `chars().count()` and the text normalizers
+  `trim`/`trim_start`/`trim_end`/`to_lowercase`/`to_uppercase` (#10838, so a
+  trimmed local resolves to the value an equality compares) are credit-only
+  families (#9637): a chain that
   uses one may close a boundary through an observed equality row but
   never names a missing input, so no row on the boundary leaves the
   stage unknown. A comparison operand that is itself such a chain over
   `&str`/`String`/integer owner parameters, same-file constants and
   literals resolves the same way, but only for ordering predicates
   (`<`, `<=`, `>`, `>=`): an `==` or `!=` guard never credits, because one
-  on-boundary row cannot discriminate its neighbours. Integer owner
+  on-boundary row cannot discriminate its neighbours. The one exception is
+  an emptiness guard (#9619): the whole changed condition is the single
+  comparison `text.len() == 0` or `text.len() != 0` over a `&str` or
+  `String` parameter. It credits only when the related calls give the
+  operand both an empty and a non-empty value, every related test that
+  calls the owner holds only strong assertions (a conservative proxy: a
+  weakly asserted call is not read as pinning the guard), and each row is
+  readable; one unreadable row keeps the unknown reading. The credit covers
+  the guard's negation, `== 1` and constant `true`/`false` mutants; it does
+  not claim neighbours such as `len() < 2`, which need a one-character row. Rows may come from direct calls or from the cells of a constant
+  `for` table, where a whole string literal cell is an exact input
+  for this guard alone; any other string-valued column stays unread.
+  Rows on one side only, a literal other than `0`, a compound condition and
+  a loop that can leave a row early keep the unknown reading. Integer owner
   parameters must be 32 bits or wider (`u32`, `i32`, `u64`, `i64`,
   `u128`, `i128`, `usize`, `isize`); `u8`/`i8`/`u16`/`i16` stay unknown.
   A computed or call-result argument, a generic or slice receiver and a
   rebound parameter stay unknown, and a local initializer that reads a
   parameter that is rebound, assigned, `mut`, or bound by `for`/`if let`/
-  `match`/closure earlier (`let x = x + 10;`) is unresolved. A direct
+  `while let`/`match`/closure earlier (`let x = x + 10;`) is unresolved.
+  The rebinding scan is token-level and fail-closed (#9774): the name as a
+  whole token in the pattern of any earlier `let` (plain, destructuring
+  `let (n, _)`/`let Foo { n, .. }`/`let &n`, `let Some(n) = .. else {..}`,
+  `if let`, `while let`, or on the declaration's own line), in a `for`
+  pattern, in any closure parameter list (`|(n, m)|`, `|&n|`), or in a
+  `match` arm pattern region (even when the `=>` is on another line), or in a
+  nested block's `let`, counts as a rebinding. Over-declining is accepted. A direct
   closed-form operand is known only when every related call row
   evaluates it; a computed local keeps its existing any-row semantics
   (#3295), where one evaluable row suffices. The difference is
   deliberate: the direct form is new and fails closed on a row that may
-  sit on the other side.
+  sit on the other side. A local initializer retains the declared types of
+  owner parameters it reads: bounded arithmetic uses the same wide-integer
+  gate, and `checked_add`/`checked_sub` over integer parameters require
+  `usize`. A different integer width or signedness, or an unknown type,
+  stays unresolved instead of borrowing `usize` overflow semantics. String
+  lengths and char-derived indices keep their intrinsic `usize` semantics.
+  A same-file type alias, import rename or unresolved glob that can shadow
+  an intrinsic type spelling refuses integer evaluation in both direct
+  expressions and local initializers, including raw identifier spellings.
+  The root spellings (`std`, `core`, `alloc`) are refused by a
+  workspace-global pre-check: admission fails whenever any indexed file
+  aliases or renames a root, not only the owner's file, while every other
+  intrinsic spelling stays scoped to the owner's file. That broader
+  over-refusal is fail-closed and deliberate; narrowing it to the owner's
+  file rides the recorded optimization follow-up rather than this repair.
+  Type parameters of the owner and its enclosing impl/trait also refuse
+  intrinsic identity; unrelated functions' generic parameters do not bind
+  that owner. A missing or ambiguous owner context remains unresolved.
+  Generic declarations inside an owner do not escape into its signature.
+  A nested function's forbidden reference to an outer generic stays unresolved;
+  the absence of legal capture does not establish primitive identity.
+  Both forms share the intrinsic-identity admission; their operation-family
+  limits remain distinct. Literal-only expressions do not require unused
+  parameter types to be resolved. Alias resolution is not inferred from a name.
+  A directly compared owner parameter also constrains unsuffixed arithmetic:
+  `let k = ((if flag { 255 } else { 0 }) + 1) / 2; k <= bound` is not a
+  wide-integer computation when `bound: u8`. Local and direct forms retain
+  that declared counterpart constraint even for literal-only initializers.
+  Narrow or unresolved counterpart identities refuse arithmetic credit;
+  genuine wide counterparts and unrelated unused narrow parameters retain
+  their existing support. A live comparison local retains its initializer's
+  declared parameter constraints; unsupported declarations or rebound inputs
+  cannot borrow a stale wide parameter type. This does not infer typed constants, annotations,
+  helper return types or arbitrary Rust result types.
+  Raw or Unicode value names remain unresolved where existing plain-identifier
+  liveness evidence cannot certify the comparison constraint.
+  Explicit numeric suffixes on the counterpart retain their intrinsic limits:
+  narrow suffixes refuse arithmetic, wide suffixes preserve bounded arithmetic,
+  and checked integer methods still require usize semantics.
+- `map_or` evaluates its default once before selecting `Some` or `None`.
+  A refused default (including division by zero or an unsupported call)
+  leaves either arm unresolved. An evaluated default contributes its
+  provenance on both arms, even when the identity closure supplies the
+  selected value. This does not add any evaluated operation families.
+  Receiver and default failures precede closure-shape refusal, matching
+  their evaluation order; arbitrary closures and opaque defaults stay
+  unsupported.
 - Failure modes are typed and named: `Unsupported` names the earliest
   edge (unknown method family, non-identity closure, `map_or_else`,
   dynamic non-input identifier, over-limit chain/literal);
@@ -71,6 +177,48 @@ exercised boundary from a missing one.
   `end == start` discriminator with `observed end values: unknown`.
 - Char literals in test-call arguments are extracted as exact inputs
   (lifetimes are not).
+- Literal byte-length boundary (#9637): diff analysis also reads one closed
+  owner shape, `fn f(text: &str, width: usize) -> bool { let end =
+  text.as_bytes().len(); end <= width }`, with immutable parameters and local,
+  no other statement, attributes or generic parameters, and established
+  primitive type names. Parameter and local names are read from the AST.
+  Every admitted direct call has two whole literals: a Rust string decoded
+  by the parser and a plain decimal `usize` input. At most 64 call rows and
+  512 source bytes per string literal are read. Other expressions, aliases,
+  explicit hidden references and unresolved owner or primitive bindings keep the ordinary
+  unknown reading. The existing owner-reference counter must account for
+  exactly the declaration and admitted literal call sites in the owner file
+  and every indexed file the native free-function reach scan marks as
+  explicitly naming the owner. Function references, aliases and owner-naming
+  macros in any indexed source cannot hide another explicit input. External
+  or macro-derived documentation refuses the witness globally, and primitive
+  shadow checks still cover every indexed file. The counter's closed source
+  grammar permits only `use super::*` imports in owner-referencing files, so
+  even a direct `std::primitive::usize` import there is unsupported. This
+  inherits the native free-function reach limits around generated identifiers
+  and calls; it does not establish universal macro-expansion completeness.
+  This is a diff-only refinement; the general evaluator,
+  repo-seam/test-grip path and persistent fact/classification generations are
+  unchanged.
+  Each typed row retains its test identity, owner identity and exact source
+  call range. An equality between that row's UTF-8 byte length and its width
+  establishes infection. Credit also requires the existing admitted
+  owner-return pin on that same source call; another row, same-line call,
+  assertion message or foreign owner cannot supply it. A row is admitted only
+  when its call is a direct statement of a test body that has no branch, loop,
+  closure, `?` or early exit, so an assertion under `if false` supplies none.
+  A call to the right of `||` or `&&` in its own statement is short-circuited
+  and supplies none (`assert!(true || !f(..))`).
+  The edit's old initializer must be the plain `text.len()`, the known no-op
+  rewrite; any other old spelling is not assumed equivalent and gets no row.
+  The owner AST
+  establishes the comparison as the returned value, supplied to the existing
+  propagation authority as an owner-bound return sink. Derived local values
+  are rendered as assignment facts; rendered `==` text grants no authority.
+  No new missing-input gap is inferred from distant or unsupported inputs.
+  The changed-binding causal relation remains visible. Its syntax-only
+  unresolved-value disclosure is omitted after the actual infection stage
+  establishes the operand from input evidence; unknown operands retain it.
 - Flag-selected locals (#9276): `if flag { A } else { B }` and
   `if !flag { A } else { B }` evaluate to the arm an exact boolean input
   selects, and the other arm is never read. A local's initializer may
@@ -103,6 +251,38 @@ exercised boundary from a missing one.
   only mentions of the name are receiver calls (`expected.to_string()`)
   is not counted as a caller: a method call never resolves to a free
   function.
+- Multi-caller owner (#9329): an owner with several direct callers binds per
+  caller. Each caller is resolved on its own, and the chain is the one
+  caller a related test reaches (a test calls the caller or a hop above it
+  by name). A caller no test reaches contributes nothing. The chain
+  declines, naming the multi-caller edge, when no caller is reached, when
+  two are reached (the tests' own call path to the owner is ambiguous, even
+  through different tests), when a test calls the owner itself, or when the
+  owner has more than eight callers; a reached caller whose hop does not
+  bind carries its own stop. The binding is per chain, not per test, so a
+  second reached caller is a deliberate limit.
+- Asserting entry (#9329): a method hop does not forward the owner's result
+  by the tail rule, but its top hop may be a `#[cfg(test)]` helper whose
+  whole body is one `assert_eq!`/`assert_ne!` with one operand exactly the
+  receiver call (`b.to_string_as(si)`, the hop's own arguments) and an
+  other operand that names neither the receiver, the method nor a direct
+  call of the owner, over hops below it that each tail-forward the call
+  and each call the indexed workspace function they name: the callee is
+  the one workspace function of that name, and the hop's file neither
+  imports nor macro-defines another item of the name and its body does not
+  rebind it (a method calling an imported `std::cmp::min` is not a caller
+  of a changed local `min`)
+  (`helper_transfer::asserting_method_entry`). Propagation then counts the
+  chain as forwarding, and the same-test pairing
+  (`boundary_pairing::entry_loan_pairs_boundary_call`) pairs the helper's
+  discriminating assertion with the transferred `==` row on the line of an
+  eager call to the helper, recomputed from that test alone, when that
+  call is the helper's only call on the line apart from calls inside its
+  own arguments. A dropped, let-bound, transformed or shadowed result, a
+  second statement, or a transforming method declines and keeps the
+  abstention. A free-function owner's name on a receiver call
+  (`expected.to_string()`) is not a call of the owner when judging whether
+  the expected side is computed through it.
 - Receiver values (#9329): the entry hop's receiver parameter gets one
   extra row cell, the canonical string `Type(<v0>,<v1>..)`, built only from
   `Type(<integer literals>)` for a tuple struct declared exactly once in
@@ -120,9 +300,38 @@ exercised boundary from a missing one.
   `self`, readable only as `self.<index>` for an index in range; the cell
   is never an owner parameter value, never copied through a plain
   argument, and never compared against a boundary.
+- A `mut` parameter is the compared operand like any other parameter (#10306)
+  only while the caller's value is what the comparison reads: it is never
+  written, or every write (`n = ..`, `n op= ..`, `&mut n`, a method that may
+  mutate it, a macro that names it) comes after the comparison's `if`
+  condition or sits in the `then` block of an earlier arm of the same
+  `if` / `else if` chain, with no loop, closure or second binding of the name
+  in the function. Any other shape keeps the boundary operand unresolved
+  (`infection_unknown`).
+
+### Literal-only integer folding for observation (#10479)
+
+A changed `return_value` expression made only of plain decimal literals, `+ - * / %`
+and parentheses (`8 * 100`, `(2 + 2) * 200`) folds, through the same exact integer
+arithmetic, to its value. That value is one more owner-scoped digit token of the
+probe, so an exact-value assertion bound to the owner's result and carrying the
+folded literal confirms observation, as an unrewritten literal of three or more
+digits already does. A one- or two-digit value is no token in either spelling
+(`40 + 2` and `42` both stay unconfirmed), so a short folded value never matches
+an assertion that merely mentions its digits. A wrong expected value (`801`), a result at or above the arithmetic bound, an
+overflow, an underflow, a division by zero, and any name, suffix, sign,
+underscore, string or method call leave the expression unfolded and the
+assertion unconfirmed. The fold adds no reach and no new family: a test that
+only reaches the owner without a bound exact assertion stays below `exposed`.
 
 ## Required Evidence
 
+- The complete retained `authored-tokens` subject's six Rust sources,
+  `tokens-fits-binding-predicate` row and public
+  `literal_length_boundary` integration target cover the byte-length leaf,
+  UTF-8/escape decoding, boundary distance, crossed rows, same-line and
+  assertion-message calls, unsupported expressions/bodies, foreign owners,
+  weak oracles and primitive-name shadowing.
 - The #3215 reproduction flip (`observed end values: unknown` →
   `infection yes: Detected related test input at the changed boundary`,
   `end == start` observed) and the removal experiment: without the
@@ -183,67 +392,128 @@ exercised boundary from a missing one.
 
 ## Acceptance Examples
 
-- Accept: `end = input.rfind(delim).map_or(1, |idx| idx)` with
-  `input = "ab"`, `delim = 'x'` → `end = 1` exactly; `start =
-  delim.len_utf8()` → `1`; the boundary is observed.
-- Accept: `strip_prefix` absent → the `None` arm flows into the
-  evaluated default.
-- Reject: exactness from a method outside the families, a non-identity
-  closure, a dynamic input, or a shadowed/out-of-scope binding.
-- Accept: `let unit = if si { KIB } else { KB };` with `KIB = 1_024` and a
-  related test calling the owner with `(1_024, true)`: `unit` is `1024`
-  under that row, equals `bytes`, and the boundary is observed
-  (`local-boundary-flag-hit`, `local-boundary-flag-negated`).
-- Reject: the same local with tests at `(1_000, true)` and `(1_024,
-  false)`: each input is the other flag's boundary, no row sits on
-  `unit`, and the verdict stays a gap (`local-boundary-flag-trap`).
-- Reject: `let si = !si;` before the same local, with tests at
-  `(1_024, true)`: the flag the local reads is the opposite of the
-  caller's literal, so the pinned 1_024 is not the boundary and the
-  verdict stays unresolved (`local-boundary-flag-shadowed`).
-- Reject: `for si in [false] { let unit = if si { KIB } else { KB }; .. }`
-  with tests at `(1_024, true)` (`local-boundary-flag-loop`), and a
-  function-local `const KB: u64 = 2_000;` shadowing the file's `KB`
-  (`local-boundary-flag-alias`).
-- Reject: the real `bytesize` edit `bytes < unit` to `bytes <= unit`,
-  whose only direct row binds `bytes` to a string literal: the verdict
-  stays `infection_unknown` (`bytesize-format-unit-first-run`).
+1. Accept: `end = input.rfind(delim).map_or(1, |idx| idx)` with
+   `input = "ab"`, `delim = 'x'` → `end = 1` exactly; `start =
+   delim.len_utf8()` → `1`; the boundary is observed.
+2. Accept: `strip_prefix` absent → the `None` arm flows into the
+   evaluated default.
+3. Reject: exactness from a method outside the families
+   (`input.to_ascii_uppercase().rfind(delim)`).
+4. Reject: exactness through a non-identity closure
+   (`map_or(1, |idx| idx + 0)`).
+5. Reject: exactness from a dynamic input, a `map_or` default that is a
+   local computed from the input rather than a literal or a bound input.
+   When some rows evaluate and one row's chain is refused, the local stays
+   unresolved: the refused row may sit on the boundary, so the other rows
+   cannot support a missing discriminator.
+6. Reject: exactness through a shadowed or out-of-scope binding (`let end =
+   end + start - start;` between the chain and the comparison).
+7. Accept: `let unit = if si { KIB } else { KB };` with `KIB = 1_024` and a
+   related test calling the owner with `(1_024, true)`: `unit` is `1024`
+   under that row, equals `bytes`, and the boundary is observed
+   (`local-boundary-flag-hit`, `local-boundary-flag-negated`).
+8. Reject: the same local with tests at `(1_000, true)` and `(1_024,
+   false)`: each input is the other flag's boundary, no row sits on
+   `unit`, and the verdict stays a gap (`local-boundary-flag-trap`).
+9. Reject: `let si = !si;` before the same local, with tests at
+   `(1_024, true)`: the flag the local reads is the opposite of the
+   caller's literal, so the pinned 1_024 is not the boundary and the
+   verdict stays unresolved (`local-boundary-flag-shadowed`).
+10. Reject: `for si in [false] { let unit = if si { KIB } else { KB }; .. }`
+    with tests at `(1_024, true)` (`local-boundary-flag-loop`).
+11. Reject: a function-local `const KB: u64 = 2_000;` shadowing the file's
+    `KB` (`local-boundary-flag-alias`).
+12. Reject: the real `bytesize` edit `bytes < unit` to `bytes <= unit`,
+    whose only direct row binds `bytes` to a string literal: the verdict
+    stays `infection_unknown` (`bytesize-format-unit-first-run`).
+13. Accept: `fn check(expected: &str, size: Size, si: bool)` asserting on
+    `size.hit_as(si)`, `hit_as(&self, si)` calling `hit(self.0, si)`, and a
+    test calling `check("1 big", Size::kib(1), true)` with `pub const fn
+    kib(count: u64) -> Self { Size(count * KIB) }`: the owner row is `bytes
+    = 1024`, `si = true`, so infection reads `yes` at the changed boundary.
+    The helper's one assertion compares the method's result, which returns
+    the owner's result unchanged, so the exact pin pairs with the boundary
+    row and the verdict is `exposed` (`method-hop-field-read-hit`, and
+    `method-hop-field-read-name-collision` where the owner is named
+    `to_string` and the helper also calls `expected.to_string()`).
+14. Reject: the same chain with rows that never equal the selected unit
+    (`method-hop-field-read-trap`): no boundary input is credited.
+15. Reject: a receiver rebound before the call
+    (`method-hop-field-read-rebound`): the earlier stop is kept.
+16. Reject: a constructor argument that is not a literal
+    (`method-hop-field-read-nonliteral`): every row is withdrawn.
+17. Reject: a constructor shape the product reader declines
+    (`method-hop-field-read-second-ctor`, `Size::shifted(1)` shifts instead
+    of multiplying): no receiver value is built.
+18. Reject: a receiver that is not a parameter, a parameter typed as another
+    type, two call sites, a non-unique method, a constructor whose body is
+    not one tail expression, a product that overflows the field type, a
+    shadowed, duplicated or imported constant, a tuple struct declared
+    twice, a named-field struct, and `self.1` for a one-field struct: each
+    keeps the earlier stop or withdraws the rows. These keep
+    `infection_unknown`.
+19. Accept: the same shape with a second caller of the owner that no test
+    reaches (`method-hop-multi-caller-hit`, a `Display::fmt`).
+20. Reject: one helper call reaching two callers of the owner
+    (`method-hop-multi-caller-both-reached`, `infection_unknown`); a method
+    that transforms the result (`method-hop-transformed-result`) and a
+    helper that drops it (`method-hop-unobserved-result`), both
+    `propagation_unknown`.
+21. Accept: `let base = 9;` with `score(base + 1)` and `score(base)` against
+    `10 <= qty` reached through `order_discount`: the first argument folds to
+    `10`, the second reads `9`, and the boundary is observed
+    (`grid-bindings-computed-arg`).
+22. Reject: a binding that may hold another value at the call: `mut`, a second
+    `let`, a `for` pattern, a closure parameter, an `if let` and an assignment
+    each keep the argument unread (`spec0158-fold-mutable-binding`,
+    `spec0158-fold-shadowed-binding`).
+23. Reject: an operand that is not a plain decimal binding or literal: a call,
+    a method, a cast, a suffixed literal, a text or fractional or computed
+    initializer, an unbound name, or arithmetic that underflows keeps the
+    argument unread (`spec0158-fold-call-operand`).
 
-- Accept: `fn check(expected: &str, size: Size, si: bool)` asserting on
-  `size.hit_as(si)`, `hit_as(&self, si)` calling `hit(self.0, si)`, and a
-  test calling `check("1 big", Size::kib(1), true)` with `pub const fn
-  kib(count: u64) -> Self { Size(count * KIB) }`: the owner row is `bytes
-  = 1024`, `si = true`, so infection reads `yes` at the changed boundary.
-  The helper's assertion observes the method's result and a method hop never
-  forwards, so the verdict abstains at `propagation_unknown`
-  (`method-hop-field-read-hit`, and `method-hop-field-read-name-collision`
-  where the owner is named `to_string` and the helper also calls
-  `expected.to_string()`).
-- Reject: the same chain with rows that never equal the selected unit
-  (`method-hop-field-read-trap`): no boundary input is credited.
-- Reject: a receiver rebound before the call, a receiver that is not a
-  parameter, a parameter typed as another type, two call sites, a
-  non-unique method, a constructor argument that is not a literal, a
-  constructor whose body is not one tail expression, a product that
-  overflows the field type, a shadowed, duplicated or imported constant,
-  a tuple struct declared twice, a named-field struct, and `self.1` for a
-  one-field struct: each keeps the earlier stop or withdraws the rows
-  (`method-hop-field-read-rebound`, `method-hop-field-read-nonliteral`,
-  `method-hop-field-read-second-ctor`, and the unit tests below). These keep
-  `infection_unknown`.
+24. Accept: an argument that computes over a same-file `const` or a
+    nullary literal helper: `BASE + 1` and `BASE` against `10 <= qty`, and
+    `big()` and `small()` against the same boundary, the helpers returning `10`
+    and `9` (`spec0158-modfold-const-operand`,
+    `spec0158-modfold-helper-call`, `old-surcharge-call-expression-input`).
+25. Reject: a helper or constant the file does not pin down to one literal: a
+    helper whose body computes, takes a parameter, or is declared a second
+    time by a test-module copy that returns another value, a `const`
+    declared again in the test body, and a helper declared only in a sibling
+    module while the test glob-imports the name from elsewhere, keep the
+    argument unread (`spec0158-modfold-helper-shadowed`,
+    `spec0158-modfold-helper-computes`, `spec0158-modfold-const-shadowed`,
+    `spec0158-modfold-helper-glob-import`).
+26. Reject: a call shape that is not the bare helper: a path, a method call, a
+    call with arguments or a cast around it keeps the argument unread
+    (`argument_fold` unit tests).
 
 ## Test Mapping
 
-`analysis/classify/value_transfer.rs` `tests`;
+`analysis/classify/argument_fold.rs` `tests` (every fold and refusal above);
+`rust-verdict-corpus` cases `spec0158-modfold-const-operand`,
+`spec0158-modfold-helper-call`, `spec0158-modfold-helper-shadowed`,
+`spec0158-modfold-helper-computes`, `spec0158-modfold-const-shadowed` and
+`spec0158-modfold-helper-glob-import`;
+`analysis/classify/value_transfer.rs` `tests` (including
+`literal_only_integer_expressions_fold_to_their_value` and
+`literal_folding_refuses_everything_that_is_not_plain_integer_arithmetic`);
+`crates/ripr/tests/literal_arithmetic_observation.rs`;
 `analysis/classify/activation.rs`
 `activation_evidence_resolves_computed_local_boundary_operands`,
 `exact_values_compare_plain_decimals_by_digits_only` and
 `an_integer_local_meets_only_an_integer_counterpart_cell`;
+`crates/ripr/tests/local_value_transfer_semantics.rs` and fixture
+`binding_value_semantics_fail_closed` (declared integer widths and eager
+`map_or` defaults, with intrinsic-index, scoped-generic and safe-default controls);
 `rust-verdict-corpus` cases `local-boundary-flag-hit`,
 `local-boundary-flag-trap`, `local-boundary-flag-negated`,
 `local-boundary-flag-shadowed`, `local-boundary-flag-loop` and
 `local-boundary-flag-alias`;
 `analysis/classify/helper_transfer/method_hop_tests.rs`,
+`analysis/classify/helper_transfer/asserting_entry_tests.rs` (including the
+wrong-owner import and rebinding negatives),
 `analysis/classify/helper_transfer/multi_caller_tests.rs` (the multi-caller
 rule: a chain whose callee has several direct callers binds through the one
 caller a test reaches, and declines when no caller is reached, when two are
@@ -274,6 +544,10 @@ the #3295 family fixtures.
 ## Implementation Mapping
 
 - `analysis/classify/value_transfer.rs` — the typed evaluator.
+- `analysis/classify/argument_fold.rs` — the test-side argument fold and its
+  `FoldScope` (the test's own file, for `const` operands and nullary
+  helpers); the row reader (`owner_row_argument_values`) and same-test
+  pairing consume it.
 - `analysis/classify/activation.rs` — exact operand resolution and the
   boundary/missing-discriminator wiring; char-literal extraction in
   `scalar_values`; the method hop's receiver cell and `self.<index>`

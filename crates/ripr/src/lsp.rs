@@ -14,8 +14,10 @@ mod dollar_requests;
 mod gap_artifacts;
 mod git_inputs;
 mod hover;
+mod initialize_repair;
 mod input_identity;
 mod lens;
+mod panic_containment;
 mod payload_bounds;
 mod position;
 mod progress;
@@ -67,6 +69,7 @@ const COLLECT_REPAIR_PACKET_COMMAND: &str = "ripr.collectRepairPacket";
 const COLLECT_TOP_LIMITATION_COMMAND: &str = "ripr.collectTopLimitation";
 const COLLECT_RECEIPT_STATUS_COMMAND: &str = "ripr.collectReceiptStatus";
 const OPEN_RELATED_TEST_COMMAND: &str = "ripr.openRelatedTest";
+const SHOW_RELATED_TEST_COMMAND: &str = "ripr.showRelatedTest";
 const REFRESH_COMMAND: &str = "ripr.refresh";
 const HOVER_TEXT: &str = "ripr estimates static RIPR exposure for changed Rust behavior. Run `ripr check --format json` for current findings.";
 
@@ -107,13 +110,16 @@ where
     O: tokio::io::AsyncWrite + Unpin,
 {
     let (stdin, stdout) = bounds.wrap(stdin, stdout);
+    // #10016: repair raw non-ASCII URIs in the first initialize frame before
+    // tower-lsp-server's strict RFC 3986 Uri parser rejects the whole request.
+    let stdin = initialize_repair::InitializeRepairReader::new(stdin);
     let (service, socket) = build_service(root.clone(), bounds.client_request_timeout);
     let order = ShutdownExitOrder::default();
 
     Server::new(stdin, stdout, socket)
         .concurrency_level(bounds.request_concurrency)
-        .serve(dollar_requests::AnswerDollarRequests(
-            RecordShutdownExit::new(service, order.clone()),
+        .serve(panic_containment::ContainPanics(
+            dollar_requests::AnswerDollarRequests(RecordShutdownExit::new(service, order.clone())),
         ))
         .await;
     if order.exit_without_shutdown() {

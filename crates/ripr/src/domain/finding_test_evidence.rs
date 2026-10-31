@@ -101,6 +101,8 @@ mod tests {
             relation_confidence: relation_reason.map(RelationReason::confidence),
             relation_reason,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
@@ -110,6 +112,8 @@ mod tests {
         missing_discriminators: &[&str],
     ) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "finding:raw".to_string(),
             canonical_gap: canonical_gap_id.map(|id| FindingCanonicalGap {
                 id: id.to_string(),

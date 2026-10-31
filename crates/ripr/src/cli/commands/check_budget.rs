@@ -69,6 +69,8 @@ where
     });
     let worker_token = token.clone();
     let (tx, rx) = mpsc::channel();
+    #[cfg(test)]
+    let rx = ObservedReceiver(rx);
     // The worker replaces the main thread's analysis stack, so it gets at
     // least the main thread's usual 8 MiB; the 2 MiB default would let a
     // deeply nested source abort the process instead of refusing.
@@ -94,10 +96,60 @@ where
             }
             Err(CoreError::analysis_timeout(timeout_detail(budget)))
         }
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err(CoreError::message(
-            "check analysis stopped before producing a result",
+        // The worker dropped its sender without sending: it panicked (the
+        // panic hook already printed the message on stderr). No result exists,
+        // so this is a typed refusal, never a clean or partial result.
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(CoreError::analysis_worker_stopped(
+            worker_stopped_detail("ripr check", "narrow the diff or base range"),
         )),
     }
+}
+
+/// The refusal diagnostic for an analysis worker that stopped without a
+/// result, shared by `check` and `pilot`. `narrow` names the command's own
+/// way to reduce scope.
+pub(super) fn worker_stopped_detail(command: &str, narrow: &str) -> String {
+    format!(
+        "analysis_worker_stopped: the {command} analysis worker stopped before producing a \
+         result, most likely because it panicked (the panic message is printed above on stderr). \
+         No findings were produced, so this is not a clean result. \
+         Repair route: re-run; if it repeats, report it with the panic hook output \
+         (RUST_BACKTRACE=1 adds a backtrace) and {narrow} to isolate the input."
+    )
+}
+
+// Production calls the standard receiver directly. This test-only observer
+// captures the argument at that method boundary, so there is no production
+// forwarding adapter below the trace whose argument could diverge from it.
+#[cfg(test)]
+struct ObservedReceiver<T>(mpsc::Receiver<T>);
+
+#[cfg(test)]
+impl<T> ObservedReceiver<T> {
+    fn recv_timeout(&self, timeout: Duration) -> Result<T, mpsc::RecvTimeoutError> {
+        WAIT_TRACE.with(|trace| {
+            if let Some(waits) = trace.borrow_mut().as_mut() {
+                waits.push(timeout);
+            }
+        });
+        self.0.recv_timeout(timeout)
+    }
+}
+
+#[cfg(test)]
+impl<T> std::ops::Deref for ObservedReceiver<T> {
+    type Target = mpsc::Receiver<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static WAIT_TRACE: std::cell::RefCell<Option<Vec<Duration>>> = const {
+        std::cell::RefCell::new(None)
+    };
 }
 
 #[cfg(test)]
@@ -190,14 +242,57 @@ mod tests {
 
     #[test]
     fn exhausted_budget_refuses_with_the_typed_timeout_and_no_result() -> Result<(), String> {
-        let started = std::time::Instant::now();
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        // Outer containment: if the grace wait is broken into an unbounded
+        // wait for the worker, this releases the worker after a finite time
+        // so the run ends with a failed assertion instead of hanging.
+        const CONTAINMENT: Duration = Duration::from_secs(20);
+        // The worker parks until released, so it cannot finish inside the
+        // budget or the grace on its own. `on_timeout` runs only when the
+        // grace elapsed with the worker still parked. The wait trace checks
+        // the durations actually passed by the production entry point; it
+        // does not assert the scheduler or standard library's elapsed time.
+        let (release, parked) = mpsc::channel::<()>();
+        let (done, done_rx) = mpsc::channel::<()>();
+        let (worker_done, worker_done_rx) = mpsc::channel::<()>();
+        let watchdog_release = release.clone();
+        let watchdog = std::thread::spawn(move || {
+            if matches!(
+                done_rx.recv_timeout(CONTAINMENT),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ) {
+                let _ = watchdog_release.send(());
+            }
+        });
+        let grace_elapsed_with_worker_parked = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&grace_elapsed_with_worker_parked);
+        WAIT_TRACE.with(|trace| *trace.borrow_mut() = Some(Vec::new()));
         let result: Result<u32, _> = run_with_budget(
             Some(Duration::from_millis(50)),
-            || {},
-            || {
-                std::thread::sleep(Duration::from_mins(1));
+            move || observed.store(true, Ordering::SeqCst),
+            move || {
+                let _ = parked.recv();
+                let _ = worker_done.send(());
                 Ok(1)
             },
+        );
+        let waits = WAIT_TRACE.with(|trace| trace.borrow_mut().take().unwrap_or_default());
+        let _ = done.send(());
+        let _ = release.send(());
+        watchdog
+            .join()
+            .map_err(|_panic_payload| "watchdog panicked".to_string())?;
+        assert_eq!(worker_done_rx.recv_timeout(CONTAINMENT), Ok(()));
+        assert_eq!(
+            waits,
+            vec![Duration::from_millis(50), Duration::from_secs(2)]
+        );
+        assert!(
+            grace_elapsed_with_worker_parked.load(Ordering::SeqCst),
+            "the grace wait must expire with the worker still parked, not wait for it"
         );
         let Err(error) = result else {
             return Err("a stuck worker must hit the budget".to_string());
@@ -210,8 +305,36 @@ mod tests {
         assert_eq!(refusal.identity, "analysis_timeout");
         assert_eq!(refusal.repair_route, "analysis/timeout");
         assert!(error.to_string().contains("not a clean result"));
-        // The bound is the budget plus the cancel grace, not the worker's 60 s.
-        assert!(started.elapsed() < Duration::from_secs(10));
+        Ok(())
+    }
+
+    #[test]
+    fn panicking_worker_refuses_with_the_typed_worker_stopped_failure() -> Result<(), String> {
+        // The worker unwinds before sending, so the channel disconnects (the
+        // production hook would print the panic message on stderr); the
+        // refusal must be typed and carry no result.
+        let result: Result<u32, _> = run_with_budget(
+            Some(Duration::from_secs(30)),
+            || {},
+            || -> Result<u32, CoreError> {
+                std::panic::resume_unwind(Box::new("injected check worker fault (#11116)"))
+            },
+        );
+        let Err(error) = result else {
+            return Err("a dead worker must not yield a result".to_string());
+        };
+        assert_eq!(
+            error.check_failure_kind(),
+            Some(CheckFailureKind::AnalysisWorkerStopped)
+        );
+        let refusal = error.check_refusal();
+        assert_eq!(refusal.identity, "analysis_worker_stopped");
+        assert_eq!(refusal.repair_route, "analysis/worker-stopped");
+        let text = error.to_string();
+        for needle in ["panicked", "not a clean result", "re-run", "panic hook"] {
+            assert!(text.contains(needle), "missing {needle:?}: {text}");
+        }
+        assert!(!text.contains("injected check worker fault"));
         Ok(())
     }
 

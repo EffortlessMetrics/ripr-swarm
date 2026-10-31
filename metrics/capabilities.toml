@@ -3,6 +3,10 @@
 
 [[capability]]
 id = "static_exposure_loop"
+cells = [
+  "rust/any/diff/static_facts",
+  "rust/any/repo/static_facts",
+]
 name = "Static exposure loop"
 status = "alpha"
 spec = "RIPR-SPEC-0001"
@@ -44,6 +48,9 @@ metric = "findings include changed behavior, class, evidence, and next step"
 
 [[capability]]
 id = "rust_gap_repair_loop"
+cells = [
+  "rust/any/diff/repair_routing",
+]
 name = "Rust gap repair loop"
 status = "usable alpha"
 spec = "RIPR-SPEC-0057"
@@ -1553,6 +1560,10 @@ metric = "configured analysis mode, oracle policy, severity, suppressions, and s
 
 [[capability]]
 id = "python_preview_static_facts"
+cells = [
+  "python/any/diff/static_facts",
+  "python/any/repo/static_facts",
+]
 name = "Python preview static facts"
 status = "alpha"
 spec = "RIPR-SPEC-0028"
@@ -1604,6 +1615,8 @@ evidence = [
   "fixtures/python-real-repo-evals/corpus.json:mixed_rust_python_pytest_receipt records a mixed Rust/Python pytest repo repair card, bounded agent packet, human-run focused pytest verify pass, and closed Python predicate-boundary outcome receipt",
   "fixtures/python_api_route_decorator_repair_gap pins simple route decorators such as @api.post(...) as static route metadata that can produce a field/object repair card while arbitrary decorators remain static limits",
   "fixtures/python_api_json_field_repair_gap pins a framework-shaped API repair card that links client.post(\"/checkout\") to a route owner and recommends response.json()[\"detail\"] evidence without executing route registration",
+  "fixtures/python_route_rival_app pins that a client built over a same-named application imported from another module does not relate to the changed route owner, so the handler reads no_static_path instead of taking credit from the rival application",
+  "fixtures/python_route_verb_mismatch pins that a client call whose HTTP verb differs from the route decorator's does not relate to the route owner, so the changed handler reads no_static_path instead of taking credit from the wrong verb",
   "fixtures/python_dynamic_route_registration_limit pins dynamic route registration as a decorator_indirection static limitation that emits no repair card or agent-packet-eligible canonical gap",
   "fixtures/python_argparse_output_repair_gap pins an argparse-shaped command whose changed print output routes to a bounded pytest CLI output repair card without importing argparse or executing tests",
   "fixtures/python-real-repo-evals/corpus.json:log_output_pytest_receipt records a pytest caplog repair card, bounded agent packet, focused pytest verify pass with exact log text evidence, and closed Python call/output-effect outcome receipt",
@@ -1636,6 +1649,7 @@ fixtures = [
   "fixtures/python_boundary_gap",
   "fixtures/python_parametrized_boundary_repair_gap",
   "fixtures/python_named_constant_boundary_repair_gap",
+  "fixtures/python_len_local_boundary_repair_gap",
   "fixtures/python_rebound_constant_boundary_limit",
   "fixtures/python_unittest_basic",
   "fixtures/python_method_owner",
@@ -1657,6 +1671,8 @@ fixtures = [
   "fixtures/python_test_placement_verify",
   "fixtures/python_api_route_decorator_repair_gap",
   "fixtures/python_api_json_field_repair_gap",
+  "fixtures/python_route_verb_mismatch",
+  "fixtures/python_route_rival_app",
   "fixtures/python_dynamic_route_registration_limit",
   "fixtures/python_cli_output_repair_gap",
   "fixtures/python_argparse_output_repair_gap",
@@ -1696,6 +1712,10 @@ metric = "language_adapter_python_findings_preview, language_adapter_python_cano
 
 [[capability]]
 id = "python_repair_routing_loop"
+cells = [
+  "python/pytest/diff/repair_routing",
+  "python/unittest/diff/repair_routing",
+]
 name = "Python repair routing loop"
 status = "usable alpha"
 spec = "RIPR-SPEC-0028"
@@ -1725,6 +1745,11 @@ metric = "language_adapter_python_repair_card_v1, language_adapter_python_agent_
 
 [[capability]]
 id = "perl_repair_routing_loop"
+cells = [
+  "perl/any/diff/static_facts",
+  "perl/any/repo/static_facts",
+  "perl/any/diff/repair_routing",
+]
 name = "Perl repair routing loop"
 status = "planned"
 spec = "RIPR-SPEC-0064"
@@ -1750,6 +1775,14 @@ metric = "language_adapter_perl_facts_packet_v1, language_adapter_perl_gap_recor
 
 [[capability]]
 id = "typescript_preview_static_facts"
+cells = [
+  "typescript/any/diff/static_facts",
+  "typescript/any/repo/static_facts",
+  "typescript/any/diff/repair_routing",
+  "javascript/any/diff/static_facts",
+  "javascript/any/repo/static_facts",
+  "javascript/any/diff/repair_routing",
+]
 name = "TypeScript preview static facts"
 status = "alpha"
 spec = "RIPR-SPEC-0027"

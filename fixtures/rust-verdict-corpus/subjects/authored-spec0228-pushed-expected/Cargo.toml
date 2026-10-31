@@ -1,0 +1,6 @@
+[package]
+name = "authored-spec0228-pushed-expected"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

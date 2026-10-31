@@ -232,6 +232,16 @@ boundary only for an `ffi` identifier word (`std::ffi::CStr`, `ffi_call`),
 not for the letters `ffi` inside a word, which refused every witness for
 variants such as `PayError::Insufficient` (#6673).
 
+Repo-seam grading applies the same rule to a `return_value` seam whose changed
+expression is a plain `Err(Type::Variant)` construction (#11111): an exact
+error-variant pin naming that same variant (with the same string-payload guard)
+discriminates the return-value seam as it does the same-span error-variant seam,
+so `ripr repair` no longer reports "missing evidence" for a change `ripr check`
+reads as exposed. A sibling-variant pin, an `.ok_or(..)?` line and a success
+payload are not credited, and the shared `oracle_kind_matches_seam_kind` is
+unchanged. The effect can only move a seam toward gripped, which removes
+repair candidates and never adds one.
+
 ## Non-Goals
 
 - Does NOT recognize `expect_err` in a middle position (only at the end of the
@@ -348,7 +358,9 @@ Tests in `crates/ripr/src/analysis/extract/oracles/` and
 
 ## Acceptance Examples
 
-### Before (incorrect — weakly_exposed even with exact variant test)
+Before shows the behavior this spec corrects. It is not an example.
+
+Before (incorrect — weakly_exposed even with exact variant test):
 
 ```
 Probe
@@ -363,20 +375,20 @@ Evidence
   - related test tests/errors.rs:4 uses medium exact error variant oracle: assert_eq!(err, CalcError::Negative);
 ```
 
-### After (correct — exposed, strong discriminator)
+1. After (correct — exposed, strong discriminator):
 
-```
-Probe
-  family: error_path
-  delta:  value
+   ```
+   Probe
+     family: error_path
+     delta:  value
 
-Static exposure
-  exposed (info, confidence 1.00)
+   Static exposure
+     exposed (info, confidence 1.00)
 
-Evidence
-  - discriminator yes: Strong oracle found: exact error variant assertion
-  - related test tests/errors.rs:4 uses strong exact error variant oracle: assert_eq!(err, CalcError::Negative);
-```
+   Evidence
+     - discriminator yes: Strong oracle found: exact error variant assertion
+     - related test tests/errors.rs:4 uses strong exact error variant oracle: assert_eq!(err, CalcError::Negative);
+   ```
 
 ## Implementation Mapping
 
