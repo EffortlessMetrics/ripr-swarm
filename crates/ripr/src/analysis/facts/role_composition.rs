@@ -859,14 +859,13 @@ impl CrateRoots {
         if let Some(declared) = self.declared_roots.get(package_dir) {
             return declared.clone();
         }
-        let declared = std::fs::read_to_string(workspace_root.join(package_dir).join("Cargo.toml"))
-            .map(|text| {
-                crate::analysis::workspace::declared_crate_root_paths_from_manifest(
-                    &text,
-                    package_dir,
-                )
-            })
-            .unwrap_or_default();
+        let declared = crate::bounded_input::read_metadata_toml(
+            workspace_root.join(package_dir).join("Cargo.toml"),
+        )
+        .map(|text| {
+            crate::analysis::workspace::declared_crate_root_paths_from_manifest(&text, package_dir)
+        })
+        .unwrap_or_default();
         self.declared_roots
             .insert(package_dir.to_path_buf(), declared.clone());
         declared
