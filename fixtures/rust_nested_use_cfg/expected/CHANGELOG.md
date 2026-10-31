@@ -106,7 +106,7 @@ Updated:
 ## Pending — rust_nested_use_cfg (9)
 
 Reason:
-RIPR-SPEC-0197: #10046 refused call identity (a rival, namesake or generated-glob owner) now reads infection_unknown with an explicit unresolved-input reason instead of static_unknown/propagation_unknown; no missing discriminator or equality is invented
+RIPR-SPEC-0122: plain wording for seam and state token in the check digest
 
 Command:
 `cargo xtask goldens bless rust_nested_use_cfg --reason "..."`
