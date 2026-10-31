@@ -1587,29 +1587,64 @@ pub(crate) fn producer_refusal(value: &Value) -> Option<ProducerRefusal> {
         return None;
     }
     let status = refusal_run_status(value).map(str::to_string);
-    let message = value
+    // Message and route come from ONE refusal-bearing record so a
+    // multi-record envelope never pairs an unrelated message with the
+    // refusal's route: first the refusal-bearing `run_limitations[]` entry
+    // (non-consumable or carrying the refusal status), then any entry.
+    let limitations: Vec<&Value> = value
         .get("run_limitations")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|entry| entry.get("message").and_then(Value::as_str))
-        .find(|message| !message.trim().is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| "no producer message recorded".to_string());
-    let repair_route = value
-        .pointer("/analysis_scope/repair_route")
-        .and_then(Value::as_str)
-        .filter(|route| !route.trim().is_empty())
-        .or_else(|| {
-            value
-                .get("run_limitations")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|entry| entry.get("repair_route").and_then(Value::as_str))
-                .find(|route| !route.trim().is_empty())
+        .collect();
+    let non_empty = |record: &Value, key: &str| {
+        record
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .map(str::to_string)
+    };
+    let refusal_entry = limitations
+        .iter()
+        .find(|entry| {
+            entry.get("downstream_consumable").and_then(Value::as_bool) == Some(false)
+                || (status.is_some()
+                    && entry.get("run_status").and_then(Value::as_str) == status.as_deref())
         })
-        .map(str::to_string)
+        .copied();
+    let scope = value.get("analysis_scope");
+    let scope_refuses = scope
+        .and_then(|scope| scope.get("downstream_consumable"))
+        .and_then(Value::as_bool)
+        == Some(false);
+    let message = refusal_entry
+        .and_then(|entry| non_empty(entry, "message"))
+        .or_else(|| {
+            if refusal_entry.is_none() {
+                limitations
+                    .iter()
+                    .find_map(|entry| non_empty(entry, "message"))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "no producer message recorded".to_string());
+    let repair_route = refusal_entry
+        .and_then(|entry| non_empty(entry, "repair_route"))
+        .or_else(|| {
+            scope
+                .filter(|_| scope_refuses || refusal_entry.is_none())
+                .and_then(|scope| non_empty(scope, "repair_route"))
+        })
+        .or_else(|| {
+            if refusal_entry.is_none() {
+                limitations
+                    .iter()
+                    .find_map(|entry| non_empty(entry, "repair_route"))
+            } else {
+                None
+            }
+        })
         .unwrap_or_else(|| "not recorded".to_string());
     Some(ProducerRefusal {
         status,

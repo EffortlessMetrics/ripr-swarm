@@ -230,6 +230,26 @@ fn record_review_comments_timeout(
     }
 }
 
+/// Early producer-refusal probe (#11161): a producer refusal envelope carries
+/// no `analysis_outcome`, so it needs neither the diff nor the inventory.
+/// Reading it before that work keeps an earlier diff/inventory/deadline
+/// failure from hiding the refusal and its repair route. Anything that is not
+/// a refusal (unreadable, malformed, bounded, carrying an outcome) returns
+/// `None` and keeps the loader's own validation and error ordering.
+fn early_producer_refusal_error(path: Option<&Path>) -> Option<String> {
+    let path = path?;
+    let text = crate::bounded_input::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    if value.get("analysis_outcome").is_some()
+        || crate::output::gate::discloses_limited_findings_bound(&value)
+        || crate::output::gate::discloses_bounded_analysis_document(&value)
+    {
+        return None;
+    }
+    let refusal = crate::output::gate::producer_refusal(&value)?;
+    Some(review_comments_refusal_error(path, &refusal))
+}
+
 /// The named refusal error for a producer-refusal check document (#11161):
 /// the typed run status when known, the producer's own message, and the
 /// next step. A refusal envelope carries no `analysis_outcome` at all —
@@ -622,6 +642,14 @@ fn review_comments_with_admission(
         return Ok(());
     }
 
+    if let Some(error) = early_producer_refusal_error(options.check_output.as_deref()) {
+        return Err(record_review_comments_error(
+            &mut receipt,
+            &receipt_path,
+            "configuration",
+            error,
+        ));
+    }
     receipt.phase("configuration", "diff_discovery");
     receipt.write_atomic(&receipt_path)?;
     let diff_text = analysis::cancellation::with_token(&cancellation, || {
@@ -2105,6 +2133,59 @@ mod tests {
         assert!(rendered_md.contains("ripr first-action"));
         assert!(rendered_md.contains("analysis scope: `gap_ledger_artifact`"));
 
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_producer_refusal_wins_over_diff_failure() -> Result<(), String> {
+        // #11161: the refusal envelope needs neither diff nor inventory, so an
+        // earlier diff failure must not hide the refusal and its repair route.
+        let root = unique_command_test_dir("review-comments-refusal-before-diff");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let refusal = root.join("refusal.json");
+        std::fs::write(
+            &refusal,
+            serde_json::json!({
+                "schema_version": "0.2", "tool": "ripr", "mode": "draft",
+                "root": ".", "base": "main", "summary": {}, "findings": [],
+                "analysis_scope": {
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false,
+                    "repair_route": "analysis/diff-scope-budget"
+                },
+                "run_limitations": [{
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false,
+                    "message": "diff_scope_oversized: too many lines",
+                    "repair_route": "analysis/diff-scope-budget"
+                }]
+            })
+            .to_string(),
+        )
+        .map_err(|err| format!("write refusal: {err}"))?;
+        let out = root.join("target/ripr/review/comments.json");
+        let error = match review_comments_with_diff_loader(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "main",
+                "--head",
+                "HEAD",
+                "--check-output",
+                &refusal.display().to_string(),
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| Err("diff failure must not hide the refusal".into()),
+        ) {
+            Ok(()) => return Err("a refusal envelope must fail".to_string()),
+            Err(err) => err,
+        };
+        assert!(error.contains("producer refusal"), "{error}");
+        assert!(error.contains("analysis/diff-scope-budget"), "{error}");
+        assert!(!error.contains("diff failure"), "{error}");
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
         Ok(())
     }

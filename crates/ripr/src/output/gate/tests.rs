@@ -1094,6 +1094,31 @@ fn refusal_input_error_requires_explicit_consumable_false() -> Result<(), String
 }
 
 #[test]
+fn producer_refusal_pairs_message_and_route_from_one_record() -> Result<(), String> {
+    // #11161 review: an unrelated earlier limitation must not lend its message
+    // to the refusal-bearing record's route.
+    let multi = json!({
+        "run_limitations": [
+            {
+                "category": "note",
+                "message": "unrelated advisory note",
+                "repair_route": "analysis/unrelated"
+            },
+            {
+                "run_status": "diff_scope_oversized",
+                "downstream_consumable": false,
+                "message": "diff_scope_oversized: analysis was not run.",
+                "repair_route": "analysis/diff-scope-budget"
+            }
+        ]
+    });
+    let named = producer_refusal(&multi).ok_or_else(|| "refusal must be named".to_string())?;
+    assert_eq!(named.message, "diff_scope_oversized: analysis was not run.");
+    assert_eq!(named.repair_route, "analysis/diff-scope-budget");
+    Ok(())
+}
+
+#[test]
 fn producer_refusal_names_status_message_and_repair_route() -> Result<(), String> {
     // #11161: the shared refusal reader names the typed run status when the
     // document carries a known one, the producer's own first limitation
