@@ -732,23 +732,29 @@ fn repo_root() -> Result<PathBuf, String> {
     })
 }
 
-/// Whether the diff can change what the built binary prints: `ripr` source or
-/// manifests, this check, or its baseline. An unreadable diff forces the run.
-fn live_output_may_have_changed() -> bool {
-    let (Ok(mut changed), Ok(dirty)) = (
-        crate::changed_files_vs_base(Path::new(".")),
-        crate::git_changed_files(Path::new("."), "HEAD"),
-    ) else {
-        return true;
-    };
-    changed.extend(dirty);
-    changed.iter().any(|path| live_trigger_path(path))
+/// Paths changed against the base or the working tree, or an error.
+fn changed_paths() -> Result<Vec<String>, String> {
+    let mut changed = crate::changed_files_vs_base(Path::new("."))?;
+    changed.extend(crate::git_changed_files(Path::new("."), "HEAD")?);
+    Ok(changed)
+}
+
+/// Run the live half when forced, when a changed path can alter what the built
+/// binary prints, or when the diff cannot be read (fail toward running).
+pub(crate) fn live_half_decision(forced: bool, changed: Result<Vec<String>, String>) -> bool {
+    forced
+        || match changed {
+            Ok(paths) => paths.iter().any(|path| live_trigger_path(path)),
+            Err(_) => true,
+        }
 }
 
 pub(crate) fn live_trigger_path(path: &str) -> bool {
-    path.starts_with("crates/ripr/src/")
-        || path == "crates/ripr/Cargo.toml"
+    path.starts_with("crates/ripr/")
+        || path == "Cargo.toml"
         || path == "Cargo.lock"
+        || path.starts_with("rust-toolchain")
+        || path.starts_with(".cargo/")
         || path == "xtask/src/policy/user_text.rs"
         || path == BASELINE_PATH
 }
@@ -801,7 +807,7 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
     // The live half builds `ripr` and runs ~25 commands. Run it when forced
     // (`--full`, `--ripr`, `--ratchet`, check-pr/CI) or when the change can
     // alter live output; a docs-only change scans the goldens only.
-    let run_live = full || ratchet || ripr.is_some() || live_output_may_have_changed();
+    let run_live = live_half_decision(full || ratchet || ripr.is_some(), changed_paths());
     let (live, baseline) = if run_live {
         let bin = resolve_ripr_binary(ripr.as_deref())?;
         (scan_live(&bin, &root, &mut counts)?, baseline)
@@ -929,7 +935,29 @@ mod tests {
 
     #[test]
     fn live_half_runs_only_for_output_affecting_paths() {
-        assert!(live_trigger_path("crates/ripr/src/cli/help.rs"));
+        for path in [
+            "crates/ripr/src/cli/help.rs",
+            "crates/ripr/Cargo.toml",
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            ".cargo/config.toml",
+        ] {
+            assert!(live_trigger_path(path), "{path}");
+        }
+        assert!(live_half_decision(true, Ok(vec![])));
+        assert!(live_half_decision(false, Err("git failed".into())));
+        assert!(live_half_decision(
+            false,
+            Ok(vec!["crates/ripr/src/x.rs".into()])
+        ));
+        assert!(!live_half_decision(
+            false,
+            Ok(vec![
+                "docs/README.md".into(),
+                "fixtures/a/expected/human.txt".into()
+            ])
+        ));
         assert!(live_trigger_path(BASELINE_PATH));
         assert!(!live_trigger_path("docs/USER_TEXT_GLOSSARY.md"));
         assert!(!live_trigger_path("fixtures/x/expected/human.txt"));
@@ -1021,6 +1049,35 @@ mod tests {
         let text = "Top recommendation:\n  gap 2377230e7659a2e1: src/lib.rs:2 discount (x)\n";
         assert_eq!(gap_id_from_pilot(text).as_deref(), Some("2377230e7659a2e1"));
         assert_eq!(gap_id_from_pilot("nothing here"), None);
+    }
+
+    /// Hosted CI runs `ci-policy` -> `precommit_policy(true)`, which takes the
+    /// collect-all path. That path must still run the full check, or a banned
+    /// term increase would pass hosted CI while failing only locally.
+    #[test]
+    fn the_collect_all_ci_policy_path_runs_the_full_user_text_check() -> Result<(), String> {
+        let source = fs::read_to_string(repo_root()?.join("xtask/src/main.rs"))
+            .map_err(|err| format!("read main.rs: {err}"))?;
+        let start = source
+            .find("fn precommit_policy_remaining(")
+            .ok_or("precommit_policy_remaining not found")?;
+        let body = &source[start..];
+        let end = body.find("\n}\n").ok_or("function end not found")?;
+        let body = &body[..end];
+        let local = body
+            .find("check_user_text()?;")
+            .ok_or("local path must run check_user_text()")?;
+        let ci = body
+            .find("policy::check_user_text_full()?;")
+            .ok_or("collect_all path must run policy::check_user_text_full()")?;
+        let guard = body[..ci]
+            .rfind("if !collect_all")
+            .ok_or("full check must sit in the else of `if !collect_all`")?;
+        assert!(
+            guard < local && local < ci,
+            "full check must be the else arm"
+        );
+        Ok(())
     }
 
     /// The committed goldens must already sit within the committed ceilings,

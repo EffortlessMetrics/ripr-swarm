@@ -745,6 +745,9 @@ fn precommit_policy_remaining(
         check_network_policy()?;
         check_lint_policy()?;
         check_user_text()?;
+    } else {
+        // Hosted `ci-policy`: enforce both halves (goldens and live output).
+        policy::check_user_text_full()?;
     }
     Ok(())
 }

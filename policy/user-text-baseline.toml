@@ -6,7 +6,6 @@
 # See docs/USER_TEXT_GLOSSARY.md.
 schema_version = "1.0"
 
-
 [[ceiling]]
 surface = "agent-card-unknown-id"
 term = "seam"

@@ -61,10 +61,10 @@ marker; they are only required to exist (zero goldens fails the check).
 
 The live half uses the default-feature `ripr` binary (`cargo build -p ripr`);
 text that only appears under non-default features is not scanned. It builds the
-binary and runs about 25 commands, so a change that touches no `ripr` source,
-no manifest, and not this check or its baseline scans the goldens only
-(`precommit`). `check-pr`/CI, `--full`, `--ripr` and `--ratchet` always run
-both halves.
+binary and runs about 25 commands, so locally a change that touches nothing under
+`crates/ripr/`, the root manifests and toolchain files, `.cargo/`, or this check
+and its baseline scans the goldens only (`precommit`). Hosted CI (`ci-policy`,
+`check-pr`), `--full`, `--ripr` and `--ratchet` always run both halves.
 
 ## Baseline ceilings
 
