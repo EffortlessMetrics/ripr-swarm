@@ -3,7 +3,7 @@ use std::path::Path;
 
 pub(crate) fn sha256_file(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path)
-        .map_err(|err| format!("read artifact {} failed: {err}", path.display()))?;
+        .map_err(|err| format!("read artifact {} failed: {err}; check the path exists and is readable", path.display()))?;
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     let digest = hasher.finalize();

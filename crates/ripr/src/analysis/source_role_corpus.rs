@@ -24,7 +24,7 @@ fn case_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
     fn walk(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
         let entries = fs::read_dir(directory)
-            .map_err(|error| format!("case directory {directory:?} unreadable: {error}"))?;
+            .map_err(|error| format!("case directory {directory:?} unreadable: {error}; check the directory is readable"))?;
         let mut collected: Vec<_> = entries.filter_map(Result::ok).collect();
         collected.sort_by_key(|entry| entry.file_name());
         for entry in collected {
