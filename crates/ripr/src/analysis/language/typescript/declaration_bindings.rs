@@ -405,6 +405,25 @@ impl DeclarationBindings {
                 .insert(name.to_string(), Binding::default());
         }
     }
+
+    /// Bind a runtime parameter list into the current (just-pushed function)
+    /// scope. Callers establish that the list belongs to a runtime function;
+    /// type-only parameter lists never reach this helper (#10224).
+    fn bind_parameters(&mut self, params: &FormalParameters<'_>) {
+        for id in params
+            .items
+            .iter()
+            .flat_map(|param| param.pattern.get_binding_identifiers())
+            .chain(
+                params
+                    .rest
+                    .iter()
+                    .flat_map(|rest| rest.rest.argument.get_binding_identifiers()),
+            )
+        {
+            self.bind_unknown(id.name.as_str());
+        }
+    }
 }
 
 fn root_value(name: &str) -> Option<Value> {
@@ -473,6 +492,15 @@ impl<'a> Visit<'a> for DeclarationBindings {
                 if let Some(id) = &function.id {
                     self.bind_unknown(id.name.as_str());
                 }
+                // Only a function with a body binds parameters at runtime. A
+                // `declare function`, an overload signature (both bodiless)
+                // and every type-only parameter list (`TSFunctionType`,
+                // `TSMethodSignature`, ...) never create a binding, so their
+                // identifiers must not shadow the runner in the enclosing
+                // scope (#10224).
+                if function.body.is_some() {
+                    self.bind_parameters(&function.params);
+                }
             }
             AstKind::ArrowFunctionExpression(arrow) => {
                 // An expression-bodied arrow returns its operand; the operand
@@ -486,6 +514,10 @@ impl<'a> Visit<'a> for DeclarationBindings {
                 }
                 self.push(arrow.span, &arrow.body.statements);
                 self.variable_scopes.extend(self.stack.last().copied());
+                // An arrow always has a runtime body, so its parameters
+                // always bind (see the `Function` arm for the type-only
+                // counterpart that must not).
+                self.bind_parameters(&arrow.params);
             }
             AstKind::BlockStatement(block) => self.push(block.span, &block.body),
             AstKind::CatchClause(catch) => {
@@ -532,21 +564,6 @@ impl<'a> Visit<'a> for DeclarationBindings {
             AstKind::TSModuleBlock(block) => {
                 self.push(block.span, &block.body);
                 self.variable_scopes.extend(self.stack.last().copied());
-            }
-            AstKind::FormalParameters(params) => {
-                for id in params
-                    .items
-                    .iter()
-                    .flat_map(|param| param.pattern.get_binding_identifiers())
-                    .chain(
-                        params
-                            .rest
-                            .iter()
-                            .flat_map(|rest| rest.rest.argument.get_binding_identifiers()),
-                    )
-                {
-                    self.bind_unknown(id.name.as_str());
-                }
             }
             AstKind::ImportDeclaration(import) => {
                 if let Some(specifiers) = &import.specifiers {
