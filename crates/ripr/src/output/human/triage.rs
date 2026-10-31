@@ -1660,7 +1660,7 @@ fn has_repair_route(finding: &Finding) -> bool {
             .any(|line| line.starts_with("suggested_verify_command: "))
 }
 
-fn is_static_limited(finding: &Finding) -> bool {
+pub(super) fn is_static_limited(finding: &Finding) -> bool {
     // The producer's named limitation remains authoritative even when its
     // conservative class is reachable_unrevealed or weakly_exposed.
     finding.static_limit_kind.is_some()
@@ -1673,7 +1673,7 @@ fn is_static_limited(finding: &Finding) -> bool {
         )
 }
 
-fn is_preview_limited(finding: &Finding) -> bool {
+pub(super) fn is_preview_limited(finding: &Finding) -> bool {
     finding
         .language_status
         .is_some_and(|status| status.as_str() == "preview")

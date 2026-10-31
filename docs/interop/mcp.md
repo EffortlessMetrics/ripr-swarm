@@ -249,7 +249,10 @@ mean identical input. `ripr check --committed` selects committed input;
 edits outside MCP, or inside MCP with the opt-in `source: "worktree"`
 (RIPR-SPEC-0211, #7357: repair cards and readiness only with an
 established producer-custody agreement, withheld with the cause
-otherwise). A committed refresh whose findings and checkout Rust files were not
+otherwise). `ripr_get_repair_card` re-verifies, on every read, the captured
+digests of the files the card's evidence is bound to: an edit or commit after
+`ripr_refresh` (the server does not watch the worktree) refuses with
+`stale_snapshot`, names the path and says to run `ripr_refresh` again. A committed refresh whose findings and checkout Rust files were not
 shown to agree (a consumed file edited, staged, deleted or changed during the
 refresh, or any uncommitted or untracked Rust source or test file, including
 one outside the diff) likewise withholds repair cards (`incomplete_inventory`)
@@ -673,7 +676,7 @@ only it is the mapping, not an observed `resources/read` response.
 | `item_not_found` | `-32002` | identity miss (`-32602` for 2026-07-28 peers) | the id is not in the current snapshot; re-list with `ripr_list_gaps` |
 | `attempt_not_found` | `-32002` | identity miss (`-32602` for 2026-07-28 peers) | the attempt/receipt id does not exist; list attempts |
 | `no_snapshot` | `-32603` | retryable after refresh | call `ripr_refresh`, then retry |
-| `stale_snapshot` | `-32603` | retryable after refresh | re-read with the `current_snapshot_id` in `error.data` or refresh |
+| `stale_snapshot` | `-32603` | retryable after refresh | re-read with the `current_snapshot_id` in `error.data` or refresh; a card refused because a bound source file changed since refresh needs `ripr_refresh` (the id alone still refuses) |
 | `analysis_in_flight` | `-32603` | retryable after wait | another attempt is running; wait and retry |
 | `superseded` | `-32603` | retryable after refresh | the transaction's snapshot is no longer current; refresh and re-prepare |
 | `result_too_large` | `-32603` | bound; narrow the request where a narrower read exists | pageable lists: page or filter. Single-item resources and status/repair documents can have no narrower MCP read; follow `error.data.recovery`, which is authoritative. Retrying unchanged cannot succeed |
