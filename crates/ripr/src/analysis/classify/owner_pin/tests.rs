@@ -42,6 +42,7 @@ fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> 
     Ok(())
 }
 
+mod shared_macro_scan;
 mod shared_target_context;
 #[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
@@ -12895,11 +12896,14 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
         .num_threads(2)
         .build()
         .map_err(|e| e.to_string())?;
+    // The scan is shared per index (#11509), so the control and the primed
+    // run each get their own index to pay their own scan.
     let index = convergence_index();
-    let lookup_all = |syntax: &OwnerPinSyntax| {
+    let primed_index = convergence_index();
+    let lookup_all = |syntax: &OwnerPinSyntax, index: &RustIndex| {
         for name in assertion_context_macros() {
             for test_root in [None, Some(Path::new(TESTS))] {
-                let _ = syntax.workspace_macro_site(name, test_root, &index);
+                let _ = syntax.workspace_macro_site(name, test_root, index);
             }
         }
     };
@@ -12908,7 +12912,7 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
     let unprimed = OwnerPinSyntax::default();
     let in_line = pool.install(|| {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        lookup_all(&unprimed);
+        lookup_all(&unprimed, &index);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     });
     assert_eq!(in_line, Some(false), "an unprimed worker scans in line");
@@ -12916,7 +12920,7 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
     let primed = OwnerPinSyntax::default();
     let fanned_out = pool.install(|| {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        primed.prime_workspace_macro_scan(&index);
+        primed.prime_workspace_macro_scan(&primed_index);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     });
     assert_eq!(fanned_out, Some(true), "priming fans out over its pool");
@@ -12934,7 +12938,7 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
     // After priming no worker scans again, and the guard did not leak.
     let after = pool.install(|| {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        lookup_all(&primed);
+        lookup_all(&primed, &primed_index);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     });
     assert_eq!(after, None, "lookups after priming must not scan");
@@ -12946,8 +12950,8 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
     for name in assertion_context_macros() {
         for test_root in [None, Some(Path::new(TESTS))] {
             assert_eq!(
-                primed.workspace_macro_site(name, test_root, &index),
-                unprimed.workspace_macro_site(name, test_root, &index),
+                primed.workspace_macro_site(name, test_root, &primed_index),
+                unprimed.workspace_macro_site(name, test_root, &primed_index),
                 "{name} {test_root:?}"
             );
         }
