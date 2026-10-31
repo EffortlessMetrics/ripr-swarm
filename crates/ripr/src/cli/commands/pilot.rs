@@ -601,15 +601,7 @@ fn artifact_root_ignore_note(root: &Path, out_dir: &Path) -> Option<String> {
         return None;
     }
     let uncovered = super::doctor::uncovered_artifact_roots(root, &[artifact_root])?;
-    if uncovered.is_empty() {
-        return None;
-    }
-    Some(format!(
-        "ripr note: this run wrote artifacts under {}; that path is not covered by git \
-         ignore rules — add `/target/ripr/` to .gitignore so a future `git add -A` does \
-         not commit ripr's own reports.",
-        uncovered.join(", ")
-    ))
+    super::doctor::artifact_root_ignore_message(&uncovered)
 }
 
 /// Lexically resolve `.` and `..` components in a repository-relative path

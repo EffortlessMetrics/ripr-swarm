@@ -3002,6 +3002,33 @@ fn preemptive_artifact_ignore(
     }
 }
 
+/// The one-line stderr note `check` and `pilot` print after a run that wrote
+/// under `target/ripr` in a non-Cargo project whose git ignore rules do not
+/// cover it (#11879, #9858). `None` for Cargo projects (the `target/`
+/// convention applies), covered rules, or a probe that cannot establish
+/// coverage: the note never claims a fact ripr did not check.
+pub(crate) fn first_run_ignore_note(root: &Path) -> Option<String> {
+    if root.join("Cargo.toml").is_file() {
+        return None;
+    }
+    let uncovered = uncovered_artifact_roots(root, &[PathBuf::from("target/ripr")])?;
+    artifact_root_ignore_message(&uncovered)
+}
+
+/// The wording shared by every first-run ignore note; `None` when nothing is
+/// uncovered.
+pub(crate) fn artifact_root_ignore_message(uncovered: &[String]) -> Option<String> {
+    if uncovered.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "ripr note: this run wrote artifacts under {}; that path is not covered by git \
+         ignore rules — add `/target/ripr/` to .gitignore so a future `git add -A` does \
+         not commit ripr's own reports.",
+        uncovered.join(", ")
+    ))
+}
+
 /// The typed evidence on whether git's index tracks files under ripr's
 /// artifact roots (#8276, relocated bases #8751). An ignore rule never
 /// untracks files committed earlier, so a repository can cover
@@ -5516,6 +5543,48 @@ mod tests {
             preemptive_artifact_ignore(&root, &default_artifact_roots(&root)),
             DoctorArtifactIgnore::Ignored
         );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #11879: the note `check` prints names the exact entry, only when git
+    /// positively reports `target/ripr` uncovered, never for a Cargo project,
+    /// and not once a covering rule exists.
+    #[test]
+    fn first_run_ignore_note_fires_only_for_an_uncovered_non_cargo_project() -> Result<(), String> {
+        let root = unique_command_test_dir("first-run-ignore-note");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        // Not a git repository yet: the probe cannot establish coverage.
+        assert_eq!(first_run_ignore_note(&root), None);
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        let note = first_run_ignore_note(&root).ok_or("uncovered root must produce a note")?;
+        assert!(note.contains("target/ripr"), "{note}");
+        assert!(note.contains("add `/target/ripr/` to .gitignore"), "{note}");
+        // Covered: silent.
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(first_run_ignore_note(&root), None);
+        // A Cargo project follows the `target/` convention: silent even
+        // when the rule is missing.
+        std::fs::write(root.join(".gitignore"), "").map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(first_run_ignore_note(&root), None);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }

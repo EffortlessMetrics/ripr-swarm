@@ -33,6 +33,9 @@ mod check_artifact_stdin;
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/check_budget_refusals.rs"]
 mod check_budget_refusals;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/check_first_run_gitignore_note.rs"]
+mod check_first_run_gitignore_note;
 #[path = "cli_smoke/cli_value_contracts.rs"]
 mod cli_value_contracts;
 #[path = "cli_smoke/closed_stderr.rs"]

@@ -1,0 +1,93 @@
+//! #11879: a first human `check` in a non-Cargo project tells the user once,
+//! on stderr, which `.gitignore` line covers the `target/ripr` it just wrote.
+use super::{run_command, unique_external_workspace};
+use std::fs;
+use std::path::Path;
+
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+const NOTE: &str = "ripr note: this run wrote artifacts under target/ripr";
+
+fn git(project: &Path, args: &[&str]) -> TestResult {
+    let output = run_command("git", Some(project), args)?;
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+/// A bare source tree with no `Cargo.toml`, so the Cargo `target/` convention
+/// does not apply, inside a git repository whose ignore rules are empty.
+fn project(label: &str) -> TestResult<std::path::PathBuf> {
+    let project = unique_external_workspace(label)?;
+    fs::create_dir_all(project.join("src"))?;
+    fs::create_dir_all(project.join("tests"))?;
+    fs::write(project.join("src/lib.rs"), "pub fn price() -> u32 { 2 }\n")?;
+    fs::write(
+        project.join("tests/price.rs"),
+        "use pricing::price;\n#[test]\nfn exact_price() { assert_eq!(price(), 2); }\n",
+    )?;
+    fs::write(
+        project.join("change.diff"),
+        "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn price() -> u32 { 1 }\n+pub fn price() -> u32 { 2 }\n",
+    )?;
+    fs::write(project.join("empty-excludes"), "")?;
+    git(&project, &["init", "-q"])?;
+    git(&project, &["config", "core.excludesFile", "empty-excludes"])?;
+    Ok(project)
+}
+
+fn stderr_of(project: &Path, extra: &[&str]) -> TestResult<String> {
+    let mut args = vec!["check", "--diff", "change.diff"];
+    args.extend_from_slice(extra);
+    let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(project), &args)?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(String::from_utf8(output.stderr)?)
+}
+
+#[test]
+fn first_check_names_the_gitignore_line_until_the_rule_exists() -> TestResult {
+    let project = project("check-gitignore-note")?;
+
+    let first = stderr_of(&project, &[])?;
+    assert_eq!(first.matches(NOTE).count(), 1, "{first}");
+    assert!(
+        first.contains("add `/target/ripr/` to .gitignore"),
+        "{first}"
+    );
+
+    // Discriminating controls: machine formats and `--quiet` stay silent.
+    let json = stderr_of(&project, &["--format", "json"])?;
+    assert!(!json.contains(NOTE), "{json}");
+    let quiet = stderr_of(&project, &["--quiet"])?;
+    assert!(!quiet.contains(NOTE), "{quiet}");
+
+    // Once a covering rule exists the note never repeats, and ripr did not
+    // write the rule itself.
+    fs::write(project.join(".gitignore"), "/target/ripr/\n")?;
+    let covered = stderr_of(&project, &[])?;
+    assert!(!covered.contains(NOTE), "{covered}");
+    assert_eq!(
+        fs::read_to_string(project.join(".gitignore"))?,
+        "/target/ripr/\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_cargo_project_gets_no_gitignore_note() -> TestResult {
+    let project = project("check-gitignore-cargo")?;
+    fs::write(
+        project.join("Cargo.toml"),
+        "[package]\nname = \"pricing\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    let stderr = stderr_of(&project, &[])?;
+    assert!(!stderr.contains(NOTE), "{stderr}");
+    Ok(())
+}
