@@ -39,7 +39,7 @@ One coherent claim has one current candidate, current proof and review for the a
 5. If the issue is missing or materially wrong, use `prepare-issue` and continue.
 6. If proof is absent or self-confirming, use `prepare-proof` and continue.
 7. Build or repair the one current candidate with `build-candidate` and materialize an exact committed head.
-8. Run `review-pr` on that exact head. Before publication, retain unavailable remote checks, artifacts, and external review as `REVIEW_INCOMPLETE`; do not convert them to pass.
+8. Perform `review-pr` on that exact head inline in the owning session's main context, with distinct directed challenges; subagents and bot input are optional evidence. Before publication, retain unavailable remote checks, artifacts, and required review evidence as `REVIEW_INCOMPLETE`; do not convert them to pass.
 9. Use `finish-pr` to publish or resume the exact candidate when no equivalent PR already exists. Committing, pushing an ordinary branch, opening or updating the PR, and repairing it are routine delivery inside the selected claim; do not pause for owner permission. Immediately before pushing to a candidate branch, re-read the PR head (`gh pr view --json headRefOid` or equivalent) and compare it with the expected candidate SHA; see Candidate law for an externally advanced head.
 10. Immediately before publication, before resolving a conflict, and before replacing a supposedly stale candidate, repeat the claim-identity search against current `main`, open PRs, and recently merged PRs. If equivalent work landed, stop conflict repair, preserve any unique residual, and close or disposition the duplicate instead of manufacturing a rival PR. Search once more right after opening the PR; a competing PR for the same claim is resolved by the competing-PR rule, not by creation order alone. Keep the claim comment's `State:` line current as the candidate advances.
 11. Re-enter `review-pr` on the exact published PR head after remote evidence is available. A green check set, empty thread list, or unavailable reviewer does not establish substantive review.
@@ -50,7 +50,12 @@ One coherent claim has one current candidate, current proof and review for the a
 # Continuation handoff
 
 At a phase change or bounded worker return, confirm the current user scope and
-surviving limits before selecting the next transition.
+surviving limits before selecting the next transition. Retire an obsolete
+assistant-imposed phase restriction only when the active user instruction names
+the implementation outcome and that instruction is quoted in the session record;
+preserve explicit user limits, task-scoped boundaries imposed by the coordinating
+owner or run script until that owner retires them, and actual resource denials;
+route genuine doubt to the user.
 
 A bounded worker finishing its phase returns an obligation, not parent
 completion. The delivery owner verifies its evidence and takes the next useful

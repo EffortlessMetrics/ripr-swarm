@@ -12,6 +12,11 @@ n=0
 n=$((n + 1))
 echo "$n" > "$FAKE_DIR/count"
 printf '%s\n' "$*" >> "$FAKE_DIR/calls"
+# Inspect the entire attempted request, including GraphQL query arguments.
+case "$*" in
+  *protection*|*ruleset*|*branchProtection*|*repositoryRuleset*|*credential*|*secret*|*'auth token'*)
+    echo 'privileged request rejected' >&2; exit 91 ;;
+esac
 if [ "$FAKE_FAIL_AT" = "$n" ]; then echo 'ordinary PR read: HTTP 401' >&2; exit 1; fi
 case "$1 $2" in
   'api graphql') cat "$FAKE_DIR/identity.json" ;;
@@ -109,6 +114,36 @@ fn ordinary_pr_read_401_fails_without_publishing_readiness() -> Result<(), Strin
         );
         fs::remove_dir_all(dir).map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+#[test]
+fn fake_gh_rejects_privileged_rest_and_graphql_requests() -> Result<(), String> {
+    let dir = std::env::temp_dir().join(format!("pr-status-deny-{}", std::process::id()));
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let script = dir.join("gh");
+    fs::write(&script, FAKE_GH).map_err(|e| e.to_string())?;
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+    for args in [
+        vec!["api", "repos/x/y/branches/main/protection"],
+        vec!["api", "repos/x/y/rulesets"],
+        vec![
+            "api",
+            "graphql",
+            "-f",
+            "query={repository{branchProtectionRules{totalCount}}}",
+        ],
+    ] {
+        let result = Command::new(&script)
+            .args(args)
+            .env("FAKE_DIR", &dir)
+            .output()
+            .map_err(|e| e.to_string())?;
+        assert_eq!(result.status.code(), Some(91));
+    }
+    let calls = fs::read_to_string(dir.join("calls")).map_err(|e| e.to_string())?;
+    assert_eq!(calls.lines().count(), 3);
+    fs::remove_dir_all(dir).map_err(|e| e.to_string())?;
     Ok(())
 }
 

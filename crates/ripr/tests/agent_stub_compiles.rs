@@ -1297,7 +1297,7 @@ fn limited_journey_check_names_ambiguous_stub_seams() -> Result<(), String> {
 }
 
 #[test]
-fn limited_journey_mixed_grip_choices_disclose_unvalidated_refusal() -> Result<(), String> {
+fn limited_journey_mixed_grip_choices_print_only_the_validated_stub() -> Result<(), String> {
     const SOURCE: &str = "pub fn pair(a: u32, b: u32) -> u32 {\n    if a >= 10 { return 1; } if b >= 20 { return 2; } 0\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn pins_a() {\n        assert_eq!(pair(9, 0), 0);\n        assert_eq!(pair(10, 0), 1);\n        assert_eq!(pair(11, 0), 1);\n    }\n}\n";
     let scratch = kind_refusal_crate(SOURCE)?;
     let root = &scratch.directory;
@@ -1355,16 +1355,7 @@ fn limited_journey_mixed_grip_choices_disclose_unvalidated_refusal() -> Result<(
     }
     assert_ne!(subjects[0].0, subjects[1].0);
     let stdout = check_human(root, &diff)?;
-    assert!(stdout.contains("Choose a test-stub seam for "), "{stdout}");
-    assert!(
-        stdout.contains("syntax choices are unvalidated"),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains("commands may refuse, including for already-gripped seams"),
-        "{stdout}"
-    );
-    assert!(!stdout.contains("Write a test for it:"), "{stdout}");
+    assert!(!stdout.contains("may refuse"), "{stdout}");
     let mut choices = stdout
         .lines()
         .filter(|line| line.trim_start().starts_with("ripr agent stub "))
@@ -1374,14 +1365,16 @@ fn limited_journey_mixed_grip_choices_disclose_unvalidated_refusal() -> Result<(
         })
         .collect::<Vec<_>>();
     choices.sort();
-    let mut expected = subjects
+    // #10710: only the seam whose `--seam-id` stub succeeds is printed; the
+    // strongly gripped seam (which refuses `not_a_gap` below) is withheld.
+    let expected = subjects
         .iter()
+        .filter(|(_, _, eligible)| *eligible)
         .map(|(id, _, _)| id.clone())
         .collect::<Vec<_>>();
-    expected.sort();
     assert_eq!(
         choices, expected,
-        "same syntax identities, not filtered by readiness"
+        "only the validated stub identity is printed:\n{stdout}"
     );
     for (id, class, eligible) in subjects {
         let mut command = ripr_command();
@@ -2525,34 +2518,30 @@ fn first_action_real_callee_only_wrapper_keeps_its_refusal() -> Result<(), Strin
         wrapper_card["seam"]["expression"],
         "try_parse_summary(raw).map_err(|error| error.to_string().into())"
     );
-    let seam_id = wrapper_card["seam_id"]
+    wrapper_card["seam_id"]
         .as_str()
         .filter(|id| !id.is_empty())
         .ok_or("the genuine wrapper card must carry its identity")?;
-    // Preserve the producer's global suppression evidence; this does
-    // not attribute a per-card suppression cause.
+    // The producer's "configured off for strongly_gripped" warnings name other
+    // seams (lines 7, 8 and 10, not this card's line 14) and `suppressed[]` is
+    // empty, so nothing is suppressed: the only card is a static limitation
+    // with no repair start, which is a refusal, not an action. The report must
+    // not call it "suppressed" (RIPR-SPEC-0020) and must not invent a repair.
+    assert_eq!(wrapper_card["gap_state"], "static_limitation");
+    assert_eq!(wrapper_guidance["suppressed"], serde_json::json!([]));
     let (action, markdown) = repair_start_action(&scratch, &wrapper_guidance, "callee-action")?;
     assert_eq!(action["schema_version"], "0.1");
     assert_eq!(action["kind"], "first_useful_action");
     assert!(action["commands"].get("repair").is_none(), "{action}");
-    assert_eq!(action["status"], "suppressed", "{action}");
+    assert_eq!(action["status"], "no_actionable_seam", "{action}");
     assert_eq!(action["action_kind"], "no_action");
-    assert_eq!(action["fallback"]["kind"], "suppressed");
-    assert_eq!(action["why"], "The seam is suppressed or configured off.");
-    assert_eq!(action["selected"]["source"], "pr_guidance");
-    assert_eq!(action["selected"]["seam_id"], seam_id);
-    assert_eq!(action["selected"]["path"], "src/lib.rs");
-    assert_eq!(action["selected"]["line"], 14);
-    assert_eq!(action["selected"]["seam_kind"], "return_value");
-    assert_eq!(action["selected"]["classification"], "no_static_path");
+    assert_eq!(action["fallback"]["kind"], "no_actionable_seam");
     assert_eq!(
-        action["selected"]["changed_behavior"],
-        "try_parse_summary(raw).map_err(|error| error.to_string().into())"
+        action["why"],
+        "Fresh inputs do not contain a PR-local actionable seam."
     );
-    assert_eq!(
-        markdown.lines().find(|line| line.starts_with("- Why: ")),
-        Some("- Why: The seam is suppressed or configured off.")
-    );
+    assert!(action["selected"].is_null(), "{action}");
+    assert!(!markdown.contains("suppressed"), "{markdown}");
     assert!(!markdown.contains("## Start Repair"));
     scratch.cleanup()
 }

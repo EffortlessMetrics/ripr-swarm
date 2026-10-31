@@ -16,8 +16,9 @@ use super::super::rust_index::{
 
 use super::arm_selection::ArmSelector;
 use super::builder_override::{
-    EarlierWrite, KeyedFallback, OwnerCall, is_literal_key, literals_equal, overridden_fields_read,
-    setter_names, struct_literal_fields,
+    EarlierWrite, KeyedFallback, OwnerCall, changed_struct_literal_fields, is_literal_key,
+    literals_equal, overridden_fields_read, setter_names, struct_literal_field_texts,
+    struct_literal_fields,
 };
 use super::propagation_witness::{
     assertion_field_collection_reads, assertion_keyed_getter_reads,
@@ -39,8 +40,8 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// the exact subsequently asserted field. It grants neither reach nor strength.
     pub(in crate::analysis) recording_double_observed:
         &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
-    /// A changed whole returned closure needs its admitted applied owner pin;
-    /// token coincidence cannot establish that the closure ran discriminatingly.
+    /// A changed returned closure or unsafe Display format edit needs its
+    /// admitted owner pin; token coincidence cannot confirm discrimination.
     pub(in crate::analysis) returned_closure_pin_required: bool,
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// #9870: a Result.map callback runs only on Ok. Token coincidence in
@@ -2006,7 +2007,16 @@ fn analyze_related_assertions(
     return_admission: &ReturnOracleAdmission<'_>,
     arm_selector: Option<&ArmSelector>,
 ) -> RevealAssertionAnalysis {
-    let probe_tokens = if is_effect_family(&probe.family) {
+    let probe_tokens = if let Some(fields) = changed_literal_fields(probe) {
+        // The diff changed some initializers of a struct literal and left the
+        // rest: only the changed fields' text names the behavior, so an
+        // assertion on an untouched field (`url` beside a changed
+        // `timeout_ms`) observes nothing the diff moved.
+        fields
+            .iter()
+            .flat_map(|(name, text)| extract_identifier_tokens(&format!("{name} {text}")))
+            .collect()
+    } else if is_effect_family(&probe.family) {
         // An effect target rooted at a binding the owner itself introduces
         // (`let table = ..; table.validate()?;`) names a value no test can
         // hold: a test's same-named local is a different binding, so the
@@ -2017,7 +2027,21 @@ fn analyze_related_assertions(
             .filter(|token| !owner_local_bindings.contains(token))
             .collect()
     } else {
-        extract_identifier_tokens(analysis_expression)
+        // #10479: a literal-only integer expression (`8 * 100`) returns its
+        // folded value (`800`), which an exact-value assertion pins. Digit
+        // tokens stay owner-scoped below, so the fold confirms only an
+        // assertion bound to the owner's result. A value of one or two digits
+        // is no token, as for a bare literal: `1` or `2` would match any
+        // assertion that mentions them (`one() + 1 == 2`).
+        let mut tokens = extract_identifier_tokens(analysis_expression);
+        // The folded value goes through the same token reader, so the one
+        // token-length rule in `extract_identifier_tokens` decides.
+        tokens.extend(
+            super::value_transfer::fold_literal_integer(analysis_expression)
+                .into_iter()
+                .flat_map(|folded| extract_identifier_tokens(&folded)),
+        );
+        tokens
     };
     let effect_literals = if is_effect_family(&probe.family) {
         rust_string_literals(analysis_expression)
@@ -2183,7 +2207,9 @@ fn analyze_related_assertions(
     // reads the field only after the test overwrote it on the owner's result.
     let override_fields: Vec<String> = match probe.family {
         ProbeFamily::ReturnValue => {
-            let fields = struct_literal_fields(&probe.expression);
+            let fields = changed_literal_fields(probe)
+                .map(|fields| fields.into_iter().map(|(name, _)| name).collect())
+                .unwrap_or_else(|| struct_literal_fields(&probe.expression));
             if !fields.is_empty() {
                 fields
             } else if constructed_field.is_some() {
@@ -2195,7 +2221,9 @@ fn analyze_related_assertions(
         ProbeFamily::FieldConstruction => {
             constructed_field.map(str::to_string).into_iter().collect()
         }
-        _ => Vec::new(),
+        _ => changed_literal_fields(probe)
+            .map(|fields| fields.into_iter().map(|(name, _)| name).collect())
+            .unwrap_or_default(),
     };
     let override_owner = probe
         .owner
@@ -3188,6 +3216,21 @@ struct RevealMatchContext<'a> {
 /// The field a `field_construction` expression assigns: the identifier
 /// before a single `:` (`total: a + b`), or the whole shorthand
 /// identifier (`storage,`).
+/// The `(field, initializer)` pairs a probe on a struct literal expression
+/// changed, when the diff touched only some of its fields
+/// ([`changed_struct_literal_fields`]).
+fn changed_literal_fields(probe: &Probe) -> Option<Vec<(String, String)>> {
+    let before = probe.before.as_deref()?;
+    let names = changed_struct_literal_fields(before, &probe.expression)?;
+    let after = struct_literal_field_texts(&probe.expression);
+    Some(
+        after
+            .into_iter()
+            .filter(|(name, _)| names.contains(name))
+            .collect(),
+    )
+}
+
 fn constructed_field_name(expression: &str) -> Option<&str> {
     let expression = expression.trim().trim_end_matches(',').trim();
     let head = match expression.find(':') {
@@ -4128,8 +4171,27 @@ fn assertion_matches_probe_detail_with_literals(
     // owner-scoped token counts only when the assertion is bound to the
     // owner's result: it calls the owner, or names a test `let` bound from
     // an owner call (`let value = score(1); assert!(matches!(value, 2))`).
+    // Scope this lexical token confirmation to return assertion operands,
+    // not diagnostics. Keep full text for association and rendering.
+    let top_level_assertion = [
+        "assert!(",
+        "assert_eq!(",
+        "assert_ne!(",
+        "debug_assert!(",
+        "debug_assert_eq!(",
+        "debug_assert_ne!(",
+        "assert_matches!(",
+        "debug_assert_matches!(",
+        "ensure!(",
+    ]
+    .iter()
+    .any(|prefix| assertion.text.trim_start().starts_with(prefix));
+    let return_operands = (matches!(family, ProbeFamily::ReturnValue) && top_level_assertion)
+        .then(|| crate::analysis::extract::assertion_oracle_text(&assertion.text))
+        .flatten();
+    let confirmation_text = return_operands.as_deref().unwrap_or(&assertion.text);
     let confirming_token_match = probe_tokens.iter().any(|token| {
-        contains_as_whole_word(&assertion.text, token)
+        contains_as_whole_word(confirmation_text, token)
             && (owner_bound || !owner_scoped_tokens.contains(token))
     });
     let effect_literal_match = !effect_literals.is_empty()
@@ -8501,6 +8563,33 @@ mod tests {
     }
 
     #[test]
+    fn return_lexical_confirmation_uses_operands_not_diagnostics() {
+        let tokens = vec!["verifies".to_string()];
+        for (text, expected) in [
+            ("assert_eq!(value, \"verifies\");", true),
+            ("assert_eq!(value, \"other\", \"verifies\");", false),
+            (
+                "wrapper!(assert_eq!(value, \"other\", \"verifies\"));",
+                true,
+            ),
+        ] {
+            let assertion = oracle(text, OracleKind::ExactValue, OracleStrength::Strong);
+            let (matched, confirmed) = assertion_matches_probe_detail(
+                &tokens,
+                &[],
+                &[],
+                None,
+                &ProbeFamily::ReturnValue,
+                &assertion,
+                1,
+                None,
+            );
+            assert!(matched, "assertion stays associated: {text}");
+            assert_eq!(confirmed, expected, "{text}");
+        }
+    }
+
+    #[test]
     fn assertion_matching_accepts_token_family_and_single_assertion_fallbacks() {
         let token_assertion = oracle(
             "assert_eq!(score, 3);",
@@ -10853,6 +10942,53 @@ return Err(\"typed pin\".into());
             assert_eq!(discriminate.summary, BUILDER_OVERRIDE_UNOBSERVED_SUMMARY);
             assert!(discriminate.summary.contains("(observation_unverified)"));
         }
+    }
+
+    /// #10916: the diff moved one initializer of a returned struct literal.
+    /// An assertion on an untouched field (`url`, `retries`) observes nothing
+    /// the diff changed, so it cannot confirm the literal; one on the changed
+    /// field still can.
+    #[test]
+    fn untouched_field_assertion_does_not_confirm_a_partly_changed_literal() {
+        let mut probe = builder_override_probe(
+            ProbeFamily::ReturnValue,
+            "RetryBuilder { attempts: 4, delay_ms: 100 }",
+        );
+        probe.before = Some("RetryBuilder { attempts: 3, delay_ms: 100 }".to_string());
+        let untouched = builder_override_test(
+            "let retry = RetryBuilder::new().build();",
+            "assert_eq!(retry.delay_ms, 100);",
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&untouched, RelationReason::DirectOwnerCall)]);
+        assert_ne!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+        let changed = builder_override_test(
+            "let retry = RetryBuilder::new().build();",
+            "assert_eq!(retry.attempts, 4);",
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&changed, RelationReason::DirectOwnerCall)]);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+        // Control: with no `before`, every field stays in play.
+        probe.before = None;
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&untouched, RelationReason::DirectOwnerCall)]);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
     }
 
     /// Controls for the builder override: reading the default with no

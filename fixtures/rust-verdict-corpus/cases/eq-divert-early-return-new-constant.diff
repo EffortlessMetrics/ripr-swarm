@@ -1,0 +1,266 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index ed7e681..d8e6e77 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -19,7 +19,7 @@ pub fn early_old(n: u32) -> u32 {
+ 
+ pub fn early_new(n: u32) -> u32 {
+     if n > 3 { return 9; }
+-    if n == 5 { 1 } else { 0 }
++    if n == 6 { 1 } else { 0 }
+ }
+ 
+ #[cfg(test)]
+diff --git a/target/debug/deps/eq_divert-89b3137b791ef06d b/target/debug/deps/eq_divert-89b3137b791ef06d
+index bc4cc75..1c785f3 100755
+Binary files a/target/debug/deps/eq_divert-89b3137b791ef06d and b/target/debug/deps/eq_divert-89b3137b791ef06d differ
+diff --git a/target/debug/deps/libeq_divert-f8b861f4e40abc84.rlib b/target/debug/deps/libeq_divert-f8b861f4e40abc84.rlib
+index a2f3462..d64da04 100644
+Binary files a/target/debug/deps/libeq_divert-f8b861f4e40abc84.rlib and b/target/debug/deps/libeq_divert-f8b861f4e40abc84.rlib differ
+diff --git a/target/debug/deps/libeq_divert-f8b861f4e40abc84.rmeta b/target/debug/deps/libeq_divert-f8b861f4e40abc84.rmeta
+index fdd738c..0125f9a 100644
+Binary files a/target/debug/deps/libeq_divert-f8b861f4e40abc84.rmeta and b/target/debug/deps/libeq_divert-f8b861f4e40abc84.rmeta differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/00kaqea25sbnder5cq5awbm33.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/00kaqea25sbnder5cq5awbm33.o
+deleted file mode 100644
+index 48ddbdf..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/00kaqea25sbnder5cq5awbm33.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/0d127mvdll747zaxs6txzz1qp.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/0d127mvdll747zaxs6txzz1qp.o
+deleted file mode 100644
+index 5208d46..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/0d127mvdll747zaxs6txzz1qp.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/0zlej6q48c9sfutf81mravlee.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/0zlej6q48c9sfutf81mravlee.o
+deleted file mode 100644
+index 0e9cf77..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/0zlej6q48c9sfutf81mravlee.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/30htizze29zojkoacbp9smczw.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/30htizze29zojkoacbp9smczw.o
+deleted file mode 100644
+index 9556843..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/30htizze29zojkoacbp9smczw.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/33gr9pjvbyiiy4co37uldhm7g.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/33gr9pjvbyiiy4co37uldhm7g.o
+deleted file mode 100644
+index 537c651..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/33gr9pjvbyiiy4co37uldhm7g.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/5iwiw56xzzmkwli0zvpdckx69.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/5iwiw56xzzmkwli0zvpdckx69.o
+deleted file mode 100644
+index cbe0482..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/5iwiw56xzzmkwli0zvpdckx69.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/5yvxtjuwqzvwzgxz9l46fmwic.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/5yvxtjuwqzvwzgxz9l46fmwic.o
+deleted file mode 100644
+index 85e7fd7..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/5yvxtjuwqzvwzgxz9l46fmwic.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/60k8fuca0ixslwhvawq5qscbq.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/60k8fuca0ixslwhvawq5qscbq.o
+deleted file mode 100644
+index fca84bb..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/60k8fuca0ixslwhvawq5qscbq.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/79vqa604n965crpmi5x2491oy.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/79vqa604n965crpmi5x2491oy.o
+deleted file mode 100644
+index 96c4045..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/79vqa604n965crpmi5x2491oy.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/8hkdo4fqrc38uibx999f7ktx1.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/8hkdo4fqrc38uibx999f7ktx1.o
+deleted file mode 100644
+index 1dd370d..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/8hkdo4fqrc38uibx999f7ktx1.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/91anz1rtwzjeivx8x1b6yten5.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/91anz1rtwzjeivx8x1b6yten5.o
+deleted file mode 100644
+index 3a987ff..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/91anz1rtwzjeivx8x1b6yten5.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/9745a2srclv8j0oi3iuuk4e6f.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/9745a2srclv8j0oi3iuuk4e6f.o
+deleted file mode 100644
+index df2ea84..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/9745a2srclv8j0oi3iuuk4e6f.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/9zxkh1c0mfnhj3pqrinhhicet.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/9zxkh1c0mfnhj3pqrinhhicet.o
+deleted file mode 100644
+index 2033b41..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/9zxkh1c0mfnhj3pqrinhhicet.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/a3tw85aas9k17toaugsyhfwqw.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/a3tw85aas9k17toaugsyhfwqw.o
+deleted file mode 100644
+index 70f5ff8..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/a3tw85aas9k17toaugsyhfwqw.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/alubewmp93uorpw5ex61ldfdv.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/alubewmp93uorpw5ex61ldfdv.o
+deleted file mode 100644
+index 6b0ca93..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/alubewmp93uorpw5ex61ldfdv.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/awkjh64adi398ryo0z5jahqn0.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/awkjh64adi398ryo0z5jahqn0.o
+deleted file mode 100644
+index d75e4a9..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/awkjh64adi398ryo0z5jahqn0.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/bqr6j11040j16wqn77uye9pfo.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/bqr6j11040j16wqn77uye9pfo.o
+deleted file mode 100644
+index a91ad29..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/bqr6j11040j16wqn77uye9pfo.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/cm2xx66wuh7n8fc9m4w1k1n0z.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/cm2xx66wuh7n8fc9m4w1k1n0z.o
+deleted file mode 100644
+index 64510f6..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/cm2xx66wuh7n8fc9m4w1k1n0z.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/dep-graph.bin b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/dep-graph.bin
+deleted file mode 100644
+index fce8d76..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/dep-graph.bin and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/dg1ahpo6sfrt18vyqmd4g7eio.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/dg1ahpo6sfrt18vyqmd4g7eio.o
+deleted file mode 100644
+index 5d83355..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/dg1ahpo6sfrt18vyqmd4g7eio.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/f1mfkmusghjkjog5wlia6c1fl.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/f1mfkmusghjkjog5wlia6c1fl.o
+deleted file mode 100644
+index 18bb983..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/f1mfkmusghjkjog5wlia6c1fl.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/f3k2z0z0g6k77kosxj9skv4d6.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/f3k2z0z0g6k77kosxj9skv4d6.o
+deleted file mode 100644
+index 49cbff6..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/f3k2z0z0g6k77kosxj9skv4d6.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/query-cache.bin b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/query-cache.bin
+deleted file mode 100644
+index 39785cc..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/query-cache.bin and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/work-products.bin b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/work-products.bin
+deleted file mode 100644
+index d95bcec..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr-bcyj4cdpes47wmx5edkupotr6/work-products.bin and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr.lock b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgat4zt9-064jhdr.lock
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/00kaqea25sbnder5cq5awbm33.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/00kaqea25sbnder5cq5awbm33.o
+deleted file mode 100644
+index 48ddbdf..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/00kaqea25sbnder5cq5awbm33.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/0d127mvdll747zaxs6txzz1qp.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/0d127mvdll747zaxs6txzz1qp.o
+deleted file mode 100644
+index 5208d46..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/0d127mvdll747zaxs6txzz1qp.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/0zlej6q48c9sfutf81mravlee.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/0zlej6q48c9sfutf81mravlee.o
+deleted file mode 100644
+index 0e9cf77..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/0zlej6q48c9sfutf81mravlee.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/30htizze29zojkoacbp9smczw.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/30htizze29zojkoacbp9smczw.o
+deleted file mode 100644
+index 9556843..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/30htizze29zojkoacbp9smczw.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/33gr9pjvbyiiy4co37uldhm7g.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/33gr9pjvbyiiy4co37uldhm7g.o
+deleted file mode 100644
+index dc85387..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/33gr9pjvbyiiy4co37uldhm7g.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/5iwiw56xzzmkwli0zvpdckx69.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/5iwiw56xzzmkwli0zvpdckx69.o
+deleted file mode 100644
+index cbe0482..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/5iwiw56xzzmkwli0zvpdckx69.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/5yvxtjuwqzvwzgxz9l46fmwic.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/5yvxtjuwqzvwzgxz9l46fmwic.o
+deleted file mode 100644
+index 85e7fd7..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/5yvxtjuwqzvwzgxz9l46fmwic.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/60k8fuca0ixslwhvawq5qscbq.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/60k8fuca0ixslwhvawq5qscbq.o
+deleted file mode 100644
+index fca84bb..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/60k8fuca0ixslwhvawq5qscbq.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/79vqa604n965crpmi5x2491oy.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/79vqa604n965crpmi5x2491oy.o
+deleted file mode 100644
+index 96c4045..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/79vqa604n965crpmi5x2491oy.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/8hkdo4fqrc38uibx999f7ktx1.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/8hkdo4fqrc38uibx999f7ktx1.o
+deleted file mode 100644
+index 1dd370d..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/8hkdo4fqrc38uibx999f7ktx1.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/91anz1rtwzjeivx8x1b6yten5.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/91anz1rtwzjeivx8x1b6yten5.o
+deleted file mode 100644
+index 3a987ff..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/91anz1rtwzjeivx8x1b6yten5.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/9745a2srclv8j0oi3iuuk4e6f.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/9745a2srclv8j0oi3iuuk4e6f.o
+deleted file mode 100644
+index df2ea84..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/9745a2srclv8j0oi3iuuk4e6f.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/9zxkh1c0mfnhj3pqrinhhicet.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/9zxkh1c0mfnhj3pqrinhhicet.o
+deleted file mode 100644
+index 2033b41..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/9zxkh1c0mfnhj3pqrinhhicet.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/a3tw85aas9k17toaugsyhfwqw.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/a3tw85aas9k17toaugsyhfwqw.o
+deleted file mode 100644
+index 70f5ff8..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/a3tw85aas9k17toaugsyhfwqw.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/alubewmp93uorpw5ex61ldfdv.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/alubewmp93uorpw5ex61ldfdv.o
+deleted file mode 100644
+index 6b0ca93..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/alubewmp93uorpw5ex61ldfdv.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/awkjh64adi398ryo0z5jahqn0.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/awkjh64adi398ryo0z5jahqn0.o
+deleted file mode 100644
+index d75e4a9..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/awkjh64adi398ryo0z5jahqn0.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/bqr6j11040j16wqn77uye9pfo.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/bqr6j11040j16wqn77uye9pfo.o
+deleted file mode 100644
+index a91ad29..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/bqr6j11040j16wqn77uye9pfo.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/cm2xx66wuh7n8fc9m4w1k1n0z.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/cm2xx66wuh7n8fc9m4w1k1n0z.o
+deleted file mode 100644
+index 64510f6..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/cm2xx66wuh7n8fc9m4w1k1n0z.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/dep-graph.bin b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/dep-graph.bin
+deleted file mode 100644
+index 6bf9fb5..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/dep-graph.bin and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/dg1ahpo6sfrt18vyqmd4g7eio.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/dg1ahpo6sfrt18vyqmd4g7eio.o
+deleted file mode 100644
+index 5d83355..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/dg1ahpo6sfrt18vyqmd4g7eio.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/f1mfkmusghjkjog5wlia6c1fl.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/f1mfkmusghjkjog5wlia6c1fl.o
+deleted file mode 100644
+index 18bb983..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/f1mfkmusghjkjog5wlia6c1fl.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/f3k2z0z0g6k77kosxj9skv4d6.o b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/f3k2z0z0g6k77kosxj9skv4d6.o
+deleted file mode 100644
+index 49cbff6..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/f3k2z0z0g6k77kosxj9skv4d6.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/query-cache.bin b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/query-cache.bin
+deleted file mode 100644
+index 65b2860..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/query-cache.bin and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/work-products.bin b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/work-products.bin
+deleted file mode 100644
+index d95bcec..0000000
+Binary files a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef-5br87hq9sobcarantzkkntqsx/work-products.bin and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef.lock b/target/debug/incremental/eq_divert-16dcsn3qj18ck/s-hnlgatazse-1i9y3ef.lock
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/9xvraoas759dssejixtzqbdwy.o b/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/9xvraoas759dssejixtzqbdwy.o
+deleted file mode 100644
+index d427ad0..0000000
+Binary files a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/9xvraoas759dssejixtzqbdwy.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/dep-graph.bin b/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/dep-graph.bin
+deleted file mode 100644
+index 6e58677..0000000
+Binary files a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/dep-graph.bin and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/metadata.rmeta b/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/metadata.rmeta
+deleted file mode 100644
+index d4dcbe9..0000000
+Binary files a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/metadata.rmeta and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/query-cache.bin b/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/query-cache.bin
+deleted file mode 100644
+index 4618b26..0000000
+Binary files a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/query-cache.bin and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/work-products.bin b/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/work-products.bin
+deleted file mode 100644
+index 52bec75..0000000
+Binary files a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2-4mnewu73uslujs4bg6epmbycb/work-products.bin and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2.lock b/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgat4zvk-11smuj2.lock
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/9xvraoas759dssejixtzqbdwy.o b/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/9xvraoas759dssejixtzqbdwy.o
+deleted file mode 100644
+index 7ff3853..0000000
+Binary files a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/9xvraoas759dssejixtzqbdwy.o and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/dep-graph.bin b/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/dep-graph.bin
+deleted file mode 100644
+index f7d2225..0000000
+Binary files a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/dep-graph.bin and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/metadata.rmeta b/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/metadata.rmeta
+deleted file mode 100644
+index fdd738c..0000000
+Binary files a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/metadata.rmeta and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/query-cache.bin b/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/query-cache.bin
+deleted file mode 100644
+index 83d0e1b..0000000
+Binary files a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/query-cache.bin and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/work-products.bin b/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/work-products.bin
+deleted file mode 100644
+index 52bec75..0000000
+Binary files a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs-5wu2x6a1kdvli75fgpv2r2l1q/work-products.bin and /dev/null differ
+diff --git a/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs.lock b/target/debug/incremental/eq_divert-1jmrjn29845za/s-hnlgatb07z-0arrwxs.lock
+deleted file mode 100644
+index e69de29..0000000

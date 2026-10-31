@@ -13,6 +13,11 @@ use std::path::PathBuf;
 
 const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change; a test may still reach it through paths ripr cannot follow.";
 const PROXIMITY_ONLY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.";
+/// The same inspection step when the finding's own missing-check line says no
+/// boundary input was detected (#10978): the step names that missing input
+/// instead of leaving the two lines to read as unrelated.
+const PROXIMITY_ONLY_BOUNDARY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner, and no test input that exercises the changed condition was detected. Inspect existing tests, doctests and examples for a call whose input makes that condition both true and false before changing assertions; add a test only if that inspection finds none.";
+const NO_BOUNDARY_INPUT_MISSING: &str = "No detected boundary input for the changed predicate";
 
 #[cfg(test)]
 pub(in crate::analysis) fn build_finding(
@@ -61,8 +66,28 @@ pub(in crate::analysis) fn build_finding_with_origins(
         reaching_summaries
     };
     let mut stop_reasons = stop_reasons(context.probe, context.owner_fn, &test_summaries);
+    // RIPR-SPEC-0048: a constant decided by evaluation has a reader and tests
+    // the evaluation read, so "no changed Rust line" no longer describes it.
+    if context.const_flow.is_some() {
+        stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
+    }
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
+    // RIPR-SPEC-0263: no related test call enters the guard around the
+    // changed line, so the repair is an input, not a stronger assertion.
+    let unentered_guard = (class == ExposureClass::WeaklyExposed)
+        .then(|| {
+            input_boundary_fact(
+                &evidence.activation.missing_discriminators,
+                &context.probe.family,
+            )
+        })
+        .flatten()
+        .filter(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX))
+        .map(|fact| fact.value.clone());
+    // An exact oracle on another branch does not cover a sink no test enters
+    // (#11147), so the rows still get their `missing_input` miss.
     let exact_oracle_covers_direct_sink = evidence.discriminate.state == StageState::Yes
+        && unentered_guard.is_none()
         && matches!(
             context.probe.family,
             ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::FieldConstruction
@@ -106,9 +131,10 @@ pub(in crate::analysis) fn build_finding_with_origins(
             &evidence.implicit_dispatch_tests,
         );
     }
-    // RIPR-SPEC-0263: no related test call enters the guard around the
-    // changed line, so the repair is an input, not a stronger assertion.
-    let unentered_guard = (class == ExposureClass::WeaklyExposed)
+    // RIPR-SPEC-0229 / #11024: no related test input selects the changed
+    // match arm, so the repair is an input that selects it, not a stronger
+    // assertion. The arm pattern is the backticked span of the fact reason.
+    let unselected_arm = (class == ExposureClass::WeaklyExposed)
         .then(|| {
             input_boundary_fact(
                 &evidence.activation.missing_discriminators,
@@ -116,11 +142,15 @@ pub(in crate::analysis) fn build_finding_with_origins(
             )
         })
         .flatten()
-        .filter(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX))
-        .map(|fact| fact.value.clone());
+        .filter(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX))
+        .map(|fact| format!("{} =>", fact.value));
     let recommended_next_step = if let Some(guard) = unentered_guard {
         Some(format!(
             "Add a related test input that enters `{guard}`; no related test call runs the changed line, so no assertion can observe it yet."
+        ))
+    } else if let Some(arm) = unselected_arm {
+        Some(format!(
+            "Add a test that calls the changed code with an input that selects the arm `{arm}` and asserts its result."
         ))
     } else if evidence
         .discriminate
@@ -156,7 +186,13 @@ pub(in crate::analysis) fn build_finding_with_origins(
         // Proximity is an inspection pointer, not a finding that an
         // existing assertion is broad or missing. Unindexed doctests
         // and examples may already constrain this owner (#7593).
-        Some(PROXIMITY_ONLY_INSPECTION_NEXT_STEP.to_string())
+        Some(
+            if missing.iter().any(|line| line == NO_BOUNDARY_INPUT_MISSING) {
+                PROXIMITY_ONLY_BOUNDARY_INSPECTION_NEXT_STEP.to_string()
+            } else {
+                PROXIMITY_ONLY_INSPECTION_NEXT_STEP.to_string()
+            },
+        )
     } else if class == ExposureClass::StaticUnknown
         && evidence.reach.state == StageState::No
         && !context.owner_assertion_shaped
@@ -286,6 +322,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
     let (activation, files) = evidence.activation.into_public();
     let finding = Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: context.probe.id.0.clone(),
         canonical_gap: None,
         probe: context.probe.clone(),

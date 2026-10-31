@@ -12,14 +12,15 @@ Start here:
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./util/src/stream/take.rs:9
   Static exposure: weak (severity: warning, confidence 0.66)
-  Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
+  Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart
   Gap ID (for scripts): gap:rust:util/src/stream/take.rs:impl Display for Take::fmt:predicate_boundary:predicate:self.remaining==4
   Changed behavior: self.remaining <= 4
   Missing check: No detected boundary input for the changed predicate
   Related test: util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6)
-  Next step: The indexed related tests do not establish a call to the changed owner. Inspect
-    existing tests, doctests and examples before changing assertions; they may already constrain the
-    changed behavior. Add or strengthen a test only if that inspection finds a gap
+  Next step: The indexed related tests do not establish a call to the changed owner, and no test
+    input that exercises the changed condition was detected. Inspect existing tests, doctests and
+    examples for a call whose input makes that condition both true and false before changing
+    assertions; add a test only if that inspection finds none
   Evidence: reach weak · infection weak · propagation yes · observation yes · discriminator not established
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

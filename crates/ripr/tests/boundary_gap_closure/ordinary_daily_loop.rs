@@ -150,8 +150,12 @@ fn ordinary_loop_preserves_production_subject_and_native_outcome() -> Result<(),
         serde_json::json!([])
     );
 
-    // Static exposure cannot establish whether the asserted expected value is
-    // correct. A failing native equality test remains failed even when exposed.
+    // The wrong expected value statically contradicts the owner's folded
+    // behavior, so the whole-test contradiction control withholds the
+    // diff-mode credit exactly as the repo surface does (#7007, #10980):
+    // a test that fails at baseline cannot claim the change is noticed.
+    // The native equality test still fails, and the report subject itself
+    // is unchanged.
     let wrong_expectation = AFTER_TESTS.replace(
         "discounted_total(100, 100), 90",
         "discounted_total(100, 100), 91",
@@ -166,7 +170,7 @@ fn ordinary_loop_preserves_production_subject_and_native_outcome() -> Result<(),
     assert_same_subject(&after, &failed_static)?;
     assert_eq!(
         boundary_finding(&failed_static)?["classification"],
-        "exposed"
+        "weakly_exposed"
     );
     assert_eq!(
         std::fs::read_to_string(roots.fixture.join("src/lib.rs"))

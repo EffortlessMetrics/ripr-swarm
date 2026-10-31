@@ -56,41 +56,87 @@ pub(super) fn credit_known_equality_helpers<'a>(
             .iter()
             .any(|assertion| assertion.known_equality_helper.is_some())
     };
+    // The workspace source-fact parse answers most helpers (#10914); a file
+    // is parsed here only for a helper it left unanswered. Debug builds parse
+    // every helper file to check the supplied answers.
+    let unanswered = |test: &PythonTest| {
+        test.assertions.iter().any(|assertion| {
+            assertion
+                .known_equality_helper
+                .as_ref()
+                .is_some_and(|helper| cfg!(debug_assertions) || helper.established.is_none())
+        })
+    };
     // Each file is parsed once; the parses run in parallel (#10914).
     let paths: BTreeSet<&Path> = tests
         .iter()
-        .filter(|test| uses_helper(test))
+        .filter(|test| uses_helper(test) && unanswered(test))
         .map(|test| test.file.as_path())
         .collect();
     let token = crate::analysis::cancellation::current_token();
-    let files: BTreeMap<PathBuf, Option<FileImports>> = paths
+    let files: BTreeMap<PathBuf, (&'a str, Option<Vec<Stmt>>)> = paths
         .into_par_iter()
-        .map(|path| {
-            let imports =
-                crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
-                    read_source(path).and_then(|source| FileImports::read(path, source))
-                });
-            (path.to_path_buf(), imports)
+        .filter_map(|path| {
+            let source = read_source(path)?;
+            let body = crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                match parse_module_result(path, source) {
+                    Ok(Mod::Module(module)) => Some(module.body),
+                    _ => None,
+                }
+            });
+            Some((path.to_path_buf(), (source, body)))
         })
         .collect();
     for test in tests.iter_mut() {
         if !uses_helper(test) {
             continue;
         }
-        let Some(Some(imports)) = files.get(&test.file) else {
-            continue;
-        };
+        if let Some((source, body)) = files.get(&test.file) {
+            prove_known_equality_helpers(source, body.as_deref(), std::slice::from_mut(test));
+        }
         for assertion in &mut test.assertions {
             let Some(helper) = &assertion.known_equality_helper else {
                 continue;
             };
-            if imports.proves(helper) && !broadcasts_a_scalar(helper) {
+            if helper.established == Some(true) && !broadcasts_a_scalar(helper) {
                 assertion.gate_text = format!("assert {} == {}", helper.left, helper.right);
                 assertion.oracle_kind = OracleKind::ExactValue;
                 assertion.oracle_strength = OracleStrength::Strong;
                 assertion.oracle_shape = super::PythonOracleShape::ExactAssertion;
             }
         }
+    }
+}
+
+/// Answers `established` on every helper of `tests`, which belong to the file
+/// `source` parses to (`body` is None when it does not parse). An answer
+/// already present must agree.
+pub(super) fn prove_known_equality_helpers(
+    source: &str,
+    body: Option<&[Stmt]>,
+    tests: &mut [PythonTest],
+) {
+    let mut helpers = tests
+        .iter_mut()
+        .flat_map(|test| test.assertions.iter_mut())
+        .filter_map(|assertion| assertion.known_equality_helper.as_mut())
+        .peekable();
+    if helpers.peek().is_none() {
+        return;
+    }
+    let imports = body.and_then(|body| FileImports::read(source, body));
+    for helper in helpers {
+        let established = imports
+            .as_ref()
+            .is_some_and(|imports| imports.proves(helper));
+        debug_assert!(
+            helper
+                .established
+                .is_none_or(|supplied| supplied == established),
+            "supplied known-equality proof differs from the source's for {}",
+            helper.callee
+        );
+        helper.established = Some(established);
     }
 }
 
@@ -175,19 +221,16 @@ fn prefixed_integer(text: &str) -> bool {
 /// One test file's top-level imports and the checks that keep them trusted.
 struct FileImports<'a> {
     source: &'a str,
-    body: Vec<Stmt>,
+    body: &'a [Stmt],
     /// Bound name to the dotted object its top-level import brings in.
     bound: BTreeMap<String, String>,
 }
 
 impl<'a> FileImports<'a> {
-    fn read(path: &Path, source: &'a str) -> Option<Self> {
+    fn read(source: &'a str, body: &'a [Stmt]) -> Option<Self> {
         if writes_names_dynamically(source) {
             return None;
         }
-        let Ok(Mod::Module(module)) = parse_module_result(path, source) else {
-            return None;
-        };
         let mut bound: BTreeMap<String, Option<String>> = BTreeMap::new();
         let mut record = |name: String, target: String| {
             // A second top-level import of the same name is ambiguous.
@@ -196,7 +239,7 @@ impl<'a> FileImports<'a> {
                 .and_modify(|existing| *existing = None)
                 .or_insert(Some(target));
         };
-        for stmt in &module.body {
+        for stmt in body {
             match stmt {
                 Stmt::Import(import) => {
                     for alias in &import.names {
@@ -234,7 +277,7 @@ impl<'a> FileImports<'a> {
         }
         Some(Self {
             source,
-            body: module.body,
+            body,
             bound: bound
                 .into_iter()
                 .filter_map(|(name, target)| Some((name, target?)))
@@ -269,15 +312,15 @@ impl<'a> FileImports<'a> {
         }
         // The head is bound once, by its import. Names after it are reached
         // as attributes; any binding of one (`np.testing = fake`) rebinds.
-        if count_bindings(&self.body, head) != 1
+        if count_bindings(self.body, head) != 1
             || rest
                 .iter()
-                .any(|segment| count_bindings(&self.body, segment) != 0)
+                .any(|segment| count_bindings(self.body, segment) != 0)
         {
             return false;
         }
         let method = helper.library == KnownEqualityLibrary::Assertpy;
-        if method && count_bindings(&self.body, "is_equal_to") != 0 {
+        if method && count_bindings(self.body, "is_equal_to") != 0 {
             return false;
         }
         let callable_import = rest.is_empty();

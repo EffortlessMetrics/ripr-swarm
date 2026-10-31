@@ -23,7 +23,7 @@ The selected PR has an exact current head, a current `review-pr` disposition, al
 
 `finish-pr` owns publication, remote review/CI repair, merge, and reconciliation. It does not silently manufacture the substantive review pass.
 
-A committed candidate with `REVIEW_INCOMPLETE` may enter so the procedure can publish the PR and obtain remote evidence. Before merging, the exact published PR head must have a current `REVIEW_READY` result from `review-pr`, including independent substantive exact-head LLM review. When the head changes materially, re-enter `review-pr` for affected currentness dimensions.
+A committed candidate with `REVIEW_INCOMPLETE` may enter so the procedure can publish the PR and obtain remote evidence. Before landing, the exact published PR head must have a current `REVIEW_READY` result from `review-pr`. When the head changes materially, re-enter `review-pr` for affected currentness dimensions.
 
 Routine publication and convergence inside the selected repository claim—push ordinary branch, open/update PR, reply to review, repair CI, resolve addressed threads, use protected squash merge, and clean lane-created state—do not require another owner approval. Separate authorization remains required for force-push/shared-history rewriting, settings/rulesets/secrets, public tags, releases, registry or marketplace package publication, signing or release credentials, durable-evidence deletion, or work outside the selected goal.
 
@@ -68,9 +68,9 @@ a rejection without guessing its cause; never bypass enforcement or change setti
    - the ordinary squash result is the combined-tree subject.
 10. Do not update a behind-only branch. Unrelated movement on `main` is normal and does not require restacking, force-pushing, or rerunning unaffected proof. Reconcile only an actual conflict, explicit stack change, material prerequisite change, failed combined-tree proof, or exact-base policy that applies to this candidate.
 11. Before spending time on conflict repair, re-run the claim-identity search. When upstream or another PR already delivered the same claim, stop, compare for unique residuals, record the winning implementation, and close or disposition the duplicate rather than resolving a dead candidate.
-12. Apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then request required hosted qualification for the exact head by applying `merge-ready` (remove and re-add it for a new head; a Ready toggle requests nothing). A push or material finding returns through that same Draft repair wave, not an immediate re-toggle.
+12. Select the applicable route in [merge flow](../../../docs/MERGE_FLOW.md). For the installed legacy label route, apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then request required hosted qualification for the exact head by applying `merge-ready` (remove and re-add it for a new head; a Ready toggle requests nothing). A push or material finding returns through that same Draft repair wave, not an immediate re-toggle. After verified queue activation, use the native-queue procedure instead of requesting legacy label qualification.
 13. Do not infer review from an empty thread list, reviewer quota/unavailability, or green required checks. Do not infer a human approval requirement or exact cause from `mergeStateStatus: BLOCKED`; inspect available PR/check evidence and report what is known. Do not query settings for routine diagnosis.
-14. When GitHub owns the next transition, retain the exact wait and accountable owner; the parent may advance an independent claim. Use supported spaced waits or an actual continuation under host limits. Do not arm routine auto-merge or a merge queue: inspect completed results and make the final current-head judgment before the normal expected-head merge.
+14. Follow [merge flow](../../../docs/MERGE_FLOW.md): the installed legacy label route remains operative until verified migration to native queue qualification of the actual composition. For the legacy route, inspect current required proof and findings, make the final integration judgment, and use protected expected-head squash; do not substitute generic auto-merge. Use the native-queue procedure only after verified activation. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. The parent goal may advance another independent claim while this PR waits.
 15. Merge ordinary `ripr-swarm` development PRs with the repository's protected squash method. Exact history-preserving source-integration transactions are a separate controlled path and follow their governing issue instead of this rule.
 16. After merge, verify `main`, update issue acceptance, parent state, generated evidence, and any residual work. A merged PR means implementation landed; it does not by itself complete the parent issue, release phase, or high-level goal.
 17. After deliberate closure or supersession, record the winning candidate and preserved residual work.
@@ -118,8 +118,9 @@ passive waiting; genuine remote waits name their owner and decision-changing eve
 without an idle polling worker. Batch related findings into one repair wave, preserve
 unaffected review, and do not force branch churn or a global intake freeze. These
 instructions govern agent decisions; they do not install branch protection.
-The `merge-ready` label (#4986) is the hosted qualification request; being Ready for
-review is not `REVIEW_READY` or permission to merge.
+Until verified migration, the `merge-ready` label (#4986) is the installed hosted
+qualification request; being Ready for
+review is not REVIEW_READY or permission to arm auto-merge.
 
 # Release-scope law
 
@@ -127,7 +128,7 @@ For a pinned release, treat the reviewed immutable pin receipt as the sole membe
 
 # Review law
 
-Independent substantive exact-head LLM review is required before merge. A different name alone is not independence; the reviewer must challenge the actual candidate and evidence rather than echo the author. The accountable root verifies and integrates the result.
+The owning session performs directed inline review in its main context through `review-pr`, changing perspective with explicit criteria, targeted checks and counterexamples. Subagents and advisory bot input (for example `ub-review`; see `docs/CI.md`) are optional extra evidence, not mandatory reviewer identities. Preserve actual required reviews and protections and valid historical review; refresh affected or newly requested dimensions only. The accountable root verifies and integrates the result.
 
 Quota, unavailable, skipped, failed, or stale review-provider output is missing review, not a clean result. A self-review on the author's PR uses a `COMMENT` event with an explicit disposition because GitHub cannot request changes from the author; that platform constraint is not approval.
 

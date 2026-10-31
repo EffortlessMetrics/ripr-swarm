@@ -55,6 +55,17 @@ For a phase change or bounded worker return, use `deliver-pr`'s continuation
 handoff. Its [paired scenarios](docs/agent-context/delivery-continuation-scenarios.md)
 challenge both useful continuation and genuine stop boundaries.
 
+Give the owning session the authorized issue-through-merge outcome upfront and
+evolve directed stages within that session. Perform directed staged review
+inline in the owning session's main context through `review-pr`; in-session
+subagents and advisory bot input (for example `ub-review`; see `docs/CI.md`) are
+optional evidence, not a required separate reviewer. Retire an obsolete
+assistant-imposed phase restriction only when the active user instruction names
+the implementation outcome and that instruction is quoted in the session record;
+preserve explicit user investigation-only limits, task-scoped boundaries imposed
+by the coordinating owner or run script until that owner retires them, and actual
+tool, service or security denials; route genuine doubt to the user.
+
 ## Selected-candidate pre-merge flow
 
 Keep development cheap: focused warm proof, substantive review and joined repairs
@@ -64,16 +75,16 @@ pre-merge CI. Do not run full qualification on every alternative. Independent
 objectives may proceed concurrently; selection is not a repository-wide max-one
 queue. Complete each focused objective's code, tests and documentation together.
 
-Use the actual installed request interface. The intended #4984/#4985/#4986 flow is
-explicit late qualification, normally at most 20 minutes of complete CI execution,
-then a separate current-repository/product/integration judgment and protected
-expected-head squash. Queue time is separate. No routine auto-merge or merge queue.
-The checked-in `routed-rust.yml` requests PR qualification on the `merge-ready`
-label event; Ready alone does not request it. The same source includes merge-group
-support for a proposed cutover, not evidence that a queue is active. Verify the
-actual deployed request path and run state without reading administrative settings.
-`premerge-ci-request` and `request-premerge-ci` remain proposals, not installed
-commands. Preserve current enforcement; this guidance changes no triggers or settings.
+Use the actual installed request interface described in
+[merge flow](docs/MERGE_FLOW.md). The accepted destination is native merge-queue
+qualification of the actual merge composition. Workflow support does not establish
+live queue activation: until verified migration, the installed `merge-ready` label
+requests late PR qualification, followed by current product/integration judgment
+and protected expected-head squash. Ready alone requests nothing. Do not arm
+generic auto-merge as a substitute for that legacy final judgment. After verified
+activation, follow the native-queue procedure and its conditional landing
+authorization. Preserve actual required checks and approvals; this guidance does
+not change triggers, settings or result producers.
 
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future
@@ -85,9 +96,8 @@ head. Reconcile existing native request/run/attempt state before creating more w
 The same useful lead normally stays with its candidate through an ordinary CI wait,
 inspects complete results and current review/Conversation findings, makes the final
 judgment, performs the authorized protected merge and reads back the landing.
-The final judgment does not require a new routine human approval, but an independent
-substantive exact-head LLM review is required before merge. A different name alone
-does not establish independence, and the author's self-review is not its substitute.
+The final judgment does not require a new routine human approval. Perform the
+substantive current-head review under the applicable `review-pr` procedure.
 Use supported waits/events or bounded checks without tight polling. Retain context
 and ownership; a real interruption or exhausted window gets an exact continuation,
 not duplicate CI or an uncertain merge write repeated blindly. Follow the shared
@@ -100,11 +110,14 @@ partial reads and zero visible threads are not clean review. A valid later findi
 can block merge despite an earlier clean pass. Preserve unaffected evidence while
 refreshing materially changed review/proof dimensions.
 
-After landing, reconcile the actual issue/parent acceptance. No routine full
-post-merge CI replay; the intended independent main-health cadence requires both
-at least one hour and ten merges. Incident, deep and release proof retain their
-own purposes and authority. Do not skip the currently enforced path or weaken
-proof to claim the timing/cost target.
+After landing, reconcile the actual issue/parent acceptance. Under #4984, the
+former one-hour-and-ten-merges automatic main-health target is superseded by the
+selected merge-queue-only qualification direction in [merge flow](docs/MERGE_FLOW.md).
+Retain earlier observations with their original subjects and scope; they do not
+authorize routine full post-merge CI replay. Current installed qualification
+obligations remain binding until verified cutover; this instruction does not
+disable any workflow. Incident, deep and release proof retain their own named
+purposes and authority. Do not weaken proof to claim the timing/cost target.
 
 ## Product contract
 
@@ -367,9 +380,8 @@ stimulus and oracle grip, rendered/public behavior, runtime/schema/docs/output
 parity, platform-relevant branches, and exact-head job/artifact evidence. A
 clean self-review records what was inspected and uses a `COMMENT` disposition on
 the author's PR; GitHub's inability to request changes from the author is not
-approval. An independent substantive exact-head LLM review is required before
-merge; the author's self-review is not a substitute, and a different name alone
-does not establish independence.
+approval. The owning session remains accountable for substantive current-head
+review under the applicable procedure.
 
 Review binds only to committed Git objects. Record completed source/oracle review
 separately from missing hosted proof or provider evidence. A final-merge review can

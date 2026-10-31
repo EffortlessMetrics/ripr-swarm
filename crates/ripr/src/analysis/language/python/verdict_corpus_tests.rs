@@ -40,9 +40,11 @@ fn classify_finding_with_delta(
 ) -> Result<crate::domain::Finding, String> {
     let mut owners = extract_owners(Path::new(OWNER_FILE), owner);
     // The workspace pass fills the star-export fact from the module source.
-    reexports::apply_package_reexports(&mut owners, |file| {
-        (file == Path::new(OWNER_FILE)).then_some(owner)
-    });
+    reexports::apply_package_reexports(
+        &mut owners,
+        |file| (file == Path::new(OWNER_FILE)).then_some(owner),
+        &|_| None,
+    );
     let tests = extract_tests(Path::new(TEST_FILE), test_source);
     let new_line = owner
         .lines()
@@ -1086,11 +1088,20 @@ fn a_removed_term_that_every_asserted_input_makes_zero_is_not_discriminated() ->
         )?,
         ExposureClass::Exposed
     );
-    // An input the rule cannot resolve leaves the verdict to the oracle.
+    // A single-assignment local resolves like a literal (#10707), so a local
+    // that makes the term zero is discriminated no better than `6000`.
     assert_eq!(
         quote_class(
             QUOTE_OLD_SHIPPING,
             "def test_quote():\n    amount = 6000\n    assert quote(amount)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    // An input the rule cannot resolve leaves the verdict to the oracle.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    amount = 6000\n    amount += 1\n    assert quote(amount)[\"total_cents\"] == 6001\n"
         )?,
         ExposureClass::Exposed
     );

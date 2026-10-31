@@ -333,7 +333,52 @@ parameter or local rebinding of the name, an attribute call, and comment or
 string text make no edge, nor does a caller wrapped by any decorator
 (including one whose name cannot be read, or a call form such as
 `@property(x)`) other than a bare `classmethod`, `staticmethod` or
-`property`, alone or combined; an `async def` caller is allowed (#4568).
+`property`, alone or combined, except that a top-level `click.command` or
+`click.group` function (decorated only by those and `click.option` /
+`click.argument`, with `import click` in its module) is a caller as well, since
+its decorators build a command that runs the body; an `async def` caller is
+allowed (#4568, #9226).
+A top-level `click.command` or `click.group` function that no test calls is
+related, with the weak `cli_runner_invoke` relation, to a test that passes it
+as the first argument of `<runner>.invoke(` (`runner.invoke(hello, [...])`),
+and, through the `helper_owner_call` hops above, so are the helpers it calls
+(#9226). The test must name the command through the provenance-checked import
+that every direct call uses; `<runner>` must be a local assigned exactly once
+to `CliRunner(...)` imported from `click.testing` or `typer.testing`, or a
+literal `CliRunner()` fixture that nothing else rewrites. A different module's
+`CliRunner`, a non-first argument, an attribute of the command, a rebound or
+parameter-shadowed name, a fixture with arguments or extra statements, an
+undecorated function make no edge. The relation is uncertain, carries no
+oracle and never reaches `exposed`: the command's output is not credited, and a
+helper reached through the command is reach-only too (the invoke may never run
+the body, e.g. `--help`). `import click as c` and `from click import command`
+are not recognised.
+A group subcommand gets the same weak relation by name (#9226): a top-level
+synchronous function bound once and decorated by one `@<group>.command`
+registration (plus `click.option` / `click.argument` only) is reached by a test
+that passes the group, through the same provenance-checked import, as the first
+argument of `<runner>.invoke(` with a literal argument list (positional or
+`args=`) whose first element is the subcommand's name. The group must be a
+top-level function bound once in the same file, decorated only by `click.group`
+(without `cls=`), `click.option` and `click.argument`, with `import click` as
+the file's only binding of `click`. The name is a string literal given to the
+registration (positionally or as `name=`), or the function's own name lowered
+with `_` as `-`; a function name ending `_command`, `_cmd`, `_group` or `_grp`
+is refused, since click versions differ on stripping it. Every registration on
+the group must be readable and distinct, the text `<group>.command` /
+`<group>.group` must appear only as those decorators, and the file must not
+spell `add_command` or `.commands`. A name after an option, a command-line
+string, a name built at run time, an option on the registration other than
+`name`, `help`, `short_help`, `epilog`, `hidden`, `deprecated` or
+`no_args_is_help`, and a helper the subcommand calls make no edge. The
+subcommand's `decorator_indirection` limit is lifted only while such a test
+exists; with none, the owner keeps the limit.
+An owner left `no_static_path` while a test that imports its module (or a
+package above it) calls `.invoke(` on a recognised fresh `CliRunner` keeps its
+class but replaces the generic "No Python test references" line with one
+naming that test and saying ripr does not follow into command internals, and
+withdraws the add-a-test next step (#11069). No recognised invoke, no change.
+
 Known limits, all weak-only: a module-level rebinding such as
 `helper = wrap(helper)` is not detected, and a call inside a nested `def` or
 lambda counts as an edge of the enclosing owner.
@@ -426,7 +471,9 @@ comments, strings, and docstrings:
   bindings: a builtin shadowed by an import, a module or test-local binding
   (including tuple and annotated targets), or a receiver rebound by a chained,
   bracketed (spaced or nested too: `( r), x = ...`, `((r), x) = ...`,
-  `for ((r), x) in ...`; #9178), loop, `with`, walrus or augmented target
+  `for ((r), x) in ...`; #9178; non-adjacent single-line targets
+  `(x, (r)) = ...`, `[a, [r]] = ...`, outer/chained targets and inline
+  loop/with header targets too; #9531), loop, `with`, walrus or augmented target
   (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
   is not credited, as is an augmented assignment after a header or `;`
   (`if c: r += 1`), an `import r` or `nonlocal r`, and any `case` pattern line that
@@ -441,7 +488,9 @@ comments, strings, and docstrings:
   retains earlier lines for multiline literals while searching only the current
   line; an unterminated literal supplies no parsed test or protocol-entry credit.
   Known limits, none of
-  them closed by this: a multi-line tuple target whose earlier elements sit on
+  them closed by this: a non-adjacent assignment inside an inline compound
+  body (`if c: (x, (r)) = ...`) is outside the complete-target fallback;
+  a multi-line tuple target whose earlier elements sit on
   other lines (`(x,\n r) = ...`) is not seen, so the receiver stays credited
   (the credit-keeping direction); and a dict key at the start of a continuation
   line (`{\n (r): 1\n}`) reads as an annotated target and withholds credit
@@ -548,7 +597,20 @@ integer. An exact integer assertion is taken to describe the returned value,
 and the abstention covers only arithmetic defined in reachable workspace
 files. A third-party or dynamically built type with its own `+`, `-` or `*` is
 not visible to this scan, and a pinned number it produced may not behave as the
-algebra assumes. A function defined under a
+algebra assumes. An edit that changes only the value of integer literals on a line that calls an
+imported symbol (`islice(seq, 0, None, n)` to `islice(seq, 1, None, n)`,
+`chunks[-1]` to `chunks[-2]`) lifts `missing_import_graph` on token equality
+alone: the old and new lines must lex to the same tokens except integer
+values, so no callee, keyword, operator, operand, string or float moved (#9226).
+The abstention is lifted only when a strong exact oracle observes the owner;
+no test, a smoke assertion or an assertion on another value keeps it. The callee
+is not evaluated, so a strong exact oracle that reaches the owner is
+not credited as `exposed`: the finding is `weakly_exposed` with no nameable
+discriminator, no canonical gap or flow sink, no `suggested_*` repair card and no
+next step. Any other limit that applies (rebind, dunder dispatch,
+heuristic-only relation, `caplog` evidence) still wins. Without the old
+line the limit stays.
+A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only
 decided shapes are Python 2/3 version tuples, with `sys` the single plain
 import) is an ordinary function owner when its name has no other live
@@ -565,6 +627,27 @@ source assertion, independently of the boolean oracle's normalized gate text.
 A workspace assignment to a function's `__code__`, `__defaults__`, `__kwdefaults__` or
 `__closure__` can replace a reader without rebinding its name, so it withholds the module
 constant's credit for scalar and table constants alike (#10626).
+
+A boundary input that a test passes as a plain name resolves like a literal
+when the name is bound once in the test body, by a top-level single-target
+assignment of a literal before the call (#10707). The test is parsed; the name
+is refused if it is a parameter, is stored, deleted, imported, declared
+`global`/`nonlocal`, bound by a `for`, `with`, `except`, walrus, comprehension,
+nested `def`/`class`/`lambda`, tuple unpack or augmented assignment, or if the
+body contains a `match`. A refused name stays unresolved, so the verdict is
+the weak one. Module-level constants are not resolved by this rule.
+
+A changed line whose old and new text differ only in a trailing `#` comment or
+in whitespace between tokens emits no probe (#10706). Both lines are lexed and
+compared by the source spelling of each token, so the statement is the same
+code; a `#` inside a string, a respelling (`0x1` to `1`, a requoted string), a
+changed token or a changed indentation is still an edit, and a line that does
+not lex alone (part of a multi-line construct) stays analyzed. A line inside a
+string literal that crosses a line break is string content, so the guard does
+not apply there, on either the new line or its paired old line (read from the
+reconstructed old source); a file that cannot be lexed to rule that out gets no
+guard. No gap id or
+discriminator can then embed comment text.
 
 A one-line module-level dict literal of unique `str` or `int` keys and scalar
 values (#9619) is a constant of the same kind, read only by a module function
@@ -587,6 +670,170 @@ credit for every table. Reflection over modules outside that component keeps the
 line continuation cannot hide a table from the foreign-store scan.
 Preceding assertions must evaluate true under the same bounded old/new scope
 before a later assertion can supply the value-flip credit.
+
+A scalar or table constant's reader may also be reached through one forwarding
+hop in a sibling module (#9619). A test that imports `quote` with `from
+pkg.quote import quote [as name]`, where `quote`'s body is one `return` calling
+`lookup` bound by `from .table import lookup [as local]`, relates as
+`module_value_call` when the assertion holds through the old reader and fails
+through the new one. The conditions are:
+
+- the owner module is not `__init__.py` and sits in a regular package (its
+  `__init__.py` is a workspace source), does not mention the forwarder
+  module's name, and loads inertly: its top level holds only a docstring,
+  `pass`, `from __future__` imports, assignments of literals (dict, list and
+  tuple displays of constants included) to plain non-dunder names or
+  `__all__`, with an optional annotation that is a string or, under
+  `from __future__ import annotations`, a bare name, and undecorated `def`s
+  with literal defaults and annotations of the same kinds.
+  It imports nothing else, not even a standard-library module, because a
+  test-root module can take a standard-library name and calls such as
+  `pickle.loads` or `pydoc.locate` import by a string. Loading it therefore
+  never imports the forwarder module;
+- the forwarder module is a non-test sibling in the same directory (not
+  `__init__.py` or `conftest.py`) whose source spells `from .<stem> import`; at
+  most 16 such siblings are read per changed file, and more reads none;
+- loading the forwarder module runs nothing else: its top level holds only a
+  docstring, `pass`, `from __future__` and level-1 `from .<stem>` imports,
+  assignments of literals to plain names other than dunders (`__all__`
+  aside, so `__package__` cannot redirect the relative import), and
+  undecorated `def`s whose defaults are literals; an annotation is absent or
+  a string, or a bare name under `from __future__ import annotations`, so
+  loading never evaluates one;
+- the local name and the forwarder are each bound once in that module; the
+  forwarder is a top-level `def` with positional parameters and no defaults,
+  and it calls the local name with positional arguments only;
+- the test reaches the forwarder only through a `from` import of the
+  forwarder's own name whose module path ends with the forwarder's package
+  directory and module (`rates.quote`), never through a module receiver,
+  which a package `__init__` may rebind, or a path that drops the package,
+  which breaks the relative import; its module path does not start with a
+  standard-library name;
+- the forwarder module gets its own write view of every other workspace file:
+  a write of the forwarder or the local name, a code-slot or dunder write,
+  reflection or a non-byte-exact name anywhere, or another file, extension
+  module or compiled package sharing the forwarder module's name withholds
+  credit, as do reflection, a dynamic writer or a dunder assignment in the
+  forwarder module's own source, and a shared name of the owner module;
+- inside the forwarder only its parameters are bound (the owner's constant is
+  not), and the reader it calls is evaluated with no forwarder of its own, so
+  a second hop decides nothing.
+
+Along a module's dotted path from any import root, read from its whole path
+and from the path below a `src` layout root (any depth) or a top-level `lib`
+root, a package with an initializer of any kind or a source module named for
+a leading component that is not the module's own ancestor
+(`tests/shapes/__init__.py` or `tests/shapes.py` for `shapes.rates.quote`)
+shadows the module's package under pytest's prepend mode. An import root
+that is itself a package below the workspace root (it holds `__init__.py`,
+as `tests/` does when `tests/__init__.py` exists) is skipped by this rule:
+pytest inserts the first directory above a test that has no `__init__.py`,
+so it never puts a package directory on `sys.path`. It withholds the
+credit of every pass that refuses a shared module name. A shadow reached only
+through another suffix of the path is not checked.
+
+A change to the single `return` of an undecorated module function or method
+that no test calls directly (#9226) relates as `module_value_call` to a test
+whose straight-line `assert <entry> == <literal>` holds with the old body and
+fails with the new one, evaluated through a chain of model callables. The
+changed line is the file's only changed line. A model callable is a top-level
+undecorated synchronous `def` with plain positional parameters (no defaults,
+`*args`, keywords, or annotations other than a bare name) whose body is one
+`return` after an optional docstring, bound once in the module, with no
+`yield`, `await` or `:=`. It may also be such a method of a model class: a
+top-level class with no bases, keywords or decorators, bound once, whose body
+holds only a docstring, `pass` and `def`s, with no method whose name starts
+with `__` (dunder or name-mangled), no method defined twice or bound by a
+walrus or `global`, and no `def` carrying a decorator, a default, or an
+annotation other than a bare name or string (each runs while the class body
+does), built as `Class()` with no arguments. Inside a callable a name is a parameter, and a call is a bare call
+of a model function or class of the module, or a method call on an instance
+of a model class (the method's receiver, a parameter holding one, or
+`Class()`), all with positional arguments. Values
+and operators are the module-value evaluator's integers, booleans and strings,
+plus `str * int` repetition (at most 4096 characters) and `.upper()`/`.lower()`
+of an ASCII string. The test reaches the entry through a function or class it
+imports with `from M import name` from the owner's module and does not rebind
+(`import pkg.mod as alias` and `from pkg import mod` read `mod` as a package
+attribute, which `pkg/__init__.py` may rebind, so they do not count), or through a local it binds once to `Class()`
+of a model class before the assertion and uses only as a method receiver (a
+local bound to a model function's result runs that function, so it is not one). The test is
+undecorated, defined once in its file, requests no fixture, has no autouse
+conftest fixture that may skip it, and runs nothing before the assertion but
+other assertions, `pass`, a docstring and its local bindings. A workspace file
+that writes or patches any name the chain runs, a code slot, or any dunder
+attribute (`__new__`, `__getattribute__`, ...; in the owner module too)
+decides nothing, and the finding keeps its verdict. So do `__class__`,
+`__bases__` or `eval` in the owner module, a call nesting deeper than 16, more
+than 4096 calls, and any name, call, operator or value outside that model.
+
+Reflection refuses the credit wherever it appears, in the owner module or in
+any other workspace file: a reflective spelling (`getattr`, `dir`,
+`getmembers`, `locals`, `inspect`, `gc`, `exec`, `compile`, `attrgetter`,
+...), a frame or a function's globals (`__globals__`, `f_globals`,
+`f_locals`, `_getframe`, `currentframe`, `f_back`, `tb_frame`,
+`get_referrers`, `get_referents`), `gc.get_objects`, `setattr`,
+`__setattr__`, `delattr`, `__dict__` and `vars`, or the import system
+(`sys` with `modules` or `path`, however imported, `addsitedir`,
+`meta_path`, `path_hooks`,
+`path_importer_cache`, `__path__`, `pkgutil`, `extend_path`, `importlib`, `__import__`,
+`import_module`, `exec_module`, `reload`). Such code can write a module
+namespace under a name built at runtime, or hand an importer a different
+module, so no name it mentions bounds what it changes. Another workspace file
+with the owner's module name (its file stem, or its package directory for
+`__init__.py`) refuses it too: under pytest's default `prepend` import mode,
+an extra import root, or a package `name/__init__.py` beside `name.py`, the
+test's import of the owner's dotted path may load that file instead. So does
+a compiled extension module of the owner's name beside it (`ledger.*.so`,
+`ledger.so`, `ledger.pyd`, or `__init__.*.so` for a package's `__init__.py`),
+which the import system loads before the source.
+A non-ASCII character in a name or an f-string, in the owner module or any
+other workspace file, refuses the credit: Python NFKC-normalises identifiers,
+so a fullwidth `_ｐad` rebinds `_pad`, while the credit's name matches are
+byte-exact. So does a PEP 263 encoding declaration other than UTF-8 in any of
+those files: in UTF-7 an all-ASCII comment can decode to a second line of
+code. A NUL byte or a carriage return not followed by a newline refuses it
+too: CPython breaks lines on a lone `\r`, so it and the scan disagree on
+which line holds a declaration. An unchecked-hash pyc (PEP 552) of any
+workspace source refuses it as well, since CPython loads it without comparing
+it with the source. Timestamp and checked-hash pycs are trusted the way
+CPython trusts them; the residual risk is a stale timestamp pyc after a
+same-size edit whose mtime lands in the compile second or is restored
+(`rsync -t`, `tar`, CI caches), which CPython itself would load. A pytest or
+tox configuration beside any workspace source, or above one, whose
+`pythonpath`, `python_paths` or `PYTHONPATH` setting names anything but its
+own directory refuses the credit: any other entry (an archive, a directory
+the workspace walk excludes, a root holding only compiled extensions, a path
+outside the workspace, an expansion such as `{toxinidir}`, or entries that
+cannot be read off its lines) can hold code the scan does not read.
+`pythonpath = ["."]` keeps it. Any `addopts` refuses too, since its shell
+split `-o pythonpath=...` can be quoted past any word match. TOML
+configurations are always parsed, so an escaped key counts, every
+`pythonpath` key at any depth counts and a mention outside such a key
+refuses; an INI value runs on across blank and comment lines, as iniconfig
+reads it. A compiled extension or sourceless `.pyc` in any directory that
+holds a source or lies above one (pytest's prepend mode can put any of them
+on `sys.path`) named like the owner or one of its packages (a
+compiled `__init__` counts as its package) refuses it, and so does one in a
+package directory below such a root along a dotted path the owner can be
+imported by (`tests/reach/ledger.pyc`, which pytest's prepend mode puts
+ahead of `reach/ledger.py`), as does a package directory named for the
+whole path with an initializer of any kind (`tests/reach/ledger/
+__init__.pyc`) other than the owner's own package. A test import whose
+top-level module is a standard-library name (`from math import floor`)
+never credits a workspace `math.py`: the built-in and frozen importers run
+before any path entry, and pytest has already imported many pure-Python
+stdlib modules.
+What the environment supplies is outside the static claim and stays a
+residual risk: a `PYTHONPATH` or `PYTEST_ADDOPTS` set by the caller (a
+Makefile, a noxfile, CI configuration, `.envrc`), a `.pth` file in site packages, or an installed
+non-editable copy that wins over the checkout (#10969). A test whose module has header effects is
+refused like one under a conftest with effects. Because these are
+whole-word matches over every workspace file, the credit rarely applies in
+repositories that use reflection anywhere; that is missed credit, not a
+wrong verdict.
+`__setattr__`, `delattr` and the frame words, like `setattr`, also mark a file
+as a dynamic writer for every module-value pass.
 
 A `def name(`, `async def name(`, or `class name(` header in a test defines a
 local; it is not a call of `name`.
@@ -744,9 +991,20 @@ imported from the owner's module (`discounted_total(DISCOUNT_THRESHOLD)` or
 or its module binds that name again. The name stays unresolved when anything
 can rebind it: a second module-scope binding (including inside
 `if`/`try`/`for`/`with`), a `global` declaration or walrus target anywhere in
-the module, a star import, a module-scope `match`, any mention of a dynamic
-namespace writer (`exec`, `globals`, `vars`, `locals`, `setattr`,
-`sys.modules`, `__dict__`), a non-literal value, a parameter or local binding
+the module, a star import, a module-scope `match`, a dynamic
+namespace writer in code (`exec`, `eval`, `globals`, `vars`, `locals`,
+`setattr`, `__setattr__`, `delattr`, `reload`, `patch`, `sys.modules`,
+`__dict__`), whether called, named in an f-string, or named as a
+whitespace-free string such as `getattr(m, "exec")` (a word in a comment or in
+prose, like a docstring saying "env vars", is not a writer, #10979; a module
+the lexer rejects falls back to the whole-text scan; for the names a
+`parametrize` decorator reads at import, that is the `pytest` root, a `@cases` name and
+argnames, a writer inside the body of a `test*` function or a `test*` method of a
+`Test*` class is not counted because it runs after every decorator, while module
+scope, class bodies, helpers, fixtures and decorator arguments still count, and a
+test function named outside its own `def` keeps the whole-module scan; constants,
+object and table bindings read at call time keep it too, #11018),
+a non-literal value, a parameter or local binding
 of the same name in the owner, a nested `def`/`class`/`lambda` in the owner,
 or a related test file that assigns the attribute (`pricing.DISCOUNT_THRESHOLD
 = 5`). A call inside a `@pytest.mark.parametrize` (or `@mark.parametrize`)
@@ -1256,6 +1514,31 @@ argument or a helper with control flow stays `no_static_path`.
 This differs from `helper_assertions` (#9419, #9711): it is a same-file,
 literal-argument, multi-assert source rewrite that runs first, so
 `helper_assertions` then sees no call to resolve.
+
+## Predicate Swap Amendment (2026-10-30, #9186)
+
+A changed predicate that swaps one single-operand test of an owner parameter
+for another (`x is None` to `not x`) is `weakly_exposed`, not `exposed`, when
+every strong related call binds that parameter to a literal on which both
+tests agree. The rule is a closed allow-list that keeps the existing verdict
+on anything unrecognized: the parameter may be mentioned in the owner body
+only in plain read statements (the changed line included), and a related test
+body may make only recognized calls (the owner, the `assert` statement, named
+`self.assert*` methods, known builtins and `pytest` helpers) with no
+non-ASCII identifier letters, f-strings in the owner, subscript or call-result
+callees, f-strings, or non-call mentions of the owner. A function owner is
+recognized only under its imported name or a module alias the reader
+resolves, never through a receiver alias (`m = src.lib; m.pick(0, 3)`,
+`self.lib.pick(0, 3)`); an owner docstring holding `>>>` refuses. The test
+file source is not read, so these shapes are known limits: an owner call at
+module level (`R = pick(0, 3)`), in a class attribute, in `setUp`, in a
+decorator (`@pytest.mark.parametrize('v', [pick(0, 3)])`), or in a conftest
+or autouse fixture, a module-docstring, README or `.txt` doctest, a
+`--doctest-modules` run over test or source files, a helper or runner table defined at module level
+and seen only through its call in the test body, a discriminating call under
+a non-strong oracle (`assert not pick(0, 3)`), and an owner doctest the
+reader does not see. The change is only `exposed` to `weakly_exposed`, the
+conservative direction.
 
 ## Metrics
 

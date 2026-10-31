@@ -13,7 +13,9 @@ use crate::output::perl_preview_card::{PerlPreviewCard, PerlRawEvidenceRef, perl
 use crate::output::preview_actionability::{
     PreviewActionability, PreviewRawEvidenceRef, preview_actionability_for,
 };
-use crate::output::python_repair_card::{PythonRepairCard, python_repair_card};
+use crate::output::python_repair_card::{
+    PythonRepairCard, manual_python_raw, python_repair_card, rooted_pytest_action,
+};
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use crate::output::typescript_preview_card::{
     TypeScriptPreviewCard, bun_cross_language_advisory_packet, stable_byte_proof_mode,
@@ -50,6 +52,22 @@ pub(super) fn trim_field_period(value: &str) -> &str {
 /// parse error ("Next step: TypeScript preview advisory: ..."), so a value
 /// carrying a short leading label renders with a dash; plain text keeps the
 /// colon.
+/// The full first-run Evidence legend (#9373, #10481). `check` records the
+/// first-run marker only when a render contains this whole block, so a header
+/// that merely echoes one legend line cannot count as a displayed legend.
+pub(crate) const HUMAN_EVIDENCE_LEGEND: &str = concat!(
+    "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
+    "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
+    "      discriminator = assertion distinguishes intended from wrong behavior\n",
+    "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
+    "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+    "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
+    "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
+    "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
+    "      found = listed for review; suppressed by your settings = hidden by your suppression policy;\n",
+    "      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers\n",
+);
+
 fn next_step_prefix(step: &str) -> &'static str {
     const NEXT_STEP_PREFIX: &str = "  Next step: ";
     const NEXT_STEP_NESTED_PREFIX: &str = "  Next step — ";
@@ -129,10 +147,16 @@ pub(crate) fn render_finding_digest_with_config(
         severity,
         finding.confidence
     ));
+    if let Some(line) = crate::domain::why_capped_line(&finding.confidence_basis, finding.language)
+    {
+        out.push_str(&format!("  {line}\n"));
+    }
     // #2614: add a brief classification hint so the digest reader understands
     // WHY the finding is at this class without reading the full form.
     let refused_macro = refused_assertion_macro(finding);
-    if let Some(hint) = classification_hint(&finding.class, &finding.ripr, refused_macro) {
+    if let Some(hint) = unresolved_fixture_hint(finding)
+        .or_else(|| classification_hint(&finding.class, &finding.ripr, refused_macro))
+    {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
     }
     // The refusal names a file and a blocker; a cut would drop the blocker,
@@ -260,10 +284,24 @@ pub(crate) fn render_finding_digest_with_config(
         if let Some(node_id) = placement.test_node_id {
             out.push_str(&format!("  Test node: {node_id}\n"));
         }
-        out.push_str(&format!(
-            "  Verify command: {} ({})\n",
-            placement.verify_command, placement.verify_confidence
-        ));
+        if let Some(action) = rooted_pytest_action(finding, root) {
+            out.push_str(&format!(
+                "  Verify command (Bash): {action} ({})\n",
+                placement.verify_confidence
+            ));
+        } else if let Some(raw) = manual_python_raw(finding) {
+            out.push_str(&format!(
+                "  Suggested command (unverified; inspect and run from the selected root): {}\n",
+                raw
+            ));
+        } else if finding.language == Some(LanguageId::Python) {
+            out.push_str("  Verify: no verified command; select and run a project test from the selected root\n");
+        } else {
+            out.push_str(&format!(
+                "  Verify command: {} ({})\n",
+                placement.verify_command, placement.verify_confidence
+            ));
+        }
     }
     if finding.recommended_next_step.is_some() {
         // #4323: wrap, never truncate. The guidance leads with context and
@@ -303,18 +341,15 @@ pub(crate) fn render_finding_digest_with_config(
         ));
         // #9373 item 1: explain the pipeline and its conservative tokens at
         // the bounded surface; full human and machine evidence stay unchanged.
-        out.push_str(concat!(
-            "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
-            "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
-            "      discriminator = assertion distinguishes intended from wrong behavior\n",
-            "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
-            "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
-            "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
-            "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
-            "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
-            "      found = listed for review; suppressed by your settings = hidden by your suppression policy;\n",
-            "      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers\n",
-        ));
+        // #10481: after the first run the digest keeps one pointer line; the
+        // definitions stay one flag away.
+        if config.reports().human_legend() == crate::config::HumanLegend::Pointer {
+            out.push_str(
+                "    Terms: rerun with `--legend` for the stage, state and summary definitions\n",
+            );
+        } else {
+            out.push_str(HUMAN_EVIDENCE_LEGEND);
+        }
         for line in evidence.iter().take(2) {
             // #7756: list-item values carry no trailing period.
             let line = super::evidence_lines::plain_internal_wording(line);
@@ -627,6 +662,10 @@ pub(super) fn render_finding_with_shared_sections(
         severity,
         finding.confidence
     ));
+    if let Some(line) = crate::domain::why_capped_line(&finding.confidence_basis, finding.language)
+    {
+        out.push_str(&format!("  {line}\n"));
+    }
 
     out.push_str("\nEvidence\n");
     if let Some(shared) = shared {
@@ -706,7 +745,7 @@ pub(super) fn render_finding_with_shared_sections(
     }
 
     if let Some(card) = python_repair_card(finding) {
-        push_python_repair_card(&mut out, &card);
+        push_python_repair_card(&mut out, &card, finding, root);
     } else if let Some(card) = typescript_preview_card(finding) {
         push_typescript_preview_card(&mut out, &card);
         // §PR8 (RIPR-SPEC-0088): surface the full work-packet field-note when
@@ -732,10 +771,23 @@ pub(super) fn render_finding_with_shared_sections(
         if let Some(node_id) = placement.test_node_id {
             out.push_str(&format!("  pytest node: {node_id}\n"));
         }
-        out.push_str(&format!(
-            "  verify: {} ({})\n",
-            placement.verify_command, placement.verify_confidence
-        ));
+        if finding.language == Some(LanguageId::Python) {
+            if let Some(action) = rooted_pytest_action(finding, root) {
+                out.push_str(&format!(
+                    "  verify (Bash): {action} ({})\n",
+                    placement.verify_confidence
+                ));
+            } else if let Some(raw) = manual_python_raw(finding) {
+                out.push_str(&format!("  suggested command (unverified; inspect and run from the selected root): {raw}\n"));
+            } else {
+                out.push_str("  verify: no verified command; select and run a project test from the selected root\n");
+            }
+        } else {
+            out.push_str(&format!(
+                "  verify: {} ({})\n",
+                placement.verify_command, placement.verify_confidence
+            ));
+        }
     }
 
     if finding.recommended_next_step.is_some() {
@@ -889,7 +941,12 @@ fn push_raw_ref(out: &mut String, raw_ref: &PreviewRawEvidenceRef) {
     }
 }
 
-fn push_python_repair_card(out: &mut String, card: &PythonRepairCard) {
+fn push_python_repair_card(
+    out: &mut String,
+    card: &PythonRepairCard,
+    finding: &Finding,
+    root: &Path,
+) {
     out.push_str("\nPython repair card (preview/advisory)\n");
     out.push_str(&format!("  card version: {}\n", card.card_version));
     out.push_str(&format!("  canonical gap: {}\n", card.canonical_gap_id));
@@ -921,10 +978,21 @@ fn push_python_repair_card(out: &mut String, card: &PythonRepairCard) {
     if let Some(node_id) = &card.suggested_test_node_id {
         out.push_str(&format!("  pytest node: {node_id}\n"));
     }
-    out.push_str(&format!(
-        "  verify: {} ({})\n",
-        card.verify_command, card.verify_command_confidence
-    ));
+    if let Some(action) = rooted_pytest_action(finding, root) {
+        out.push_str(&format!(
+            "  verify (Bash): {action} ({})\n",
+            card.verify_command_confidence
+        ));
+    } else if let Some(raw) = manual_python_raw(finding) {
+        out.push_str(&format!(
+            "  suggested command (unverified; inspect and run from the selected root): {}\n",
+            raw
+        ));
+    } else {
+        out.push_str(
+            "  verify: no verified command; select and run a project test from the selected root\n",
+        );
+    }
     if let Some(command) = &card.receipt_command {
         out.push_str(&format!("  receipt command: {command}\n"));
     } else {
@@ -1338,7 +1406,14 @@ fn partial_path_hint(ripr: &RiprEvidence) -> &'static str {
         if ripr.infect.state == StageState::Unknown {
             "a related test reaches this change, but static evidence cannot tell whether any test input tells the old and new behavior apart"
         } else {
-            "a related test reaches this change, but no test input tells the old and new behavior apart"
+            // Assertion-level on purpose (#10920 review): every
+            // infection-weak producer establishes that the tests'
+            // assertions cannot distinguish the versions, whether the
+            // inputs fold equal (#8659), no input selects the changed
+            // arm, or a relational sibling's comparison holds on both
+            // versions (#10916) while the asserted values differ. An
+            // input-level claim would misstate that last case.
+            "a related test reaches this change, but no assertion tells the old and new behavior apart"
         }
     } else if incomplete(&ripr.propagate) {
         "a related test reaches this change, but the path from it to what the test checks is only partly traced"
@@ -1374,6 +1449,45 @@ fn refused_assertion_macro(finding: &Finding) -> Option<&str> {
     let note = evidence_value(finding, crate::domain::ASSERTION_NOT_CREDITED_PREFIX)?;
     let name = note.strip_prefix('`')?.split_once("!`")?.0;
     matches!(name, "assert_eq" | "assert").then_some(name)
+}
+
+/// The plain-words reason for a Python finding stopped by a pytest fixture
+/// ripr does not read (#10979): names the test and the fixture, so the reader
+/// knows which definition to open. Read back from the `unresolved_fixtures:`
+/// evidence line the analyzer writes beside the limit it explains.
+fn unresolved_fixture_hint(finding: &Finding) -> Option<String> {
+    if finding.class != ExposureClass::StaticUnknown {
+        return None;
+    }
+    let quoted = |prefix: &str| {
+        let entry = evidence_value(finding, prefix)?;
+        let (names, test) = entry.rsplit_once(" (")?;
+        let names: Vec<String> = names.split(", ").map(|name| format!("`{name}`")).collect();
+        Some((names, test.strip_suffix(')')?.to_string()))
+    };
+    if let Some((names, test)) = quoted("unresolved_fixtures: ") {
+        let (noun, pronoun, verb) = if names.len() == 1 {
+            ("fixture", "it supplies", "it passes")
+        } else {
+            ("fixtures", "they supply", "they pass")
+        };
+        return Some(format!(
+            "test `{test}` takes pytest {noun} {} that ripr does not read, so it cannot tell what {pronoun}; open the {noun} to see whether {verb} the changed input",
+            names.join(", ")
+        ));
+    }
+    // Not a known fixture: a parametrized value whose `indirect=` ripr cannot
+    // settle, which may still reach the test through a fixture of that name.
+    let (names, test) = quoted("unsettled_indirect_params: ")?;
+    let noun = if names.len() == 1 {
+        "argument"
+    } else {
+        "arguments"
+    };
+    Some(format!(
+        "test `{test}` parametrizes {noun} {} with an `indirect=` ripr cannot settle, so it cannot tell whether a fixture changes the value; check `indirect=` and any fixture of that name",
+        names.join(", ")
+    ))
 }
 
 fn classification_hint(
@@ -1591,7 +1705,10 @@ mod classification_hint_tests {
         assert_eq!(
             hint.as_deref(),
             Some(
-                "a related test reaches this change, but no test input tells the old and new behavior apart"
+                // Assertion-level: the admitted relational case (#10916) has
+                // asserted inputs that evaluate differently, so an
+                // input-level claim would misstate the gap.
+                "a related test reaches this change, but no assertion tells the old and new behavior apart"
             )
         );
 

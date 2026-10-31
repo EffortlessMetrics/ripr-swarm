@@ -41,7 +41,7 @@ The procedure may run twice on the same candidate lifecycle:
 
 1. **Candidate review before publication.** Bind the committed branch head and
    inspect source, proof, and repository contracts. Hosted checks, artifacts,
-   and external review that do not yet exist remain missing evidence, so the
+   and required review evidence that do not yet exist remain missing evidence, so the
    normal result is `REVIEW_INCOMPLETE`, not `REVIEW_READY`.
 2. **Merge review after publication.** Bind the exact published PR head, inspect
    current remote checks, artifacts, comments, and integration evidence, and
@@ -54,7 +54,9 @@ that must be inspected before the disposition can advance.
 # Inspection workspace
 
 Reviewing means reading a committed Git object. Binding an exact head must never
-mutate a checkout the reviewer does not own.
+mutate a checkout the reviewer does not own. The owning session may inspect
+committed objects in its existing candidate checkout; directed review does not
+require a new inspection worktree or another agent.
 
 Routes that materialize nothing are the default:
 
@@ -103,7 +105,11 @@ Use this procedure when a coherent candidate exists and one of these is true:
 - automated comments or CI results need an accountable synthesis;
 - a prior review was anchored to another head or an incomplete diff.
 
-Independent substantive exact-head LLM review is required before merge. A different name alone is not independence: the reviewer must make an independent judgment, challenging the actual candidate and evidence rather than echoing the author. An author self-review, even when posted as `COMMENT`, does not replace it; an independent review may record its disposition in a `COMMENT`. The accountable root verifies the review and owns the disposition. If a permitted independent review is unavailable, retain `REVIEW_INCOMPLETE` while continuing independent authorized work.
+Perform directed staged review inline in the owning session's main context by default. Challenge the candidate from distinct correctness, test-oracle, failure and integration perspectives using falsifiable criteria, targeted checks and counterexamples. A separate subagent, external reviewer, source transfer or second executor is not a required review stage. Optional in-session subagents may address a useful evidence or capability question; a different identity is not inherently required for effective review. The owning session remains accountable for the disposition and finish-through.
+
+Retain valid historical reviews with their original subject and scope. Refresh affected or newly requested dimensions only; a new review model or reviewer location does not require retroactive replay. Preserve actual GitHub-required reviews, checks, approvals and protections. Repair conflicting workflow instructions within scope rather than waiving required gates. This default does not prohibit legitimate source-author/publisher or capacity transfers needed for other reasons.
+
+Advisory providers such as `ub-review` and other documented bots (see `docs/CI.md`) supply extra evidence, not replacements for substantive owner review or mandatory identity separation. Unavailable output remains missing evidence for that provider, never a pass; it does not create an absent-service prerequisite.
 
 # Procedure
 

@@ -1,0 +1,44 @@
+{
+  "case_id": "assoc-other-impl-read",
+  "subject_id": "authored-spec0048-assoc-kit",
+  "diff": "cases/assoc-other-impl-read.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 24
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "associated_const_clamp_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "const MAX: u32 = 200;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: Wide::MAX is edited but the only test reads Narrow::MAX; another impl of the same trait defines the same constant name, so a name match is not a reader."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Wide::MAX is edited but the only test reads Narrow::MAX; another impl of the same trait defines the same constant name, so a name match is not a reader.",
+  "labeling_observation": {
+    "ripr_commit": "ea68ea04",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

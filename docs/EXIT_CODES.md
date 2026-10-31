@@ -6,7 +6,7 @@ ripr uses three ordinary command exit codes, plus standalone Unix check interrup
 |------|---------|
 | `0`  | The command completed. |
 | `2`  | The command could not complete: usage, parse, operational, or internal error. |
-| `3`  | The command ran successfully and reached a blocking decision or a typed refusal. |
+| `3`  | ripr declined: the command ran and reached a blocking result, or a request it will not run (the output says why). |
 | `130` | Supported standalone Unix `check` analysis was interrupted. |
 
 `ripr check` is advisory: it exits `0` whether or not it found gaps, including
@@ -190,8 +190,9 @@ reached the caller.
   `cargo test` build may not enable, no return value, an out-of-line test module, or
   inline test modules that are all gated by more than `cfg(test)`), or the
   `--at` path names a language the Rust-only generator does not support
-  (`unsupported_language`: follow any check-provided test guidance, edit and
-  run the test by hand, then refresh the finding), or the selector names no
+  (`unsupported_language`, exit `3`; a `.py` or `.ts` path prints `stub
+  generation supports Rust files only`: follow any check-provided test
+  guidance, edit and run the test by hand, then refresh the finding), or the selector names no
   reported gap (`seam_not_found`), or the location selector
   matches several files or tied disjoint seams (`selector_ambiguous`: choose
   a specific path or one of the suggested seam IDs), or a single related

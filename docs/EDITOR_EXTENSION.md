@@ -316,6 +316,7 @@ quieter.
 - `ripr: Inspect Test Gap - Copy Context`
 - `ripr: Write Targeted Test - Copy Suggested Assertion`
 - `ripr: Write Targeted Test - Copy Brief`
+- `ripr: Start Repair - Copy Repair Command`
 - `ripr: Agent Handoff - Copy Packet Command`
 - `ripr: Agent Handoff - Copy Brief Command`
 - `ripr: Verify After Test - Copy After Snapshot Command`
@@ -329,6 +330,7 @@ quieter.
 - `ripr: Open Report`
 - `ripr: Show Top Limitation`
 - `ripr: Show Receipt Status`
+- `ripr: Show Repair Attempt Status`
 - `ripr: Copy Receipt Command (Receipt Status)`
 - `ripr: Open Attempt Ledger`
 - `ripr: Show Route Quality`
@@ -655,12 +657,12 @@ Fallback behavior preserves three levels:
 3. **No diagnostic at position** — generic guidance hover.
 
 Seam hovers use the same snapshot footer when a matching seam diagnostic is
-available. They also include a `Why this diagnostic?` section that makes the
+available. They open with `changed behavior` and `How well tests check this`, and also include a `Why this diagnostic?` section that makes the
 static classification legible:
 
 ```text
 ## Why this diagnostic?
-Grip class: `weakly_gripped` — the current static evidence has a weak discriminator or a named missing discriminator.
+the tests found check this loosely, or a specific value or check is missing.
 
 Strong evidence:
 - reach yes: related tests reach discounted_total
@@ -668,7 +670,7 @@ Strong evidence:
 
 Weak / missing evidence:
 - discrimination weak: equality boundary missing
-- missing discriminator `discount_threshold (equality boundary)`: observed values do not include the equality-boundary case
+- missing value or check `discount_threshold (equality boundary)`: observed values do not include the equality-boundary case
 
 ## Suggested test shape
 - file: `tests/pricing.rs`

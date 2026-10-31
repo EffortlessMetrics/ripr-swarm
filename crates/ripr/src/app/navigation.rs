@@ -101,13 +101,32 @@ impl GapRepairRoute {
 /// the state instead of leaving the repair line's absence silent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RepairRouteRefusal {
+    GapRouteUnavailable {
+        reason: &'static str,
+    },
+    /// The run's analysis is incomplete (#11136): the after phase refuses a
+    /// before artifact like that, so no gap-bound start is printed.
+    /// `limitation` names the cause and the recovery.
+    AnalysisIncomplete {
+        limitation: String,
+    },
     /// The finding has no canonical gap to bind a seam from.
     NoCanonicalGap,
+    /// A TypeScript/JavaScript preview finding whose repair packet is not
+    /// complete: the delegated loop starts from a complete packet's gap id,
+    /// not from a Rust seam, so the absent seam is not the reason.
+    PreviewPacketNotComplete {
+        language: String,
+        reason: String,
+    },
     /// The finding's file belongs to a language adapter whose findings the
     /// seam inventory behind `ripr repair` cannot bind (#9102). The
     /// inventory is built from the Rust index only, so no seam exists for
     /// this file; a terminal state, not a stale id.
-    NoSeamInventory { language: String, file: String },
+    NoSeamInventory {
+        language: String,
+        file: String,
+    },
     /// The root's typed config could not be loaded.
     ConfigUnreadable,
     /// Classifying seams in the finding's file failed.
@@ -118,7 +137,9 @@ pub(crate) enum RepairRouteRefusal {
     /// No classified seam in the finding's file binds this finding.
     /// `seams_in_file` is how many classified seams the file holds, so the
     /// advisory never says "no seam" where `ripr repair` lists seams (#10702).
-    NoBindingSeam { seams_in_file: usize },
+    NoBindingSeam {
+        seams_in_file: usize,
+    },
     /// The finding itself is `exposed`: the related tests already notice the
     /// change, so there is nothing to repair whatever the seam view says
     /// (#10702).
@@ -158,11 +179,22 @@ impl RepairRouteRefusal {
     pub(crate) fn advisory(&self, full_gate_command: &str) -> String {
         let gate = || format!("run `{full_gate_command}` for the full gate's answer");
         match self {
+            Self::GapRouteUnavailable { reason } => format!(
+                "no repair start offered: {reason}; inspect the current workspace and rerun `ripr check`"
+            ),
+            Self::AnalysisIncomplete { limitation } => format!(
+                "no repair start offered: the analysis is incomplete ({limitation}), so a repair started now could not be verified afterward; resolve that, rerun `ripr check`, or add the missing test by hand from the packet above"
+            ),
             Self::NoCanonicalGap => {
                 "no repair start offered: this finding has no gap ID, so there is \
                  no seam to start a repair from; follow the Next step above"
                     .to_string()
             }
+            Self::PreviewPacketNotComplete { language, reason } => format!(
+                "no repair start offered: ripr has no complete repair packet for this {language} \
+                 finding ({reason}); add or strengthen the test by hand as the Next step above \
+                 says, then rerun `ripr check`"
+            ),
             Self::NoSeamInventory { language, file } => format!(
                 "no repair start offered: {}",
                 super::task_first::no_seam_inventory_reason(language, file)
@@ -602,11 +634,21 @@ mod tests {
             let command = route
                 .commit_prerequisite(&root_text)
                 .ok_or("no commit step")?;
+            // The root anchors at the analyzed tree with the shared quoting
+            // (`shell_arg`: console quotes on Windows, single quotes on
+            // Unix), and the glob-lookalike pathspec stays literal — the
+            // quote form is owned by `shell_arg`, not spelled here (#10996).
+            let expected_prefix = format!("git -C {}", shell_arg(&root_text));
             assert!(
-                command.starts_with("git -C '") && command.contains("--literal-pathspecs commit"),
-                "{command}"
+                command.starts_with(&expected_prefix)
+                    && command.contains("--literal-pathspecs commit"),
+                "Expected command to start with '{expected_prefix}' and contain '--literal-pathspecs commit'. Actual command: {command}"
             );
-            assert!(command.ends_with("-- 'src/[ab].py'"), "{command}");
+            let expected_suffix = format!("-- {}", shell_arg("src/[ab].py"));
+            assert!(
+                command.ends_with(&expected_suffix),
+                "Expected command to end with '{expected_suffix}'. Actual command: {command}"
+            );
             let command = command.replace("<message>", "hint");
             let status = std::process::Command::new("sh")
                 .arg("-c")
@@ -883,6 +925,19 @@ mod tests {
                 && unverified.contains(gate)
                 && !unverified.contains("still missing"),
             "non-RouteNotReady kinds keep their reason and gate pointer: {unverified}"
+        );
+        // A TypeScript/JavaScript preview finding names its packet state, not
+        // a Rust seam it can never have.
+        let preview = RepairRouteRefusal::PreviewPacketNotComplete {
+            language: "TypeScript".to_string(),
+            reason: "its repair packet is not complete".to_string(),
+        }
+        .advisory(gate);
+        assert!(
+            preview.starts_with("no repair start offered: ripr has no complete repair packet")
+                && preview.contains("TypeScript finding")
+                && !preview.contains("no seam"),
+            "preview refusal must name the packet, not a seam: {preview}"
         );
         // #9244: a finding with no canonical gap would get the same refusal
         // from the full gate, so the advisory names its own recovery.

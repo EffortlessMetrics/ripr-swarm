@@ -41,7 +41,7 @@ The same candidate may receive two deliberate passes:
 
 1. **Pre-publication candidate review.** Bind the committed branch head and
    inspect source, proof, and repository contracts. Remote checks, artifacts,
-   and external review that do not exist yet remain missing, so this normally
+   and required review evidence that do not exist yet remain missing, so this normally
    exits `REVIEW_INCOMPLETE` rather than `REVIEW_READY`.
 2. **Published merge review.** Bind the exact PR head, inspect current hosted
    jobs, artifacts, comments, and integration evidence, and refresh only the
@@ -102,7 +102,7 @@ Use `review-pr` when:
 - automated review and CI results need an accountable synthesis;
 - a prior inspection covered another head or only part of the diff.
 
-Independent substantive exact-head LLM review is required before merge. A different name alone is not independence: the reviewer must make an independent judgment, challenging the actual candidate and evidence rather than echoing the author. An author self-review, even when posted as `COMMENT`, does not replace it; an independent review may record its disposition in a `COMMENT`. The accountable lead verifies the review and owns the disposition. If a permitted independent review is unavailable, retain `REVIEW_INCOMPLETE` while continuing independent authorized work.
+Perform directed staged review inline in the owning session's main context by default, using falsifiable criteria, targeted checks and counterexamples. Delegate only when another context changes the available evidence, oracle, tools, threat model, platform access, or failure perspective. Retain valid historical reviews with their original subject and scope; refresh affected or newly requested dimensions only. Advisory providers such as `ub-review` and other documented bots (see `docs/CI.md`) supply extra evidence; unavailable output remains missing evidence for that provider. The lead verifies the returned evidence and owns the final disposition.
 
 # Workflow
 

@@ -124,6 +124,13 @@ Test discovery:
   `node:test` `suite(...)`, as test and describe roots with the same active
   modifiers (`.only`, `.concurrent`, `.sequential`); `.skip`, `xit`, and
   `xcontext` register nothing (#4548)
+- a renamed registration alias the imports layer admits (`const { test: t } =
+  require('node:test')`, `import { test as t }`): the alias registers like
+  the direct spelling, bare or through an active modifier, with the same
+  runner-source, shadowing, skip/todo-options and inactive-modifier fences
+  (#10987). The namespace object's own name, a member read off it
+  (`runner.test(...)`), and an aliased `.each` factory register nothing
+  through this path
 - AVA's macro form, a named macro between the title and the callback
   (`test(name, macro, async (t) => {})`, `test(name, ns.macro, fn)`): the
   function third argument is the callback (#10964) for a root bound to AVA's `test`, and only an inline function; a macro without a
@@ -458,6 +465,30 @@ operands to the same value. Predicates without a comparable boundary (such as
 values stay `weakly_exposed`; the literal or operand-pair boundary becomes the
 missing discriminator when one is known.
 
+The named boundary is the comparison the edit changed (#10399). On a compound
+condition (`a > b || c >= d`) the adapter compares parser-owned tokens of the old and new line and reads
+the boundary from the one condition-level comparison whose tokens differ,
+never from a neighbouring comparison on the same line. Literal and comment
+contents, callback bodies, call arguments, computed access and type syntax do
+not supply comparison sites. Unsupported operands and malformed old or new
+syntax retain refusal; whitespace/comment-only edits name no boundary. When the edit
+touches no comparison (an operand such as `isDone ||` is removed), touches
+several, or the line cannot be tokenized, the changed operator cannot be
+located unambiguously, so no boundary is named: no `missing_discriminator`,
+and the limitation reports that the changed line has no statically comparable
+predicate boundary. An added line with several comparisons is likewise
+unlabeled. The selected comparison and full changed source line retain separate
+identities: expected-side branch checks must still find the original owner line,
+so narrowing a label cannot credit an expectation that matches neither outcome.
+The module-bound boundary-input and boundary-parameters facts likewise keep
+reading the full changed source line rather than the selected text: their
+whole-side and verbatim-line gates need the source line's statement context and
+line identity, so a fact stays available on a compound line whose single
+comparison sits next to the statement opening (`if (total > 100 && ready) {`)
+and refuses on narrowed text alone or on a line holding several comparisons.
+Returned-ternary arm edits retain their sole condition boundary only when the
+condition tokens are unchanged.
+
 Three one-hop input resolutions credit the idiom shapes that reach the same
 boundary without changing the guards (#4104 E):
 
@@ -495,6 +526,27 @@ boundary without changing the guards (#4104 E):
   initializers, repeated declarations, off-value constants, and constants
   imported from a module the adapter cannot resolve to the owner stay
   fail-closed.
+- **Test-side constants** (#10707, #10706): an owner-call argument that is
+  a bare identifier of any spelling (`edge`, `EDGE`) resolves to its integer
+  value only when the name provably has one binding, decided on the oxc
+  token stream. In the test callback: exactly one
+  `const NAME [: number] = <plain decimal integer>` declarator directly in
+  the callback block (never a nested block, loop header, or parameter list),
+  and every other occurrence in the callback a plain read after the
+  declaration. At the test file's module level: exactly one top-level such
+  `const`, every other occurrence in the file a plain read (the owner-module
+  constant rule), and no non-file-level enclosing scope binding the name.
+  The callback's own declaration decides first; a binding it refuses is
+  never rescued by an outer scope. Fail-closed: `let`/`var`, a reassigned or
+  updated name, a shadowing parameter, catch, function, inner declaration or
+  destructuring, an object key or shorthand spelling, a second declaration,
+  a computed, signed, non-decimal, fractional or non-safe-integer
+  initializer, an import that does not resolve to the owner, `eval`/`with`,
+  a read before the declaration, and member reads (`config.edge`, whose
+  property a test can rewrite). The credit only substitutes the value for
+  the name; the position, arity, off-value and expected-side rules are the
+  literal path's, unchanged. Fixtures: `ts_boundary_local_constant_credit`,
+  `ts_boundary_local_constant_refused`.
 - **Boundary input evidence**: for a changed predicate with a named missing
   discriminator `<param> == <operand>`, the adapter emits
   `typescript_boundary_input: parameter=<param>;index=<i>;operand=<operand>;value=<v>`
@@ -538,6 +590,28 @@ boundary without changing the guards (#4104 E):
   type); a computed or string-literal name, an optional method (`pick?(n)`), an
   object-type return and a method named like a control keyword are not, and keep
   their previous behavior (#10776).
+
+- **`typeof` kind tests** (#11196): an equality comparison of a `typeof`
+  expression with a quoted type-name word (`typeof input === "function"`,
+  also `!==`, `==`, `!=`, and the reversed spelling) names the missing
+  discriminator `typeof <operand> == "<kind>"`. It never reads as
+  `<operand> == "<kind>"`, which would name the type-name string as the input.
+  Two `typeof` sides, a relational operator, or a non-literal kind name no
+  discriminator. The comparison is witnessed only by an observed owner call
+  whose argument at the guarded parameter's position is written as a value of
+  exactly that kind (an inline function for `"function"`, a number literal for
+  `"number"`, and so on; a trailing type assertion such as `as any` is read
+  through). The kind's name as a string literal is a string, so
+  `resolveValue("function" as any)` does not witness a `"function"` test. The
+  guarded operand must be a plain owner parameter; a member read or a local
+  stays unwitnessed. The repair packet's assertion shape asks for a value of
+  the kind in place of the argument and never reuses the observed input, and
+  the "inputs on one side of the boundary" wording is not used for this shape.
+- **Open gap reason in the after phase** (#11196): when `agent verify` refuses
+  a gap that still reads open, the refusal appends the missing discriminator
+  the before and after check-findings artifacts already state (unchanged, or
+  changed from one to the other). With no discriminator in the after artifact
+  it appends nothing; the refusal reads as before and no reason is invented.
 
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:

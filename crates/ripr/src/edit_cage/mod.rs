@@ -26,8 +26,11 @@ use std::time::{Duration, Instant};
 )]
 pub(crate) mod inline_test_region;
 
+#[cfg(test)]
+mod binding_omission_tests;
+
 const MAX_CAPTURE_PATHS: usize = 10_000;
-const MAX_CAPTURE_FILE_BYTES: u64 = 16 * 1024 * 1024;
+pub(crate) const MAX_CAPTURE_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CAPTURE_TOTAL_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_CAPTURE_TOTAL_WORK_BYTES: u64 = 384 * 1024 * 1024;
 const IGNORED_FILE_SAMPLE_BYTES: u64 = 4 * 1024;
@@ -102,6 +105,11 @@ pub(crate) struct AttemptPathChange {
     kind: AttemptPathChangeKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     previous_path: Option<PathBuf>,
+    /// The observed post-change index and worktree identity. The verdict is
+    /// path-oriented, but currentness must also notice later byte changes to
+    /// a path already present in the delta.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    after_state: Option<RepositoryPathState>,
 }
 
 #[derive(Deserialize)]
@@ -110,13 +118,16 @@ struct AttemptPathChangeWire {
     path: PathBuf,
     kind: AttemptPathChangeKind,
     previous_path: Option<PathBuf>,
+    #[serde(default)]
+    after_state: Option<RepositoryPathState>,
 }
 
 impl TryFrom<AttemptPathChangeWire> for AttemptPathChange {
     type Error = String;
 
     fn try_from(wire: AttemptPathChangeWire) -> Result<Self, Self::Error> {
-        match (wire.kind, wire.previous_path) {
+        let after_state = wire.after_state;
+        let mut change = match (wire.kind, wire.previous_path) {
             (AttemptPathChangeKind::Renamed, Some(previous_path)) => {
                 Ok(Self::renamed(previous_path, wire.path))
             }
@@ -128,7 +139,9 @@ impl TryFrom<AttemptPathChangeWire> for AttemptPathChange {
                 path_change_kind_name(kind)
             )),
             (kind, None) => Ok(Self::new(wire.path, kind)),
-        }
+        }?;
+        change.after_state = after_state;
+        Ok(change)
     }
 }
 
@@ -150,6 +163,7 @@ impl AttemptPathChange {
             path: to.into(),
             kind: AttemptPathChangeKind::Renamed,
             previous_path: Some(from.into()),
+            after_state: None,
         }
     }
 
@@ -158,6 +172,7 @@ impl AttemptPathChange {
             path: path.into(),
             kind,
             previous_path: None,
+            after_state: None,
         }
     }
 }
@@ -364,6 +379,129 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     }
     let verdict = evaluate_edit_cage(&baseline.policy, &delta);
     Ok((delta, verdict))
+}
+
+/// Retained, independently validated producer bytes for one absent workflow
+/// projection. This is never an authorization to replace a present path.
+pub(crate) struct MissingWorkflowProjection {
+    pub(crate) path: PathBuf,
+    pub(crate) bytes: Vec<u8>,
+}
+
+/// Enumerate the bounded executable-bit possibilities for absent, retained
+/// projections against one real capture. The caller must accept only a
+/// unique candidate whose *whole* delta digest and verdict match the durable
+/// finish; this function itself does not establish provenance or currentness.
+pub(crate) fn visit_reconstructed_workflow_deltas(
+    baseline: &AttemptBaseline,
+    movement: HeadMovement,
+    projections: &[MissingWorkflowProjection],
+    mut visit: impl FnMut(AttemptDelta) -> Result<(), String>,
+) -> Result<(), String> {
+    const MAX_PROJECTIONS: usize = 6;
+    if projections.is_empty() || projections.len() > MAX_PROJECTIONS {
+        return Err("invalid number of missing workflow projections".to_string());
+    }
+    let after = reevaluation_capture(baseline)?;
+    let committed = match movement {
+        HeadMovement::RequireBaselineHead => (baseline.head == after.head).then(Vec::new),
+        HeadMovement::AdmitDescendantCommits => {
+            committed_changes(&baseline.root, &baseline.head, &after.head)?
+        }
+    };
+    // At most 64 candidates over the existing capture path budget, including
+    // the committed-path side; refuse rather than amplify a larger delta.
+    if baseline.paths.len() > MAX_CAPTURE_PATHS
+        || after.paths.len() > MAX_CAPTURE_PATHS
+        || committed
+            .as_ref()
+            .is_some_and(|paths| paths.len() > MAX_CAPTURE_PATHS)
+    {
+        return Err(
+            "workflow projection reconstruction exceeds the capture path budget".to_string(),
+        );
+    }
+    let policy = baseline.policy();
+    let mut entries = Vec::with_capacity(projections.len());
+    let mut names = BTreeSet::new();
+    for projection in projections {
+        let path = normalize_repo_relative_path(&projection.path)?;
+        if !names.insert(path.clone())
+            || projection.bytes.len() as u64 > MAX_CAPTURE_FILE_BYTES
+            || baseline.index_entry(&path).is_some()
+            || after.paths.contains_key(&path)
+            || policy.selected_target.matches(&path)
+            || policy
+                .allowed_edit_surface
+                .iter()
+                .any(|rule| rule.matches(&path))
+            || policy
+                .forbidden_paths
+                .iter()
+                .any(|rule| rule.matches(&path))
+            || !policy
+                .expected_operational_writes
+                .iter()
+                .any(|rule| rule.matches(&path))
+            || !writable_path_components_are_safe(&baseline.root, &path)?
+        {
+            return Err(format!(
+                "missing workflow projection `{path}` is not eligible for reconstruction"
+            ));
+        }
+        if baseline
+            .paths
+            .get(&path)
+            .is_some_and(|state| !matches!(&state.worktree_identity, WorktreeIdentity::File { .. }))
+        {
+            return Err(format!(
+                "baseline workflow projection `{path}` is not a regular file"
+            ));
+        }
+        match fs::symlink_metadata(baseline.root.join(&path)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            _ => return Err(format!("workflow projection `{path}` is not absent")),
+        }
+        entries.push((
+            path,
+            format!("{:x}", Sha256::digest(&projection.bytes)),
+            eol_normalized_file_digest(&projection.bytes),
+        ));
+    }
+    for mask in 0..(1usize << entries.len()) {
+        let overrides = entries
+            .iter()
+            .enumerate()
+            .map(|(index, (path, digest, eol))| {
+                (
+                    path.clone(),
+                    RepositoryPathState {
+                        index_entry: None,
+                        worktree_identity: WorktreeIdentity::File {
+                            digest: digest.clone(),
+                            executable: mask & (1 << index) != 0,
+                            eol_normalized_digest: eol.clone(),
+                        },
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut delta = delta_from_repository_states_with_overrides(
+            baseline,
+            &after,
+            committed.as_deref(),
+            &overrides,
+        );
+        if let Some(region) = &baseline.inline_test_region
+            && delta.changes.iter().any(|change| {
+                normalize_repo_relative_path(&change.path).is_ok_and(|path| path == region.path)
+            })
+        {
+            delta.inline_test_region = Some(observe_inline_target(baseline, &after, region)?);
+        }
+        visit(delta)?;
+    }
+    Ok(())
 }
 
 /// Captures taken for re-evaluations inside one [`ReevaluationMemoScope`].
@@ -742,6 +880,16 @@ fn capture_repository_state(
                 .allowed_edit_surface
                 .iter()
                 .any(|rule| rule.matches(&path));
+        let exact_ignored = expected_write
+            || policy.selected_target.matches(&path)
+            || policy
+                .allowed_edit_surface
+                .iter()
+                .any(|rule| rule.matches(&path))
+            || policy
+                .forbidden_paths
+                .iter()
+                .any(|rule| rule.matches(&path));
         if writable_surface && !writable_path_components_are_safe(&root, &path)? {
             ambiguous = true;
         }
@@ -786,7 +934,7 @@ fn capture_repository_state(
             &mut remaining_file_bytes,
             &mut remaining_work_bytes,
             ignored_path,
-            ignored_path && expected_write,
+            ignored_path && exact_ignored,
         )?;
         ambiguous |= worktree_identity == WorktreeIdentity::Other;
         #[cfg(windows)]
@@ -839,10 +987,16 @@ fn capture_repository_state(
             &mut remaining_work_bytes,
             ignored_paths.contains(path.as_str()),
             ignored_paths.contains(path.as_str())
-                && policy
+                && (policy
                     .expected_operational_writes
                     .iter()
-                    .any(|rule| rule.matches(path)),
+                    .any(|rule| rule.matches(path))
+                    || policy.selected_target.matches(path)
+                    || policy
+                        .allowed_edit_surface
+                        .iter()
+                        .any(|rule| rule.matches(path))
+                    || policy.forbidden_paths.iter().any(|rule| rule.matches(path))),
         );
         if !matches!(identity, Ok(identity) if identity == state.worktree_identity) {
             stable_worktree = false;
@@ -1242,17 +1396,27 @@ fn delta_from_repository_states(
     after: &AttemptBaseline,
     committed: Option<&[AttemptPathChange]>,
 ) -> AttemptDelta {
+    delta_from_repository_states_with_overrides(before, after, committed, &BTreeMap::new())
+}
+
+fn delta_from_repository_states_with_overrides(
+    before: &AttemptBaseline,
+    after: &AttemptBaseline,
+    committed: Option<&[AttemptPathChange]>,
+    overrides: &BTreeMap<String, RepositoryPathState>,
+) -> AttemptDelta {
     let mut changes = Vec::new();
     let paths = before
         .paths
         .keys()
         .chain(after.paths.keys())
+        .chain(overrides.keys())
         .cloned()
         .collect::<BTreeSet<_>>();
     let mut changed_symlink = false;
     for path in paths {
         let old = before.paths.get(&path);
-        let new = after.paths.get(&path);
+        let new = overrides.get(&path).or_else(|| after.paths.get(&path));
         if old == new {
             continue;
         }
@@ -1323,6 +1487,14 @@ fn delta_from_repository_states(
             .filter(|change| !observed.contains(&change.path))
             .cloned(),
     );
+    for change in &mut changes {
+        if let Ok(path) = normalize_repo_relative_path(&change.path) {
+            change.after_state = overrides
+                .get(&path)
+                .or_else(|| after.paths.get(&path))
+                .cloned();
+        }
+    }
     AttemptDelta {
         comparable: before.root == after.root
             && committed.is_some()
@@ -1334,6 +1506,192 @@ fn delta_from_repository_states(
     }
 }
 
+/// The selected attempt manifest contains the delta digest itself, so its
+/// pre-finish bytes cannot be part of that digest. Exclude only this exact
+/// manifest's identity, not its path/kind or other operational files. A
+/// tracked or authored/forbidden manifest path never receives the exception.
+pub(crate) fn omit_attempt_manifest_identity(
+    delta: &mut AttemptDelta,
+    baseline: &AttemptBaseline,
+    manifest_path: &Path,
+) -> Result<(), String> {
+    let path = normalize_repo_relative_path(manifest_path)?;
+    let policy = baseline.policy();
+    if baseline.index_entry(&path).is_some()
+        || policy.selected_target.matches(&path)
+        || policy
+            .allowed_edit_surface
+            .iter()
+            .any(|rule| rule.matches(&path))
+        || policy
+            .forbidden_paths
+            .iter()
+            .any(|rule| rule.matches(&path))
+        || !policy
+            .expected_operational_writes
+            .iter()
+            .any(|rule| rule.matches(&path))
+    {
+        return Ok(());
+    }
+    for change in &mut delta.changes {
+        if normalize_repo_relative_path(&change.path)? == path
+            && change
+                .after_state
+                .as_ref()
+                .is_none_or(|state| state.index_entry.is_none())
+        {
+            change.after_state = None;
+        }
+    }
+    Ok(())
+}
+
+/// Omit only backup files this invocation exclusively created, and only when
+/// their captured regular-file bytes still match that invocation's copy. A
+/// baseline file, tracked path, authored surface or forbidden path is never
+/// eligible. The later cleanup of such a temporary copy must not stale the
+/// verdict which was measured while it existed.
+pub(crate) fn omit_owned_workflow_backups(
+    delta: &mut AttemptDelta,
+    baseline: &AttemptBaseline,
+    backups: &[(PathBuf, String, bool)],
+) -> Result<(), String> {
+    for (path, digest, executable) in backups {
+        let path = normalize_repo_relative_path(path)?;
+        let policy = baseline.policy();
+        if baseline.paths.contains_key(&path)
+            || policy.selected_target.matches(&path)
+            || policy
+                .allowed_edit_surface
+                .iter()
+                .any(|rule| rule.matches(&path))
+            || policy
+                .forbidden_paths
+                .iter()
+                .any(|rule| rule.matches(&path))
+            || !policy
+                .expected_operational_writes
+                .iter()
+                .any(|rule| rule.matches(&path))
+        {
+            continue;
+        }
+        delta.changes.retain(|change| {
+            let owned = normalize_repo_relative_path(&change.path).is_ok_and(|name| name == path)
+                && change.kind == AttemptPathChangeKind::Added
+                && change.after_state.as_ref().is_some_and(|state| {
+                    state.index_entry.is_none()
+                        && matches!(&state.worktree_identity, WorktreeIdentity::File { digest: observed, executable: observed_executable, .. } if observed == digest && observed_executable == executable)
+                });
+            !owned
+        });
+    }
+    Ok(())
+}
+
+/// The compatibility receipt is a single fixed producer output, not a
+/// directory exemption. Only an already-bound regular-file change can carry
+/// a predecessor witness; all authored, tracked and forbidden paths stay bound.
+const RECEIPT_PROJECTION: &str = "target/ripr/reports/agent-receipt.json";
+
+fn eligible_receipt_projection_change<'a>(
+    delta: &'a AttemptDelta,
+    baseline: &AttemptBaseline,
+) -> Option<&'a AttemptPathChange> {
+    let policy = baseline.policy();
+    if !delta.comparable
+        || baseline.index_entry(RECEIPT_PROJECTION).is_some()
+        || policy.selected_target.matches(RECEIPT_PROJECTION)
+        || policy
+            .allowed_edit_surface
+            .iter()
+            .any(|rule| rule.matches(RECEIPT_PROJECTION))
+        || policy
+            .forbidden_paths
+            .iter()
+            .any(|rule| rule.matches(RECEIPT_PROJECTION))
+        || !policy
+            .expected_operational_writes
+            .iter()
+            .any(|rule| rule.matches(RECEIPT_PROJECTION))
+        || !writable_path_components_are_safe(baseline.root(), RECEIPT_PROJECTION).ok()?
+    {
+        return None;
+    }
+    let change = delta
+        .changes
+        .iter()
+        .find(|change| change.path == Path::new(RECEIPT_PROJECTION))?;
+    if !matches!(
+        change.kind,
+        AttemptPathChangeKind::Added | AttemptPathChangeKind::Modified
+    ) || change.after_state.as_ref()?.index_entry.is_some()
+    {
+        return None;
+    }
+    Some(change)
+}
+
+/// Match producer-validated receipt bytes against the real captured slot.
+/// The caller, not the pathname, must establish the retained receipt's custody.
+pub(crate) fn receipt_projection_identity(
+    delta: &AttemptDelta,
+    baseline: &AttemptBaseline,
+    bytes: &[u8],
+) -> Option<(AttemptPathChangeKind, bool)> {
+    if bytes.len() as u64 > MAX_CAPTURE_FILE_BYTES {
+        return None;
+    }
+    let change = eligible_receipt_projection_change(delta, baseline)?;
+    match &change.after_state.as_ref()?.worktree_identity {
+        WorktreeIdentity::File {
+            digest,
+            executable,
+            eol_normalized_digest,
+        } if *digest == format!("{:x}", Sha256::digest(bytes))
+            && *eol_normalized_digest == eol_normalized_file_digest(bytes) =>
+        {
+            Some((change.kind, *executable))
+        }
+        _ => None,
+    }
+}
+
+/// Reconstruct only a bound A-to-B issued receipt replacement. Both receipts
+/// must already be validated by the caller. Keep shape, mode, every neighbor,
+/// and the original whole-delta digest authoritative; never edit the worktree.
+pub(crate) fn reconstruct_receipt_projection(
+    delta: &mut AttemptDelta,
+    baseline: &AttemptBaseline,
+    kind: AttemptPathChangeKind,
+    executable: bool,
+    predecessor: &[u8],
+    issued: &[u8],
+) -> bool {
+    if predecessor.len() as u64 > MAX_CAPTURE_FILE_BYTES
+        || receipt_projection_identity(delta, baseline, issued) != Some((kind, executable))
+    {
+        return false;
+    }
+    let Some(change) = delta
+        .changes
+        .iter_mut()
+        .find(|change| change.path == Path::new(RECEIPT_PROJECTION))
+    else {
+        return false;
+    };
+    change.after_state = Some(RepositoryPathState {
+        index_entry: None,
+        worktree_identity: WorktreeIdentity::File {
+            digest: format!("{:x}", Sha256::digest(predecessor)),
+            executable,
+            eol_normalized_digest: eol_normalized_file_digest(predecessor),
+        },
+    });
+    true
+}
+
 /// Removes from a recomputed `delta` the command-owned output that appeared
 /// only after a verdict was bound: a change whose path is an expected
 /// operational write (the `target/ripr` reports, workflow, and cache files a
@@ -1343,10 +1701,20 @@ fn delta_from_repository_states(
 /// path, so it only adds a `changed_paths` entry. Every other change is kept,
 /// so an edit to a source, test, forbidden, or authored path after the bind,
 /// or the disappearance of a bound change, still moves the recomputed delta.
+#[cfg(test)]
 pub(crate) fn without_later_operational_writes(
     policy: &EditCagePolicy,
     delta: &AttemptDelta,
     bound_changed_paths: &[String],
+) -> AttemptDelta {
+    without_later_operational_writes_protecting(policy, delta, bound_changed_paths, &[])
+}
+
+pub(crate) fn without_later_operational_writes_protecting(
+    policy: &EditCagePolicy,
+    delta: &AttemptDelta,
+    bound_changed_paths: &[String],
+    protected_paths: &[&str],
 ) -> AttemptDelta {
     let operational_only = |path: &str| {
         policy
@@ -1369,7 +1737,9 @@ pub(crate) fn without_later_operational_writes(
             .filter(|change| {
                 let later_output = change.kind != AttemptPathChangeKind::Renamed
                     && normalize_repo_relative_path(&change.path).is_ok_and(|path| {
-                        operational_only(&path) && !bound_changed_paths.contains(&path)
+                        operational_only(&path)
+                            && !bound_changed_paths.contains(&path)
+                            && !protected_paths.contains(&path.as_str())
                     });
                 !later_output
             })
@@ -1420,6 +1790,13 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
         }
     }
     Ok(true)
+}
+
+pub(crate) fn workflow_path_components_are_safe(
+    root: &Path,
+    relative: &Path,
+) -> Result<bool, String> {
+    writable_path_components_are_safe(root, &normalize_repo_relative_path(relative)?)
 }
 
 #[cfg(windows)]
@@ -1802,13 +2179,13 @@ fn open_regular_file_no_follow_with_write_sharing(
 }
 
 #[cfg(unix)]
-fn same_file_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+pub(crate) fn same_file_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt as _;
     left.dev() == right.dev() && left.ino() == right.ino()
 }
 
 #[cfg(windows)]
-fn same_file_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+pub(crate) fn same_file_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt as _;
     // Stable Rust does not expose Windows file IDs. OPEN_REPARSE_POINT keeps
     // link replacement from being followed; compare the strongest stable
@@ -1820,7 +2197,7 @@ fn same_file_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn same_file_object(_left: &fs::Metadata, _right: &fs::Metadata) -> bool {
+pub(crate) fn same_file_object(_left: &fs::Metadata, _right: &fs::Metadata) -> bool {
     false
 }
 
@@ -2847,6 +3224,68 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
         })
+    }
+
+    #[test]
+    fn owned_backup_omission_requires_exact_new_untracked_identity() -> Result<(), String> {
+        let fixture = git_fixture("owned-backup")?;
+        let path = "target/ripr/workflow/after.json.ripr-preattempt-backup";
+        let neighbor = "target/ripr/workflow/unrelated.json";
+        fs::create_dir_all(fixture.root.join("target/ripr/workflow"))
+            .map_err(|error| error.to_string())?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::write(fixture.root.join(path), b"prior").map_err(|error| error.to_string())?;
+        fs::write(fixture.root.join(neighbor), b"neighbor").map_err(|error| error.to_string())?;
+        let (delta, _) = evaluate_repository_edit_cage_with_head_movement(
+            &baseline,
+            HeadMovement::RequireBaselineHead,
+        )?;
+        let digest = format!("{:x}", Sha256::digest(b"prior"));
+        let executable = is_executable(
+            &fs::metadata(fixture.root.join(path)).map_err(|error| error.to_string())?,
+        );
+        let mut wrong = delta.clone();
+        omit_owned_workflow_backups(
+            &mut wrong,
+            &baseline,
+            &[(path.into(), "wrong".into(), executable)],
+        )?;
+        assert_eq!(wrong, delta, "a mismatched identity must stay in the delta");
+        let mut exact = delta.clone();
+        omit_owned_workflow_backups(&mut exact, &baseline, &[(path.into(), digest, executable)])?;
+        assert!(
+            !exact
+                .changes
+                .iter()
+                .any(|change| change.path == Path::new(path))
+        );
+        assert!(
+            exact
+                .changes
+                .iter()
+                .any(|change| change.path == Path::new(neighbor))
+        );
+
+        // A baseline file cannot be reclassified as an invocation-owned new
+        // backup, even if its new bytes happen to match the supplied digest.
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::write(fixture.root.join(path), b"changed").map_err(|error| error.to_string())?;
+        let (mut changed, _) = evaluate_repository_edit_cage_with_head_movement(
+            &baseline,
+            HeadMovement::RequireBaselineHead,
+        )?;
+        let expected = changed.clone();
+        omit_owned_workflow_backups(
+            &mut changed,
+            &baseline,
+            &[(
+                path.into(),
+                format!("{:x}", Sha256::digest(b"changed")),
+                executable,
+            )],
+        )?;
+        assert_eq!(changed, expected);
+        Ok(())
     }
 
     /// #8991: the predicate is bound to the real producer. An unparseable
@@ -5021,6 +5460,7 @@ mod tests {
             path: PathBuf::from("tests/other.rs"),
             kind: AttemptPathChangeKind::Modified,
             previous_path: Some(PathBuf::from("tests/pricing.rs")),
+            after_state: None,
         };
 
         let verdict = evaluate_edit_cage(

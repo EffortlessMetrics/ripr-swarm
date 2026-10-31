@@ -66,13 +66,13 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    AnalyzedRevisions, another_base_candidate, artifact_root_gitignore_entry,
-    artifact_root_pathspec, load_diff, load_diff_core, load_diff_range_with_deadline_core,
-    load_diff_with_effective_base_core, load_worktree_diff,
-    load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
-    probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
-    resolve_effective_base_core, ripr_artifact_roots, working_tree_has_tracked_changes,
-    working_tree_has_uncommitted_changes,
+    AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
+    artifact_root_gitignore_entry, artifact_root_pathspec, is_shallow_repository, load_diff,
+    load_diff_core, load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
+    load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
+    parse_unified_diff, probe_head_ref_state, probe_working_tree_tracked_changes_within,
+    resolve_base_commit, resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
+    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -127,17 +127,18 @@ pub(crate) use seam_inventory::file_fact_store_failure_rows;
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
     ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, FileSeamIndex,
-    ScopedClassifiedSeamInventory, ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource,
-    TargetedTestInventoryError, apply_pilot_seam_budget, classify_seams_in_file_with_shared_index,
-    classify_seams_in_files_at_with_config, diff_only_rust_files,
-    inventory_changed_test_classified_seams_at_with_config_node,
+    PilotInventoryDefault, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer, SeamLimitInfo,
+    SeamLimitSource, TargetedTestInventoryError, apply_pilot_seam_budget,
+    classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
+    diff_only_rust_files, inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_bound_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
-    inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config, pilot_seam_budget,
-    repo_exposure_seam_limit, scoped_file_seams, seam_kind_for_probe_family,
+    inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config,
+    probe_family_for_seam_kind, repo_exposure_seam_limit, scoped_file_seams,
+    seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
     workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
@@ -153,6 +154,7 @@ pub(crate) use workspace::apply_module_graph_evidence;
 pub(crate) use workspace::classify_with;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
+pub(crate) use workspace::path_enters_ignored_dir;
 pub(crate) use workspace::seeds_diff_probes;
 pub(crate) use workspace::{UnlinkedPythonTests, discover_python_test_files};
 
@@ -2020,5 +2022,7 @@ mod git_candidate_entry_tests {
 pub(crate) mod input_boundary;
 #[cfg(test)]
 pub(crate) use pipeline::diff_pipeline_entry_count;
+#[cfg(test)]
+pub(crate) use pipeline::injected_adapter_panic;
 
 pub(crate) use workspace::cargo_input_identity;
