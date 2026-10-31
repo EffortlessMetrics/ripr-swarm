@@ -20,6 +20,16 @@ use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::Stdio;
+use std::time::{Duration, Instant};
+
+/// Environment variable overriding the per-step wall-clock bound, in whole
+/// seconds (#11720). There is no "unbounded" value: a step must end.
+pub(super) const STEP_TIMEOUT_ENV: &str = "RIPR_RUN_CHAIN_STEP_TIMEOUT";
+/// Default per-step bound: thirty minutes, generous for a large repository's
+/// repo-exposure analysis while still ending a hung step.
+const DEFAULT_STEP_TIMEOUT_SECS: u64 = 30 * 60;
+/// How often a running step is checked against its deadline.
+const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Stderr lines kept to name a failed step's own last diagnostic.
 const STDERR_TAIL_LINES: usize = 20;
@@ -240,7 +250,26 @@ pub(super) fn run_steps(
     let exe = std::env::current_exe().map_err(|err| {
         format!("first-pr --run-chain: cannot resolve the running ripr executable: {err}")
     })?;
-    run_steps_with(&exe, root, options, steps)
+    let timeout = step_timeout_from(std::env::var(STEP_TIMEOUT_ENV))?;
+    run_steps_with(&exe, root, options, steps, timeout)
+}
+
+/// The per-step bound: `RIPR_RUN_CHAIN_STEP_TIMEOUT` whole seconds (at least
+/// 1), else thirty minutes. A typo is refused rather than run with a
+/// silently different bound.
+fn step_timeout_from(value: Result<String, std::env::VarError>) -> Result<Duration, String> {
+    match value {
+        Err(std::env::VarError::NotPresent) => Ok(Duration::from_secs(DEFAULT_STEP_TIMEOUT_SECS)),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{STEP_TIMEOUT_ENV} must be valid UTF-8; set it to a whole number of seconds or unset it"
+        )),
+        Ok(text) => match text.trim().parse::<u64>() {
+            Ok(secs) if secs > 0 => Ok(Duration::from_secs(secs)),
+            _ => Err(format!(
+                "{STEP_TIMEOUT_ENV} must be a whole number of seconds of at least 1, got `{text}`; set it to e.g. {DEFAULT_STEP_TIMEOUT_SECS} or unset it"
+            )),
+        },
+    }
 }
 
 fn run_steps_with(
@@ -248,6 +277,7 @@ fn run_steps_with(
     root: &Path,
     options: &FirstPrOptions,
     steps: &[ChainStep],
+    timeout: Duration,
 ) -> Result<(), String> {
     let total = steps.len();
     for (index, step) in steps.iter().enumerate() {
@@ -299,12 +329,60 @@ fn run_steps_with(
                 recent
             })
         });
-        let output = child
-            .wait_with_output()
-            .map_err(|err| stopped(number, total, step, &format!("could not run: {err}")))?;
+        // Stdout is drained concurrently so a chatty step cannot block on a
+        // full pipe while the deadline is being watched.
+        let stdout_reader = child.stdout.take().map(|mut pipe| {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let _ = std::io::Read::read_to_end(&mut pipe, &mut bytes);
+                bytes
+            })
+        });
+        let deadline = Instant::now() + timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if Instant::now() >= deadline => {
+                    // Terminate the child and reap it. The reader threads are not
+                    // joined: a grandchild holding the pipes open must not
+                    // keep the chain waiting past its bound.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    discard(&fresh_outputs);
+                    return Err(stopped(
+                        number,
+                        total,
+                        step,
+                        &format!(
+                            "timed out after {}; the step was terminated. Raise {STEP_TIMEOUT_ENV} (whole seconds) and rerun",
+                            describe_duration(timeout)
+                        ),
+                    ));
+                }
+                Ok(None) => std::thread::sleep(POLL_INTERVAL),
+                Err(err) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(stopped(
+                        number,
+                        total,
+                        step,
+                        &format!("could not run: {err}"),
+                    ));
+                }
+            }
+        };
+        let stdout = stdout_reader
+            .and_then(|handle| handle.join().ok())
+            .unwrap_or_default();
         let recent = tail
             .and_then(|handle| handle.join().ok())
             .unwrap_or_default();
+        let output = std::process::Output {
+            status,
+            stdout,
+            stderr: Vec::new(),
+        };
         if !output.status.success() {
             discard(&fresh_outputs);
             let code = output
@@ -396,6 +474,14 @@ fn bytes_problem(path: &Path, bytes: &[u8]) -> Option<String> {
         ));
     }
     None
+}
+
+fn describe_duration(timeout: Duration) -> String {
+    if timeout.subsec_nanos() == 0 {
+        format!("{}s", timeout.as_secs())
+    } else {
+        format!("{}ms", timeout.as_millis())
+    }
 }
 
 fn discard(paths: &[PathBuf]) {
@@ -535,7 +621,13 @@ mod tests {
     #[cfg(unix)]
     fn run_sh(step: ChainStep) -> Result<(), String> {
         let options = FirstPrOptions::default();
-        run_steps_with(Path::new("/bin/sh"), Path::new("."), &options, &[step])
+        run_steps_with(
+            Path::new("/bin/sh"),
+            Path::new("."),
+            &options,
+            &[step],
+            Duration::from_mins(1),
+        )
     }
 
     #[cfg(unix)]
@@ -588,5 +680,52 @@ mod tests {
         assert!(error.contains("failed (exit 3); boom"), "{error}");
         assert!(!other.exists());
         std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_step_past_its_bound_is_terminated_named_and_its_new_files_removed() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-11720-timeout-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let target = dir.join("slow.json");
+        // `exec` makes the sleep the child itself, so the kill reaches it.
+        let step = sh_step("printf x > \"$0\"; exec sleep 30", None, &target);
+        let options = FirstPrOptions::default();
+        let started = Instant::now();
+        let error = run_steps_with(
+            Path::new("/bin/sh"),
+            Path::new("."),
+            &options,
+            &[step],
+            Duration::from_millis(300),
+        )
+        .err()
+        .unwrap_or_default();
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "not terminated"
+        );
+        assert!(error.contains("(gap ledger)"), "{error}");
+        assert!(error.contains("timed out after 300ms"), "{error}");
+        assert!(error.contains(STEP_TIMEOUT_ENV), "{error}");
+        assert!(!target.exists(), "the timed-out step's file was left");
+        std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn the_step_timeout_defaults_parses_seconds_and_refuses_typos() {
+        let ok = |v: Result<String, std::env::VarError>| step_timeout_from(v);
+        assert_eq!(
+            ok(Err(std::env::VarError::NotPresent)),
+            Ok(Duration::from_mins(30))
+        );
+        assert_eq!(ok(Ok(" 45 ".to_string())), Ok(Duration::from_secs(45)));
+        for bad in ["0", "-1", "soon", "1.5", ""] {
+            let error = ok(Ok(bad.to_string())).err().unwrap_or_default();
+            assert!(
+                error.contains(STEP_TIMEOUT_ENV) && error.contains("set it"),
+                "{error}"
+            );
+        }
     }
 }
