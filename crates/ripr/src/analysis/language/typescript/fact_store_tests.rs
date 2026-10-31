@@ -625,7 +625,7 @@ fn a_decoded_test_file_shares_its_file_wide_lists_again() -> Result<(), String> 
 /// the same top-level fixture bindings.
 fn many_tests_source(count: usize) -> String {
     let mut source = String::new();
-    for index in 0..12 {
+    for index in 0..count {
         source.push_str(&format!(
             "import {{ helper{index} }} from \"../src/helpers{index}\";\n"
         ));
@@ -642,7 +642,7 @@ fn many_tests_source(count: usize) -> String {
 /// A production source with `count` exported functions under the same imports.
 fn many_owners_source(count: usize) -> String {
     let mut source = String::new();
-    for index in 0..12 {
+    for index in 0..count {
         source.push_str(&format!(
             "import {{ helper{index} }} from \"./helpers{index}\";\n"
         ));
