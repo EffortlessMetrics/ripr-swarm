@@ -172,13 +172,103 @@ fn contains_needle(haystack_lower: &str, needle: &str) -> bool {
     false
 }
 
+/// The Evidence stage vocabulary the digest defines for the reader in its own
+/// legend: the fifth stage name in the `Evidence:` chain and the legend's
+/// definitions of it (`HUMAN_EVIDENCE_LEGEND`). These phrases are exempt because
+/// the output glosses the word in plain language where it introduces it. Every
+/// other use of the word, including prose such as "No strong discriminator",
+/// stays counted.
+const STAGE_VOCABULARY: &[&str] = &[
+    "discriminator = assertion distinguishes intended from wrong behavior",
+    "named discriminator absent from tests",
+    "discriminator unconfirmed",
+];
+
+/// Remove the digest's stage vocabulary (see `STAGE_VOCABULARY`) before matching.
+fn strip_stage_vocabulary(line: &str) -> String {
+    let mut out = line.to_string();
+    for phrase in STAGE_VOCABULARY {
+        out = out.replace(phrase, " ");
+    }
+    if out.trim_start().starts_with("Evidence:") {
+        out = out.replace(" · discriminator ", " · ");
+    }
+    out
+}
+
 /// Banned term ids found on one line of output.
 pub(crate) fn banned_terms_in_line(line: &str) -> Vec<&'static str> {
-    let lower = strip_identifiers(line).to_ascii_lowercase();
+    let lower = strip_identifiers(&strip_stage_vocabulary(line)).to_ascii_lowercase();
     BANNED
         .iter()
         .filter(|banned| banned.needles.iter().any(|n| contains_needle(&lower, n)))
         .map(|banned| banned.id)
+        .collect()
+}
+
+/// The needles listed in the `BANNED` table of a `user_text.rs` source, read as
+/// text so a base commit's list can be checked without building it. Needles sit
+/// inside `needles: &[...]` groups as plain string literals.
+pub(crate) fn needles_from_source(source: &str) -> Result<Vec<String>, String> {
+    let start = source
+        .find("const BANNED")
+        .ok_or("no `const BANNED` table in the base user_text.rs")?;
+    let table = &source[start..];
+    let table = &table[..table.find("\n];").ok_or("unterminated BANNED table")?];
+    let mut needles = Vec::new();
+    let mut rest = table;
+    while let Some(at) = rest.find("needles:") {
+        rest = &rest[at + "needles:".len()..];
+        let open = rest.find('[').ok_or("needles group without `[`")?;
+        let close = rest.find(']').ok_or("needles group without `]`")?;
+        let group = rest.get(open + 1..close).ok_or("malformed needles group")?;
+        let mut parts = group.split('"');
+        parts.next();
+        while let Some(literal) = parts.next() {
+            if literal.contains('\\') {
+                return Err("escaped needle literal in the base BANNED table".into());
+            }
+            needles.push(literal.to_string());
+            parts.next();
+        }
+        rest = &rest[close + 1..];
+    }
+    if needles.is_empty() {
+        return Err("no needles found in the base BANNED table".into());
+    }
+    Ok(needles)
+}
+
+/// Lines a banned needle must stay detectable in: alone, inside a sentence,
+/// punctuated and upper-cased. A prefix needle (ending in `-`) is probed with
+/// a trailing identifier, which is how it is used.
+fn needle_probe_lines(needle: &str) -> Vec<String> {
+    let needle = if needle.ends_with('-') {
+        format!("{needle}0001")
+    } else {
+        needle.to_string()
+    };
+    vec![
+        needle.clone(),
+        format!("a {needle} b"),
+        format!("({needle}), then"),
+        format!("A {} B", needle.to_ascii_uppercase()),
+    ]
+}
+
+/// Needles the base banned that this matcher no longer detects. A PR cannot
+/// qualify itself by editing the list or the matching code: both sides of the
+/// golden delta use the head's matcher, so a weakened matcher shifts them
+/// together and the delta hides it (#11385).
+pub(crate) fn lost_needles(base_needles: &[String]) -> Vec<String> {
+    base_needles
+        .iter()
+        .filter(|needle| {
+            needle_probe_lines(needle)
+                .iter()
+                .any(|line| banned_terms_in_line(line).is_empty())
+        })
+        .cloned()
         .collect()
 }
 
@@ -863,6 +953,19 @@ pub(crate) fn scan_golden_paths(root: &Path) -> Result<Counts, String> {
 pub(crate) const BASE_UNAVAILABLE_LABEL: &str =
     "base unavailable: absolute-ceiling check only, no PR-relative no-growth established";
 
+const MATCHER_SOURCE: &str = "xtask/src/policy/user_text.rs";
+
+/// The banned needles listed in `user_text.rs` at the commit `sha`. A base with
+/// no such file has no matcher to pin, so it pins nothing.
+fn base_needles(root: &Path, sha: &str) -> Result<Vec<String>, String> {
+    let listing = git_text(root, &["ls-tree", "--name-only", sha, "--", MATCHER_SOURCE])?;
+    if listing.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let source = git_text(root, &["show", &format!("{sha}:{MATCHER_SOURCE}")])?;
+    needles_from_source(&source)
+}
+
 /// Pick the gate: per-path delta against the merge-base. Under CI both sides
 /// are bound to commits (event base, HEAD blobs) and a dirty golden path or an
 /// unreadable/unbound base fails closed. Locally an unreadable base falls back
@@ -889,16 +992,46 @@ pub(crate) fn gate_goldens(
                 };
                 return (evaluation, note);
             }
+            let base_sha = read.base_sha.clone();
             let base: BTreeMap<(String, String), usize> = read
                 .counts
                 .into_iter()
                 .map(|(key, found)| (key, found.lines))
                 .collect();
             let head = read.head_counts.as_ref().unwrap_or(head_paths);
-            (
-                evaluate_delta(counts, baseline, head, &base, &read.files),
-                note,
-            )
+            let mut evaluation = evaluate_delta(counts, baseline, head, &base, &read.files);
+            let mut note = note;
+            let in_ci = matches!(mode, Mode::Ci { .. });
+            match base_needles(root, &base_sha) {
+                Ok(needles) => {
+                    for lost in lost_needles(&needles) {
+                        evaluation.violations.push(format!(
+                            "banned needle `{lost}` at the merge-base is no longer detected by this matcher; the gate cannot qualify its own weakening"
+                        ));
+                    }
+                }
+                Err(reason) if in_ci => evaluation.violations.push(format!(
+                    "could not read the merge-base banned list to check the matcher ({reason})"
+                )),
+                Err(reason) => {
+                    note.push_str(&format!(" Matcher pin not checked locally ({reason})."))
+                }
+            }
+            // A push or scheduled run has no PR delta (HEAD is the base), so the
+            // per-file golden ceilings are its only backstop: a breach there
+            // means the PR gate was bypassed or weakened, and fails the run.
+            if let Mode::Ci { event: Ok(event) } = mode
+                && event.name != "pull_request"
+                && event.name != "merge_group"
+            {
+                let golden_prefix = format!("in {GOLDEN_SURFACE}:");
+                let (golden, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut evaluation.warnings)
+                    .into_iter()
+                    .partition(|warning| warning.contains(&golden_prefix));
+                evaluation.warnings = rest;
+                evaluation.violations.extend(golden);
+            }
+            (evaluation, note)
         }
         Err(reason) => {
             let fetch = "Run `git fetch --deepen=200 origin main` (or `git fetch origin main`) so the per-PR delta gate can run.";
@@ -1290,6 +1423,26 @@ fn write_report(root: &Path, body: &str) {
     let _ = fs::write(path, body);
 }
 
+/// `--tree <path>` (#11385): scan and gate the goldens of another checkout with
+/// the matcher compiled into this binary. CI builds the merge-base's xtask in a
+/// separate worktree and points it at the PR tree, so the judge is the code the
+/// PR could not have changed. `.github/workflows/rust-gates.yml` looks for this literal in the
+/// base source to know whether the merge-base can do that yet.
+const TREE_FLAG: &str = "--tree";
+
+fn tree_root(path: &Path) -> Result<PathBuf, String> {
+    let root = path
+        .canonicalize()
+        .map_err(|err| format!("{TREE_FLAG} {}: {err}", path.display()))?;
+    if !root.join(BASELINE_PATH).is_file() {
+        return Err(format!(
+            "{TREE_FLAG} {} is not a ripr checkout (no {BASELINE_PATH})",
+            root.display()
+        ));
+    }
+    Ok(root)
+}
+
 fn repo_root() -> Result<PathBuf, String> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     manifest_dir.parent().map(Path::to_path_buf).ok_or_else(|| {
@@ -1340,9 +1493,16 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
     let mut ripr: Option<String> = None;
     let mut ratchet = false;
     let mut full = false;
+    let mut tree: Option<PathBuf> = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
+            TREE_FLAG => {
+                tree = Some(PathBuf::from(
+                    iter.next()
+                        .ok_or_else(|| format!("{TREE_FLAG} needs a path"))?,
+                ));
+            }
             "--ripr" => {
                 ripr = Some(
                     iter.next()
@@ -1354,12 +1514,20 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
             "--full" => full = true,
             other => {
                 return Err(format!(
-                    "unknown argument `{other}`; usage: cargo xtask check-user-text [--ripr <path>] [--ratchet] [--full]"
+                    "unknown argument `{other}`; usage: cargo xtask check-user-text [--ripr <path>] [--ratchet] [--full] [--tree <path>]"
                 ));
             }
         }
     }
-    let root = repo_root()?;
+    if tree.is_some() && (ratchet || full || ripr.is_some()) {
+        return Err(format!(
+            "{TREE_FLAG} judges committed goldens only; it cannot combine with --ratchet, --full or --ripr"
+        ));
+    }
+    let root = match &tree {
+        Some(path) => tree_root(path)?,
+        None => repo_root()?,
+    };
     let baseline_text = fs::read_to_string(root.join(BASELINE_PATH))
         .map_err(|err| format!("read {BASELINE_PATH}: {err}"))?;
     let baseline = parse_baseline(&baseline_text)?;
@@ -1375,14 +1543,24 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
     // The live half builds `ripr` and runs ~25 commands. Run it when forced
     // (`--full`, `--ripr`, `--ratchet`, check-pr/CI) or when the change can
     // alter live output; a docs-only change scans the goldens only.
-    let run_live = live_half_decision(full || ratchet || ripr.is_some(), changed_paths());
+    // A foreign tree has no binary built from it, so its live output is not
+    // judged here; the golden delta is the whole judgment in that mode.
+    let run_live =
+        tree.is_none() && live_half_decision(full || ratchet || ripr.is_some(), changed_paths());
     let (live, baseline) = if run_live {
         let bin = resolve_ripr_binary(ripr.as_deref())?;
         (scan_live(&bin, &root, &mut counts)?, baseline)
     } else {
-        println!(
-            "check-user-text: live output half skipped, no ripr source or baseline change vs origin/main (golden half only; use --full to force)"
-        );
+        if tree.is_some() {
+            println!(
+                "check-user-text: live output half skipped, --tree judges the goldens of {} with this binary's matcher",
+                root.display()
+            );
+        } else {
+            println!(
+                "check-user-text: live output half skipped, no ripr source or baseline change vs origin/main (golden half only; use --full to force)"
+            );
+        }
         let golden_only = baseline
             .into_iter()
             .filter(|((surface, _), _)| surface == GOLDEN_SURFACE)
@@ -1782,6 +1960,42 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn tree_must_be_a_ripr_checkout_and_names_a_path() -> Result<(), String> {
+        let empty =
+            std::env::temp_dir().join(format!("ripr-user-text-tree-{}", std::process::id()));
+        fs::create_dir_all(&empty).map_err(|err| err.to_string())?;
+        let outcome = tree_root(&empty);
+        let _ = fs::remove_dir_all(&empty);
+        assert!(
+            matches!(outcome, Err(ref e) if e.contains("not a ripr checkout")),
+            "{outcome:?}"
+        );
+        let missing = tree_root(&empty);
+        assert!(
+            matches!(missing, Err(ref e) if e.contains(TREE_FLAG)),
+            "{missing:?}"
+        );
+        let no_path = check_user_text_with_args(&[TREE_FLAG.to_string()]);
+        assert!(
+            matches!(no_path, Err(ref e) if e.contains("needs a path")),
+            "{no_path:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tree_judges_goldens_only_and_rejects_the_modes_that_need_a_local_binary() {
+        for other in ["--ratchet", "--full"] {
+            let outcome =
+                check_user_text_with_args(&[TREE_FLAG.to_string(), ".".into(), other.to_string()]);
+            assert!(
+                matches!(outcome, Err(ref e) if e.contains("goldens only")),
+                "{other}: {outcome:?}"
+            );
+        }
+    }
+
     fn scanned_in(root: &Path) -> Result<Scanned, String> {
         let mut counts = Counts::new();
         let golden_files = scan_goldens(root, &mut counts)?;
@@ -1958,6 +2172,146 @@ mod tests {
                 checkout: checkout.into(),
             }),
         }
+    }
+
+    /// Every needle the head lists must itself stay detectable in the probe
+    /// contexts, or the base-vs-head pin would false-red on an untouched tree.
+    #[test]
+    fn the_matcher_detects_every_needle_it_lists_in_every_probe_context() -> Result<(), String> {
+        let own = needles_from_source(include_str!("user_text.rs"))?;
+        let listed: Vec<String> = BANNED
+            .iter()
+            .flat_map(|banned| banned.needles.iter().map(|n| (*n).to_string()))
+            .collect();
+        assert_eq!(
+            own, listed,
+            "the text reader must see exactly the BANNED needles"
+        );
+        assert!(
+            lost_needles(&own).is_empty(),
+            "lost: {:?}",
+            lost_needles(&own)
+        );
+        Ok(())
+    }
+
+    /// Negative: a needle the base banned but the head does not list is lost.
+    #[test]
+    fn a_needle_dropped_from_the_head_list_is_reported_lost() {
+        let base = vec!["seam".to_string(), "frobnicate".to_string()];
+        assert_eq!(lost_needles(&base), vec!["frobnicate".to_string()]);
+        assert!(lost_needles(&["ripr-spec-".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn the_text_reader_fails_closed_on_a_malformed_table() {
+        assert!(
+            matches!(needles_from_source("fn main() {}"), Err(ref e) if e.contains("no `const BANNED`"))
+        );
+        assert!(matches!(
+            needles_from_source("const BANNED: &[Banned] = &[\n];"),
+            Err(ref e) if e.contains("no needles")
+        ));
+        assert!(matches!(
+            needles_from_source("const BANNED: &[Banned] = &[ needles: &[\"a\\\\b\"] \n];"),
+            Err(ref e) if e.contains("escaped needle")
+        ));
+        assert_eq!(
+            needles_from_source("const BANNED: &[Banned] = &[\n needles: &[\"x\", \"y\"],\n];"),
+            Ok(vec!["x".to_string(), "y".to_string()])
+        );
+    }
+
+    fn matcher_source(needles: &str) -> String {
+        format!(
+            "const BANNED: &[Banned] = &[\n    Banned {{ id: \"t\", needles: &[{needles}] }},\n];\n"
+        )
+    }
+
+    /// A PR that drops a term the base banned fails under CI even though both
+    /// sides of the golden delta are clean, and a base without the file pins nothing.
+    #[test]
+    fn ci_fails_a_pr_whose_matcher_lost_a_base_needle() -> Result<(), String> {
+        let (root, main, pr, merge) = pr_event_repo(
+            "pin-lost",
+            &[
+                (A, "plain\n"),
+                (MATCHER_SOURCE, &matcher_source("\"seam\", \"frobnicate\"")),
+            ],
+            &[(A, "plain\n")],
+        )?;
+        let mode = pr_mode(&main, &pr, &merge);
+        let (evaluation, _) = gate_in_ci(&root, "main", &mode)?;
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            evaluation
+                .violations
+                .iter()
+                .any(|v| v.contains("`frobnicate`")),
+            "{:?}",
+            evaluation.violations
+        );
+        assert!(!evaluation.violations.iter().any(|v| v.contains("`seam`")));
+        Ok(())
+    }
+
+    #[test]
+    fn ci_with_an_unreadable_base_list_fails_and_a_missing_file_pins_nothing() -> Result<(), String>
+    {
+        let (bad, main, pr, merge) = pr_event_repo(
+            "pin-bad",
+            &[(A, "plain\n"), (MATCHER_SOURCE, "no table here\n")],
+            &[(A, "plain\n")],
+        )?;
+        let (evaluation, _) = gate_in_ci(&bad, "main", &pr_mode(&main, &pr, &merge))?;
+        let _ = fs::remove_dir_all(&bad);
+        assert!(
+            evaluation
+                .violations
+                .iter()
+                .any(|v| v.contains("could not read the merge-base banned list")),
+            "{:?}",
+            evaluation.violations
+        );
+        let (none, main, pr, merge) =
+            pr_event_repo("pin-none", &[(A, "plain\n")], &[(A, "plain\n")])?;
+        let (evaluation, _) = gate_in_ci(&none, "main", &pr_mode(&main, &pr, &merge))?;
+        let _ = fs::remove_dir_all(&none);
+        assert!(
+            evaluation.violations.is_empty(),
+            "{:?}",
+            evaluation.violations
+        );
+        Ok(())
+    }
+
+    /// A push has no PR delta, so a golden over its per-file ceiling fails there
+    /// (the backstop) while the same state is only a warning on a PR.
+    #[test]
+    fn a_push_run_fails_a_golden_over_its_ceiling_but_a_pr_run_only_warns() -> Result<(), String> {
+        let root = golden_repo("push-backstop", &[(A, "one seam\n")], &[(A, "one seam\n")])?;
+        let mut counts = Counts::new();
+        scan_goldens(&root, &mut counts)?;
+        let head_paths = scan_golden_paths(&root)?;
+        let baseline = Baseline::new();
+        let (push, _) = gate_goldens(&root, "main", &ci_other(), &counts, &head_paths, &baseline);
+        let (local, _) = gate_goldens(&root, "main", &Mode::Local, &counts, &head_paths, &baseline);
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            push.violations
+                .iter()
+                .any(|v| v.contains("in golden-human:")),
+            "{:?}",
+            push.violations
+        );
+        assert!(local.violations.is_empty(), "{:?}", local.violations);
+        assert!(
+            local
+                .warnings
+                .iter()
+                .any(|v| v.contains("in golden-human:"))
+        );
+        Ok(())
     }
 
     /// A committed symlink is not golden output: its blob is only a target path.
@@ -2357,6 +2711,35 @@ mod tests {
             assert!(
                 banned_terms_in_line(exempt).is_empty(),
                 "should be exempt: {exempt}"
+            );
+        }
+    }
+
+    /// The digest's Evidence line and legend introduce the stage name with its
+    /// own gloss (#10261); exempt exactly that, nothing around it.
+    #[test]
+    fn the_digest_stage_vocabulary_is_exempt_and_nothing_around_it() {
+        for exempt in [
+            "  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak",
+            "Evidence: reach no · infection unknown · propagation yes · observation no · discriminator no",
+            "      discriminator = assertion distinguishes intended from wrong behavior",
+            "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused",
+        ] {
+            assert!(
+                banned_terms_in_line(exempt).is_empty(),
+                "should be exempt: {exempt}"
+            );
+        }
+        for flagged in [
+            "Missing check: No strong discriminator was detected",
+            "Next step: add a discriminator for this input",
+            "Note: observation yes · discriminator weak",
+            "Evidence: reach yes · seam weak · discriminator weak",
+            "discriminator = something else entirely",
+        ] {
+            assert!(
+                !banned_terms_in_line(flagged).is_empty(),
+                "should be flagged: {flagged}"
             );
         }
     }

@@ -131,6 +131,8 @@ The PR evidence summary should keep these field names stable:
 | Field | Meaning |
 | --- | --- |
 | `changed_files` | Number of changed files in the analyzed diff. |
+| `changed_files_sha256` | Optional (older packets omit it). `sha256:<64 lowercase hex>` digest of the changed-path set: decoded UTF-8 paths sorted bytewise, deduplicated, each followed by one NUL byte. Not an LF-joined digest; paths containing newlines cannot collide. |
+| `changed_files_recipe` | Optional non-empty string naming the digest recipe. |
 | `comments` | Count of line-placeable review guidance items. |
 | `summary_only` | Count of summary-only guidance items. |
 | `suppressed` | Count of suppressed guidance items. |
