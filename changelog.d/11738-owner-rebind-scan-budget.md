@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr check` no longer takes quadratic time on a single Rust function with thousands of comparisons: the per-comparison rebinding scan of the owner body now has a 64 KiB budget, past which the owner is treated as rebinding (no actionable repair is offered from a body too large to have been checked). A function with 24,000 `if a > 1 { return 1 }` blocks went from over 20 s to under 1 s on a release build (#11738).

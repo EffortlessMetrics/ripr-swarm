@@ -1692,6 +1692,10 @@ fn owner_declares_local(owner: &FunctionSummary, operand: &str, predicate_line: 
         })
 }
 
+/// Owner bodies larger than this are not rescanned per comparison for
+/// rebindings (#11738); they count as rebinding. About 1,500 ordinary lines.
+const MAX_REBIND_SCAN_BODY_BYTES: usize = 64 * 1024;
+
 /// Whether the owner may rebind or mutate the identifier `operand` on or before
 /// the predicate line, so a name match against an owner parameter no longer
 /// proves the compared value is what the test passed in (#9197). Fail-closed:
@@ -1702,6 +1706,14 @@ fn owner_declares_local(owner: &FunctionSummary, operand: &str, predicate_line: 
 /// parameter alone is not a rebinding), and a field access (`self.x`) or path
 /// segment (`m::x`) is a different name.
 fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line: usize) -> bool {
+    // Each call masks and rescans the whole owner body, and a function with
+    // thousands of comparisons makes thousands of calls (#11738). Past the
+    // budget the scan is not attempted and the owner counts as rebinding, the
+    // fail-closed direction: no actionable repair is offered from a body too
+    // large to have been checked.
+    if owner.body.len() > MAX_REBIND_SCAN_BODY_BYTES {
+        return true;
+    }
     if owner_declares_local(owner, operand, predicate_line) {
         return true;
     }
@@ -9922,6 +9934,21 @@ assert_eq!(input.amount, 100);"#
             ["", "", "c"]
         );
         assert_eq!(names("fn f(a: HashMap<String, u8>, c: u8) {}"), ["a", "c"]);
+    }
+
+    /// #11738: a body past the scan budget is declined (treated as rebinding)
+    /// instead of rescanned once per comparison; a small body with no
+    /// rebinding of the name is still a read.
+    #[test]
+    fn owner_past_the_rebind_scan_budget_counts_as_rebinding() {
+        let small = "pub fn score(a: u32) -> u32 {\n    if a > 1 { return 1 }\n    0\n}";
+        let mut large = String::from("pub fn score(a: u32) -> u32 {\n");
+        while large.len() <= MAX_REBIND_SCAN_BODY_BYTES {
+            large.push_str("    if a > 1 { return 1 }\n");
+        }
+        large.push_str("    0\n}");
+        assert!(!owner_rebinds_operand(&function(small), "a", 3));
+        assert!(owner_rebinds_operand(&function(&large), "a", 3));
     }
 
     fn function(body: &str) -> FunctionSummary {
