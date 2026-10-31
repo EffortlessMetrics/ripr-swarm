@@ -272,6 +272,9 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     if let Some(subject) = options.git_candidate.as_ref() {
         let resolved = super::git_candidate_execution::resolve(subject, options.git_timeout)
             .map_err(|error| error.to_string())?;
+        // #10796: the candidate subject is the requested input source; the
+        // exact-tree identity below is what a deadline refusal may echo.
+        super::publish_input_source_fact(super::InputSource::GitCandidate);
         if crate::is_verbose() {
             eprintln!(
                 "ripr: immutable git candidate resolved: {}",
@@ -327,6 +330,16 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
         options.diff_file.as_ref(),
         options.git_timeout,
     )?;
+    // #10796: publish only what this completed load actually resolved; a
+    // supplied diff ignores `base`, so its base facts stay unavailable.
+    super::publish_loaded_input_facts(
+        if options.diff_file.is_some() {
+            super::InputSource::SuppliedDiff
+        } else {
+            super::InputSource::Committed
+        },
+        &loaded,
+    );
     cancellation::checkpoint()?;
     // A committed-history diff names lines as they exist at HEAD, so the
     // adapters must read HEAD content for tracked files with uncommitted
@@ -482,6 +495,9 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
         options.base.as_deref(),
         options.git_timeout,
     )?;
+    // #10796: the working-tree load completed and holds this diff's base and
+    // merge-base origin; publish them for a possible deadline refusal.
+    super::publish_loaded_input_facts(super::InputSource::WorkingTree, &loaded);
     cancellation::checkpoint()?;
     // #7716: consumers that render neither the untracked-routed-files
     // naming (RIPR-SPEC-0116) nor the analyzed-revisions naming (#5997) —
@@ -1397,6 +1413,10 @@ fn run_pipeline_for_diff_text_with_language_config(
     if out_of_scope.count > 0 && changed_files.is_empty() {
         return Err(scope_matched_nothing_error(diff_scope, &out_of_scope));
     }
+    // #10796: the scoped intake completed — publish the adapter-facing scoped
+    // file count and the out-of-scope count. These are intake quantities, not
+    // raw Git path counts and not adapter result counts.
+    super::publish_scoped_intake_facts(changed_files.len(), out_of_scope.count);
     let mut limitations = parsed_diff
         .limitations
         .into_iter()
