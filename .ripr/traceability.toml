@@ -19445,6 +19445,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_still_excludes_simple_false_comparison",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::eval_comparison_fails_open_on_rebound_parameter",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::compare_literal_values_equates_bool_like_python",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::compare_literal_values_fails_open_on_undecoded_literals",
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::keyword_outside_quotes_respects_word_boundaries",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::guarded_arm_return_value_below_guard_is_weakly_exposed",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::guarded_arm_return_value_with_activating_input_stays_exposed",
