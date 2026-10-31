@@ -1,0 +1,95 @@
+name: Retain tested stub candidate (non-shipping)
+on:
+  push:
+    branches: [codex/8547-stub-tail-proof]
+    paths: [.github/workflows/stub-candidate-retain.yml]
+permissions:
+  contents: write
+concurrency:
+  group: ripr-8547-candidate-retain
+  cancel-in-progress: false
+jobs:
+  retain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BASIS: 6341e3e0408eb7be0083c71bd5df9f2bf1adffdb
+      SUBJECT: c4cd2a30254ff2062f46942a03917aaab4c827f8
+      TREE: 6a34b5ec9826824f91eb5bf811f73866dbfa75da
+      PATCH_BLOB: b817a275324bf8fdfe79b1688510fddf46b27b31
+      DESTINATION: codex/8547-nonboundary-stub-lookup
+      OLD_DESTINATION: d8ba02c0cdd0b5920ec9ca99e25a7b1638d736f7
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 6341e3e0408eb7be0083c71bd5df9f2bf1adffdb
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reconstruct and verify the original tested Git objects
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/retained-stub"
+          evidence="$RUNNER_TEMP/retained-stub"
+          test "$(git rev-parse HEAD)" = "$BASIS"
+          test -z "$(git status --porcelain)"
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/$PATCH_BLOB" > "$evidence/patch-blob.json"
+          export RETAINED_EVIDENCE="$evidence"
+          python3 - <<'PY'
+          import base64, hashlib, json, os
+          from pathlib import Path
+          e=Path(os.environ['RETAINED_EVIDENCE'])
+          b=json.loads((e/'patch-blob.json').read_text())
+          assert b['sha']==os.environ['PATCH_BLOB'] and b['encoding']=='base64'
+          patch=base64.b64decode(b['content'])
+          assert hashlib.sha256(patch).hexdigest()=='b1b6cebd0315093c451e69e1ac0c12d9412617a246656ffa7d55cb950d9312eb'
+          (e/'candidate.patch').write_bytes(patch)
+          # These exact bytes reproduce the original native candidate SHA,
+          # not a fresh execution or a metadata-equivalent replacement.
+          commit=('tree 6a34b5ec9826824f91eb5bf811f73866dbfa75da\n'
+                  'parent 6341e3e0408eb7be0083c71bd5df9f2bf1adffdb\n'
+                  'author github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 1793418718 +0000\n'
+                  'committer github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 1793418718 +0000\n'
+                  '\nperf(check): skip impossible nonpredicate stub guidance lookup (#8547)\n').encode()
+          assert hashlib.sha1(b'commit '+str(len(commit)).encode()+b'\0'+commit).hexdigest()==os.environ['SUBJECT']
+          (e/'candidate.commit').write_bytes(commit)
+          PY
+          git apply --check --index "$evidence/candidate.patch"
+          git apply --index "$evidence/candidate.patch"
+          test "$(git write-tree)" = "$TREE"
+          test "$(git hash-object -t commit -w "$evidence/candidate.commit")" = "$SUBJECT"
+          git diff --cached --name-only > "$evidence/changed-paths.txt"
+          printf '%s\n' changelog.d/8547-nonpredicate-stub-guidance.md crates/ripr/src/app/test_stub.rs crates/ripr/src/app/test_stub_inventory_tests.rs > "$evidence/expected-paths.txt"
+          diff -u "$evidence/expected-paths.txt" "$evidence/changed-paths.txt"
+          git diff --cached --check
+          git diff --exit-code
+          git cat-file -p "$SUBJECT" > "$evidence/published-commit-object.txt"
+          test "$(git rev-parse "$SUBJECT^{tree}")" = "$TREE"
+          test "$(git rev-parse "$SUBJECT^")" = "$BASIS"
+          git diff --exit-code "$BASIS" "$SUBJECT" -- fixtures policy xtask tools docs .github Cargo.toml Cargo.lock rust-toolchain.toml
+          {
+            printf 'source_proof_run=41165155343\nsource_artifact=13029532134\nsource_artifact_sha256=48463d454327a0fe565060e7f0ed1a8f1639a496002c360baf4712b6880a7481\n'
+            printf 'controller=%s\nrun=%s\nattempt=%s\nsubject=%s\ntree=%s\nbasis=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$SUBJECT" "$TREE" "$BASIS"
+            echo 'Source retained only: precommit remains failed; no new runtime or required qualification is asserted.'
+          } > "$evidence/identity.txt"
+      - name: Publish only the existing candidate branch, never Ready or merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          remote="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$DESTINATION" --jq .object.sha)"
+          test "$remote" = "$OLD_DESTINATION"
+          git merge-base --is-ancestor "$OLD_DESTINATION" "$SUBJECT"
+          gh auth setup-git
+          git push origin "$SUBJECT:refs/heads/$DESTINATION"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$DESTINATION" --jq .object.sha)" = "$SUBJECT"
+          echo 'Exact tested head retained. Draft publication is separate; no readiness, qualification label or merge requested.' >> "$RUNNER_TEMP/retained-stub/identity.txt"
+      - name: Retain object custody evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: retained-stub-candidate-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-stub/
+          if-no-files-found: error
+          retention-days: 14
