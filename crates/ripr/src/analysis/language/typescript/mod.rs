@@ -100,6 +100,7 @@ mod infection_shape;
 #[cfg(test)]
 mod infection_shape_tests;
 mod instance_class_guard;
+mod instance_factories;
 #[cfg(test)]
 mod line_index_tests;
 mod literal_eval;
@@ -208,6 +209,7 @@ pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
 pub(crate) use field_update_guard::*;
 pub(crate) use instance_class_guard::*;
+pub(crate) use instance_factories::*;
 pub(crate) use literal_matcher_guard::*;
 pub(crate) use lookup_table_guard::*;
 pub(crate) use loop_bound_guard::*;

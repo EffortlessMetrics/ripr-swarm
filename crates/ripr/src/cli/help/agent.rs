@@ -125,8 +125,9 @@ Options:
                    top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
   --json           Emit the versioned repair_card.v1 JSON document. Without
-                   this flag the same typed fields render as a compact human
-                   summary.
+                   this flag the same typed fields render as a short plain
+                   brief; add the global `--verbose` for the full field list
+                   (producer, subject, non-claim, detail routes).
 
 The card command assembles the compact RepairCardV1 handoff for one seam: the
 changed behavior, the exact blocker, the instruction state, the edit cage, the

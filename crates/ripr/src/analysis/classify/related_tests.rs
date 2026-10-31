@@ -5587,33 +5587,15 @@ fn owner_impl_is_root_item_of(index: &RustIndex, owner: &FunctionSummary, file: 
     if owner.file != file {
         return false;
     }
-    let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
+    let Some(snapshot) = index.source_syntax.get(index, file) else {
         return false;
     };
-    let syntax = tree.syntax();
-    let source = syntax.text().to_string();
-    let line_of = |offset: usize| {
-        1 + source.as_bytes()[..offset.min(source.len())]
-            .iter()
-            .filter(|byte| **byte == b'\n')
-            .count()
-    };
-    syntax
-        .descendants()
-        .filter_map(ast::Impl::cast)
-        .any(|item| {
-            let range = item.syntax().text_range();
-            let (start, end) = (
-                line_of(u32::from(range.start()) as usize),
-                line_of(u32::from(range.end()) as usize),
-            );
-            start <= owner.start_line
-                && owner.start_line <= end
-                && item
-                    .syntax()
-                    .parent()
-                    .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
-        })
+    // The ranges are read once per file snapshot. Rebuilding them per probe
+    // copied the whole file text and recounted its newlines for every `impl`.
+    snapshot
+        .root_impl_lines()
+        .iter()
+        .any(|&(start, end)| start <= owner.start_line && owner.start_line <= end)
 }
 
 /// Whether `file` has a `use` that names `ty` or a glob other than `self::*` /
