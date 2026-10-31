@@ -1056,8 +1056,8 @@ mutant calibrates the rule; ripr reports only the static shape.
     `python_files`, `python_classes` (pytest-style classes),
     `python_functions` (pytest-style tests), `testpaths`, `norecursedirs`
     and `--ignore` / `--ignore-glob` in `addopts`, read from `pytest.ini`,
-    `.pytest.ini`, `tox.ini`, `setup.cfg`, `pyproject.toml` and
-    `pytest.toml` on the test file's directory chain. The read is
+    `.pytest.ini`, `tox.ini`, `setup.cfg`, `pyproject.toml`
+    `pytest.toml` and `.pytest.toml` on the test file's directory chain. The read is
     parse-everything-or-refuse: a collection form the adapter cannot
     evaluate (a computed `collect_ignore`, a collection hook, a character
     class, an unparsable or unreadable file, `-o`, `-c` or `--rootdir` in
