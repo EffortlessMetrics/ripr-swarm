@@ -1193,7 +1193,7 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
 /// the corpus builds its default binary in a private target directory instead.
 /// Unset (the required lane builds default features throughout), behavior is
 /// unchanged and the shared binary is rebuilt in place as before (#3054).
-const FIXTURE_BINARY_ISOLATE_ENV: &str = "RIPR_FIXTURE_BINARY_ISOLATE";
+pub(crate) const FIXTURE_BINARY_ISOLATE_ENV: &str = "RIPR_FIXTURE_BINARY_ISOLATE";
 
 fn isolate_fixture_binary() -> bool {
     std::env::var_os(FIXTURE_BINARY_ISOLATE_ENV).is_some_and(|value| value == "1")
