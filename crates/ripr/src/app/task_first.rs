@@ -522,8 +522,10 @@ fn route_not_ready_reason(
 /// A test already reaches the changed code but ripr cannot follow the changed
 /// value to an assertion on it (`*_unknown` class past activation): name that
 /// test so the reader knows where to strengthen, instead of listing missing
-/// evidence alone (#11466). Refusal text only; class and eligibility are
-/// untouched.
+/// evidence alone (#11466). An activation-unknown seam is named too, but only
+/// through a direct owner call: it reaches the owner, yet ripr cannot show its
+/// input reaches the changed branch (#11895). Refusal text only; class and
+/// eligibility are untouched.
 fn reaching_test_guidance(
     entry: &crate::analysis::ClassifiedSeam,
     root: RefusalRoot<'_>,
@@ -4036,6 +4038,18 @@ pub(crate) mod tests {
                 && reason.contains("its input reaches the changed branch"),
             "{reason}"
         );
+
+        // A weaker relation listed before the direct caller never wins.
+        let mut via_helper = weak_related_test();
+        via_helper.test_name = "via_helper".to_string();
+        via_helper.relation_reason = crate::domain::RelationReason::HelperOwnerCall;
+        let both = gate_entry(
+            SeamGripClass::ActivationUnknown,
+            vec![via_helper, weak_related_test()],
+        );
+        let reason = route_not_ready_reason(&both, "repair route not ready", &missing, root);
+        assert!(reason.contains("`at_threshold_runs`"), "{reason}");
+        assert!(!reason.contains("`via_helper`"), "{reason}");
 
         // Negatives: a weaker relation and no related test.
         let mut weak = weak_related_test();
