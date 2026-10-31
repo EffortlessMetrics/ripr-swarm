@@ -187,3 +187,92 @@ fn a_gate_the_owner_does_not_share_keeps_the_gap() -> Result<(), String> {
     assert_gap(&found, "an ignored test under the shared gate");
     Ok(())
 }
+
+/// `lib` with its changed expression on `line`, diffed without context.
+fn finding_in(lib: &str, line: usize) -> Result<Finding, String> {
+    let diff = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 1111111..2222222 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-        (raw & 0x0fff) | 0x4000\n+        0x4000 | (raw & 0x0fff)\n"
+    );
+    let repo = TempRepo::create(lib)?;
+    std::fs::write(repo.root.join("diff.patch"), diff).map_err(|error| error.to_string())?;
+    let output = check_workspace(CheckInput {
+        root: repo.root.clone(),
+        base: None,
+        diff_file: Some(repo.root.join("diff.patch")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let mut on_line = output.findings.iter().filter(|finding| {
+        finding.probe.location.line == line
+            && finding.probe.family == ripr::ProbeFamily::ReturnValue
+    });
+    match (on_line.next(), on_line.next()) {
+        (Some(finding), None) => Ok(finding.clone()),
+        other => Err(format!("premise: one return_value finding, got {other:?}")),
+    }
+}
+
+/// Two nested gated modules around the owner and the test; `inner_test_gate`
+/// is an extra attribute on the test module.
+fn nested(inner_test_gate: &str) -> String {
+    format!(
+        "#[cfg(feature = \"a\")]
+pub mod a {{
+    #[cfg(feature = \"b\")]
+    pub mod b {{
+        pub fn stamp(raw: u16) -> u16 {{
+        0x4000 | (raw & 0x0fff)
+        }}
+
+        {inner_test_gate}
+        #[cfg(test)]
+        mod tests {{
+            use super::stamp;
+
+            #[test]
+            fn stamp_sets_the_version_nibble() {{
+                assert_eq!(stamp(0xffff), 0x4fff);
+            }}
+        }}
+    }}
+}}
+"
+    )
+}
+
+#[test]
+fn every_test_gate_must_be_carried_by_the_owner() -> Result<(), String> {
+    // Two nesting levels, both shared with the owner: withheld.
+    let found = finding_in(&nested(""), 6)?;
+    assert_withheld(&found, "two shared gate levels");
+    // A shared gate beside an extra independent one on the test: the extra
+    // gate can keep the test out of a run the owner is in, so the gap stays.
+    let found = finding_in(&nested("#[cfg(feature = \"c\")]"), 6)?;
+    assert_gap(&found, "shared gates plus an extra independent test gate");
+    // The extra gate is also refused when it is only a negation of a shared one.
+    let found = finding_in(&nested("#[cfg(not(feature = \"b\"))]"), 6)?;
+    assert_gap(&found, "shared gates plus a negated shared feature");
+    Ok(())
+}
+
+#[test]
+fn the_ungated_owner_control_refuses_for_the_gate_not_for_a_comment() -> Result<(), String> {
+    // The helper writes `// ungated` where the owner's attribute would be;
+    // the test still carries a real gate, so the refusal exists and is a gap.
+    let feature = "#[cfg(feature = \"v4\")]";
+    let lib = source("", &format!("{feature}\n    #[cfg(test)]"), "");
+    assert!(lib.starts_with("// ungated\npub mod v4"), "{lib}");
+    let found = finding("", &format!("{feature}\n    #[cfg(test)]"), "")?;
+    assert_gap(&found, "owner ungated");
+    assert!(
+        found
+            .evidence
+            .iter()
+            .any(|line| line.contains("cannot evaluate for test builds")),
+        "the test's gate must be the named refusal: {:?}",
+        found.evidence
+    );
+    Ok(())
+}
