@@ -19,6 +19,7 @@ pub(super) struct ProptestReceipt {
     pub(super) source: Arc<str>,
     pub(super) line_offset: usize,
     pub(super) name_scopes: Arc<crate::analysis::syntax::NameScopes>,
+    pub(super) singleton_value: Option<(String, String)>,
 }
 
 /// A failed attempt is diagnostic context, never a generated-test receipt.
@@ -98,6 +99,10 @@ pub(super) fn register_proptest_tests(
         if !identity.admits_proptest_target(root, &path) {
             continue;
         }
+        let standard_crates_unshadowed = !expansions
+            .iter()
+            .any(|expansion| expansion.singleton_value.is_some())
+            || identity.proptest_standard_crates_unshadowed(root, &path);
         let mut groups = std::collections::BTreeMap::<_, Vec<_>>::new();
         for expansion in expansions {
             groups
@@ -106,10 +111,15 @@ pub(super) fn register_proptest_tests(
                 .push(expansion);
         }
         for ((macro_line, macro_name), properties) in groups {
-            // Admission is atomic per macro. A refused/duplicate function must
-            // not lose its limitation because a neighboring property worked.
+            // Independently admitted siblings keep receipts, but a partially
+            // understood macro must retain its unresolved-property limitation.
+            let complete = properties.iter().all(|property| {
+                property.macro_complete
+                    && (property.singleton_value.is_none() || standard_crates_unshadowed)
+            });
             let receipts = properties
                 .into_iter()
+                .filter(|property| property.singleton_value.is_none() || standard_crates_unshadowed)
                 .map(|expansion| {
                     let facts = summarize_file_with_parser(&path, &expansion.source).ok()?;
                     let mut tests = facts.tests.into_iter();
@@ -134,6 +144,7 @@ pub(super) fn register_proptest_tests(
                         source: Arc::from(expansion.source),
                         line_offset: offset,
                         name_scopes: Arc::new(expansion.name_scopes),
+                        singleton_value: expansion.singleton_value,
                     })
                 })
                 .collect::<Option<Vec<_>>>();
@@ -174,9 +185,11 @@ pub(super) fn register_proptest_tests(
                         .then(left.end_line.cmp(&right.end_line))
                         .then(left.name.cmp(&right.name))
                 });
-                file.data
-                    .unresolved_property_macros
-                    .retain(|property| property.line != macro_line || property.name != macro_name);
+                if complete {
+                    file.data.unresolved_property_macros.retain(|property| {
+                        property.line != macro_line || property.name != macro_name
+                    });
+                }
             }
         }
     }

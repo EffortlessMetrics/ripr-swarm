@@ -216,7 +216,7 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
             file.unresolved_property_macros.iter().any(|property| {
                 matches!(
                     property.name.as_str(),
-                    "proptest::proptest" | "::proptest::proptest"
+                    "proptest" | "proptest::proptest" | "::proptest::proptest"
                 )
             })
         })
