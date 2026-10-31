@@ -94,8 +94,16 @@ fn unified_diff(path: &str, before: &str, after: &str) -> String {
 /// The return-value finding of a package whose `files` hold `(path, before,
 /// after)` and whose `tests/qualified.rs` is `tests`.
 fn return_finding(files: &[(&str, &str, &str)], tests: &str) -> Result<Value, String> {
+    return_finding_in(MANIFEST, files, tests)
+}
+
+fn return_finding_in(
+    manifest: &str,
+    files: &[(&str, &str, &str)],
+    tests: &str,
+) -> Result<Value, String> {
     let scratch = Scratch::create()?;
-    scratch.write("Cargo.toml", MANIFEST)?;
+    scratch.write("Cargo.toml", manifest)?;
     let mut diff = String::new();
     for (path, before, after) in files {
         scratch.write(path, after)?;
@@ -180,6 +188,53 @@ fn crate_qualified_entry_that_swallows_or_reshapes_the_result_is_not_credited() 
             "{entry}\n{finding}"
         );
     }
+    Ok(())
+}
+
+/// The crate name a test spells is the library target's name: a hyphenated
+/// package is spelled with underscores, and a `[lib] name` override replaces
+/// the package name. Spelling the other name would not compile, so it must
+/// never read `exposed`.
+#[test]
+fn crate_qualified_entry_follows_the_library_target_name() -> Result<(), String> {
+    let owned = [
+        ("src/lib.rs", root(BEFORE, ""), root(AFTER, "")),
+        ("src/tiers.rs", tiers(TIERS_BEFORE), tiers(TIERS_BEFORE)),
+    ];
+    let files: Vec<(&str, &str, &str)> = owned
+        .iter()
+        .map(|(path, before, after)| (*path, before.as_str(), after.as_str()))
+        .collect();
+    let hyphenated =
+        "[package]\nname = \"q-pin\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n";
+    let renamed = format!("{MANIFEST}\n[lib]\nname = \"renamed\"\n");
+    for (manifest, spelled, credited) in [
+        (hyphenated, "q_pin", true),
+        (hyphenated, "q-pin", false),
+        (renamed.as_str(), "renamed", true),
+        (renamed.as_str(), "qpin", false),
+    ] {
+        let tests = format!(
+            "#[test]\nfn plus_one_is_pinned() {{\n    assert_eq!({spelled}::plus_one(5), 11);\n}}\n"
+        );
+        let finding = return_finding_in(manifest, &files, &tests)?;
+        assert_eq!(
+            class_of(&finding) == "exposed",
+            credited,
+            "{manifest}\n{tests}\n{finding}"
+        );
+    }
+    Ok(())
+}
+
+/// A qualified call elsewhere in the test must not credit an assertion that
+/// observes a different call: here a same-named local function.
+#[test]
+fn a_qualified_call_outside_the_assertion_does_not_credit_another_observed_call()
+-> Result<(), String> {
+    let tests = "fn plus_one(x: i64) -> i64 {\n    x + 6\n}\n\n#[test]\nfn local_is_pinned() {\n    let _ = qpin::plus_one(1);\n    assert_eq!(plus_one(5), 11);\n}\n";
+    let finding = root_finding("", tests)?;
+    assert_ne!(class_of(&finding), "exposed", "{tests}\n{finding}");
     Ok(())
 }
 

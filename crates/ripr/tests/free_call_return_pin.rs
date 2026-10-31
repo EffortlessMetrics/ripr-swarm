@@ -289,8 +289,7 @@ fn free_call_entry_resolved_through_a_use_glob_or_another_file_is_not_credited()
 }
 
 #[test]
-fn free_call_entry_with_a_test_that_does_not_pin_it_exactly_is_not_credited() -> Result<(), String>
-{
+fn free_call_entry_classes_follow_the_tests_shape() -> Result<(), String> {
     let before = library("inner(x) + 1", OWNER, "");
     let after = library("inner(x) + 1", OWNER_CHANGED, "");
     for (tests, class) in [
