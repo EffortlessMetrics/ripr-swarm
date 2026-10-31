@@ -1809,6 +1809,7 @@ fn run_agent_repair_phase(
                     crate::app::repair_attempt::conservative_dirty_premise_violations(
                         &root,
                         &preflight_head,
+                        store_ref,
                     )
                 && !preflight_violations.is_empty()
             {
@@ -3328,7 +3329,11 @@ fn run_gap_bound_before_phase(
     // any doubt falls through to the exact policy check below.
     if let Ok(preflight_head) = crate::agent::artifact::current_git_head(root)
         && let Ok(preflight_violations) =
-            crate::app::repair_attempt::conservative_dirty_premise_violations(root, &preflight_head)
+            crate::app::repair_attempt::conservative_dirty_premise_violations(
+                root,
+                &preflight_head,
+                store_ref,
+            )
         && !preflight_violations.is_empty()
     {
         return Err(before_phase_dirty_premise_refusal_with_restart(
