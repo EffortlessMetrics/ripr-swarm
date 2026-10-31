@@ -22448,6 +22448,25 @@ fn context_reuse_matches_fresh(fresh: &[u8], reused: &[u8]) -> Result<(), String
     Ok(())
 }
 
+/// A byte-identical copy of the suite binary inside the test's owned temp
+/// workspace (#11197): repo-rooted cross-process artifact tests write and
+/// read through this stable copy, so an in-suite rebuild of the shared
+/// `target/debug/ripr` cannot change the analyzer identity between the
+/// artifact's write and read execs. Identity constants are baked into the
+/// bytes, so the copy verifies exactly like the original — the comparison
+/// is not weakened.
+fn stable_ripr_copy(workspace: &Path) -> Result<PathBuf, String> {
+    let copy = workspace.join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
+    std::fs::copy(env!("CARGO_BIN_EXE_ripr"), &copy)
+        .map_err(|err| format!("copy suite binary to {}: {err}", copy.display()))?;
+    Ok(copy)
+}
+
+fn run_ripr_copy(binary: &Path, args: &[&str]) -> Result<Output, String> {
+    run_command(&binary.display().to_string(), None, args)
+        .map_err(|err| format!("spawn {}: {err}", binary.display()))
+}
+
 /// Every identity mismatch class fails closed with a typed error naming the
 /// mismatched field — never a silent recompute.
 #[test]
@@ -22459,17 +22478,24 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
     let artifact = dir.join("last-check.json");
     let artifact_arg = artifact.display().to_string();
     let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
+    // Repo-rooted and long-running: write and read through a stable binary
+    // copy so an in-suite rebuild of the shared binary cannot interleave
+    // with this test's identity observations (#11197).
+    let binary = stable_ripr_copy(&dir)?;
 
     let result = (|| {
-        let check = run_ripr(&[
-            "check",
-            "--root",
-            &root,
-            "--diff",
-            &diff,
-            "--write-artifact",
-            &artifact_arg,
-        ]);
+        let check = run_ripr_copy(
+            &binary,
+            &[
+                "check",
+                "--root",
+                &root,
+                "--diff",
+                &diff,
+                "--write-artifact",
+                &artifact_arg,
+            ],
+        )?;
         assert_success(&check);
         let original = std::fs::read_to_string(&artifact)
             .map_err(|err| format!("artifact was not written: {err}"))?;
@@ -22477,14 +22503,17 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
         // Mode mismatch (tampered recording).
         let tampered = original.replace("\"mode\": \"draft\"", "\"mode\": \"ready\"");
         std::fs::write(&artifact, &tampered).map_err(|err| format!("write: {err}"))?;
-        let output = run_ripr(&[
-            "explain",
-            "--root",
-            &root,
-            "--from",
-            &artifact_arg,
-            selector,
-        ]);
+        let output = run_ripr_copy(
+            &binary,
+            &[
+                "explain",
+                "--root",
+                &root,
+                "--from",
+                &artifact_arg,
+                selector,
+            ],
+        )?;
         assert_failure(&output);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -22494,17 +22523,53 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
             "mode mismatch must be named:\n{stderr}"
         );
 
+        // Analyzer binary flip (#11197): the mismatch names BOTH the
+        // recorded and the current identity so a swapped binary is
+        // self-describing.
+        let mut flipped: serde_json::Value = serde_json::from_str(&original)
+            .map_err(|err| format!("parse artifact for tamper: {err}"))?;
+        flipped["analyzer_version"] =
+            serde_json::Value::String("ripr-flipped-identity-11197".to_string());
+        std::fs::write(
+            &artifact,
+            serde_json::to_string(&flipped)
+                .map_err(|err| format!("serialize tampered artifact: {err}"))?,
+        )
+        .map_err(|err| format!("write: {err}"))?;
+        let output = run_ripr_copy(
+            &binary,
+            &[
+                "explain",
+                "--root",
+                &root,
+                "--from",
+                &artifact_arg,
+                selector,
+            ],
+        )?;
+        assert_failure(&output);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("analyzer_version")
+                && stderr.contains("ripr-flipped-identity-11197")
+                && stderr.contains("vs current"),
+            "analyzer_version mismatch must name recorded and current values:\n{stderr}"
+        );
+
         // Unsupported schema version.
         let stale = original.replace("ripr-check-artifact-v1", "ripr-check-artifact-v0");
         std::fs::write(&artifact, &stale).map_err(|err| format!("write: {err}"))?;
-        let output = run_ripr(&[
-            "explain",
-            "--root",
-            &root,
-            "--from",
-            &artifact_arg,
-            selector,
-        ]);
+        let output = run_ripr_copy(
+            &binary,
+            &[
+                "explain",
+                "--root",
+                &root,
+                "--from",
+                &artifact_arg,
+                selector,
+            ],
+        )?;
         assert_failure(&output);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -22518,16 +22583,19 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
         let other_diff = dir.join("other.diff");
         std::fs::copy(sample_diff(), &other_diff).map_err(|err| format!("copy: {err}"))?;
         let other_diff_arg = other_diff.display().to_string();
-        let output = run_ripr(&[
-            "explain",
-            "--root",
-            &root,
-            "--from",
-            &artifact_arg,
-            "--diff",
-            &other_diff_arg,
-            selector,
-        ]);
+        let output = run_ripr_copy(
+            &binary,
+            &[
+                "explain",
+                "--root",
+                &root,
+                "--from",
+                &artifact_arg,
+                "--diff",
+                &other_diff_arg,
+                selector,
+            ],
+        )?;
         assert_failure(&output);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -22806,52 +22874,69 @@ fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<()
     let artifact = dir.join("no-unchanged.json");
     let artifact_arg = artifact.display().to_string();
     let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
+    // Repo-rooted and long-running: write and read through a stable binary
+    // copy so an in-suite rebuild of the shared binary cannot land between
+    // the artifact's write and read execs and flip the analyzer identity
+    // (#11197).
+    let binary = stable_ripr_copy(&dir)?;
 
-    let check = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--no-unchanged-tests",
-        "--write-artifact",
-        &artifact_arg,
-    ]);
+    let check = run_ripr_copy(
+        &binary,
+        &[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--no-unchanged-tests",
+            "--write-artifact",
+            &artifact_arg,
+        ],
+    )?;
     assert_success(&check);
 
-    let fresh = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--no-unchanged-tests",
-        "--at",
-        selector,
-    ]);
+    let fresh = run_ripr_copy(
+        &binary,
+        &[
+            "context",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--no-unchanged-tests",
+            "--at",
+            selector,
+        ],
+    )?;
     assert_success(&fresh);
-    let reused = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--from",
-        &artifact_arg,
-        "--no-unchanged-tests",
-        "--at",
-        selector,
-    ]);
+    let reused = run_ripr_copy(
+        &binary,
+        &[
+            "context",
+            "--root",
+            &root,
+            "--from",
+            &artifact_arg,
+            "--no-unchanged-tests",
+            "--at",
+            selector,
+        ],
+    )?;
     assert_success(&reused);
     context_reuse_matches_fresh(&fresh.stdout, &reused.stdout)?;
 
-    let without_flag = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--from",
-        &artifact_arg,
-        "--at",
-        selector,
-    ]);
+    let without_flag = run_ripr_copy(
+        &binary,
+        &[
+            "context",
+            "--root",
+            &root,
+            "--from",
+            &artifact_arg,
+            "--at",
+            selector,
+        ],
+    )?;
     assert_failure(&without_flag);
     let stderr = String::from_utf8_lossy(&without_flag.stderr);
     assert!(
