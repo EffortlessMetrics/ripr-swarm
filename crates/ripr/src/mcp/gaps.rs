@@ -1522,14 +1522,13 @@ mod tests {
         let policy = crate::app::agent_brief::AgentBriefPolicy::from_config(&config);
         let findings = [finding()?];
         let id = findings[0].id.as_str();
-        let complete =
-            SeamAdmission::evaluate(
-                &findings,
-                &[],
-                policy,
-                &InventoryCompleteness::Complete,
-                None,
-            );
+        let complete = SeamAdmission::evaluate(
+            &findings,
+            &[],
+            policy,
+            &InventoryCompleteness::Complete,
+            None,
+        );
         match complete.verdict(id) {
             Some(SeamVerdict::Refused { code, .. }) if code != SEAM_INVENTORY_TRUNCATED => {}
             other => return Err(format!("complete inventory must not truncate: {other:?}")),
