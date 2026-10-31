@@ -8893,7 +8893,7 @@ Field contract:
     "attempt_id": "<repair-attempt-id>",
     "attempt_state": "failed",
     "edit_cage_verdict": "violated",
-    "error": "repair attempt `<id>` is not receipt-ready: state `failed`, current true, verdict `violated`",
+    "error": "repair attempt `<id>` is not receipt-ready: state `failed`, current true, verdict `violated`; run `ripr agent status` to see why, then start a new attempt with `ripr agent repair`",
     "narration": ["<named cause>", "<recovery>"]
   }
   ```
