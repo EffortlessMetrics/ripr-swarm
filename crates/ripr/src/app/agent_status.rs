@@ -3875,13 +3875,13 @@ mod tests {
         assert!(
             warning.message.contains(&format!(
                 "`ripr doctor --root {}`",
-                shell_arg(&spaced_display)
+                shell_arg(&crate::agent::loop_commands::bound_root(&spaced_display))
             )),
             "{}",
             warning.message
         );
         assert!(
-            shell_arg(&spaced_display).starts_with('\''),
+            shell_arg(&spaced_display).starts_with(['\'', '"']),
             "the spaced root must be quoted: {spaced_display}"
         );
         std::fs::remove_dir_all(&spaced).map_err(|err| format!("remove: {err}"))?;
