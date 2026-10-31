@@ -3699,7 +3699,7 @@ The JSON report is repo automation output with schema version `"0.1"`:
     {
       "rule_id": "ripr.seam.weakly_gripped",
       "level": "warning",
-      "fingerprint": "ripr.seam.weakly_gripped|abc123|src/lib.rs|42",
+      "fingerprint": "ripr.seam.weakly_gripped|src/lib.rs|0123456789abcdef0123456789abcdef|0",
       "uri": "src/lib.rs",
       "line": 42,
       "message": "weakly_gripped seam grip for predicate_boundary"
@@ -14361,7 +14361,16 @@ Field contract:
   `canonical_gap_id` that no other record shares; it passes the shared
   `validate_agent_gap_record_packet` validator; and the ledger's recorded
   `analysis_outcome` is complete with no `run_limitations`, judged by the
-  predicate `ripr check` applies. The command is
+  predicate `ripr check` applies. The validator's candidate-current
+  requirement reads the record's `source_currentness`, which the ledger
+  producer (`ripr reports gap-ledger --check-output`, and `first-pr
+  --check-output`) copies from the check finding for Python and TypeScript
+  alike, and `analysis_outcome` is copied from the same check document. A
+  record whose `source_currentness` is missing, `unknown` or stale (a finding
+  that is `base_deleted` or `moved_or_renamed` forms no record), or a ledger
+  whose `analysis_outcome` is missing or incomplete, recommends nothing. The
+  checked-in TypeScript `first_successful_pr` ledger carries both fields so
+  its start-here packet recommends the same route as the Python case. The command is
   `ripr agent repair --gap-id <id> --base <base> --root <root> --phase before`.
   `ripr check` may print the resolved dirty origin as `--base` where first-pr
   prints its own `--base`, and first-pr cannot see the working tree, so the
@@ -14407,7 +14416,8 @@ Field contract:
 - A root without `Cargo.toml` that `ripr doctor` detects as TypeScript or
   JavaScript (for example a `package.json` plus `.ts` files), not also as
   Python, and that has no `tsconfig.json` or `jsconfig.json` at the root and
-  no TypeScript under `src/` or `tests/` (`package.json` alone is not enough)
+  no `package.json` with JavaScript or TypeScript source at the root or under
+  `src/`, `test/` or `tests/` (`package.json` alone is not enough)
   reports `blocked_artifact` with
   `selected.reason_code = "typescript_project_marker_missing"` and no next
   command, not `wrong_root`. Its message says to add `tsconfig.json`
