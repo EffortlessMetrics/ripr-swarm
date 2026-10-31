@@ -1,0 +1,10 @@
+diff --git a/src/lib.py b/src/lib.py
+--- a/src/lib.py
++++ b/src/lib.py
+@@ -1,5 +1,5 @@
+ def pick(x, d, flag):
+     if flag: x = 0
+-    if x is None:
++    if not x:
+         return d
+     return x

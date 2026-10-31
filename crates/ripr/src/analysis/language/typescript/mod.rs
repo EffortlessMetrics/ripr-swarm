@@ -106,6 +106,9 @@ mod line_index_tests;
 mod literal_eval;
 mod literal_mask;
 mod literal_matcher_guard;
+mod local_constant;
+#[cfg(test)]
+mod local_constant_tests;
 mod lookup_table_guard;
 mod loop_bound_guard;
 mod match_object_guard;
@@ -152,6 +155,7 @@ mod row_miss;
 mod row_miss_tests;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
+mod shadow_index;
 mod spread_override_guard;
 mod static_limit;
 mod table_loop_rows;

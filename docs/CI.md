@@ -1520,7 +1520,11 @@ command, `ripr reports ci-summary --root . >> "$GITHUB_STEP_SUMMARY"`, which
 reads the artifacts earlier steps wrote and prints a regeneration route for any
 that are missing or malformed instead of failing. When the pinned ripr did not install (even if an older one is on PATH),
 the step writes a short summary saying so and pointing at the install step's
-log instead of leaving the summary empty. The summary starts with
+log instead of leaving the summary empty. When `target/ripr/review/comments.json`
+exists, the summary opens with "What RIPR found in this pull request": the count
+of changed-behavior spots where the tests may not notice a wrong result, the first
+spot with its missing check, and the `ripr agent repair` start when it is a plain
+`ripr agent repair ...` command (an unfinished analysis is never reported as clean). The summary then continues with
 the `start-here` first-run packet when `ripr first-pr` can compose one from
 explicit artifacts, then includes the PR review front panel, first useful
 action fallback, a language preview grouping section when `[languages]` enables
@@ -1692,7 +1696,13 @@ configure the workflow, so changing a mode never means editing the file:
   updated.
 - `RIPR_UPLOAD_SARIF` is set in the file, not as a variable. `"true"` uploads
   SARIF to the Security tab; set `"false"` if the repository does not use code
-  scanning.
+  scanning. Code scanning is free on public repositories; a private repository
+  needs GitHub Code Security (Advanced Security), and a fork or Dependabot pull
+  request has a read-only token that cannot upload. Where the upload cannot
+  work it fails, and because the upload steps are `continue-on-error` the job
+  stays green: the **Explain failed SARIF upload** step then adds a
+  `RIPR SARIF upload failed` warning to the run page. Set `"false"` to stop
+  trying; the job summary, annotations and artifacts do not depend on it.
 
 Pilot deadline (#11205). `RIPR_PILOT_TIMEOUT_MS` is optional and not in the
 generated file. Add it to
@@ -1787,7 +1797,11 @@ Steps:
   reads as a workflow command.
 - **Upload RIPR diff findings** stays `continue-on-error`: upload infrastructure
   is not analysis authority (#2009), so a code-scanning outage must not fail a
-  gate the analysis passed.
+  gate the analysis passed. **Explain failed SARIF upload** runs only when
+  one of the two upload steps failed and lists the usual causes (private
+  repository without GitHub Code Security, code scanning not available, or a
+  read-only token), notes it can also be an outage or a rejected SARIF file,
+  and points at the failed step's log and the one-line fix.
 
 For a first rollout, treat code-scanning annotations as review guidance. Do not
 make the job blocking until the repository has reviewed its initial SARIF
