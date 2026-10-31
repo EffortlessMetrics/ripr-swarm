@@ -828,19 +828,29 @@ fn python_receipt_route_consumes_the_bound_verify_and_refuses_forgery() -> Resul
         .map_err(|error| format!("receipt not written at the --out target: {error}"))?;
     let receipt: serde_json::Value =
         serde_json::from_str(&control).map_err(|error| format!("receipt json: {error}"))?;
-    if !control.contains("\"closed\": true") {
+    if receipt["bound_gap"]["closed"].as_bool() != Some(true) {
         return Err(format!("receipt carries no closure:\n{control}"));
     }
-    if control.contains("\"status\": \"passed\"") || receipt.get("test_run").is_some() {
-        return Err(format!("receipt claims a test run:\n{control}"));
+    if receipt["verification"]["status"].as_str() != Some("verification_not_run")
+        || receipt["verification"]["commands_run"]
+            .as_array()
+            .is_none_or(|commands| !commands.is_empty())
+    {
+        return Err(format!("receipt claims a project test run:\n{control}"));
     }
 
     // Negative 1: a missing verify document is refused, no receipt written.
     let missing = receipt_for(&workflow.join("absent-verify.json"), "missing")?;
+    let (_, missing_err) = text_of(&missing);
     expect_exit(
         missing.status.success(),
         false,
         "receipt over a missing verify",
+    )?;
+    need(
+        &missing_err,
+        "absent-verify.json",
+        "missing verify file is named",
     )?;
     if workflow.join("missing.receipt.json").exists() {
         return Err("a receipt was written over a missing verify".to_string());
