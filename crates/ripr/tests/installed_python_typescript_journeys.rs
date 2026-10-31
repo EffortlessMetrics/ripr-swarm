@@ -927,15 +927,18 @@ fn python_receipt_route_consumes_the_bound_verify_and_refuses_forgery() -> Resul
     decoy_untouched(&decoy)
 }
 
-/// Splits a POSIX shell command into words, honouring the single quotes
-/// `ripr` prints around arguments that hold spaces or shell metacharacters.
-#[cfg(feature = "lang-python")]
-fn shell_words(command: &str) -> Vec<String> {
+/// Splits a POSIX shell command into words. Supports exactly what `ripr`
+/// prints: whitespace-separated words, single-quoted spans, and the `\'`
+/// escape used between spans to embed a single quote (`'a'\''b'` is `a'b`).
+/// Any other backslash, or an unterminated quote, is an error.
+#[cfg(all(feature = "lang-python", unix))]
+fn shell_words(command: &str) -> Result<Vec<String>, String> {
     let mut words = Vec::new();
     let mut current = String::new();
     let mut started = false;
     let mut quoted = false;
-    for ch in command.chars() {
+    let mut chars = command.chars();
+    while let Some(ch) = chars.next() {
         match (quoted, ch) {
             (true, '\'') => quoted = false,
             (true, other) => current.push(other),
@@ -943,6 +946,15 @@ fn shell_words(command: &str) -> Vec<String> {
                 quoted = true;
                 started = true;
             }
+            (false, '\\') => match chars.next() {
+                Some('\'') => {
+                    current.push('\'');
+                    started = true;
+                }
+                other => {
+                    return Err(format!("unsupported escape `\\{other:?}` in: {command}"));
+                }
+            },
             (false, ch) if ch.is_whitespace() => {
                 if started {
                     words.push(std::mem::take(&mut current));
@@ -955,10 +967,13 @@ fn shell_words(command: &str) -> Vec<String> {
             }
         }
     }
+    if quoted {
+        return Err(format!("unterminated single quote in: {command}"));
+    }
     if started {
         words.push(current);
     }
-    words
+    Ok(words)
 }
 
 /// #4518: the Python `first-pr` receipt route. The `Receipt path:` line equals
@@ -967,7 +982,7 @@ fn shell_words(command: &str) -> Vec<String> {
 /// records `not_run` at that path while `passed` and `failed` stay separate
 /// records of the supplied verify outcome that carry no static closure. An
 /// unknown status is refused and writes nothing.
-#[cfg(feature = "lang-python")]
+#[cfg(all(feature = "lang-python", unix))]
 #[test]
 fn python_first_pr_receipt_path_matches_out_and_statuses_stay_separate() -> Result<(), String> {
     let (_guard, root, decoy) =
@@ -1007,7 +1022,7 @@ fn python_first_pr_receipt_path_matches_out_and_statuses_stay_separate() -> Resu
         .strip_prefix('(')
         .and_then(|line| line.strip_suffix(')'))
         .ok_or_else(|| format!("receipt command is not a subshell: {receipt_line}"))?;
-    let words = shell_words(inner);
+    let words = shell_words(inner)?;
     let word_after = |flag: &str| -> Result<String, String> {
         let at = words
             .iter()
@@ -1103,7 +1118,8 @@ fn python_first_pr_receipt_path_matches_out_and_statuses_stay_separate() -> Resu
     let refused = write("bogus", &refused_out)?;
     let (_, refused_err) = text_of(&refused);
     expect_exit(refused.status.success(), false, "unknown receipt status")?;
-    need(&refused_err, "status", "unknown status is named")?;
+    need(&refused_err, "invalid --status", "unknown status is named")?;
+    need(&refused_err, "bogus", "unknown status value is named")?;
     if root.join(&refused_out).exists() {
         return Err("a receipt was written for an unknown status".to_string());
     }
