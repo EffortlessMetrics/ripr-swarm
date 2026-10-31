@@ -1713,6 +1713,19 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits (#5254 item 2)",
         ],
     });
+    // Top-level currentness so an agent need not parse `scope`: `true` only
+    // when the snapshot's source is the saved worktree or the working tree
+    // had no uncommitted edits outside the analysis; `false` after a failed
+    // attempt or with edits the analysis cannot see; `null` with no snapshot
+    // (audit finding 2).
+    document["fresh_for_working_tree"] = match (&session.last_good, &session.last_failure) {
+        (None, _) => Value::Null,
+        (Some(_), Some(_)) => json!(false),
+        (Some(snapshot), None) => {
+            json!(snapshot.source == RefreshSource::Worktree || !snapshot.scope.uncommitted_edits)
+        }
+    };
+    document["verify"] = super::repair::verify_after_editing_tests();
     if let Some(base) = &session.desired_base {
         document["requested_base"] = json!(base);
     }
@@ -4367,6 +4380,15 @@ mod tests {
         };
 
         let refresh = refresh_document(&session);
+        // The audit's silent-staleness case: an uncommitted edit the analysis
+        // cannot see is a top-level `false`, with the worktree re-check named.
+        if refresh["fresh_for_working_tree"] != json!(false)
+            || refresh["verify"]["mcp"]["arguments"]["source"] != "worktree"
+        {
+            return Err(format!(
+                "a dirty-tree committed refresh must say it is not fresh: {refresh}"
+            ));
+        }
         if refresh.pointer("/scope/analyzed").and_then(Value::as_str)
             != Some("committed default-branch diff")
         {
