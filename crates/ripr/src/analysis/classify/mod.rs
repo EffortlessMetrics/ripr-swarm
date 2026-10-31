@@ -68,7 +68,7 @@ pub(in crate::analysis) use builder_override::{
 };
 pub(in crate::analysis) use call_identity::{
     CallIdentityMemos, CallTarget, OwnerCallIdentity, bound_free_owner_calls,
-    shared_owner_call_identity, text_calls_owner,
+    shared_owner_call_identity, test_calls_only_through_local_rival_module, text_calls_owner,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
 pub(in crate::analysis) use const_flow::{
@@ -158,8 +158,8 @@ pub(in crate::analysis) use related_tests::{
     free_helper_call_resolves, impl_self_type_name, inherent_owner_call_resolves,
     is_display_fmt_owner, is_drop_destructor, is_partial_eq_method, manifests_with_unindexed_files,
     method_call_resolves_to_impl, module_stem, owner_call_text, owner_dispatch_trait,
-    package_prefix, requires_inherent_receiver_identity, resolves_method_in_prefix,
-    test_calls_free_function,
+    owner_impl_identity_shadowed, package_prefix, requires_inherent_receiver_identity,
+    resolves_method_in_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::reveal_outcome;

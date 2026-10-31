@@ -7600,6 +7600,44 @@ mod tests {
         std::fs::write(&manifest, "{}").map_err(|err| format!("write package.json: {err}"))?;
         assert_eq!(identity(), cargo_only);
 
+        // #11419: each package-led source directory (`src/`, `test/`,
+        // `tests/`) participates in the identity, mirroring the detector's
+        // own per-directory coverage — not just the root source.
+        for dir in ["src", "test", "tests"] {
+            let source = root.join(dir).join("present.js");
+            std::fs::create_dir_all(root.join(dir))
+                .map_err(|err| format!("create {dir}: {err}"))?;
+            std::fs::write(&source, "x").map_err(|err| format!("write {dir}: {err}"))?;
+            assert!(
+                detect_javascript_led_root(&root),
+                "{dir}/ source selects the adapter"
+            );
+            assert_ne!(
+                identity(),
+                cargo_only,
+                "creating the first {dir} source must invalidate the cache identity"
+            );
+
+            std::fs::remove_file(&source).map_err(|err| format!("remove {dir}: {err}"))?;
+            assert_eq!(
+                identity(),
+                cargo_only,
+                "removing the last {dir} source must restore the baseline identity"
+            );
+
+            // Nested sources are covered by the recursive detector walk.
+            let nested = root.join(dir).join("pkg").join("nested.js");
+            std::fs::create_dir_all(root.join(dir).join("pkg"))
+                .map_err(|err| format!("create {dir}/pkg: {err}"))?;
+            std::fs::write(&nested, "x").map_err(|err| format!("write {dir}/pkg: {err}"))?;
+            assert_ne!(
+                identity(),
+                cargo_only,
+                "nested {dir} sources participate in detection identity"
+            );
+            std::fs::remove_file(&nested).map_err(|err| format!("remove nested {dir}: {err}"))?;
+        }
+
         ignore_remove_dir_all(&root);
         Ok(())
     }
