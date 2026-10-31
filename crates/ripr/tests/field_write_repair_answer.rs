@@ -166,7 +166,19 @@ fn builder_returning_self_names_the_missing_field_check() -> Result<(), String> 
     let repo = builder_case(
         "    let r = Req::new(\"http://x\").timeout(10);\n    assert_eq!(r.url, \"http://x\");\n",
     )?;
-    assert_names_missing_field_check("builder sibling read", &repo, "12")
+    assert_names_missing_field_check("builder sibling read", &repo, "12")?;
+    // The hand-written step names the receiver, not a wrapper or `Err`
+    // variant that a struct-literal field would need.
+    let (check, _, _) = repo.answers()?;
+    if !check.contains("sets a field of `self` inside a method")
+        || !check.contains("the value you called it on")
+        || check.contains("match the wrapper")
+    {
+        return Err(format!(
+            "builder: check must name the field write, not a wrapper:\n{check}"
+        ));
+    }
+    Ok(())
 }
 
 #[test]
@@ -179,12 +191,20 @@ fn exact_field_read_is_already_checked_in_both_commands() -> Result<(), String> 
     if !check.contains("Static exposure: exposed") {
         return Err(format!("exact read: check must read exposed:\n{check}"));
     }
-    if !repair.contains("existing tests already grip it") || repair.contains(MISSING_FIELD_CHECK) {
+    if !already_checked(&repair) || repair.contains(MISSING_FIELD_CHECK) {
         return Err(format!(
             "exact read: repair must call the write already checked:\n{repair}"
         ));
     }
     Ok(())
+}
+
+/// Whether bare repair says existing tests already check the change. #11392
+/// rewords "already grip it" to "already check it"; either spelling counts.
+fn already_checked(repair: &str) -> bool {
+    ["already grip it", "already check it"]
+        .iter()
+        .any(|phrase| repair.contains(phrase))
 }
 
 /// A read the exact rule cannot judge keeps the write unknown: it never reads
@@ -194,7 +214,7 @@ fn assert_read_unjudged(case: &str, repo: &Repo) -> Result<(), String> {
     if started {
         return Err(format!("{case}: repair must not start:\n{repair}"));
     }
-    if check.contains("Static exposure: exposed") || repair.contains("already grip it") {
+    if check.contains("Static exposure: exposed") || already_checked(&repair) {
         return Err(format!(
             "{case}: an unconfirmed read is not a check:\n{check}\n{repair}"
         ));

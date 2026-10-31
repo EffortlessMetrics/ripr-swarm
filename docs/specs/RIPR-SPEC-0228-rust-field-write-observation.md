@@ -294,6 +294,14 @@ test checks the field", and never already checked.
 As for constructed fields, no field-write seam starts a repair; this rule
 only replaces "no code" with the specific missing check.
 
+`ripr agent stub` refuses a field-write seam with its own reason
+(`field_written_in_method`): the value to check is the receiver after the
+call, which the stub cannot write. The `ripr check` hand-written step for it
+says to call the method with an input for which old and new code store
+different values and assert the changed field on the value the method was
+called on (for a builder, on the value the chain returns), instead of the
+struct-literal wording about a wrapper or `Err` variant.
+
 ## Required Evidence
 
 - The reproduction reads `exposed` with a `field_construction` finding and no

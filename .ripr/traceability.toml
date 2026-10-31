@@ -17312,6 +17312,7 @@ tests = [
   "crates/ripr/tests/field_write_repair_answer.rs::read_of_the_same_field_on_another_binding_is_not_a_check",
   "crates/ripr/tests/field_write_repair_answer.rs::write_followed_by_an_unresolved_self_call_has_no_field_seam",
   "crates/ripr/tests/field_write_repair_answer.rs::nested_field_path_write_has_no_field_seam",
+  "crates/ripr/src/analysis/test_stub/tests.rs::field_write_in_a_method_names_the_receiver_not_a_struct_literal",
 ]
 fixtures = [
   "fixtures/rust_map_overwrite_count",
@@ -17328,6 +17329,8 @@ code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/analysis/test_grip_evidence.rs",
+  "crates/ripr/src/analysis/test_stub.rs",
+  "crates/ripr/src/output/human/triage.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0228-rust-field-write-observation.md",
