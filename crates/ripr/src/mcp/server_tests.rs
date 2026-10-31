@@ -1864,3 +1864,40 @@ async fn refresh_contains_a_language_adapter_panic() -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }
+
+/// #9360: a typed failure is never digested. `RIPR_MCP_TEXT_CONTENT=summary`
+/// only changes the text companion of a success; a refusal keeps its
+/// `isError: true` shape with the code and recovery in text.
+#[test]
+fn summary_mode_never_digests_a_typed_failure() -> Result<(), String> {
+    let mut server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    server.text_mode = protocol::TextContentMode::Summary;
+    let oversized = serde_json::json!({ "rows": "x".repeat(super::super::MAX_RESPONSE_BYTES) });
+    let response = server
+        .bounded_tool_result(
+            oversized,
+            workspace::SESSION_SCHEMA_VERSION,
+            "serialize refusal fixture",
+            workspace::RECOVERY_STATUS_TOO_LARGE,
+            super::super::MAX_RESPONSE_BYTES,
+        )
+        .map_err(|error| error.to_string())?;
+    let rmcp::model::CallToolResponse::Complete(result) = response else {
+        return Err("refusal did not complete".into());
+    };
+    let wire = serde_json::to_value(&result).map_err(|error| error.to_string())?;
+    let text = wire
+        .pointer("/content/0/text")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("refusal lost its text: {wire}"))?;
+    if wire["isError"] != serde_json::json!(true)
+        || !text.starts_with(workspace::CODE_RESULT_TOO_LARGE)
+        || text.contains("ripr summary")
+        || wire.pointer("/structuredContent/failure/code")
+            != Some(&serde_json::json!(workspace::CODE_RESULT_TOO_LARGE))
+    {
+        return Err(format!("a typed failure must not be digested: {wire}"));
+    }
+    Ok(())
+}

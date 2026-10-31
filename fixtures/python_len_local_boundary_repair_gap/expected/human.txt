@@ -28,7 +28,7 @@ Start here:
   Suggested test file: tests/test_clip.py
   Suggested test: test_keeps_short_text
   Test node: tests/test_clip.py::test_keeps_short_text
-  Verify command: python -m pytest tests/test_clip.py::test_keeps_short_text (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_len_local_boundary_repair_gap/input && python -m pytest tests/test_clip.py::test_keeps_short_text) (high)
   Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `visible == limit`
   Evidence: reach yes · infection weak · propagation weak · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

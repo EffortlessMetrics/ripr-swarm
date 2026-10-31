@@ -130,6 +130,7 @@ pub(super) struct PythonRepairPlacement {
     pub(super) suggested_test_name: String,
     pub(super) suggested_test_line: Option<usize>,
     pub(super) suggested_test_node_id: Option<String>,
+    pub(super) suggested_test_qualified_name: Option<String>,
     pub(super) verify_command: String,
     pub(super) verify_command_confidence: &'static str,
     pub(super) location_reason: &'static str,
@@ -481,77 +482,12 @@ pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Op
             // ends with one, so `pytest "path"::test` would hand pytest the
             // quote bytes as part of the file name. A token with bytes cmd
             // or PowerShell expand inside double quotes gets no command.
-            let selector = if windows {
-                shell_quote_file_arg_for_host(&format!("{path}::{node}"), true)?
-            } else {
-                format!("{}::{node}", shell_quote_file_arg_for_host(&path, false)?)
-            };
-            Some(format!(
-                "{} {selector}",
-                crate::domain::PYTEST_VERIFY_PROGRAM
-            ))
+            crate::domain::python_pytest_verify_display(&path, &node, windows)
         }
         PythonFramework::Unittest => {
-            let module = unittest_module_for_path(&path)?;
-            let selector = if windows {
-                shell_quote_file_arg_for_host(&format!("{module}.{}", test.qualified_name), true)?
-            } else {
-                format!(
-                    "{}.{}",
-                    shell_quote_file_arg_for_host(&module, false)?,
-                    test.qualified_name
-                )
-            };
-            Some(format!("python -m unittest {selector}"))
+            crate::domain::python_unittest_verify_display(&path, &test.qualified_name, windows)
         }
     }
-}
-
-fn unittest_module_for_path(path: &str) -> Option<String> {
-    let module_path = path.strip_suffix(".py").unwrap_or(path);
-    // unittest splits every dot as a module separator. A literal path dot
-    // can therefore select a different file, even when shell quoting is
-    // correct. Keep that unresolved identity out of verification routes.
-    if module_path.contains('.') {
-        return None;
-    }
-    Some(module_path.replace(['/', '\\'], "."))
-}
-
-/// Quote one path or module token for the host's default shell grammar.
-///
-/// Suggested verify commands are text an agent may paste into a shell, so the
-/// quoting must match the host's grammar or the command fails for exactly the
-/// paths that need quoting (#8752). A relative path made of ASCII letters,
-/// digits, `.`, `_`, `/`, `-` stays readable (`:` too on Windows, where it is
-/// not a metachar and the pytest `::` separator must not force quotes); any
-/// other byte is quoted so spaces, unicode, and shell metacharacters reach
-/// the test runner intact. On POSIX hosts the quote is single-quote escaping
-/// (`'\''`), so `$()`, backticks, spaces, and quotes are not expanded. On
-/// Windows hosts the quote is double quotes — the common denominator of cmd
-/// and PowerShell for literal text — but both shells still expand some bytes
-/// inside double quotes (PowerShell: `$()`, `$var`, and backtick escapes;
-/// cmd: `%VAR%`). A token carrying any of those bytes gets no paste-ready
-/// command at all: the verify route stays silent rather than emitting a
-/// command whose paste executes the file name. An embedded `"` in a
-/// quotable token is doubled per the PowerShell grammar; cmd has no
-/// representation for an embedded quote, which stays a documented limit.
-/// Stored node ids and test-file paths stay the raw spelling; only the
-/// command text is quoted. This does not run the command.
-fn shell_quote_file_arg_for_host(file_str: &str, windows: bool) -> Option<String> {
-    let in_safe_class = |c: char| {
-        c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-') || (windows && c == ':')
-    };
-    if !file_str.is_empty() && file_str.chars().all(in_safe_class) {
-        return Some(file_str.to_string());
-    }
-    if windows {
-        if file_str.contains(['$', '`', '%']) {
-            return None;
-        }
-        return Some(format!("\"{}\"", file_str.replace('"', "\"\"")));
-    }
-    Some(format!("'{}'", file_str.replace('\'', "'\\''")))
 }
 
 pub(super) fn python_repair_placement(
@@ -598,6 +534,11 @@ pub(super) fn python_repair_placement_on(
                 suggested_test_name: candidate.test.name.clone(),
                 suggested_test_line,
                 suggested_test_node_id: Some(node_id),
+                suggested_test_qualified_name: candidate
+                    .test
+                    .qualified_name
+                    .contains('.')
+                    .then(|| candidate.test.qualified_name.clone()),
                 verify_command,
                 verify_command_confidence: "high",
                 location_reason: "strengthen existing weak pytest relation",
@@ -609,6 +550,7 @@ pub(super) fn python_repair_placement_on(
             suggested_test_name: candidate.test.name.clone(),
             suggested_test_line,
             suggested_test_node_id: None,
+            suggested_test_qualified_name: Some(candidate.test.qualified_name.clone()),
             verify_command,
             verify_command_confidence: "high",
             location_reason: "strengthen existing weak unittest relation",
@@ -624,8 +566,14 @@ pub(super) fn related_test_relation(
     // them the full scan below (route parsing, fixture views, import
     // matching) is pure cost (#10914: pandas scans ~23k tests per changed
     // owner).
+    // A click subcommand is reached through its group, so the test spells the
+    // group instead (`cli_subcommand.rs`).
     if let Some(name) = name_anchor(owner)
         && !test_text_mentions(test, name)
+        && !owner
+            .cli_subcommand
+            .as_ref()
+            .is_some_and(|subcommand| test_text_mentions(test, &subcommand.group))
     {
         debug_assert_eq!(
             related_test_relation_scan(test, owner),
@@ -964,6 +912,7 @@ fn is_case_capture(body: &str, idx: usize, after: &str) -> bool {
 /// `r: list = ...`). Any `var,` / `, var` / `var:` occurrence counts, which
 /// also demotes some reads (`f(r, 1)`); that only fails closed.
 pub(super) fn binds_in_target_list(body: &str, var: &str) -> bool {
+    let mut parsed_target_line = None;
     body.match_indices(var).any(|(idx, _)| {
         let end = idx + var.len();
         python_callee_start_has_boundary(body, idx)
@@ -983,7 +932,69 @@ pub(super) fn binds_in_target_list(body: &str, var: &str) -> bool {
                     || (continued && (plain_assign(after) || augmented_assign_op(after)))
                     || is_case_capture(body, idx, after)
                     || chained_or_bracketed_target(body, idx, before, after)
+                    || enclosing_bracketed_target_binds(body, idx, var, &mut parsed_target_line)
             }
+    })
+}
+
+/// A complete single-line target can enclose the name without every bracket
+/// touching it (`(x, (r)) = ...`, `[a, [r]] = ...`). Read the target tree rather
+/// than treating every surrounding bracket as a binding: `values[(r)]` still
+/// reads `r`, including when it occurs inside a tuple assignment target.
+fn enclosing_bracketed_target_binds(
+    body: &str,
+    idx: usize,
+    var: &str,
+    parsed_target_line: &mut Option<usize>,
+) -> bool {
+    use rustpython_parser::ast::{Expr, Mod, Stmt};
+
+    // Only a bracketed occurrence needs this fallback. In particular the
+    // original `r = Owner(...)` initializer must not count as a rebind.
+    if !body[..idx]
+        .trim_end_matches([' ', '\t'])
+        .ends_with(['(', '['])
+        || !body[idx + var.len()..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with([')', ']'])
+    {
+        return false;
+    }
+    let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
+    // A failed lookup applies to every occurrence of this name on the line.
+    // Do not repeatedly parse wide tuple expressions containing many reads.
+    if *parsed_target_line == Some(line_start) {
+        return false;
+    }
+    *parsed_target_line = Some(line_start);
+    let line = body[line_start..].lines().next().unwrap_or_default().trim();
+    let path = Path::new("<protocol-entry-target>");
+    // Preserve inline suites by parsing the actual line first. Only an
+    // incomplete header needs a synthetic suite. Both attempts keep the
+    // common parser's nesting/tree budget and never execute user code.
+    let parsed = super::source_facts::parse_module_result(path, line).or_else(|_| {
+        super::source_facts::parse_module_result(path, &format!("{line}\n    pass\n"))
+    });
+    let Ok(Mod::Module(module)) = parsed else {
+        return false;
+    };
+    let binds = |target: &Expr| {
+        matches!(target, Expr::Tuple(_) | Expr::List(_) | Expr::Starred(_))
+            && super::sink_alignment::target_binds_name(target, var)
+    };
+    module.body.iter().any(|stmt| match stmt {
+        Stmt::Assign(assign) => assign.targets.iter().any(binds),
+        Stmt::For(loop_) => binds(&loop_.target),
+        Stmt::AsyncFor(loop_) => binds(&loop_.target),
+        Stmt::With(with) => with
+            .items
+            .iter()
+            .any(|item| item.optional_vars.as_deref().is_some_and(binds)),
+        Stmt::AsyncWith(with) => with
+            .items
+            .iter()
+            .any(|item| item.optional_vars.as_deref().is_some_and(binds)),
+        _ => false,
     })
 }
 
@@ -1807,6 +1818,19 @@ fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
 /// ([`submodule_receivers`]), or a re-exporting package alias. A local that
 /// shadows the import is not a spelling. Methods have none.
 pub(super) fn owner_module_callees(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
+    module_callees_named(test, owner, &owner.name, true)
+}
+
+/// The spellings a test uses for the top-level function `name` of the owner's
+/// module, through the same provenance checks as [`owner_module_callees`].
+/// `reexported` also accepts the owner's package re-exports, which only hold
+/// when `name` is the owner's own name.
+pub(super) fn module_callees_named(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    name: &str,
+    reexported: bool,
+) -> Vec<String> {
     if matches!(
         owner.owner_kind,
         Some(OwnerKind::Method | OwnerKind::ClassMethod)
@@ -1819,18 +1843,18 @@ pub(super) fn owner_module_callees(test: &PythonTest, owner: &PythonOwner) -> Ve
         if test_rebinds_import_alias(test, &import.alias) {
             continue;
         }
-        if import.imported == owner.name
-            && import_source_module_matches_owner(import, owner, &test.file)
+        if import.imported == name && import_source_module_matches_owner(import, owner, &test.file)
         {
             callees.push(import.alias.clone());
         }
-        let reexporting_package =
-            import.source_module.is_empty() && owner.reexport_modules.contains(&import.imported);
+        let reexporting_package = reexported
+            && import.source_module.is_empty()
+            && owner.reexport_modules.contains(&import.imported);
         let receivers = submodule_receivers(import, owner, &test.file)
             .into_iter()
             .chain(reexporting_package.then(|| import.alias.clone()));
         for receiver in receivers {
-            callees.push(format!("{receiver}.{}", owner.name));
+            callees.push(format!("{receiver}.{name}"));
         }
     }
     callees.sort();

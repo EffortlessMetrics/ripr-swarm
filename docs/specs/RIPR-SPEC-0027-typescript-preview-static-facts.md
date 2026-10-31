@@ -546,6 +546,28 @@ boundary without changing the guards (#4104 E):
   object-type return and a method named like a control keyword are not, and keep
   their previous behavior (#10776).
 
+- **`typeof` kind tests** (#11196): an equality comparison of a `typeof`
+  expression with a quoted type-name word (`typeof input === "function"`,
+  also `!==`, `==`, `!=`, and the reversed spelling) names the missing
+  discriminator `typeof <operand> == "<kind>"`. It never reads as
+  `<operand> == "<kind>"`, which would name the type-name string as the input.
+  Two `typeof` sides, a relational operator, or a non-literal kind name no
+  discriminator. The comparison is witnessed only by an observed owner call
+  whose argument at the guarded parameter's position is written as a value of
+  exactly that kind (an inline function for `"function"`, a number literal for
+  `"number"`, and so on; a trailing type assertion such as `as any` is read
+  through). The kind's name as a string literal is a string, so
+  `resolveValue("function" as any)` does not witness a `"function"` test. The
+  guarded operand must be a plain owner parameter; a member read or a local
+  stays unwitnessed. The repair packet's assertion shape asks for a value of
+  the kind in place of the argument and never reuses the observed input, and
+  the "inputs on one side of the boundary" wording is not used for this shape.
+- **Open gap reason in the after phase** (#11196): when `agent verify` refuses
+  a gap that still reads open, the refusal appends the missing discriminator
+  the before and after check-findings artifacts already state (unchanged, or
+  changed from one to the other). With no discriminator in the after artifact
+  it appends nothing; the refusal reads as before and no reason is invented.
+
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:
 
