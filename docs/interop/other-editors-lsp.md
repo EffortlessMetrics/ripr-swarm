@@ -56,15 +56,55 @@ client advertises pull diagnostics (`textDocument.diagnostic`).
 **Commands.** `executeCommandProvider` lists `ripr.refresh`,
 `ripr.collectContext`, `ripr.collectEvidenceContext`,
 `ripr.collectWorkspaceStatus`, `ripr.collectRepairPacket`,
-`ripr.collectTopLimitation`, and `ripr.collectReceiptStatus`. The server runs
-all of them. Clipboard and navigation actions (`ripr.copy*`,
-`ripr.openRelatedTest`) are offered only to clients that advertise them in the
-`experimental.riprEditor` capability, which only the VS Code extension does.
+`ripr.collectTopLimitation`, `ripr.collectReceiptStatus`, and
+`ripr.showRelatedTest`. The server runs all of them. Clipboard actions
+(`ripr.copy*`) and the client-side `ripr.openRelatedTest` command are offered
+only to clients that advertise them in the `experimental.riprEditor`
+capability, which only the VS Code extension does. Other clients navigate
+through `ripr.showRelatedTest` instead.
+
+**Jump to a related test.** A finding that names related tests offers the code
+action "Write targeted test: open best related test" to a client that
+advertises `window.showDocument`. It runs `ripr.showRelatedTest`, and the
+server answers with a `window/showDocument` request for the test file and
+line. A client without `showDocument` is not offered the action. The action
+only navigates: it never edits source and never runs the test. If the
+analysis input changed since the action was listed (or the request carries no
+analysis identity), the server refuses with an
+`InvalidParams` error that names `ripr.refresh`.
 
 **Custom notification.** The server sends `ripr/analysisStatus` after startup
 and each refresh. A client without a handler can ignore it. `ripr.collectWorkspaceStatus` returns a
 `workspace_status` object on request, with the latest status payload under
 `analysis_status`.
+
+## Check that it works
+
+Before configuring an editor, run these from the repository root in the shell
+that launches the editor:
+
+```text
+ripr --version      # must resolve; editors do not use your interactive shell PATH on every platform
+ripr doctor         # "Recommended first command" names the next step
+git status --short  # ripr analyzes changed behavior; see below
+```
+
+What a first open looks like (observed 2026-10-30 driving `ripr lsp --stdio`
+from a scripted client):
+
+| Workspace | What the client shows |
+| --- | --- |
+| Git repository with an edited, saved Rust file | Observed with a scripted LSP client: a `weakly_exposed`-style diagnostic on the changed line within about a second |
+| Git repository with **nothing changed** against the base | Observed with a scripted LSP client: no diagnostics, and hover shows the generic "ripr estimates static RIPR exposure" text. This is the normal clean state, not a broken server. Expected, not observed in an editor: edit a branch condition, save, and the diagnostic appears. Set `baseRef` to compare against another branch |
+| **Not a Git work tree** | Observed with a scripted LSP client: a `window/showMessage` warning, "workspace analysis failed ... not inside a Git work tree", whose text ripr itself bounds to 240 characters (ending in `…` when cut, with absolute paths redacted), so a remedy may be cut off. Diff-scoped analysis needs Git: run `ripr doctor` for the full remedy, or use `ripr pilot --root .` to explore without history |
+| `ripr` not on the client's `PATH` | Typical editor behavior; wording varies. Clients generally report a failed server start (places to look: Helix `:log-open`, Neovim `:checkhealth vim.lsp`, Zed language server status). Use an absolute path in `cmd` / `command` |
+
+A first-open diagnostic of `ripr-diagnostic-analysis-pending` means the first
+analysis has not finished; save the file or run `ripr.refresh`.
+
+Neovim needs `vim.lsp.config` and `vim.lsp.enable` (Neovim 0.11 or newer)
+for the snippet below. Older versions can use `vim.lsp.start` with the same
+`cmd` and root markers.
 
 ## Helix
 

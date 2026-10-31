@@ -82,6 +82,7 @@ mod work_selection_identity;
 mod work_synthesis_identity;
 mod work_wave_identity;
 pub(crate) use types::*;
+mod exact_schema_json;
 mod reports;
 mod ripr_swarm;
 mod run;
@@ -293,8 +294,8 @@ use policy::{
     check_doc_roles, check_droid_review_config, check_executable_files, check_file_policy,
     check_local_context, check_network_policy, check_no_panic_family, check_packaged_readme,
     check_positioning_language, check_process_policy, check_product_copy, check_proof_packs,
-    check_release_targets, check_static_language, check_text_encoding, check_workflows,
-    qualify_python_wheelhouse,
+    check_release_targets, check_static_language, check_text_encoding, check_user_text,
+    check_workflows, qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -616,6 +617,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-process-policy",
     "check-network-policy",
     "check-lint-policy",
+    "check-user-text",
 ];
 
 fn check_identity_registry() -> Result<(), String> {
@@ -743,6 +745,10 @@ fn precommit_policy_remaining(
         check_process_policy()?;
         check_network_policy()?;
         check_lint_policy()?;
+        check_user_text()?;
+    } else {
+        // Hosted `ci-policy`: enforce both halves (goldens and live output).
+        policy::check_user_text_full()?;
     }
     Ok(())
 }
@@ -1752,7 +1758,8 @@ fn run_policy_checks() -> Result<(), String> {
     check_dependencies()?;
     check_process_policy()?;
     check_network_policy()?;
-    check_lint_policy()
+    check_lint_policy()?;
+    policy::check_user_text_full()
 }
 
 fn ci_full() -> Result<(), String> {
@@ -5721,7 +5728,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-doc-roles`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-doc-roles`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n- `cargo xtask check-user-text`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One

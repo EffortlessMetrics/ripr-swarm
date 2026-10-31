@@ -5,6 +5,7 @@ use super::render_helpers::{
 use super::why_line;
 use crate::agent::loop_commands::shell_path;
 use crate::analysis::ClassifiedSeam;
+use crate::domain::LanguageId;
 use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
 };
@@ -20,6 +21,7 @@ use crate::output::pilot::ranking::{
     actionable_in_change, actionable_in_owner, actionable_total, top_actionable_seams,
     withheld_static_limitations,
 };
+use crate::output::pilot::types::PilotPythonFirstUseStatus;
 use crate::output::pilot::{
     ChangeSeams, PILOT_SUMMARY_SCHEMA_VERSION, PilotCurrentChange, PilotLanguageRoute,
     PilotLanguageRoutes, PilotPythonFirstUse, PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
@@ -229,12 +231,43 @@ pub(crate) fn render_pilot_summary_json(
     out
 }
 
+/// Render both human surfaces from one observation of the inline target.
+/// The CLI always writes Markdown and renders the terminal, even for JSON stdout.
+pub(crate) fn render_pilot_human_summaries(
+    classified: &[ClassifiedSeam],
+    context: PilotSummaryContext<'_>,
+) -> (String, String) {
+    let top = top_actionable_seams(classified, context.max_seams.max(1), context.current_change);
+    let terminal_top = &top[..top.len().min(1)];
+    let markdown_top = &top[..top.len().min(context.max_seams)];
+    let target = terminal_top
+        .first()
+        .and_then(|entry| uncommitted_inline_target(context.root, entry));
+    (
+        render_pilot_summary_md_with_target(classified, context, markdown_top, target.as_deref()),
+        render_pilot_terminal_with_target(classified, context, terminal_top, target.as_deref()),
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn render_pilot_summary_md(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> String {
-    let actionable_total = actionable_total(classified);
     let top = top_actionable_seams(classified, context.max_seams, context.current_change);
+    let target = top
+        .first()
+        .and_then(|entry| uncommitted_inline_target(context.root, entry));
+    render_pilot_summary_md_with_target(classified, context, &top, target.as_deref())
+}
+
+fn render_pilot_summary_md_with_target(
+    classified: &[ClassifiedSeam],
+    context: PilotSummaryContext<'_>,
+    top: &[&ClassifiedSeam],
+    uncommitted_inline_target: Option<&str>,
+) -> String {
+    let actionable_total = actionable_total(classified);
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
@@ -453,10 +486,7 @@ pub(crate) fn render_pilot_summary_md(
                 .first()
                 .map(|entry| repair_edit_scope(entry))
                 .unwrap_or_default();
-            if let Some(file) = top
-                .first()
-                .and_then(|entry| uncommitted_inline_target(context.root, entry))
-            {
+            if let Some(file) = uncommitted_inline_target {
                 out.push_str(&format!(
                     "Before starting the repair: if `{file}` has uncommitted edits, commit or stash them; the repair start refuses a target file that differs from HEAD.\n\n",
                 ));
@@ -590,11 +620,24 @@ pub(crate) fn render_pilot_summary_md(
     out
 }
 
+#[cfg(test)]
 pub(crate) fn render_pilot_terminal(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> String {
     let top = top_actionable_seams(classified, 1, context.current_change);
+    let target = top
+        .first()
+        .and_then(|entry| uncommitted_inline_target(context.root, entry));
+    render_pilot_terminal_with_target(classified, context, &top, target.as_deref())
+}
+
+fn render_pilot_terminal_with_target(
+    classified: &[ClassifiedSeam],
+    context: PilotSummaryContext<'_>,
+    top: &[&ClassifiedSeam],
+    uncommitted_inline_target: Option<&str>,
+) -> String {
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
@@ -740,15 +783,27 @@ pub(crate) fn render_pilot_terminal(
     } else if let Some((route, command)) = supported_headline_route(context) {
         out.push_str("Top recommendation:\n");
         out.push_str(&format!(
-            "  analyze the {} diff: {command}\n  (pilot found no gaps in the Rust code it checked; see the other languages below)\n\n",
+            "  analyze the {} diff: {command}\n",
             route.language.display_name(),
         ));
+        if !no_rust_source(context) {
+            out.push_str(
+                "  (pilot found no gaps in the Rust code it checked; see the other languages below)\n",
+            );
+        }
+        out.push('\n');
         false
     } else if required_routes(context).is_some() {
         out.push_str("Top recommendation:\n");
-        out.push_str(
-            "  none: pilot found no gaps in the Rust code it checked; see the other languages below\n\n",
-        );
+        if no_rust_source(context) {
+            out.push_str(
+                "  none: pilot found no Rust code to scan; see the other languages below\n\n",
+            );
+        } else {
+            out.push_str(
+                "  none: pilot found no gaps in the Rust code it checked; see the other languages below\n\n",
+            );
+        }
         false
     } else if let Some(unanalyzed) = unanalyzed_only(context) {
         out.push_str("Top recommendation:\n");
@@ -771,7 +826,13 @@ pub(crate) fn render_pilot_terminal(
         false
     };
 
-    if let Some(first_use) = context.python_first_use {
+    // A `no_python_findings` preview next to a "Not scanned" Python route reads
+    // as a clean bill for code pilot never read (#11297); the route block says
+    // "not scanned" instead.
+    if let Some(first_use) = context
+        .python_first_use
+        .filter(|first_use| !python_preview_is_unscanned(context, first_use))
+    {
         push_python_first_use_terminal(&mut out, first_use);
     }
     push_declined_rust_files_terminal(&mut out, declined_rust_files(context));
@@ -779,8 +840,9 @@ pub(crate) fn render_pilot_terminal(
         push_rust_exclusion_terminal(&mut out, excluded);
     }
     let routes = required_routes(context);
-    if let Some(routes) = routes {
-        push_language_routes_terminal(&mut out, routes);
+    let unscanned = unanalyzed_routes(context);
+    if !unscanned.is_empty() {
+        push_language_routes_terminal(&mut out, &unscanned);
     }
 
     out.push_str("Full report (Markdown):\n");
@@ -798,11 +860,8 @@ pub(crate) fn render_pilot_terminal(
         .and_then(|entry| repair_start_command(context.root, entry))
     {
         out.push_str("Next, in order:\n");
-        if let Some(file) = top
-            .first()
-            .and_then(|entry| uncommitted_inline_target(context.root, entry))
-        {
-            out.push_str(&dirty_target_precondition(&file));
+        if let Some(file) = uncommitted_inline_target {
+            out.push_str(&dirty_target_precondition(file));
             out.push('\n');
         }
         out.push_str(&format!("  1. {command}\n"));
@@ -922,6 +981,7 @@ pub(crate) fn render_pilot_terminal(
 /// difference is named too and pilot does not fork its own check. The predicate
 /// fails open (`None`) whenever the answer is not positively established.
 fn uncommitted_inline_target(root: &std::path::Path, entry: &ClassifiedSeam) -> Option<String> {
+    repair_start_command(root, entry)?;
     repair_inline_target_file(entry)
         .filter(|file| crate::edit_cage::inline_target_is_uncommitted(root, file))
 }
@@ -1398,6 +1458,42 @@ fn required_routes<'a>(context: PilotSummaryContext<'a>) -> Option<&'a [PilotLan
     context
         .language_routes
         .and_then(PilotLanguageRoutes::required)
+}
+
+/// Whether the repository has no Rust source at all.
+fn no_rust_source(context: PilotSummaryContext<'_>) -> bool {
+    context
+        .language_routes
+        .is_some_and(PilotLanguageRoutes::no_rust_source)
+}
+
+/// A zero-finding Python preview whose Python route is listed as not scanned.
+fn python_preview_is_unscanned(
+    context: PilotSummaryContext<'_>,
+    first_use: &PilotPythonFirstUse,
+) -> bool {
+    first_use.status == PilotPythonFirstUseStatus::NoPythonFindings
+        && unanalyzed_routes(context)
+            .iter()
+            .any(|route| route.language == LanguageId::Python)
+}
+
+/// Required routes minus languages pilot actually analyzed: a Python run that
+/// produced findings already prints its own "Python preview" block, so
+/// listing Python under "Not scanned" would contradict it.
+fn unanalyzed_routes(context: PilotSummaryContext<'_>) -> Vec<PilotLanguageRoute> {
+    let python_analyzed = context.python_first_use.is_some_and(|first_use| {
+        matches!(
+            first_use.status,
+            PilotPythonFirstUseStatus::Ready | PilotPythonFirstUseStatus::NoRepairCards
+        )
+    });
+    required_routes(context)
+        .unwrap_or_default()
+        .iter()
+        .filter(|route| !(python_analyzed && route.language == LanguageId::Python))
+        .cloned()
+        .collect()
 }
 
 /// Enabled supported-language check route the top recommendation should name

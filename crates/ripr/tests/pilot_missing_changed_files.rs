@@ -155,9 +155,14 @@ fn run_subject(fixture: &Fixture, cache: &Path, args: &[&str]) -> Result<Run, St
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
-    if let Some(limit) = fixture.seam_limit {
-        command.env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", limit);
-    }
+    // These tests pin that `ripr check` and `ripr pilot` share one classified
+    // cache entry. Pilot's built-in inventory cap follows its seam budget
+    // (#10726), so its default cache key differs from check's; an uncapped
+    // fixture therefore sets the product default explicitly for both commands.
+    command.env(
+        "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+        fixture.seam_limit.unwrap_or("10000"),
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut child = OwnedProcess::spawn(command).map_err(|error| error.to_string())?;
     let outcome = (|| {

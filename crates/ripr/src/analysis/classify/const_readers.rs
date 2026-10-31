@@ -50,7 +50,7 @@ pub(in crate::analysis) fn same_file_const_readers<'a>(
 /// qualified by another path (`crate::other::NAME`, `Other::NAME`), a field or
 /// method (`x.NAME`), a local `let NAME` shadow, an escaped `{{NAME}}`, a
 /// comment, or a plain string is not a read.
-fn function_reads(body: &str, name: &str) -> bool {
+pub(in crate::analysis) fn function_reads(body: &str, name: &str) -> bool {
     let masked = mask_comments_and_strings(body);
     if shadows(&masked, name) {
         return false;
