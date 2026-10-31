@@ -25,6 +25,10 @@ case "$1 $2" in
 esac
 "##;
 
+fn test_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    Command::new(program)
+}
+
 fn run(case: &str, fail_at: &str) -> Result<(std::process::Output, String, PathBuf), String> {
     let dir = std::env::temp_dir().join(format!(
         "pr-status-no-settings-{}-{case}",
@@ -53,7 +57,7 @@ fn run(case: &str, fail_at: &str) -> Result<(std::process::Output, String, PathB
         dir.join("bin").display(),
         std::env::var("PATH").unwrap_or_default()
     );
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+    let output = test_command(env!("CARGO_BIN_EXE_xtask"))
         .args(["gh-pr-status", "--pr", "42"])
         .current_dir(&dir)
         .env("PATH", path)
@@ -134,7 +138,7 @@ fn fake_gh_rejects_privileged_rest_and_graphql_requests() -> Result<(), String> 
             "query={repository{branchProtectionRules{totalCount}}}",
         ],
     ] {
-        let result = Command::new(&script)
+        let result = test_command(&script)
             .args(args)
             .env("FAKE_DIR", &dir)
             .output()
