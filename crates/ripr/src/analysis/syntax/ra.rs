@@ -526,16 +526,14 @@ pub(super) fn include_literal_path_from_macro_call(call: &ast::MacroCall) -> Opt
         SyntaxKind::L_BRACK => SyntaxKind::R_BRACK,
         _ => return None,
     };
-    let literal_index = rest
-        .iter()
-        .position(|token| token.kind() == SyntaxKind::STRING)?;
-    if rest[literal_index + 1..]
-        .iter()
-        .any(|token| token.kind() != close)
-    {
+    let (literal, tail) = rest.split_first()?;
+    if literal.kind() != SyntaxKind::STRING {
         return None;
     }
-    parse_rust_string_literal(rest[literal_index].text()).map(PathBuf::from)
+    if tail.iter().any(|token| token.kind() != close) {
+        return None;
+    }
+    parse_rust_string_literal(literal.text()).map(PathBuf::from)
 }
 
 pub(super) fn parse_rust_string_literal(literal: &str) -> Option<String> {
@@ -4443,6 +4441,7 @@ include!(r#"raw.rs"#);
 include!("escaped\\path.rs");
 include!("quoted\"file.rs");
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+include!(env!("X"), "frag.rs");
 include_str!("sidecar.rs");
 preinclude!("not_include.rs");
 mod nested { include!("nested.rs"); }
@@ -4467,14 +4466,14 @@ mod nested { include!("nested.rs"); }
                 PathBuf::from("nested.rs")
             ]
         );
-        assert_eq!(directives.len(), 9);
+        assert_eq!(directives.len(), 10);
         assert!(
             directives
                 .iter()
                 .filter(|directive| directive.literal_path.is_none())
                 .count()
-                == 1,
-            "only concat! should lack a literal path"
+                == 2,
+            "concat! and non-leading-literal arguments should lack a literal path"
         );
         let nested = directives
             .iter()
