@@ -32,5 +32,13 @@
       "limited"
     ]
   },
-  "reasoning": "The test asserts `expect([isBulk(100)].length).toBe(1)`. A spread-free array literal around the result always has the same length, so the green test cannot notice the boundary change. The honest reading is `weakly_exposed`, not `exact_value` / `exposed`."
+  "reasoning": "The test asserts `expect([isBulk(100)].length).toBe(1)`. A spread-free array literal around the result always has the same length, so the green test cannot notice the boundary change. The honest reading is `weakly_exposed`, not `exact_value` / `exposed`.",
+  "labeling_observation": {
+    "ripr_commit": "11cc34ec",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
 }

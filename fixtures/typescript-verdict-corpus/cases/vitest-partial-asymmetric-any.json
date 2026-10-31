@@ -32,5 +32,13 @@
       "limited"
     ]
   },
-  "reasoning": "The test asserts `expect(isBulk(100)).toEqual(expect.any(Boolean))`. A top-level asymmetric matcher matches any value of the family, so the edit from `>=` to `>` leaves the test green. Crediting it `exact_value` / `exposed` would be a false exposed; the honest reading is a weak relational check (`weakly_exposed`)."
+  "reasoning": "The test asserts `expect(isBulk(100)).toEqual(expect.any(Boolean))`. A top-level asymmetric matcher matches any value of the family, so the edit from `>=` to `>` leaves the test green. Crediting it `exact_value` / `exposed` would be a false exposed; the honest reading is a weak relational check (`weakly_exposed`).",
+  "labeling_observation": {
+    "ripr_commit": "11cc34ec",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
 }

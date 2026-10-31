@@ -32,5 +32,13 @@
       "limited"
     ]
   },
-  "reasoning": "The test asserts `expect(typeof isBulk(100)).toBe(\"boolean\")`. The kind of the result is the same on both sides of the edit, so the green test cannot notice the boundary change. A derived-property observation is not an exact value check; the honest reading is `weakly_exposed`."
+  "reasoning": "The test asserts `expect(typeof isBulk(100)).toBe(\"boolean\")`. The kind of the result is the same on both sides of the edit, so the green test cannot notice the boundary change. A derived-property observation is not an exact value check; the honest reading is `weakly_exposed`.",
+  "labeling_observation": {
+    "ripr_commit": "11cc34ec",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
 }
