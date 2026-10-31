@@ -483,6 +483,18 @@ pub enum StaticLimitKind {
     /// or that the arm's value reaches the compared items. The gap is
     /// withheld and the class is `static_unknown`. See RIPR-SPEC-0240 / #5503.
     RustCallerLoopSelectorUnresolved,
+    /// A Rust proof harness (`#[kani::proof]`, `#[kani::proof_for_contract]`)
+    /// calls the changed owner and no test reaches it. ripr does not evaluate
+    /// proofs: the harness is neither a test nor oracle evidence, so the
+    /// class stays `no_static_path`. This label names the unevaluated proof,
+    /// not a coverage claim. See RIPR-SPEC-0367.
+    ProofHarnessNotEvaluated,
+    /// TypeScript workspace discovery stopped at its entry cap
+    /// (`RIPR_TS_MAX_WORKSPACE_FILES`) before the walk covered the workspace,
+    /// so the test universe is incomplete. A finding that would say no test
+    /// reaches the change is withheld and the class is `static_unknown`: the
+    /// missing test may be one the walk never read. See RIPR-SPEC-0240.
+    TypescriptWorkspaceDiscoveryTruncated,
 }
 
 impl StaticLimitKind {
@@ -552,6 +564,10 @@ impl StaticLimitKind {
             }
             StaticLimitKind::RustCallerLoopSelectorUnresolved => {
                 "rust_caller_loop_selector_unresolved"
+            }
+            StaticLimitKind::ProofHarnessNotEvaluated => "proof_harness_not_evaluated",
+            StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
+                "typescript_workspace_discovery_truncated"
             }
         }
     }
@@ -725,6 +741,19 @@ impl StaticLimitKind {
                  ripr reads the loop's selector range but does not prove the loop runs for the \
                  test's input or that the arm's value reaches the compared items, so it does not \
                  claim a gap; this is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::ProofHarnessNotEvaluated => {
+                "A Rust proof harness (`#[kani::proof]` or `#[kani::proof_for_contract]`) calls \
+                 this code, but ripr does not evaluate proofs: a harness is not a test and \
+                 its assertions are not oracle evidence, so no test path is established. A \
+                 passing verifier run is a separate authority ripr does not read. This is a \
+                 named limitation, not a coverage claim."
+            }
+            StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
+                "TypeScript workspace discovery stopped at its entry cap before it covered the \
+                 workspace, so tests past the cap were never read. ripr cannot say that no test \
+                 reaches this change, so it does not claim a gap; this is a named limitation, \
+                 not a coverage claim."
             }
         }
     }
@@ -1081,6 +1110,14 @@ mod tests {
             StaticLimitKind::RustIndirectOwnerCallUnresolved.as_str(),
             "rust_indirect_owner_call_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::ProofHarnessNotEvaluated.as_str(),
+            "proof_harness_not_evaluated"
+        );
+        assert_eq!(
+            StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated.as_str(),
+            "typescript_workspace_discovery_truncated"
+        );
     }
 
     #[test]
@@ -1116,6 +1153,8 @@ mod tests {
             StaticLimitKind::RustImplicitCallUnresolved,
             StaticLimitKind::RustIndirectOwnerCallUnresolved,
             StaticLimitKind::RustCallerLoopSelectorUnresolved,
+            StaticLimitKind::ProofHarnessNotEvaluated,
+            StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

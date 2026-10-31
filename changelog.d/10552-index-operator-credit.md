@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A changed `Index::index` or `IndexMut::index_mut` impl is now related to a same-file test that reads or writes a typed `a[i]`: a read reaches `index`, an assignment, compound assignment or `&mut a[i]` reaches `index_mut`, and a projected result, a field or helper receiver, a second `Index` impl, `stringify!` text or a discarded read reaches neither. An unconfirmed credit stays `static_unknown` rather than `weakly_exposed` (RIPR-SPEC-0240, #10552).

@@ -130,6 +130,10 @@ sha = "ecdb4258a39cdfc8ba70ce1aa3edda1615b1defc"
 language = "python"
 note = "large Python library (~1500 .py files, ~23k tests); commit edits scripts/validate_min_versions_in_sync.py and its test"
 heavy = true
+# Held under 2 s and 512 MiB by #10914; a run above either fails the gate
+# whatever the baseline holds (hosted nightly at 9b059708: pandas 1617 ms /
+# 415 MiB, Django 1592 ms / 271 MiB).
+ceilings = { "speed.warm_check_ms" = 2000, "speed.warm_check_peak_rss_mb" = 512 }
 
 # The largest real Python workspace pinned (#10785): Django's own tree, a
 # 27-file edit across django/ and tests/ (14.4 s, 390 MiB peak on 4 cores).
@@ -140,6 +144,10 @@ sha = "5c13b5a19864807cae7266339554c14e151e5961"
 language = "python"
 note = "large Python framework (2,937 .py files); commit adds HTTP QUERY method support across django/ and its tests"
 heavy = true
+# Held under 2 s and 512 MiB by #10914; a run above either fails the gate
+# whatever the baseline holds (hosted nightly at 9b059708: pandas 1617 ms /
+# 415 MiB, Django 1592 ms / 271 MiB).
+ceilings = { "speed.warm_check_ms" = 2000, "speed.warm_check_peak_rss_mb" = 512 }
 
 # TypeScript diffs. `defu`, `ky`, `h3`, `execa`, `destr` and `zod` complete under `--mode draft` for their
 # pinned diffs. Partial-extraction gaps (#10436) are omitted only when their test
@@ -286,6 +294,19 @@ direction = "lower_is_better"
 target = 10000
 regression_pct = 25
 regression_floor = 1000
+runner_dependent = true
+source = "measured"
+per_repo = true
+
+[[metric]]
+id = "speed.editor_refresh_peak_rss_mb"
+board = "speed"
+title = "Editor server peak memory after an edited save, from `ripr lsp --stdio`"
+unit = "MB"
+direction = "lower_is_better"
+target = 1024
+regression_pct = 15
+regression_floor = 64
 runner_dependent = true
 source = "measured"
 per_repo = true
@@ -554,7 +575,8 @@ direction = "lower_is_better"
 target = 0.05
 # Perl metrics read producer-packet cases only: edited packets carry facts the
 # pinned producer does not emit, so they say nothing about what a Perl user
-# gets today. Floors are 0 because each Perl case is a large share of 27.
+# gets today. Floors are 0 because one case moves a rate by 1/54 to 1/26, so a
+# single case regressing must fail the comparison.
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false

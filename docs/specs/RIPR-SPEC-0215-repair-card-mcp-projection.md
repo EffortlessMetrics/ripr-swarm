@@ -124,9 +124,13 @@ and without execution authority (ADR 0022):
   `seam_inventory_truncated` refusal, so a truncated inventory never ships a
   card with `readiness.repair_ready` true; a snapshot captured under the
   opt-in saved tracked-worktree source (`ripr_refresh` `source: "worktree"`,
-  RIPR-SPEC-0211, #7357) binds no card producers and fails the same way with
-  a detail naming the worktree source, since no consumed-source commitment
-  spans its findings and the live seam inventory; producer operational failures stay
+  RIPR-SPEC-0211, #7357) binds card producers only when its source custody
+  is established (the findings producer and the seam inventory consumed the
+  same Rust bytes); otherwise it binds none and fails the same way with a
+  detail naming the cause; every card read also re-verifies the captured
+  digests of the files its evidence is bound to and refuses with
+  `stale_snapshot` (naming the path, remedy `ripr_refresh`) when one changed
+  after the refresh (#7357); producer operational failures stay
   `analysis_failed`. Refusal kinds travel under their CLI-pinned wire
   spellings via `AgentCardRefusalKind::as_str()`, so one machine state names
   one refusal on every transport. Unknown tool arguments are rejected at

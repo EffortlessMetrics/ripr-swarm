@@ -427,3 +427,42 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — error_path_diagnostic_escaped (32)
+
+Reason:
+RIPR-SPEC-0001: human normalizer keeps source-text backslashes (#11178)
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_escaped --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_diagnostic_escaped (33)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_escaped --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_diagnostic_escaped (34)
+
+Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_escaped --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

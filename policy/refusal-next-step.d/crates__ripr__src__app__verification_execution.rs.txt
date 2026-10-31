@@ -1,0 +1,18 @@
+crates/ripr/src/app/verification_execution.rs|authority boundary is not verification-route-only
+crates/ripr/src/app/verification_execution.rs|cancellation is not allowed
+crates/ripr/src/app/verification_execution.rs|clock failed: {error}
+crates/ripr/src/app/verification_execution.rs|create temporary result failed: {error}
+crates/ripr/src/app/verification_execution.rs|cwd is not the invocation root
+crates/ripr/src/app/verification_execution.rs|environment policy is not clean
+crates/ripr/src/app/verification_execution.rs|execution mode is not direct
+crates/ripr/src/app/verification_execution.rs|expected result parser is not declared JSON
+crates/ripr/src/app/verification_execution.rs|network policy is not forbidden
+crates/ripr/src/app/verification_execution.rs|program is not ripr
+crates/ripr/src/app/verification_execution.rs|read process output failed: {error}
+crates/ripr/src/app/verification_execution.rs|refusing to overwrite an existing result
+crates/ripr/src/app/verification_execution.rs|result path has no parent
+crates/ripr/src/app/verification_execution.rs|role is not verify
+crates/ripr/src/app/verification_execution.rs|route does not accept exit code 0
+crates/ripr/src/app/verification_execution.rs|route has no timeout
+crates/ripr/src/app/verification_execution.rs|stdin policy is not null
+crates/ripr/src/app/verification_execution.rs|write temporary result failed: {error}
