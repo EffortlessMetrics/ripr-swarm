@@ -757,7 +757,7 @@ pub(super) fn quarantine_withdrawal_diagnostic(reason: DocumentStalenessReason) 
         ),
         DocumentStalenessReason::NoAnalyzedSavedContent => (
             "save_then_refresh",
-            "Save a new file first, then refresh (`ripr.refresh`) so ripr can restore them.",
+            "Save the file if it is new, then refresh (`ripr.refresh`) so ripr can restore them.",
         ),
     };
     Diagnostic {

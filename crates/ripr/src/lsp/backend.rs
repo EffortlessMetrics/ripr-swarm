@@ -20,7 +20,9 @@ use super::diagnostics::{
     delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
     take_all_uris, withdrawn_quarantine_diagnostics,
 };
-use super::hover::NoEvidenceState;
+use super::hover::{
+    NoEvidenceState, UnanalyzedFileCause, classify_unanalyzed_file, unanalyzed_file_hover_route,
+};
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
     diagnostic_hover_response, finding_hover_response, hover_response_without_evidence,
@@ -1924,6 +1926,18 @@ impl Backend {
     }
 
     #[cfg(test)]
+    pub(super) fn analysis_attempt_state_for_test(&self) -> AnalysisAttemptState {
+        self.analysis_health_snapshot().state
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_latest_analysis_for_test(&self) {
+        if let Ok(mut latest) = self.latest_analysis.lock() {
+            *latest = None;
+        }
+    }
+
+    #[cfg(test)]
     pub(super) fn set_analysis_attempt_state_for_test(&self, state: AnalysisAttemptState) {
         if let Ok(mut health) = self.analysis_health.lock() {
             health.attempt_id = Some(2);
@@ -3699,7 +3713,7 @@ impl Backend {
                     "ripr could not apply one incremental edit and stopped trusting the retained text; saving cannot fix this. Undo the edit or revert the file so ripr receives the full document again."
                 }
                 DocumentStalenessReason::NoAnalyzedSavedContent => {
-                    "ripr has not analyzed this file's saved content yet; its evidence appears after the next refresh (`ripr.refresh`) completes. A new file must be saved first."
+                    unanalyzed_file_hover_route(self.unanalyzed_file_cause(uri))
                 }
             };
             return markdown_hover(format!(
@@ -3714,6 +3728,25 @@ impl Backend {
         hover_response_without_evidence(
             self.no_evidence_state(),
             &self.configured_language_labels(),
+        )
+    }
+
+    /// The observed cause behind a `no_analyzed_saved_content` quarantine
+    /// (#11452), read from the file, the committed snapshot and the latest
+    /// attempt state.
+    fn unanalyzed_file_cause(&self, uri: &Uri) -> UnanalyzedFileCause {
+        let file_on_disk = self
+            .document_path_for_uri(uri)
+            .is_some_and(|path| path.is_file());
+        let snapshot_committed = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .is_some_and(|value| value.is_some());
+        classify_unanalyzed_file(
+            file_on_disk,
+            self.analysis_health_snapshot().state,
+            snapshot_committed,
         )
     }
 
@@ -8489,9 +8522,11 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
         DocumentStalenessReason::InvalidIncrementalChange => {
             "revert the file or close and reopen it so ripr receives the full document again"
         }
-        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent
-        | DocumentStalenessReason::NoAnalyzedSavedContent => {
+        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
             "save the file to analyze the new saved state"
+        }
+        DocumentStalenessReason::NoAnalyzedSavedContent => {
+            "save the file if it is new, then refresh (`ripr.refresh`)"
         }
     };
     format!(
