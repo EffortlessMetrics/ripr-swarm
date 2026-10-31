@@ -1621,6 +1621,9 @@ fn run_pipeline_for_diff_text_with_language_config(
             // not touch. Indexing the whole Python workspace for that result
             // was most of a warm Rust check in a repository that bundles Python
             // tooling (servo's 200k-file `tests/wpt`: 3.5 s of 3.6 s).
+            // Without the adapter compiled in, the unavailable-language error
+            // below is the recorded outcome, so only skip a real adapter.
+            #[cfg(feature = "lang-python")]
             LanguageId::Python
                 if !preview_changed_files
                     .iter()
@@ -3051,6 +3054,7 @@ fn analyze_typescript_diff(
 /// What a preview adapter reports for a diff that touches none of its
 /// language, without indexing the workspace: no findings, no limitations, no
 /// changed files and no cache work.
+#[cfg(feature = "lang-python")]
 fn untouched_preview_result() -> LanguageDiffResult {
     LanguageDiffResult {
         value_origins: Default::default(),
