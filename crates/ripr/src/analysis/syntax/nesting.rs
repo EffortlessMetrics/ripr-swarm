@@ -928,6 +928,8 @@ mod tests {
         assert_eq!(skip_char_or_lifetime("'a x", 0), 1);
         assert_eq!(skip_char_or_lifetime("'\\'' x", 0), 4);
         assert_eq!(skip_char_or_lifetime("', got\n\"y", 0), 6);
+        // An unterminated literal stops at a `/` (a possible comment).
+        assert_eq!(skip_char_or_lifetime("', x/ y'", 0), 4);
         assert_eq!(skip_char_or_lifetime("'/' x", 0), 3);
         assert_eq!(skip_char_or_lifetime("''' x", 0), 3);
         // A lone quote outside any string is the case that used to flip parity.
