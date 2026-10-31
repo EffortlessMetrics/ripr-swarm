@@ -68,9 +68,9 @@ fn every_other_way_the_name_can_differ_keeps_the_weak_verdict() -> Result<(), St
         "    s = 50\n    for s in (1, 2):\n        pass\n    assert tier(s) == \"basic\"",
         "    s = 50\n    del s\n    assert tier(s) == \"basic\"",
         "    s = 50\n    (s := 60)\n    assert tier(s) == \"basic\"",
-        "    s = 50\n    with open('f') as s:\n        pass\n    assert tier(s) == \"basic\"",
+        "    lvl = 50\n    with open('f') as lvl:\n        pass\n    assert tier(lvl) == \"basic\"",
         "    s = 50\n    import os as s\n    assert tier(s) == \"basic\"",
-        "    s = 50\n    try:\n        pass\n    except ValueError as s:\n        pass\n    assert tier(s) == \"basic\"",
+        "    lvl = 50\n    try:\n        pass\n    except ValueError as lvl:\n        pass\n    assert tier(lvl) == \"basic\"",
         // Chained, unpacked or conditional bindings are not one plain binding.
         "    s = t = 50\n    assert tier(s) == \"basic\"",
         "    s, t = 50, 1\n    assert tier(s) == \"basic\"",
@@ -81,7 +81,7 @@ fn every_other_way_the_name_can_differ_keeps_the_weak_verdict() -> Result<(), St
         "    s = 50\n    assert (lambda s: tier(s))(60) == \"gold\"",
         // A nested definition or declaration can rebind it.
         "    s = 50\n    def s():\n        pass\n    assert tier(s) == \"basic\"",
-        "    s = 50\n    match 1:\n        case s:\n            pass\n    assert tier(s) == \"basic\"",
+        "    lvl = 50\n    match 1:\n        case lvl:\n            pass\n    assert tier(lvl) == \"basic\"",
         // A non-literal value is not known.
         "    s = 25 * 2\n    assert tier(s) == \"basic\"",
         "    s = int('50')\n    assert tier(s) == \"basic\"",
