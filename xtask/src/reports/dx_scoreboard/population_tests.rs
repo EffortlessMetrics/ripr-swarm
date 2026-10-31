@@ -1389,7 +1389,9 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             assert_eq!(metric[key], original[key], "{id} {key}");
         }
     }
-    // #8035: (id, rate, numerator, denominator, status, corpus_blob, rows_tree)
+    // #8035, with the four Perl rate rows re-recorded by #10809 on the grown
+    // corpus: (id, rate, numerator, denominator, status, corpus_blob, rows_tree,
+    // revision, approved)
     let recorded_8035 = [
         (
             "trust.verdict_corpus_typescript_false_actionable",
@@ -1399,6 +1401,8 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "meets_target",
             "9beb188ce1b9dec73def368ba742beb342206151",
             "d882f07fc2a9993924d6588d6bec488d63209e15",
+            "76651d1cdf9242b301c9ddf28c442838ccf73c59",
+            "EffortlessMetrics/ripr-swarm#8035",
         ),
         (
             "trust.verdict_corpus_typescript_false_exposed",
@@ -1408,6 +1412,8 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "meets_target",
             "9beb188ce1b9dec73def368ba742beb342206151",
             "d882f07fc2a9993924d6588d6bec488d63209e15",
+            "76651d1cdf9242b301c9ddf28c442838ccf73c59",
+            "EffortlessMetrics/ripr-swarm#8035",
         ),
         (
             "trust.verdict_corpus_typescript_false_silent",
@@ -1417,6 +1423,8 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "meets_target",
             "9beb188ce1b9dec73def368ba742beb342206151",
             "d882f07fc2a9993924d6588d6bec488d63209e15",
+            "76651d1cdf9242b301c9ddf28c442838ccf73c59",
+            "EffortlessMetrics/ripr-swarm#8035",
         ),
         (
             "trust.verdict_corpus_python_false_actionable",
@@ -1426,6 +1434,8 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "meets_target",
             "dae9b3d0d971a673c0978ed3e0a5ed672c313fb0",
             "934a6181f778537ec2b4a2cfcf7d6e8ca9fba8ae",
+            "76651d1cdf9242b301c9ddf28c442838ccf73c59",
+            "EffortlessMetrics/ripr-swarm#8035",
         ),
         (
             "trust.verdict_corpus_python_false_exposed",
@@ -1435,6 +1445,8 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "meets_target",
             "dae9b3d0d971a673c0978ed3e0a5ed672c313fb0",
             "934a6181f778537ec2b4a2cfcf7d6e8ca9fba8ae",
+            "76651d1cdf9242b301c9ddf28c442838ccf73c59",
+            "EffortlessMetrics/ripr-swarm#8035",
         ),
         (
             "trust.verdict_corpus_python_false_silent",
@@ -1444,42 +1456,52 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "meets_target",
             "dae9b3d0d971a673c0978ed3e0a5ed672c313fb0",
             "934a6181f778537ec2b4a2cfcf7d6e8ca9fba8ae",
+            "76651d1cdf9242b301c9ddf28c442838ccf73c59",
+            "EffortlessMetrics/ripr-swarm#8035",
         ),
         (
             "trust.perl_verdict_corpus_false_verdict",
             "by_packet_provenance.producer.false_verdict_rate",
-            8,
-            27,
-            "below_target",
-            "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
-            "46a0dc499fe0a9e43ac672ad34d1305b68bad33b",
+            1,
+            54,
+            "meets_target",
+            "6b0da537f6aa117f126cb732c7e19acee7c24f8f",
+            "5b1718f4c61eb369f055d938d26421102ba79c50",
+            "ea5229fba660d284841b3954f73ca7948a88d0ea",
+            "EffortlessMetrics/ripr-swarm#10809",
         ),
         (
             "trust.perl_verdict_corpus_false_actionable",
             "by_packet_provenance.producer.false_actionable_rate",
-            5,
-            15,
-            "below_target",
-            "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
-            "46a0dc499fe0a9e43ac672ad34d1305b68bad33b",
+            0,
+            28,
+            "meets_target",
+            "6b0da537f6aa117f126cb732c7e19acee7c24f8f",
+            "5b1718f4c61eb369f055d938d26421102ba79c50",
+            "ea5229fba660d284841b3954f73ca7948a88d0ea",
+            "EffortlessMetrics/ripr-swarm#10809",
         ),
         (
             "trust.perl_verdict_corpus_false_exposed",
             "by_packet_provenance.producer.false_exposed_rate",
-            3,
-            12,
+            1,
+            26,
             "below_target",
-            "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
-            "46a0dc499fe0a9e43ac672ad34d1305b68bad33b",
+            "6b0da537f6aa117f126cb732c7e19acee7c24f8f",
+            "5b1718f4c61eb369f055d938d26421102ba79c50",
+            "ea5229fba660d284841b3954f73ca7948a88d0ea",
+            "EffortlessMetrics/ripr-swarm#10809",
         ),
         (
             "trust.perl_verdict_corpus_false_silent",
             "by_packet_provenance.producer.false_silent_rate",
             0,
-            12,
+            26,
             "meets_target",
-            "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
-            "46a0dc499fe0a9e43ac672ad34d1305b68bad33b",
+            "6b0da537f6aa117f126cb732c7e19acee7c24f8f",
+            "5b1718f4c61eb369f055d938d26421102ba79c50",
+            "ea5229fba660d284841b3954f73ca7948a88d0ea",
+            "EffortlessMetrics/ripr-swarm#10809",
         ),
         (
             "trust.perl_verdict_corpus_abstention",
@@ -1489,6 +1511,8 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "below_target",
             "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
             "46a0dc499fe0a9e43ac672ad34d1305b68bad33b",
+            "76651d1cdf9242b301c9ddf28c442838ccf73c59",
+            "EffortlessMetrics/ripr-swarm#8035",
         ),
         (
             "trust.verdict_corpus_oracle_accuracy",
@@ -1498,6 +1522,8 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "meets_target",
             "8ef7a4bec9b0e6594e676ec9089db205ade40af3",
             "a1e8a38d6b1cbc7f240fa15ec02690cab6a45d4d",
+            "76651d1cdf9242b301c9ddf28c442838ccf73c59",
+            "EffortlessMetrics/ripr-swarm#8035",
         ),
         (
             "trust.verdict_corpus_oracle_overclaim_rate",
@@ -1507,9 +1533,11 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "meets_target",
             "8ef7a4bec9b0e6594e676ec9089db205ade40af3",
             "a1e8a38d6b1cbc7f240fa15ec02690cab6a45d4d",
+            "76651d1cdf9242b301c9ddf28c442838ccf73c59",
+            "EffortlessMetrics/ripr-swarm#8035",
         ),
     ];
-    for (id, rate, n, d, status, corpus_blob, rows_tree) in recorded_8035 {
+    for (id, rate, n, d, status, corpus_blob, rows_tree, revision, approved) in recorded_8035 {
         let metrics = live["metrics"].as_array_mut().ok_or("metrics missing")?;
         let at = metrics
             .iter()
@@ -1530,16 +1558,10 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
         assert_eq!(metric["status"], status, "{id} status");
         let provenance = &sample["population_provenance"];
         assert_eq!(provenance["kind"], "committed_expected_rows", "{id}");
-        assert_eq!(
-            provenance["revision"], "76651d1cdf9242b301c9ddf28c442838ccf73c59",
-            "{id}"
-        );
+        assert_eq!(provenance["revision"], revision, "{id}");
         assert_eq!(provenance["corpus_blob"], corpus_blob, "{id}");
         assert_eq!(provenance["rows_tree"], rows_tree, "{id}");
-        assert_eq!(
-            provenance["approved"], "EffortlessMetrics/ripr-swarm#8035",
-            "{id}"
-        );
+        assert_eq!(provenance["approved"], approved, "{id}");
         let witness_metrics = witness["metrics"].as_array_mut().ok_or("metrics missing")?;
         if let Some(wat) = witness_metrics.iter().position(|metric| metric["id"] == id) {
             let original = witness_metrics.remove(wat);

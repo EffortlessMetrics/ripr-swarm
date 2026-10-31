@@ -1240,6 +1240,25 @@ fn is_python_tool_cache(path: &str) -> bool {
     parents.is_empty() && (*file == ".coverage" || file.starts_with(".coverage."))
 }
 
+/// Whether `path` is inside a Vitest cache directory under a `node_modules`
+/// directory: `node_modules/.vite/**` (run-order results) or
+/// `node_modules/.vitest-cache/**` (transformed-module cache), at the
+/// repository root or any package below it.
+///
+/// This exemption applies only to the post-verdict currentness recompute,
+/// never to the live edit cage: a cache written before the after phase is still
+/// refused, because the transformed-module cache is executable data. A cache
+/// written after the verdict cannot change the static evidence the receipt
+/// describes, which reads committed sources and tests.
+fn is_typescript_test_runner_cache(path: &str) -> bool {
+    let components = path.split('/').collect::<Vec<_>>();
+    components.windows(2).enumerate().any(|(index, pair)| {
+        pair[0] == "node_modules"
+            && matches!(pair[1], ".vite" | ".vitest-cache")
+            && index + 2 < components.len()
+    })
+}
+
 fn inventory_paths(
     tracked: &[u8],
     untracked: &[u8],
@@ -1753,6 +1772,7 @@ pub(crate) fn without_later_operational_writes_protecting(
                 .any(|rule| rule.matches(path))
             && !policy.forbidden_paths.iter().any(|rule| rule.matches(path))
     };
+    let expects_ts_caches = policy.expects_typescript_test_runner_caches();
     AttemptDelta {
         comparable: delta.comparable,
         inline_test_region: delta.inline_test_region.clone(),
@@ -1762,7 +1782,8 @@ pub(crate) fn without_later_operational_writes_protecting(
             .filter(|change| {
                 let later_output = change.kind != AttemptPathChangeKind::Renamed
                     && normalize_repo_relative_path(&change.path).is_ok_and(|path| {
-                        operational_only(&path)
+                        (operational_only(&path)
+                            || (expects_ts_caches && is_typescript_test_runner_cache(&path)))
                             && !bound_changed_paths.contains(&path)
                             && !protected_paths.contains(&path.as_str())
                     });
@@ -2336,6 +2357,18 @@ impl EditCagePolicy {
                 .extension()
                 .and_then(std::ffi::OsStr::to_str),
             Some("py" | "pyi")
+        )
+    }
+
+    /// A TypeScript or JavaScript repair is followed by the project's test run,
+    /// which writes Vitest caches. Only the post-verdict currentness reading
+    /// excludes them (see [`is_typescript_test_runner_cache`]).
+    pub(crate) fn expects_typescript_test_runner_caches(&self) -> bool {
+        matches!(
+            Path::new(self.selected_target.path())
+                .extension()
+                .and_then(std::ffi::OsStr::to_str),
+            Some("ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs")
         )
     }
 
@@ -3918,6 +3951,54 @@ mod tests {
                 "{name}"
             );
         }
+        Ok(())
+    }
+
+    /// Vitest cache writes after the verdict are not drift for a TypeScript
+    /// repair (#11534); the live cage and every other path keep their reading.
+    #[test]
+    fn typescript_vitest_cache_is_not_later_drift_but_other_paths_are() -> Result<(), String> {
+        let (_fixture, mut policy) = python_fixture("ts-cache-later", "")?;
+        policy.selected_target = CagePathRule::exact("test/pricing.test.ts")?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact("test/pricing.test.ts")?];
+        assert!(policy.expects_typescript_test_runner_caches());
+        let bound = vec![AttemptPathChange::modified("test/pricing.test.ts")];
+        let project = |policy: &EditCagePolicy, extra: &[&str], bound_paths: &[String]| {
+            let mut changes = bound.clone();
+            changes.extend(extra.iter().map(|path| AttemptPathChange::added(*path)));
+            without_later_operational_writes(
+                policy,
+                &AttemptDelta {
+                    comparable: true,
+                    inline_test_region: None,
+                    changes,
+                },
+                bound_paths,
+            )
+            .changes
+        };
+        let caches = [
+            "node_modules/.vitest-cache/abc",
+            "node_modules/.vite/vitest/x/results.json",
+            "packages/app/node_modules/.vitest-cache/CACHEDIR.TAG",
+        ];
+        assert_eq!(project(&policy, &caches, &[]), bound);
+        // A cache path the verdict already bound stays part of the delta.
+        let bound_cache = vec!["node_modules/.vitest-cache/abc".to_string()];
+        assert_eq!(project(&policy, &caches[..1], &bound_cache).len(), 2);
+        for other in [
+            "node_modules/pkg/index.js",
+            "node_modules/.vitest-cache",
+            "node_modules/.vite",
+            "vendor/.vitest-cache/abc",
+            "src/pricing.ts",
+        ] {
+            assert_eq!(project(&policy, &[other], &[]).len(), 2, "{other}");
+        }
+        // Only a TypeScript or JavaScript repair carries the reading.
+        policy.selected_target = CagePathRule::exact("tests/test_pricing.py")?;
+        assert!(!policy.expects_typescript_test_runner_caches());
+        assert_eq!(project(&policy, &caches[..1], &[]).len(), 2);
         Ok(())
     }
 

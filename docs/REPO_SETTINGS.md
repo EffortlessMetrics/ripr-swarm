@@ -194,15 +194,31 @@ forecasts.
 
 Use GitHub Environments for token-bearing publish jobs:
 
-- `vscode-marketplace`
-- `open-vsx`
+- `vs-marketplace-publish`
+- `open-vsx-publish`
 - `github-release`
 - `crates-io`, if crate publishing is automated later
 
 Store publish tokens in the narrowest environment that needs them:
 
-- `VSCE_PAT` in `vscode-marketplace`
-- `OVSX_PAT` in `open-vsx`
+- `VSCE_PAT` in `vs-marketplace-publish`
+- `OVSX_PAT` in `open-vsx-publish`
+
+These are environment secrets only. Do not also set `VSCE_PAT` or `OVSX_PAT`
+as repository secrets: a repository-level copy bypasses the environment gate.
+The environment names are fixed by `publish-extension.yml` and checked by the
+`publish_jobs_run_locked_tools_with_scoped_pat_and_gate` policy test.
+
+Protection for both publish environments:
+
+- required reviewer: the repository owner (`prevent_self_review` stays false
+  while one person is both dispatcher and sole reviewer);
+- wait timer: none;
+- admin bypass: disabled (`can_admins_bypass: false`);
+- deployment refs: a custom policy allowing only the release tag pattern
+  `v*.*.*`. The release transaction dispatches `publish-extension.yml` with
+  `--ref v<version>`, so a `main`-only branch policy would reject every real
+  dispatch.
 
 Environment protection gives release approvals, scoped secrets, and audit
 history without adding another repo control plane.

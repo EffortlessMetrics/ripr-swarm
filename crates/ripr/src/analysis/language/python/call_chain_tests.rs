@@ -766,6 +766,8 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
     // withholds, then the label and each `path=text` file, joined by ` ;; `.
     let layouts = [
         "- pytest pythonpath ;; pytest.ini=[pytest]\npythonpath = vendor.zip\n ;; vendor.zip=PK",
+        "- hidden pytest TOML archive ;; .pytest.toml=[pytest]\npythonpath = [\"vendor.zip\"]\n ;; vendor.zip=PK",
+        "+ hidden pytest TOML own directory ;; .pytest.toml=[pytest]\npythonpath = [\".\"]\n",
         "+ pyproject pythonpath of the workspace root ;; pyproject.toml=[tool.pytest.ini_options]\npythonpath = [\n    \".\",\n]\n",
         "- pyproject pythonpath of an archive ;; pyproject.toml=[tool.pytest.ini_options]\npythonpath = [\".\", \"vendor.zip\"]\n ;; vendor.zip=PK",
         "- tox PYTHONPATH expansion ;; tox.ini=[testenv]\nsetenv =\n    PYTHONPATH = {toxinidir}/vendor\n",

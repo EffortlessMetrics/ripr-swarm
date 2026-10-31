@@ -36,7 +36,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// On-disk schema version of a `python-file-facts` envelope. Any change to a
 /// serialized fact spelling (field rename, type change, new label) is a
 /// schema change: bump this so stale entries read as misses.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "9";
+/// `11`: each file records `<module>.<attr>` writes so a test-module
+/// constant another file rebinds is not credited (#11424). `10` entries
+/// lack that fact.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "11";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the

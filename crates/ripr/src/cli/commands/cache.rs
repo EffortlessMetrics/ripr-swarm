@@ -13,7 +13,9 @@ const CACHE_STATUS_SCHEMA_VERSION: &str = "0.2";
 
 const CACHE_USAGE: &str = "Inspect, export or clear the disposable analysis cache.\n\nUsage:\n  ripr cache status [--root PATH] [--json]\n  ripr cache export [--root PATH] --out NEW_DIRECTORY\n  ripr cache clear [--root PATH] [--dry-run] [--force]";
 
-pub(in crate::cli) const CACHE_EXPORT_HELP: &str = r#"Usage: ripr cache export [--root PATH] --out NEW_DIRECTORY
+pub(in crate::cli) const CACHE_EXPORT_HELP: &str = r#"Copy a validated current-input cache snapshot without historical generations.
+
+Usage: ripr cache export [--root PATH] --out NEW_DIRECTORY
 
 Copy a qualified current-input cache snapshot, excluding historical keys,
 unreferenced shards, fingerprint mappings and staging files. The live cache
@@ -35,7 +37,9 @@ this cooperative-filesystem contract. No live-cache history is deleted.
 /// Help body for `ripr cache status`. Also the flag source for unknown-argument
 /// suggestions, so `--json` has to appear as an option-list line, not only
 /// inside the usage brackets.
-pub(in crate::cli) const CACHE_STATUS_HELP: &str = r#"Usage: ripr cache status [--root PATH] [--json]
+pub(in crate::cli) const CACHE_STATUS_HELP: &str = r#"Show cache occupancy and entry health.
+
+Usage: ripr cache status [--root PATH] [--json]
 
 Report the resolved analysis cache directory (RIPR_CACHE_DIR when set,
 otherwise target/ripr/cache under the Cargo workspace root).
@@ -61,7 +65,9 @@ The cache is disposable: deleting it only costs a slower next run. Use
 "#;
 /// Help body for `ripr cache clear`. Also the flag source for unknown-argument
 /// suggestions; keep accepted flags on option-list lines.
-pub(in crate::cli) const CACHE_CLEAR_HELP: &str = r#"Usage: ripr cache clear [--root PATH] [--dry-run] [--force]
+pub(in crate::cli) const CACHE_CLEAR_HELP: &str = r#"Evict ripr cache entries.
+
+Usage: ripr cache clear [--root PATH] [--dry-run] [--force]
 
 Removes only recognized ripr cache layers under the resolved cache directory
 (RIPR_CACHE_DIR when set, otherwise target/ripr/cache under the Cargo workspace

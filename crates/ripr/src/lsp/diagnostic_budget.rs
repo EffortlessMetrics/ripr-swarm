@@ -524,32 +524,57 @@ impl DiagnosticDeliverySelection {
         else {
             return diagnostics.to_vec();
         };
+        // Budget-exempt disclosures (#11296) are served as-is, after the
+        // budgeted diagnostics, whatever the selection did.
+        let (disclosures, diagnostics): (Vec<_>, Vec<_>) = diagnostics
+            .iter()
+            .cloned()
+            .partition(is_budget_exempt_disclosure);
+        let diagnostics = diagnostics.as_slice();
         let selected_for_document = selected_ids_by_document
             .get(document)
             .map(|ids| ids.iter().map(String::as_str).collect::<BTreeSet<_>>())
             .unwrap_or_default();
         // Ids were computed by the budget builder in this exact order; reuse
         // them instead of serializing every diagnostic again.
-        if let Some(ordered_ids) = ids_by_document.get(document)
+        let mut served: Vec<tower_lsp_server::ls_types::Diagnostic> = if let Some(ordered_ids) =
+            ids_by_document.get(document)
             && ordered_ids.len() == diagnostics.len()
         {
-            return diagnostics
+            diagnostics
                 .iter()
                 .zip(ordered_ids.iter())
                 .filter(|(_, id)| selected_for_document.contains(id.as_str()))
                 .map(|(diagnostic, _)| diagnostic.clone())
-                .collect();
-        }
-        diagnostics
-            .iter()
-            .filter(|diagnostic| {
-                let payload = serde_json::to_vec(diagnostic).unwrap_or_default();
-                let id = diagnostic_canonical_id(diagnostic, document, &payload);
-                selected_for_document.contains(id.as_str())
-            })
-            .cloned()
-            .collect()
+                .collect()
+        } else {
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    let payload = serde_json::to_vec(diagnostic).unwrap_or_default();
+                    let id = diagnostic_canonical_id(diagnostic, document, &payload);
+                    selected_for_document.contains(id.as_str())
+                })
+                .cloned()
+                .collect()
+        };
+        served.extend(disclosures);
+        served
     }
+}
+
+/// The preview-withheld disclosure marker (#11296) is exempt from the
+/// delivery budget: one bounded Hint per file that carries no finding
+/// identity, repair data or actionability, so it must neither occupy a
+/// budget slot nor be dropped by one. Identity is the governed code plus the
+/// ripr source; a lookalike code or foreign source is budgeted normally.
+fn is_budget_exempt_disclosure(diagnostic: &tower_lsp_server::ls_types::Diagnostic) -> bool {
+    diagnostic.source.as_deref() == Some("ripr")
+        && matches!(
+            diagnostic.code.as_ref(),
+            Some(tower_lsp_server::ls_types::NumberOrString::String(code))
+                if code == super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE
+        )
 }
 
 /// Build [`DiagnosticBudgetItem`]s from a snapshot's diagnostics.
@@ -576,6 +601,12 @@ pub fn build_budget_items_from_diagnostics(
     for (uri, diagnostics) in diagnostics_by_uri {
         let document = uri.as_str().to_string();
         for diagnostic in diagnostics {
+            // The preview-withheld marker (#11296) is a bounded per-document
+            // disclosure, never budget input: it neither consumes a slot nor
+            // crowds out an eligible diagnostic.
+            if is_budget_exempt_disclosure(diagnostic) {
+                continue;
+            }
             let payload = serde_json::to_vec(diagnostic)?;
             let payload_bytes = payload.len();
             let canonical_id = diagnostic_canonical_id(diagnostic, &document, &payload);
@@ -652,7 +683,10 @@ fn diagnostic_is_actionable(diagnostic: &tower_lsp_server::ls_types::Diagnostic)
     // LSP projection route. The budget still needs the producer's semantic
     // actionability predicate, rather than treating identity as eligibility.
     if data.get("source").and_then(|value| value.as_str()) == Some("gap_decision_ledger") {
-        return data.get("gap_state").and_then(|value| value.as_str()) == Some("actionable")
+        return data
+            .get("gap_state")
+            .and_then(|value| value.as_str())
+            .is_some_and(crate::domain::EvidenceState::is_actionable_word)
             && data.get("repairability").and_then(|value| value.as_str()) == Some("repairable");
     }
 
@@ -1210,6 +1244,102 @@ mod tests {
                 .overflow_reasons
                 .contains(&DiagnosticOverflowReason::InlineDetailLimit)
         );
+        Ok(())
+    }
+
+    fn preview_withheld_marker(code: &str, source: &str) -> tower_lsp_server::ls_types::Diagnostic {
+        tower_lsp_server::ls_types::Diagnostic {
+            severity: Some(tower_lsp_server::ls_types::DiagnosticSeverity::HINT),
+            code: Some(tower_lsp_server::ls_types::NumberOrString::String(
+                code.to_string(),
+            )),
+            source: Some(source.to_string()),
+            message: "preview: 1 preview python finding(s) not shown".to_string(),
+            data: Some(serde_json::json!({"kind": "preview_findings_withheld"})),
+            ..Default::default()
+        }
+    }
+
+    /// #11296: the passive preview-withheld marker neither consumes a budget
+    /// slot nor crowds out an eligible diagnostic, and the cap behavior for
+    /// eligible findings is unchanged.
+    #[test]
+    fn preview_withheld_marker_is_budget_exempt() -> Result<(), String> {
+        let uri = "file:///workspace/a.py"
+            .parse::<tower_lsp_server::ls_types::Uri>()
+            .map_err(|err| format!("parse test URI: {err}"))?;
+        let eligible = |id: &str| tower_lsp_server::ls_types::Diagnostic {
+            data: Some(serde_json::json!({
+                "diagnostic_id": id,
+                "delivery_eligible": true,
+            })),
+            ..Default::default()
+        };
+        let code = crate::lsp::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE;
+        let marker = preview_withheld_marker(code, "ripr");
+        let budget = DiagnosticBudget {
+            max_items_per_document: 1,
+            max_items_per_workspace_response: 1,
+            ..DiagnosticBudget::default()
+        };
+        let diagnostics = std::collections::BTreeMap::from([(
+            uri.clone(),
+            vec![
+                marker.clone(),
+                eligible("finding:one"),
+                eligible("finding:two"),
+            ],
+        )]);
+        let selection =
+            DiagnosticDeliverySelection::evaluate(&diagnostics, &budget, "profile", "evidence");
+        let DiagnosticDeliveryOutcome::Applied { result, .. } = &selection.outcome else {
+            return Err("expected an applied selection".to_string());
+        };
+        if result.total_canonical_items != 2 || result.eligible_items != 2 {
+            return Err(format!("marker must not be a budget item: {result:?}"));
+        }
+        if result.selected.len() != 1 || result.omitted.len() != 1 {
+            return Err(format!(
+                "eligible cap behavior must be unchanged: {result:?}"
+            ));
+        }
+        let served = selection.diagnostics_for_document(uri.as_str(), &diagnostics[&uri]);
+        let markers = served.iter().filter(|d| d.code == marker.code).count();
+        if served.len() != 2 || markers != 1 {
+            return Err(format!("one eligible plus the marker expected: {served:?}"));
+        }
+
+        // The marker alone is still served (zero budget items).
+        let alone = std::collections::BTreeMap::from([(uri.clone(), vec![marker.clone()])]);
+        let selection =
+            DiagnosticDeliverySelection::evaluate(&alone, &budget, "profile", "evidence");
+        if selection
+            .diagnostics_for_document(uri.as_str(), &alone[&uri])
+            .len()
+            != 1
+        {
+            return Err("a lone marker must be served".to_string());
+        }
+
+        // Negative controls: a lookalike code or a foreign source gets no
+        // exemption and stays profile-filtered like any unstamped diagnostic.
+        for (control_code, source) in [
+            ("ripr-diagnostic-preview-withheld-x", "ripr"),
+            (code, "other"),
+        ] {
+            let control = std::collections::BTreeMap::from([(
+                uri.clone(),
+                vec![preview_withheld_marker(control_code, source)],
+            )]);
+            let selection =
+                DiagnosticDeliverySelection::evaluate(&control, &budget, "profile", "evidence");
+            if !selection
+                .diagnostics_for_document(uri.as_str(), &control[&uri])
+                .is_empty()
+            {
+                return Err(format!("{control_code}/{source} must not be exempt"));
+            }
+        }
         Ok(())
     }
 

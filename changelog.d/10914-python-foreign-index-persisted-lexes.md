@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- Python: on a warm run the foreign index no longer re-lexes every workspace file. The source-fact pass lexes each file once for its dict-literal names, import words and unsafe table uses, and persists the results with the file's facts. Measured locally on 4 cores against main 94208772, with byte-identical output: pandas ecdb4258 warm went from 3.0–3.1 s to 2.5–2.6 s, and Django 5c13b5a warm went from 2.3–2.7 s to 2.1–2.2 s. Against main 387f96eb, pandas cold went from 6.1–6.2 s to 5.8–5.9 s (#10914).

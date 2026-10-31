@@ -1,0 +1,9 @@
+diff --git a/src/steps.py b/src/steps.py
+--- a/src/steps.py
++++ b/src/steps.py
+@@ -1,4 +1,4 @@
+ def countdown(start):
+-    while start > 0:
++    while start >= 0:
+         yield start
+         start -= 1
