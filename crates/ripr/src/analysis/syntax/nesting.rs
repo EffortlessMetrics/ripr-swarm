@@ -254,6 +254,9 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
                 estimate.else_if_chain = estimate.else_if_chain.max(*chain);
             }
             previous_word_was_else = word == "else";
+            if word == "as" {
+                bump_operator_run(&mut operators, depth, &mut open_operators, &mut estimate);
+            }
             if word == "in" {
                 right_run = right_run.saturating_add(1);
                 estimate.depth = estimate
@@ -276,6 +279,10 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         previous_word_was_else = false;
         match byte {
             b'(' | b'[' | b'{' => {
+                if after_operand && byte != b'{' {
+                    // Postfix call or index: `f()()..`, `x[0][0]..` nest left.
+                    bump_operator_run(&mut operators, depth, &mut open_operators, &mut estimate);
+                }
                 depth = depth.saturating_add(1);
                 right_run = 0;
                 else_if.push(0);
@@ -318,6 +325,13 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
             }
             // Postfix `.` and `?` count too: a long method or field chain is
             // a left-nested tree just like a binary-operator run.
+            b':' if bytes.get(index + 1) == Some(&b':')
+                || index.checked_sub(1).and_then(|i| bytes.get(i)) == Some(&b':') =>
+            {
+                // Each `::` path segment nests the path expression once.
+                bump_operator_run(&mut operators, depth, &mut open_operators, &mut estimate);
+                after_operand = false;
+            }
             b'.' | b'?' | b'+' | b'-' | b'*' | b'/' | b'%' | b'^' | b'|' | b'&' | b'<' | b'>'
             | b'=' => {
                 if let Some(run) = operators.get_mut(depth) {
@@ -347,6 +361,21 @@ fn is_expression_keyword(word: &str) -> bool {
     is_recursive_prefix_keyword(word) || matches!(word, "in" | "else" | "let" | "mut" | "move")
 }
 
+/// Count one more link of a left-nested chain (`::`, `as`, postfix call or
+/// index) in the operator run at `depth`, exactly like a binary operator.
+fn bump_operator_run(
+    operators: &mut [usize],
+    depth: usize,
+    open_operators: &mut usize,
+    estimate: &mut NestingEstimate,
+) {
+    if let Some(run) = operators.get_mut(depth) {
+        *run = run.saturating_add(1);
+        *open_operators = open_operators.saturating_add(1);
+        estimate.operator_run = estimate.operator_run.max(*open_operators);
+    }
+}
+
 /// A bare `=` (assignment or `let` initializer), not part of `==`, `<=`, `=>`,
 /// `+=` and the like. Assignment is right-associative, so a chain nests once
 /// per link.
@@ -369,7 +398,7 @@ fn is_plain_assignment(bytes: &[u8], index: usize) -> bool {
 fn is_recursive_prefix_keyword(word: &str) -> bool {
     matches!(
         word,
-        "return" | "break" | "yield" | "become" | "if" | "match" | "while"
+        "return" | "break" | "yield" | "become" | "if" | "match" | "while" | "box"
     )
 }
 
@@ -749,6 +778,29 @@ mod tests {
             );
         }
         let ordinary = "fn f(v: Vec<u8>) { let mut a = 1; let b = a == 2; a += 1; for x in v { let _y = x <= 3; } let c = |x| x => y; }\n";
+        assert_eq!(rust_nesting_refusal(ordinary), None);
+    }
+
+    /// #11661: left-nested `::`, `as`, call and index chains and `box`
+    /// patterns must hit the budget too (release builds abort near 100k).
+    #[test]
+    fn path_cast_call_index_and_box_chains_are_refused() {
+        let cases = [
+            format!("fn f() {{ let _v = a{}; }}\n", "::b".repeat(5_000)),
+            format!("fn f() {{ let _v = x{}; }}\n", " as u8".repeat(5_000)),
+            format!("fn f() {{ let _v = x{}; }}\n", "[0]".repeat(5_000)),
+            format!("fn f() {{ let _v = f{}; }}\n", "()".repeat(5_000)),
+            format!("fn f() {{ let {}x = 1; }}\n", "box ".repeat(3_000)),
+        ];
+        for source in cases {
+            assert!(
+                rust_nesting_refusal(&source)
+                    .is_some_and(|reason| reason.contains("rust_nesting_budget")),
+                "{}",
+                &source[..40]
+            );
+        }
+        let ordinary = "use std::collections::BTreeMap;\nfn f(v: Vec<Vec<u8>>, m: BTreeMap<u8, u8>) -> u8 { let a = v[0][1] as u8; let b = std::cmp::max(a, m.get(&1).copied().unwrap_or(0)); g(b)(a) }\n";
         assert_eq!(rust_nesting_refusal(ordinary), None);
     }
 
