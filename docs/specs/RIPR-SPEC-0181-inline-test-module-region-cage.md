@@ -111,7 +111,20 @@ target only through this cage:
 - The after phase observes the selected target whenever it changed: the
   worktree bytes go through `validate_inline_test_region_edit`, and the
   index copy and any committed copy on top of the prepared head must each be
-  unchanged or exactly those validated bytes. The observation is part of the
+  unchanged or exactly those validated bytes. "Exactly those bytes" is an
+  object-id comparison taken with `git hash-object --no-filters`, so a clean
+  filter cannot make a different staged blob match, and a `hash-object`
+  failure is its own refusal (`git_object_unreadable`), not a differing copy.
+  Under `core.autocrlf=true` a staged or committed copy is the LF-normalized
+  form of the CRLF worktree bytes and is refused as
+  `index_copy_not_validated` (fail closed); the unstaged flow is unaffected.
+  The before-phase "target is at HEAD" check intentionally keeps Git's filters
+  so it agrees with `git status` under `core.autocrlf`, and it is never compared
+  with validated bytes. Accepted residual (#6310): a normalizing clean filter
+  can make a raw uncommitted worktree edit read as "at HEAD" there; this is
+  accepted because the edit then becomes part of the captured before text and
+  any later staged or committed copy is still compared raw.
+  The observation is part of the
   bound delta, so the verdict kernel is compliant only with an admitted
   observation (a missing one fails closed as `outside_inline_test_region`),
   and a production edit made after the after phase changes the recomputed

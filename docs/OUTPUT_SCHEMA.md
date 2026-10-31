@@ -788,6 +788,54 @@ incomplete warning does not fire, on both the with-findings and the empty
 complete branches, and an empty complete stream still prints its
 `No static exposure findings found` notice (#10520).
 
+`ripr check --format agent` (#11580) is a compact, deterministic, line-oriented
+text report for coding agents. It is not JSON and carries no `schema_version`;
+its stability contract is the line grammar below. It is a pure projection of
+the same triage selector, candidate-actionable filter and scope-bound drill-in
+commands `--format human` uses, so it adds no verdict, class or ranking. It is
+diff-scoped, refuses `--suppression-policy` like SARIF and the badge formats,
+and has no legend or repeated disclaimers.
+
+```text
+#ripr agent static-advisory base=BASE findings=N gaps=G CLASS=COUNT ...
+CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
+tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
++M more gaps not shown; `--format json` lists all
+limits=CLASS:COUNT,...
+next=COMMAND
+```
+
+- Line 1 is always the header: `base` is `-` when no base applies, `gaps` counts
+  every test-side gap (candidate-current, `weakly_exposed` or
+  `reachable_unrevealed`, not static-limited, not preview-only), and the class
+  counts cover every non-suppressed finding in the run.
+- At most 5 gap lines are printed, top triage gap first, then the remaining gaps
+  in finding order; `+M more gaps not shown` states the exact remainder.
+  Fields are whitespace-collapsed, the changed expression and oracle text are
+  clipped to 80 characters, and a literal `|` inside a field is written `\|`.
+  `missing=` is the first missing discriminator value, or `-`.
+- `tK` rows are the strongest contributing related test of each listed gap,
+  written once however many gaps it grips.
+- `limits=` counts the non-exposed findings that are not test-side gaps
+  (`no_static_path`, `infection_unknown`, `propagation_unknown`,
+  `static_unknown`, preview-only), so a short gap list never hides them.
+- `next=` is the scope-bound `ripr explain` command for the top gap (it embeds
+  `--root` and the diff or base selectors, because a finding id does not
+  resolve outside its run). It is absent when no gap is listed unless the
+  shared canonical next action has an executable command.
+- Terminal states are one explicit line: `done=` (no weak or unobserved gap is
+  left to fix from the test side, or no changed behavior was found in scope) or
+  `stop=` (every finding is base-side or unresolved, all are suppressed by
+  policy, ripr cannot tell from reading the code, preview-only evidence, or
+  nothing was analyzed because no scope was given). `done=` is static advisory
+  evidence, not runtime mutation outcome or test adequacy.
+
+Machine consumers that need fields should keep using `--format json`; this
+format is for reading by a model with a small token budget. On a two-finding
+demo diff it measured 528 bytes against 2,549 (`human`), 4,475 (`human-full`)
+and 11,845 (`json`); it grows by roughly 150 bytes per listed gap and stops at
+five.
+
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
@@ -2557,7 +2605,8 @@ JSON fields:
   `rust_caller_loop_selector_unresolved`, or
   `rust_pinned_shape_unresolved`, or
   `rust_indirect_owner_call_unresolved`, or
-  `proof_harness_not_evaluated`.
+  `proof_harness_not_evaluated`, or
+  `typescript_workspace_discovery_truncated`.
 - `rust_field_match_selector_unresolved`: a plain owner-parameter field selects a changed statement-free tail match. A strong oracle in a directly calling test exists, but the field value at that invocation and whether an assertion observes that invocation's return are unresolved. The match header and unique direct-arm lines may carry this metadata; computed selectors, local bindings, nested matches, guarded arms and ambiguous same-line subjects are excluded. This does not establish an `Option` type, same-invocation proof, coverage, or absence of a test gap. Finding/probe IDs, classes, RIPR stages, missing discriminators and raw class counts are unchanged. The existing typed-limitation contract withholds canonical repair-gap projection and can change repair readiness and derived gate routing; this names uncertainty, not resolved test debt. Inspect the existing call/assertion before adding a test. The optional kind uses the existing wire shape/version; consumers still require their own producer compatibility qualification.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
@@ -3161,6 +3210,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_indirect_owner_call_unresolved` -- (RIPR-SPEC-0240, additive, #9442, #9443) A test reaches the changed owner without a call ripr can pair with its assertion: it passes the owner as a function value (`.map(owner)`, an untyped `let f = owner;` binding; a typed `fn` pointer binding is left to the typed function-pointer reading), the changed line is an item-position macro invocation that generates the owner, or the owner call is the only argument of `block_on` or a local helper polling a `Future`. A verified polling helper whose call and standard primitives resolve under RIPR-SPEC-0197 supplies an owner-return pin instead; unsupported or shadowed wrappers receive no polling-helper pin and remain subject to the existing unresolved-executor limitations. A `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `rust_caller_loop_selector_unresolved` -- (RIPR-SPEC-0240, additive, #5503) The changed integer match arm is fed by a bounded `for` loop inside an `Iterator::next` whose selector range includes the arm, and a related test collects the iterator and compares the whole collection. ripr reads the range (with its file and line) but does not prove the loop runs for the test's input or that the arm's value reaches the compared items, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `proof_harness_not_evaluated` -- (RIPR-SPEC-0367, additive) A Rust function carrying `#[kani::proof]` or `#[kani::proof_for_contract]` (or the same path under `cfg_attr`) calls the changed owner and no test path is established. The harness is neither a test nor oracle evidence and gains no credit; the class stays `no_static_path` and the next step says a proof harness exists that ripr does not evaluate. Not a coverage claim.
+- `typescript_workspace_discovery_truncated` -- (RIPR-SPEC-0240, additive, #11767) TypeScript workspace discovery stopped at `RIPR_TS_MAX_WORKSPACE_FILES` before covering the workspace, so the test universe is incomplete. A TypeScript or JavaScript finding that would be `no_static_path` is `static_unknown` instead, with this kind; findings that have a related test are unchanged. It names an incomplete walk, not a coverage claim; the existing typed-limitation contract withholds canonical repair-gap projection. The optional kind uses the existing wire shape/version.
 
 Reserved `flow_sink` values:
 
@@ -3667,6 +3717,7 @@ Every result carries:
 - a primary physical location when file and line are known;
 - `partialFingerprints.riprFingerprintV1`;
 - `properties.kind` (`finding` or `seam`);
+- finding `properties.confidence`, rounded to the contract's two decimals through `domain::contract_confidence` (the same value `check` JSON prints; the `f32` is never widened to `f64`, #10717);
 - stable IDs (`finding_id`, `probe_id`, or `seam_id`) when available;
 - class metadata (`classification`, `probe_family`, `grip_class`, or
   `seam_kind`) when available.
@@ -3861,6 +3912,7 @@ it as an empty list. An explicit `null` or malformed limitations list is
 rejected. Unknown witness properties are accepted and ignored by the typed
 reader, so typed reserialization does not preserve those properties. Consumers
 that need to forward unknown properties must retain the complete JSON value.
+`witness.confidence.value` is rendered at the contract's two-decimal precision, matching SARIF `properties.confidence` and the finding `confidence` (#10717).
 Renderers must not infer evidence from paths, lines, classes, or prose.
 `probe.owner_signature` (#7796) carries the changed
 function's observed call shape — the same producer-owned signature `ripr
@@ -4665,7 +4717,9 @@ Field contract:
     budget cut, with the same count/source fields and `control:
     "RIPR_PILOT_SEAM_BUDGET"`. Its default is 2,000; a configured value
     retains `limit_source: "configured"`. The repair route names the pilot
-    budget that actually fired, even when an inventory cap also applied.
+    budget that actually fired. When an independent inventory cap also
+    applies, a separate `repo_seam_limit_applied` entry names its own control
+    and the outer inventory total; the pilot entry also reports that total.
     An inactive pilot budget does not relabel an inventory limitation.
   - `category: "typescript_diff_first"` appears when a TS/JS-predominant
     workspace has TS/JS files, no Rust files, and zero classified seams.
@@ -16589,16 +16643,17 @@ Field contract:
   `limitations[]` (`declined_file_count`, up to three `declined_files[]` of
   `{path, reason}`, `repair_route`). Packet admission remains independent of
   this status.
-- `limitations[]` — present for a pilot artifact cap, with one object carrying
+- `limitations[]` — present for a pilot artifact cap, with each object carrying
   `category`, `seams_analyzed`, `seams_total`, `limit_source`, `control` and
   `repair_route`. An inventory-only cut names `"repo_seam_limit_applied"` and
   `"RIPR_REPO_EXPOSURE_SEAM_LIMIT"`; a pilot cut names
   `"pilot_seam_budget_applied"` and `"RIPR_PILOT_SEAM_BUDGET"`.
   The existing repo-exposure cap authority supplies the same default/configured
   repair routes. An inactive pilot budget cannot relabel the inventory cut.
-  When both fire, the pilot cut's total is the already-capped inventory; its
-  route describes lifting only the pilot budget. Full recovery requires
-  disabling every active cap. Uncapped output has no stale cap limitation.
+  When both independently fire, both entries are present; the pilot entry
+  reports the outer inventory total, and each entry names its own recovery
+  control. Full recovery requires lifting every active cap. Uncapped output
+  has no stale cap limitation.
 - `analysis_outcome_status` — the producer outcome projection state. It is
   `"complete"` or `"incomplete"` when a typed diff outcome is present,
   `"missing"` or `"invalid"` when a required producer artifact cannot be

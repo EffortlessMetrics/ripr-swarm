@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/inner.rs:is_bulk:return_value:return_value:10<=qty
   Changed behavior: 10 <= qty
-  Missing check: No strong discriminator was detected
+  Missing check: No strong assertion was detected
   Related test (1 of 2 matched rows): tests/api.rs:2 discount_boundary (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `discount_boundary` already has an exact assertion; this does not
     establish observation of the returned value. Check whether the change can affect the returned
@@ -39,7 +39,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/module_reach_control_qualified/input --diff <cwd>/fixtures/module_reach_control_qualified/diff.patch --mode fast probe:src_inner.rs:return_value:438cae72
   ripr context --root <cwd>/fixtures/module_reach_control_qualified/input --diff <cwd>/fixtures/module_reach_control_qualified/diff.patch --mode fast --at probe:src_inner.rs:return_value:438cae72
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the whole seam and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the whole seam) and ripr does not start a repair on conflicting evidence; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/module_reach_control_qualified/input --at src/inner.rs:2 --kind return_value
 
