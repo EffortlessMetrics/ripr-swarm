@@ -171,6 +171,9 @@ mod typescript_finally_completion;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_partial_star.rs"]
 mod typescript_partial_star;
+#[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_private_methods.rs"]
+mod typescript_private_methods;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
@@ -16963,7 +16966,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // A newer push cancels the older run of the same PR, so two runs never
     // publish the same inline cards (#4448).
     assert!(workflow.contains(
-        "\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"
+        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.action || 'run' }}\n  cancel-in-progress: true\n"
     ));
     // The prebuilt install needs no third-party toolchain or cache action.
     assert!(!workflow.contains("dtolnay/rust-toolchain"));
@@ -17383,6 +17386,162 @@ fn baseline_create_warns_when_source_predates_build_identity() -> Result<(), Str
     assert!(
         baseline.contains("\"analyzer_version\": null"),
         "{baseline}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn baseline_create_from_check_baselines_a_whole_repo_artifact_and_refuses_a_scoped_one()
+-> Result<(), String> {
+    // Issue #11206 item 3: the whole-repository route goes through the real
+    // binary, and a diff-scoped artifact is refused with the producer command.
+    let workspace = unique_temp_workspace("baseline-create-from-check");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let artifact = |name: &str, base_tree: &str| -> Result<String, String> {
+        let path = workspace.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "root": ".",
+  "analysis_outcome": {{
+    "analysis_complete": true,
+    "outcome": {{
+      "kind": "complete_with_findings",
+      "identity": {{"git_candidate_subject": {{"base_tree": "{base_tree}"}}}}
+    }}
+  }},
+  "findings": [
+    {{
+      "canonical_gap_id": "gap:rust:src/lib.rs:price:predicate_boundary:predicate:n==10",
+      "classification": "reachable_unrevealed",
+      "severity": "warning",
+      "probe": {{"file": "./src/lib.rs", "line": 2}},
+      "missing_discriminators": [{{"value": "n == 10"}}]
+    }},
+    {{
+      "canonical_gap_id": "gap:rust:src/lib.rs:other:predicate_boundary:predicate:x==1",
+      "classification": "static_unknown",
+      "probe": {{"file": "src/lib.rs", "line": 5}}
+    }}
+  ]
+}}"#
+            ),
+        )
+        .map_err(|e| format!("write artifact: {e}"))?;
+        Ok(path.display().to_string())
+    };
+    let whole = artifact(
+        "check-whole.json",
+        "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+    )?;
+    let scoped = artifact(
+        "check-scoped.json",
+        "1f0f141e3f5501c293980d256a55df8bbda6b24c",
+    )?;
+    let out = workspace.join(".ripr/gate-baseline.json");
+    let out_arg = out.display().to_string();
+
+    let output = run_ripr(&[
+        "baseline",
+        "create",
+        "--from-check",
+        &whole,
+        "--out",
+        &out_arg,
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Entries: 1"), "{stdout}");
+    let baseline = std::fs::read_to_string(&out).map_err(|e| format!("read baseline: {e}"))?;
+    assert!(
+        baseline.contains("gap:rust:src/lib.rs:price:predicate_boundary:predicate:n==10"),
+        "{baseline}"
+    );
+    assert!(
+        !baseline.contains("other:predicate_boundary"),
+        "an unknown-class finding must not be baselined: {baseline}"
+    );
+    assert!(
+        baseline.contains("\"mode\": \"whole_repo_check\""),
+        "{baseline}"
+    );
+
+    let refused_out = workspace.join("refused.json");
+    let refused_arg = refused_out.display().to_string();
+    let refused = run_ripr(&[
+        "baseline",
+        "create",
+        "--from-check",
+        &scoped,
+        "--out",
+        &refused_arg,
+    ]);
+    assert!(
+        !refused.status.success(),
+        "a scoped artifact must fail closed"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("not a whole-repository run"), "{stderr}");
+    assert!(stderr.contains("--candidate-tree HEAD^{tree}"), "{stderr}");
+    assert!(!refused_out.exists(), "no baseline is written on refusal");
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn baseline_create_from_check_accepts_a_real_whole_tree_producer_artifact() -> Result<(), String> {
+    // Issue #11206 item 3, producer-driven: the artifact is written by the real
+    // `ripr check --candidate-tree` over the committed tree (compared with the
+    // empty tree), not hand-written, so the accepted schema is the producer's.
+    let workspace = unique_temp_workspace("baseline-create-from-producer");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    init_producer_fixture_repo(&workspace).map_err(|e| format!("fixture repo: {e}"))?;
+    let tree = run_command("git", Some(&workspace), &["rev-parse", "HEAD^{tree}"])
+        .map_err(|e| format!("rev-parse tree: {e}"))?;
+    assert!(tree.status.success(), "rev-parse failed: {tree:?}");
+    let tree = String::from_utf8_lossy(&tree.stdout).trim().to_string();
+    let root_arg = workspace.display().to_string();
+
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--candidate-tree",
+        &tree,
+        "--format",
+        "json",
+        "--quiet",
+    ]);
+    assert_success(&check);
+    let artifact = workspace.join("whole-check.json");
+    std::fs::write(&artifact, &check.stdout).map_err(|e| format!("write artifact: {e}"))?;
+    let artifact_arg = artifact.display().to_string();
+    let out = workspace.join("baseline.json");
+    let out_arg = out.display().to_string();
+
+    let created = run_ripr(&[
+        "baseline",
+        "create",
+        "--from-check",
+        &artifact_arg,
+        "--out",
+        &out_arg,
+    ]);
+    assert_success(&created);
+    let baseline = std::fs::read_to_string(&out).map_err(|e| format!("read baseline: {e}"))?;
+    assert!(
+        baseline.contains("\"mode\": \"whole_repo_check\""),
+        "{baseline}"
+    );
+    assert!(
+        baseline.contains("\"canonical_gap_id\": \"gap:rust:"),
+        "the producer's boundary gap must be baselined with its canonical id: {baseline}"
     );
 
     ignore_remove_dir_all(&workspace);

@@ -996,7 +996,8 @@ mod tests {
         assert!(GATE_HELP.contains("`config_error` reports stay quiet"));
         assert!(GATE_HELP.contains("Must be an existing directory"));
         assert!(GATE_HELP.contains("message naming the root"));
-        assert!(BASELINE_HELP.contains("ripr baseline create --from PATH"));
+        assert!(BASELINE_HELP.contains("ripr baseline create (--from PATH | --from-check PATH)"));
+        assert!(BASELINE_HELP.contains("--from-check PATH"));
         assert!(BASELINE_HELP.contains("--dry-run"));
         assert!(BASELINE_HELP.contains("it prints the candidate JSON"));
         assert!(BASELINE_HELP.contains("to stdout without"));

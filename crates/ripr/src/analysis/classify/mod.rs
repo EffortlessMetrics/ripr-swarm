@@ -1,3 +1,4 @@
+mod absorbing_tail;
 mod activation;
 mod argument_fold;
 mod arm_selection;
@@ -50,6 +51,7 @@ mod transitive_reach;
 mod value_transfer;
 mod variant_field_pattern;
 
+pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
     chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,

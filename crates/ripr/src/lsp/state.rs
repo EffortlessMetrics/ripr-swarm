@@ -719,6 +719,53 @@ impl AnalysisHealth {
     pub(super) fn pending(&self) -> bool {
         self.pending_attempt_id.is_some()
     }
+
+    /// Why `allows_current_repairs` is false, as `(refresh_state, recovery)`
+    /// (#4427). `in_flight`: a refresh is queued, running, pending or inside
+    /// the interactive debounce window (`refresh_debounced`), so a retry
+    /// shortly should succeed. `no_snapshot`: nothing has been analyzed yet
+    /// (or the input was invalidated) and nothing failed. `terminal`: the
+    /// latest attempt failed, was cancelled or was superseded without a
+    /// result. `stale_snapshot`: a snapshot is retained but is not current.
+    /// Every case still fails closed.
+    pub(super) fn repair_block_guidance(
+        &self,
+        refresh_debounced: bool,
+    ) -> (&'static str, &'static str) {
+        if refresh_debounced
+            || self.pending()
+            || matches!(
+                self.state,
+                AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+            )
+        {
+            return (
+                "in_flight",
+                "A refresh is in progress; retry the repair packet shortly.",
+            );
+        }
+        if matches!(
+            self.state,
+            AnalysisAttemptState::Failed
+                | AnalysisAttemptState::Cancelled
+                | AnalysisAttemptState::Superseded
+        ) {
+            return (
+                "terminal",
+                "The latest refresh did not produce a result; check ripr status and run a refresh to recover.",
+            );
+        }
+        if self.snapshot_id.is_none() {
+            return (
+                "no_snapshot",
+                "No analysis snapshot exists yet; open or save a Rust file or run a refresh, then retry the repair packet.",
+            );
+        }
+        (
+            "stale_snapshot",
+            "The retained snapshot is not current; run a refresh, then retry the repair packet.",
+        )
+    }
 }
 
 impl RefreshMetadata {
@@ -879,6 +926,13 @@ pub(super) struct AnalysisSnapshot {
     /// select) is read from here, not re-derived from limitation text.
     /// `None` when the producer returned no view (no analysis ran).
     pub(super) language_view: Option<LanguageCompletenessView>,
+    /// Numeric editor-row origins captured by the same Rust analysis pass that
+    /// produced `findings` (#10609). Code-lens placement, the lens-view
+    /// identity and unpublished line-hover lookup select their row from this
+    /// map, never from a later disk read or from diagnostic visibility. A
+    /// finding without a record (non-Rust, or a producer without origins)
+    /// takes the conservative analyzer-row fallback.
+    pub(super) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
 }
 
 /// Changed-file coverage for languages the run did not analyze because the
@@ -3581,6 +3635,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if !snapshot.is_consistent() {
@@ -3618,6 +3673,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if snapshot.is_consistent() {
@@ -3665,6 +3721,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if !snapshot.is_consistent() {
@@ -3720,6 +3777,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         })
     }
 
