@@ -878,8 +878,13 @@ values defined in RIPR-SPEC-0026:
   syntax such as `importlib.import_module(...)` / `__import__(...)`; a changed
   line that calls an imported symbol keeps the limit unless the old/new token
   diff shows only literals, operators or local names changed: an edit that names
-  an import alias, an attribute after `.`, a keyword argument name or an
-  f-string still limits, #9226)
+  an import alias, an attribute after `.`, an identifier followed by `=` (a
+  keyword argument name, kept conservatively even for a plain assignment
+  target), an f-string, a literal dict key that could name a keyword
+  (`**{"x": 1}`, any `r`/`b`/`f`/`u` prefix), or a line whose token stream is
+  identical (a comment-only edit) still limits, #9226; same-quote nested
+  f-strings of Python 3.12 are not tokenized as one string and fall through to
+  the ordinary oracle path)
 - `decorator_indirection` (the decorator changes the call semantics in a
   way the syntax-first adapter cannot follow; simple route decorators such as
   `@app.get(...)`, `@api.post(...)`, or `@router.api_route(...)` may be treated

@@ -1499,7 +1499,7 @@ fn edit_leaves_imported_symbols_untouched(old: &str, new: &str, imports: &[Pytho
                 return true;
             }
             // A literal dict key may be a keyword name (`f(**{"x": 1})`).
-            if token.starts_with(['"', '\'']) && next.is_some_and(|n| n == ":") {
+            if is_string_token(token) && next.is_some_and(|n| n == ":") {
                 return true;
             }
             if !token.starts_with(|c: char| c.is_alphabetic() || c == '_') {
@@ -1518,6 +1518,17 @@ fn edit_leaves_imported_symbols_untouched(old: &str, new: &str, imports: &[Pytho
     let new_after = &new_tokens[new_tokens.len() - suffix..];
     !span_touches_import(old_span, old_before, old_after)
         && !span_touches_import(new_span, new_before, new_after)
+}
+
+/// Whether `token` is a string literal, with or without a `r`/`b`/`f`/`u`
+/// prefix (the alphabet `edit_tokens` merges onto one token).
+fn is_string_token(token: &str) -> bool {
+    token.find(['"', '\'']).is_some_and(|index| {
+        index <= 2
+            && token[..index]
+                .chars()
+                .all(|c| matches!(c.to_ascii_lowercase(), 'r' | 'b' | 'f' | 'u'))
+    })
 }
 
 fn is_fstring_token(token: &str) -> bool {
@@ -1560,6 +1571,15 @@ fn edit_tokens(text: &str) -> Vec<String> {
             while index < chars.len()
                 && (chars[index].is_alphanumeric() || matches!(chars[index], '.' | '_'))
             {
+                // A dot before a name is an attribute access (`1.0.hex`), not
+                // part of the number: leave it as punctuation.
+                if chars[index] == '.'
+                    && chars
+                        .get(index + 1)
+                        .is_some_and(|n| n.is_alphabetic() || *n == '_')
+                {
+                    break;
+                }
                 index += 1;
             }
             tokens.push(chars[start..index].iter().collect());
@@ -2510,6 +2530,32 @@ pub(super) mod tests {
                 "    return itertools.islice(\"abd\", 0)"
             ),
             None
+        );
+    }
+
+    #[test]
+    fn prefixed_dict_key_and_number_attribute_edits_keep_the_limit() {
+        let limited = Some(StaticLimitKind::MissingImportGraph);
+        for prefix in ["r", "u", "R", "U"] {
+            assert_eq!(
+                import_limit(
+                    Some(&format!("    return itertools.starmap(f, **{{{prefix}\"x\": 1}})")),
+                    &format!("    return itertools.starmap(f, **{{{prefix}\"y\": 1}})")
+                ),
+                limited,
+                "prefix {prefix}"
+            );
+        }
+        assert_eq!(
+            edit_tokens("g(1.0.hex())"),
+            vec!["g", "(", "1.0", ".", "hex", "(", ")", ")"]
+        );
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.islice(1.0.hex(), 0)"),
+                "    return itertools.islice(1.0.conjugate(), 0)"
+            ),
+            limited
         );
     }
 
