@@ -511,8 +511,14 @@ fn whole_side_comparisons_accept_common_line_shapes() {
             true,
         ),
         ("  if (amount >= LIMIT) { return (amount) / 10; }", true),
-        ("  if (amount >= LIMIT) { return /LIMIT >= amount/.test(s); }", false),
-        ("  if (amount >= LIMIT) { s.replace(/amount >= LIMIT/, x); }", false),
+        (
+            "  if (amount >= LIMIT) { return /LIMIT >= amount/.test(s); }",
+            false,
+        ),
+        (
+            "  if (amount >= LIMIT) { s.replace(/amount >= LIMIT/, x); }",
+            false,
+        ),
     ] {
         let operand = if line.contains("5_000") {
             "5_000"

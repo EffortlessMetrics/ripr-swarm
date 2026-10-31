@@ -439,8 +439,20 @@ fn slashes_are_plain_division(line: &str) -> bool {
         return false;
     }
     const VALUE_KEYWORDS: &[&str] = &[
-        "return", "typeof", "case", "do", "else", "in", "instanceof", "of", "void", "delete",
-        "throw", "new", "yield", "await",
+        "return",
+        "typeof",
+        "case",
+        "do",
+        "else",
+        "in",
+        "instanceof",
+        "of",
+        "void",
+        "delete",
+        "throw",
+        "new",
+        "yield",
+        "await",
     ];
     line.char_indices()
         .filter(|(_, ch)| *ch == '/')
