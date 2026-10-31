@@ -1022,6 +1022,12 @@ pub enum FunctionSourceRole {
     /// executable `TestFact` is registered for this variant alone.
     /// Executable subjects are the adapter-established harness subjects.
     HarnessHelper,
+    /// Canonical ordinary Kani proof in an explicitly declared native source
+    /// context. Source evidence only: never a Cargo test or assertion donor.
+    KaniProofHarness,
+    /// Function nested inside an admitted proof body. It shares that source
+    /// role, without becoming an independently selected native harness.
+    KaniProofLocal,
 }
 
 impl FunctionSourceRole {

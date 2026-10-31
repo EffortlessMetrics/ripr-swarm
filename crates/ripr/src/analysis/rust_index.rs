@@ -18,8 +18,6 @@ pub(crate) use super::extract::{
     unwrap_err_bound_variables,
 };
 use super::facts::ModulePathTarget;
-#[cfg(test)]
-pub(crate) use super::facts::build_index_from_loaded_files_with_cache_and_test_harnesses;
 pub(crate) use super::facts::validated_file_wide_harness_targets;
 #[cfg(test)]
 pub use super::facts::{CallFact, FileFacts, LiteralFact, ReturnFact};
@@ -28,8 +26,14 @@ pub use super::facts::{
     RustIndex, SourceText, TestFact, TestSummary, build_index, build_index_with_test_harnesses,
 };
 pub(crate) use super::facts::{
-    build_analysis_index_from_loaded_files, build_index_from_paths_with_cache_and_test_harnesses,
-    reuse_cached_index_with_loaded_files,
+    build_analysis_index_from_loaded_files, build_analysis_index_with_kani_context,
+    build_index_from_paths_with_kani_context, build_index_with_kani_context,
+    reuse_cached_index_with_kani_context,
+};
+#[cfg(test)]
+pub(crate) use super::facts::{
+    build_index_from_loaded_files_with_cache_and_test_harnesses,
+    build_index_from_paths_with_cache_and_test_harnesses, reuse_cached_index_with_loaded_files,
 };
 #[cfg(test)]
 use super::syntax::LexicalRustSyntaxAdapter;

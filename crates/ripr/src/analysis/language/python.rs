@@ -1798,6 +1798,7 @@ impl PythonAdapter {
         Ok(LanguageDiffResult {
             value_origins,
             findings,
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             changed_files: changed_count,
             candidate_line_count: 0,
@@ -1837,6 +1838,7 @@ impl PythonAdapter {
             findings: evidence.findings,
             // No test-harness registry registrations exist in repo mode
             // (#3532): the projection is empty.
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             production_files,
             skipped_files,

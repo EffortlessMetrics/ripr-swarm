@@ -1095,6 +1095,7 @@ mod tests {
     fn render_adds_presentation_text_finding_alignment_when_supported() -> Result<(), String> {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -1206,6 +1207,7 @@ mod tests {
         };
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -1349,6 +1351,7 @@ mod tests {
         };
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2312,6 +2315,7 @@ mod tests {
     fn sample_output(base: Option<String>) -> CheckOutput {
         CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2452,6 +2456,7 @@ mod tests {
 
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2569,6 +2574,7 @@ mod tests {
     fn single_finding_output(finding: Finding) -> CheckOutput {
         CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2599,6 +2605,7 @@ mod tests {
         // scope_disclosures additive field with scope_status=no_scope_provided.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2665,6 +2672,7 @@ mod tests {
         // field must be absent — this is a real analyzed-empty result.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2707,6 +2715,7 @@ mod tests {
         // --mode is a speed tier; pilot is the whole-repository route.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),

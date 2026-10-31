@@ -172,6 +172,22 @@ where
 /// this evaluates `test = true` and empty Boolean combinators. Feature,
 /// target and custom atoms stay unknown; no host configuration is guessed.
 pub(crate) fn attribute_test_build_availability(attr_text: &str) -> Option<bool> {
+    attribute_availability_in(attr_text, AvailabilityContext::Test)
+}
+
+/// Availability under a declared native target context. Unknown feature,
+/// target and editor predicates stay unknown; no host environment is read.
+pub(crate) fn attribute_kani_availability(attr_text: &str, tests: bool) -> Option<bool> {
+    attribute_availability_in(attr_text, AvailabilityContext::Kani { tests })
+}
+
+#[derive(Clone, Copy)]
+enum AvailabilityContext {
+    Test,
+    Kani { tests: bool },
+}
+
+fn attribute_availability_in(attr_text: &str, context: AvailabilityContext) -> Option<bool> {
     let tokens: Vec<_> = positioned_tokens(attr_text)?
         .into_iter()
         .map(|positioned| positioned.token)
@@ -192,7 +208,7 @@ pub(crate) fn attribute_test_build_availability(attr_text: &str) -> Option<bool>
         ] => body,
         _ => return None,
     };
-    availability_attribute(body, 0).ok().flatten()
+    availability_attribute_in(body, 0, context).ok().flatten()
 }
 
 /// Whether `#[cfg_attr(<predicate>, test)]` makes the function a plain
@@ -611,7 +627,11 @@ fn preservation_string_value(literal: &str) -> Option<String> {
     string.value().ok().map(|value| value.into_owned())
 }
 
-fn availability_attribute(tokens: &[Token], depth: usize) -> Result<Option<bool>, ()> {
+fn availability_attribute_in(
+    tokens: &[Token],
+    depth: usize,
+    context: AvailabilityContext,
+) -> Result<Option<bool>, ()> {
     if depth > MAX_PREDICATE_NESTING || !body_is_balanced(tokens) {
         return Err(());
     }
@@ -625,7 +645,7 @@ fn availability_attribute(tokens: &[Token], depth: usize) -> Result<Option<bool>
             Token::Punct('('),
             inner @ ..,
             Token::Punct(')'),
-        ] if name == "cfg" => availability_predicate(inner, depth + 1),
+        ] if name == "cfg" => availability_predicate_in(inner, depth + 1, context),
         [
             Token::Word(name),
             Token::Punct('('),
@@ -639,10 +659,10 @@ fn availability_attribute(tokens: &[Token], depth: usize) -> Result<Option<bool>
             if introduced.is_empty() {
                 return Err(());
             }
-            let condition = availability_predicate(condition, depth + 1)?;
+            let condition = availability_predicate_in(condition, depth + 1, context)?;
             let introduced = introduced
                 .iter()
-                .map(|part| availability_attribute(part, depth + 1))
+                .map(|part| availability_attribute_in(part, depth + 1, context))
                 .collect::<Result<Vec<_>, _>>()?;
             let introduced = availability_all(&introduced);
             Ok(match condition {
@@ -659,11 +679,32 @@ fn availability_attribute(tokens: &[Token], depth: usize) -> Result<Option<bool>
 }
 
 fn availability_predicate(tokens: &[Token], depth: usize) -> Result<Option<bool>, ()> {
+    availability_predicate_in(tokens, depth, AvailabilityContext::Test)
+}
+
+fn availability_predicate_in(
+    tokens: &[Token],
+    depth: usize,
+    context: AvailabilityContext,
+) -> Result<Option<bool>, ()> {
     if depth > MAX_PREDICATE_NESTING || !body_is_balanced(tokens) {
         return Err(());
     }
     match tokens {
-        [Token::Word(name)] if name == "test" => Ok(Some(true)),
+        [Token::Word(name)] if name == "test" => Ok(Some(match context {
+            AvailabilityContext::Test => true,
+            AvailabilityContext::Kani { tests } => tests,
+        })),
+        [Token::Word(name)]
+            if matches!(context, AvailabilityContext::Kani { .. }) && name == "kani" =>
+        {
+            Ok(Some(true))
+        }
+        [Token::Word(name)]
+            if matches!(context, AvailabilityContext::Kani { .. }) && name == "kani_host" =>
+        {
+            Ok(Some(false))
+        }
         [Token::Word(_)] | [Token::Word(_), Token::Punct('='), Token::Literal] => Ok(None),
         [
             Token::Word(name),
@@ -674,7 +715,7 @@ fn availability_predicate(tokens: &[Token], depth: usize) -> Result<Option<bool>
             let parts = availability_arguments(inner)?;
             let values = parts
                 .iter()
-                .map(|part| availability_predicate(part, depth + 1))
+                .map(|part| availability_predicate_in(part, depth + 1, context))
                 .collect::<Result<Vec<_>, _>>()?;
             match name.as_str() {
                 "all" => Ok(availability_all(&values)),

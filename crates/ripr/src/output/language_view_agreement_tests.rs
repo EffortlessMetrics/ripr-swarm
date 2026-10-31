@@ -263,6 +263,7 @@ pub(crate) fn check_output(
 ) -> CheckOutput {
     CheckOutput {
         value_origins: Default::default(),
+        kani_source_inventory: None,
         harness_projections: Vec::new(),
         schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
         tool: "ripr".to_string(),

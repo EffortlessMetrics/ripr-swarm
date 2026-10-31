@@ -167,13 +167,38 @@ fn touches_test(
     }
     let mut index = RustIndex::default();
     index.insert_file(changed.path.clone(), facts, true);
-    normalize_reconstructed_source_roles(&mut index, root, config.analysis().test_harnesses())
-        .ok()?;
-    Some(lines.iter().any(|line| {
-        index.functions().iter().any(|function| {
-            function.source_role.is_evidence_role()
-                && function.start_line <= line.line
-                && line.line <= function.end_line
-        })
-    }))
+    normalize_reconstructed_source_roles(
+        &mut index,
+        root,
+        config.analysis().test_harnesses(),
+        config.languages().rust.kani.as_ref(),
+    )
+    .ok()?;
+    // This per-file Git-object reader has no include-composition authority.
+    // An apparent proof can instead be an ordinary test in a refused include
+    // fragment. Attribute-only edits also precede FunctionFact's fn-token span.
+    // Preserve uncertainty for this source unit, unless an ordinary test edit
+    // is independently established below.
+    let native_role_unresolved = index
+        .kani_source_inventory
+        .as_ref()
+        .is_some_and(|inventory| !inventory.harnesses.is_empty());
+    for line in lines {
+        for function in index
+            .functions()
+            .iter()
+            .filter(|function| function.start_line <= line.line && line.line <= function.end_line)
+        {
+            if function.source_role.is_evidence_role()
+                && !matches!(
+                    function.source_role,
+                    super::facts::FunctionSourceRole::KaniProofHarness
+                        | super::facts::FunctionSourceRole::KaniProofLocal
+                )
+            {
+                return Some(true);
+            }
+        }
+    }
+    (!native_role_unresolved).then_some(false)
 }

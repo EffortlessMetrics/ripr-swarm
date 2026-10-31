@@ -1,0 +1,7 @@
+[languages]
+enabled = ["rust"]
+
+[languages.rust.kani]
+profile = "kani_ordinary_proof_v1"
+source = "src/lib.rs"
+tests = false

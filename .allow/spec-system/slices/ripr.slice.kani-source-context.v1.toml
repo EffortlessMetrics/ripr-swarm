@@ -1,0 +1,31 @@
+schema_version = "2.0"
+id = "ripr.slice.kani-source-context.v1"
+generation = 1
+source_issue = "issue:10686"
+design_reference = "RIPR-SPEC-0153#declared-ordinary-kani-source-context-10686"
+change_class = "behavior_change"
+claim_boundary = """
+Explicit ordinary Kani source/context inventory in the existing Rust facts
+owner, with canonical source identity, declared cfg applicability, separate
+CLI/MCP capture, role/cache/old-source isolation and zero new functional
+protection credit. No verifier is selected or executed and #10686 remains open
+for discriminator/domain/contract semantics and native qualification.
+"""
+non_goals = ["native execution", "Cargo test registration or selector", "functional discriminator credit", "contract/assumption/adequacy/non-vacuity semantics", "out-of-line or macro expansion", "new support tier", "full #10686 closure"]
+return_conditions = ["Return to root if native facts enter Cargo test membership or helper credit.", "Return to root if context/captured-source changes can reuse an affirmative old generation."]
+owned_seams = ["seam:ripr:analysis:facts:kani-source-context"]
+shared_seams = ["seam:ripr:analysis:source-role", "seam:ripr:cli:check-json", "seam:ripr:mcp:snapshot"]
+forbidden_seams = ["seam:ripr:domain:classification-vocabulary", "seam:ripr:native:execution"]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0153#declared-ordinary-kani-source-context-10686"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

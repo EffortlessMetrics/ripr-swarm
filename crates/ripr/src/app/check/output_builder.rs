@@ -8,6 +8,7 @@ pub(super) fn check_output_from_analysis(
 ) -> CheckOutput {
     CheckOutput {
         value_origins: analysis.value_origins,
+        kani_source_inventory: analysis.kani_source_inventory,
         harness_projections: analysis.harness_projections,
         schema_version: CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
         tool: "ripr".to_string(),

@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
 mod diagnostic;
+#[cfg(test)]
+mod kani_tests;
 mod model;
 #[cfg(test)]
 mod perl_executable_tests;
@@ -35,8 +37,8 @@ pub(crate) use model::LanguagesConfig;
 use model::{BunUbProfileConfig, FindingSeverityConfig, ProfilesConfig, SeamSeverityConfig};
 pub use model::{
     CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION, CheckInputExplicit, ConfigIdentityRole, ConfigSeverity,
-    LspDiagnosticProfile, OraclePolicy, PerlConfig, RiprConfig, SeverityConfig, TestHarnessAdapter,
-    TestHarnessKind, TestHarnessRegistration, TypescriptConfig,
+    KaniAnalysisContext, LspDiagnosticProfile, OraclePolicy, PerlConfig, RiprConfig,
+    SeverityConfig, TestHarnessAdapter, TestHarnessKind, TestHarnessRegistration, TypescriptConfig,
 };
 pub(crate) use model::{
     HumanLegend, PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig, perl_executable_opt_in,
@@ -548,7 +550,8 @@ pub(crate) fn loaded_config_identity(config: &RiprConfig) -> Option<String> {
 /// differing only in an unconsumed setting stay comparable). Closed set:
 /// when the producer starts consuming another config field, add it here in
 /// the same PR; do not widen the filter to whole sections.
-pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 7] = [
+pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 8] = [
+    "languages.rust.kani",
     "oracles.broad_error_strength",
     "oracles.mock_expectation_strength",
     "oracles.snapshot_strength",
@@ -900,6 +903,10 @@ impl RiprConfig {
                 config.languages.enabled = parse_languages_enabled(&enabled)?;
             }
             if let Some(rust) = languages.rust {
+                if let Some(mut context) = rust.kani {
+                    context.source = context.normalized_source()?;
+                    config.languages.rust.kani = Some(context);
+                }
                 if let Some(patterns) = rust.generated_file_patterns {
                     config.languages.rust.generated_file_patterns =
                         parse_generated_file_patterns(&patterns)?;
@@ -1169,6 +1176,7 @@ struct RawLanguagesConfig {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RawRustLanguageConfig {
+    kani: Option<KaniAnalysisContext>,
     generated_file_patterns: Option<Vec<String>>,
     handwritten_files: Option<Vec<String>>,
 }

@@ -1,0 +1,8 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn boundary(value: u8) -> bool {
+-    value < 9
++    value < 10
+ }

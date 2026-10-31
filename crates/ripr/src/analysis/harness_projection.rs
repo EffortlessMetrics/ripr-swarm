@@ -8,8 +8,12 @@
 //! or names. Empty records (no registrations) project nothing.
 
 pub use crate::analysis::facts::{HarnessLimitationFact, HarnessSubjectFact};
+// Native source inventory is separate from every executable test projection.
 #[cfg(test)]
 pub use crate::analysis::facts::{HarnessSelectorCapability, HarnessSubjectClaim};
+pub use crate::analysis::facts::{
+    KaniApplicability, KaniHarnessSource, KaniSourceInventory, KaniSourceLimitation,
+};
 use std::path::PathBuf;
 
 /// What one registration established for one analysis run.

@@ -516,6 +516,7 @@ mod tests {
         finding.probe.location.file = file;
         CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -643,6 +644,7 @@ mod tests {
         let report = build_diff_report(
             &CheckOutput {
                 value_origins: Default::default(),
+                kani_source_inventory: None,
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -721,6 +723,7 @@ mod tests {
         let report = build_diff_report(
             &CheckOutput {
                 value_origins: Default::default(),
+                kani_source_inventory: None,
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -807,6 +810,7 @@ mod tests {
         let report = build_diff_report(
             &CheckOutput {
                 value_origins: Default::default(),
+                kani_source_inventory: None,
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -927,6 +931,7 @@ mod tests {
         let report = build_diff_report(
             &CheckOutput {
                 value_origins: Default::default(),
+                kani_source_inventory: None,
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -988,6 +993,7 @@ mod tests {
         let report = build_diff_report(
             &CheckOutput {
                 value_origins: Default::default(),
+                kani_source_inventory: None,
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
