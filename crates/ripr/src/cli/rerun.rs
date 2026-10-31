@@ -4027,7 +4027,7 @@ mod tests {
     }
 
     #[test]
-    fn rerun_value_flags_refuse_a_missing_trailing_value() {
+    fn rerun_value_flags_refuse_a_missing_trailing_value() -> Result<(), String> {
         for flag in [
             "--root",
             "--changed-test",
@@ -4043,7 +4043,8 @@ mod tests {
             );
         }
         // Single-change control: supplying the value clears the refusal.
-        assert!(parse_options(&args(&["--changed-test", "tests/a.rs"])).is_ok());
+        parse_options(&args(&["--changed-test", "tests/a.rs"]))?;
+        Ok(())
     }
 
     #[test]
