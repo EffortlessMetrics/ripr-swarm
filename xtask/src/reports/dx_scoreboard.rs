@@ -579,14 +579,24 @@ fn validate_ceilings(config: &Config) -> Result<(), String> {
 
 /// The ceilinged samples this run breached: a value above its row's
 /// ceiling, a sample of a ceilinged row that produced no value, or a row this
-/// run measured that has no sample of its ceilinged metric at all. Rows this
-/// run did not measure at all (a heavy row without `--include-heavy`) are not
-/// breaches; their absence is visible in the per-repo view.
-fn ceiling_breaches(config: &Config, boards: &[String], samples: &[Sample]) -> Vec<Value> {
+/// run selected that has no sample of its ceilinged metric at all. A row is
+/// selected when the run recorded it in its corpus or holds any sample of
+/// it. Rows this run did not select (a heavy row without `--include-heavy`)
+/// are not breaches; their absence is visible in the per-repo view.
+fn ceiling_breaches(
+    config: &Config,
+    boards: &[String],
+    samples: &[Sample],
+    context: &RunContext,
+) -> Vec<Value> {
     let mut breaches = Vec::new();
     for entry in &config.corpus {
         let of_row = |sample: &&Sample| sample.repo.as_deref() == Some(entry.id.as_str());
-        let measured = samples.iter().any(|sample| of_row(&sample));
+        let selected = context
+            .corpus
+            .iter()
+            .any(|row| row["id"].as_str() == Some(entry.id.as_str()))
+            || samples.iter().any(|sample| of_row(&sample));
         for (metric_id, ceiling) in &entry.ceilings {
             let in_run = config
                 .metric
@@ -621,16 +631,16 @@ fn ceiling_breaches(config: &Config, boards: &[String], samples: &[Sample]) -> V
                     "reason": reason,
                 }));
             }
-            // A measured row whose ceilinged metric has no sample is a
+            // A selected row whose ceilinged metric has no sample is a
             // missing measurement, not a pass.
-            if measured && !sampled {
+            if selected && !sampled {
                 breaches.push(json!({
                     "metric": metric_id,
                     "repo": entry.id,
                     "ceiling": ceiling,
                     "value": Value::Null,
                     "reason": format!(
-                        "was measured but produced no sample, so ceiling {ceiling} is not established"
+                        "was selected but produced no sample, so ceiling {ceiling} is not established"
                     ),
                 }));
             }
@@ -2127,7 +2137,7 @@ pub(crate) fn build_report(
         .filter(|row| row["baseline"]["comparison_failed"] == true)
         .map(|row| json!({"metric": row["id"], "reason": row["baseline"]["reason"]}))
         .collect();
-    let ceiling_breaches = ceiling_breaches(config, boards, samples);
+    let ceiling_breaches = ceiling_breaches(config, boards, samples, context);
     let gate_status = if !gate {
         "not_run"
     } else if !ceiling_breaches.is_empty() {

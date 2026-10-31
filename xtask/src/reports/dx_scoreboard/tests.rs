@@ -405,7 +405,7 @@ fn a_ceilinged_row_fails_the_gate_above_its_ceiling_whatever_the_baseline() -> R
         other["gate"]["ceiling_breaches"].as_array().map(Vec::len),
         Some(0)
     );
-    // A row the run measured (another of its metrics has a sample) whose
+    // A row the run selected (another of its metrics has a sample) whose
     // ceilinged metric has no sample at all is a missing measurement.
     let missing = gate(
         &[sample(
@@ -429,6 +429,37 @@ fn a_ceilinged_row_fails_the_gate_above_its_ceiling_whatever_the_baseline() -> R
     assert_eq!(breaches.len(), 1, "{breaches:?}");
     assert_eq!(breaches[0]["repo"], "serde");
     assert!(breaches[0]["value"].is_null());
+    // A row the run selected (recorded in its corpus) with no samples at all
+    // differs from a row the run left out, which has neither.
+    let mut selected = context("runner-a");
+    selected
+        .corpus
+        .push(json!({"id": "serde", "status": "complete"}));
+    let silent = build_report(&config, &all_boards(), &[], &selected, None, true);
+    assert_eq!(
+        silent["gate"]["status"].as_str(),
+        Some("fail"),
+        "{}",
+        silent["gate"]
+    );
+    assert_eq!(
+        silent["gate"]["ceiling_breaches"].as_array().map(Vec::len),
+        Some(1)
+    );
+    let left_out = build_report(
+        &config,
+        &all_boards(),
+        &[],
+        &context("runner-a"),
+        None,
+        true,
+    );
+    assert_eq!(
+        left_out["gate"]["ceiling_breaches"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
     // Without --gate a breach is reported but nothing fails.
     let ungated = build_report(
         &config,
