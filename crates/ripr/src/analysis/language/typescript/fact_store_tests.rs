@@ -736,3 +736,29 @@ fn a_persisted_envelope_grows_linearly_with_the_entries_of_one_file() -> Result<
     assert!(first.imports_in_file.same_list(&last.imports_in_file));
     Ok(())
 }
+
+/// A persisted envelope is untrusted input: a shared-list reference that
+/// names no earlier list, or one read outside a wire scope, must fail the
+/// decode (so the store recomputes) rather than yield an empty or wrong list.
+#[test]
+fn a_malformed_shared_list_reference_fails_to_decode() {
+    use super::types::{Shared, SharedWireScope};
+
+    let decode = |json: &str| {
+        let _scope = SharedWireScope::open();
+        serde_json::from_str::<Vec<Shared<u32>>>(json)
+    };
+
+    // Control: the first sight defines the list, later sights reference it.
+    let ok = decode(r#"[{"shared":1,"items":[7,8]},{"shared":1}]"#);
+    assert!(ok.is_ok_and(|lists| lists.len() == 2 && lists[0].same_list(&lists[1])));
+
+    // A forward or unknown reference.
+    assert!(decode(r#"[{"shared":1}]"#).is_err());
+    assert!(decode(r#"[{"shared":2},{"shared":2,"items":[1]}]"#).is_err());
+    // An unexpected field, and a map without the `shared` key.
+    assert!(decode(r#"[{"shared":1,"other":[1]}]"#).is_err());
+    assert!(decode(r#"[{"items":[1]}]"#).is_err());
+    // The wire form is refused outside a scope.
+    assert!(serde_json::from_str::<Vec<Shared<u32>>>(r#"[{"shared":1,"items":[1]}]"#).is_err());
+}
