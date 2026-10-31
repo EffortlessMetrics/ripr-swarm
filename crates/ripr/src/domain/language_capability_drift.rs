@@ -181,7 +181,7 @@ fn documented_registry_block(doc: &str) -> Result<&str, String> {
     })? + REGISTRY_END.len();
     doc.get(start..stop)
         .filter(|_| start < stop)
-        .ok_or_else(|| "end marker precedes begin marker".to_string())
+        .ok_or_else(|| "end marker precedes begin marker; move the capability-registry end marker below the begin marker in the doc".to_string())
 }
 
 /// Empty when the documented block equals the rendering of the table.
