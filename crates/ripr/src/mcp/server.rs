@@ -1529,3 +1529,7 @@ mod tool_panic_tests;
 #[cfg(test)]
 #[path = "source_recovery_tests.rs"]
 mod source_recovery_tests;
+
+#[cfg(test)]
+#[path = "worktree_custody_tests.rs"]
+mod worktree_custody_tests;

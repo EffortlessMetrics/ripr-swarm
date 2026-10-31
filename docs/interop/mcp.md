@@ -74,12 +74,18 @@ An agent edits the worktree, but by default `ripr_refresh` analyzes only the
 committed default-branch diff. To analyze saved staged and unstaged tracked
 edits without committing them, call `ripr_refresh` with `{"source":
 "worktree"}`; omitting `source` (or `"committed"`) keeps the committed
-default. A worktree snapshot is tagged `source: "worktree"`, discloses that
-unsaved editor buffers are outside and that it carries no consumed-source
-commitment, and withholds repair cards and repair readiness
-(`repair_packet_ready: false`, `worktree_source_not_committed`;
-`ripr_get_repair_card` refuses with `incomplete_inventory`): commit the
-change and refresh without `source` for those. Untracked files stay excluded
+default. A worktree snapshot is tagged `source: "worktree"` and discloses that
+unsaved editor buffers are outside. The findings producer and the seam
+inventory each record the raw Rust bytes they read; when they agree
+(`scope.consumed_source_commitment: "established"`, `repair_cards:
+"available"`) the same repair readiness, `ripr_get_repair_card` and
+`ripr_prepare_repair` the committed refresh offers are available, behind their
+usual per-item gates, and the producer commitment is part of the snapshot
+identity. When a saved file or `HEAD` moved between the two producers, or any
+input was not observed (`not_established`, `withheld`), every item is
+`repair_packet_ready: false` with `worktree_source_not_committed` naming the
+cause and `ripr_get_repair_card` refuses with `incomplete_inventory`: refresh
+again once the edit settles. Untracked files stay excluded
 until `git add -N <paths>`. The server does not watch the worktree, so
 refresh again after edits. Requested and captured source are separate facts:
 a failed worktree request keeps the last committed snapshot tagged
@@ -229,10 +235,10 @@ when staged or unstaged tracked edits exist; sharing the authority does not
 mean identical input. `ripr check --committed` selects committed input;
 `ripr check --worktree --format json` analyzes staged and unstaged tracked
 edits outside MCP, or inside MCP with the opt-in `source: "worktree"`
-(RIPR-SPEC-0211, #7357: findings only; repair cards and readiness
-withheld). The existing response `scope` note discloses detected
-excluded edits. The call blocks until the
-attempt reaches a terminal state and reports it: `completed` with the new
+(RIPR-SPEC-0211, #7357: repair cards and readiness only with an
+established producer-custody agreement, withheld with the cause
+otherwise). The existing response `scope` note discloses detected excluded
+edits. The call blocks until the attempt reaches a terminal state and reports it: `completed` with the new
 snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the
 canonical item identities, and each item's evidence digest — equivalent
 roots at equivalent inputs share one portable identity, while the concrete
@@ -688,8 +694,9 @@ attempt creation stays CLI-owned; the adapter's session transactions are
 in-memory and its durable-store reads are read-only). A prepared transaction
 never authorizes an edit, a command, or a merge by itself — the external
 client's approval and sandbox policy remains authoritative. It does not
-load project-local configuration or providers, embed a model, or offer a
-remote transport. It does not watch the worktree: the snapshot is current as
+load project-local provider configuration, embed a model, or offer a
+remote transport (the workspace's own `ripr.toml` is honored by
+`ripr_refresh`, as described above). It does not watch the worktree: the snapshot is current as
 of its completed `ripr_refresh`, so refresh again after edits. The session
 is in-memory; restarting the server drops the snapshot and every session
 transaction unless a new refresh commits one.
