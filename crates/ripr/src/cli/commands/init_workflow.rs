@@ -173,6 +173,7 @@ const TEMPLATE_TAIL: &str = r#"      - name: Upload RIPR report artifacts
           retention-days: 14
 
       - name: Upload RIPR diff findings
+        id: sarif_findings
         if: always() && env.RIPR_UPLOAD_SARIF == 'true' && github.event_name == 'pull_request' && hashFiles('target/ripr/reports/ripr-findings.sarif') != ''
         continue-on-error: true # a code-scanning outage must not fail the gate (#2009)
         uses: github/codeql-action/upload-sarif@v4
@@ -181,12 +182,18 @@ const TEMPLATE_TAIL: &str = r#"      - name: Upload RIPR report artifacts
           category: ripr-findings
 
       - name: Upload RIPR repo seams
+        id: sarif_seams
         if: always() && env.RIPR_UPLOAD_SARIF == 'true' && hashFiles('target/ripr/reports/ripr-seams.sarif') != ''
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: target/ripr/reports/ripr-seams.sarif
           category: ripr-seams
+
+      - name: Explain failed SARIF upload
+        if: always() && (steps.sarif_findings.outcome == 'failure' || steps.sarif_seams.outcome == 'failure')
+        continue-on-error: true
+        run: echo '::warning title=RIPR SARIF upload failed::A SARIF upload step failed, so its results may not be in the Security tab. Usual causes include a private repository without GitHub Code Security, code scanning not being available, or a read-only token (fork or Dependabot pull request); it can also be a transient GitHub outage or a rejected SARIF file, so open the log of the failed upload step for the exact error. The rest of the RIPR report is unaffected. If code scanning is not wanted, set RIPR_UPLOAD_SARIF to false in this workflow.'
 "#;
 
 /// The unrendered workflow template, pinned by hash below. The only
@@ -367,13 +374,14 @@ mod template_pin_tests {
     /// workflow env, and the setting docs into docs/CI.md (385 → 150 rendered
     /// lines). #4452 moved pull-request number, head SHA, and repository
     /// interpolations out of `run:` shell text into step `env:`, and
-    /// re-measured the hash below.
+    /// re-measured the hash below. #11145 added the SARIF upload step ids and
+    /// the `Explain failed SARIF upload` step, and re-measured it again.
     /// The unrendered template is the stable identity:
     /// rendering additionally substitutes the install version, the pin
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "50ca3c66abbb3e8e23b333db55c653db979784bfa02f0c5fa097aa145cc4cbec";
+        "f0238ee00aba27aeb49a33594acc306e0ea332e4db6978663eb3f70c9494f520";
 
     #[test]
     fn template_matches_the_pinned_bytes() {

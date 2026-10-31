@@ -32,10 +32,12 @@ use crate::agent::loop_commands::{
     WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT, WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT,
     WORKFLOW_AGENT_SEAM_PACKETS_ARTIFACT, WORKFLOW_AGENT_STATUS_ARTIFACT,
     WORKFLOW_AGENT_STATUS_MARKDOWN_ARTIFACT, WORKFLOW_AGENT_VERIFY_ARTIFACT,
-    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, shell_arg,
 };
 use crate::cli::suggest::unknown_argument;
 use crate::output::ci_summary::annotations::render_workflow_annotations;
+use crate::output::ci_summary::effective_comment_mode;
+use crate::output::first_pr::base_fetch_refspec;
 use crate::process_owner::OwnedProcess;
 use serde::Serialize;
 use serde_json::Value;
@@ -600,7 +602,10 @@ impl PacketRun {
             "Plan RIPR inline comments",
             When::Always,
             Role::Advisory,
-            pr && self.settings.comment_mode != "off" && self.exists(COMMENTS_JSON),
+            // An empty mode means `off`, as `--comment-mode` documents and
+            // `ci-summary` reads it (#11146); only a named mode is planned.
+            pr && effective_comment_mode(&self.settings.comment_mode) != "off"
+                && self.exists(COMMENTS_JSON),
             Self::plan_inline_comments,
         );
 
@@ -1296,7 +1301,7 @@ impl PacketRun {
             &self.root,
             &["rev-parse", "--verify", &format!("{base_ref}^{{commit}}")],
         )
-        .map_err(|err| format!("ripr: cannot resolve base ref {base_ref}: {err}"))?;
+        .map_err(|err| unresolved_base_message(&self.root, &base_ref, &err.to_string()))?;
         let head_sha = crate::git::run_git(&self.root, &["rev-parse", "--verify", "HEAD^{commit}"])
             .map_err(|err| format!("ripr: cannot resolve HEAD: {err}"))?;
         let range = format!("{base_sha}...{head_sha}");
@@ -1411,7 +1416,7 @@ impl PacketRun {
             "--pr-guidance",
             COMMENTS_JSON,
             "--mode",
-            &settings.comment_mode,
+            effective_comment_mode(&settings.comment_mode),
             "--event-name",
             &settings.event_name,
             "--pull-request",
@@ -1785,6 +1790,42 @@ fn args(values: &[&str]) -> Vec<String> {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The error for a pull request base that is not in the checkout, naming the
+/// cause and the repair instead of Git's raw `Needed a single revision`.
+///
+/// The usual cause is a shallow `actions/checkout` (its default `fetch-depth`
+/// is 1), which fetches the head commit only. `ripr check` already names that
+/// repair; the packet is the step a first-time adopter reads when the job
+/// turns red, so it names it too. Git's own last line stays at the end for
+/// causes this wording does not cover.
+fn unresolved_base_message(root: &Path, base_ref: &str, detail: &str) -> String {
+    let branch = base_ref.strip_prefix("origin/").unwrap_or(base_ref);
+    let repair = if branch.is_empty() {
+        // `GITHUB_BASE_REF` is empty (not a pull_request event payload), so
+        // the base is `origin/` and no fetch can name a branch.
+        "GITHUB_BASE_REF is empty, so there is no base branch to compare against; run this \
+         on a pull_request event."
+            .to_string()
+    } else if crate::analysis::is_shallow_repository(root, None) {
+        let refspec = shell_arg(&base_fetch_refspec(branch));
+        format!(
+            "This is most likely a shallow clone: set `fetch-depth: 0` on actions/checkout (or \
+             run `git fetch --unshallow origin {refspec}`), then re-run."
+        )
+    } else {
+        let refspec = shell_arg(&base_fetch_refspec(branch));
+        format!(
+            "Fetch the base branch (`git fetch origin {refspec}`; actions/checkout with \
+             `fetch-depth: 0` fetches every branch), then re-run."
+        )
+    };
+    format!(
+        "ripr: the pull request base `{base_ref}` is not in this checkout (the analysis did not \
+         run). {repair} Git said: {}",
+        detail.lines().last().unwrap_or(detail).trim()
+    )
 }
 
 /// Raw stdout of a successful git invocation; the diff is bytes, not text.
@@ -2200,6 +2241,44 @@ mod tests {
         assert!(line(&manual, "ripr first-pr ").contains(" --base origin/trunk "));
         assert!(!manual.contains("ripr review-comments "), "{manual}");
         assert!(!line(&manual, "ripr policy history ").contains("--pr-number"));
+        Ok(())
+    }
+
+    /// #11146: an empty (or blank) `RIPR_COMMENT_MODE` means `off`, so the plan
+    /// stage must not run and fail with `unknown pr-comments plan mode ""`.
+    /// `plan` and an unknown value still plan (the unknown one fails loudly).
+    #[test]
+    fn empty_comment_mode_skips_the_inline_plan_like_off() -> Result<(), String> {
+        let planned = |mode: &str| -> Result<bool, String> {
+            let (packet, _failed) = recorded_packet_with(CiSettings {
+                comment_mode: mode.to_string(),
+                ..full_packet_settings()
+            })?;
+            Ok(packet.contains("ripr pr-comments plan "))
+        };
+        assert!(planned("inline")?, "inline must plan");
+        assert!(planned("plan")?, "plan must plan");
+        assert!(
+            planned("post")?,
+            "an unknown mode must still reach the plan"
+        );
+        assert!(!planned("off")?, "off must not plan");
+        assert!(!planned("")?, "empty must not plan");
+        assert!(!planned("  ")?, "blank must not plan");
+        // A padded value plans, and plans the trimmed mode (the summary reads
+        // it the same way), never `--mode " inline"`.
+        let (padded, _) = recorded_packet_with(CiSettings {
+            comment_mode: " inline ".to_string(),
+            ..full_packet_settings()
+        })?;
+        let plan_line = padded
+            .lines()
+            .find(|line| line.starts_with("ripr pr-comments plan "))
+            .unwrap_or_default();
+        assert!(
+            plan_line.contains(" --mode inline --event-name "),
+            "{plan_line}"
+        );
         Ok(())
     }
 
@@ -2806,6 +2885,138 @@ mod tests {
         assert!(
             diff.contains("vendor/lib"),
             "gitlink bump was hidden: {diff:?}"
+        );
+        Ok(())
+    }
+
+    /// Build a two-commit repository, then a depth-1 clone of it: what a
+    /// default `actions/checkout` produces. Returns `(scratch, full, shallow)`.
+    fn full_and_shallow_clone(label: &str) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+        let scratch = std::env::temp_dir().join(format!(
+            "ripr-ci-packet-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        let full = scratch.join("full");
+        fs::create_dir_all(&full).map_err(|e| e.to_string())?;
+        let git = |root: &Path, args: &[&str]| -> Result<String, String> {
+            crate::git::run_git(root, args).map_err(|err| err.to_string())
+        };
+        git(&full, &["init", "--initial-branch=main"])?;
+        git(&full, &["config", "user.email", "ripr@example.invalid"])?;
+        git(&full, &["config", "user.name", "ripr test"])?;
+        git(&full, &["config", "commit.gpgSign", "false"])?;
+        fs::write(full.join("a.txt"), "one\n").map_err(|e| e.to_string())?;
+        git(&full, &["add", "a.txt"])?;
+        git(&full, &["commit", "-m", "base"])?;
+        fs::write(full.join("a.txt"), "two\n").map_err(|e| e.to_string())?;
+        git(&full, &["commit", "-am", "change"])?;
+        // A pull request checkout fetches the head branch only, so the base
+        // branch (`main`) never exists as `origin/main` in the clone.
+        git(&full, &["checkout", "--quiet", "-b", "feature"])?;
+        let url = format!("file://{}", full.display());
+        git(
+            &scratch,
+            &[
+                "clone", "--quiet", "--depth", "1", "--branch", "feature", &url, "shallow",
+            ],
+        )?;
+        let shallow = scratch.join("shallow");
+        Ok((scratch, full, shallow))
+    }
+
+    fn capture_error(root: &Path, base_ref: &str) -> String {
+        let mut run = recording_run(root);
+        run.recorded = None;
+        run.settings.base_ref = base_ref.to_string();
+        run.capture_pull_request_diff().err().unwrap_or_default()
+    }
+
+    /// The default `actions/checkout` is a depth-1 clone with no base branch.
+    /// The failing step must name that cause and the `fetch-depth: 0` repair,
+    /// not Git's raw `Needed a single revision` (the `ripr check` wording).
+    #[test]
+    fn missing_base_in_a_shallow_checkout_names_fetch_depth() -> Result<(), String> {
+        let (scratch, _full, shallow) = full_and_shallow_clone("shallow-base")?;
+        let message = capture_error(&shallow, "main");
+        let _ = fs::remove_dir_all(&scratch);
+        assert!(
+            message.contains("`origin/main` is not in this checkout"),
+            "{message}"
+        );
+        assert!(message.contains("most likely a shallow clone"), "{message}");
+        assert!(message.contains("`fetch-depth: 0`"), "{message}");
+        assert!(
+            message
+                .contains("fetch --unshallow origin '+refs/heads/main:refs/remotes/origin/main'"),
+            "{message}"
+        );
+        assert!(
+            !message.contains("git fetch origin main"),
+            "a shallow clone is repaired by fetch-depth, not a one-branch fetch: {message}"
+        );
+        Ok(())
+    }
+
+    /// An empty `GITHUB_BASE_REF` makes the base `origin/`; advice must not
+    /// tell the reader to `git fetch origin ` with no branch.
+    #[test]
+    fn empty_base_ref_names_the_missing_event_not_a_blank_branch() -> Result<(), String> {
+        let (scratch, full, shallow) = full_and_shallow_clone("empty-base")?;
+        let messages = [capture_error(&full, ""), capture_error(&shallow, "")];
+        let _ = fs::remove_dir_all(&scratch);
+        for message in messages {
+            assert!(message.contains("GITHUB_BASE_REF is empty"), "{message}");
+            assert!(!message.contains("git fetch origin "), "{message}");
+            assert!(!message.contains("refs/heads/:"), "{message}");
+        }
+        Ok(())
+    }
+
+    /// Discriminating negative: a complete repository with a mistyped base is
+    /// not a shallow clone, so it must get the fetch advice and never the
+    /// shallow diagnosis.
+    #[test]
+    fn missing_base_in_a_full_checkout_names_the_fetch_not_a_shallow_clone() -> Result<(), String> {
+        let (scratch, full, _shallow) = full_and_shallow_clone("full-base")?;
+        let message = capture_error(&full, "no-such-branch");
+        let _ = fs::remove_dir_all(&scratch);
+        assert!(
+            message.contains("`origin/no-such-branch` is not in this checkout"),
+            "{message}"
+        );
+        assert!(
+            message.contains(
+                "git fetch origin '+refs/heads/no-such-branch:refs/remotes/origin/no-such-branch'"
+            ),
+            "{message}"
+        );
+        assert!(!message.contains("shallow clone"), "{message}");
+        Ok(())
+    }
+
+    /// The branch comes from the event payload; an apostrophe must not close
+    /// the quoted refspec and leave the rest as shell syntax.
+    #[test]
+    fn missing_base_with_an_awkward_branch_name_is_shell_escaped() -> Result<(), String> {
+        let (scratch, full, _shallow) = full_and_shallow_clone("quote-base")?;
+        let message = capture_error(&full, "feat/it's");
+        let _ = fs::remove_dir_all(&scratch);
+        let escaped = shell_arg(&base_fetch_refspec("feat/it's"));
+        assert_ne!(
+            escaped, "'+refs/heads/feat/it's:refs/remotes/origin/feat/it's'",
+            "escaping must change a branch containing an apostrophe"
+        );
+        assert!(
+            message.contains(&format!("git fetch origin {escaped}")),
+            "{message}"
+        );
+        assert!(
+            !message.contains("origin '+refs/heads/feat/it's:"),
+            "unescaped apostrophe: {message}"
         );
         Ok(())
     }
