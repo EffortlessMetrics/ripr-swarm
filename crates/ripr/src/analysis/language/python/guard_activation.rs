@@ -1433,7 +1433,9 @@ mod tests {
         assert_eq!(compare_literal_values("16", "==", "16.0"), Some(true));
         assert_eq!(compare_literal_values("\"A\"", "==", "'A'"), Some(true));
         assert_eq!(compare_literal_values("\"A\"", "==", "\"B\""), Some(false));
-        assert_eq!(compare_literal_values("None", "!=", "0"), Some(true));
+        // A mixed kind (`None` against a number) is unreadable to the shared
+        // equality helper, so the gate fails open and keeps the call (#11842).
+        assert_eq!(compare_literal_values("None", "!=", "0"), None);
     }
 
     #[test]
