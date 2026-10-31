@@ -201,3 +201,35 @@ fn only_a_real_declaration_head_makes_a_default_parameter_edit() {
         assert_eq!(shape(old, new), Some("default_parameter"), "{old}");
     }
 }
+
+#[test]
+fn a_block_comment_hiding_a_double_slash_is_undecidable_not_comment_only() {
+    // #11723: the line-comment cut stops at the `//` inside `/* a // b */`, so
+    // both lines would compare equal and hide a real edit. Fail closed.
+    assert_eq!(
+        shape("x /* a // b */ y", "x /* a // b */ z"),
+        None,
+        "a block comment line is not a comment-only no-op"
+    );
+    // Positive control: the same edit without a block comment is still read.
+    assert_eq!(
+        shape("  return price;", "  return price; // fallback"),
+        Some("comment_only")
+    );
+}
+
+#[test]
+fn a_block_comment_opener_inside_a_string_does_not_decline_the_line() {
+    // `/*` inside a literal is text, so the trailing `//` comment is still read.
+    assert_eq!(
+        shape("  return \"/*\";", "  return \"/*\"; // note"),
+        Some("comment_only")
+    );
+}
+
+#[test]
+fn any_block_comment_line_is_declined_even_without_a_double_slash() {
+    // The reader does not track `/* ... */` extents, so every block-comment
+    // line fails closed, not only one that hides a `//`.
+    assert_eq!(shape("x /* a */ y", "x /* a */ z"), None);
+}

@@ -189,15 +189,15 @@ async fn sdk_session(
                 .pointer("/mcp/tools")
                 .and_then(Value::as_array)
                 .map(Vec::len)
-                != Some(9)
+                != Some(10)
             {
-                return Err("SDK status surface block lost the nine-tool contract".into());
+                return Err("SDK status surface block lost the ten-tool contract".into());
             }
             if status
                 .pointer("/mcp/resource_templates")
                 .and_then(Value::as_array)
                 .map(Vec::len)
-                != Some(5)
+                != Some(6)
             {
                 return Err("SDK status surface block lost the five-template contract".into());
             }
@@ -269,7 +269,7 @@ async fn sdk_session(
                     if serde_json::to_value(error.code).map_err(|error| error.to_string())?
                         == serde_json::json!(expected_resource_code) =>
                 {
-                    if error.message != "unknown resource; available: ripr://workspace/status; templates: ripr://snapshot/{snapshot_id}, ripr://gap/{canonical_id}, ripr://repair-attempt/{attempt_id}, ripr://receipt/{receipt_id}, ripr://repair-card/{canonical_id}"
+                    if error.message != "unknown resource; available: ripr://workspace/status; templates: ripr://snapshot/{snapshot_id}, ripr://gap/{canonical_id}, ripr://gap/{canonical_id}/limitation, ripr://repair-attempt/{attempt_id}, ripr://receipt/{receipt_id}, ripr://repair-card/{canonical_id}"
                         || error
                             .data
                             .as_ref()
@@ -278,6 +278,7 @@ async fn sdk_session(
                         || error.data.as_ref().and_then(|data| data.get("resource_templates"))
                             != Some(&serde_json::json!([
                                 "ripr://snapshot/{snapshot_id}", "ripr://gap/{canonical_id}",
+                                "ripr://gap/{canonical_id}/limitation",
                                 "ripr://repair-attempt/{attempt_id}", "ripr://receipt/{receipt_id}",
                                 "ripr://repair-card/{canonical_id}"
                             ]))

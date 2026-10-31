@@ -566,10 +566,10 @@ fn catalog_list_cursors_fail_closed_over_stdio() -> Result<(), String> {
             )
         };
         for (method, field, count) in [
-            ("tools/list", "tools", 9),
+            ("tools/list", "tools", 10),
             ("prompts/list", "prompts", 0),
             ("resources/list", "resources", 1),
-            ("resources/templates/list", "resourceTemplates", 5),
+            ("resources/templates/list", "resourceTemplates", 6),
         ] {
             let baseline = call(&mut session, "plain", method, json!({}))?;
             let catalog = baseline
@@ -772,7 +772,7 @@ fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Resul
         || recovered
             .pointer("/result/tools")
             .and_then(Value::as_array)
-            .is_none_or(|tools| tools.len() != 9)
+            .is_none_or(|tools| tools.len() != 10)
     {
         return Err(format!(
             "protocol controls lost same-session recovery: {recovered}"
@@ -2005,12 +2005,13 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
     let miss = by_id
         .get("unknown-resource")
         .ok_or("missing unknown-resource response")?;
-    let expected_message = "unknown resource; available: ripr://workspace/status; templates: ripr://snapshot/{snapshot_id}, ripr://gap/{canonical_id}, ripr://repair-attempt/{attempt_id}, ripr://receipt/{receipt_id}, ripr://repair-card/{canonical_id}";
+    let expected_message = "unknown resource; available: ripr://workspace/status; templates: ripr://snapshot/{snapshot_id}, ripr://gap/{canonical_id}, ripr://gap/{canonical_id}/limitation, ripr://repair-attempt/{attempt_id}, ripr://receipt/{receipt_id}, ripr://repair-card/{canonical_id}";
     if miss.pointer("/error/data/available") != Some(&json!(["ripr://workspace/status"]))
         || miss.pointer("/error/data/resource_templates")
             != Some(&json!([
                 "ripr://snapshot/{snapshot_id}",
                 "ripr://gap/{canonical_id}",
+                "ripr://gap/{canonical_id}/limitation",
                 "ripr://repair-attempt/{attempt_id}",
                 "ripr://receipt/{receipt_id}",
                 "ripr://repair-card/{canonical_id}"
@@ -2201,9 +2202,9 @@ fn unsupported_inline_version_is_rejected_and_next_request_recovers() -> Result<
         || recovered
             .pointer("/result/tools")
             .and_then(Value::as_array)
-            .is_none_or(|tools| tools.len() != 9)
+            .is_none_or(|tools| tools.len() != 10)
     {
-        return Err("valid inline request did not recover the nine-tool slice surface".into());
+        return Err("valid inline request did not recover the ten-tool slice surface".into());
     }
     Ok(())
 }
@@ -4340,6 +4341,48 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
     if gap_tool != gap_resource {
         return Err(format!(
             "gap tool and resource diverged:\ntool={gap_tool}\nresource={gap_resource}"
+        ));
+    }
+
+    // Limitation pair (#1898): the tool and the `/limitation` resource return
+    // one document, the `/limitation` suffix does not shadow the plain gap
+    // route (the gap resource above still returned the gap document), and the
+    // typed limitation block is present rather than `null`.
+    let limitation_tool = session.call_tool(
+        "limitation-tool",
+        "ripr_get_top_limitation",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let limitation_tool = structured_tool_success(&limitation_tool, "ripr_get_top_limitation")?;
+    let limitation_resource = read_resource_document(
+        &mut session,
+        "limitation-resource",
+        &format!("ripr://gap/{canonical_id}/limitation"),
+        REPLY_TIMEOUT,
+    )?;
+    if limitation_tool != limitation_resource {
+        return Err(format!(
+            "limitation tool and resource diverged:\ntool={limitation_tool}\nresource={limitation_resource}"
+        ));
+    }
+    if limitation_tool
+        .pointer("/schema_version")
+        .and_then(Value::as_str)
+        != Some("ripr-mcp-gap-limitation-v1")
+        || limitation_tool
+            .pointer("/canonical_id")
+            .and_then(Value::as_str)
+            != Some(canonical_id.as_str())
+        || limitation_tool
+            .pointer("/limitation/kind")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        || limitation_tool.pointer("/limitation/stage").is_none()
+        || limitation_tool == gap_tool
+    {
+        return Err(format!(
+            "limitation document lost its typed contract: {limitation_tool}"
         ));
     }
 

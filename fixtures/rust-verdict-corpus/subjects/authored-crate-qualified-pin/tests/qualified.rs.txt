@@ -1,0 +1,19 @@
+#[test]
+fn plus_one_pins_the_doubled_value() {
+    assert_eq!(crate_pin::plus_one(5), 11);
+}
+
+#[test]
+fn bumped_pins_the_quadrupled_value() {
+    assert_eq!(crate_pin::tiers::bumped(3), 14);
+}
+
+#[test]
+fn swallowed_ignores_the_owner() {
+    assert_eq!(crate_pin::swallowed(1), 10);
+}
+
+#[test]
+fn twin_reads_the_module_twin() {
+    assert_eq!(crate_pin::tiers::twin(5), 105);
+}

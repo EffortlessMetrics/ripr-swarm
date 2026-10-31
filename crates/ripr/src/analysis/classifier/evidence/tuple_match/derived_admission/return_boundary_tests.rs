@@ -76,3 +76,57 @@ fn projection_return_boundary_preserves_whole_body_owner_uniqueness() -> Result<
     assert_eq!(admission(&body)?, None);
     Ok(())
 }
+
+#[test]
+fn projection_conditional_or_diverging_exit_before_observation_stays_unverified()
+-> Result<(), String> {
+    // Each exit sits between the owner call and the last observation, so the
+    // later assertions are not unconditionally reachable. The complete
+    // control (no exit) must still promote, and a trailing-only exit after
+    // every observation must not over-reject.
+    let complete = [RECEIPTS, OWNER, LENGTH, IDENTITY, RELATION];
+    assert_eq!(admission(&complete.join("\n"))?, Some(true));
+    for exit in [
+        "if terminal.is_empty() { return; }",
+        "if terminal.is_empty() { return Default::default(); }",
+        "if terminal.is_empty() { panic!(\"empty\"); }",
+        "let _checked = fallible()?;",
+        "match terminal.len() { 0 => return, _ => {} }",
+        "loop { break; }",
+        "match terminal.len() { 0 => unreachable!(), _ => {} }",
+        "if terminal.is_empty() { std::process::exit(1); }",
+    ] {
+        for position in 2..complete.len() {
+            let mut body = complete.to_vec();
+            body.insert(position, exit);
+            assert_eq!(
+                admission(&body.join("\n"))?,
+                None,
+                "exit {exit:?} at position {position}"
+            );
+        }
+        let mut trailing = complete.to_vec();
+        trailing.push(exit);
+        // A block-like exit as the last item would parse as a tail expression.
+        trailing.push("let _after = 0;");
+        assert_eq!(
+            admission(&trailing.join("\n"))?,
+            Some(true),
+            "trailing {exit:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn projection_exit_inside_uninvoked_closure_or_item_does_not_bound() -> Result<(), String> {
+    for prefix in [
+        "let _f = || { if true { return; } };",
+        "fn helper() { if true { return; } }",
+        "let _g = |x: u8| -> Option<u8> { Some(fallible(x)?) };",
+    ] {
+        let body = [RECEIPTS, OWNER, prefix, LENGTH, IDENTITY, RELATION].join("\n");
+        assert_eq!(admission(&body)?, Some(true), "{prefix}");
+    }
+    Ok(())
+}

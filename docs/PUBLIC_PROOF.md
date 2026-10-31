@@ -13,11 +13,11 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | `metrics/public-proof/dx-scoreboard.json` | Speed, memory, CI adoption, pasted-command safety, self-contradictions | ripr 0.11.0 (10e5637) | runner `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor` |
 | `metrics/dx-scoreboard/corpus-full-baseline.json` | Corpus lane, used when the scoreboard receipt did not ingest corpus | 10e5637 | runner `github-hosted-linux-x86_64-4cpu-intel-r-xeon-r-platinum-8370c-cpu-2-80ghz` |
 | `metrics/dx-scoreboard/pilot-ranking-baseline.json` | Pilot ranking lane, used when the scoreboard receipt did not ingest ranking | 72e613e | runner `local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-80ghz` |
-| `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | 807 cases | RIPR-SPEC-0219 |
+| `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | 808 cases | RIPR-SPEC-0219 |
 | `metrics/public-proof/mutation-spot-check.json` | Agreement with real mutation runs | 5 repositories at pinned revisions | cargo-mutants 27.1.0 |
 | `metrics/public-proof/first-run-previous.json` | New-developer walk, earlier release | ripr 0.10.0 | 3 crates |
 | `metrics/public-proof/first-run-current.json` | New-developer walk, later build | ripr 0.11.0 (a7a089e) | 3 crates |
-| `metrics/public-proof/agent-as-user.json` | An agent using only ripr's help to close a real test gap | agent-as-user | docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94 |
+| `metrics/public-proof/agent-as-user.json` | An agent using only ripr's help to close a real test gap | agent-as-user | docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f) |
 | `metrics/public-proof/install.json` | Time to install a prebuilt release | install | one cloud container, not hosted CI |
 | `metrics/public-proof/corpus-manifest.json` | Pinned reference corpus of real repositories | corpus 2026-10-04.5 | copy of the pinned manifest |
 
@@ -49,7 +49,7 @@ By board, so the weak areas show before the full table:
 | Trust | Commands that exit 0 when pointed at a missing repository | 0 commands | <= 0 commands | meets the bar | -2 commands since c6ccf9d (was 2 commands) |
 | Trust | Hostile-repository journeys (odd file names, symlink loops, shallow clones, submodules) where ripr neither finds nor refuses cleanly | 0 journeys | <= 0 journeys | meets the bar | no earlier measurement |
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
-| Trust | Wrong verdicts on hand-checked changes from real repositories | **5.6%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 807 cases: 0.5%) |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | **5.6%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 808 cases: 0.4%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **11.0%** | <= 5.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits where ripr gives no specific verdict | **37.1%** | <= 20.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 2af3f38) |
@@ -106,8 +106,8 @@ Not measured, and why:
 
 Each line below is computed from the receipts above. Detail sections follow.
 
-- **Wrong gaps.** On changes from real repositories ripr reported a gap on 2 of 22 whose tests caught every listed mutant (9.1%): `serde-derive-rename-field-upper`, `serde-derive-rename-variant-lower`. On the authored cases, which were written to fill empty corpus cells, it did so on 2 of 395 (0.5%).
-- **Mostly unsure.** On real-repository changes it abstained on 29 of 36 cases (80.6%); on the authored cases, 267 of 771 (34.6%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Wrong gaps.** On changes from real repositories ripr reported a gap on 2 of 22 whose tests caught every listed mutant (9.1%): `serde-derive-rename-field-upper`, `serde-derive-rename-variant-lower`. On the authored cases, which were written to fill empty corpus cells, it did so on 1 of 395 (0.2%).
+- **Mostly unsure.** On real-repository changes it abstained on 29 of 36 cases (80.6%); on the authored cases, 268 of 772 (34.7%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 12 mutants on seams ripr called ungripped, real mutation testing caught 0 that ripr said nothing would catch; ripr agreed on 12. No false-gap examples are recorded.
 - **Thin ground truth.** Only 75 of 1745 mutants (4.3%) enter an agreement rate. 493 join a ripr seam precisely, and 418 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
@@ -154,7 +154,7 @@ Overclaim examples, as recorded:
 
 ## Verdict corpus
 
-807 hand-labeled changes (RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
+808 hand-labeled changes (RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
 
 This receipt does not record which ripr build produced the observed verdicts, only the corpus state. The rates below cannot be tied to a specific analyzer revision, and they may not describe the current build.
 
@@ -162,13 +162,13 @@ Only the upstream cases come from real repositories. The authored cases were wri
 
 | Rate | All cases | Upstream (real repositories) | Authored |
 | --- | --- | --- | --- |
-| False verdicts (all cases) | 4/807 (0.5%) | 2/36 (5.6%) | 2/771 (0.3%) |
-| False actionable (of discriminated) | 4/417 (1.0%) | 2/22 (9.1%) | 2/395 (0.5%) |
-| False exposed (of not fully discriminated) | 0/390 (0.0%) | 0/14 (0.0%) | 0/376 (0.0%) |
-| False silent (of not fully discriminated) | 0/390 (0.0%) | 0/14 (0.0%) | 0/376 (0.0%) |
-| Ideal verdict | 507/807 (62.8%) | 5/36 (13.9%) | 502/771 (65.1%) |
-| Abstained (limited or silent where acceptable) | 296/807 (36.7%) | 29/36 (80.6%) | 267/771 (34.6%) |
-| Findings with a contradiction | 0/995 (0.0%) | not split by origin | not split by origin |
+| False verdicts (all cases) | 3/808 (0.4%) | 2/36 (5.6%) | 1/772 (0.1%) |
+| False actionable (of discriminated) | 3/417 (0.7%) | 2/22 (9.1%) | 1/395 (0.2%) |
+| False exposed (of not fully discriminated) | 0/391 (0.0%) | 0/14 (0.0%) | 0/377 (0.0%) |
+| False silent (of not fully discriminated) | 0/391 (0.0%) | 0/14 (0.0%) | 0/377 (0.0%) |
+| Ideal verdict | 508/808 (62.9%) | 5/36 (13.9%) | 503/772 (65.2%) |
+| Abstained (limited or silent where acceptable) | 297/808 (36.8%) | 29/36 (80.6%) | 268/772 (34.7%) |
+| Findings with a contradiction | 0/996 (0.0%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -495,7 +495,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `mined-roundtrip-symmetric-mask` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
 | `mined-snapshot-helper-document-separator` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `mined-snapshot-helper-heading-unasserted` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
-| `mined-snapshot-helper-negative-zero` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `mined-snapshot-helper-negative-zero` | authored | discriminated | credited | limited | weakly_exposed | abstained | none |
 | `mined-token-table-pinned-range` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `mined-token-table-unpinned-tilde` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
 | `namesakes-delay-sibling-file-test` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
@@ -521,7 +521,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `old-surcharge-call-expression-input` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `old-tag-boxed-into-wrapper` | authored | partially_discriminated | gap | limited | weakly_exposed | abstained | none |
 | `old-tip-duplicative-tests` | authored | discriminated | credited | credited | exposed | ideal | none |
-| `old-title-through-format-macro` | authored | discriminated | credited | limited | propagation_unknown | abstained | none |
+| `old-title-through-format-macro` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `old-tool-build-script-limit` | authored | discriminated | credited | limited | no_static_path | abstained | none |
 | `old-tool-exit-code-subprocess` | authored | discriminated | credited | limited | no_static_path | abstained | none |
 | `old-unit-assert-matches-macro` | authored | discriminated | credited | credited | exposed | ideal | none |
@@ -534,6 +534,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `pricing-gold-threshold` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `pricing-quote-total-field` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `pricing-tier-label-gold` | authored | discriminated | credited | credited | exposed | ideal | none |
+| `proof-harness-calls-owner-no-test` | authored | not_discriminated | gap | limited | no_static_path | abstained | none |
 | `push-after-early-return-empty-assert` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `push-after-early-return-seeded-assert` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `push-seeded-unguarded-assert` | authored | discriminated | credited | credited | exposed | ideal | none |
@@ -1038,13 +1039,13 @@ Install, from its own receipt:
 
 ## An agent using only ripr's help
 
-One agent per crate was given a real test gap and only ripr's own help output, and was scored against a mutation answer key. This is one run per crate, not a rate. Evidence: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94.
+One agent per crate was given a real test gap and only ripr's own help output, and was scored against a mutation answer key. This is one run per crate, not a rate. The last two columns are scripted, not agent behaviour: what the first `ripr check` writes (stdout plus stderr) and how many gaps `--format agent` names on the unfixed gap commit. Evidence: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f).
 
-| Crate | Answer-key mutants caught | ripr commands to fix | Tool steps to fix | False weak findings after the fix |
-| --- | --- | --- | --- | --- |
-| bytesize | 3 | 7 | 8 | 0 |
-| humantime | 3 | 8 | 9 | 4 |
-| semver | 3 | 10 | 9 | 1 |
+| Crate | Answer-key mutants caught | ripr commands to fix | Tool steps to fix | False weak findings after the fix | Gaps `--format agent` names before the fix | First `check` bytes: human / agent / JSON |
+| --- | --- | --- | --- | --- | --- | --- |
+| bytesize | 3 | 7 | 8 | 0 | 2 | 3773 / 773 / 57586 |
+| humantime | 3 | 8 | 9 | 4 | 0 | 3797 / 391 / 110467 |
+| semver | 3 | 10 | 9 | 1 | 4 | 3155 / 984 / 70880 |
 
 Across the runs: fix success 100.0%, stale re-check cycles n/a, white-box tests written only to satisfy ripr 0.
 

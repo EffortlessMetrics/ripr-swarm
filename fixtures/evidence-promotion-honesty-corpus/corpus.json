@@ -5,6 +5,20 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_fixture_receiver_extension_iter",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/fixture_receiver_extension_iter",
+      "probe_family": "return_value",
+      "vector": "raw_module_associated_extension_iterator_discards_literal_fixture_data_before_projection",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
       "id": "py_while_counter_past_bound",
       "language": "python",
       "tier": "pure",
@@ -1429,6 +1443,60 @@
         {
           "type": "expected_finding_count",
           "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "typescript_private_method_unknown",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_private_method_unknown",
+      "vector": "private_member_without_tests_retains_unknown_reach",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        }
+      ]
+    },
+    {
+      "id": "typescript_nested_private_method_partial",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_nested_private_method_partial",
+      "vector": "private_member_cannot_borrow_public_reach",
+      "assertions": [
+        {
+          "type": "expected_partial_analysis",
+          "limitation_kind": "language_scope_unsupported",
+          "producer_stage": "language_adapter",
+          "path": "src/counter.ts",
+          "affected_items": 1,
+          "detail_contains": "typescript_owner_extraction_partial: unextracted private class member"
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 0
         },
         {
           "type": "must_not_promote"
@@ -6473,6 +6541,45 @@
       "tier": "pure",
       "source_fixture": "fixtures/match_arm_tuple_derived_return_before_assertion",
       "vector": "relation_assertion_after_direct_return_does_not_certify_derived_tuple_arm",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_tuple_derived_conditional_exit_before_assertion_no_promotion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/match_arm_tuple_derived_conditional_exit_before_assertion",
+      "vector": "relation_assertion_after_conditional_exit_does_not_certify_derived_tuple_arm",
       "assertions": [
         {
           "type": "must_not_report_clean"

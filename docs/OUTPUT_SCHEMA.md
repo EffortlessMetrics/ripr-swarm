@@ -999,6 +999,29 @@ count. `summary.changed_rust_files` stays Rust-adapter-only (#2103):
 preview-language files never inflate it, so it is `0` for a Python-only diff
 by design; read `changed_files_by_language` for other languages.
 
+`language_completeness` (additive, no `schema_version` bump, #11272) is the
+per-language projection of the shared completeness view that the editor, MCP
+and SARIF surfaces already read. It is emitted on every `check --json` run
+that built the view, as one compact member after the other optional members:
+
+```json
+"language_completeness": {"schema_version":"language_completeness.v1","mode":"diff","completeness":"complete","total_findings":0,"languages":[{"language":"rust","status":"complete_zero","findings":0,"limitations":[],"disclosure":"silent"}]}
+```
+
+- `mode` is `diff` or `repo`; `completeness` is the aggregate's `complete` or
+  `incomplete` (fail closed when no language evidenced anything).
+- `languages[].status` is the sealed child status: `complete`, `complete_zero`
+  (the adapter ran and found nothing), `partial`, `unavailable`, `invalid`,
+  `failed`, `unsupported`, `not_selected` or `no_current_scope`. An empty
+  `findings` array alone cannot tell `complete_zero` from `not_selected`; this
+  row can.
+- `languages[].disclosure` says where else the row is public: `silent`,
+  `language_run` (a non-success `language_runs` row), `typed_limitation` or
+  `advisory_only`.
+- The projection never strengthens a child. It reads the same rows the
+  `language_runs` compatibility projection is derived from, and it carries no
+  correctness, test-adequacy or mutation claim.
+
 `canonical_next_action` (additive, no `schema_version` bump, #7258) is the
 same DTO RepairCard and agent-status JSON already embed. Check JSON carries
 it only when the CLI render path has a declared diff provenance.
@@ -1042,6 +1065,17 @@ positions, so the churn is line-ending-only and probes treat the text as
 unchanged. It is the one limitation kind that may ride on a complete outcome
 (`complete_with_findings` / `complete_no_findings`); every other kind marks the
 outcome incomplete. Human output renders it without the incomplete-scope hedge.
+
+`verification_only_change` (RIPR-SPEC-0368, #10749) is the second change-shape
+disclosure that may ride on a complete outcome. Changed lines that are
+verifier-only text (contract attributes such as `#[requires]`/`#[ensures]`,
+Creusot `#[logic]` items, `proof_assert!`/`snapshot!`/`ghost!`/`pearlite!` and
+Prusti `prusti_assert!`/`body_invariant!`) seed no probe, so they never become
+a finding or an actionable repair start. One aggregate limitation at
+`probe_generation` (human output: "change point detection") reports the changed-line count, the file count and the files
+(bounded), with the recovery to re-run the verifier. A contract-only diff stays
+`no_behavioral_candidates` but no longer reports an empty `limitations` list.
+ripr does not evaluate contracts, proofs or ghost code.
 
 `unevaluated_condition` (#8714) discloses conditional assertion credit: a
 credited test assertion sits under a branch condition static analysis cannot
@@ -1984,6 +2018,9 @@ The evidence-first fields are additive in schema `0.2`:
   `[]`, and `authority_boundary` stays `"preview_advisory_only"` (TypeScript
   remains preview). Only `incomplete_repair_packet` is eligible to flip; all
   other categories stay non-actionable. `schema_version` is unchanged.
+  `private_member_reach_unknown` names unmodeled reach through public callers
+  into a TypeScript private method. It infers neither a related test nor a
+  missing assertion; its preview card retains the reach investigation route.
   When flipped, the actionability fields are rewritten to read as actionable
   (RIPR-SPEC-0088 §PR8) so they do not contradict the complete packet:
   `repair_route` names the actual repair action (the suggested assertion shape
@@ -2280,7 +2317,7 @@ JSON fields:
       "risk_class": "mock interaction payload gap",
       "evidence_kind": "mock_interaction",
       "disposition": "candidate_future_support",
-      "gap_state": "advisory",
+      "gap_state": "unknown",
       "actionability_category": "incomplete_repair_packet",
       "repair_packet_ready": false,
       "must_remain_non_actionable": true,
@@ -2604,7 +2641,8 @@ JSON fields:
   `rust_caller_loop_selector_unresolved`, or
   `rust_pinned_shape_unresolved`, or
   `rust_indirect_owner_call_unresolved`, or
-  `proof_harness_not_evaluated`.
+  `proof_harness_not_evaluated`, or
+  `typescript_workspace_discovery_truncated`.
 - `rust_field_match_selector_unresolved`: a plain owner-parameter field selects a changed statement-free tail match. A strong oracle in a directly calling test exists, but the field value at that invocation and whether an assertion observes that invocation's return are unresolved. The match header and unique direct-arm lines may carry this metadata; computed selectors, local bindings, nested matches, guarded arms and ambiguous same-line subjects are excluded. This does not establish an `Option` type, same-invocation proof, coverage, or absence of a test gap. Finding/probe IDs, classes, RIPR stages, missing discriminators and raw class counts are unchanged. The existing typed-limitation contract withholds canonical repair-gap projection and can change repair readiness and derived gate routing; this names uncertainty, not resolved test debt. Inspect the existing call/assertion before adding a test. The optional kind uses the existing wire shape/version; consumers still require their own producer compatibility qualification.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
@@ -3208,6 +3246,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_indirect_owner_call_unresolved` -- (RIPR-SPEC-0240, additive, #9442, #9443) A test reaches the changed owner without a call ripr can pair with its assertion: it passes the owner as a function value (`.map(owner)`, an untyped `let f = owner;` binding; a typed `fn` pointer binding is left to the typed function-pointer reading), the changed line is an item-position macro invocation that generates the owner, or the owner call is the only argument of `block_on` or a local helper polling a `Future`. A verified polling helper whose call and standard primitives resolve under RIPR-SPEC-0197 supplies an owner-return pin instead; unsupported or shadowed wrappers receive no polling-helper pin and remain subject to the existing unresolved-executor limitations. A `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `rust_caller_loop_selector_unresolved` -- (RIPR-SPEC-0240, additive, #5503) The changed integer match arm is fed by a bounded `for` loop inside an `Iterator::next` whose selector range includes the arm, and a related test collects the iterator and compares the whole collection. ripr reads the range (with its file and line) but does not prove the loop runs for the test's input or that the arm's value reaches the compared items, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `proof_harness_not_evaluated` -- (RIPR-SPEC-0367, additive) A Rust function carrying `#[kani::proof]` or `#[kani::proof_for_contract]` (or the same path under `cfg_attr`) calls the changed owner and no test path is established. The harness is neither a test nor oracle evidence and gains no credit; the class stays `no_static_path` and the next step says a proof harness exists that ripr does not evaluate. Not a coverage claim.
+- `typescript_workspace_discovery_truncated` -- (RIPR-SPEC-0240, additive, #11767) TypeScript workspace discovery stopped at `RIPR_TS_MAX_WORKSPACE_FILES` before covering the workspace, so the test universe is incomplete. A TypeScript or JavaScript finding that would be `no_static_path` is `static_unknown` instead, with this kind; findings that have a related test are unchanged. It names an incomplete walk, not a coverage claim; the existing typed-limitation contract withholds canonical repair-gap projection. The optional kind uses the existing wire shape/version.
 
 Reserved `flow_sink` values:
 
@@ -4714,7 +4753,9 @@ Field contract:
     budget cut, with the same count/source fields and `control:
     "RIPR_PILOT_SEAM_BUDGET"`. Its default is 2,000; a configured value
     retains `limit_source: "configured"`. The repair route names the pilot
-    budget that actually fired, even when an inventory cap also applied.
+    budget that actually fired. When an independent inventory cap also
+    applies, a separate `repo_seam_limit_applied` entry names its own control
+    and the outer inventory total; the pilot entry also reports that total.
     An inactive pilot budget does not relabel an inventory limitation.
   - `category: "typescript_diff_first"` appears when a TS/JS-predominant
     workspace has TS/JS files, no Rust files, and zero classified seams.
@@ -8945,7 +8986,7 @@ Field contract:
     "attempt_id": "<repair-attempt-id>",
     "attempt_state": "failed",
     "edit_cage_verdict": "violated",
-    "error": "repair attempt `<id>` is not receipt-ready: state `failed`, current true, verdict `violated`",
+    "error": "repair attempt `<id>` is not receipt-ready: state `failed`, current true, verdict `violated`; run `ripr agent status` to see why, then start a new attempt with `ripr agent repair`",
     "narration": ["<named cause>", "<recovery>"]
   }
   ```
@@ -13905,8 +13946,12 @@ stale reviews stay visible; they are not silently attributed to the new head.
 
 This attribution is advisory. It does not establish substantive or independent
 review, required approval counts, protection satisfaction, integration proof,
-or permission to merge. The retained current-head control preserves the
-existing advisory action; the command performs no PR mutation.
+or permission to merge. A CLEAN packet's `safe_next_action` is now
+`inspect final merge gates`, not `merge`; external consumers of schema `0.1`
+must handle the changed value. An empty rollup still leaves required-context
+completeness unknown. The action calls for final judgment and the normal
+server-enforced merge route when eligible, not settings discovery or an endless
+wait. The command performs no PR mutation.
 
 ## Report Packet Index
 
@@ -14178,6 +14223,12 @@ Report packet index field contract:
 
 Field contract:
 
+- `open_prs[].checks_rollup_available` is true only when GitHub returned an
+  array, including a valid empty array. A missing, null, or non-array rollup
+  is unknown, not evidence that no checks exist. `checks_summary` distinguishes
+  passed, neutral/skipped, pending, failed, and unknown entries. An unknown
+  rollup or check calls for inspection; this advisory packet does not establish
+  required-check completeness or authorize a merge.
 - `queue_disposition[].disposition` is advisory. It may be
   `merge_candidate`, `needs_integration_review`, `needs_review`, `close_duplicate`,
   `superseded`, `needs_fresh_validation`, `needs_owner_decision`, or
@@ -16638,16 +16689,17 @@ Field contract:
   `limitations[]` (`declined_file_count`, up to three `declined_files[]` of
   `{path, reason}`, `repair_route`). Packet admission remains independent of
   this status.
-- `limitations[]` — present for a pilot artifact cap, with one object carrying
+- `limitations[]` — present for a pilot artifact cap, with each object carrying
   `category`, `seams_analyzed`, `seams_total`, `limit_source`, `control` and
   `repair_route`. An inventory-only cut names `"repo_seam_limit_applied"` and
   `"RIPR_REPO_EXPOSURE_SEAM_LIMIT"`; a pilot cut names
   `"pilot_seam_budget_applied"` and `"RIPR_PILOT_SEAM_BUDGET"`.
   The existing repo-exposure cap authority supplies the same default/configured
   repair routes. An inactive pilot budget cannot relabel the inventory cut.
-  When both fire, the pilot cut's total is the already-capped inventory; its
-  route describes lifting only the pilot budget. Full recovery requires
-  disabling every active cap. Uncapped output has no stale cap limitation.
+  When both independently fire, both entries are present; the pilot entry
+  reports the outer inventory total, and each entry names its own recovery
+  control. Full recovery requires lifting every active cap. Uncapped output
+  has no stale cap limitation.
 - `analysis_outcome_status` — the producer outcome projection state. It is
   `"complete"` or `"incomplete"` when a typed diff outcome is present,
   `"missing"` or `"invalid"` when a required producer artifact cannot be
@@ -19109,7 +19161,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.124",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.125",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -19894,7 +19946,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.124",
+      "schema_version": "1.125",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

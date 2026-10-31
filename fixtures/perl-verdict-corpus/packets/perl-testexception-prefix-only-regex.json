@@ -17,36 +17,7 @@
       }
     }
   ],
-  "dynamic_boundaries": [
-    {
-      "boundary_id": "boundary:t/forms.t:eval_or_string_code:1",
-      "confidence": "high",
-      "file_id": "file:t/forms.t",
-      "kind": "eval_or_string_code",
-      "owner_id": null,
-      "provenance_refs": [],
-      "range": {
-        "end_column": 6,
-        "end_line": 13,
-        "start_column": 0,
-        "start_line": 13
-      }
-    },
-    {
-      "boundary_id": "boundary:t/forms.t:eval_or_string_code:2",
-      "confidence": "high",
-      "file_id": "file:t/forms.t",
-      "kind": "eval_or_string_code",
-      "owner_id": null,
-      "provenance_refs": [],
-      "range": {
-        "end_column": 6,
-        "end_line": 18,
-        "start_column": 0,
-        "start_line": 18
-      }
-    }
-  ],
+  "dynamic_boundaries": [],
   "files": [
     {
       "digest": "sha256:4475a27cfb3874b85283972e4040c4a326890d0bb361163f23d013b96541aa65",
@@ -94,22 +65,6 @@
     ]
   },
   "limitations": [
-    {
-      "evidence_refs": [
-        "file:t/forms.t"
-      ],
-      "kind": "eval_or_string_code",
-      "limitation_id": "limitation:boundary:t/forms.t:eval_or_string_code:1",
-      "message": "Dynamic boundary `eval {` detected in t/forms.t; ripr fails closed on this boundary kind."
-    },
-    {
-      "evidence_refs": [
-        "file:t/forms.t"
-      ],
-      "kind": "eval_or_string_code",
-      "limitation_id": "limitation:boundary:t/forms.t:eval_or_string_code:2",
-      "message": "Dynamic boundary `eval {` detected in t/forms.t; ripr fails closed on this boundary kind."
-    },
     {
       "evidence_refs": [],
       "kind": "partial_emitter",
@@ -226,7 +181,7 @@
       "confidence": "medium",
       "expected_expression": null,
       "expression": "like($@, qr/zero not allowed/, 'zero is refused')",
-      "kind": "predicate_boundary_assertion",
+      "kind": "exception_observer",
       "observed_sink": null,
       "oracle_id": "oracle:t/forms.t:like:465-514",
       "provenance_refs": [
@@ -238,7 +193,7 @@
         "start_column": 0,
         "start_line": 14
       },
-      "strength": "weak_broad",
+      "strength": "strong_exact",
       "target_owner_id": null,
       "test_id": "test:t/forms.t"
     },

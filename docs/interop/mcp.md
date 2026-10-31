@@ -54,7 +54,13 @@ claude mcp add --scope project ripr -- ripr mcp --stdio
 
 # Codex: adds an entry to its user config
 codex mcp add ripr -- ripr mcp --stdio
+
+# Cursor: writes .cursor/mcp.json (same mcpServers shape), keeping your other servers
+ripr init --agents cursor --mcp
 ```
+
+Cursor reads the same `mcpServers` entry from `.cursor/mcp.json`; see the
+[agent quickstart](../AGENT_QUICKSTART.md) for the matching Cursor rule file.
 
 Equivalent Codex `config.toml` entry:
 
@@ -144,6 +150,7 @@ ripr_workspace_status   → root, authority, session facts (no evidence)
 ripr_refresh            → one bounded static analysis, commits the snapshot
 ripr_list_gaps          → deterministic bounded working set (summaries only)
 ripr_get_gap            → one item's complete bounded evidence
+ripr_get_top_limitation → the earliest producer limitation for one item
 ripr_prepare_repair     → readiness-gated in-memory repair transaction
 ripr_get_repair_attempt → one session or durable attempt, read-only
 ripr_get_receipt_status → one attempt's receipt state, read-only
@@ -153,6 +160,35 @@ ripr_list_repair_attempts → durable attempt discovery, before or after refresh
 
 Status and list calls never return the full evidence graph; read one item at
 a time through the tool or the resource.
+
+## Top limitation
+
+`ripr_get_top_limitation` (and the equivalent resource
+`ripr://gap/{canonical_id}/limitation`) returns the earliest producer fact that
+prevents a safe repair route for one canonical item of the current completed
+snapshot, as a `ripr-mcp-gap-limitation-v1` document. The `limitation` block
+carries `kind`, `stage`, `reason`, `recovery`, `retryable`, `prohibited_claim`
+and a `restart` identity (`snapshot_id`, `canonical_id`, `route`). It re-uses
+the existing vocabulary and never invents a limitation:
+
+| `stage` | `kind` | Source |
+| --- | --- | --- |
+| `producer_static_limit` | the finding's `static_limit_kind` token | `describe()` / `next_step()` of the shared static-limit vocabulary |
+| `seam_admission` | a shared seam-validator code (for example `seam_already_gripped`) | the validator behind `ripr repair` |
+| `repair_readiness` | the first failing readiness gate (for example `fix_site_not_established`) | the commit-time readiness block of `ripr_get_gap` |
+| `none` | `no_limitation_established` | no limiting producer fact; not a runtime or sufficiency result |
+
+Order is upstream first: a producer static limit outranks every readiness
+gate, and the seam validator outranks the finding-level gates, so a
+renderer-convenient limitation never replaces the fact that owns the stop. An
+item with no limitation answers with the explicit `no_limitation_established`
+kind, never `null`. Only a saved-worktree withhold is `retryable` without a
+source change. The read uses committed facts, so repeated reads are identical
+and analysis is never rerun. Failures are the gap read's: `stale_snapshot`,
+`item_not_found`, `no_snapshot`, `workspace_unavailable`, `result_too_large`.
+The resource route reads the whole canonical id before the `/limitation`
+suffix; an existing item whose id itself ends in `/limitation` keeps the plain
+gap route.
 
 ## Durable attempt discovery
 
@@ -195,6 +231,7 @@ runs no tests or verification and grants no execution or edit authority.
 | Tool (`base?`, `source?`) | `ripr_refresh` |
 | Tool (`snapshot_id?`, `offset?`, `omitted_offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
+| Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_top_limitation` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
 | Tool (`attempt_id`) | `ripr_get_repair_attempt` |
 | Tool (`receipt_id`) | `ripr_get_receipt_status` |
@@ -203,6 +240,7 @@ runs no tests or verification and grants no execution or edit authority.
 | Resource (`application/json`) | `ripr://workspace/status` |
 | Resource template | `ripr://snapshot/{snapshot_id}` |
 | Resource template | `ripr://gap/{canonical_id}` |
+| Resource template | `ripr://gap/{canonical_id}/limitation` |
 | Resource template | `ripr://repair-attempt/{attempt_id}` |
 | Resource template | `ripr://receipt/{receipt_id}` |
 | Resource template | `ripr://repair-card/{canonical_id}` |
@@ -301,6 +339,7 @@ validate every document the server emits:
 | Refresh-time attempt document | `ripr-mcp-refresh-v1` | `ripr_refresh` tool result |
 | Gap list | `ripr-mcp-gap-list-v4` | `ripr_list_gaps` result |
 | Single gap | `ripr-mcp-gap-v1` | `ripr_get_gap` result |
+| Gap limitation | `ripr-mcp-gap-limitation-v1` | `ripr_get_top_limitation` result |
 | Repair attempt list | `ripr-mcp-repair-attempt-list-v1` | durable attempt discovery |
 | Repair packet | `ripr-mcp-repair-packet-v1` | `ripr_prepare_repair` result |
 | Repair attempt | `ripr-mcp-repair-attempt-v1` | attempt documents |
@@ -793,7 +832,7 @@ An invalid root does not stop the server. Status reports
 `workspace_state: "unavailable"` with a `root.error_code`, and the tool result
 adds a second text content item that names the cause and the recovery
 (restart with `--root <repository>`). An unknown resource URI is
-rejected with the valid static URI and all five resource templates in the
+rejected with the valid static URI and all six resource templates in the
 human-readable message. The same routes remain available separately in
 `error.data.available` and `error.data.resource_templates`. Templates require
 valid resource identities; listing a template does not promise its resource
