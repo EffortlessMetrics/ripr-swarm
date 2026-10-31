@@ -11,3 +11,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — fixture_receiver_coincident_data (2)
+
+Reason:
+RIPR-SPEC-0240: human summary wording re-blessed after merging origin/main (formatting only; no classification change)
+
+Command:
+`cargo xtask goldens bless fixture_receiver_coincident_data --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

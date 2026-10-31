@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — fixture_receiver_unread_data (3)
+
+Reason:
+RIPR-SPEC-0240: human summary wording re-blessed after merging origin/main (formatting only; no classification change)
+
+Command:
+`cargo xtask goldens bless fixture_receiver_unread_data --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

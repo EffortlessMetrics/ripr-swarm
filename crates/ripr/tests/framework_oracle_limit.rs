@@ -1255,37 +1255,36 @@ fn a_fixture_receiver_shape_that_differs_keeps_the_finding() -> Result<(), Strin
 }
 
 /// #9766: the literal-fixture propagation claim rides only on an assertion
-/// that passed the fixture-receiver gate. A forwarding-entry exact assertion
-/// over an empty (unreadable) fixture is credited by the chain-entry route and
-/// must not borrow the fixture gate's literal-data propagation fact.
+/// that passed the fixture-receiver gate. An exact assertion on a forwarding
+/// entry that builds the literal receiver itself is credited by the
+/// chain-entry route (the test never calls the owner), and must not borrow
+/// the fixture gate's literal-data propagation fact or exposure.
 #[test]
 fn fixture_receiver_gate_does_not_lend_propagation_to_a_forwarding_entry_pin() -> Result<(), String>
 {
-    let source = cart_source("        assert_eq!(fixture().report(), 0);")
-        .replace(
-            "vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)]",
-            "vec![]",
-        )
-        .replace(
-            "        self.items.iter().map(|(_, price)| price).sum()\n    }\n",
-            "        self.items.iter().map(|(_, price)| price).sum()\n    }\n    pub fn report(&self) -> u32 {\n        self.total()\n    }\n",
-        );
+    let source = cart_source("        assert_eq!(report(), 42);").replace(
+        "#[cfg(test)]",
+        "pub fn report() -> u32 {\n    Cart { items: vec![(\"a\".to_string(), 30), (\"b\".to_string(), 12)] }.total()\n}\n#[cfg(test)]",
+    );
     assert!(
-        source.contains("fn report"),
+        source.contains("pub fn report() -> u32"),
         "fixture construction: {source}"
     );
     assert!(
-        source.contains("items: vec![],"),
+        source.contains("assert_eq!(report(), 42)"),
         "fixture construction: {source}"
     );
     let findings = findings_on(&source, &cart_edit(), 6)?;
     assert!(!findings.is_empty(), "the edited line yields a finding");
     assert!(
-        findings.iter().all(|finding| !finding
-            .ripr
-            .propagate
-            .summary
-            .contains("Literal fixture receiver data")),
+        findings
+            .iter()
+            .all(|finding| finding.class != ExposureClass::Exposed
+                && !finding
+                    .ripr
+                    .propagate
+                    .summary
+                    .contains("Literal fixture receiver data")),
         "{findings:?}"
     );
     Ok(())
