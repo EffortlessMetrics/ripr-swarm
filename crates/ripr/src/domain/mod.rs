@@ -16,7 +16,8 @@ mod git_candidate;
 mod identity;
 mod intervention_study;
 mod language;
-pub(crate) mod language_availability;
+#[doc(hidden)]
+pub mod language_availability;
 pub(crate) mod language_capability;
 #[cfg(test)]
 mod language_capability_drift;

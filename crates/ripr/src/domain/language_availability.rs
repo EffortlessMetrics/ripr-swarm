@@ -13,7 +13,7 @@ use super::LanguageId;
 
 /// Support tier a language is documented at. The resolver never promotes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SupportTier {
+pub enum SupportTier {
     Stable,
     UsableAlpha,
     Preview,
@@ -21,7 +21,7 @@ pub(crate) enum SupportTier {
 }
 
 impl SupportTier {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             SupportTier::Stable => "stable",
             SupportTier::UsableAlpha => "usable_alpha",
@@ -31,7 +31,7 @@ impl SupportTier {
     }
 
     /// Conservative tier for a language: only Rust is stable.
-    pub(crate) fn for_language(language: LanguageId) -> Self {
+    pub fn for_language(language: LanguageId) -> Self {
         match language {
             LanguageId::Rust => SupportTier::Stable,
             _ => SupportTier::Preview,
@@ -41,7 +41,7 @@ impl SupportTier {
 
 /// What the user said in `[languages]`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ConfiguredIntent {
+pub enum ConfiguredIntent {
     /// The language is not mentioned; policy decides.
     Unspecified,
     Enabled,
@@ -51,7 +51,7 @@ pub(crate) enum ConfiguredIntent {
 
 /// Whether detection alone may enable a language when the user is silent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AutoDetectionPolicy {
+pub enum AutoDetectionPolicy {
     /// Detection is reported but never enables the language.
     Never,
     /// A detected, compiled language is enabled when not configured.
@@ -59,7 +59,7 @@ pub(crate) enum AutoDetectionPolicy {
 }
 
 impl AutoDetectionPolicy {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             AutoDetectionPolicy::Never => "never",
             AutoDetectionPolicy::WhenDetected => "when_detected",
@@ -70,7 +70,7 @@ impl AutoDetectionPolicy {
 /// Observed facts for one language. Built by the caller from config, the
 /// workspace scan and the binary; the resolver adds no facts of its own.
 #[derive(Clone, Debug)]
-pub(crate) struct LanguageAvailabilityInput {
+pub struct LanguageAvailabilityInput {
     pub language: LanguageId,
     pub support: SupportTier,
     /// Relevant project markers or files are present.
@@ -89,7 +89,7 @@ pub(crate) struct LanguageAvailabilityInput {
 
 impl LanguageAvailabilityInput {
     /// Input with the compiled fact read from this binary's features.
-    pub(crate) fn for_language(language: LanguageId) -> Self {
+    pub fn for_language(language: LanguageId) -> Self {
         Self {
             language,
             support: SupportTier::for_language(language),
@@ -106,7 +106,7 @@ impl LanguageAvailabilityInput {
 
 /// The user-facing availability state. Closed vocabulary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AvailabilityState {
+pub enum AvailabilityState {
     DetectedCompiledEnabled,
     DetectedCompiledDisabled,
     DetectedNotCompiled,
@@ -121,7 +121,7 @@ pub(crate) enum AvailabilityState {
 }
 
 impl AvailabilityState {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             AvailabilityState::DetectedCompiledEnabled => "detected_compiled_enabled",
             AvailabilityState::DetectedCompiledDisabled => "detected_compiled_disabled",
@@ -140,7 +140,7 @@ impl AvailabilityState {
 
 /// One resolved availability report for a language.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LanguageAvailabilityReport {
+pub struct LanguageAvailabilityReport {
     pub language: LanguageId,
     pub support: SupportTier,
     pub project_detected: bool,
@@ -167,7 +167,7 @@ pub(crate) struct LanguageAvailabilityReport {
 /// [`AutoDetectionPolicy::WhenDetected`] plus detection plus a compiled
 /// adapter enables the language. Effective enablement never implies the
 /// adapter ran.
-pub(crate) fn resolve_language_availability(
+pub fn resolve_language_availability(
     input: &LanguageAvailabilityInput,
 ) -> LanguageAvailabilityReport {
     let language = input.language;
@@ -232,7 +232,7 @@ pub(crate) fn resolve_language_availability(
 
 /// Resolve every input, preserving input order so each language keeps its
 /// own independent state in a mixed-language workspace.
-pub(crate) fn resolve_language_availability_all(
+pub fn resolve_language_availability_all(
     inputs: &[LanguageAvailabilityInput],
 ) -> Vec<LanguageAvailabilityReport> {
     inputs.iter().map(resolve_language_availability).collect()
@@ -517,5 +517,71 @@ mod tests {
         assert_eq!(SupportTier::Planned.as_str(), "planned");
         assert_eq!(SupportTier::UsableAlpha.as_str(), "usable_alpha");
         assert_eq!(AutoDetectionPolicy::Never.as_str(), "never");
+    }
+
+    #[test]
+    fn explicit_disable_outranks_missing_adapter_and_detection() {
+        // Detected + not compiled + explicitly disabled: not enabled, and no
+        // build or enable route is pushed at a user who opted out.
+        let r = resolve(&input(
+            LanguageId::TypeScript,
+            true,
+            false,
+            ConfiguredIntent::Disabled,
+            AutoDetectionPolicy::WhenDetected,
+        ));
+        assert_eq!(r.state, AvailabilityState::NotEnabled);
+        assert!(!r.effective_enabled && r.configured_disabled);
+        assert!(r.remediation.is_empty());
+        assert!(r.non_claims.iter().any(|s| s.contains("not analyzed")));
+        // Undetected + not compiled + disabled is the same named state.
+        let r = resolve(&input(
+            LanguageId::Perl,
+            false,
+            false,
+            ConfiguredIntent::Disabled,
+            AutoDetectionPolicy::Never,
+        ));
+        assert_eq!(r.state, AvailabilityState::NotEnabled);
+        assert!(r.remediation.is_empty());
+    }
+
+    #[test]
+    fn adapter_limitation_cannot_enable_an_unavailable_or_undetected_language() {
+        // A stale "ran with limitations" fact never overrides enablement.
+        let mut i = input(
+            LanguageId::Python,
+            false,
+            true,
+            ConfiguredIntent::Unspecified,
+            AutoDetectionPolicy::WhenDetected,
+        );
+        i.adapter_ran_with_limitations = Some(true);
+        let r = resolve(&i);
+        assert_eq!(r.state, AvailabilityState::NotEnabled);
+        assert!(!r.effective_enabled);
+        i.project_detected = true;
+        i.compiled_available = false;
+        assert_eq!(resolve(&i).state, AvailabilityState::DetectedNotCompiled);
+        // Enabled but undetected: the ran-with-limitations fact is honored.
+        i.compiled_available = true;
+        i.project_detected = false;
+        i.configured = ConfiguredIntent::Enabled;
+        assert_eq!(
+            resolve(&i).state,
+            AvailabilityState::AdapterRanWithLimitations
+        );
+    }
+
+    #[test]
+    fn available_states_carry_no_remediation() {
+        let r = resolve(&input(
+            LanguageId::TypeScript,
+            true,
+            true,
+            ConfiguredIntent::Enabled,
+            AutoDetectionPolicy::Never,
+        ));
+        assert!(r.remediation.is_empty());
     }
 }
