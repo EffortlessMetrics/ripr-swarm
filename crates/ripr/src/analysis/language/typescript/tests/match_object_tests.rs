@@ -966,3 +966,94 @@ fn colon_proto_is_not_a_listed_match_object_field() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// RIPR-SPEC-0250 rule 4 (#11256): a scalar literal is not an object subset.
+#[test]
+fn match_object_with_a_scalar_literal_reads_unknown_while_containers_keep_their_grade() {
+    let body = |expected: &str| {
+        profile_test(&format!(
+            "  expect(buildProfile(\"bo\", 18)).toMatchObject({expected});"
+        ))
+    };
+    for expected in ["\"foo_bar\"", "'x'", "5", "-1", "true", "null"] {
+        let tests = extract_tests(Path::new("tests/profile.test.ts"), &body(expected));
+        let assertion = &tests[0].assertions[0];
+        assert_eq!(assertion.matcher, "toMatchObject", "{expected}");
+        assert_eq!(
+            assertion.expected_value_or_variant.as_deref(),
+            Some(expected),
+            "the parsed subject must be the scalar: {expected}"
+        );
+        assert_eq!(
+            (
+                assertion.oracle_kind.clone(),
+                assertion.oracle_strength.clone()
+            ),
+            (OracleKind::Unknown, OracleStrength::Unknown),
+            "{expected}"
+        );
+    }
+    // Controls: an object, an array and a negated scalar keep their grade.
+    for expected in ["{ adult: true }", "{}", "[1, 2]"] {
+        let tests = extract_tests(Path::new("tests/profile.test.ts"), &body(expected));
+        assert_eq!(
+            (
+                tests[0].assertions[0].oracle_kind.clone(),
+                tests[0].assertions[0].oracle_strength.clone()
+            ),
+            (OracleKind::RelationalCheck, OracleStrength::Weak),
+            "{expected}"
+        );
+    }
+    let negated = profile_test("  expect(buildProfile(\"bo\", 18)).not.toMatchObject(\"x\");");
+    let tests = extract_tests(Path::new("tests/profile.test.ts"), &negated);
+    assert_eq!(
+        (
+            tests[0].assertions[0].oracle_kind.clone(),
+            tests[0].assertions[0].oracle_strength.clone()
+        ),
+        (OracleKind::RelationalCheck, OracleStrength::Weak)
+    );
+}
+
+#[test]
+fn match_object_scalar_names_its_own_limitation_and_withholds_the_packet() -> Result<(), String> {
+    let scalar = profile_finding(
+        "match-object-scalar",
+        &profile_test("  expect(buildProfile(\"bo\", 18)).toMatchObject(\"bo\");"),
+    )?;
+    assert!(
+        scalar
+            .evidence
+            .iter()
+            .any(|line| line == "typescript_limitation: typescript_match_object_scalar_unresolved"),
+        "{:?}",
+        scalar.evidence
+    );
+    // The scalar is not described as an unrecognised matcher.
+    assert!(
+        !scalar
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_custom_matcher_unresolved")),
+        "{:?}",
+        scalar.evidence
+    );
+    assert_ne!(scalar.class, ExposureClass::Exposed);
+    // Control: an object expectation that omits the changed field keeps its
+    // weak reading and does not name the scalar limitation.
+    let object = profile_finding(
+        "match-object-object-control",
+        &profile_test("  expect(buildProfile(\"bo\", 18)).toMatchObject({ name: \"bo\" });"),
+    )?;
+    assert!(
+        !object
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_match_object_scalar_unresolved")),
+        "{:?}",
+        object.evidence
+    );
+    assert_eq!(object.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
