@@ -11,7 +11,7 @@ fn changed(path: &str) -> ChangedFile {
     }
 }
 
-fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
+pub(super) fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
     TypeScriptOwner {
         name: name.to_string(),
         file: PathBuf::from(file),
@@ -120,7 +120,7 @@ fn smoke_assertion() -> TypeScriptAssertion {
     }
 }
 
-fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
+pub(super) fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
     TypeScriptTest {
         name: format!("{owner_name} smoke"),
         local_name: format!("{owner_name} smoke"),
@@ -225,7 +225,7 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
     }
 }
 
-fn direct_test_with_assertion(
+pub(super) fn direct_test_with_assertion(
     test_name: &str,
     owner_name: &str,
     body_text: impl Into<String>,
@@ -345,7 +345,7 @@ fn classify_weak_direct_line(line_text: &str) -> Result<Finding, String> {
     .ok_or_else(|| "expected TypeScript preview finding".to_string())
 }
 
-fn missing_discriminator_values(finding: &Finding) -> Vec<String> {
+pub(super) fn missing_discriminator_values(finding: &Finding) -> Vec<String> {
     finding
         .activation
         .missing_discriminators
@@ -6749,6 +6749,73 @@ fn classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary() {
             "{line}"
         );
     }
+}
+
+/// #11256: a quoted operand is one operand, and an operator inside a string
+/// literal is no comparison.
+#[test]
+fn boundary_discriminator_is_faithful_or_withheld() {
+    // A plain quoted literal is named whole.
+    assert_eq!(
+        typescript_boundary_discriminator("  if (arg === \"stop\") {").as_deref(),
+        Some("arg == \"stop\"")
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (\"stop\" === arg) {").as_deref(),
+        Some("\"stop\" == arg")
+    );
+    // A literal holding `-` or a space was cut at that character (`arg == "`).
+    for line in [
+        "  if (arg !== \"--\") {",
+        "  if (\"--\" === arg) {",
+        "  if (mode === \"a b\") {",
+        "  if (mode === 'a-b') {",
+        "  if (mode === \"unterminated) {",
+    ] {
+        assert_eq!(typescript_boundary_discriminator(line), None, "{line}");
+    }
+    // A comparison-looking operator inside a string, or an arrow, is not a
+    // second comparison.
+    assert_eq!(
+        typescript_boundary_discriminator("  if (total >= 100 && ready) {").as_deref(),
+        Some("total == 100")
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (kind === \"a>=b\") {").as_deref(),
+        None,
+        "an unsimple literal is withheld"
+    );
+    assert_eq!(
+        typescript_boundary_discriminator("  if (kind === \"ab\" && ok) {").as_deref(),
+        Some("kind == \"ab\"")
+    );
+    // Through the changed-comparison selection the production path uses: the
+    // `--` edit names no discriminator (it was `arg == "`), and the compound
+    // edit names its own comparison, not the neighbouring `typeof` test.
+    let narrowed = |old: &str, new: &str| {
+        typescript_boundary_discriminator(&typescript_changed_boundary_text(
+            Path::new("src/_parser.ts"),
+            &ProbeFamily::Predicate,
+            Some(old),
+            new,
+        ))
+    };
+    assert_eq!(
+        narrowed("    if (arg === \"--\") {", "    if (arg !== \"--\") {"),
+        None
+    );
+    assert_eq!(
+        narrowed("    if (arg === \"stop\") {", "    if (arg !== \"stop\") {").as_deref(),
+        Some("arg == \"stop\"")
+    );
+    assert_eq!(
+        narrowed(
+            "    if (type === \"boolean\" && typeof value === \"string\") {",
+            "    if (type !== \"boolean\" && typeof value === \"string\") {"
+        )
+        .as_deref(),
+        Some("type == \"boolean\"")
+    );
 }
 
 #[test]
@@ -19935,6 +20002,7 @@ mod comparison_edit_tests;
 mod custom_matcher_tests;
 mod decorated_reach_tests;
 mod default_object_member_tests;
+mod derived_operand_tests;
 mod directory_specifier_tests;
 mod dropped_term_tests;
 mod enum_member_tests;
