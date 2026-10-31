@@ -1,5 +1,6 @@
 <!-- section: Fixed -->
 - `ripr agent receipt` and the repair after phase now say what to do when the
-  after verdict binding no longer matches the attempt: read `ripr agent status`,
-  keep command output outside the repository, or start a new attempt with the
-  printed restart command (#11337).
+  after verdict binding no longer matches the attempt: output redirected into a
+  repository file during the run, or a later edit, can cause it; a receipt retry
+  removes the stray file or edit, while an after-phase caller starts a new
+  attempt with the printed restart command (#11337).

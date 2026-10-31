@@ -9463,6 +9463,65 @@ fn rerun_repair_receipt(root: &Path, out: bool) -> Result<Output, std::io::Error
     run_command(env!("CARGO_BIN_EXE_ripr"), Some(root), &args)
 }
 
+/// #11337: the after phase's stderr redirected into a file inside the repo
+/// (even under `target/ripr`) breaks the verdict binding it just recorded. The
+/// refusal names the after-phase route (the verdict is recorded, so a rerun
+/// reports `already finished` and only a new attempt recovers), and the rerun
+/// points at the restart command. Control: both streams outside the repo
+/// succeed.
+#[test]
+fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unbuilt_repair_fixture("agent-repair-after-redirect")?;
+    assert_success(&run_repair_phase(
+        &root,
+        &["--seam-id", BOUNDARY_GAP_SEAM_ID],
+        "before",
+    )?);
+    let (attempt_id, _) = sole_repair_attempt(&root)?;
+    add_boundary_test(&root)?;
+
+    let outside = root.with_file_name(format!(
+        "{}-outside",
+        root.file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("fixture root has no name")?
+    ));
+    std::fs::create_dir_all(&outside)?;
+    let in_repo_err = root.join("target/ripr/cont.txt");
+    let after = run_repair_phase_redirected(
+        &root,
+        &["--attempt", &attempt_id],
+        "after",
+        &outside.join("out.json"),
+        &in_repo_err,
+    )?;
+    let refusal = std::fs::read_to_string(&in_repo_err)?;
+    assert_failure(&after);
+    assert!(
+        refusal.contains("repair attempt after verdict binding is tampered or stale")
+            && refusal.contains("the verdict is already recorded")
+            && refusal.contains("start a new attempt with `ripr agent repair --root ")
+            && refusal.contains(" --phase before`"),
+        "{refusal}"
+    );
+
+    // Removing the file does not revive the attempt: the rerun reports it
+    // finished and names the restart command.
+    std::fs::remove_file(&in_repo_err)?;
+    let rerun = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
+    assert_failure(&rerun);
+    let rerun_err = String::from_utf8_lossy(&rerun.stderr);
+    assert!(
+        rerun_err.contains("already finished") && rerun_err.contains(" --phase before`"),
+        "{rerun_err}"
+    );
+
+    std::fs::remove_dir_all(&outside)?;
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 const INCLUDE_RECEIPT_LINE: &str = "ripr: next: Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.";
 
 /// F15-1/F15-3: the printed loop on a library crate that does not commit
@@ -9574,7 +9633,8 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
     assert!(
         moved_stderr.contains("the recorded binding no longer matches the attempt")
             && moved_stderr.contains("`ripr agent status`")
-            && moved_stderr.contains("write command output outside the repository")
+            && moved_stderr.contains("remove the stray file or edit and rerun")
+            && moved_stderr.contains("writing command output outside the repository")
             && moved_stderr.contains("start a new attempt with `ripr agent repair --root ")
             && moved_stderr.contains(" --seam-id ")
             && moved_stderr.contains(" --phase before`"),

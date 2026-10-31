@@ -515,10 +515,9 @@ pub(crate) fn receipt_binding_from(
     }
     let (verdict, binding_holds) = recompute_after_verdict_binding(&root, &manifest, after)?;
     if !binding_holds {
-        // Name what is known and both routes out: the recorded binding no
-        // longer matches the attempt. A path outside `target/ripr` may have
-        // changed after the after phase bound it (for example command output
-        // redirected into a repository file), or the attempt already finished.
+        // Name what is known and the route for each caller. The after phase
+        // reaches this refusal after it recorded its verdict, so only a new
+        // attempt recovers it; a receipt retry recovers by undoing the change.
         let store_flag = quoted_store_flag_from_identity(manifest.store.as_ref());
         let restart = crate::app::gap_bound_repair::repair_start_command(
             &root_display,
@@ -530,7 +529,7 @@ pub(crate) fn receipt_binding_from(
                 .map(|binding| binding.base.as_str()),
         );
         return Err(format!(
-            "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt. A path outside `target/ripr` changed after the after phase bound it (for example command output redirected into a file in the repository), or the attempt already finished. Next: read `ripr agent status` for the attempt's state; write command output outside the repository and remove any such file, then rerun; or start a new attempt with `{restart}`"
+            "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt. Output this command wrote during the run (stdout or stderr redirected into a repository file, including under `target/ripr`), a path outside `target/ripr` that changed after the after phase bound it, or an attempt that already finished can each cause this. Next: `ripr agent status` reads the attempt's state. From `ripr agent receipt`, remove the stray file or edit and rerun. From the after phase the verdict is already recorded, so a rerun reports the attempt as already finished: start a new attempt with `{restart}`, writing command output outside the repository"
         ));
     }
     validate_trusted_head_surface(
