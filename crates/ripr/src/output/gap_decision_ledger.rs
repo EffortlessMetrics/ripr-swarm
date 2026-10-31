@@ -5599,7 +5599,10 @@ mod tests {
         // #11103: `python_len_local_boundary_repair_gap` derives its once-bound
         // `visible = len(text)` operand, so the weak boundary finding names
         // `visible == limit` and carries one direct-aligned card.
-        if (direct, no_strong, orthogonal, family_selection) != (19, 27, 31, 1) {
+        // #10707: `python_boundary_local_rebound_not_credited` keeps a rebound
+        // test local unresolved at the boundary, so its weak finding adds one
+        // direct-aligned card; `python_boundary_local_input_credited` is exposed.
+        if (direct, no_strong, orthogonal, family_selection) != (20, 27, 31, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

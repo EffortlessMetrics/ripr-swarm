@@ -465,6 +465,30 @@ operands to the same value. Predicates without a comparable boundary (such as
 values stay `weakly_exposed`; the literal or operand-pair boundary becomes the
 missing discriminator when one is known.
 
+The named boundary is the comparison the edit changed (#10399). On a compound
+condition (`a > b || c >= d`) the adapter compares parser-owned tokens of the old and new line and reads
+the boundary from the one condition-level comparison whose tokens differ,
+never from a neighbouring comparison on the same line. Literal and comment
+contents, callback bodies, call arguments, computed access and type syntax do
+not supply comparison sites. Unsupported operands and malformed old or new
+syntax retain refusal; whitespace/comment-only edits name no boundary. When the edit
+touches no comparison (an operand such as `isDone ||` is removed), touches
+several, or the line cannot be tokenized, the changed operator cannot be
+located unambiguously, so no boundary is named: no `missing_discriminator`,
+and the limitation reports that the changed line has no statically comparable
+predicate boundary. An added line with several comparisons is likewise
+unlabeled. The selected comparison and full changed source line retain separate
+identities: expected-side branch checks must still find the original owner line,
+so narrowing a label cannot credit an expectation that matches neither outcome.
+The module-bound boundary-input and boundary-parameters facts likewise keep
+reading the full changed source line rather than the selected text: their
+whole-side and verbatim-line gates need the source line's statement context and
+line identity, so a fact stays available on a compound line whose single
+comparison sits next to the statement opening (`if (total > 100 && ready) {`)
+and refuses on narrowed text alone or on a line holding several comparisons.
+Returned-ternary arm edits retain their sole condition boundary only when the
+condition tokens are unchanged.
+
 Three one-hop input resolutions credit the idiom shapes that reach the same
 boundary without changing the guards (#4104 E):
 
@@ -502,6 +526,27 @@ boundary without changing the guards (#4104 E):
   initializers, repeated declarations, off-value constants, and constants
   imported from a module the adapter cannot resolve to the owner stay
   fail-closed.
+- **Test-side constants** (#10707, #10706): an owner-call argument that is
+  a bare identifier of any spelling (`edge`, `EDGE`) resolves to its integer
+  value only when the name provably has one binding, decided on the oxc
+  token stream. In the test callback: exactly one
+  `const NAME [: number] = <plain decimal integer>` declarator directly in
+  the callback block (never a nested block, loop header, or parameter list),
+  and every other occurrence in the callback a plain read after the
+  declaration. At the test file's module level: exactly one top-level such
+  `const`, every other occurrence in the file a plain read (the owner-module
+  constant rule), and no non-file-level enclosing scope binding the name.
+  The callback's own declaration decides first; a binding it refuses is
+  never rescued by an outer scope. Fail-closed: `let`/`var`, a reassigned or
+  updated name, a shadowing parameter, catch, function, inner declaration or
+  destructuring, an object key or shorthand spelling, a second declaration,
+  a computed, signed, non-decimal, fractional or non-safe-integer
+  initializer, an import that does not resolve to the owner, `eval`/`with`,
+  a read before the declaration, and member reads (`config.edge`, whose
+  property a test can rewrite). The credit only substitutes the value for
+  the name; the position, arity, off-value and expected-side rules are the
+  literal path's, unchanged. Fixtures: `ts_boundary_local_constant_credit`,
+  `ts_boundary_local_constant_refused`.
 - **Boundary input evidence**: for a changed predicate with a named missing
   discriminator `<param> == <operand>`, the adapter emits
   `typescript_boundary_input: parameter=<param>;index=<i>;operand=<operand>;value=<v>`
