@@ -3012,7 +3012,18 @@ pub(crate) fn first_run_ignore_note(root: &Path) -> Option<String> {
         return None;
     }
     let uncovered = uncovered_artifact_roots(root, &[PathBuf::from("target/ripr")])?;
-    artifact_root_ignore_message(&uncovered)
+    if uncovered.is_empty() {
+        return None;
+    }
+    // Not "this run wrote": a human `check` writes under `target/ripr` only
+    // when it records the legend marker or fact caches, so the claim is the
+    // standing one: ripr keeps its reports and caches there.
+    Some(format!(
+        "ripr note: ripr keeps its reports and caches under {}; that path is not covered \
+         by git ignore rules — add `/target/ripr/` to .gitignore so a future `git add -A` \
+         does not commit them.",
+        uncovered.join(", ")
+    ))
 }
 
 /// The wording shared by every first-run ignore note; `None` when nothing is

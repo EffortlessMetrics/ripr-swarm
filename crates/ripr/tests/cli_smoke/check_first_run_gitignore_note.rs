@@ -1,12 +1,12 @@
 //! #11879: a first human `check` in a non-Cargo project tells the user once,
-//! on stderr, which `.gitignore` line covers the `target/ripr` it just wrote.
-use super::{run_command, unique_external_workspace};
+//! on stderr, which `.gitignore` line covers the `target/ripr` ripr keeps its reports in.
+use super::{run_command, run_command_with_env, unique_external_workspace};
 use std::fs;
 use std::path::Path;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-const NOTE: &str = "ripr note: this run wrote artifacts under target/ripr";
+const NOTE: &str = "ripr note: ripr keeps its reports and caches under target/ripr";
 
 fn git(project: &Path, args: &[&str]) -> TestResult {
     let output = run_command("git", Some(project), args)?;
@@ -67,6 +67,15 @@ fn first_check_names_the_gitignore_line_until_the_rule_exists() -> TestResult {
     assert!(!json.contains(NOTE), "{json}");
     let quiet = stderr_of(&project, &["--quiet"])?;
     assert!(!quiet.contains(NOTE), "{quiet}");
+
+    let env_quiet = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &project,
+        &["check", "--diff", "change.diff"],
+        &[("RIPR_QUIET", "1")],
+    )?;
+    let env_quiet = String::from_utf8(env_quiet.stderr)?;
+    assert!(!env_quiet.contains(NOTE), "{env_quiet}");
 
     // Once a covering rule exists the note never repeats, and ripr did not
     // write the rule itself.

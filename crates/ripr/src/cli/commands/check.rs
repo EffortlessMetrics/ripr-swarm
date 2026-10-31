@@ -1834,7 +1834,7 @@ fn check_inner(
     // line with the exact entry; silent once the rule exists, for Cargo
     // projects, for machine formats and under `--quiet`. It never edits
     // `.gitignore`.
-    if !quiet
+    if !crate::cli::progress::progress_silenced(quiet)
         && matches!(format, OutputFormat::Human | OutputFormat::HumanFull)
         && let Some(note) = super::doctor::first_run_ignore_note(&output.root)
     {
