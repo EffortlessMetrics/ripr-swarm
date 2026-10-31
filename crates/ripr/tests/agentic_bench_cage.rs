@@ -1499,9 +1499,25 @@ fn b6_dirty_production_premise_refuses_before_the_inventory_in_both_arms() -> Re
                 ));
             }
         }
-        if root.join("target/ripr/workflow").exists()
-            || root.join("target/ripr/repair-attempts").exists()
-        {
+        // Same observable as the late refusal: no workflow artifact and no
+        // published attempt directory (the empty store directory the locked
+        // driver prepares is not an attempt).
+        let attempts = root.join("target/ripr/repair-attempts");
+        let published = if attempts.is_dir() {
+            fs::read_dir(&attempts)
+                .map_err(|error| format!("read {}: {error}", attempts.display()))?
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("repair-attempt-")
+                })
+                .count()
+        } else {
+            0
+        };
+        if root.join("target/ripr/workflow").exists() || published != 0 {
             return Err(format!("{label} arm: early refusal wrote artifacts"));
         }
     }
