@@ -275,7 +275,7 @@ pub(super) fn zero(args: &[String]) -> Result<(), String> {
 
 pub(super) fn policy(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_policy_help();
+        help::print_group_help("policy", args);
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
@@ -327,7 +327,7 @@ pub(super) fn pr_ledger(args: &[String]) -> Result<(), String> {
 
 pub(super) fn pr_comments(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_pr_comments_help();
+        help::print_group_help("pr-comments", args);
         return Ok(());
     }
     // `plan` is implied when the command runs bare: `ripr pr-comments`
@@ -521,7 +521,7 @@ pub(super) fn first_action(args: &[String]) -> Result<(), String> {
 
 pub(super) fn reports(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_reports_help();
+        help::print_group_help("reports", args);
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
@@ -6360,8 +6360,12 @@ language = "rust"
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--mode", "post"])),
+            Err("unknown pr-comments plan mode \"post\". Accepted: off, plan, inline.".to_string())
+        );
+        assert_eq!(
+            parse_pr_comments_plan_options(&args(&["--mode", "inlin"])),
             Err(
-                "unknown pr-comments plan mode \"post\"; expected `off`, `plan`, or `inline`"
+                "unknown pr-comments plan mode \"inlin\". Did you mean `inline`? Accepted: off, plan, inline."
                     .to_string()
             )
         );

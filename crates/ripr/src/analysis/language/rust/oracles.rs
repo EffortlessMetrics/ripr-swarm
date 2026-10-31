@@ -11,6 +11,8 @@ use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, RustIndex};
 use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
 
+mod provider_metadata;
+
 /// Returns `true` when the owner function carries an FFI or language-binding
 /// attribute that indicates its surface may be exercised by an external-language
 /// test oracle rather than a Rust test.
@@ -203,6 +205,7 @@ pub(super) struct PropertyMacroMentionIndex<'a> {
 struct PropertyMacroLocation<'a> {
     file: &'a std::path::Path,
     witness: &'a crate::analysis::facts::UnresolvedPropertyMacroFact,
+    metadata_failure: Option<crate::analysis::workspace::MetadataProbeFailure>,
 }
 
 impl<'a> PropertyMacroMentionIndex<'a> {
@@ -217,6 +220,11 @@ impl<'a> PropertyMacroMentionIndex<'a> {
                         .push(PropertyMacroLocation {
                             file: file.as_path(),
                             witness,
+                            metadata_failure: index.proptest_metadata_failure(
+                                file,
+                                witness.line,
+                                &witness.name,
+                            ),
                         });
                 }
             }
@@ -268,13 +276,24 @@ pub(super) fn apply_unresolved_property_macro_limit(
     // This is retained manifest/source authority, not a path-layout guess.
     // No per-finding filesystem reads or manifest resolution are performed.
     let owner_package = mentions.owner_package(owner_file);
-    let Some(PropertyMacroLocation { file, witness }) = locations.iter().find(|location| {
-        match (owner_package, mentions.known_package(location.file)) {
-            (Some(owner), Some(mentioned)) => owner == mentioned,
-            // An unresolved package identity cannot prove unrelatedness.
-            _ => true,
-        }
-    }) else {
+    // Prefer a relevant invocation whose actual verification failed over an
+    // earlier opaque sibling. The diagnostic stays attached to its own witness;
+    // it must never be copied onto the unsupported sibling's source pointer.
+    let Some(PropertyMacroLocation {
+        file,
+        witness,
+        metadata_failure,
+    }) = locations
+        .iter()
+        .filter(|location| {
+            match (owner_package, mentions.known_package(location.file)) {
+                (Some(owner), Some(mentioned)) => owner == mentioned,
+                // An unresolved package identity cannot prove unrelatedness.
+                _ => true,
+            }
+        })
+        .min_by_key(|location| location.metadata_failure.is_none())
+    else {
         return false;
     };
     // A lexical mention supplies no runtime edge. Keep all affected stages
@@ -307,6 +326,9 @@ pub(super) fn apply_unresolved_property_macro_limit(
     finding.recommended_next_step = Some(
         "Inspect the property macro's definition and collected tests, then run its existing test suite; this limitation does not establish a missing test.".to_string(),
     );
+    if let Some(failure) = metadata_failure {
+        provider_metadata::apply(finding, *failure);
+    }
     true
 }
 
@@ -1046,6 +1068,7 @@ mod tests {
                     vec![super::PropertyMacroLocation {
                         file: witness_file,
                         witness: &witness,
+                        metadata_failure: None,
                     }],
                 )]),
                 package_authority: Some(&authorities),
@@ -1073,6 +1096,7 @@ mod tests {
                     vec![super::PropertyMacroLocation {
                         file: witness_file,
                         witness: &witness,
+                        metadata_failure: None,
                     }],
                 )]),
                 package_authority,

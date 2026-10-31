@@ -60,6 +60,8 @@ pub use diff_scope_filter::DiffScopeFilter;
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
 pub use diff::load_pr_evidence_diff_range;
+#[cfg(test)]
+pub(crate) use diff::not_a_work_tree_message;
 /// Shared NUL-delimited Git path-record authority (#4006), consumed by the
 /// product and xtask routes alike.
 pub use diff::records::{
@@ -182,6 +184,14 @@ pub(crate) fn workspace_unanalyzed_source_languages(root: &Path) -> Vec<(&'stati
 /// walk; see `workspace::has_inspectable_source_file`.
 pub(crate) fn workspace_has_inspectable_source(root: &Path) -> bool {
     workspace::has_inspectable_source_file(root)
+}
+
+/// Whether the root is not a workspace ripr can inspect: no `Cargo.toml` and
+/// no source file in any language ripr reads. The single owner of this verdict
+/// (#11395): `ripr pilot` refuses on it and `ripr status` withholds the pilot
+/// command on it, so the two cannot disagree.
+pub(crate) fn root_has_no_inspectable_workspace(root: &Path) -> bool {
+    !(root.join("Cargo.toml").is_file() || workspace_has_inspectable_source(root))
 }
 
 /// Re-export workspace Rust file discovery for the output layer so it can

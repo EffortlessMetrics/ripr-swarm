@@ -485,7 +485,7 @@ fn startup_warning(status: &WorkspaceStatus) -> Option<String> {
          Tools will fail closed with workspace_unavailable until the server is restarted."
     ))
 }
-async fn serve<R, W>(
+pub(super) async fn serve<R, W>(
     reader: R,
     writer: W,
     status: WorkspaceStatus,

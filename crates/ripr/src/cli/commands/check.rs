@@ -1597,6 +1597,7 @@ fn check_inner(
     // Capture diff_file before input is moved into the analysis call; the
     // RIPR-SPEC-0112 disclosure gate after the analysis needs it.
     let input_diff_file_is_some = input.diff_file.is_some();
+    let diff_from_stdin = input.diff_file.as_deref() == Some(Path::new("-"));
     let limited_check_input = input.clone();
     // Analysis-phase snapshot: identical to the scope-guard input, so guard
     // envelopes and refusal envelopes echo the same invocation context.
@@ -1788,7 +1789,8 @@ fn check_inner(
     if input_diff_file_is_some
         && output.findings.is_empty()
         && !format.is_repo_scope()
-        && let Some(hedge) = zero_findings_diff_hedge(output.analysis_outcome.as_ref())
+        && let Some(hedge) =
+            zero_findings_diff_hedge(output.analysis_outcome.as_ref(), diff_from_stdin)
     {
         eprintln!("{}", terminal_safe(hedge));
     }
@@ -2074,9 +2076,14 @@ fn default_base_is_head_hedge(
 ///   "may not be a valid unified diff" hint.
 fn zero_findings_diff_hedge(
     outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
+    from_stdin: bool,
 ) -> Option<String> {
     use crate::analysis_outcome::AnalysisLimitationKind;
-    let generic = "ripr: --diff produced zero findings. If the diff file is not a valid unified diff, this result is empty because nothing was parsed — not because all behavior is covered.";
+    let generic = if from_stdin {
+        "ripr: --diff produced zero findings. If the diff piped on stdin is not a valid unified diff, this result is empty because nothing was parsed — not because all behavior is covered."
+    } else {
+        "ripr: --diff produced zero findings. If the diff file is not a valid unified diff, this result is empty because nothing was parsed — not because all behavior is covered."
+    };
     let Some(outcome) = outcome else {
         return Some(generic.to_string());
     };
@@ -2177,6 +2184,10 @@ pub(super) fn gap_check_findings_snapshot(
 #[cfg(test)]
 #[path = "check_argv_refusal_tests.rs"]
 mod argv_refusal_tests;
+
+#[cfg(test)]
+#[path = "check_gap_ledger_legend_tests.rs"]
+mod gap_ledger_legend_tests;
 
 #[cfg(test)]
 mod candidate_tree_tests {
@@ -2551,7 +2562,7 @@ mod tests {
                 crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations,
                 "an excluded Rust adapter must not claim a complete analysis ({label})"
             );
-            let hedge = zero_findings_diff_hedge(Some(&outcome))
+            let hedge = zero_findings_diff_hedge(Some(&outcome), false)
                 .ok_or_else(|| format!("{label}: a typed exclusion must be named on stderr"))?;
             assert!(
                 hedge.contains("rust is not in the effective [languages].enabled set"),
@@ -2584,7 +2595,7 @@ mod tests {
         let outcome = result?
             .analysis_outcome
             .ok_or_else(|| "diff pipeline must project an analysis outcome".to_string())?;
-        assert_eq!(zero_findings_diff_hedge(Some(&outcome)), None);
+        assert_eq!(zero_findings_diff_hedge(Some(&outcome), false), None);
         Ok(())
     }
 
@@ -2620,7 +2631,7 @@ mod tests {
                 )?,
             ],
         )?;
-        let hedge = zero_findings_diff_hedge(Some(&outcome))
+        let hedge = zero_findings_diff_hedge(Some(&outcome), false)
             .ok_or_else(|| "an unavailable adapter must be named on stderr".to_string())?;
         assert!(hedge.contains("perl changed 1 file(s)"), "{hedge}");
         assert!(!hedge.contains("not a valid unified diff"), "{hedge}");
@@ -2636,7 +2647,7 @@ mod tests {
             sample_diff_outcome("hedge-rust-enabled", vec![crate::domain::LanguageId::Rust])?;
         assert!(outcome.counts.changed_file_count > 0);
         assert!(
-            zero_findings_diff_hedge(Some(&outcome)).is_none(),
+            zero_findings_diff_hedge(Some(&outcome), false).is_none(),
             "a parsed diff must not be blamed for diff validity"
         );
         // Nothing parsed (or no outcome): the generic hint remains.
@@ -2647,9 +2658,19 @@ mod tests {
             Vec::new(),
         )?;
         for outcome in [Some(&empty), None] {
-            let hedge = zero_findings_diff_hedge(outcome)
+            let hedge = zero_findings_diff_hedge(outcome, false)
                 .ok_or_else(|| "an unparsed diff must keep the generic hint".to_string())?;
-            assert!(hedge.contains("not a valid unified diff"), "{hedge}");
+            assert!(
+                hedge.contains("the diff file is not a valid unified diff"),
+                "{hedge}"
+            );
+            let stdin_hedge = zero_findings_diff_hedge(outcome, true)
+                .ok_or_else(|| "an unparsed stdin diff must keep the generic hint".to_string())?;
+            assert!(
+                stdin_hedge.contains("the diff piped on stdin is not a valid unified diff"),
+                "{stdin_hedge}"
+            );
+            assert!(!stdin_hedge.contains("diff file"), "{stdin_hedge}");
         }
         Ok(())
     }
