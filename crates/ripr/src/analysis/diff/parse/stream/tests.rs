@@ -565,7 +565,8 @@ fn one_file_header(path: &str, added: usize) -> String {
 }
 
 #[test]
-fn oversized_single_file_stops_at_the_first_line_past_the_ceiling_in_every_language() {
+fn oversized_single_file_stops_at_the_first_line_past_the_ceiling_in_every_language()
+-> Result<(), String> {
     for path in ["src/a.rs", "web/a.ts", "pkg/a.py", "lib/a.pl", "web/a.js"] {
         let header = one_file_header(path, 10_000);
         let tail_reads = Cell::new(0usize);
@@ -574,7 +575,9 @@ fn oversized_single_file_stops_at_the_first_line_past_the_ceiling_in_every_langu
         });
         let result = parse_with_line_limit(header.lines().chain(body), 5);
         let Err(error) = result else {
-            panic!("{path}: over-limit input returned a partial successful parse");
+            return Err(format!(
+                "{path}: over-limit input returned a partial successful parse"
+            ));
         };
         assert!(
             error.starts_with("diff_scope_oversized: at least 6 changed lines"),
@@ -587,6 +590,7 @@ fn oversized_single_file_stops_at_the_first_line_past_the_ceiling_in_every_langu
         // The sixth payload line is the last one read; the tail stays unread.
         assert_eq!(tail_reads.get(), 6, "{path}: the oversized tail was read");
     }
+    Ok(())
 }
 
 #[test]
@@ -609,17 +613,18 @@ fn exact_limit_single_file_succeeds_with_exact_coordinates() -> Result<(), Strin
 }
 
 #[test]
-fn many_tiny_files_still_trip_the_file_count_guard_not_the_line_guard() {
+fn many_tiny_files_still_trip_the_file_count_guard_not_the_line_guard() -> Result<(), String> {
     let input = format!(
         "{FIRST_FILE}diff --git a/src/b.rs b/src/b.rs\n--- a/src/b.rs\n+++ b/src/b.rs\n@@ -1 +1 @@\n-x\n+y\n"
     );
     let Err(error) = parse_bounded_lines_scoped(input.lines(), 1, 1_000, |_| true) else {
-        panic!("two files must exceed a one-file limit");
+        return Err("two files must exceed a one-file limit".to_string());
     };
     assert!(
         error.contains("changed files exceed the RIPR_MAX_DIFF_INDEX_FILES"),
         "{error}"
     );
+    Ok(())
 }
 
 #[test]
