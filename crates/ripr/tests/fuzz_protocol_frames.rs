@@ -132,6 +132,17 @@ fn judge(status: std::process::ExitStatus) -> Result<(), String> {
             return Err(format!("server died from signal {signal}"));
         }
     }
+    #[cfg(windows)]
+    {
+        // Windows has no signals: a stack overflow or abort surfaces as an
+        // NTSTATUS exit code (0xC00000FD stack overflow, 0xC0000409 fast-fail).
+        if let Some(code) = status.code() {
+            let code = u32::from_ne_bytes(code.to_ne_bytes());
+            if code & 0xF000_0000 == 0xC000_0000 {
+                return Err(format!("server crashed with status {code:#x}"));
+            }
+        }
+    }
     if status.code() == Some(101) {
         return Err("server panicked (exit 101)".to_string());
     }
