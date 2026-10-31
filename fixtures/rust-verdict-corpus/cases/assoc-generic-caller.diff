@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..0000000 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -31,7 +31,7 @@
+ pub struct Tall;
+ 
+ impl Limits for Tall {
+-    const MAX: u32 = 8;
++    const MAX: u32 = 9;
+ }
+ 
+ pub struct Fixed;

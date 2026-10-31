@@ -14,16 +14,19 @@
 //! does not hold on the old value (the test is stale, or misread) ends in
 //! `None`, and the caller keeps `static_unknown`.
 
+mod assoc;
 mod expr;
 
+pub(in crate::analysis) use self::assoc::associated_const_binding;
 use std::collections::BTreeMap;
 
 use self::expr::{
     Assertion, Machine, Reader, Value, parse_assertion, parse_const_decl, parse_reader,
+    parse_trait_reader,
 };
 use super::related_tests::normalize_path;
 use crate::analysis::diff::ChangedFile;
-use crate::analysis::facts::{FunctionSummary, TestSummary};
+use crate::analysis::facts::{FunctionContainer, FunctionSummary, TestSummary};
 
 /// Related tests evaluated per constant. Past it the flow is unread rather
 /// than sampled.
@@ -179,11 +182,16 @@ pub(in crate::analysis) struct ConstFlowDetail {
 /// `functions_named` counts the functions of the constant's file with a
 /// name: a reader whose name another function of the file shares, or that
 /// sits in an `impl`, may not be the function the test's call reaches.
+///
+/// `assoc_type` is the self type of the `impl Trait for Type` that declares an
+/// associated constant (see `associated_const_binding`): its readers are trait
+/// default methods, and every call a test makes to one must name that type.
 pub(in crate::analysis) fn evaluate_const_flow(
     change: &ConstChange,
     readers: &[&FunctionSummary],
     tests: &[&TestSummary],
     functions_named: &dyn Fn(&str) -> usize,
+    assoc_type: Option<&str>,
 ) -> Option<ConstFlow> {
     let old = parse_const_decl(&change.old_declaration)?;
     let new = parse_const_decl(&change.new_declaration)?;
@@ -207,15 +215,26 @@ pub(in crate::analysis) fn evaluate_const_flow(
     };
     let mut parsed: Vec<Reader> = Vec::new();
     for reader in readers {
-        if functions_named(&reader.name) != 1
-            || !matches!(
-                reader.impl_context,
-                crate::analysis::facts::FunctionImplContext::Free
-            )
-        {
+        if functions_named(&reader.name) != 1 {
             return None;
         }
-        parsed.push(parse_reader(&reader.body)?);
+        if assoc_type.is_some() {
+            if !matches!(reader.item.container, FunctionContainer::Trait { .. })
+                || !reader.item.has_body
+                || reader.item.has_self_param
+            {
+                return None;
+            }
+            parsed.push(parse_trait_reader(&reader.body)?);
+        } else {
+            if !matches!(
+                reader.impl_context,
+                crate::analysis::facts::FunctionImplContext::Free
+            ) {
+                return None;
+            }
+            parsed.push(parse_reader(&reader.body)?);
+        }
     }
     let machine = |constant_value| Machine {
         readers: &parsed,
@@ -252,6 +271,13 @@ pub(in crate::analysis) fn evaluate_const_flow(
                 continue;
             }
             let assertion = parse_assertion(&oracle.text)?;
+            if let Some(self_type) = assoc_type
+                && !reader_names
+                    .iter()
+                    .all(|name| calls_name_the_type(&oracle.text, name, self_type))
+            {
+                return None;
+            }
             let names = assertion.call_names();
             if !assertion.has_literal_expectation()
                 || names.is_empty()
@@ -391,6 +417,27 @@ impl Explain<'_> {
             neighbour_breaks: Vec::new(),
         }
     }
+}
+
+/// Whether every call of `name(` in `text` is spelled `self_type::name(`.
+/// A trait default method reached through another type, a generic parameter
+/// or an unqualified path is not the one the edited `impl` binds.
+fn calls_name_the_type(text: &str, name: &str, self_type: &str) -> bool {
+    let word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let qualifier = format!("{self_type}::");
+    text.match_indices(name)
+        .filter(|(at, _)| {
+            text[..*at].chars().next_back().is_none_or(|ch| !word(ch))
+                && text[at + name.len()..].trim_start().starts_with('(')
+        })
+        .all(|(at, _)| {
+            let before = &text[..at];
+            before.ends_with(&qualifier)
+                && before[..before.len() - qualifier.len()]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !word(ch) && ch != ':')
+        })
 }
 
 /// Whether `text` calls `name(`: a whole-word occurrence followed by `(`.

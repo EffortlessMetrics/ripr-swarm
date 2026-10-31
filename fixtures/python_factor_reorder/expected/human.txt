@@ -27,7 +27,7 @@ Start here:
   Suggested test file: tests/test_shop.py
   Suggested test: test_area
   Test node: tests/test_shop.py::test_area
-  Verify command: python -m pytest tests/test_shop.py::test_area (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_factor_reorder/input && python -m pytest tests/test_shop.py::test_area) (high)
   Next step — Python preview: strengthen the existing related test with an exact return-value
     assertion for missing discriminator `a table row whose operands distinguish multiplication
     order`

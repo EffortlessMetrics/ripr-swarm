@@ -1,0 +1,44 @@
+{
+  "case_id": "assoc-overridden-reader",
+  "subject_id": "authored-spec0048-assoc-kit",
+  "diff": "cases/assoc-overridden-reader.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 40
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "associated_const_clamp_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "const MAX: u32 = 7;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: Fixed overrides `clamp`, so the trait default body that reads `Self::MAX` is not the code that runs; the edit to MAX is unread."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Fixed overrides `clamp`, so the trait default body that reads `Self::MAX` is not the code that runs; the edit to MAX is unread.",
+  "labeling_observation": {
+    "ripr_commit": "ea68ea04",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

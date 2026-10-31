@@ -326,8 +326,29 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                 )));
             }
             RepairStartDecision::Action(action, candidates) => {
-                // A deliberate named outcome, not a failure: the canonical
-                // block on stderr, stdout empty, decision exit code.
+                // A deliberate named outcome, not a failure: stderr, stdout
+                // empty (`cmd:repair` declares an empty-stdout refusal),
+                // decision exit code.
+                let bound =
+                    crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
+                let selection_total = match action.stop() {
+                    Some(crate::domain::NextActionStop::SelectItem { total, .. }) => Some(*total),
+                    _ => None,
+                };
+                if let (Some(total), false) = (selection_total, candidates.is_empty()) {
+                    // #10978 / #11111: a selection is told in plain words:
+                    // where each change is, what a test must check for it,
+                    // and the exact command that starts it. The typed stop
+                    // ids and count are carried by those commands and the
+                    // stated total, so the internal block is not repeated.
+                    eprint!(
+                        "{}",
+                        crate::app::task_first::render_repair_choice(&candidates, total, &bound)
+                    );
+                    return Err(CommandError::Decision(
+                        "no repair started; run one of the commands above".to_string(),
+                    ));
+                }
                 eprint!(
                     "{}",
                     crate::output::next_action::render_next_action_human_at_root(
@@ -336,21 +357,9 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                     )
                 );
                 if action.action_class() == crate::domain::NextActionClass::ChooseItem {
-                    // #10978: the stop lists bare ids; say where each one is
-                    // and what changed there so the choice is informed.
-                    if !candidates.is_empty() {
-                        eprintln!("choose the change to repair:");
-                        for candidate in &candidates {
-                            eprintln!("  {candidate}");
-                        }
-                    }
                     print_retry_line(&format!(
                         "ripr repair <seam-id> --root {}",
-                        crate::agent::loop_commands::shell_arg(
-                            &crate::agent::loop_commands::bound_root(
-                                &options.root.to_string_lossy()
-                            )
-                        )
+                        crate::agent::loop_commands::shell_arg(&bound)
                     ));
                 }
                 return Err(CommandError::Decision(
@@ -686,8 +695,10 @@ fn no_eligible_seam_message(
             "no seams visible under {root}; `ripr repair` selects repository seams and does not reuse the diff or base from an earlier `ripr check`. If that check printed a gap-bound repair start, use the start printed by that check; rerun the same check, including its original --base if supplied, if needed. To explore repository seams, run `ripr pilot --root {root}`"
         );
     }
-    let noun = if total_seams == 1 { "seam" } else { "seams" };
-    let mut message = format!("{total_seams} visible {noun} under {root}, none repair-eligible");
+    let noun = if total_seams == 1 { "spot" } else { "spots" };
+    let mut message = format!(
+        "ripr looked at {total_seams} {noun} in the code under {root}; none is ready for an automatic repair"
+    );
     if !reasons.is_empty() {
         message.push_str(&format!(" ({})", reasons.join("; ")));
         // The list is bounded (#8728): when the total count exceeds what
@@ -766,15 +777,52 @@ fn run_facade_status(mut options: StatusFacadeOptions) -> Result<(), CommandErro
     .map_err(CommandError::from)
 }
 
-/// Print one retry template with its PowerShell pair when the translator
-/// renders one. The template keeps a placeholder, never a filled
-/// candidate: filling one would be the implicit selection the façade
+/// Print one retry template and, when PowerShell needs a different spelling
+/// (or has none), that spelling. The template keeps a placeholder, never a
+/// filled candidate: filling one would be the implicit selection the façade
 /// refuses to make.
 fn print_retry_line(retry: &str) {
-    eprintln!("retry: {retry}");
-    if let Some(form) = crate::output::markdown::powershell_text_variant(retry) {
-        eprintln!("retry (PowerShell): {form}");
+    for line in retry_lines(retry) {
+        eprintln!("{line}");
     }
+}
+
+/// The retry lines [`print_retry_line`] prints. A `<placeholder>` the user
+/// replaces would read to the PowerShell translator as a redirection, so it
+/// is swapped for a plain token while the rest of the command (its quoted
+/// root) is translated, then restored (#11111). The disclosure that no form
+/// exists then describes the command, never the placeholder.
+fn retry_lines(retry: &str) -> Vec<String> {
+    const TOKEN: &str = "riprplaceholder";
+    let mut placeholders = Vec::new();
+    let mut masked = String::new();
+    let mut rest = retry;
+    while let Some(open) = rest.find('<') {
+        let Some(len) = rest[open..].find('>') else {
+            break;
+        };
+        let name = &rest[open..=open + len];
+        if !name[1..name.len() - 1]
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        {
+            break;
+        }
+        masked.push_str(&rest[..open]);
+        masked.push_str(&format!("{TOKEN}{}", placeholders.len()));
+        placeholders.push(name);
+        rest = &rest[open + len + 1..];
+    }
+    masked.push_str(rest);
+    let mut lines = vec![format!("retry: {retry}")];
+    if let Some(mut form) = crate::output::markdown::powershell_text_variant(&masked) {
+        // Restore from the highest index so `…1` never matches inside `…10`.
+        for (index, name) in placeholders.iter().enumerate().rev() {
+            form = form.replace(&format!("{TOKEN}{index}"), name);
+        }
+        lines.push(format!("retry (PowerShell): {form}"));
+    }
+    lines
 }
 
 #[cfg(test)]
@@ -784,6 +832,26 @@ mod tests {
 
     fn args(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| word.to_string()).collect()
+    }
+
+    /// #11111: a retry template keeps its placeholder, yet a root that quotes
+    /// differently in PowerShell still gets its PowerShell line; an ordinary
+    /// root prints only the Bash line.
+    #[test]
+    fn retry_template_translates_root_around_its_placeholder() {
+        let root = crate::agent::loop_commands::shell_arg("/home/o'neil/proj");
+        assert_eq!(
+            retry_lines(&format!("ripr continue --attempt <attempt-id> --root {root}")),
+            vec![
+                format!("retry: ripr continue --attempt <attempt-id> --root {root}"),
+                "retry (PowerShell): ripr continue --attempt <attempt-id> --root '/home/o''neil/proj'"
+                    .to_string(),
+            ]
+        );
+        assert_eq!(
+            retry_lines("ripr repair <seam-id> --root /work/proj"),
+            vec!["retry: ripr repair <seam-id> --root /work/proj".to_string()]
+        );
     }
 
     #[test]
@@ -1117,17 +1185,18 @@ mod tests {
         let root = Path::new("/ripr-task-first-root");
         let setup = no_eligible_seam_message(root, 0, &["ignored reason".to_string()], 1);
         if !setup.starts_with("no seams visible under ")
-            || setup.contains("none repair-eligible")
+            || setup.contains("automatic repair")
             || setup.contains("ignored reason")
             || !setup.contains("`ripr pilot --root ")
         {
             return Err(format!("zero seams must be the setup outcome:\n{setup}"));
         }
         let one = no_eligible_seam_message(root, 1, &[], 0);
-        if !one.starts_with("1 visible seam under ") || one.contains("seams under") {
+        if !one.starts_with("ripr looked at 1 spot in the code under ") || one.contains("spots in")
+        {
             return Err(format!("one seam must be singular:\n{one}"));
         }
-        if one.contains("none repair-eligible (") {
+        if one.contains("automatic repair (") {
             return Err(format!("no reasons must print no reason list:\n{one}"));
         }
         let several = no_eligible_seam_message(
@@ -1140,8 +1209,8 @@ mod tests {
             2,
         );
         for expected in [
-            "3 visible seams under ",
-            "none repair-eligible (repair route not ready; configured off). Next:",
+            "ripr looked at 3 spots in the code under ",
+            "none is ready for an automatic repair (repair route not ready; configured off). Next:",
             "`ripr check --root ",
         ] {
             if !several.contains(expected) {

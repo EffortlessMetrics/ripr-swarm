@@ -63,7 +63,7 @@ Python repair card (preview/advisory)
   suggested file: tests/test_shop.py
   suggested test: test_fee_return
   pytest node: tests/test_shop.py::test_fee_return
-  verify: python -m pytest tests/test_shop.py::test_fee_return (high)
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_cross_test_import_alias/input && python -m pytest tests/test_shop.py::test_fee_return) (high)
   receipt: unavailable_until_python_gap_ledger
   receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
   stop conditions:

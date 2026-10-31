@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 89449d6..43c1421 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -51,7 +51,7 @@ pub fn weak_class(label: &str) -> &'static str {
+
+ pub fn trimmed_class(label: &str) -> &'static str {
+     let label = label.trim();
+-    if label == "alpha" {
++    if label == "beta" {
+         "word"
+     } else {
+         "blank"
