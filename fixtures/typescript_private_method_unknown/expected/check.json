@@ -12,9 +12,16 @@
   "findings": [
     {
       "id": "probe:src_counter.ts:typescript_preview:1aa358b1",
+      "canonical_gap_id": "gap:typescript:typescript_preview:1aa358b1",
       "classification": "static_unknown",
       "severity": "note",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "discriminator_not_established", "summary": "whether a discriminator exists is not established"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a discriminator exists is not established. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_counter.ts:typescript_preview:1aa358b1",
         "family": "predicate",
