@@ -1,0 +1,241 @@
+{
+  "record_kind": "ripr_kani_retained_capture_subset.v1",
+  "provenance": "external_unattested",
+  "record_scope": "Authored portable projection of retained run observations. Native exports and source bytes are unchanged; original launcher paths, logs and bindings are not included.",
+  "original_bundle_inventory_sha256": "sha256:be01b34fcb229b93f3d1081ae6b60355d635996d0ba88882c1c4ce20d09cc5b1",
+  "original_tools_record_sha256": "sha256:c349a777b7d54b8036d89272af5c0d696d7f6dce13a8f31ccc398016f84ccd08",
+  "original_source_configuration_record_sha256": "sha256:e3c5027d0e182466112ca5fac422a348f72fe39512138aa1c4a0e4a7d01ffc58",
+  "producer": {
+    "repository": "https://github.com/model-checking/kani",
+    "commit": "744b3e84d6eb68fd5456826997568666791bd355",
+    "tracked_diff_empty": true,
+    "version_output": "Kani Rust Verifier 0.68.0 (744b3e8) (standalone)\nusing rustc 1.101.0-nightly (7189d39d9 2026-10-22) (commit 7189d39d 2026-10-22) with LLVM 23.1.4\nCBMC 6.11.0\n",
+    "toolchain": "nightly-2026-10-23-x86_64-unknown-linux-gnu",
+    "target": "x86_64-unknown-linux-gnu",
+    "solver": "cadical",
+    "charon_commit": "1b6df08a04fd2edaeedd4046b917253a1bf25de5",
+    "cargo_lock_sha256": "sha256:9b6cb730323253e5136e41914774e4ab113e416563e987194b173aaf81e2b85c",
+    "toolchain_manifest_sha256": "sha256:8ae6767838d7384b2b764bda9262793d4861a798e49e57dc965fe37ead8e65df",
+    "driver_sha256": "sha256:19c8e171128e7cafd7f7e13a5acf5429cbfbedf6c172929b29665e7e988b0461",
+    "compiler_sha256": "sha256:1823d01e5a43b032c516e0d1cde706005f42ef2b8a67e9b589befd44c5330964",
+    "cbmc_binary_sha256": "sha256:a62af25d27425610608221d79c202f993efe1d5a85cece186119bec196382995",
+    "cbmc_package_sha256": "sha256:b3721aa541038384d7801ea3aeabbcddc3e8845ac8f1cbff637cf8dec7481ac8",
+    "historical_launcher_environment_sha256": "sha256:fd7d5a218e02b1830d20267797dffde0b76d8f7e7203c0285614fcdb3029361e"
+  },
+  "source": {
+    "retained_file": "proof.rs.txt",
+    "native_filename": "proof.rs",
+    "sha256": "sha256:ce3de392ea684b2222522ca2f2a05c4de7ce9c156bbc63ce155cf8967c22876e",
+    "inventory_digest": "sha256:ee5e3f72f4f3030fcbf71c9d7fe5bf7e6f1b216ed54d0133be4eba75d5bc23d4"
+  },
+  "runs": [
+    {
+      "id": "success",
+      "native_sha256": "sha256:9dd8b96fc07406002112b9fa20ead690da553ee69918f0cac44e7a3238e47945",
+      "original_observation_sha256": "sha256:87f88326e9fd4e45ae15d22b53dcce54eaffc4c14a3ea67a5a69c203ffd44efa",
+      "original_binding_sha256": "sha256:849d46e501b2312c0ce3fb2f47666356141afcd41e1071631d66203d9e8da45a",
+      "original_log_sha256": "sha256:bf802ea8fe04ca117f80e2375278aed4b341859f916fa9bedd49207d8bbf8391",
+      "started_at": "2026-10-31T05:19:39.995342+00:00",
+      "completed_at": "2026-10-31T05:19:41.081620+00:00",
+      "process_exit_code": 0,
+      "fresh_export_path": true,
+      "source_unchanged": true,
+      "selected_harnesses": [
+        {
+          "crate_name": "proof",
+          "name": "b_success"
+        }
+      ],
+      "selection_args": [
+        "--harness",
+        "b_success",
+        "--exact"
+      ]
+    },
+    {
+      "id": "failure",
+      "native_sha256": "sha256:758027df78f121d0de6116ac2a65f340cbb89e5829f2b809d574ee65b3b64ed4",
+      "original_observation_sha256": "sha256:163e30c8f10770c4f7dc25d0ca87dd07a55c260164023a9737373fe67b6aeaf1",
+      "original_binding_sha256": "sha256:cb3aa2f11372b49b4a4f60a62e463e273498774cbfe3bedcdbd290e3fb2a8067",
+      "original_log_sha256": "sha256:2eec8e53fb3cc78ed44ee3b8c6ffccab396c0b3f9584e620c58968eefb8307a6",
+      "started_at": "2026-10-31T05:19:38.833517+00:00",
+      "completed_at": "2026-10-31T05:19:39.917494+00:00",
+      "process_exit_code": 1,
+      "fresh_export_path": true,
+      "source_unchanged": true,
+      "selected_harnesses": [
+        {
+          "crate_name": "proof",
+          "name": "a_failure"
+        }
+      ],
+      "selection_args": [
+        "--harness",
+        "a_failure",
+        "--exact"
+      ]
+    },
+    {
+      "id": "vacuous",
+      "native_sha256": "sha256:f425b358bedfe9b78a34d06a068ec1c16a467bb2439b8aa066e4a2b33a8305b6",
+      "original_observation_sha256": "sha256:571dac403a1cbe8dbd581cd8cb17c53ea0e1d2ca9bc32be4b034fae12776d7f6",
+      "original_binding_sha256": "sha256:db893cc856197e45a068415ef995ac8bcea6464dd28310cd6c7642a54945555d",
+      "original_log_sha256": "sha256:b1c19acf917def844f1f2bd7453147be453e4723f335a403aa0bb0ea5034825b",
+      "started_at": "2026-10-31T05:19:41.213580+00:00",
+      "completed_at": "2026-10-31T05:19:42.327263+00:00",
+      "process_exit_code": 0,
+      "fresh_export_path": true,
+      "source_unchanged": true,
+      "selected_harnesses": [
+        {
+          "crate_name": "proof",
+          "name": "c_vacuous"
+        }
+      ],
+      "selection_args": [
+        "--harness",
+        "c_vacuous",
+        "--exact"
+      ]
+    },
+    {
+      "id": "expected-panic",
+      "native_sha256": "sha256:3bc3b5e0168ce7d3ff121f0b4c9f26874d35fdf5f6a8e86c199b4f9774af6417",
+      "original_observation_sha256": "sha256:080150da0c2084c2cc107a5d1819117bc0998fb081389bc1bd413f50315b8625",
+      "original_binding_sha256": "sha256:2088bf031436a968ec0e83682763240396826142628c9f0b21dcaee298fca15c",
+      "original_log_sha256": "sha256:45a5c515159676be86ae5edeeb2db125e6572a26ea59f113e19df27c7b9d662e",
+      "started_at": "2026-10-31T05:19:42.409565+00:00",
+      "completed_at": "2026-10-31T05:19:43.488984+00:00",
+      "process_exit_code": 0,
+      "fresh_export_path": true,
+      "source_unchanged": true,
+      "selected_harnesses": [
+        {
+          "crate_name": "proof",
+          "name": "d_expected_panic"
+        }
+      ],
+      "selection_args": [
+        "--harness",
+        "d_expected_panic",
+        "--exact"
+      ]
+    },
+    {
+      "id": "missing-expected-panic",
+      "native_sha256": "sha256:f2cd046a92972b864448d25929aa2ede42d3ca4f3f53365902337a4e063d9add",
+      "original_observation_sha256": "sha256:af06fe2779d9001b04e3626d5b4c71ae141728a1598e48136198028e4fd5f2c4",
+      "original_binding_sha256": "sha256:5e4b78b1b7b3c8a6373273dc8ce40f82a75697b16765149601be412451b83e58",
+      "original_log_sha256": "sha256:f80ad54d17b2c525deb0f418af2f82a5b857e44b2769fb6b7319505a6cd78de4",
+      "started_at": "2026-10-31T05:19:43.589947+00:00",
+      "completed_at": "2026-10-31T05:19:44.677649+00:00",
+      "process_exit_code": 1,
+      "fresh_export_path": true,
+      "source_unchanged": true,
+      "selected_harnesses": [
+        {
+          "crate_name": "proof",
+          "name": "e_missing_expected_panic"
+        }
+      ],
+      "selection_args": [
+        "--harness",
+        "e_missing_expected_panic",
+        "--exact"
+      ]
+    },
+    {
+      "id": "bounded-success",
+      "native_sha256": "sha256:b576d259f1ed00ecbdfebdaf27e078651d1689044b9208aa5a3d4e9d09ee0c3c",
+      "original_observation_sha256": "sha256:a0c788325919a371ae98ba72a19e15836129aed552c14bf8157c37374e2e8de2",
+      "original_binding_sha256": "sha256:8e8652f914175e702ef01a94487d06b5e8a5c18de7714738be18f14300954f03",
+      "original_log_sha256": "sha256:8ab6659045a2242959617507796edaf53013a979dabb728865b10600745a6e7d",
+      "started_at": "2026-10-31T05:19:44.760446+00:00",
+      "completed_at": "2026-10-31T05:19:45.842043+00:00",
+      "process_exit_code": 0,
+      "fresh_export_path": true,
+      "source_unchanged": true,
+      "selected_harnesses": [
+        {
+          "crate_name": "proof",
+          "name": "f_bounded_success"
+        }
+      ],
+      "selection_args": [
+        "--harness",
+        "f_bounded_success",
+        "--exact"
+      ]
+    },
+    {
+      "id": "insufficient-bound",
+      "native_sha256": "sha256:f22be4d283176a8b207d980ccb33ec702ad13915e031bbf36104776995ad8cf6",
+      "original_observation_sha256": "sha256:b116dcebd757362ad75ce22b91b848f2a83d95276b05519921f368cafc675e92",
+      "original_binding_sha256": "sha256:67babb9eb0a9263f7a7d422b5148f335b39540ecc1ce905027d11a001f18c24e",
+      "original_log_sha256": "sha256:8d8ceb2c86dfca5b9c214079ede9c59ca587142e968a47315adacd9d35acd56e",
+      "started_at": "2026-10-31T05:19:45.928068+00:00",
+      "completed_at": "2026-10-31T05:19:47.006667+00:00",
+      "process_exit_code": 1,
+      "fresh_export_path": true,
+      "source_unchanged": true,
+      "selected_harnesses": [
+        {
+          "crate_name": "proof",
+          "name": "g_insufficient_bound"
+        }
+      ],
+      "selection_args": [
+        "--harness",
+        "g_insufficient_bound",
+        "--exact"
+      ]
+    },
+    {
+      "id": "partial",
+      "native_sha256": "sha256:8bb4e1227a871d5705551176e13cdf2627b2fcc708626d373f39a8e170b0b9de",
+      "original_observation_sha256": "sha256:7faf05ca5ac4f9fcd21cb8a177a369b787216601470f6976f5e3a85b4b38abd0",
+      "original_binding_sha256": "sha256:e329f86105b29c55b8c2396c2f54cbc6c0645f482d7be55053762acba03564b1",
+      "original_log_sha256": "sha256:edfaf488089532eaf7752c2fd9d3c5331604eed90ba6eeae7c978ed0e590689c",
+      "started_at": "2026-10-31T05:19:48.275068+00:00",
+      "completed_at": "2026-10-31T05:19:49.356292+00:00",
+      "process_exit_code": 1,
+      "fresh_export_path": true,
+      "source_unchanged": true,
+      "selected_harnesses": [
+        {
+          "crate_name": "proof",
+          "name": "g_insufficient_bound"
+        },
+        {
+          "crate_name": "proof",
+          "name": "b_success"
+        }
+      ],
+      "selection_args": [
+        "--harness",
+        "g_insufficient_bound",
+        "--harness",
+        "b_success",
+        "--exact",
+        "--fail-fast"
+      ]
+    }
+  ],
+  "unmatched_selector": {
+    "original_observation_sha256": "sha256:bee850af8d41c70bc64080a1189cfe29ec50825b4ac6b89394915e65029c8543",
+    "original_log_sha256": "sha256:910c2b73456f4f412ef4651f423cb1f7a29a10f3fda2e0a03103f0b15c91ca72",
+    "process_exit_code": 1,
+    "native_export_exists": false,
+    "selection_args": [
+      "--harness",
+      "absent_harness",
+      "--exact"
+    ]
+  },
+  "non_claims": [
+    "No fresh native execution by offline tests.",
+    "No authenticated execution, dependency completeness or receipt authority.",
+    "No held-out qualification, frozen-guard implementation mutation experiment or adequacy score.",
+    "No native captures of timeout, crash, out-of-memory, autoharness, contracts, stubs or code-coverage mode."
+  ]
+}

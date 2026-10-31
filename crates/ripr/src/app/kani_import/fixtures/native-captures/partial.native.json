@@ -1,0 +1,174 @@
+{
+  "schema_version": "0.1.0",
+  "kani_commit": "744b3e84d6eb68fd5456826997568666791bd355",
+  "kani_commit_dirty": false,
+  "tools": {
+    "kani": "0.68.0",
+    "rustc": "1.101.0-nightly (7189d39d9 2026-10-22)",
+    "cbmc": "6.11.0 (cbmc-6.11.0)"
+  },
+  "enabled_unstable_features": [
+    "export-json"
+  ],
+  "harness_selection": {
+    "requested_filters": [
+      "g_insufficient_bound",
+      "b_success"
+    ],
+    "exact": true,
+    "unmatched_filters": [],
+    "matched_count": 2
+  },
+  "harness_timeout_s": null,
+  "configuration": {
+    "checks": {
+      "memory_safety": true,
+      "overflow": true,
+      "unwinding": true,
+      "undefined_function": true,
+      "assertion_reach_checks": true,
+      "ignore_global_asm": false,
+      "extra_pointer_checks": false,
+      "assert_contracts": true,
+      "prove_safety_only": false
+    },
+    "cbmc_args": [],
+    "coverage_enabled": false
+  },
+  "outcome": {
+    "kind": "COMPLETED"
+  },
+  "run_state": "PARTIAL",
+  "target": "x86_64-unknown-linux-gnu",
+  "started_at": "2026-10-31T05:19:48Z",
+  "wall_time_s": 0.177403765,
+  "harnesses": [
+    {
+      "name": "g_insufficient_bound",
+      "crate_name": "proof",
+      "file": "proof.rs",
+      "line": 58,
+      "contract": null,
+      "is_automatically_generated": false,
+      "has_loop_contracts": false,
+      "is_bounded": false,
+      "attributes": {
+        "kind": "Proof",
+        "should_panic": false,
+        "solver": null,
+        "unwind_value": 3,
+        "stubs": [],
+        "verified_stubs": []
+      },
+      "outcome": {
+        "kind": "COMPLETED",
+        "verdict": "FAILURE"
+      },
+      "resolved_solver": "cadical",
+      "resolved_unwind": 3,
+      "generated_concrete_test": false,
+      "resources": {
+        "verification_time_s": 0.085987086
+      },
+      "n_properties": 32,
+      "n_failed": 1,
+      "failure_kind": "OTHER",
+      "failed_properties": [
+        {
+          "id": "g_insufficient_bound.unwind.0",
+          "description": "unwinding assertion loop 0",
+          "class": "unwind",
+          "file": "proof.rs",
+          "line": "62",
+          "trace_available": true,
+          "status": "FAILURE"
+        }
+      ],
+      "unsupported_constructs": [
+        {
+          "id": "core::panicking::panic_nounwind_fmt::runtime.unsupported_construct.1",
+          "description": "call to foreign \"Rust\" function `_RNvCseilXckri75C_7___rustc17rust_begin_unwind` is not currently supported by Kani. Please post your example at https://github.com/model-checking/kani/issues/new/choose",
+          "class": "unsupported_construct",
+          "file": "/tmp/kani-native-rustup/toolchains/nightly-2026-10-23-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/panicking.rs",
+          "line": "110",
+          "trace_available": false,
+          "status": "UNDETERMINED"
+        },
+        {
+          "id": "std::panic::Location::<'_>::caller.unsupported_construct.1",
+          "description": "caller_location is not currently supported by Kani. Please post your example at https://github.com/model-checking/kani/issues/374",
+          "class": "unsupported_construct",
+          "file": "/tmp/kani-native-rustup/toolchains/nightly-2026-10-23-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/panic/location.rs",
+          "line": "185",
+          "trace_available": false,
+          "status": "UNDETERMINED"
+        }
+      ],
+      "warnings": [],
+      "warnings_truncated": 0,
+      "checks": {
+        "total": 32,
+        "success": 0,
+        "failure": [
+          "g_insufficient_bound.unwind.0"
+        ],
+        "unreachable": [],
+        "undetermined": [
+          "core::panicking::panic_nounwind_fmt::runtime.unsupported_construct.1",
+          "core::num::<impl u8>::unchecked_add.arithmetic_overflow.1",
+          "std::fmt::Arguments::<'_>::from_str.assertion.1",
+          "g_insufficient_bound.unreachable.1",
+          "g_insufficient_bound.assertion.1",
+          "g_insufficient_bound.assertion.2",
+          "std::panic::Location::<'_>::caller.unsupported_construct.1",
+          "<std::ops::Range<u8> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.1",
+          "<std::ops::Range<u8> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.2",
+          "<std::ops::Range<u8> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.3",
+          "<std::ops::Range<u8> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.4",
+          "<std::ops::Range<u8> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.5",
+          "<std::ops::Range<u8> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.6",
+          "<std::ops::Range<u8> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.7",
+          "<std::ops::Range<u8> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.8",
+          "<std::ops::Range<u8> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.9",
+          "<std::ops::Range<u8> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.10",
+          "<std::ops::Range<u8> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.11",
+          "<std::ops::Range<u8> as std::iter::range::RangeIteratorImpl>::spec_next.pointer_dereference.12",
+          "std::cmp::impls::<impl std::cmp::PartialOrd for u8>::lt.pointer_dereference.1",
+          "std::cmp::impls::<impl std::cmp::PartialOrd for u8>::lt.pointer_dereference.2",
+          "std::cmp::impls::<impl std::cmp::PartialOrd for u8>::lt.pointer_dereference.3",
+          "std::cmp::impls::<impl std::cmp::PartialOrd for u8>::lt.pointer_dereference.4",
+          "std::cmp::impls::<impl std::cmp::PartialOrd for u8>::lt.pointer_dereference.5",
+          "std::cmp::impls::<impl std::cmp::PartialOrd for u8>::lt.pointer_dereference.6",
+          "std::cmp::impls::<impl std::cmp::PartialOrd for u8>::lt.pointer_dereference.7",
+          "std::cmp::impls::<impl std::cmp::PartialOrd for u8>::lt.pointer_dereference.8",
+          "std::cmp::impls::<impl std::cmp::PartialOrd for u8>::lt.pointer_dereference.9",
+          "std::cmp::impls::<impl std::cmp::PartialOrd for u8>::lt.pointer_dereference.10",
+          "std::cmp::impls::<impl std::cmp::PartialOrd for u8>::lt.pointer_dereference.11",
+          "std::cmp::impls::<impl std::cmp::PartialOrd for u8>::lt.pointer_dereference.12"
+        ],
+        "error": [],
+        "unknown": [],
+        "other": []
+      },
+      "covers": {
+        "total": 0,
+        "satisfied": [],
+        "unsatisfiable": [],
+        "unreachable": [],
+        "undetermined": [],
+        "error": [],
+        "unknown": [],
+        "other": []
+      }
+    }
+  ],
+  "summary": {
+    "total": 1,
+    "successful": 0,
+    "failed": 1,
+    "checks_total": 32,
+    "checks_success": 0,
+    "covers_total": 0,
+    "covers_satisfied": 0
+  }
+}

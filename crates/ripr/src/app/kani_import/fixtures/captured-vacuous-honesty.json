@@ -1,0 +1,33 @@
+{
+  "schema_version": "ripr_kani_report.v1",
+  "adapter_version": "<normalized>",
+  "adapter_profile": "kani-export-0.1.0@744b3e84d6eb68fd5456826997568666791bd355",
+  "provenance": "external_unattested",
+  "source_binding_state": "listed_files_match",
+  "checked_root": "<normalized>",
+  "artifact_sha256": "<normalized>",
+  "binding_sha256": "<normalized>",
+  "binding": "<external payload>",
+  "native": {
+    "schema_version": "0.1.0",
+    "run_state": "COMPLETE",
+    "target": "x86_64-unknown-linux-gnu",
+    "matched_count": 1,
+    "missing_count": 0,
+    "harnesses": [{
+      "crate_name": "proof", "name": "c_vacuous", "file": "proof.rs", "line": 24,
+      "should_panic": false,
+      "outcome": {"kind": "COMPLETED", "verdict": "SUCCESS", "failure_kind": "NONE"},
+      "checks_total": 1, "checks_success": 0, "covers_total": 1
+    }],
+    "document": "<external payload>"
+  },
+  "limitations": [
+    "External, unattested observation: digests do not authenticate the verifier or establish that it consumed these files or this invocation context.",
+    "Only listed files were checked, individually at import time; repository identity, complete dependencies, atomic snapshot capture and run freshness are not established.",
+    "Full qualification of this development adapter profile remains outstanding.",
+    "Successful check counts are available at harness scope, but the export does not provide a complete inventory of their property identities or a functional-versus-safety classification.",
+    "Native success does not establish non-vacuity, specification adequacy, separately discharged stub contracts, or correctness outside the recorded checks, assumptions and bounds.",
+    "This import does not execute Kani, change static exposure, create a repair receipt, or authorize a merge."
+  ]
+}
