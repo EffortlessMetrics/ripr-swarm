@@ -29,7 +29,7 @@ mod python;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 mod read_limit_disclosure;
 mod router;
-mod rust;
+pub(crate) mod rust;
 pub(crate) use rust::producer_gap_names_seam_shape;
 #[cfg(feature = "lang-typescript")]
 mod typescript;

@@ -22,7 +22,7 @@ pub(super) fn apply(finding: &mut Finding, failure: MetadataProbeFailure) {
     finding.recommended_next_step = Some(recovery_step(failure));
 }
 
-fn recovery_step(failure: MetadataProbeFailure) -> String {
+pub(crate) fn recovery_step(failure: MetadataProbeFailure) -> String {
     match failure {
         MetadataProbeFailure::ToolchainPathPin => {
             // Never recommend executing a toolchain path the process owner

@@ -208,6 +208,35 @@ struct PropertyMacroLocation<'a> {
     metadata_failure: Option<crate::analysis::workspace::MetadataProbeFailure>,
 }
 
+pub(crate) fn provider_failure_summary(
+    index: &RustIndex,
+    owner_name: &str,
+    owner_file: &std::path::Path,
+) -> Option<String> {
+    if !index.has_proptest_metadata_failures() {
+        return None;
+    }
+    let root = &index.workspace_authority.as_ref()?.root;
+    let mentions = PropertyMacroMentionIndex::new(index, root);
+    let package = mentions.known_package(owner_file)?;
+    let location = mentions
+        .by_identifier
+        .get(owner_name)?
+        .iter()
+        .find(|location| {
+            mentions.known_package(location.file) == Some(package)
+                && location.metadata_failure.is_some()
+        })?;
+    let failure = location.metadata_failure?;
+    Some(format!(
+        "Reach unresolved (rust_macro_reach_unresolved): source invocation `{}!` at {}:{}; offline provider verification: {failure}. {}",
+        location.witness.name,
+        location.file.display(),
+        location.witness.line,
+        provider_metadata::recovery_step(failure)
+    ))
+}
+
 impl<'a> PropertyMacroMentionIndex<'a> {
     pub(super) fn new(index: &'a RustIndex, selected_root: &'a std::path::Path) -> Self {
         let mut by_identifier = std::collections::BTreeMap::new();

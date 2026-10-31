@@ -439,7 +439,10 @@ fn evidence_for_seam_with_context(
         .iter()
         .map(|(indexed, reason)| (indexed.test, *reason))
         .collect();
-    let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
+    let reach = (related_reasons.is_empty())
+        .then(|| provider_failure_reach(seam, context))
+        .flatten()
+        .unwrap_or_else(|| reach_evidence(seam, &related_reasons, owner_fn, context));
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = context.pin_syntax();
@@ -1453,6 +1456,23 @@ fn new_test_target_admission(
 /// `TestGripEvidence` preserves the stage states used by classification,
 /// but intentionally omits related-test detail and observed-value
 /// payloads because repo badges only need per-class counts.
+fn provider_failure_reach(
+    seam: &RepoSeam,
+    context: &CompactGripContext<'_>,
+) -> Option<StageEvidence> {
+    let owner = seam.owner().rsplit("::").next()?;
+    let summary = crate::analysis::language::rust::oracles::provider_failure_summary(
+        context.index,
+        owner,
+        seam.file(),
+    )?;
+    Some(StageEvidence::new(
+        StageState::Opaque,
+        Confidence::Low,
+        summary,
+    ))
+}
+
 pub(crate) fn compact_evidence_for_seam(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
@@ -1470,7 +1490,10 @@ pub(crate) fn compact_evidence_for_seam(
     let related: Vec<&TestSummary> = related_indexed.iter().map(|indexed| indexed.test).collect();
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
-    let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
+    let reach = (related_reasons.is_empty())
+        .then(|| provider_failure_reach(seam, context))
+        .flatten()
+        .unwrap_or_else(|| reach_evidence(seam, &related_reasons, owner_fn, context));
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = context.pin_syntax();

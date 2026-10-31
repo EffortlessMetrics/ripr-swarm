@@ -1392,3 +1392,6 @@ fn real_property_collects_and_rejects_wrong_owner_while_zero_cases_and_diagnosti
     assert!(String::from_utf8_lossy(&weak_correct.stdout).contains("1 passed; 0 failed"));
     Ok(())
 }
+
+#[path = "registered_proptest_profile/cache_freshness.rs"]
+mod cache_freshness;

@@ -596,7 +596,14 @@ pub(crate) fn actionability_for(
         RepairTargetSelection::Existing(_) | RepairTargetSelection::Proposed(_)
     );
 
-    let (class, reason) = if static_limited {
+    let (class, reason) = if entry
+        .evidence
+        .reach
+        .summary
+        .contains("offline provider verification:")
+    {
+        ("static_limitation", entry.evidence.reach.summary.as_str())
+    } else if static_limited {
         (
             "static_limitation",
             "static evidence is opaque or unknown for this seam",
