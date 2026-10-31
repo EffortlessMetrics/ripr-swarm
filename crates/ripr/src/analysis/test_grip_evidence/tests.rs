@@ -20962,3 +20962,99 @@ fn inherent_helper_declarations_are_not_executable_self_edges() -> Result<(), St
     }
     Ok(())
 }
+
+fn return_seam_containing(source: &str, needle: &str) -> Result<RepoSeam, String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let index = index_from_files(&[(prod.clone(), source)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    seams
+        .into_iter()
+        .find(|seam| seam.kind() == SeamKind::ReturnValue && seam.expression().contains(needle))
+        .ok_or_else(|| format!("expected a return_value seam containing `{needle}`"))
+}
+
+/// #11111: a payload-bearing `Err(E::Parse("..."))` return seam is credited by
+/// an exact error-variant pin only when the pin observes the same payload.
+/// Naming the variant alone is identity coincidence, so it stays uncredited.
+#[test]
+fn exact_err_return_pin_requires_the_string_payload_to_be_discriminated() -> Result<(), String> {
+    let seam = return_seam_containing(
+        "pub enum E { Parse(&'static str), Other }\n\
+         pub fn parse(x: i32) -> Result<i32, E> {\n\
+         \x20   if x < 0 {\n\
+         \x20       return Err(E::Parse(\"bad input\"));\n\
+         \x20   }\n\
+         \x20   Ok(x)\n\
+         }\n",
+        "E::Parse",
+    )?;
+    assert!(
+        exact_err_return_matches_error_pin(
+            &seam,
+            "assert_eq!(parse(-1), Err(E::Parse(\"bad input\")))"
+        ),
+        "same variant and same payload literal discriminates"
+    );
+    for (label, oracle) in [
+        (
+            "payload ignored",
+            "assert!(matches!(parse(-1), Err(E::Parse(_))))",
+        ),
+        (
+            "different payload literal",
+            "assert_eq!(parse(-1), Err(E::Parse(\"other\")))",
+        ),
+        ("sibling variant", "assert_eq!(parse(-1), Err(E::Other))"),
+    ] {
+        assert!(
+            !exact_err_return_matches_error_pin(&seam, oracle),
+            "{label} must not credit a payload-bearing Err: {oracle}"
+        );
+    }
+    Ok(())
+}
+
+/// #11111: an Option-to-Result conversion names a variant but is not a plain
+/// `Err(Type::Variant)` construction, so no error-variant pin credits it.
+#[test]
+fn ok_or_conversion_return_is_not_credited_as_an_exact_err_construction() -> Result<(), String> {
+    let seam = return_seam_containing(
+        "pub enum E { Bad }\n\
+         pub fn find(value: Option<i32>) -> Result<i32, E> {\n\
+         \x20   value.ok_or(E::Bad)\n\
+         }\n",
+        "ok_or",
+    )?;
+    for oracle in [
+        "assert_eq!(find(None), Err(E::Bad))",
+        "assert!(matches!(find(None), Err(E::Bad)))",
+    ] {
+        assert!(
+            !exact_err_return_matches_error_pin(&seam, oracle),
+            "an `.ok_or(..)` return must not be credited by {oracle}"
+        );
+    }
+    Ok(())
+}
+
+/// Positive control for the two tests above: a plain `Err(E::Bad)` return with
+/// no payload is credited by the exact pin, so the negatives are not vacuous.
+#[test]
+fn plain_exact_err_return_is_credited_by_the_matching_pin_only() -> Result<(), String> {
+    let seam = return_seam_containing(
+        "pub enum E { Bad, Other }\n\
+         pub fn fail() -> Result<i32, E> {\n\
+         \x20   return Err(E::Bad);\n\
+         }\n",
+        "E::Bad",
+    )?;
+    assert!(exact_err_return_matches_error_pin(
+        &seam,
+        "assert!(matches!(fail(), Err(E::Bad)))"
+    ));
+    assert!(!exact_err_return_matches_error_pin(
+        &seam,
+        "assert!(matches!(fail(), Err(E::Other)))"
+    ));
+    Ok(())
+}
