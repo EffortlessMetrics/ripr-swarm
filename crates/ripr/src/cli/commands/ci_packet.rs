@@ -2642,7 +2642,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
     fn recording_run(root: &Path) -> PacketRun {
         PacketRun {
             root: root.to_path_buf(),

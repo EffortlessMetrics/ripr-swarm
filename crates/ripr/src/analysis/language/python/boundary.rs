@@ -1910,6 +1910,14 @@ fn bind_call_arguments(
                     from_default: false,
                 },
             );
+        } else if let Some(value) = super::test_local_literal::test_module_constant(test, value) {
+            bindings.insert(
+                name,
+                Binding {
+                    value,
+                    from_default: false,
+                },
+            );
         } else if test
             .parametrize
             .as_ref()

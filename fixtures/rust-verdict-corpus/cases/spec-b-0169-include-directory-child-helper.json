@@ -1,0 +1,53 @@
+{
+  "case_id": "spec-b-0169-include-directory-child-helper",
+  "subject_id": "authored-spec-b-configured",
+  "diff": "cases/spec-b-0169-include-directory-child-helper.diff",
+  "anchor": {
+    "file": "src/fragments/child.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "0169_include_directory_child_helper",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --locked",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "5",
+        "mutated_line": "5",
+        "outcome": "tests_failed",
+        "failing_test": "child::included_directory_anchor",
+        "equivalence_review": "not equivalent: child::included_directory_anchor expects 6, not 5"
+      },
+      {
+        "replacement": "7",
+        "mutated_line": "7",
+        "outcome": "tests_failed",
+        "failing_test": "child::included_directory_anchor",
+        "equivalence_review": "not equivalent: child::included_directory_anchor expects 6, not 7"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The cfg(test) included fragment declares mod child. Rust compiles fragments/child.rs, not the outer src/child.rs decoy. The edited helper in the actual child inherits the include/module context and stays silent; its literal assertion rejects both neighboring results.",
+  "spec_examples": [
+    "RIPR-SPEC-0169#3"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "5abb7591b0510f2fe563c086b42c381d8b4a2164",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  }
+}
