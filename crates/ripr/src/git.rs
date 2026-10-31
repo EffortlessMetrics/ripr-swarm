@@ -1811,59 +1811,348 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         Ok(())
     }
 
+    /// Hook-suppression regression helpers (#11533, #11732).
+    #[cfg(unix)]
+    mod hook_suppression {
+        use super::*;
+        use crate::testing::fixture_git::fixture_git_ok;
+        use std::os::unix::fs::PermissionsExt;
+        use std::path::PathBuf;
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+        #[derive(Clone)]
+        pub(super) enum HookInstall {
+            /// `.git/hooks/post-index-change` with no `core.hooksPath` override.
+            DefaultGitHooks,
+            /// External directory wired through `core.hooksPath`.
+            ConfiguredHooksPath(PathBuf),
+        }
+
+        pub(super) fn temp_root(label: &str) -> PathBuf {
+            let stamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0);
+            std::env::temp_dir().join(format!("ripr-git-{label}-{}-{stamp}", std::process::id()))
+        }
+
+        fn clear_inherited_git_env(command: &mut Command) {
+            command
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_COMMON_DIR")
+                .env_remove("GIT_INDEX_FILE")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null");
+        }
+
+        /// Unprotected git for positive controls and defense-isolation probes.
+        fn plain_git_output(root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+            plain_git_output_isolated(root, args, false, false)
+        }
+
+        fn plain_git_output_isolated(
+            root: &Path,
+            args: &[&str],
+            optional_locks_zero: bool,
+            hooks_path_null: bool,
+        ) -> Result<std::process::Output, String> {
+            let mut command = Command::new("git");
+            clear_inherited_git_env(&mut command);
+            if optional_locks_zero {
+                command.env("GIT_OPTIONAL_LOCKS", "0");
+            } else {
+                command.env_remove("GIT_OPTIONAL_LOCKS");
+            }
+            if hooks_path_null {
+                command.args(["-c", "core.hooksPath=/dev/null"]);
+            }
+            command.args(args).current_dir(root);
+            command
+                .output()
+                .map_err(|err| format!("git {args:?}: {err}"))
+        }
+
+        fn plain_git_ok(root: &Path, args: &[&str]) -> Result<(), String> {
+            let output = plain_git_output(root, args)?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!("git {args:?} failed: {output:?}"))
+            }
+        }
+
+        fn index_bytes(root: &Path) -> Result<Vec<u8>, String> {
+            std::fs::read(root.join(".git/index")).map_err(|err| format!("read index: {err}"))
+        }
+
+        fn write_executable_hook(path: &Path, marker: &Path) -> Result<(), String> {
+            std::fs::create_dir_all(
+                path.parent()
+                    .ok_or_else(|| format!("hook path has no parent: {}", path.display()))?,
+            )
+            .map_err(|err| format!("create hook dir: {err}"))?;
+            std::fs::write(path, format!("#!/bin/sh\ntouch '{}'\n", marker.display()))
+                .map_err(|err| format!("write hook: {err}"))?;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+                .map_err(|err| format!("chmod hook: {err}"))
+        }
+
+        fn stale_stat_unchanged_file(path: &Path) -> Result<(), String> {
+            let past = SystemTime::now()
+                .checked_sub(Duration::from_hours(8760))
+                .ok_or_else(|| "system clock too early for stale-stat fixture".to_string())?;
+            let file =
+                std::fs::File::open(path).map_err(|err| format!("open for stale stat: {err}"))?;
+            file.set_times(
+                std::fs::FileTimes::new()
+                    .set_accessed(past)
+                    .set_modified(past),
+            )
+            .map_err(|err| format!("set stale stat times: {err}"))
+        }
+
+        fn seed_two_file_hook_fixture(
+            root: &Path,
+            marker: &Path,
+            install: HookInstall,
+        ) -> Result<(), String> {
+            std::fs::create_dir_all(root).map_err(|err| format!("create root: {err}"))?;
+            match &install {
+                HookInstall::DefaultGitHooks => {
+                    let hook = root.join(".git/hooks/post-index-change");
+                    fixture_git_ok(root, &["init", "-q"])?;
+                    write_executable_hook(&hook, marker)?;
+                }
+                HookInstall::ConfiguredHooksPath(hooks_dir) => {
+                    std::fs::create_dir_all(hooks_dir)
+                        .map_err(|err| format!("create hooks dir: {err}"))?;
+                    write_executable_hook(&hooks_dir.join("post-index-change"), marker)?;
+                    fixture_git_ok(root, &["init", "-q"])?;
+                    let hooks_path = hooks_dir.display().to_string();
+                    fixture_git_ok(root, &["config", "core.hooksPath", hooks_path.as_str()])?;
+                }
+            }
+            fixture_git_ok(root, &["config", "user.email", "t@example.invalid"])?;
+            fixture_git_ok(root, &["config", "user.name", "t"])?;
+            std::fs::write(root.join("clean.rs"), "fn clean() {}\n")
+                .map_err(|err| format!("write clean.rs: {err}"))?;
+            std::fs::write(root.join("dirty.rs"), "fn dirty() {}\n")
+                .map_err(|err| format!("write dirty.rs: {err}"))?;
+            fixture_git_ok(root, &["add", "clean.rs", "dirty.rs"])?;
+            fixture_git_ok(root, &["commit", "-q", "-m", "seed", "--no-verify"])?;
+            stale_stat_unchanged_file(&root.join("clean.rs"))?;
+            std::fs::write(root.join("dirty.rs"), "fn dirty() { 1; }\n")
+                .map_err(|err| format!("rewrite dirty.rs: {err}"))?;
+            Ok(())
+        }
+
+        fn positive_plain_status_refreshes_index_and_runs_hook(
+            root: &Path,
+            marker: &Path,
+            install: HookInstall,
+            status_args: &[&str],
+        ) -> Result<(), String> {
+            seed_two_file_hook_fixture(root, marker, install)?;
+            let before = index_bytes(root)?;
+            plain_git_ok(root, status_args)?;
+            let after = index_bytes(root)?;
+            if before == after {
+                return Err(
+                    "plain git status must refresh a stale index (index bytes unchanged)".into(),
+                );
+            }
+            if !marker.exists() {
+                return Err(
+                    "plain git status must run the post-index-change hook (marker missing)".into(),
+                );
+            }
+            let output = plain_git_output(root, status_args)?;
+            let porcelain = String::from_utf8_lossy(&output.stdout);
+            if !porcelain.contains("dirty.rs") {
+                return Err(format!(
+                    "plain git status must report the dirty file; got {porcelain:?}"
+                ));
+            }
+            Ok(())
+        }
+
+        fn protected_status_leaves_index_and_hook_quiet(
+            root: &Path,
+            marker: &Path,
+            install: HookInstall,
+            status_args: &[&str],
+        ) -> Result<(), String> {
+            seed_two_file_hook_fixture(root, marker, install)?;
+            let before = index_bytes(root)?;
+            let protected = run_git(root, status_args).map_err(|err| err.to_string())?;
+            let after = index_bytes(root)?;
+            if before != after {
+                return Err(
+                    "ripr git status must not rewrite the index (index bytes changed)".into(),
+                );
+            }
+            if marker.exists() {
+                return Err(
+                    "ripr git status must not run post-index-change hooks (marker present)".into(),
+                );
+            }
+            if !protected.contains("dirty.rs") {
+                return Err(format!(
+                    "ripr git status must still report the dirty file; got {protected:?}"
+                ));
+            }
+            Ok(())
+        }
+
+        pub(super) fn run_hook_suppression_discriminator(
+            label: &str,
+            install: HookInstall,
+            status_args: &[&str],
+        ) -> Result<(), String> {
+            let positive_root = temp_root(&format!("{label}-pos"));
+            let positive_marker = positive_root.join("hook-ran");
+            let positive = positive_plain_status_refreshes_index_and_runs_hook(
+                &positive_root,
+                &positive_marker,
+                install.clone(),
+                status_args,
+            );
+            let _ = std::fs::remove_dir_all(&positive_root);
+            positive?;
+
+            let protected_root = temp_root(&format!("{label}-prot"));
+            let protected_marker = protected_root.join("hook-ran");
+            let protected = protected_status_leaves_index_and_hook_quiet(
+                &protected_root,
+                &protected_marker,
+                install,
+                status_args,
+            );
+            let _ = std::fs::remove_dir_all(&protected_root);
+            protected
+        }
+
+        #[test]
+        fn repository_post_index_change_hook_does_not_run_configured_hooks_path()
+        -> Result<(), String> {
+            let hooks_dir = temp_root("hooksdir");
+            let install = HookInstall::ConfiguredHooksPath(hooks_dir);
+            run_hook_suppression_discriminator(
+                "hookpath",
+                install,
+                &["status", "--porcelain", "-z"],
+            )
+        }
+
+        #[test]
+        fn repository_post_index_change_hook_does_not_run_default_hooks_path() -> Result<(), String>
+        {
+            run_hook_suppression_discriminator(
+                "defaulthook",
+                HookInstall::DefaultGitHooks,
+                &["status", "--porcelain", "-z"],
+            )
+        }
+
+        #[test]
+        fn repository_post_index_change_hook_literal_pathspecs_status() -> Result<(), String> {
+            run_hook_suppression_discriminator(
+                "literal",
+                HookInstall::DefaultGitHooks,
+                &["--literal-pathspecs", "status", "--porcelain", "-z"],
+            )
+        }
+
+        #[test]
+        fn optional_locks_alone_suppresses_post_index_change_hook() -> Result<(), String> {
+            let root = temp_root("optlocks");
+            let marker = root.join("hook-ran");
+            let hooks = temp_root("optlocks-hooks");
+            let result = (|| {
+                seed_two_file_hook_fixture(
+                    &root,
+                    &marker,
+                    HookInstall::ConfiguredHooksPath(hooks.clone()),
+                )?;
+                let before = index_bytes(&root)?;
+                let output = plain_git_output_isolated(
+                    &root,
+                    &["status", "--porcelain", "-z"],
+                    true,
+                    false,
+                )?;
+                if !output.status.success() {
+                    return Err(format!("git status failed: {output:?}"));
+                }
+                if before != index_bytes(&root)? {
+                    return Err("GIT_OPTIONAL_LOCKS=0 alone must not refresh the index".into());
+                }
+                if marker.exists() {
+                    return Err(
+                        "GIT_OPTIONAL_LOCKS=0 alone must not run post-index-change hooks".into(),
+                    );
+                }
+                Ok(())
+            })();
+            let _ = std::fs::remove_dir_all(&root);
+            let _ = std::fs::remove_dir_all(&hooks);
+            result
+        }
+
+        #[test]
+        fn hooks_path_null_alone_suppresses_post_index_change_hook() -> Result<(), String> {
+            let root = temp_root("hooknull");
+            let marker = root.join("hook-ran");
+            let hooks = temp_root("hooknull-hooks");
+            let result = (|| {
+                seed_two_file_hook_fixture(
+                    &root,
+                    &marker,
+                    HookInstall::ConfiguredHooksPath(hooks.clone()),
+                )?;
+                let before = index_bytes(&root)?;
+                let output = plain_git_output_isolated(
+                    &root,
+                    &["status", "--porcelain", "-z"],
+                    false,
+                    true,
+                )?;
+                if !output.status.success() {
+                    return Err(format!("git status failed: {output:?}"));
+                }
+                if marker.exists() {
+                    return Err(
+                        "core.hooksPath=/dev/null alone must not run post-index-change hooks"
+                            .into(),
+                    );
+                }
+                if before == index_bytes(&root)? {
+                    return Err(
+                        "positive control premise: plain status with only hooksPath null should \
+                         still be allowed to refresh the index when optional locks are enabled"
+                            .into(),
+                    );
+                }
+                Ok(())
+            })();
+            let _ = std::fs::remove_dir_all(&root);
+            let _ = std::fs::remove_dir_all(&hooks);
+            result
+        }
+    }
+
+    /// Backward-compatible name retained for #11533 callers in docs and history.
     #[cfg(unix)]
     #[test]
     fn repository_post_index_change_hook_does_not_run() -> Result<(), String> {
-        use std::os::unix::fs::PermissionsExt;
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_nanos())
-            .unwrap_or(0);
-        let root =
-            std::env::temp_dir().join(format!("ripr-git-hookpath-{}-{stamp}", std::process::id()));
-        let marker = root.join("hook-ran");
-        let result: Result<bool, String> = (|| {
-            let hooks = root.join("hooks");
-            std::fs::create_dir_all(&hooks).map_err(|err| format!("create hooks: {err}"))?;
-            let hook = hooks.join("post-index-change");
-            std::fs::write(&hook, format!("#!/bin/sh\ntouch '{}'\n", marker.display()))
-                .map_err(|err| format!("write hook: {err}"))?;
-            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))
-                .map_err(|err| format!("chmod hook: {err}"))?;
-            let hooks_path = hooks.display().to_string();
-            let plain = |args: &[&str]| -> Result<(), String> {
-                let output = Command::new("git")
-                    .args(args)
-                    .current_dir(&root)
-                    .env_remove("GIT_DIR")
-                    .env_remove("GIT_WORK_TREE")
-                    .output()
-                    .map_err(|err| format!("git {args:?}: {err}"))?;
-                if !output.status.success() {
-                    return Err(format!("git {args:?} failed: {output:?}"));
-                }
-                Ok(())
-            };
-            plain(&["init", "-q"])?;
-            plain(&["config", "user.email", "t@example.invalid"])?;
-            plain(&["config", "user.name", "t"])?;
-            std::fs::write(root.join("lib.rs"), "fn a() {}\n")
-                .map_err(|err| format!("write: {err}"))?;
-            plain(&["add", "lib.rs"])?;
-            plain(&["commit", "-q", "-m", "seed", "--no-verify"])?;
-            plain(&["config", "core.hooksPath", hooks_path.as_str()])?;
-            // A different size makes the cached stat data stale, so a plain
-            // `git status` would refresh and rewrite the index.
-            std::fs::write(root.join("lib.rs"), "fn a() { 1; }\n")
-                .map_err(|err| format!("rewrite: {err}"))?;
-            run_git(&root, &["status", "--porcelain", "-z"])?;
-            Ok(marker.exists())
-        })();
-        let _ = std::fs::remove_dir_all(&root);
-        if result? {
-            return Err("git ran the repository's post-index-change hook".to_string());
-        }
-        Ok(())
+        hook_suppression::run_hook_suppression_discriminator(
+            "legacy",
+            hook_suppression::HookInstall::ConfiguredHooksPath(hook_suppression::temp_root(
+                "legacy-hooks",
+            )),
+            &["status", "--porcelain", "-z"],
+        )
     }
 
     #[test]
