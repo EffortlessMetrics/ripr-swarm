@@ -1,0 +1,2 @@
+crates/ripr/src/output/first_pr/options.rs|first-pr {flag} requires a non-empty value
+crates/ripr/src/output/first_pr/options.rs|missing value for {flag}

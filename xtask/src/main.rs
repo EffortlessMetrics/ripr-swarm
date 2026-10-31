@@ -69,6 +69,7 @@ mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
 mod types;
+mod warm_ab;
 mod work_adapter_identity;
 mod work_burndown_identity;
 mod work_claim_identity;
@@ -87,6 +88,7 @@ mod ripr_swarm;
 mod run;
 mod rust_judged_panel;
 mod rust_region_scan;
+mod schema_cut_replay;
 mod schema_producer_sweep;
 mod verification_contracts;
 mod verify_test_shards;
@@ -3015,7 +3017,12 @@ fn workflow_run_xtask_invocation(line: &str) -> Option<WorkflowXtaskInvocation> 
     if line.contains("|| true") {
         return None;
     }
-    let rest = line.strip_prefix("cargo xtask ")?;
+    // The hosted shard verifier runs the xtask binary shard 1 built (#11566),
+    // because that job has no toolchain. Only this exact quoted form counts, and
+    // the workflow contract test pins how `$xtask` is bound.
+    let rest = line
+        .strip_prefix("cargo xtask ")
+        .or_else(|| line.strip_prefix("\"$xtask\" "))?;
     let mut tokens = rest.split_whitespace();
     let root = tokens.next()?.trim_matches('"');
     if root.is_empty() || root.starts_with('$') {

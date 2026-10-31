@@ -1,0 +1,8 @@
+crates/ripr/src/output/gate/causal.rs|canonical delta coverage missing ambiguous_items
+crates/ripr/src/output/gate/causal.rs|canonical delta coverage missing unknown_items
+crates/ripr/src/output/gate/causal.rs|canonical delta missing coverage
+crates/ripr/src/output/gate/causal.rs|canonical delta missing deltas array canonical_gap_id
+crates/ripr/src/output/gate/causal.rs|canonical delta missing schema_version
+crates/ripr/src/output/gate/causal.rs|parse canonical delta failed: {error}
+crates/ripr/src/output/gate/causal.rs|read canonical delta failed: {error}
+crates/ripr/src/output/gate/causal.rs|unsupported canonical delta schema_version `{schema_version}`

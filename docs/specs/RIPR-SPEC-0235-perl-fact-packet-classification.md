@@ -346,7 +346,8 @@ For each change, the first match wins:
     `exception_observer` reads `static_unknown`: a class or message matcher
     pins that an error is raised, not which boundary raises it. The recommended
     next step says so. A packet without the capability keeps the reading above,
-    including example 5. No producer advertises the capability yet.
+    including example 5. The perl-lsp-swarm producer advertises the capability from
+    56b40816 (perl-lsp-swarm#18503), and the Perl verdict corpus pins it.
 17. **`isnt` pins nothing.** An oracle whose recorded expression begins with
     the call `isnt` (bare, or qualified `Test::More::`, `Test2::V0::` or
     `Test2::V1::`) is read as `weak_smoke` when the producer graded it
