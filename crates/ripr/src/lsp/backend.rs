@@ -3790,10 +3790,7 @@ impl Backend {
         let Some(text) = self.document_text(uri) else {
             return false;
         };
-        if std::fs::metadata(&path).map(|meta| meta.len()).ok() != u64::try_from(text.len()).ok() {
-            return false;
-        }
-        std::fs::read(&path).is_ok_and(|disk| disk == text.as_bytes())
+        disk_bytes_equal_text(&path, &text)
     }
 
     /// The quarantine state of an open document, as `(path, reason)`.
@@ -14344,5 +14341,51 @@ mod pull_disclosure_dedup_tests {
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
         })
+    }
+}
+
+/// Whether the regular file at the client-named `path` holds exactly `text`.
+/// A cheap length check precedes the read. The path may be a device or FIFO
+/// (`/dev/zero` reports length 0), so the read goes through the bounded
+/// regular-file reader, never an unbounded `fs::read`.
+fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
+    if std::fs::metadata(path).map(|meta| meta.len()).ok() != u64::try_from(text.len()).ok() {
+        return false;
+    }
+    super::state::read_saved_bytes(path).is_some_and(|disk| disk == text.as_bytes())
+}
+
+#[cfg(test)]
+mod disk_bytes_equal_text_tests {
+    use super::disk_bytes_equal_text;
+    use std::path::Path;
+
+    #[test]
+    fn device_and_directory_paths_never_equal_empty_text() {
+        // `/dev/zero` stats as length 0, so an empty buffer passes the length
+        // check; the unbounded read that followed grew RSS past 5 GB.
+        #[cfg(target_os = "linux")]
+        assert!(!disk_bytes_equal_text(Path::new("/dev/zero"), ""));
+        assert!(!disk_bytes_equal_text(&std::env::temp_dir(), ""));
+    }
+
+    #[test]
+    fn regular_file_equality_is_exact() -> Result<(), String> {
+        let path = std::env::temp_dir().join(format!(
+            "ripr-disk-equal-{}-{:?}.txt",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        let equal = disk_bytes_equal_text(&path, "abc");
+        let same_len_different = disk_bytes_equal_text(&path, "abd");
+        let shorter = disk_bytes_equal_text(&path, "ab");
+        let _ = std::fs::remove_file(&path);
+        if !equal || same_len_different || shorter {
+            return Err(format!(
+                "equal={equal} same_len_different={same_len_different} shorter={shorter}"
+            ));
+        }
+        Ok(())
     }
 }
