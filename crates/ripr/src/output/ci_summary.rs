@@ -101,6 +101,7 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
         relative: repo_relative_for(&input.root),
         out: Vec::new(),
         attention: false,
+        policy_read: false,
     };
     summary.headline();
     summary.start_here();
@@ -187,6 +188,8 @@ struct Summary {
     out: Vec<u8>,
     /// A folded governance section carried a count that is not exactly `0`.
     attention: bool,
+    /// A folded section read a policy JSON report.
+    policy_read: bool,
 }
 
 impl Summary {
@@ -240,13 +243,17 @@ impl Summary {
             return;
         }
         let body = self.out.split_off(start);
-        // Fail closed: a warning, unknown, blocker or error count that is not
-        // exactly `0` keeps the block open so a non-clean state is not hidden.
+        // Fail closed: only parsed reports with every count exactly `0` fold
+        // as clean; anything else stays open or says nothing was read.
         if self.attention {
-            self.line("<details open><summary>Policy and governance (advisory; no gate configured; has warnings, unknowns or blockers)</summary>");
-        } else {
+            self.line("<details open><summary>Policy and governance (advisory; no gate configured; needs attention)</summary>");
+        } else if self.policy_read {
             self.line(
                 "<details><summary>Policy and governance (advisory; no gate configured; no warnings or unknowns)</summary>",
+            );
+        } else {
+            self.line(
+                "<details><summary>Policy and governance (advisory; no gate configured; no policy reports found)</summary>",
             );
         }
         self.blank();
@@ -255,10 +262,15 @@ impl Summary {
         self.blank();
     }
 
-    /// Record that a folded section reported a count that is not `0`.
-    fn note_attention(&mut self, doc: &Doc, counts: &[&str]) {
-        // A report that did not parse reads as `0` counts; it is not clean.
-        if doc.is_broken() || counts.iter().any(|count| *count != "0") {
+    /// Record what a folded section's report establishes. Only a report that
+    /// parsed with every listed count present and exactly `0` is clean;
+    /// unreadable, wrong-shape and missing-count reports need attention.
+    fn note_attention(&mut self, doc: &Doc, count_paths: &[&str]) {
+        self.policy_read = true;
+        if count_paths
+            .iter()
+            .any(|path| doc.strict_count(path) != Some(0))
+        {
             self.attention = true;
         }
     }
@@ -1152,7 +1164,7 @@ impl Summary {
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
             let next = inline(&doc.field(&["next_policy_action"], "not_available", "unknown"));
-            self.note_attention(&doc, &[&warnings, &unknowns]);
+            self.note_attention(&doc, &["warnings", "unknowns"]);
             self.line("#### Policy readiness at a glance");
             self.line(&format!("- Status: `{status}`"));
             self.line(&format!("- Recommended mode: `{mode}`"));
@@ -1183,7 +1195,7 @@ impl Summary {
             ));
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
-            self.note_attention(&doc, &[&blockers, &warnings, &unknowns]);
+            self.note_attention(&doc, &["promotion_blockers", "warnings", "unknowns"]);
             self.line("#### Policy operations at a glance");
             self.line(&format!("- Current ceiling: `{ceiling}`"));
             self.line(&format!("- Next safe action: `{next}`"));
@@ -1218,7 +1230,7 @@ impl Summary {
             let preview = direction("trend.preview_boundary_state.direction");
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
-            self.note_attention(&doc, &[&warnings, &unknowns]);
+            self.note_attention(&doc, &["warnings", "unknowns"]);
             self.line("#### Policy history at a glance");
             self.line(&format!(
                 "- Current ceiling: `{ceiling}`; history entries: `{entries}`"
@@ -1250,7 +1262,7 @@ impl Summary {
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
             let reason = inline(&doc.field(&["why_or_why_not"], "not_available", "unknown"));
-            self.note_attention(&doc, &[&warnings, &unknowns]);
+            self.note_attention(&doc, &["warnings", "unknowns"]);
             self.line(&format!("- `{target}`: allowed_now=`{allowed}`, repairs=`{repairs}`, receipts=`{receipts}`, warnings=`{warnings}`, unknowns=`{unknowns}`, why=`{reason}`"));
         }
         if found {
@@ -1283,7 +1295,7 @@ impl Summary {
             let supplied = inline(&doc.length("supplied_evidence"));
             let warnings = inline(&doc.length("warnings"));
             let unknowns = inline(&doc.length("unknowns"));
-            self.note_attention(&doc, &[&warnings, &unknowns]);
+            self.note_attention(&doc, &["warnings", "unknowns"]);
             self.line(&format!("- `{language}`/`{class}`: allowed_now=`{allowed}`, supplied_evidence=`{supplied}`, missing_evidence=`{missing}`, warnings=`{warnings}`, unknowns=`{unknowns}`"));
         }
         if jsons.iter().any(|json| self.is_file(json)) {
@@ -1335,7 +1347,10 @@ impl Summary {
             let focused = count("summary.focused_test_candidates");
             let suppression = count("summary.durable_suppression_candidates");
             let warnings = count("summary.warnings");
-            self.note_attention(&doc, &[&suppression, &warnings]);
+            self.note_attention(
+                &doc,
+                &["summary.durable_suppression_candidates", "summary.warnings"],
+            );
             self.line("#### Waiver aging at a glance");
             self.line(&format!("- Status: `{status}`"));
             self.line(&format!("- Counts: waivers=`{waivers}`, identities=`{identities}`, repeated_seams=`{repeated_seams}`, repeated_files=`{repeated_files}`"));
@@ -1372,14 +1387,14 @@ impl Summary {
             self.note_attention(
                 &doc,
                 &[
-                    &missing_owner,
-                    &missing_reason,
-                    &stale,
-                    &overbroad,
-                    &unknown_selector,
-                    &preview_gap,
-                    &warnings,
-                    &config_errors,
+                    "summary.missing_owner",
+                    "summary.missing_reason",
+                    "summary.stale",
+                    "summary.overbroad_scope",
+                    "summary.unknown_selector",
+                    "summary.preview_without_preview_label",
+                    "summary.warnings",
+                    "summary.config_errors",
                 ],
             );
             self.line("#### Suppression health at a glance");

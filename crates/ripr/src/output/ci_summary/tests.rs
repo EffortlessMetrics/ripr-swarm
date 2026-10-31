@@ -1162,6 +1162,7 @@ fn render_gate(
 #[test]
 fn governance_sections_fold_unless_a_gate_is_configured() -> TestResult {
     let fixture = Fixture::complete("fold-governance")?;
+    write_quiet(&fixture)?;
     let folded = render_gate(&fixture, false)?;
     let open = render_gate(&fixture, true)?;
     let fold = "<details><summary>Policy and governance (advisory; no gate configured; no warnings or unknowns)</summary>";
@@ -1190,39 +1191,161 @@ fn governance_sections_fold_unless_a_gate_is_configured() -> TestResult {
     Ok(())
 }
 
-#[test]
-fn a_nonzero_count_keeps_the_governance_fold_open() -> TestResult {
-    let cases: [(&str, serde_json::Value); 3] = [
+const R: &str = "target/ripr/reports";
+
+/// Every folded report, parsed, with every count it states at exactly zero.
+fn quiet_reports() -> Vec<(String, serde_json::Value)> {
+    let warn = || json!({"warnings": [], "unknowns": []});
+    vec![
+        (format!("{R}/policy-readiness.json"), warn()),
         (
-            "policy-readiness",
-            json!({"status": "ok", "warnings": ["w"]}),
+            format!("{R}/policy-operations.json"),
+            json!({"promotion_blockers": [], "warnings": [], "unknowns": []}),
+        ),
+        (format!("{R}/policy-history.json"), warn()),
+        (
+            format!("{R}/policy-promotion-acknowledgeable.json"),
+            json!({"target_mode": "acknowledgeable", "warnings": [], "unknowns": []}),
         ),
         (
-            "policy-operations",
-            json!({"promotion_blockers": [{"repair_action": "fix"}]}),
+            format!("{R}/preview-promotion-typescript-boundary-gap.json"),
+            json!({"language": "typescript", "warnings": [], "unknowns": []}),
         ),
         (
-            "suppression-health",
-            json!({"summary": {"config_errors": 1}}),
+            format!("{R}/waiver-aging.json"),
+            json!({"summary": {"durable_suppression_candidates": 0, "warnings": 0}}),
         ),
-    ];
-    for (name, doc) in cases {
-        let fixture = Fixture::complete(&format!("fold-open-{name}"))?;
-        fixture.json(&format!("target/ripr/reports/{name}.json"), &doc)?;
-        let summary = render_gate(&fixture, false)?;
-        assert!(
-            summary.contains("<details open><summary>Policy and governance"),
-            "{name}: {summary}"
-        );
+        (
+            format!("{R}/suppression-health.json"),
+            json!({"summary": {
+                "missing_owner": 0, "missing_reason": 0, "stale": 0,
+                "overbroad_scope": 0, "unknown_selector": 0,
+                "preview_without_preview_label": 0, "warnings": 0, "config_errors": 0,
+            }}),
+        ),
+    ]
+}
+
+fn write_quiet(fixture: &Fixture) -> TestResult {
+    for (path, doc) in quiet_reports() {
+        fixture.json(&path, &doc)?;
     }
-    // A malformed report cannot be read as clean either.
-    let fixture = Fixture::complete("fold-open-malformed")?;
-    fixture.write("target/ripr/reports/policy-history.json", "{not json")?;
-    let summary = render_gate(&fixture, false)?;
+    Ok(())
+}
+
+fn set_path(doc: &mut serde_json::Value, path: &str, value: serde_json::Value) {
+    let mut node = doc;
+    let keys: Vec<&str> = path.split('.').collect();
+    for key in &keys[..keys.len() - 1] {
+        node = &mut node[*key];
+    }
+    node[keys[keys.len() - 1]] = value;
+}
+
+const OPEN: &str = "<details open><summary>Policy and governance";
+const CLEAN: &str = "no gate configured; no warnings or unknowns)";
+
+#[test]
+fn every_count_source_keeps_the_governance_fold_open_when_nonzero() -> TestResult {
+    let control = Fixture::complete("fold-control")?;
+    write_quiet(&control)?;
+    let summary = render_gate(&control, false)?;
     assert!(
-        summary.contains("<details open><summary>Policy and governance"),
+        summary.contains(CLEAN) && !summary.contains(OPEN),
         "{summary}"
     );
+
+    let mut cases: Vec<(&str, String, serde_json::Value)> = Vec::new();
+    for file in [
+        "policy-readiness.json",
+        "policy-operations.json",
+        "policy-history.json",
+        "policy-promotion-acknowledgeable.json",
+        "preview-promotion-typescript-boundary-gap.json",
+    ] {
+        cases.push((file, "warnings".to_string(), json!(["w"])));
+        cases.push((file, "unknowns".to_string(), json!(["u"])));
+    }
+    cases.push((
+        "policy-operations.json",
+        "promotion_blockers".to_string(),
+        json!([{"repair_action": "fix"}]),
+    ));
+    for path in ["summary.durable_suppression_candidates", "summary.warnings"] {
+        cases.push(("waiver-aging.json", path.to_string(), json!(1)));
+    }
+    for path in [
+        "missing_owner",
+        "missing_reason",
+        "stale",
+        "overbroad_scope",
+        "unknown_selector",
+        "preview_without_preview_label",
+        "warnings",
+        "config_errors",
+    ] {
+        cases.push((
+            "suppression-health.json",
+            format!("summary.{path}"),
+            json!(1),
+        ));
+    }
+    for (file, path, value) in cases {
+        let fixture = Fixture::complete(&format!("fold-open-{file}-{path}"))?;
+        write_quiet(&fixture)?;
+        let full = format!("{R}/{file}");
+        let mut doc = quiet_reports()
+            .into_iter()
+            .find(|(name, _)| *name == full)
+            .map(|(_, doc)| doc)
+            .ok_or("unknown report")?;
+        set_path(&mut doc, &path, value);
+        fixture.json(&full, &doc)?;
+        let summary = render_gate(&fixture, false)?;
+        assert!(summary.contains(OPEN), "{file} {path}: {summary}");
+        assert!(!summary.contains(CLEAN), "{file} {path}");
+    }
+    Ok(())
+}
+
+#[test]
+fn unreadable_wrong_shape_and_missing_counts_are_not_clean() -> TestResult {
+    let shapes: [(&str, Option<serde_json::Value>); 6] = [
+        ("array", Some(json!([]))),
+        ("number", Some(json!(42))),
+        (
+            "bool-count",
+            Some(json!({"warnings": true, "unknowns": []})),
+        ),
+        ("summary-array", Some(json!({"summary": []}))),
+        ("no-counts", Some(json!({"status": "ok"}))),
+        ("malformed", None),
+    ];
+    for (reports_file, _) in quiet_reports() {
+        for (shape, doc) in &shapes {
+            let fixture = Fixture::complete(&format!("fold-shape-{reports_file}-{shape}"))?;
+            write_quiet(&fixture)?;
+            match doc {
+                Some(doc) => fixture.json(&reports_file, doc)?,
+                None => fixture.write(&reports_file, "{not json")?,
+            }
+            let summary = render_gate(&fixture, false)?;
+            assert!(summary.contains(OPEN), "{reports_file} {shape}: {summary}");
+            assert!(!summary.contains(CLEAN), "{reports_file} {shape}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn no_policy_reports_is_neither_clean_nor_open() -> TestResult {
+    let fixture = Fixture::new("fold-none")?;
+    let summary = render_gate(&fixture, false)?;
+    assert!(
+        summary.contains("no gate configured; no policy reports found)"),
+        "{summary}"
+    );
+    assert!(!summary.contains(CLEAN), "{summary}");
     Ok(())
 }
 

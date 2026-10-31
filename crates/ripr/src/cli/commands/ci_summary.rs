@@ -43,10 +43,11 @@ pub(super) fn ci_summary(args: &[String]) -> Result<(), String> {
         .map_err(|err| format!("{COMMAND} could not write the summary: {err}"))
 }
 
-/// `RIPR_GATE_MODE` counts as set when it is not blank, as `ci_packet` reads
-/// it; an invalid value is still "configured" and fails in the gate itself.
+/// `RIPR_GATE_MODE` counts as set when it is non-empty, read raw as
+/// `ci_packet` reads it (no trim); an invalid or whitespace-only value is
+/// still "configured" and fails in the gate itself.
 fn gate_configured(mode: &str) -> bool {
-    !mode.trim().is_empty()
+    !mode.is_empty()
 }
 
 /// The enabled languages `ripr doctor --json` reports; none when the
@@ -113,9 +114,9 @@ pub(super) fn parse_ci_summary_options_with(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn gate_mode_is_configured_unless_blank() {
+    fn gate_mode_is_configured_unless_empty() {
         assert!(!super::gate_configured(""));
-        assert!(!super::gate_configured("  \t"));
+        assert!(super::gate_configured("  \t"));
         assert!(super::gate_configured("visible-only"));
         assert!(super::gate_configured("off"));
         assert!(super::gate_configured("not-a-mode"));
