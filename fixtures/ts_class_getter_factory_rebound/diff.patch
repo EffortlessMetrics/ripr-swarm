@@ -1,0 +1,12 @@
+diff --git a/src/cache.ts b/src/cache.ts
+--- a/src/cache.ts
++++ b/src/cache.ts
+@@ -8,7 +8,7 @@
+ 
+   get value(): T {
+     const getter = this._getter;
+-    if (getter !== undefined) {
++    if (getter === undefined) {
+       this._value = getter();
+       this._getter = undefined;
+     }

@@ -6,6 +6,7 @@
 mod build_feature_reuse;
 mod discarded_matcher_honesty;
 mod fixture_cache;
+mod fixture_variants;
 mod operand_callee_honesty;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
@@ -12092,6 +12093,18 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         (
             "tree to the live head merged onto the group base",
             "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
+        ),
+        (
+            "same-head succession read as the last live eligibility check",
+            "            read_succession\n          }\n",
+        ),
+        (
+            "older run or a newer attempt of the same head",
+            ".id != $id and .run_number >= $number)] | length) == 0",
+        ),
+        (
+            "succession read to this run's own attempt",
+            ".id == $id and .run_attempt == $attempt and .head_sha == $head",
         ),
     ] {
         let mutated = workflow.replace(snippet, "removed");

@@ -71,6 +71,9 @@ mod init_followups;
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/legend_first_run.rs"]
+mod legend_first_run;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/mixed_quote_rename.rs"]
 mod mixed_quote_rename;
 #[cfg(feature = "lang-rust")]
@@ -765,7 +768,15 @@ fn unique_external_workspace(label: &str) -> Result<PathBuf, String> {
         if canonical == workspace || canonical.starts_with(&workspace) {
             continue;
         }
-        let probe = canonical.join(format!(".ripr-write-probe-{}", std::process::id()));
+        // Tests run on parallel threads of one process: a pid-only name made a
+        // sibling's `remove_dir` race this `create_dir` into a false "no
+        // writable directory".
+        static PROBE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let probe = canonical.join(format!(
+            ".ripr-write-probe-{}-{}",
+            std::process::id(),
+            PROBE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         if std::fs::create_dir(&probe).is_err() {
             continue;
         }
@@ -6375,10 +6386,58 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
         "{route}"
     );
 
-    // The default surface is the compact human summary of the same card.
+    // The default surface is the short plain brief (#10693): no producer,
+    // subject, non-claim, detail rows or hashes. `--verbose` keeps the full
+    // field list of the same card, asserted below.
+    let plain = run_ripr(&[
+        "agent",
+        "card",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        "67fc764ba37d77bd",
+    ]);
+    assert_success(&plain);
+    let plain_stdout = String::from_utf8_lossy(&plain.stdout);
+    for needle in [
+        "Repair brief for gap 67fc764ba37d77bd",
+        "  Files you may change: ",
+        "  Do not change: ",
+        "  Done when: ",
+        "  This is a suggestion; ripr has not run or verified anything.",
+        "--seam-id 67fc764ba37d77bd --json",
+    ] {
+        assert!(
+            plain_stdout.contains(needle),
+            "missing {needle:?}:\n{plain_stdout}"
+        );
+    }
+    for absent in [
+        "Repair card ",
+        "producer:",
+        "subject:",
+        "non-claim",
+        "edit cage",
+        "allowed_edit_surface",
+        "witness",
+        "detail [",
+        "repair_ready=",
+        "sha256:",
+    ] {
+        assert!(
+            !plain_stdout.contains(absent),
+            "plain brief must not print {absent:?}:\n{plain_stdout}"
+        );
+    }
+    assert!(
+        plain_stdout.lines().count() <= 14,
+        "plain brief should stay short:\n{plain_stdout}"
+    );
+
     let human = run_ripr(&[
         "agent",
         "card",
+        "--verbose",
         "--root",
         &root_arg,
         "--seam-id",
@@ -6723,9 +6782,24 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
                 .ok_or("missing cage blocker")?;
             assert!(blocker.contains("no selected edit target"), "{blocker}");
             assert!(String::from_utf8_lossy(&before.stderr).contains(blocker));
+            let plain = run_ripr(&[
+                "agent",
+                "card",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                BOUNDARY_GAP_SEAM_ID,
+            ]);
+            assert_success(&plain);
+            let plain = String::from_utf8_lossy(&plain.stdout);
+            assert!(
+                plain.contains("Not ready to repair yet:") && plain.contains(blocker),
+                "{plain}"
+            );
             let human = run_ripr(&[
                 "agent",
                 "card",
+                "--verbose",
                 "--root",
                 &root_arg,
                 "--seam-id",
@@ -13918,9 +13992,11 @@ fn assert_doctor_passes_without_rust_toolchain(
     let human = run_doctor_with_path(root, path, false)?;
     let stdout = String::from_utf8_lossy(&human.stdout);
     if !human.status.success()
-        || !stdout.contains(&format!("- Cargo.toml check skipped: {scope_reason}"))
-        || !stdout.contains(&format!("- cargo check skipped: {scope_reason}"))
-        || !stdout.contains(&format!("- rustc check skipped: {scope_reason}"))
+        || stdout
+            .matches(&format!("- Rust checks skipped: {scope_reason}\n"))
+            .count()
+            != 1
+        || stdout.contains("check skipped:")
         || stdout.contains("! no Cargo.toml")
         || !stdout.contains("✓ doctor checks passed")
     {
@@ -17752,6 +17828,143 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     Ok(())
 }
 
+/// #10726: the built-in inventory cap follows the pilot artifact budget, so
+/// pilot stops classifying seams it would only discard. The ranking and the
+/// disclosure must not move: with the inventory env var unset (bounded by the
+/// budget) and with `RIPR_REPO_EXPOSURE_SEAM_LIMIT=0` (whole inventory
+/// classified, then cut by the same budget), pilot names the same seams, the
+/// same top actionable seams, the same summary limit, and the same pilot-budget
+/// limitation (category, control, repair route). Also pin that a changed seam
+/// past the cap still survives into the pilot result.
+#[test]
+fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("pilot-default-cap-follows-budget");
+    std::fs::create_dir_all(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let mut lib = std::fs::read_to_string(root.join("src/lib.rs"))?;
+    lib.push_str(
+        "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n\npub fn handling_fee(items: i32) -> i32 {\n    if items > 3 { 2 } else { 0 }\n}\n",
+    );
+    std::fs::write(root.join("src/lib.rs"), lib)?;
+    commit_repair_fixture(&root, &["-qam", "expanded pilot fixture"])?;
+
+    let run = |inventory_limit: Option<&str>| -> Result<
+        (serde_json::Value, serde_json::Value),
+        Box<dyn std::error::Error>,
+    > {
+        let mut env = vec![("RIPR_PILOT_SEAM_BUDGET", "1")];
+        if let Some(limit) = inventory_limit {
+            env.push(("RIPR_REPO_EXPOSURE_SEAM_LIMIT", limit));
+        }
+        let pilot = run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &root,
+            &["pilot", "--root", ".", "--mode", "draft"],
+            &env,
+        )?;
+        assert_success(&pilot);
+        let exposure: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+            root.join("target/ripr/pilot/repo-exposure.json"),
+        )?)?;
+        let summary: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+            root.join("target/ripr/pilot/pilot-summary.json"),
+        )?)?;
+        Ok((exposure, summary))
+    };
+    let seam_ids = |exposure: &serde_json::Value| -> Vec<String> {
+        exposure["seams"]
+            .as_array()
+            .map(|seams| {
+                seams
+                    .iter()
+                    .map(|seam| seam["seam_id"].to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let assert_same_result =
+        |label: &str,
+         default: &(serde_json::Value, serde_json::Value),
+         full: &(serde_json::Value, serde_json::Value)| {
+            assert_eq!(seam_ids(&default.0), seam_ids(&full.0), "{label}");
+            assert_eq!(
+                default.1["top_actionable_seams"], full.1["top_actionable_seams"],
+                "{label}: {}\n{}",
+                default.1, full.1
+            );
+            assert_eq!(
+                default.1["seam_limit"], full.1["seam_limit"],
+                "{label}: the summary must disclose the same cut"
+            );
+            // The cut is the pilot budget in both runs: same category, control and
+            // repair route, never the inventory control.
+            let limitation = |doc: &serde_json::Value| doc["limitations"][0].clone();
+            assert_eq!(limitation(&default.0), limitation(&full.0), "{label}");
+            assert_eq!(
+                limitation(&default.0)["category"],
+                "pilot_seam_budget_applied",
+                "{label}: {}",
+                default.0
+            );
+            assert_eq!(
+                limitation(&default.0)["control"],
+                "RIPR_PILOT_SEAM_BUDGET",
+                "{label}"
+            );
+            assert_eq!(
+                default.0.get("artifact"),
+                full.0.get("artifact"),
+                "{label}: a budget-cut snapshot carries no comparable identity"
+            );
+            assert!(default.0.get("artifact").is_none(), "{label}");
+        };
+
+    // Clean tree: nothing supplemented.
+    let full = run(Some("0"))?;
+    let default = run(None)?;
+    let total = full.1["seam_limit"]["total"]
+        .as_u64()
+        .ok_or("the budget must cut the fixture inventory")?;
+    assert!(total > 1, "{}", full.1);
+    assert_eq!(seam_ids(&full.0).len(), 1, "{}", full.0);
+    assert_same_result("clean tree", &default, &full);
+
+    // A changed seam past the cap (the last function of the file, well past
+    // a one-seam cap) is still classified and kept.
+    let mut lib = std::fs::read_to_string(root.join("src/lib.rs"))?;
+    lib = lib.replace(
+        "if items > 3 { 2 } else { 0 }",
+        "if items > 4 { 2 } else { 0 }",
+    );
+    std::fs::write(root.join("src/lib.rs"), lib)?;
+    let full = run(Some("0"))?;
+    let default = run(None)?;
+    assert!(
+        default.0["seams"]
+            .as_array()
+            .ok_or("seams must be an array")?
+            .iter()
+            .any(|seam| seam["owner"]
+                .as_str()
+                .is_some_and(|o| o.contains("handling_fee"))),
+        "the changed seam past the cap must survive: {}",
+        default.0
+    );
+    assert_same_result("changed seam past the cap", &default, &full);
+    // An explicit nonzero inventory limit still applies as set (cap 2 here,
+    // not the pilot-scoped default of 1), so the run still discloses the
+    // whole inventory as its total.
+    let explicit = run(Some("2"))?;
+    assert_eq!(
+        explicit.1["seam_limit"]["total"], default.1["seam_limit"]["total"],
+        "{}",
+        explicit.1
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 /// #5205: pilot honors `[languages] enabled` like `check` does. With Rust
 /// disabled, pilot ranks no Rust seam and discloses the exclusion — in the
 /// terminal and the summary packet — instead of silently ranking Rust.
@@ -19844,12 +20057,13 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
         "python-only repo exposure must name the seam-inventory limit: {exposure}"
     );
     assert_eq!(exposure["metrics"]["seams_total"], 0);
+    // Pilot analyzed Python (the preview block above), so it must not also
+    // list Python as "Not scanned" (#11215).
     assert!(
-        stdout.contains(&format!(
-            "python: 2 files (preview; run the command below to check the diff)\n    route: {command}\n"
-        )),
+        stdout.contains("Python preview:\n  status: ready"),
         "{stdout}"
     );
+    assert!(!stdout.contains("Not scanned by pilot"), "{stdout}");
     // The Python repair card is the top recommendation, so the closing block
     // follows the card's route rather than sending the user to `ripr check`,
     // which only leads back to pilot (rc rehearsal py-pricing).
@@ -22371,6 +22585,25 @@ fn context_reuse_matches_fresh(fresh: &[u8], reused: &[u8]) -> Result<(), String
     Ok(())
 }
 
+/// A byte-identical copy of the suite binary inside the test's owned temp
+/// workspace (#11197): repo-rooted cross-process artifact tests write and
+/// read through this stable copy, so an in-suite rebuild of the shared
+/// `target/debug/ripr` cannot change the analyzer identity between the
+/// artifact's write and read execs. Identity constants are baked into the
+/// bytes, so the copy verifies exactly like the original — the comparison
+/// is not weakened.
+fn stable_ripr_copy(workspace: &Path) -> Result<PathBuf, String> {
+    let copy = workspace.join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
+    std::fs::copy(env!("CARGO_BIN_EXE_ripr"), &copy)
+        .map_err(|err| format!("copy suite binary to {}: {err}", copy.display()))?;
+    Ok(copy)
+}
+
+fn run_ripr_copy(binary: &Path, args: &[&str]) -> Result<Output, String> {
+    run_command(&binary.display().to_string(), None, args)
+        .map_err(|err| format!("spawn {}: {err}", binary.display()))
+}
+
 /// Every identity mismatch class fails closed with a typed error naming the
 /// mismatched field — never a silent recompute.
 #[test]
@@ -22382,17 +22615,24 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
     let artifact = dir.join("last-check.json");
     let artifact_arg = artifact.display().to_string();
     let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
+    // Repo-rooted and long-running: write and read through a stable binary
+    // copy so an in-suite rebuild of the shared binary cannot interleave
+    // with this test's identity observations (#11197).
+    let binary = stable_ripr_copy(&dir)?;
 
     let result = (|| {
-        let check = run_ripr(&[
-            "check",
-            "--root",
-            &root,
-            "--diff",
-            &diff,
-            "--write-artifact",
-            &artifact_arg,
-        ]);
+        let check = run_ripr_copy(
+            &binary,
+            &[
+                "check",
+                "--root",
+                &root,
+                "--diff",
+                &diff,
+                "--write-artifact",
+                &artifact_arg,
+            ],
+        )?;
         assert_success(&check);
         let original = std::fs::read_to_string(&artifact)
             .map_err(|err| format!("artifact was not written: {err}"))?;
@@ -22400,14 +22640,17 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
         // Mode mismatch (tampered recording).
         let tampered = original.replace("\"mode\": \"draft\"", "\"mode\": \"ready\"");
         std::fs::write(&artifact, &tampered).map_err(|err| format!("write: {err}"))?;
-        let output = run_ripr(&[
-            "explain",
-            "--root",
-            &root,
-            "--from",
-            &artifact_arg,
-            selector,
-        ]);
+        let output = run_ripr_copy(
+            &binary,
+            &[
+                "explain",
+                "--root",
+                &root,
+                "--from",
+                &artifact_arg,
+                selector,
+            ],
+        )?;
         assert_failure(&output);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -22417,17 +22660,53 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
             "mode mismatch must be named:\n{stderr}"
         );
 
+        // Analyzer binary flip (#11197): the mismatch names BOTH the
+        // recorded and the current identity so a swapped binary is
+        // self-describing.
+        let mut flipped: serde_json::Value = serde_json::from_str(&original)
+            .map_err(|err| format!("parse artifact for tamper: {err}"))?;
+        flipped["analyzer_version"] =
+            serde_json::Value::String("ripr-flipped-identity-11197".to_string());
+        std::fs::write(
+            &artifact,
+            serde_json::to_string(&flipped)
+                .map_err(|err| format!("serialize tampered artifact: {err}"))?,
+        )
+        .map_err(|err| format!("write: {err}"))?;
+        let output = run_ripr_copy(
+            &binary,
+            &[
+                "explain",
+                "--root",
+                &root,
+                "--from",
+                &artifact_arg,
+                selector,
+            ],
+        )?;
+        assert_failure(&output);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("analyzer_version")
+                && stderr.contains("ripr-flipped-identity-11197")
+                && stderr.contains("vs current"),
+            "analyzer_version mismatch must name recorded and current values:\n{stderr}"
+        );
+
         // Unsupported schema version.
         let stale = original.replace("ripr-check-artifact-v1", "ripr-check-artifact-v0");
         std::fs::write(&artifact, &stale).map_err(|err| format!("write: {err}"))?;
-        let output = run_ripr(&[
-            "explain",
-            "--root",
-            &root,
-            "--from",
-            &artifact_arg,
-            selector,
-        ]);
+        let output = run_ripr_copy(
+            &binary,
+            &[
+                "explain",
+                "--root",
+                &root,
+                "--from",
+                &artifact_arg,
+                selector,
+            ],
+        )?;
         assert_failure(&output);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -22441,16 +22720,19 @@ fn explain_from_fails_closed_on_tampered_identity() -> Result<(), String> {
         let other_diff = dir.join("other.diff");
         std::fs::copy(sample_diff(), &other_diff).map_err(|err| format!("copy: {err}"))?;
         let other_diff_arg = other_diff.display().to_string();
-        let output = run_ripr(&[
-            "explain",
-            "--root",
-            &root,
-            "--from",
-            &artifact_arg,
-            "--diff",
-            &other_diff_arg,
-            selector,
-        ]);
+        let output = run_ripr_copy(
+            &binary,
+            &[
+                "explain",
+                "--root",
+                &root,
+                "--from",
+                &artifact_arg,
+                "--diff",
+                &other_diff_arg,
+                selector,
+            ],
+        )?;
         assert_failure(&output);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -22729,52 +23011,69 @@ fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<()
     let artifact = dir.join("no-unchanged.json");
     let artifact_arg = artifact.display().to_string();
     let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
+    // Repo-rooted and long-running: write and read through a stable binary
+    // copy so an in-suite rebuild of the shared binary cannot land between
+    // the artifact's write and read execs and flip the analyzer identity
+    // (#11197).
+    let binary = stable_ripr_copy(&dir)?;
 
-    let check = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--no-unchanged-tests",
-        "--write-artifact",
-        &artifact_arg,
-    ]);
+    let check = run_ripr_copy(
+        &binary,
+        &[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--no-unchanged-tests",
+            "--write-artifact",
+            &artifact_arg,
+        ],
+    )?;
     assert_success(&check);
 
-    let fresh = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--no-unchanged-tests",
-        "--at",
-        selector,
-    ]);
+    let fresh = run_ripr_copy(
+        &binary,
+        &[
+            "context",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--no-unchanged-tests",
+            "--at",
+            selector,
+        ],
+    )?;
     assert_success(&fresh);
-    let reused = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--from",
-        &artifact_arg,
-        "--no-unchanged-tests",
-        "--at",
-        selector,
-    ]);
+    let reused = run_ripr_copy(
+        &binary,
+        &[
+            "context",
+            "--root",
+            &root,
+            "--from",
+            &artifact_arg,
+            "--no-unchanged-tests",
+            "--at",
+            selector,
+        ],
+    )?;
     assert_success(&reused);
     context_reuse_matches_fresh(&fresh.stdout, &reused.stdout)?;
 
-    let without_flag = run_ripr(&[
-        "context",
-        "--root",
-        &root,
-        "--from",
-        &artifact_arg,
-        "--at",
-        selector,
-    ]);
+    let without_flag = run_ripr_copy(
+        &binary,
+        &[
+            "context",
+            "--root",
+            &root,
+            "--from",
+            &artifact_arg,
+            "--at",
+            selector,
+        ],
+    )?;
     assert_failure(&without_flag);
     let stderr = String::from_utf8_lossy(&without_flag.stderr);
     assert!(
