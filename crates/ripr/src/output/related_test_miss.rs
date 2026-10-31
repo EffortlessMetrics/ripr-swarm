@@ -13,7 +13,7 @@ use crate::domain::{ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason};
 /// the row the human `Related test` line names (`related_tests.first()`).
 /// `Iterator::max_by_key` returns the *last* maximum, which made the packet
 /// name a different test than the headline whenever two tests tied.
-pub(crate) fn strongest_related_test<'a>(tests: &'a [RelatedTest]) -> Option<&'a RelatedTest> {
+pub(crate) fn strongest_related_test(tests: &[RelatedTest]) -> Option<&RelatedTest> {
     let mut best: Option<&RelatedTest> = None;
     for test in tests {
         if best.is_none_or(|current| test.oracle_strength.rank() > current.oracle_strength.rank()) {
@@ -21,6 +21,25 @@ pub(crate) fn strongest_related_test<'a>(tests: &'a [RelatedTest]) -> Option<&'a
         }
     }
     best
+}
+
+/// The row the human `Related test` headline names (#11228).
+///
+/// TypeScript and JavaScript findings use [`strongest_related_test`] so the
+/// headline, card, packet and oracle summary all name one row, including when
+/// a weak direct call precedes a strong re-exported one. Other languages keep
+/// the first row; moving them is a separate, golden-wide change.
+pub(crate) fn headline_related_test(
+    language: Option<crate::domain::LanguageId>,
+    tests: &[RelatedTest],
+) -> Option<&RelatedTest> {
+    if matches!(
+        language,
+        Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript)
+    ) {
+        return strongest_related_test(tests);
+    }
+    tests.first()
 }
 
 /// Short reason the test misses the changed behavior, or `None` when the
@@ -272,6 +291,35 @@ mod tests {
             Some("small")
         );
         assert!(strongest_related_test(&[]).is_none());
+    }
+
+    /// #11228 (mixed strengths): a weak direct row precedes a strong
+    /// re-exported one. Script findings headline the strong row, as the card,
+    /// packet and JSON summary do; other languages keep the first row.
+    #[test]
+    fn headline_related_test_follows_the_shared_rule_for_script_findings_only() {
+        use crate::domain::LanguageId;
+        let mut weak = test_with(None, None);
+        weak.name = "direct weak".to_string();
+        weak.oracle_strength = OracleStrength::Weak;
+        let mut strong = test_with(None, None);
+        strong.name = "barrel strong".to_string();
+        let rows = [weak, strong];
+        for language in [LanguageId::TypeScript, LanguageId::JavaScript] {
+            assert_eq!(
+                headline_related_test(Some(language), &rows).map(|t| t.name.as_str()),
+                Some("barrel strong"),
+                "{language:?}"
+            );
+        }
+        for language in [Some(LanguageId::Rust), Some(LanguageId::Python), None] {
+            assert_eq!(
+                headline_related_test(language, &rows).map(|t| t.name.as_str()),
+                Some("direct weak"),
+                "{language:?}"
+            );
+        }
+        assert!(headline_related_test(Some(LanguageId::TypeScript), &[]).is_none());
     }
 
     fn test_with(miss: Option<RelatedTestMiss>, reason: Option<RelationReason>) -> RelatedTest {

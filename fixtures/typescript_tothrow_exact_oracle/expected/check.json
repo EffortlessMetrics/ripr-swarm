@@ -114,8 +114,8 @@
         "probe_family": "predicate",
         "related_test": {
           "file": "tests/parser.test.ts",
-          "line": 17,
-          "name": "empty user throws ParseError class"
+          "line": 5,
+          "name": "empty user throws exact message"
         },
         "repair_packet_ready": false,
         "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",

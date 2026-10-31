@@ -601,3 +601,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_tothrow_exact_oracle (37)
+
+Reason:
+RIPR-SPEC-0088: related-test selection ties keep the first row, matching the check headline (#11228)
+
+Command:
+`cargo xtask goldens bless typescript_tothrow_exact_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

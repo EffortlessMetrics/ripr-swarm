@@ -112,8 +112,8 @@
         "probe_family": "predicate",
         "related_test": {
           "file": "tests/pricing.test.ts",
-          "line": 7,
-          "name": "discounts far above threshold"
+          "line": 3,
+          "name": "no discount below threshold"
         },
         "repair_packet_ready": true,
         "repair_route": "add a focused assertion for the missing discriminator `DISCOUNT_THRESHOLD == amount` in the related test, shaped like `expect(discountedTotal(10000)).toBe(expected)`",
@@ -153,7 +153,7 @@
         "repair_kind": "AddBoundaryAssertion",
         "schema_version": "0.5",
         "source": "typescript_preview_projection",
-        "target_test": "tests/pricing.test.ts::discounts far above threshold",
+        "target_test": "tests/pricing.test.ts::no discount below threshold",
         "verify_command": "npx --no-install jest tests/pricing.test.ts"
       },
       "preview_actionability": {

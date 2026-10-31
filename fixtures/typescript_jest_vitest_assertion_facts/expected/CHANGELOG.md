@@ -841,3 +841,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (39)
+
+Reason:
+RIPR-SPEC-0088: related-test selection ties keep the first row, matching the check headline (#11228)
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

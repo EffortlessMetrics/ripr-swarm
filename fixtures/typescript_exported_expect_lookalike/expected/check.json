@@ -128,7 +128,7 @@
         "owner_kind": "function",
         "probe_family": "return_value",
         "related_test": {
-          "file": "tests/function.test.ts",
+          "file": "tests/const.test.js",
           "line": 3,
           "name": "price"
         },
