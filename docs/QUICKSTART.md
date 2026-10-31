@@ -619,7 +619,8 @@ Reference details for driving ripr from a coding agent:
 ### Prepare a PR summary
 
 After generating the needed evidence, use `ripr first-pr` to compose the
-PR-facing packet. It does not run analysis or repair the code. See
+PR-facing packet. By default it does not run analysis (`--run-chain` opts in,
+below), and it never repairs the code. See
 [First successful PR workflow](FIRST_PR_WORKFLOW.md) for the inputs and
 `ripr help first-pr` for its options.
 
@@ -627,9 +628,20 @@ On a fresh checkout the first `first-pr` run prints one next command (the
 `Missing artifact` regeneration command for repo exposure) and names the later
 steps (gap ledger, then review cards) on a `Later steps` line without their
 commands. Run the printed command, then rerun `first-pr`; it prints the next
-command each time. It reads artifact presence only and runs none of them. The
-packet JSON (`selected.also_missing`) still carries every later step with its
-literal command. Commit your test first, because the
+command each time. It reads artifact presence only and runs none of them. To
+have `first-pr` run that missing-artifact chain itself, pass `--run-chain`:
+`ripr first-pr --run-chain` runs the repo-exposure report, the gap ledger and
+the review cards in order, each only when its artifact is missing (the cards
+only when the gap ledger names no repair start) and each exactly the command
+`first-pr` would have printed (with the resolved `--base` and `--head`), then
+composes the packet in the same invocation. It is opt-in because it runs
+analysis (cost scales with the repository, minutes on a large one), writes the
+missing artifacts under `target/ripr/` and uses no network. The first failing
+step, or a step that exits 0 without leaving a non-empty, parseable `.json`
+artifact, stops it with exit `2` and names the step; no packet is written from
+partial artifacts. It cannot be combined with `--check` or `--check-output`.
+The packet JSON (`selected.also_missing`) still carries every later step with
+its literal command. Commit your test first, because the
 committed diff does not include uncommitted edits. After a successful repair
 the final state `no actionable gap` is expected: the gap is already addressed.
 It also appears when no repairable PR-local gap was selected; read the printed

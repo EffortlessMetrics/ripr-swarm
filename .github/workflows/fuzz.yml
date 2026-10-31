@@ -1,0 +1,60 @@
+name: Fuzz
+
+# Scheduled and manual panic/hang fuzzing (#11439): runs the proptest suites
+# in crates/ripr/tests (source, diff and config mutation through `ripr check`;
+# MCP and LSP stdio frame mutation) with a much higher case count than the
+# default test run. Not part of the required PR workflow and not a required
+# check. A failure prints the shrunk edit list and exact input bytes; the
+# workspaces of cases that aborted the test binary stay in the temp directory
+# and are uploaded as an artifact.
+
+on:
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: "PROPTEST_CASES per suite"
+        required: false
+        default: "400"
+  schedule:
+    - cron: "17 5 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-on-failure: true
+
+      - name: Fuzz source, diff, config and protocol inputs
+        env:
+          PROPTEST_CASES: ${{ inputs.cases || '400' }}
+        run: cargo test --locked -p ripr --test fuzz_panic_freedom --test fuzz_protocol_frames
+
+      - name: Collect leftover case workspaces
+        if: failure()
+        run: mkdir -p target/ripr/fuzz-findings; cp -r /tmp/ripr-fuzz-* target/ripr/fuzz-findings/ || true
+
+      - name: Upload fuzz findings
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-findings
+          path: target/ripr/fuzz-findings
+          if-no-files-found: warn
