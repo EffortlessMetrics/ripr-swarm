@@ -60,6 +60,11 @@ impl CommentMode {
             "off" => Ok(Self::Off),
             "plan" => Ok(Self::Plan),
             "inline" => Ok(Self::Inline),
+            "" => Err(
+                "pr-comments plan mode is empty; expected `off`, `plan`, or `inline` (leave \
+                 `--mode` out, or pass `off`, to publish no comments)"
+                    .to_string(),
+            ),
             _ => Err(format!(
                 "unknown pr-comments plan mode {value:?}; expected `off`, `plan`, or `inline`"
             )),
@@ -1966,6 +1971,22 @@ mod tests {
         assert!(report.summary.safe_to_publish);
         assert!(report.operations[0].safe_to_publish);
         Ok(())
+    }
+
+    /// #11146: the empty-string arm names the empty value and the way to
+    /// publish nothing, apart from the unknown-value arm.
+    #[test]
+    fn comment_mode_parse_names_an_empty_value_apart_from_an_unknown_one() {
+        let empty = CommentMode::parse("").err().unwrap_or_default();
+        assert!(empty.contains("is empty"), "{empty}");
+        assert!(empty.contains("pass `off`"), "{empty}");
+        assert!(!empty.contains("unknown"), "{empty}");
+        let unknown = CommentMode::parse("post").err().unwrap_or_default();
+        assert!(
+            unknown.contains("unknown pr-comments plan mode"),
+            "{unknown}"
+        );
+        assert!(!unknown.contains("is empty"), "{unknown}");
     }
 
     #[test]

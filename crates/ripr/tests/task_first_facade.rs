@@ -720,7 +720,7 @@ fn repair_explicit_ineligible_seam_refuses_without_attempt_or_lock() -> Result<(
         "refusal must name the seam:\n{stderr}"
     );
     assert!(
-        stderr.contains("its existing tests already grip it (exposed)"),
+        stderr.contains("existing tests already grip it"),
         "refusal must name the ineligibility reason:\n{stderr}"
     );
     assert_no_repair_attempt_side_effects(root);
@@ -4057,7 +4057,7 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
     assert_exit(&repair, 3, "repair with the sole seam configured off");
     let stderr = stderr_text(&repair);
     assert!(
-        stderr.contains("none repair-eligible"),
+        stderr.contains("none is ready for an automatic repair"),
         "must report no eligible seam:\n{stderr}"
     );
     assert!(
@@ -4149,7 +4149,7 @@ fn status_and_continue_do_not_offer_a_start_the_repair_gate_refuses() -> Result<
     let refused = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
     assert_exit(&refused, 3, "ripr repair on the now-gripped seam");
     assert!(
-        stderr_text(&refused).contains("already grip it (exposed)"),
+        stderr_text(&refused).contains("already grip it"),
         "precondition: the gate refuses the start and says why:\n{}",
         stderr_text(&refused)
     );
@@ -4165,7 +4165,7 @@ fn status_and_continue_do_not_offer_a_start_the_repair_gate_refuses() -> Result<
             "{label} printed a start the same build refuses:\n{text}"
         );
         assert!(
-            text.contains("already grip it (exposed)")
+            text.contains("already grip it")
                 && text.contains("not a runtime-verified result")
                 && !text.contains("by hand"),
             "{label} must say the seam is already gripped on static evidence:\n{text}"
@@ -4336,7 +4336,7 @@ fn status_drops_the_pilot_recorded_start_once_the_seam_is_gripped() -> Result<()
     assert!(
         !after_text.contains("--phase before")
             && after_text.contains("repair_start_withheld")
-            && after_text.contains("already grip it (exposed)"),
+            && after_text.contains("already grip it"),
         "status advertised a pilot start the same build refuses:\n{after_text}"
     );
     Ok(())

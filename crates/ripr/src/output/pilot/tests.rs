@@ -3170,6 +3170,45 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
     Ok(())
 }
 
+/// #11297: a repo with no Rust source must not get the "no gaps in the Rust
+/// code" sentence, while one that has Rust source keeps it.
+#[test]
+#[cfg(feature = "lang-python")]
+fn pilot_omits_rust_gap_sentence_when_repo_has_no_rust() -> Result<(), String> {
+    use crate::domain::LanguageId;
+
+    let artifacts = pilot_artifacts();
+    let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
+    let build = |rust_source_present: bool| {
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files)
+            .with_unanalyzed(Vec::new(), rust_source_present)
+    };
+    let render = |routes: &PilotLanguageRoutes| {
+        render_pilot_terminal(
+            &[],
+            PilotSummaryContext {
+                language_routes: Some(routes),
+                ..pilot_context(&artifacts)
+            },
+        )
+    };
+
+    let python_only = render(&build(false));
+    assert!(
+        python_only.contains("analyze the Python diff:"),
+        "{python_only}"
+    );
+    assert!(
+        !python_only.contains("Rust code it checked"),
+        "{python_only}"
+    );
+    assert!(!python_only.contains("no gaps"), "{python_only}");
+
+    let with_rust = render(&build(true));
+    assert!(with_rust.contains("Rust code it checked"), "{with_rust}");
+    Ok(())
+}
+
 /// #7665: a Python-only repo with no Rust seam and no repair card used to
 /// headline `Top recommendation: none` even though `ripr check` is the
 /// supported route. The headline names that route; JSON `language_routes`
@@ -3217,8 +3256,8 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
         "Rust-scan explanation stays secondary:\n{terminal}"
     );
     assert!(
-        terminal.contains("Python preview:\n  status: no_python_findings"),
-        "{terminal}"
+        !terminal.contains("no_python_findings") && !terminal.contains("findings: 0"),
+        "unscanned Python must not read as 'no findings' (#11297):\n{terminal}"
     );
     assert!(
         terminal.contains(&format!(
