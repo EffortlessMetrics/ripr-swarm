@@ -17,7 +17,11 @@ mod model;
 mod perl_executable_tests;
 mod python;
 mod toolchain_file;
-#[cfg(feature = "lang-typescript")]
+// The exclusion path authorities are pure predicates, needed by the
+// diff-scope guard's admission counting in every feature lane (mirroring the
+// always-compiled Python authorities), so the module compiles unconditionally.
+// Only the detection surface below stays feature-gated: without
+// `lang-typescript` no-config detection must never select the adapter.
 mod typescript;
 
 pub(crate) use diagnostic::ConfigDiagnostic;
@@ -34,7 +38,9 @@ pub use model::{
     LspDiagnosticProfile, OraclePolicy, PerlConfig, RiprConfig, SeverityConfig, TestHarnessAdapter,
     TestHarnessKind, TestHarnessRegistration, TypescriptConfig,
 };
-pub(crate) use model::{PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig, perl_executable_opt_in};
+pub(crate) use model::{
+    HumanLegend, PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig, perl_executable_opt_in,
+};
 
 #[cfg(test)]
 pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
@@ -51,15 +57,22 @@ pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pi
 pub(crate) use typescript::{
     TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS,
     declared_typescript_handwritten_under, detect_typescript_project,
-    is_declared_handwritten_typescript_path, is_detectable_excluded_typescript_path,
-    is_detectable_generated_typescript_path, is_detectable_typescript_source_name,
-    is_typescript_dir_pruned_from_discovery, is_typescript_excluded_dir_everywhere,
+    is_detectable_typescript_source_name, is_typescript_dir_pruned_from_discovery,
     source_dir_contains_detectable_typescript, typescript_project_marker_name,
     typescript_source_dir_marker_name,
 };
+// Admission/exclusion predicates for the diff-scope guard and the adapters:
+// real in every lane, like the Python authorities above, so an adapter's
+// generated-name and excluded-directory refusals measure the same diff in a
+// rust-only build as in a full build (#10730).
+pub(crate) use typescript::{
+    is_declared_handwritten_typescript_path, is_detectable_excluded_typescript_path,
+    is_detectable_generated_typescript_path, is_typescript_excluded_dir_everywhere,
+};
 
 /// Without `lang-typescript` no-config detection never selects the adapter,
-/// so these inert forms keep the shared call sites unconditional.
+/// so these inert forms keep the shared call sites unconditional. Exclusion
+/// predicates are NOT mirrored here: they are real in every lane (see above).
 #[cfg(not(feature = "lang-typescript"))]
 mod typescript_absent {
     use std::path::Path;
@@ -68,10 +81,6 @@ mod typescript_absent {
     pub(crate) const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &[];
 
     pub(crate) fn detect_typescript_project(_root: &Path) -> bool {
-        false
-    }
-
-    pub(crate) fn is_typescript_excluded_dir_everywhere(_name: &str) -> bool {
         false
     }
 
@@ -94,9 +103,8 @@ mod typescript_absent {
 #[cfg(not(feature = "lang-typescript"))]
 pub(crate) use typescript_absent::{
     TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, detect_typescript_project,
-    is_detectable_typescript_source_name, is_typescript_excluded_dir_everywhere,
-    source_dir_contains_detectable_typescript, typescript_project_marker_name,
-    typescript_source_dir_marker_name,
+    is_detectable_typescript_source_name, source_dir_contains_detectable_typescript,
+    typescript_project_marker_name, typescript_source_dir_marker_name,
 };
 
 pub(crate) const CONFIG_FILE_NAME: &str = "ripr.toml";
@@ -171,7 +179,7 @@ path = ".ripr/suppressions.toml"
 # file is absent, Python project markers can enable Python preview analysis
 # automatically for the detected repository root; this explicit list remains
 # authoritative when present.
-# Valid values: rust, typescript, python, perl.
+# Valid values: rust, typescript, javascript (alias for typescript), python, perl.
 # (`perl` consumes externally-produced `ripr-perl-facts-v1` packets and does
 # not parse Perl source directly. Pass --perl-facts <path> for an explicit
 # packet, or configure a managed [perl].producer and make its exporter
@@ -927,16 +935,28 @@ impl RiprConfig {
 }
 
 fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String> {
+    if values.iter().any(|value| value == "javascript")
+        && values.iter().any(|value| value == "typescript")
+    {
+        return Err(
+            "languages.enabled lists `javascript` together with `typescript`; `javascript` is an alias for `typescript`, so list only one of them"
+                .to_string(),
+        );
+    }
     let mut parsed = Vec::with_capacity(values.len());
     for value in values {
         let language = match value.as_str() {
             "rust" => LanguageId::Rust,
             "typescript" => LanguageId::TypeScript,
+            // JavaScript is analyzed by the TypeScript adapter and is
+            // emitted as its own language label in output, so naming it
+            // here enables that same adapter instead of failing.
+            "javascript" => LanguageId::TypeScript,
             "python" => LanguageId::Python,
             "perl" => LanguageId::Perl,
             other => {
                 return Err(format!(
-                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, python, perl (Perl consumes externally-produced fact packets; use --perl-facts <path> or a configured managed [perl].producer)"
+                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, javascript (alias for typescript), python, perl (Perl consumes externally-produced fact packets; use --perl-facts <path> or a configured managed [perl].producer)"
                 ));
             }
         };

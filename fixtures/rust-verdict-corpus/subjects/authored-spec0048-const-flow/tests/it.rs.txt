@@ -1,0 +1,33 @@
+use spec0048_const_flow::reader::within_other_limit;
+use spec0048_const_flow::second::next;
+use spec0048_const_flow::{BANNER, allowed, banner_line, capped, lookup_fee};
+
+#[test]
+fn lookup_reads_the_table_row() {
+    assert_eq!(lookup_fee("basic"), 5);
+}
+
+#[test]
+fn capped_uses_its_own_cap() {
+    assert_eq!(capped(9), 7);
+}
+
+#[test]
+fn second_step_adds_five() {
+    assert_eq!(next(1), 6);
+}
+
+#[test]
+fn small_value_is_within_the_other_limit() {
+    assert!(within_other_limit(1));
+}
+
+#[test]
+fn banner_matches_its_own_template() {
+    assert_eq!(banner_line(), format!("[{BANNER}]"));
+}
+
+#[test]
+fn free_tier_is_limited_to_ten() {
+    assert!(allowed(5, false));
+}

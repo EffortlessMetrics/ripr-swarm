@@ -3,12 +3,17 @@ mode: fast
 root: fixtures/python_assertion_helper_wrong_receiver/input
 config: <cwd>/fixtures/python_assertion_helper_wrong_receiver/input/ripr.toml
 
-Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Changed file(s) by language: python = 1
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 WARNING src/stats.py:7
   id: probe:src_stats.py:python_preview:1fd9a5f2
@@ -16,11 +21,12 @@ WARNING src/stats.py:7
 Changed
   after:          self.writes += 1
 
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  python:src/stats.py::Stats.record_write
-  canonical gap: gap:python:src/stats.py:Stats.record_write:predicate_boundary:predicate:self.writes+=1
+  gap id (for scripts): gap:python:src/stats.py:Stats.record_write:predicate_boundary:predicate:self.writes+=1
 
 Language
   language: python
@@ -46,7 +52,7 @@ Repair placement
   suggested file: tests/test_stats.py
   suggested test: test_writes
   pytest node: tests/test_stats.py::test_writes
-  verify: python -m pytest tests/test_stats.py::test_writes (high)
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_assertion_helper_wrong_receiver/input && python -m pytest tests/test_stats.py::test_writes) (high)
 Drill in:
   ripr explain --root <cwd>/fixtures/python_assertion_helper_wrong_receiver/input --diff <cwd>/fixtures/python_assertion_helper_wrong_receiver/diff.patch --mode fast probe:src_stats.py:python_preview:1fd9a5f2
   ripr context --root <cwd>/fixtures/python_assertion_helper_wrong_receiver/input --diff <cwd>/fixtures/python_assertion_helper_wrong_receiver/diff.patch --mode fast --at probe:src_stats.py:python_preview:1fd9a5f2

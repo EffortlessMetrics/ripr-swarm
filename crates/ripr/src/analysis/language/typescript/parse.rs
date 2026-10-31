@@ -94,6 +94,19 @@ pub(crate) fn parse_limit_for_file<'a>(
         .find(|limit| normalized_path(&limit.file) == changed_file)
 }
 
+/// Capping reasons for a `static_unknown` preview finding with no extracted
+/// owner or related test (#10700): the discriminator is not established.
+fn unmodeled_confidence_basis() -> Vec<crate::domain::ConfidenceCap> {
+    crate::domain::ConfidenceCap::for_preview(
+        &ExposureClass::StaticUnknown,
+        &crate::domain::ConfidenceBasisInputs {
+            has_related_test: false,
+            strong_oracle_present: false,
+            boundary_input_matched: true,
+        },
+    )
+}
+
 pub(crate) fn unsupported_syntax_finding(
     file: &Path,
     line: usize,
@@ -152,6 +165,7 @@ pub(crate) fn unsupported_syntax_finding(
 
     Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: unmodeled_confidence_basis(),
         id: probe.id.0.clone(),
         canonical_gap: None,
         probe,
@@ -257,6 +271,7 @@ pub(crate) fn enum_member_finding(
     );
     Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: unmodeled_confidence_basis(),
         id: probe.id.0.clone(),
         canonical_gap: None,
         probe,
@@ -321,6 +336,8 @@ where
         .name("ripr-ts-oxc-parse".to_string())
         .stack_size(PARSE_WORKER_STACK_BYTES)
         .spawn(move || {
+            #[cfg(test)]
+            injected_worker_panic::fire(&owned_file);
             let allocator = Allocator::default();
             analyze(&owned_file, &owned_source, &allocator)
         });
@@ -329,6 +346,57 @@ where
             .join()
             .map_err(|_join_error| PARSE_WORKER_FAILED.to_string()),
         Err(err) => Err(format!("{PARSE_WORKER_UNAVAILABLE}: {err}")),
+    }
+}
+
+/// Test-only fault injection (#11132): a panic on the parse worker for an
+/// armed file path, raised before the caller's analysis closure runs, so a
+/// test drives the production join-and-disclose path with the same thread
+/// death an oxc or AST-consumer panic produces. Keyed by path so concurrent
+/// tests never observe each other's arming.
+#[cfg(test)]
+pub(crate) mod injected_worker_panic {
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    /// Armed path -> number of parses of that path allowed to succeed first.
+    static ARMED: Mutex<BTreeMap<PathBuf, usize>> = Mutex::new(BTreeMap::new());
+
+    /// Disarms the path when dropped.
+    pub(crate) struct Armed(PathBuf);
+
+    impl Drop for Armed {
+        fn drop(&mut self) {
+            if let Ok(mut armed) = ARMED.lock() {
+                armed.remove(&self.0);
+            }
+        }
+    }
+
+    /// Panic on the worker for every parse of `path` after `allow` successes.
+    pub(crate) fn arm(path: &Path, allow: usize) -> Armed {
+        if let Ok(mut armed) = ARMED.lock() {
+            armed.insert(path.to_path_buf(), allow);
+        }
+        Armed(path.to_path_buf())
+    }
+
+    pub(super) fn fire(path: &Path) {
+        let due = match ARMED.lock() {
+            Ok(mut armed) => match armed.get_mut(path) {
+                Some(0) => true,
+                Some(remaining) => {
+                    *remaining -= 1;
+                    false
+                }
+                None => false,
+            },
+            Err(_) => false,
+        };
+        if due {
+            std::panic::resume_unwind(Box::new("injected TypeScript parse worker panic (#11132)"));
+        }
     }
 }
 
@@ -642,6 +710,64 @@ fn expression_position(prev: Option<u8>, last_word: LastWord) -> bool {
 
 #[cfg(test)]
 mod parse_depth_tests {
+    #[test]
+    fn unmodeled_producers_carry_a_discriminator_not_established_basis() {
+        use crate::domain::ConfidenceCap;
+        let path = std::path::Path::new("src/a.ts");
+        let limit = TypeScriptParseLimit {
+            file: path.to_path_buf(),
+            reason: "depth".to_string(),
+        };
+        let unsupported = unsupported_syntax_finding(path, 1, "x", &limit);
+        let member = enum_member_finding(path, 1, "High = 2,", "Level::High");
+        for finding in [&unsupported, &member] {
+            assert_eq!(
+                finding.confidence_basis.last(),
+                Some(&ConfidenceCap::DiscriminatorNotEstablished)
+            );
+        }
+    }
+
+    /// Producer-wide invariant: every committed TypeScript/JavaScript preview
+    /// finding in the fixture goldens carries a non-empty `confidence_basis`
+    /// and a `confidence_why_capped` line, whichever producer built it.
+    #[test]
+    fn every_ts_js_preview_finding_in_the_goldens_has_a_confidence_basis() -> Result<(), String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+        let mut checked = 0usize;
+        let mut missing = Vec::new();
+        for entry in std::fs::read_dir(&root).map_err(|e| e.to_string())? {
+            let path = entry
+                .map_err(|e| e.to_string())?
+                .path()
+                .join("expected/check.json");
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let value: serde_json::Value =
+                serde_json::from_str(&text).map_err(|e| e.to_string())?;
+            for finding in value["findings"].as_array().into_iter().flatten() {
+                let language = finding["language"].as_str().unwrap_or("");
+                if language != "typescript" && language != "javascript" {
+                    continue;
+                }
+                checked += 1;
+                let has_basis = finding["confidence_basis"]
+                    .as_array()
+                    .is_some_and(|basis| !basis.is_empty());
+                if !has_basis || finding["confidence_why_capped"].as_str().is_none() {
+                    missing.push(format!("{} {}", path.display(), finding["id"]));
+                }
+            }
+        }
+        assert!(
+            checked > 20,
+            "expected many TS/JS golden findings, saw {checked}"
+        );
+        assert!(missing.is_empty(), "findings without a basis: {missing:#?}");
+        Ok(())
+    }
+
     use super::*;
 
     /// Wrap `inner` in `depth` balanced parentheses.

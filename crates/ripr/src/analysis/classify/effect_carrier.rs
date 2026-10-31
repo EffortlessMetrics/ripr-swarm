@@ -51,6 +51,8 @@ use crate::analysis::facts::FunctionContainer;
 use crate::domain::{OracleKind, Probe, ProbeFamily};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod recording;
+
 /// Bound on transitive `self.method(..)` resolution and on `let` chains.
 const MAX_DEPTH: usize = 6;
 const MAX_BINDING_DEPTH: usize = 3;
@@ -664,6 +666,16 @@ pub(in crate::analysis) struct EffectStateCarrier {
 }
 
 impl EffectStateCarrier {
+    /// #9766: read the trait double that retains a changed call's argument.
+    pub(in crate::analysis) fn recording_double(
+        probe: &Probe,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+        complete: bool,
+    ) -> Option<recording::RecordingDouble> {
+        recording::RecordingDouble::establish(probe, owner, index, complete)
+    }
+
     /// `None` unless every gate in the module docs holds.
     pub(in crate::analysis) fn establish(
         probe: &Probe,

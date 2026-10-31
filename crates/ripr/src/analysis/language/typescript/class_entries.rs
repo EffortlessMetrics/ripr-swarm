@@ -22,9 +22,19 @@
 //!   or class method shorthand (`name(...) {`), records no edges, because
 //!   `this` may be rebound there; keywords inside strings, templates and
 //!   comments are masked first and do not count;
-//! - an arrow function that is not an argument of a call (`const later = () =>
-//!   this.helper()`) is created, not run, so its body records no edges; an
-//!   arrow passed to a call is read as invoked (weak reach, never `exposed`);
+//! - an arrow function is read as run only when it is an argument of a
+//!   synchronous array callback method (`items.forEach((x) => ...)`, `map`,
+//!   `filter`, `reduce`, `some`, `every`, `find`, `sort` and their kin); every
+//!   other arrow (`const later = () => this.helper()`, an array element, a
+//!   logical operand, a stored or deferred callback such as `setTimeout`, an
+//!   event listener, `subscribe` or `then`) is created or run later, so its
+//!   body records no edges (weak reach, never `exposed`);
+//! - a nested `function` expression or declaration binds its own `this`, so
+//!   its body records no edges, while a call the method makes outside it still
+//!   counts; a function whose parameters are followed by a return type
+//!   annotation, or a nested `class`, drops the whole method;
+//! - a generator method (`*items()`, `async *items()`) only creates an
+//!   iterator, so it is neither a caller nor a callee;
 //! - a name an instance field of the class defines (`helper = () => 2`)
 //!   replaces the prototype method on every instance and is not a callee;
 //! - a name that appears twice in the file's class (overloads, getter and
@@ -53,11 +63,15 @@ const CLASS_ENTRY_MAX_PER_OWNER: usize = 64;
 pub(crate) fn assign_class_entries(
     owners: &mut [TypeScriptOwner],
     instance_fields: &BTreeMap<String, BTreeSet<String>>,
+    repeated_names: &BTreeSet<String>,
 ) {
     let mut by_class: BTreeMap<(PathBuf, String), Vec<usize>> = BTreeMap::new();
     for (index, owner) in owners.iter().enumerate() {
+        // Owners are keyed by `(file, class name)`, so two classes of one name
+        // in different scopes cannot be told apart: neither gets entries.
         if owner.owner_kind == OwnerKind::Method
             && let Some(class_name) = owner.class_name.as_ref()
+            && !repeated_names.contains(class_name)
         {
             by_class
                 .entry((owner.file.clone(), class_name.clone()))
@@ -102,6 +116,7 @@ fn class_entries_for(
                         | TypeScriptMethodKind::Constructor
                 )
                 && counts.get(member.name.as_str()) == Some(&1)
+                && member.source_text.as_deref().is_some_and(is_plain_method)
         })
         .collect();
     // Source of every method of the class (including the ones that are not
@@ -177,6 +192,7 @@ fn class_entries_for(
                 exported_as_default: false,
                 class_member: Some(entry.method_kind),
                 decorated: None,
+                instance_factory: false,
             })
             .collect();
         entries.sort();
@@ -188,23 +204,97 @@ fn class_entries_for(
     out
 }
 
-/// The method source with comments, strings and templates masked and every
-/// arrow body that is not a call argument blanked, or `None` when the body
-/// declares a scope that may rebind `this` (a nested `function`, a `class`, or
-/// an object/class method shorthand such as `{ run() { ... } }`).
+/// The method source with comments, strings and templates masked, the body of
+/// every nested function blanked and every arrow body that is not a
+/// synchronous array callback blanked, or `None` when the body declares a scope
+/// that may rebind `this` in a way the blanking cannot isolate (a nested
+/// `class`, an object/class method shorthand such as `{ run() { ... } }`, or a
+/// function whose return type annotation hides its body).
 fn executed_this_source(source: &str) -> Option<String> {
     let mut code = super::tests_extract::byte_preserving_code_mask(source)?;
     // The method's own `name(params) {` header is not a nested method.
     let body_start = first_top_level_brace(&code)?;
-    if ["function", "class"]
-        .iter()
-        .any(|keyword| contains_word(&code, keyword))
-        || has_method_shorthand(&code, body_start)
-    {
+    if !blank_function_bodies(&mut code, body_start) {
+        return None;
+    }
+    if contains_word(&code, "class") || has_method_shorthand(&code, body_start) {
         return None;
     }
     blank_unexecuted_arrows(&mut code);
     Some(code)
+}
+
+/// `false` for a generator: its `*` sits before the parameter list, outside
+/// every bracket, and calling it only creates an iterator.
+fn is_plain_method(source: &str) -> bool {
+    let Some(code) = super::tests_extract::byte_preserving_code_mask(source) else {
+        return false;
+    };
+    let Some(body_start) = first_top_level_brace(&code) else {
+        return false;
+    };
+    let mut depth = 0usize;
+    for ch in code[..body_start].chars() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            '*' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
+/// Blank every nested `function` (parameters and body) after the method header. A nested
+/// function binds its own `this`, so what it calls says nothing about the
+/// method. Returns `false` when a function cannot be isolated: `function` in
+/// the header, generic parameters, or anything but `{` after the parameters.
+fn blank_function_bodies(code: &mut String, body_start: usize) -> bool {
+    let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+    for (index, _) in code.match_indices("function") {
+        let before = code[..index].chars().next_back();
+        let after = code[index + "function".len()..].chars().next();
+        if before.is_some_and(is_javascript_identifier_char)
+            || after.is_some_and(is_javascript_identifier_char)
+        {
+            continue;
+        }
+        if index < body_start {
+            return false;
+        }
+        let mut rest = code[index + "function".len()..].trim_start();
+        rest = rest.strip_prefix('*').unwrap_or(rest).trim_start();
+        rest = rest
+            .trim_start_matches(is_javascript_identifier_char)
+            .trim_start();
+        if !rest.starts_with('(') {
+            return false;
+        }
+        let open = code.len() - rest.len();
+        let params_end = balanced_end(code, open, '(', ')');
+        let tail = code[params_end..].trim_start();
+        if !tail.starts_with('{') {
+            return false;
+        }
+        let brace = code.len() - tail.len();
+        // The parameter defaults run only when the function is called, so the
+        // whole function is blanked, keyword and parameters included.
+        ranges.push(index..balanced_end(code, brace, '{', '}'));
+    }
+    blank_ranges(code, ranges);
+    true
+}
+
+fn blank_ranges(code: &mut String, ranges: Vec<std::ops::Range<usize>>) {
+    let mut bytes = std::mem::take(code).into_bytes();
+    for range in ranges {
+        for byte in bytes.get_mut(range).into_iter().flatten() {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    *code = String::from_utf8(bytes).unwrap_or_default();
 }
 
 /// The byte index of the first `{` outside parentheses: where the method body
@@ -298,7 +388,7 @@ fn blank_unexecuted_arrows(code: &mut String) {
         {
             head = rest.trim_end();
         }
-        if head.ends_with(['(', ',']) {
+        if head.ends_with('(') && callback_runs_synchronously(head) {
             continue;
         }
         let after = arrow + 2;
@@ -311,15 +401,58 @@ fn blank_unexecuted_arrows(code: &mut String) {
         };
         ranges.push(after..end);
     }
-    let mut bytes = std::mem::take(code).into_bytes();
-    for range in ranges {
-        for byte in bytes.get_mut(range).into_iter().flatten() {
-            if *byte != b'\n' {
-                *byte = b' ';
+    blank_ranges(code, ranges);
+}
+
+/// Methods that call a callback argument before they return.
+const SYNC_CALLBACK_METHODS: [&str; 14] = [
+    "forEach",
+    "map",
+    "filter",
+    "reduce",
+    "reduceRight",
+    "some",
+    "every",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "flatMap",
+    "sort",
+    "toSorted",
+];
+
+/// `true` when `head` (the code before an arrow, ending in `(`) puts the arrow
+/// first in the argument list of a call to one of [`SYNC_CALLBACK_METHODS`] on a
+/// receiver; a later argument (`map`'s `thisArg`) is a stored value. An array element, a parenthesized operand, a stored callback and a
+/// deferred callee (`setTimeout`, `on`, `subscribe`, `then`) do not qualify.
+fn callback_runs_synchronously(head: &str) -> bool {
+    let mut depth = 0usize;
+    let mut open = None;
+    for (index, ch) in head.char_indices().rev() {
+        match ch {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '[' | '{' if depth > 0 => depth -= 1,
+            '(' => {
+                open = Some(index);
+                break;
             }
+            '[' | '{' => return false,
+            _ => {}
         }
     }
-    *code = String::from_utf8(bytes).unwrap_or_default();
+    let Some(open) = open else {
+        return false;
+    };
+    let callee = head[..open].trim_end();
+    let name_len: usize = callee
+        .chars()
+        .rev()
+        .take_while(|ch| is_javascript_identifier_char(*ch))
+        .map(char::len_utf8)
+        .sum();
+    let name = &callee[callee.len() - name_len..];
+    callee[..callee.len() - name_len].ends_with('.') && SYNC_CALLBACK_METHODS.contains(&name)
 }
 
 fn balanced_end(code: &str, start: usize, open: char, close: char) -> usize {
@@ -355,6 +488,31 @@ fn expression_end(code: &str, start: usize) -> usize {
         }
     }
     code.len()
+}
+
+/// Names of classes the program declares more than once, in any scope.
+pub(crate) fn repeated_class_names(program: &oxc_ast::ast::Program<'_>) -> BTreeSet<String> {
+    use oxc_ast_visit::{Visit, walk};
+    struct Counter {
+        seen: BTreeMap<String, usize>,
+    }
+    impl<'a> Visit<'a> for Counter {
+        fn visit_class(&mut self, class: &Class<'a>) {
+            if let Some(id) = class.id.as_ref() {
+                *self.seen.entry(id.name.as_str().to_string()).or_default() += 1;
+            }
+            walk::walk_class(self, class);
+        }
+    }
+    let mut counter = Counter {
+        seen: BTreeMap::new(),
+    };
+    counter.visit_program(program);
+    counter
+        .seen
+        .into_iter()
+        .filter_map(|(name, count)| (count > 1).then_some(name))
+        .collect()
 }
 
 /// Names the instance fields of each class in `program` define, keyed by class
@@ -422,7 +580,7 @@ fn contains_word(text: &str, word: &str) -> bool {
 
 /// `true` when `source` assigns, deletes or defines `this.name`, so the
 /// instance may carry its own `name` in place of the prototype method.
-fn rebinds_this_member(source: &str, name: &str) -> bool {
+pub(crate) fn rebinds_this_member(source: &str, name: &str) -> bool {
     const COMPOUND: [&str; 14] = [
         "+=", "-=", "*=", "/=", "%=", "**=", "||=", "&&=", "??=", "<<=", ">>=", "&=", "|=", "^=",
     ];
@@ -449,4 +607,55 @@ fn rebinds_this_member(source: &str, name: &str) -> bool {
     }) || source.contains("defineProperty(this")
         || source.contains("defineProperties(this")
         || source.contains("setPrototypeOf(this")
+}
+
+/// `true` when `text` assigns, deletes from a prototype, or defines a member
+/// called `name` on any receiver (`program._collect = fn`, `Command.prototype._collect = fn`,
+/// `Object.defineProperty(program, '_collect', ...)`), so a call to it may run
+/// the replacement and not the class method.
+pub(crate) fn assigns_member_named(text: &str, name: &str) -> bool {
+    const COMPOUND: [&str; 14] = [
+        "+=", "-=", "*=", "/=", "%=", "**=", "||=", "&&=", "??=", "<<=", ">>=", "&=", "|=", "^=",
+    ];
+    let needle = format!(".{name}");
+    let assigned = text.match_indices(&needle).any(|(idx, _)| {
+        let after = &text[idx + needle.len()..];
+        if after
+            .chars()
+            .next()
+            .is_some_and(is_javascript_identifier_char)
+        {
+            return false;
+        }
+        let rest = after.trim_start();
+        let plain = rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>");
+        plain
+            || COMPOUND.iter().any(|op| rest.starts_with(op))
+            || deletes_prototype_member_at(text, idx)
+    });
+    assigned
+        || ["defineProperty(", "defineProperties("].iter().any(|call| {
+            text.match_indices(call).any(|(idx, _)| {
+                let window: String = text[idx..].chars().take(240).collect();
+                ['\'', '"', '`']
+                    .iter()
+                    .any(|quote| window.contains(&format!("{quote}{name}{quote}")))
+                    || window.contains(&format!("{{ {name}:"))
+            })
+        })
+}
+
+/// `true` when the member expression that ends just before byte `dot` is the
+/// operand of `delete` and names a prototype (`delete Command.prototype.x`).
+/// `delete instance.x` removes only an own property, so a prototype method
+/// stays callable and the instance form is not a replacement.
+fn deletes_prototype_member_at(text: &str, dot: usize) -> bool {
+    let chain: usize = text[..dot]
+        .chars()
+        .rev()
+        .take_while(|ch| is_javascript_identifier_char(*ch) || *ch == '.')
+        .map(char::len_utf8)
+        .sum();
+    text[..dot - chain].trim_end().ends_with("delete")
+        && text[dot - chain..dot].ends_with(".prototype")
 }

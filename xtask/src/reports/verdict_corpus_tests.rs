@@ -1698,13 +1698,14 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
     // Every RIPR-SPEC-0238 acceptance example keeps a case citing it;
     // example 10 is in the numpy subject (#7819). Examples 1 to 34 have `py-spec0233-exNN-` cases (the prefix of the
     // spec's draft number, RIPR-SPEC-0233); 35 to 40 were written from the
-    // library cases that cite them.
+    // library cases that cite them, 41 from `py-fixtures-deposit` and 42 from
+    // `py-fixtures-fee-boundary`.
     let spec = coverage
         .by_spec
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0238")
         .ok_or("RIPR-SPEC-0238 is not in scope in the python ledger")?;
-    assert_eq!(spec.in_scope_examples, 40);
+    assert_eq!(spec.in_scope_examples, 42);
     assert!(spec.uncovered.is_empty(), "uncovered: {:?}", spec.uncovered);
     assert_eq!(spec.waived, 0);
     assert!(
@@ -2453,7 +2454,7 @@ fn a_packet_case_refuses_a_binary_without_the_perl_adapter() -> Result<(), Strin
     let unavailable = json!({"findings": [], "language_runs": [
         {"language": "perl", "status": "unavailable", "reason": "not compiled"}
     ]});
-    let Err(err) = refuse_unavailable_perl(&unavailable, "c", "ripr-lang-perl") else {
+    let Err(err) = refuse_incomplete_perl_run(&unavailable, "c", "ripr-lang-perl") else {
         return Err("an unavailable Perl run must be refused".to_string());
     };
     assert!(err.contains("`unavailable`: not compiled"), "{err}");
@@ -2463,7 +2464,7 @@ fn a_packet_case_refuses_a_binary_without_the_perl_adapter() -> Result<(), Strin
         json!({"findings": []}),
     ] {
         assert!(
-            refuse_unavailable_perl(&ok, "c", "ripr-lang-perl").is_ok(),
+            refuse_incomplete_perl_run(&ok, "c", "ripr-lang-perl").is_ok(),
             "{ok}"
         );
     }
@@ -2498,6 +2499,43 @@ fn case_output_refuses_an_unavailable_perl_run_only_for_packet_cases() -> Result
     plain_case.perl_facts = None;
     let check = case_check_output(&stdout, &plain_case, "ripr")?;
     assert_eq!(check["language_runs"][0]["status"], json!("unavailable"));
+    Ok(())
+}
+
+#[test]
+fn case_output_refuses_incomplete_perl_runs() -> Result<(), String> {
+    let dir = perl_corpus_dir();
+    let corpus: Corpus =
+        serde_json::from_value(corpus_value(&dir)?).map_err(|err| err.to_string())?;
+    let case = corpus
+        .cases
+        .iter()
+        .find(|case| case.perl_facts.is_some())
+        .ok_or("the Perl corpus has no packet case")?;
+    for status in ["invalid", "failed", "partial", "future_status"] {
+        let stdout = json!({"findings": [], "language_runs": [
+            {"language": "perl", "status": status, "reason": "packet rejected"}
+        ]})
+        .to_string();
+        let Err(err) = case_check_output(&stdout, case, "ripr-lang-perl") else {
+            return Err(format!("a `{status}` Perl run cannot be scored as silent"));
+        };
+        assert!(
+            err.contains(status) && err.contains("packet rejected"),
+            "{err}"
+        );
+    }
+    for malformed in [
+        json!({"findings": [], "language_runs": null}),
+        json!({"findings": [], "language_runs": [{"language": "perl"}]}),
+        json!({"findings": [], "language_runs": [{"status": "ok"}]}),
+    ] {
+        let Err(_err) = case_check_output(&malformed.to_string(), case, "ripr-lang-perl") else {
+            return Err(format!(
+                "malformed language_runs must be refused: {malformed}"
+            ));
+        };
+    }
     Ok(())
 }
 

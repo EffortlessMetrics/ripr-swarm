@@ -8,6 +8,7 @@ pub mod h_computed;
 pub mod h_method;
 pub mod h_nonunique;
 pub mod h_path;
+pub mod h_path_import;
 pub mod h_recursion;
 pub mod v_closure;
 pub mod v_dynamic;

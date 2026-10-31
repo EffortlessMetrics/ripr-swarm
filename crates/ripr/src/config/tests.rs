@@ -2170,6 +2170,67 @@ fn an_unknown_language_error_names_only_the_repair() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn javascript_in_languages_enabled_enables_the_typescript_adapter() -> Result<(), String> {
+    let config = parse_config("[languages]\nenabled = [\"javascript\"]\n")?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::TypeScript]
+    );
+    Ok(())
+}
+
+#[test]
+fn javascript_and_typescript_together_are_a_duplicate_alias() -> Result<(), String> {
+    let Err(message) = parse_config("[languages]\nenabled = [\"typescript\", \"javascript\"]\n")
+    else {
+        return Err("typescript plus its javascript alias must be refused".to_string());
+    };
+    assert!(
+        message.contains("`javascript` is an alias for `typescript`"),
+        "expected the alias in the duplicate error, got {message}"
+    );
+    let Err(reversed) = parse_config("[languages]\nenabled = [\"javascript\", \"typescript\"]\n")
+    else {
+        return Err("javascript plus typescript must also be refused".to_string());
+    };
+    assert!(
+        reversed.contains("`javascript` is an alias for `typescript`"),
+        "expected the alias in the reversed duplicate error, got {reversed}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn javascript_twice_is_a_duplicate_and_rust_plus_javascript_parses() -> Result<(), String> {
+    let Err(message) = parse_config("[languages]\nenabled = [\"javascript\", \"javascript\"]\n")
+    else {
+        return Err("javascript listed twice must be refused".to_string());
+    };
+    assert!(
+        message.contains("lists `javascript` more than once"),
+        "expected the generic duplicate error, got {message}"
+    );
+    let config = parse_config("[languages]\nenabled = [\"rust\", \"javascript\"]\n")?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript]
+    );
+    Ok(())
+}
+
+#[cfg(not(feature = "lang-typescript"))]
+#[test]
+fn javascript_without_typescript_feature_names_the_feature() {
+    let result = parse_config("[languages]\nenabled = [\"javascript\"]\n");
+    assert!(
+        matches!(result, Err(ref message) if message.contains("lang-typescript")),
+        "expected missing lang-typescript error, got {result:?}"
+    );
+}
+
 #[test]
 fn bytes_fingerprint_matches_text_fingerprint_and_keeps_invalid_bytes_distinct() {
     // Recorded check artifacts hash `--diff` input bytes; UTF-8 input keeps
@@ -2820,6 +2881,82 @@ fn missing_config_detects_typescript_markers_and_source() -> Result<(), String> 
         vec![LanguageId::Rust, LanguageId::TypeScript]
     );
     let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn missing_config_detects_typescript_one_level_below_root_and_under_workspace_containers()
+-> Result<(), String> {
+    // (label, file that makes the package) per layout.
+    let layouts = [
+        ("ts-nested-tsconfig", "library/tsconfig.json"),
+        ("ts-nested-src", "library/src/schema.ts"),
+        ("ts-nested-tests", "library/tests/schema.test.ts"),
+        ("ts-container-packages", "packages/remeda/tsconfig.json"),
+        ("ts-container-apps", "apps/web/src/main.ts"),
+        ("ts-container-libs", "libs/core/src/index.ts"),
+        ("ts-container-libraries", "libraries/core/tsconfig.json"),
+        ("ts-marker-in-src", "src/tsconfig.json"),
+        ("ts-marker-in-tests", "tests/jsconfig.json"),
+        ("ts-marker-in-container", "packages/tsconfig.json"),
+        ("ts-container-own-src", "packages/src/index.ts"),
+        ("ts-container-own-tests", "apps/tests/foo.ts"),
+    ];
+    for (label, file) in layouts {
+        let root = temp_root(label)?;
+        write_file(&root.join(file), "export {};\n")?;
+        let config = load_for_root(&root)?;
+        assert_eq!(
+            config.languages().enabled_owned(),
+            vec![LanguageId::Rust, LanguageId::TypeScript],
+            "{file} should enable TypeScript preview defaults"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn missing_config_ignores_nested_typescript_that_is_vendored_hidden_too_deep_or_plain_javascript()
+-> Result<(), String> {
+    let negatives = [
+        ("ts-nested-node-modules", "node_modules/pkg/tsconfig.json"),
+        ("ts-nested-vendor", "vendor/pkg/src/index.ts"),
+        ("ts-nested-dist", "dist/tsconfig.json"),
+        ("ts-nested-hidden", ".config/tsconfig.json"),
+        (
+            "ts-nested-container-vendor",
+            "packages/vendor/tsconfig.json",
+        ),
+        (
+            "ts-nested-container-excluded",
+            "packages/node_modules/tsconfig.json",
+        ),
+        ("ts-nested-too-deep", "a/b/tsconfig.json"),
+        ("ts-nested-container-too-deep", "packages/a/b/tsconfig.json"),
+        ("ts-nested-plain-js", "library/src/schema.js"),
+        ("ts-nested-package-json", "library/package.json"),
+        ("ts-nested-declaration", "library/src/types.d.ts"),
+        ("ts-nested-non-container", "tools/pkg/tsconfig.json"),
+        ("ts-nested-hidden-source", "library/src/.private/entry.ts"),
+        (
+            "ts-container-hidden-source",
+            "packages/lib/src/.private/entry.ts",
+        ),
+    ];
+    for (label, file) in negatives {
+        let root = temp_root(label)?;
+        write_file(&root.join(file), "{}")?;
+        let config = load_for_root(&root)?;
+        assert_eq!(
+            config.languages().enabled_owned(),
+            vec![LanguageId::Rust],
+            "{file} must not enable TypeScript preview defaults"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
     Ok(())
 }
 

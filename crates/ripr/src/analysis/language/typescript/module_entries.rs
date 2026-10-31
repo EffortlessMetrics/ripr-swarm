@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 const MODULE_ENTRY_MAX_HOPS: usize = 3;
 
 /// An exported name of the owner's module whose code reaches the owner.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptModuleEntry {
     /// Exported name a test imports (`default` for the default export).
     pub(crate) name: String,
@@ -47,12 +47,19 @@ pub(crate) struct TypeScriptModuleEntry {
     /// decorator wraps (`decorated_entries`, RIPR-SPEC-0243 rule 21). `name`
     /// is the method name.
     pub(crate) decorated: Option<TypeScriptDecoratedMethod>,
+    /// `true` when the entry is an exported factory that returns a fresh
+    /// instance of the owner's own class (`instance_factories`, #10402). It is
+    /// not a callable entry of the owner: a test reaches a getter owner only by
+    /// reading the property on a receiver the factory built, so the entry call
+    /// relation ignores it.
+    #[serde(default)]
+    pub(crate) instance_factory: bool,
 }
 
 /// The decorated method a pass-through decorator owner reaches, with the
 /// lines of the wrapper's final return, the only line whose change the
 /// method's call result carries.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptDecoratedMethod {
     pub(crate) class_name: String,
     /// The class is its module's `export default class`, so a test names it
@@ -209,6 +216,7 @@ fn record_export(
             exported_as_default: exported == "default",
             class_member: None,
             decorated: None,
+            instance_factory: false,
         });
 }
 
@@ -383,7 +391,7 @@ fn arrow_expression_body<'a>(arrow: &'a ArrowFunctionExpression<'a>) -> Option<&
 
 /// Strip `as T`, `satisfies T`, `x!` and parentheses, which do not change the
 /// runtime value.
-fn unwrap_type_wrappers<'a>(expression: &'a Expression<'a>) -> &'a Expression<'a> {
+pub(crate) fn unwrap_type_wrappers<'a>(expression: &'a Expression<'a>) -> &'a Expression<'a> {
     match expression {
         Expression::TSAsExpression(inner) => unwrap_type_wrappers(&inner.expression),
         Expression::TSSatisfiesExpression(inner) => unwrap_type_wrappers(&inner.expression),

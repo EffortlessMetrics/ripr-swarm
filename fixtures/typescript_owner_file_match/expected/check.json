@@ -12,9 +12,16 @@
   "findings": [
     {
       "id": "probe:src_b.ts:typescript_preview:9c971b25",
+      "canonical_gap_id": "gap:typescript:typescript_preview:9c971b25",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "boundary_input_not_matched", "summary": "no observed call supplies the changed boundary input"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_b.ts:typescript_preview:9c971b25",
         "family": "predicate",

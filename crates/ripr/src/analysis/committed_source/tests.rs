@@ -66,6 +66,218 @@ fn clean_tree_needs_no_overlay() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn cargo_authority_uses_real_committed_overlay() -> Result<(), String> {
+    use crate::analysis::facts::member_crates::MemberCrates;
+    let repo = fixture_root("cargo-authority")?;
+    let app = "[package]\nname='app'\nversion='0.1.0'\nedition='2021'\nautobins=true\n[dependencies]\nmy_macros={path='../macros'}\n";
+    let macros = "[package]\nname='my_macros'\nversion='0.1.0'\n[lib]\nproc-macro=true\n";
+    write(&repo.0, "app/Cargo.toml", app)?;
+    write(&repo.0, "macros/Cargo.toml", macros)?;
+    commit_all(&repo.0, "authority")?;
+    let members = MemberCrates::new(&repo.0);
+    let bin = Path::new("app/src/bin/worker.rs");
+    let macro_file = Path::new("macros/src/lib.rs");
+    assert!(members.is_default_binary_root(bin));
+    assert!(members.binary_imports_macro(bin, macro_file, "my_macros"));
+
+    // Both target discovery and dependency identity differ on disk. The
+    // real git probe, not a synthetic overlay, must recover the HEAD inputs.
+    write(
+        &repo.0,
+        "app/Cargo.toml",
+        "[package]\nname='app'\nversion='0.1.0'\nedition='2021'\nautobins=false\n[dependencies]\nmy_macros='1'\n",
+    )?;
+    assert!(!members.is_default_binary_root(bin));
+    assert!(!members.binary_imports_macro(bin, macro_file, "my_macros"));
+    let overlay = probe(&repo.0, DEADLINE)?.ok_or("dirty manifest must produce an overlay")?;
+    assert!(overlay.dirty_source_paths().is_empty());
+    with_overlay(Some(Arc::new(overlay)), || {
+        assert!(members.is_default_binary_root(bin));
+        assert!(members.binary_imports_macro(bin, macro_file, "my_macros"));
+    });
+
+    // A deleted committed manifest still resolves through HEAD; an
+    // untracked closer manifest cannot replace the committed package.
+    std::fs::remove_file(repo.0.join("app/Cargo.toml")).map_err(|e| e.to_string())?;
+    write(
+        &repo.0,
+        "app/src/Cargo.toml",
+        "[package]\nname='other'\nversion='0.1.0'\n",
+    )?;
+    let overlay =
+        probe(&repo.0, DEADLINE)?.ok_or("deleted/untracked manifests must produce an overlay")?;
+    assert!(overlay.committed_paths_missing_on_disk().is_empty());
+    with_overlay(Some(Arc::new(overlay)), || {
+        assert_eq!(
+            committed_workspace_paths_missing_on_disk(&repo.0),
+            ["app/Cargo.toml"]
+        );
+        assert!(members.is_default_binary_root(bin));
+        assert!(members.binary_imports_macro(bin, macro_file, "my_macros"));
+    });
+
+    write(&repo.0, ".gitignore", ".cargo/\n")?;
+    git(&repo.0, &["add", ".gitignore"])?;
+    git(
+        &repo.0,
+        &["commit", "-q", "-m", "ignore unrelated cargo files"],
+    )?;
+    write(&repo.0, ".cargo/unrelated", "not a cargo config")?;
+    let overlay = probe(&repo.0, DEADLINE)?.ok_or("ignored directory must produce an overlay")?;
+    with_overlay(Some(Arc::new(overlay)), || {
+        assert!(members.binary_imports_macro(bin, macro_file, "my_macros"));
+    });
+
+    // A changed Cargo config is not safe to interpret through the raw
+    // configuration scanner, so dependency admission remains closed.
+    write(
+        &repo.0,
+        ".cargo/config.toml",
+        "[source.crates-io]\nreplace-with='other'\n",
+    )?;
+    let overlay = probe(&repo.0, DEADLINE)?.ok_or("untracked config must produce an overlay")?;
+    with_overlay(Some(Arc::new(overlay)), || {
+        assert!(!members.binary_imports_macro(bin, macro_file, "my_macros"));
+    });
+
+    let inverse = fixture_root("cargo-authority-inverse")?;
+    write(
+        &inverse.0,
+        "app/Cargo.toml",
+        &app.replace("autobins=true", "autobins=false"),
+    )?;
+    write(&inverse.0, "macros/Cargo.toml", macros)?;
+    commit_all(&inverse.0, "disabled")?;
+    write(&inverse.0, "app/Cargo.toml", app)?;
+    let members = MemberCrates::new(&inverse.0);
+    assert!(members.is_default_binary_root(bin));
+    let overlay =
+        probe(&inverse.0, DEADLINE)?.ok_or("dirty inverse manifest must produce an overlay")?;
+    with_overlay(Some(Arc::new(overlay)), || {
+        assert!(!members.is_default_binary_root(bin));
+    });
+
+    let inherited = fixture_root("cargo-authority-inherited")?;
+    let workspace = "[workspace]\nmembers=['app','macros']\n[workspace.dependencies]\nmy_macros={path='macros'}\n";
+    write(&inherited.0, "Cargo.toml", workspace)?;
+    write(
+        &inherited.0,
+        "app/Cargo.toml",
+        "[package]\nname='app'\nversion='0.1.0'\nedition='2021'\n[dependencies]\nmy_macros={workspace=true}\n",
+    )?;
+    write(&inherited.0, "macros/Cargo.toml", macros)?;
+    commit_all(&inherited.0, "inherited")?;
+    let members = MemberCrates::new(&inherited.0);
+    assert!(members.binary_imports_macro(bin, macro_file, "my_macros"));
+    write(
+        &inherited.0,
+        "Cargo.toml",
+        &workspace.replace("path='macros'", "path='foreign'"),
+    )?;
+    assert!(!members.binary_imports_macro(bin, macro_file, "my_macros"));
+    let overlay =
+        probe(&inherited.0, DEADLINE)?.ok_or("dirty workspace manifest must produce an overlay")?;
+    with_overlay(Some(Arc::new(overlay)), || {
+        assert!(members.binary_imports_macro(bin, macro_file, "my_macros"));
+    });
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn cargo_manifest_symlinks_remain_unresolved() -> Result<(), String> {
+    use std::os::unix::fs::symlink;
+    let repo = fixture_root("cargo-manifest-symlink")?;
+    write(&repo.0, "target.toml", "[workspace]\n")?;
+    symlink("target.toml", repo.0.join("Cargo.toml")).map_err(|e| e.to_string())?;
+    commit_all(&repo.0, "symlink")?;
+    assert_eq!(
+        read_cargo_manifest(&repo.0, Path::new("Cargo.toml"))
+            .err()
+            .map(|error| error.kind()),
+        Some(std::io::ErrorKind::Other)
+    );
+    std::fs::remove_file(repo.0.join("Cargo.toml")).map_err(|e| e.to_string())?;
+    let overlay = probe(&repo.0, DEADLINE)?.ok_or("deleted symlink must produce overlay")?;
+    with_overlay(Some(Arc::new(overlay)), || {
+        assert_eq!(
+            read_cargo_manifest(&repo.0, Path::new("Cargo.toml"))
+                .err()
+                .map(|error| error.kind()),
+            Some(std::io::ErrorKind::Other)
+        );
+        assert!(
+            matches!(read_cargo_manifest(&repo.0, Path::new("new/Cargo.toml")), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+        );
+    });
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn cargo_config_symlink_target_cannot_change_snapshot_binding() -> Result<(), String> {
+    use crate::analysis::facts::member_crates::MemberCrates;
+    use std::os::unix::fs::symlink;
+    let repo = fixture_root("cargo-config-symlink")?;
+    write(
+        &repo.0,
+        "app/Cargo.toml",
+        "[package]\nname='app'\nversion='0.1.0'\n[dependencies]\nmy_macros={path='../macros'}\n",
+    )?;
+    write(
+        &repo.0,
+        "macros/Cargo.toml",
+        "[package]\nname='my_macros'\nversion='0.1.0'\n[lib]\nproc-macro=true\n",
+    )?;
+    write(&repo.0, ".cargo/overrides.toml", "paths=['foreign']\n")?;
+    symlink("overrides.toml", repo.0.join(".cargo/config.toml")).map_err(|e| e.to_string())?;
+    commit_all(&repo.0, "config symlink")?;
+    write(&repo.0, ".cargo/overrides.toml", "")?;
+    let overlay = probe(&repo.0, DEADLINE)?;
+    let members = MemberCrates::new(&repo.0);
+    with_overlay(overlay.map(Arc::new), || {
+        assert!(!members.binary_imports_macro(
+            Path::new("app/src/bin/worker.rs"),
+            Path::new("macros/src/lib.rs"),
+            "my_macros"
+        ));
+    });
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn cargo_config_directory_symlink_remains_unresolved() -> Result<(), String> {
+    use crate::analysis::facts::member_crates::MemberCrates;
+    use std::os::unix::fs::symlink;
+    let repo = fixture_root("cargo-config-directory-symlink")?;
+    write(
+        &repo.0,
+        "app/Cargo.toml",
+        "[package]\nname='app'\nversion='0.1.0'\n[dependencies]\nmy_macros={path='../macros'}\n",
+    )?;
+    write(
+        &repo.0,
+        "macros/Cargo.toml",
+        "[package]\nname='my_macros'\nversion='0.1.0'\n[lib]\nproc-macro=true\n",
+    )?;
+    write(&repo.0, "config-dir/config.toml", "paths=['foreign']\n")?;
+    symlink("config-dir", repo.0.join(".cargo")).map_err(|e| e.to_string())?;
+    commit_all(&repo.0, "config directory symlink")?;
+    write(&repo.0, "config-dir/config.toml", "")?;
+    let members = MemberCrates::new(&repo.0);
+    let bin = Path::new("app/src/bin/worker.rs");
+    let macro_file = Path::new("macros/src/lib.rs");
+    assert!(!members.binary_imports_macro(bin, macro_file, "my_macros"));
+    std::fs::remove_file(repo.0.join(".cargo")).map_err(|e| e.to_string())?;
+    let overlay = probe(&repo.0, DEADLINE)?.ok_or("deleted symlink must produce overlay")?;
+    with_overlay(Some(Arc::new(overlay)), || {
+        assert!(!members.binary_imports_macro(bin, macro_file, "my_macros"));
+    });
+    Ok(())
+}
+
 /// An untracked source or test file has no `HEAD` content, so the committed
 /// view leaves it out instead of reading it as evidence. Untracked files no
 /// adapter reads stay out of the dirty set, and a tracked README edit stays
@@ -351,6 +563,7 @@ fn missing_on_disk_disclosure_names_bounded_paths() {
     let overlay = CommittedSourceOverlay {
         root: std::env::temp_dir().join("ripr-committed-source-missing-none"),
         canonical_root: None,
+        unsupported_head: BTreeSet::new(),
         ignored: IgnoredPaths::default(),
         untracked: BTreeSet::new(),
         snapshot_inputs: BTreeSet::new(),
@@ -632,6 +845,34 @@ fn ignored_source_paths_name_files_and_directories_but_not_tracked_or_untracked(
             "tests/local.rs".to_string(),
         ],
         "the working-tree probe splits the same halves from one status call"
+    );
+    Ok(())
+}
+
+/// The non-UTF-8 path refusal must name the recovery without announcing every
+/// record class as tracked: the same `utf8_path` message covers ignored,
+/// untracked, snapshot-input and rename-original paths, so the prefix may not
+/// claim a class the caller never passed (#10568). This contract is on the
+/// byte-level function, so the assertion runs on every host.
+#[test]
+fn non_utf8_path_refusal_names_recovery_without_claiming_tracked() -> Result<(), String> {
+    let error = match utf8_path(b"\xff\xfe_bad.rs") {
+        Ok(named) => return Err(format!("expected a refusal, got a UTF-8 path `{named}`")),
+        Err(error) => error,
+    };
+    for needle in [
+        "is not valid UTF-8",
+        "`git mv` and commit the rename",
+        "plain filesystem rename",
+    ] {
+        assert!(
+            error.contains(needle),
+            "refusal is missing `{needle}`: {error}"
+        );
+    }
+    assert!(
+        !error.contains("tracked path"),
+        "the shared refusal must not announce every record class as tracked: {error}"
     );
     Ok(())
 }

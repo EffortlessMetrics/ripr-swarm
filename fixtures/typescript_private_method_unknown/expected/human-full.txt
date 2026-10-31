@@ -55,8 +55,8 @@ Weakness
   - `#limit` is a `#private` class member, so no test can call it by name; whether a test reaches it through a public method of the class is not established either way
 
 Stop reasons:
-  - transitive_reach_unresolved — ripr could not establish whether a test reaches this change through internal calls
-    Next: Call the changed owner directly from a test if tests can name it; if the path runs through private helpers ripr only matched by name, the edge can stay unresolved even with an exact assertion.
+  - ripr could not establish whether a test reaches this change through internal calls (transitive_reach_unresolved)
+    Next: Call the changed owner directly from a test if tests can name it; if it is private or reached only through private helpers, ripr cannot finish the call chain, so the edge can stay unresolved even with an exact assertion.
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1

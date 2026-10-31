@@ -130,6 +130,10 @@ fn private_method_cli_output_keeps_unknown_reach_without_invented_test_evidence(
                     !rendered.contains("related-test link is heuristic-only"),
                     "{rendered}"
                 );
+                assert!(
+                    !rendered.contains("only matched by name"),
+                    "{rendered}"
+                );
             }
         }
     }

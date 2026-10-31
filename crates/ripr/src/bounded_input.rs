@@ -85,7 +85,7 @@ pub(crate) fn read_reader_to_string_with_limit(
     })
 }
 
-fn read_reader_with_limit(reader: impl Read, limit: u64) -> std::io::Result<Vec<u8>> {
+pub(crate) fn read_reader_with_limit(reader: impl Read, limit: u64) -> std::io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     reader
         .take(limit.saturating_add(1))

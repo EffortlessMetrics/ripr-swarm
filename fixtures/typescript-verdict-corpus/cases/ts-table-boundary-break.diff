@@ -1,0 +1,10 @@
+diff --git a/src/table.ts b/src/table.ts
+--- a/src/table.ts
++++ b/src/table.ts
+@@ -7,5 +7,5 @@
+ }
+ 
+ export function qualifiesForGiftWrap(cents: number): boolean {
+-  return cents >= 3000;
++  return cents > 3000;
+ }

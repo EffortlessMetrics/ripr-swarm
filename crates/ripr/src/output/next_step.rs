@@ -17,14 +17,19 @@ use crate::output::preview_actionability::preview_actionability_for;
 ///
 /// For a finding with `repair_packet_ready: true` the blocked-case tail
 /// "; no actionable repair packet is emitted until …" is stripped and replaced
-/// with "; the repair packet is complete and delegatable (advisory)."
+/// with "; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)."
 ///
+/// Named Rust public-API/helper path limits with retained edge evidence get
+/// evidence-specific guidance explaining why tests cannot close that edge.
 /// For all other findings (incomplete packets or non-TypeScript/JS) the raw
 /// `recommended_next_step` value is returned unchanged, preserving the
 /// blocked-state disclosure on the output surfaces.
 ///
 /// Returns an empty string when `finding.recommended_next_step` is `None`.
 pub(crate) fn reconcile_next_step(finding: &Finding) -> String {
+    if let Some(guidance) = unresolved_edge_guidance(finding) {
+        return guidance;
+    }
     let step = match finding.recommended_next_step.as_deref() {
         Some(s) => s,
         None => return String::new(),
@@ -48,7 +53,42 @@ pub(crate) fn reconcile_next_step(finding: &Finding) -> String {
         .unwrap_or(step)
         .trim_end_matches(['.', ' '])
         .to_string();
-    format!("{head}; the repair packet is complete and delegatable (advisory).")
+    format!(
+        "{head}; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)."
+    )
+}
+
+/// Evidence-specific guidance for a named unresolved edge. This changes only
+/// the explanation; it neither clears the limitation nor admits a repair.
+pub(crate) fn unresolved_edge_guidance(finding: &Finding) -> Option<String> {
+    // Preserve the public optional-field contract uniformly across renderers.
+    finding.recommended_next_step.as_ref()?;
+    if !matches!(
+        finding.static_limit_kind,
+        Some(
+            crate::domain::StaticLimitKind::RustTransitiveReachUnresolved
+                | crate::domain::StaticLimitKind::RustIntegrationPublicApiPathUnresolved
+        )
+    ) {
+        return None;
+    }
+    let detail = |prefix: &str| {
+        finding
+            .evidence
+            .iter()
+            .find_map(|line| line.trim().strip_prefix(prefix).map(str::trim))
+            .filter(|value| !value.is_empty())
+    };
+    let edge = detail(crate::domain::LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX)?;
+    let boundary = detail(crate::domain::LIMITATION_HELPER_BOUNDARY_PREFIX)
+        .map(|boundary| format!(" ({boundary})"))
+        .unwrap_or_default();
+    let route = detail(crate::domain::LIMITATION_ANALYZER_ROUTE_PREFIX)
+        .map(|route| format!(" Route analyzer work to `{route}`."))
+        .unwrap_or_default();
+    Some(format!(
+        "Tests cannot close this static-analysis limitation: ripr cannot trace {edge}{boundary}. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test.{route}"
+    ))
 }
 
 #[cfg(test)]
@@ -69,11 +109,80 @@ mod tests {
     use crate::output::suppressions::SuppressionEntry;
     use std::path::PathBuf;
 
+    #[test]
+    fn limited_journey_names_the_edge_and_does_not_prescribe_tests_to_close_it() {
+        let mut finding = complete_ts_finding();
+        finding.language = Some(LanguageId::Rust);
+        finding.language_status = None;
+        finding.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustTransitiveReachUnresolved);
+        finding.evidence = vec![
+            "limitation_first_unresolved_edge: entry `parse_duration` -> owner `parse_unit` through a transitive Rust helper path".to_string(),
+            "limitation_analyzer_route: analysis/rust-public-api-transitive-reach".to_string(),
+            "limitation_helper_boundary: private helper `parse_unit` behind public entry point `parse_duration`; candidate path only".to_string(),
+        ];
+        finding.recommended_next_step = Some("add a direct test for parse_unit".to_string());
+        let step = reconcile_next_step(&finding);
+        assert!(
+            step.contains("Tests cannot close this static-analysis limitation"),
+            "{step}"
+        );
+        assert!(
+            step.contains("entry `parse_duration` -> owner `parse_unit`"),
+            "{step}"
+        );
+        assert!(
+            step.contains("analysis/rust-public-api-transitive-reach"),
+            "{step}"
+        );
+        assert!(step.contains("private helper `parse_unit`"), "{step}");
+        assert!(!step.contains("add a direct test"), "{step}");
+        finding.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustValuePropagationUnresolved);
+        assert_eq!(
+            reconcile_next_step(&finding),
+            "add a direct test for parse_unit"
+        );
+        finding.static_limit_kind = None;
+        assert_eq!(
+            reconcile_next_step(&finding),
+            "add a direct test for parse_unit"
+        );
+    }
+
+    #[test]
+    fn limited_journey_absent_next_step_stays_absent_with_a_typed_edge() {
+        let mut finding = complete_ts_finding();
+        finding.language = Some(LanguageId::Rust);
+        finding.language_status = None;
+        finding.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustTransitiveReachUnresolved);
+        finding.evidence =
+            vec!["limitation_first_unresolved_edge: entry `outer` -> owner `inner`".to_string()];
+        finding.recommended_next_step = None;
+        assert_eq!(unresolved_edge_guidance(&finding), None);
+        assert_eq!(reconcile_next_step(&finding), "");
+        let output = check_output_for(finding);
+        let config = RiprConfig::default();
+        let human = human_render_with_config(&output, &config);
+        let json = json_render_with_config(&output, &config, None);
+        assert!(
+            !human.contains("Tests cannot close this static-analysis limitation"),
+            "{human}"
+        );
+        assert!(
+            !json.contains("Tests cannot close this static-analysis limitation"),
+            "{json}"
+        );
+        assert!(json.contains("\"recommended_next_step\": \"\""), "{json}");
+    }
+
     // ── shared test fixture ────────────────────────────────────────────────────
 
     fn complete_ts_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_discount.ts:typescript_preview:2396aec1".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -221,7 +330,7 @@ mod tests {
         let finding = complete_ts_finding();
         let step = reconcile_next_step(&finding);
         assert!(
-            step.contains("the repair packet is complete and delegatable (advisory)"),
+            step.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "complete packet must produce actionable step; got: {step}"
         );
         assert!(
@@ -240,7 +349,7 @@ mod tests {
             "blocked packet must preserve blocked-state disclosure; got: {step}"
         );
         assert!(
-            !step.contains("the repair packet is complete and delegatable"),
+            !step.contains("the repair packet is complete (advisory"),
             "blocked packet must NOT say actionable; got: {step}"
         );
     }
@@ -266,7 +375,7 @@ mod tests {
         let finding = complete_ts_finding();
         let expected = reconcile_next_step(&finding);
         assert!(
-            expected.contains("the repair packet is complete and delegatable (advisory)"),
+            expected.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "precondition: reconcile_next_step must produce actionable string; got: {expected}"
         );
 
@@ -282,7 +391,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" ");
         assert!(
-            human.contains("the repair packet is complete and delegatable (advisory)"),
+            human.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "human surface must contain reconciled next-step.\nExpected: {expected}\nHuman output: {human}"
         );
         assert!(
@@ -293,7 +402,7 @@ mod tests {
         // JSON surface
         let json_out = json_render_with_config(&output, &config, None);
         assert!(
-            json_out.contains("the repair packet is complete and delegatable (advisory)"),
+            json_out.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "JSON surface must contain reconciled next-step.\nExpected: {expected}\nJSON output: {json_out}"
         );
         assert!(
@@ -327,7 +436,7 @@ mod tests {
         // string when the packet is complete (the gap that the first fix missed).
         let sarif_message = sarif_result["message"]["text"].as_str().unwrap_or("");
         assert!(
-            sarif_message.contains("the repair packet is complete and delegatable (advisory)"),
+            sarif_message.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "SARIF message.text must contain reconciled next-step.\nExpected tail: {expected}\nMessage: {sarif_message}"
         );
         assert!(
@@ -349,7 +458,7 @@ mod tests {
         // carry the reconciled next-step, not the raw blocked-case field.
         let github_out = github_render_with_config(&output, &config);
         assert!(
-            github_out.contains("the repair packet is complete and delegatable (advisory)"),
+            github_out.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "GitHub surface must contain reconciled next-step.\nExpected: {expected}\nGitHub output: {github_out}"
         );
         assert_eq!(

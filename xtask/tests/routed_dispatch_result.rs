@@ -7,6 +7,14 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+const LIVE_PR: &str = r#"{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"EffortlessMetrics/ripr-swarm"}},"base":{"ref":"main","repo":{"full_name":"EffortlessMetrics/ripr-swarm"}},"labels":[{"name":"merge-ready"}]}"#;
+
+const LIVE_GRAPHQL: &str = r#"{"data":{"repository":{"pullRequest":{"headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reviewDecision":"APPROVED","mergeQueueEntry":{"id":"entry-10"},"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#;
+
+const GROUP_HEAD: &str = "cccccccccccccccccccccccccccccccccccccccc";
+const PR_HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const REPOSITORY: &str = "EffortlessMetrics/ripr-swarm";
+
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 fn root() -> PathBuf {
@@ -67,6 +75,40 @@ fn result_shell(step: &str) -> Result<String, String> {
         .map_err(str::to_string)
 }
 
+/// The run identity the eligibility step must find for `event`: the PR head
+/// for a label request, the queue-entry commit for a merge-group request.
+fn request_identity(event: &str) -> (&'static str, String) {
+    if event == "merge_group" {
+        (GROUP_HEAD, format!("Merge queue {GROUP_HEAD}"))
+    } else {
+        (PR_HEAD, format!("Merge-ready request {PR_HEAD}"))
+    }
+}
+
+fn run_entry(event: &str, id: u64, number: u64, attempt: u64) -> serde_json::Value {
+    let (head, title) = request_identity(event);
+    serde_json::json!({
+        "id": id,
+        "run_number": number,
+        "run_attempt": attempt,
+        "workflow_id": 7,
+        "head_sha": head,
+        "event": event,
+        "display_title": title,
+        "repository": {"full_name": REPOSITORY},
+    })
+}
+
+fn runs_page(total: u64, runs: &[serde_json::Value]) -> String {
+    serde_json::json!({"total_count": total, "workflow_runs": runs}).to_string()
+}
+
+/// This invocation (run 100, number 7, attempt 1) and a page listing only it.
+fn current_runs(event: &str) -> (String, String) {
+    let own = run_entry(event, 100, 7, 1);
+    (own.to_string(), runs_page(1, &[own]))
+}
+
 fn run_result(
     source: &str,
     event: &str,
@@ -78,6 +120,7 @@ fn run_result(
     let scratch = Scratch::new()?;
     let step = result_step(source)?;
     let mut env = BTreeMap::new();
+    let (own_run, first_page) = current_runs(event);
     // Derive the consumed inputs from the actual step, then give its child
     // outcomes a successful fixture. Tests vary authoritative inputs below.
     for line in step
@@ -102,6 +145,18 @@ fn run_result(
         ("TARGET", "github"),
         ("DOCS_ONLY", "false"),
         ("LABEL_NAME", "merge-ready"),
+        ("REPOSITORY", "EffortlessMetrics/ripr-swarm"),
+        ("PR_NUMBER", "10"),
+        ("EXPECTED_HEAD", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ("EXPECTED_REQUEST", "100-1"),
+        ("GITHUB_RUN_ID", "100"),
+        ("GITHUB_RUN_ATTEMPT", "1"),
+        ("EXPECTED_QUEUE_ENTRY", "entry-10"),
+        ("MOCK_PR", LIVE_PR),
+        ("MOCK_GRAPHQL", LIVE_GRAPHQL),
+        ("GROUP_HEAD_SHA", GROUP_HEAD),
+        ("MOCK_RUN", own_run.as_str()),
+        ("MOCK_RUNS_1", first_page.as_str()),
     ]
     .into_iter()
     .chain(overrides.iter().copied())
@@ -113,19 +168,95 @@ fn run_result(
     // multi-line script before bash sees it (#9272).
     let script = scratch.0.join("result.sh");
     fs::write(&script, result_shell(step)?).map_err(|e| e.to_string())?;
-    let output = Command::new("bash")
-        .arg("-e")
-        .arg(&script)
-        .env_clear()
-        .envs(env)
-        .env("PATH", std::env::var_os("PATH").ok_or("PATH unavailable")?)
-        .env("GITHUB_STEP_SUMMARY", &summary)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let gh = scratch.0.join("gh");
+    fs::write(
+        &gh,
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$MOCK_CALLS.log"
+case "$2" in
+  graphql)
+    case "$*" in
+      *cursor=next*) printf '%s\n' "${MOCK_GRAPHQL_NEXT:-$MOCK_GRAPHQL}" ;;
+      *) printf '%s\n' "$MOCK_GRAPHQL" ;;
+    esac ;;
+  repos/*/actions/runs/100)
+    [ "$MOCK_RUN" != fail ] || exit 99
+    printf '%s\n' "$MOCK_RUN" ;;
+  repos/*/actions/workflows/*/runs?*)
+    case "${2##*page=}" in
+      1) page="${MOCK_RUNS_1-fail}" ;;
+      2) page="${MOCK_RUNS_2-fail}" ;;
+      *) page=fail ;;
+    esac
+    [ "$page" != fail ] || exit 99
+    printf '%s\n' "$page" ;;
+  repos/*/pulls/10)
+    if [ -f "$MOCK_CALLS" ]; then printf '%s\n' "${MOCK_PR_AFTER:-$MOCK_PR}"
+    else : > "$MOCK_CALLS"; printf '%s\n' "$MOCK_PR"; fi ;;
+  *) exit 97 ;;
+esac
+"#,
+    )
+    .map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+    }
+    let paths = std::iter::once(scratch.0.clone())
+        .chain(std::env::split_paths(
+            &std::env::var_os("PATH").ok_or("PATH unavailable")?,
+        ))
+        .collect::<Vec<_>>();
+    env.insert(
+        "MOCK_CALLS".to_string(),
+        scratch.0.join("calls").to_string_lossy().into_owned(),
+    );
+    let run_shell = |script: &PathBuf, bindings: &BTreeMap<String, String>| {
+        Command::new("bash")
+            .arg("-e")
+            .arg(script)
+            .env_clear()
+            .envs(bindings)
+            .env(
+                "PATH",
+                std::env::join_paths(&paths).map_err(|e| e.to_string())?,
+            )
+            .env("GITHUB_STEP_SUMMARY", &summary)
+            .output()
+            .map_err(|e| e.to_string())
+    };
+    let mut eligibility = true;
+    let mut eligibility_outcome = "skipped";
+    if admission == "success"
+        && status == "admitted"
+        && (event == "merge_group"
+            || (event == "pull_request"
+                && env
+                    .get("LABEL_NAME")
+                    .is_some_and(|label| label == "merge-ready")))
+    {
+        let (_, job) = source
+            .split_once("      - name: Recheck initially admitted eligibility\n")
+            .ok_or("missing actual eligibility step")?;
+        let (step, _) = job
+            .split_once("      - name: Summarize routed result\n")
+            .ok_or("missing summary after eligibility")?;
+        let eligibility_script = scratch.0.join("eligibility.sh");
+        fs::write(&eligibility_script, result_shell(step)?).map_err(|e| e.to_string())?;
+        let output = run_shell(&eligibility_script, &env)?;
+        eligibility = output.status.success();
+        eligibility_outcome = if eligibility { "success" } else { "failure" };
+    }
+    env.insert(
+        "ELIGIBILITY_RESULT".to_string(),
+        eligibility_outcome.to_string(),
+    );
+    let output = run_shell(&script, &env)?;
     let report =
         fs::read_to_string(summary).map_err(|e| format!("missing summary: {e}; {output:?}"))?;
     assert!(report.contains("### Ripr Rust Small Result"));
-    Ok((output.status.success(), report))
+    Ok((eligibility && output.status.success(), report))
 }
 
 #[test]
@@ -391,5 +522,534 @@ fn hosted_result_requires_the_sharded_tests_and_self_hosted_does_not() -> Result
             "fallback with sharded tests `{tests}`"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn terminal_result_rejects_late_eligibility_changes_and_old_attempts() -> Result<(), String> {
+    let source = workflow()?;
+    let bad_prs = [
+        LIVE_PR.replace("\"open\"", "\"closed\""),
+        LIVE_PR.replace("\"draft\":false", "\"draft\":true"),
+        LIVE_PR.replace(&"a".repeat(40), &"b".repeat(40)),
+        LIVE_PR.replace("\"main\"", "\"other\""),
+    ];
+    let bad_frames = [
+        "{}".to_string(),
+        r#"{"errors":[{"message":"refused"}]}"#.to_string(),
+        LIVE_GRAPHQL.replace("APPROVED", "CHANGES_REQUESTED"),
+        LIVE_GRAPHQL.replace(r#""reviewDecision":"APPROVED","#, ""),
+        LIVE_GRAPHQL.replace("\"nodes\":[]", "\"nodes\":[{\"isResolved\":false}]"),
+        LIVE_GRAPHQL.replace("\"hasNextPage\":false", "\"hasNextPage\":null"),
+    ];
+    for event in ["pull_request", "merge_group"] {
+        for (name, value) in bad_prs
+            .iter()
+            .map(|v| ("MOCK_PR", v.as_str()))
+            .chain(bad_frames.iter().map(|v| ("MOCK_GRAPHQL", v.as_str())))
+            .chain([
+                ("EXPECTED_HEAD", ""),
+                ("EXPECTED_REQUEST", "100-0"),
+                ("GITHUB_RUN_ATTEMPT", "2"),
+            ])
+        {
+            let (success, report) = run_result(
+                &source,
+                event,
+                "refs/pull/10/merge",
+                "success",
+                "admitted",
+                &[(name, value)],
+            )?;
+            assert!(
+                !success,
+                "late {name}={value} must refuse {event}: {report}"
+            );
+        }
+        let changed = LIVE_PR.replace(&"a".repeat(40), &"b".repeat(40));
+        assert!(
+            !run_result(
+                &source,
+                event,
+                "refs/pull/10/merge",
+                "success",
+                "admitted",
+                &[("MOCK_PR_AFTER", &changed)]
+            )?
+            .0,
+            "a head change during final review must refuse"
+        );
+    }
+    let no_required_review = LIVE_GRAPHQL.replace("\"APPROVED\"", "null");
+    assert!(
+        run_result(
+            &source,
+            "pull_request",
+            "pr",
+            "success",
+            "admitted",
+            &[("MOCK_GRAPHQL", &no_required_review)]
+        )?
+        .0,
+        "a present nullable decision remains valid"
+    );
+    let withdrawn = LIVE_PR.replace(r#"[{"name":"merge-ready"}]"#, "[]");
+    assert!(
+        !run_result(
+            &source,
+            "pull_request",
+            "refs/pull/10/merge",
+            "success",
+            "admitted",
+            &[("MOCK_PR", &withdrawn)]
+        )?
+        .0
+    );
+    for frame in [
+        LIVE_GRAPHQL.replace("entry-10", "entry-11"),
+        LIVE_GRAPHQL.replace(r#"{"id":"entry-10"}"#, "null"),
+    ] {
+        assert!(
+            !run_result(
+                &source,
+                "merge_group",
+                "queue",
+                "success",
+                "admitted",
+                &[("MOCK_GRAPHQL", &frame)]
+            )?
+            .0,
+            "withdrawn/replaced queue entry must refuse"
+        );
+    }
+    let page = LIVE_GRAPHQL.replace(
+        r#""hasNextPage":false,"endCursor":null"#,
+        r#""hasNextPage":true,"endCursor":"next""#,
+    );
+    let blocked = LIVE_GRAPHQL.replace(r#""nodes":[]"#, r#""nodes":[{"isResolved":false}]"#);
+    assert!(
+        run_result(
+            &source,
+            "pull_request",
+            "pr",
+            "success",
+            "admitted",
+            &[("MOCK_GRAPHQL", &page), ("MOCK_GRAPHQL_NEXT", LIVE_GRAPHQL)]
+        )?
+        .0
+    );
+    assert!(
+        !run_result(
+            &source,
+            "pull_request",
+            "pr",
+            "success",
+            "admitted",
+            &[("MOCK_GRAPHQL", &page), ("MOCK_GRAPHQL_NEXT", &blocked)]
+        )?
+        .0
+    );
+    Ok(())
+}
+
+#[test]
+fn removed_terminal_guard_exposes_the_same_closed_pr_false_green() -> Result<(), String> {
+    let source = workflow()?;
+    let guard = "          current_eligibility\n";
+    assert_eq!(source.matches(guard).count(), 1);
+    let removed = source.replace(guard, "          true\n");
+    let closed = LIVE_PR.replace("\"open\"", "\"closed\"");
+    assert!(
+        run_result(
+            &removed,
+            "pull_request",
+            "pr",
+            "success",
+            "admitted",
+            &[("MOCK_PR", &closed)]
+        )?
+        .0,
+        "removing the actual guard must expose the unchanged negative"
+    );
+    assert!(source.contains("ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}"));
+    for output in ["pr", "head", "queue_entry", "request"] {
+        assert!(source.contains(&format!(
+            "{output}: ${{{{ steps.entry.outputs.{output} }}}}"
+        )));
+    }
+    Ok(())
+}
+
+/// Runs eligibility and the Result for `event` with a custom own-run read and
+/// run-list pages, returning whether the whole Result passed.
+fn with_runs(event: &str, own: &str, pages: &[String]) -> Result<bool, String> {
+    let mut overrides = vec![("MOCK_RUN", own)];
+    if let Some(page) = pages.first() {
+        overrides.push(("MOCK_RUNS_1", page.as_str()));
+    }
+    if let Some(page) = pages.get(1) {
+        overrides.push(("MOCK_RUNS_2", page.as_str()));
+    }
+    run_result(
+        &workflow()?,
+        event,
+        "refs/pull/10/merge",
+        "success",
+        "admitted",
+        &overrides,
+    )
+    .map(|(success, _)| success)
+}
+
+#[test]
+fn current_invocation_is_accepted_and_older_or_unrelated_runs_do_not_revoke_it()
+-> Result<(), String> {
+    for event in ["pull_request", "merge_group"] {
+        let own = run_entry(event, 100, 7, 1);
+        let mut other_head = run_entry(event, 101, 9, 1);
+        other_head["head_sha"] = "b".repeat(40).into();
+        let mut other_event = run_entry(event, 102, 10, 1);
+        other_event["event"] = if event == "merge_group" {
+            "pull_request"
+        } else {
+            "merge_group"
+        }
+        .into();
+        let mut other_workflow = run_entry(event, 103, 11, 1);
+        other_workflow["workflow_id"] = 8.into();
+        let mut other_repository = run_entry(event, 104, 12, 1);
+        other_repository["repository"]["full_name"] = "someone/else".into();
+        // An ordinary label event is a newer run on the same head, but it is a
+        // different request kind (`Label metadata <id>`) and must revoke nothing.
+        let mut label_metadata = run_entry(event, 105, 13, 1);
+        label_metadata["display_title"] = "Label metadata 105".into();
+        let older = run_entry(event, 90, 3, 5);
+        let cases = [
+            ("alone", vec![own.clone()]),
+            ("older run on the same head", vec![older, own.clone()]),
+            ("newer run on another head", vec![own.clone(), other_head]),
+            ("newer run of another event", vec![own.clone(), other_event]),
+            (
+                "newer run of another workflow",
+                vec![own.clone(), other_workflow],
+            ),
+            (
+                "newer run of another repository",
+                vec![own.clone(), other_repository],
+            ),
+            (
+                "newer label-metadata run",
+                vec![own.clone(), label_metadata],
+            ),
+        ];
+        for (name, runs) in cases {
+            let page = runs_page(runs.len() as u64, &runs);
+            assert!(
+                with_runs(event, &own.to_string(), &[page])?,
+                "{event}: {name} must not revoke the current invocation"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_newer_run_or_attempt_on_the_same_head_revokes_the_superseded_invocation() -> Result<(), String>
+{
+    for event in ["pull_request", "merge_group"] {
+        let own = run_entry(event, 100, 7, 1);
+        // Newer runs revoke regardless of their own outcome or attempt count.
+        for (name, newer) in [
+            ("newer run", run_entry(event, 101, 8, 1)),
+            ("newer run, later attempt", run_entry(event, 101, 8, 3)),
+            ("much newer run", run_entry(event, 250, 99, 1)),
+            (
+                "same number, other id (ambiguous order)",
+                run_entry(event, 101, 7, 1),
+            ),
+        ] {
+            let mut failed = newer.clone();
+            failed["conclusion"] = "failure".into();
+            for candidate in [newer, failed] {
+                let runs = [own.clone(), candidate];
+                assert!(
+                    !with_runs(event, &own.to_string(), &[runs_page(2, &runs)])?,
+                    "{event}: {name} must revoke the superseded run"
+                );
+            }
+        }
+        // A newer attempt of this very run: GitHub reports only the latest
+        // attempt, so both the run read and the listing show attempt 2 while
+        // this invocation is attempt 1.
+        let advanced = run_entry(event, 100, 7, 2);
+        assert!(
+            !with_runs(
+                event,
+                &advanced.to_string(),
+                &[runs_page(1, std::slice::from_ref(&advanced))]
+            )?,
+            "{event}: a newer attempt must revoke the superseded attempt"
+        );
+        // Run read is current but the listing already shows the advanced attempt.
+        assert!(
+            !with_runs(event, &own.to_string(), &[runs_page(1, &[advanced])])?,
+            "{event}: an attempt that advances between reads must refuse"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn succession_reads_follow_every_page_and_fail_closed() -> Result<(), String> {
+    for event in ["pull_request", "merge_group"] {
+        let own = run_entry(event, 100, 7, 1);
+        let own_text = own.to_string();
+        let filler = |first: u64, count: u64| -> Vec<serde_json::Value> {
+            (0..count)
+                .map(|i| run_entry(event, first + i, 1, 1))
+                .collect()
+        };
+        // A clean multi-page inventory is accepted.
+        let mut page_one = filler(1000, 99);
+        page_one.push(own.clone());
+        let page_two = filler(2000, 5);
+        assert!(
+            with_runs(
+                event,
+                &own_text,
+                &[runs_page(104, &page_one), runs_page(104, &page_two)]
+            )?,
+            "{event}: complete clean pagination"
+        );
+        // A newer request that is only on a later page still revokes.
+        let mut late = page_two.clone();
+        late.push(run_entry(event, 300, 50, 1));
+        assert!(
+            !with_runs(
+                event,
+                &own_text,
+                &[runs_page(105, &page_one), runs_page(105, &late)]
+            )?,
+            "{event}: a newer run on page two revokes"
+        );
+        let single = runs_page(1, std::slice::from_ref(&own));
+        let malformed_newer = {
+            let mut bad = run_entry(event, 101, 8, 1);
+            bad["display_title"] = serde_json::Value::Null;
+            bad
+        };
+        let missing_number = {
+            let mut bad = run_entry(event, 101, 8, 1);
+            bad.as_object_mut().ok_or("object")?.remove("run_number");
+            bad
+        };
+        let mut wrong_title = own.clone();
+        wrong_title["display_title"] = "Label metadata 100".into();
+        let mut wrong_head = own.clone();
+        wrong_head["head_sha"] = "b".repeat(40).into();
+        let mut wrong_event = own.clone();
+        wrong_event["event"] = "workflow_dispatch".into();
+        let mut no_attempt = own.clone();
+        no_attempt
+            .as_object_mut()
+            .ok_or("object")?
+            .remove("run_attempt");
+        let mut lower_attempt = own.clone();
+        lower_attempt["run_attempt"] = 0.into();
+        let mut other_repository = own.clone();
+        other_repository["repository"]["full_name"] = "someone/else".into();
+        let cases: Vec<(&str, String, Vec<String>)> = vec![
+            ("own run read fails", "fail".into(), vec![single.clone()]),
+            ("own run read is not JSON", "{".into(), vec![single.clone()]),
+            ("own run read is empty", "".into(), vec![single.clone()]),
+            (
+                "own run has a foreign title",
+                wrong_title.to_string(),
+                vec![single.clone()],
+            ),
+            (
+                "own run has a foreign head",
+                wrong_head.to_string(),
+                vec![single.clone()],
+            ),
+            (
+                "own run has a foreign event",
+                wrong_event.to_string(),
+                vec![single.clone()],
+            ),
+            (
+                "own run lacks an attempt",
+                no_attempt.to_string(),
+                vec![single.clone()],
+            ),
+            (
+                "own run attempt is lower than the invocation",
+                lower_attempt.to_string(),
+                vec![single.clone()],
+            ),
+            (
+                "own run is another repository",
+                other_repository.to_string(),
+                vec![single.clone()],
+            ),
+            ("listing read fails", own_text.clone(), vec!["fail".into()]),
+            ("listing is not JSON", own_text.clone(), vec!["{".into()]),
+            (
+                "listing has no total_count",
+                own_text.clone(),
+                vec![serde_json::json!({"workflow_runs": [own]}).to_string()],
+            ),
+            (
+                "listing has no workflow_runs",
+                own_text.clone(),
+                vec![serde_json::json!({"total_count": 1}).to_string()],
+            ),
+            (
+                "listing omits this run",
+                own_text.clone(),
+                vec![runs_page(0, &[])],
+            ),
+            (
+                "listing is an inconsistent count",
+                own_text.clone(),
+                vec![runs_page(2, std::slice::from_ref(&own))],
+            ),
+            (
+                "later page read fails",
+                own_text.clone(),
+                vec![runs_page(104, &page_one), "fail".into()],
+            ),
+            (
+                "later page is empty before the total",
+                own_text.clone(),
+                vec![runs_page(104, &page_one), runs_page(104, &[])],
+            ),
+            (
+                "duplicate run ids across pages",
+                own_text.clone(),
+                vec![
+                    runs_page(101, &page_one),
+                    runs_page(101, std::slice::from_ref(&own)),
+                ],
+            ),
+            (
+                "newer run lacks a title",
+                own_text.clone(),
+                vec![runs_page(2, &[own.clone(), malformed_newer])],
+            ),
+            (
+                "newer run lacks a run number",
+                own_text.clone(),
+                vec![runs_page(2, &[own.clone(), missing_number])],
+            ),
+        ];
+        for (name, own_read, pages) in cases {
+            assert!(
+                !with_runs(event, &own_read, &pages)?,
+                "{event}: {name} must fail closed"
+            );
+        }
+        // Truncation: the inventory claims more runs than the bounded read
+        // will page through.
+        let hundred = filler(5000, 100);
+        let mut first = hundred.clone();
+        first[0] = own.clone();
+        assert!(
+            !with_runs(
+                event,
+                &own_text,
+                &[runs_page(5000, &first), runs_page(5000, &hundred)]
+            )?,
+            "{event}: a truncated inventory must refuse"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn succession_reads_are_pinned_read_only_gets_of_the_same_workflow_head_and_event()
+-> Result<(), String> {
+    // The step must only GET its own run and the same-workflow listing for the
+    // same head and event; a mutation or a broader listing would be a new
+    // authority.
+    let source = workflow()?;
+    let (_, job) = source
+        .split_once("      - name: Recheck initially admitted eligibility\n")
+        .ok_or("missing eligibility step")?;
+    let (step, _) = job
+        .split_once("      - name: Summarize routed result\n")
+        .ok_or("missing summary")?;
+    for needle in [
+        "gh api \"repos/$REPOSITORY/actions/runs/$GITHUB_RUN_ID\"",
+        "gh api \"repos/$REPOSITORY/actions/workflows/$wf/runs?head_sha=$run_head&event=$EVENT_NAME&per_page=100&page=$spage\"",
+    ] {
+        assert!(step.contains(needle), "missing read-only call: {needle}");
+    }
+    for forbidden in [
+        "-X ",
+        "--method",
+        "-f ",
+        "-F ",
+        "--input",
+        "gh run ",
+        "gh workflow",
+    ] {
+        let mutated = step
+            .lines()
+            .filter(|line| line.contains("actions/") && line.contains(forbidden))
+            .count();
+        assert_eq!(mutated, 0, "Actions reads must not use {forbidden}");
+    }
+    assert!(!step.contains("permissions:"));
+    Ok(())
+}
+
+#[test]
+fn removed_succession_guard_exposes_the_superseded_false_green() -> Result<(), String> {
+    let source = workflow()?;
+    let guard = "            read_succession\n          }\n";
+    assert_eq!(source.matches(guard).count(), 1);
+    let removed = source.replace(guard, "            true\n          }\n");
+    for event in ["pull_request", "merge_group"] {
+        let own = run_entry(event, 100, 7, 1);
+        let newer = run_entry(event, 101, 8, 1);
+        let page = runs_page(2, &[own.clone(), newer]);
+        let overrides = [("MOCK_RUN", own.to_string()), ("MOCK_RUNS_1", page)];
+        let overrides = overrides
+            .iter()
+            .map(|(k, v)| (*k, v.as_str()))
+            .collect::<Vec<_>>();
+        let attempt = run_entry(event, 100, 7, 2);
+        let advanced = [
+            ("MOCK_RUN", attempt.to_string()),
+            ("MOCK_RUNS_1", runs_page(1, &[attempt])),
+        ];
+        let advanced = advanced
+            .iter()
+            .map(|(k, v)| (*k, v.as_str()))
+            .collect::<Vec<_>>();
+        for (name, case) in [("newer run", overrides), ("newer attempt", advanced)] {
+            let run = |wf: &str| {
+                run_result(
+                    wf,
+                    event,
+                    "refs/pull/10/merge",
+                    "success",
+                    "admitted",
+                    &case,
+                )
+                .map(|(success, _)| success)
+            };
+            assert!(!run(&source)?, "{event}: {name} refuses with the guard");
+            assert!(
+                run(&removed)?,
+                "{event}: {name} passes without the guard, so the control discriminates"
+            );
+        }
+    }
+    // The decision reaches the real consumer: the Result step reads the
+    // eligibility outcome, and a failed outcome fails the Result.
+    assert!(source.contains("ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}"));
+    assert!(source.contains("GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}"));
     Ok(())
 }

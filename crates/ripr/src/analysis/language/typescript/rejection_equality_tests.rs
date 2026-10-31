@@ -120,6 +120,68 @@ fn literal_rejection_equality_observes_error_path() -> Result<(), String> {
     Ok(())
 }
 
+/// A literal array is not a rejection literal: `rejects.toEqual([..])` keeps
+/// its exact-value kind and earns no error-path credit, while the scalar
+/// control above is promoted (#10682).
+#[test]
+fn literal_array_rejection_equality_gains_no_error_path_credit() -> Result<(), String> {
+    for matcher in ["toEqual", "toStrictEqual"] {
+        let test = TEST
+            .replace("toBe", matcher)
+            .replace("\"TOKEN_REQUIRED\"", "[\"TOKEN_REQUIRED\"]");
+        assert!(
+            test.contains("[\"TOKEN_REQUIRED\"]"),
+            "{matcher}: fixture shape"
+        );
+        let got = finding(&test, 3)?;
+        assert_ne!(got.class, ExposureClass::Exposed, "{matcher}: {got:?}");
+        assert!(
+            got.related_tests
+                .iter()
+                .all(|row| row.oracle_kind != OracleKind::ExactErrorVariant
+                    && row.oracle.as_deref()
+                        != Some(format!("expect(...).rejects.{matcher}(...)").as_str())),
+            "{matcher}: {:?}",
+            got.related_tests
+        );
+    }
+    Ok(())
+}
+
+/// A nested literal object or an object holding an array is not a rejection
+/// literal either (#11255): it keeps its exact-value kind and earns no
+/// error-path credit.
+#[test]
+fn nested_literal_container_rejection_equality_gains_no_error_path_credit() -> Result<(), String> {
+    for matcher in ["toEqual", "toStrictEqual"] {
+        for expected in [
+            "{ code: { id: \"TOKEN_REQUIRED\" } }",
+            "{ codes: [\"TOKEN_REQUIRED\"] }",
+        ] {
+            let test = TEST
+                .replace("toBe", matcher)
+                .replace("\"TOKEN_REQUIRED\"", expected);
+            assert!(test.contains(expected), "{matcher}: fixture shape");
+            let got = finding(&test, 3)?;
+            assert_ne!(
+                got.class,
+                ExposureClass::Exposed,
+                "{matcher} {expected}: {got:?}"
+            );
+            assert!(
+                got.related_tests
+                    .iter()
+                    .all(|row| row.oracle_kind != OracleKind::ExactErrorVariant
+                        && row.oracle.as_deref()
+                            != Some(format!("expect(...).rejects.{matcher}(...)").as_str())),
+                "{matcher} {expected}: {:?}",
+                got.related_tests
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn unknown_or_shadowed_expect_does_not_gain_rejection_credit() -> Result<(), String> {
     let shadow = "const expect = (_value: unknown) => ({ rejects: { toBe() {} } });\n";
@@ -128,7 +190,7 @@ fn unknown_or_shadowed_expect_does_not_gain_rejection_credit() -> Result<(), Str
         TEST.replace("import { expect, test } from \"vitest\";", "import { test } from \"vitest\";\nconst expect = (_value: unknown) => ({ rejects: { toBe() {} } });"),
         TEST.replace("  await expect", &format!("  {shadow}  await expect")),
         TEST.replace("async () =>", "async (expect) =>"),
-        format!("import {{ expect, test, describe }} from 'vitest';\nimport {{ load }} from '../src/load';\ndescribe('nested', () => {{\n{shadow}test('missing token', async () => {{ await expect(load()).rejects.toBe('TOKEN_REQUIRED'); }});\n}});"),
+        format!("import {{ expect, test, describe }} from 'vitest';\nimport {{ load }} from '../src/load';\ndescribe('nested', () => {{\n{shadow}test('missing token', async () => {{ await expect(load()).rejects.toBe(\"TOKEN_REQUIRED\"); }});\n}});"),
     ] {
         let got = finding_for_owner_without_required_assertion(OWNER, &test, 3)?;
         assert_eq!(got.class, ExposureClass::WeaklyExposed, "{got:?}");
@@ -171,7 +233,7 @@ fn unresolved_rejection_checks_do_not_gain_exact_error_credit() {
             OracleStrength::Strong,
         ),
         (
-            "toCustomReason('TOKEN_REQUIRED')",
+            "toCustomReason(\"TOKEN_REQUIRED\")",
             OracleKind::Unknown,
             OracleStrength::Unknown,
         ),

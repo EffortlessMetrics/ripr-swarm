@@ -70,7 +70,16 @@ pub(crate) fn owners_from_program(
             owner.module_entries = owner_entries.clone();
         }
     }
-    assign_class_entries(&mut owners, &class_instance_field_names(program));
+    let instance_fields = class_instance_field_names(program);
+    let repeated_names = repeated_class_names(program);
+    assign_class_entries(&mut owners, &instance_fields, &repeated_names);
+    assign_instance_factories(
+        program,
+        source,
+        &mut owners,
+        &instance_fields,
+        &repeated_names,
+    );
     assign_decorated_entries(program, source, &mut owners);
     owners
 }
@@ -1375,7 +1384,7 @@ pub(crate) fn contains_jsx_like_return(slice: &str) -> bool {
 pub(crate) fn extract_imports_from_statements(
     statements: &[Statement<'_>],
 ) -> Vec<TypeScriptImport> {
-    extract_imports_from_statements_inner(statements, true)
+    extract_imports_from_statements_inner(statements, true, true)
 }
 
 /// Imports for a TEST file (#7507): `export { x } from './y'` re-exports are
@@ -1387,12 +1396,13 @@ pub(crate) fn extract_imports_from_statements(
 pub(crate) fn extract_imports_for_test_file(
     statements: &oxc_allocator::Vec<'_, Statement<'_>>,
 ) -> Vec<TypeScriptImport> {
-    extract_imports_from_statements_inner(statements, false)
+    extract_imports_from_statements_inner(statements, false, true)
 }
 
 fn extract_imports_from_statements_inner(
     statements: &[Statement<'_>],
     include_reexports: bool,
+    resolve_require_scope: bool,
 ) -> Vec<TypeScriptImport> {
     let mut out: Vec<TypeScriptImport> = Vec::new();
     // A file that binds its own `require` (`const require = ...`,
@@ -1406,16 +1416,25 @@ fn extract_imports_from_statements_inner(
     super::tests_extract::collect_registration_scope_names(statements, &mut top_level_names, false);
     // ES imports hoist, so the loader predicate sees all of them whatever their
     // position relative to `const require = createRequire(...)`.
-    let require_is_ambient = !top_level_names.iter().any(|name| name == "require") || {
-        let es_imports: Vec<TypeScriptImport> = statements
-            .iter()
-            .filter(|statement| matches!(statement, Statement::ImportDeclaration(_)))
-            .flat_map(|statement| {
-                extract_imports_from_statements_inner(std::slice::from_ref(statement), false)
-            })
-            .collect();
-        super::admission::program_require_is_known(statements, &es_imports, false)
-    };
+    // `resolve_require_scope` is false only for the single-import-declaration
+    // slices collected below: they hold no `require()` call, and re-deriving
+    // the scope from them would recurse on `import require from "./b"`
+    // without end (#10724).
+    let require_is_ambient =
+        !resolve_require_scope || !top_level_names.iter().any(|name| name == "require") || {
+            let es_imports: Vec<TypeScriptImport> = statements
+                .iter()
+                .filter(|statement| matches!(statement, Statement::ImportDeclaration(_)))
+                .flat_map(|statement| {
+                    extract_imports_from_statements_inner(
+                        std::slice::from_ref(statement),
+                        false,
+                        false,
+                    )
+                })
+                .collect();
+            super::admission::program_require_is_known(statements, &es_imports, false)
+        };
     // Names the file assigns to anywhere (computed on the first mutable
     // `require()` binding).
     let mut written_names: Option<std::collections::HashSet<String>> = None;
@@ -1866,7 +1885,7 @@ pub(crate) fn ambient_declaration_lines(
 /// per save). Every fact is a pure function of the source bytes; the
 /// per-diff `changed_lines` filtering happens at call time, so one cached
 /// extraction serves every diff of the same content.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PhaseTwoFacts {
     /// Every unsupported owner shape span in source order. Filtering to the
     /// first entry whose line range intersects a changed line reproduces the
@@ -1887,13 +1906,67 @@ pub(crate) struct PhaseTwoFacts {
 /// snippet), and precomputed 1-based line range (for the changed-line gate).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GapShape {
+    /// The disclosure label. The serialized spelling is on-disk cache
+    /// identity (#10725): deserialization accepts only the closed label
+    /// table and fails closed on anything else.
     pub(crate) shape: &'static str,
     pub(crate) span: (usize, usize),
     pub(crate) lines: (usize, usize),
 }
 
+/// Closed label table mirrored from the extractor sites in this file.
+/// Unknown labels are a cache-integrity failure, not a new shape:
+/// deserializing them must error so the entry is discarded.
+const GAP_SHAPE_LABELS: [&str; 8] = [
+    "enum declaration",
+    "module/namespace declaration",
+    "member-assigned function",
+    "function inside a top-level call",
+    "arrow-function class field",
+    "class static block",
+    "accessor auto-accessor",
+    "class method with unsupported key",
+];
+
+impl serde::Serialize for GapShape {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("GapShape", 3)?;
+        state.serialize_field("shape", self.shape)?;
+        state.serialize_field("span", &self.span)?;
+        state.serialize_field("lines", &self.lines)?;
+        state.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for GapShape {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Hand-written (not derived): the serde derive adds an implicit
+        // `'de: 'static` bound for a borrowed `&'static str` field, which no
+        // deserializer can satisfy. Deserializing through an owned body and
+        // resolving against the static table keeps the closed-label contract.
+        #[derive(serde::Deserialize)]
+        struct GapShapeBody {
+            shape: String,
+            span: (usize, usize),
+            lines: (usize, usize),
+        }
+        let body = <GapShapeBody as serde::Deserialize>::deserialize(deserializer)?;
+        let shape = GAP_SHAPE_LABELS
+            .iter()
+            .find(|label| **label == body.shape)
+            .copied()
+            .ok_or_else(|| serde::de::Error::custom("unknown gap shape label"))?;
+        Ok(GapShape {
+            shape,
+            span: body.span,
+            lines: body.lines,
+        })
+    }
+}
+
 /// One runtime enum member: its 1-based line range and stable identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct EnumMember {
     pub(crate) lines: (usize, usize),
     pub(crate) identity: String,

@@ -1,0 +1,6 @@
+# Pins the claims payload route's direction gate (#10807) under RIPR-SPEC-0197.
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests/claims_direction.rs::the_claims_payload_route_reads_only_the_variant_it_yields",
+]

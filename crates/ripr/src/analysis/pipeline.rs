@@ -6,7 +6,8 @@ use super::language::PythonAdapter;
 use super::language::TypeScriptAdapter;
 use super::language::{
     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope,
-    RustAdapter, is_script_language, route, unanalyzed_source_language,
+    RustAdapter, diff_limit_env, is_script_language, positive_limit_from_env, route,
+    unanalyzed_source_language,
 };
 use super::{
     AnalysisOptions, AnalysisResult, LanguageRun, LanguageRunStatus, PreviewLanguageAdvisory, diff,
@@ -44,6 +45,89 @@ fn is_preview_language(language: LanguageId) -> bool {
     )
 }
 
+/// Reason prefix for a language adapter that panicked mid-run (#11132).
+///
+/// A panic or unwind inside an adapter, or inside an AST consumer it drives
+/// (including rayon workers, which re-raise on the calling thread), must not
+/// end the process. Native stack exhaustion is a signal, not an unwind, and
+/// cannot be caught here: the per-language pre-parse nesting budgets keep
+/// that class out of the parsers.
+pub(crate) const ADAPTER_PANIC_REASON_PREFIX: &str = "static limit adapter_panicked: ";
+
+/// Run one language adapter call so a panic becomes a typed `Err`.
+///
+/// The `Err` rides the existing per-language failure channel: a preview
+/// language is recorded as a `Failed` `LanguageRun` with the sibling
+/// languages' findings intact, and a Rust failure propagates as the typed
+/// analysis failure it already was. The adapter's output is discarded
+/// whole, never partially merged, so a contained failure can never carry
+/// findings, let alone an actionable repair signal. The panic payload is
+/// not echoed: it can quote repository text, and the installed panic hook
+/// has already reported it on stderr.
+fn contain_adapter_panic<T>(
+    options: &AnalysisOptions,
+    language: LanguageId,
+    run: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let contained = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        #[cfg(test)]
+        injected_adapter_panic::fire(&options.root, language);
+        run()
+    }));
+    #[cfg(not(test))]
+    let _ = options;
+    match contained {
+        Ok(result) => result,
+        Err(_payload) => Err(format!(
+            "{ADAPTER_PANIC_REASON_PREFIX}the {} adapter stopped on an internal error while analyzing this workspace; its findings are unavailable for this run",
+            language.as_str()
+        )),
+    }
+}
+
+/// Test-only fault injection for [`contain_adapter_panic`] (#11132): raise a
+/// panic inside the adapter call for an armed `(root, language)`, so tests
+/// drive the production containment through check, pilot, LSP and MCP.
+/// Keyed by workspace root so concurrent tests never see each other's arming.
+#[cfg(test)]
+pub(crate) mod injected_adapter_panic {
+    use super::LanguageId;
+    use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    static ARMED: Mutex<BTreeSet<(PathBuf, String)>> = Mutex::new(BTreeSet::new());
+
+    /// Disarms on drop.
+    pub(crate) struct Armed(PathBuf, String);
+
+    impl Drop for Armed {
+        fn drop(&mut self) {
+            if let Ok(mut armed) = ARMED.lock() {
+                armed.remove(&(self.0.clone(), self.1.clone()));
+            }
+        }
+    }
+
+    pub(crate) fn arm(root: &Path, language: LanguageId) -> Armed {
+        let key = (root.to_path_buf(), language.as_str().to_string());
+        if let Ok(mut armed) = ARMED.lock() {
+            armed.insert(key.clone());
+        }
+        Armed(key.0, key.1)
+    }
+
+    pub(super) fn fire(root: &Path, language: LanguageId) {
+        let due = ARMED
+            .lock()
+            .map(|armed| armed.contains(&(root.to_path_buf(), language.as_str().to_string())))
+            .unwrap_or(false);
+        if due {
+            std::panic::resume_unwind(Box::new("injected language adapter panic (#11132)"));
+        }
+    }
+}
+
 #[cfg(test)]
 static DIFF_PIPELINE_ENTRIES: std::sync::Mutex<
     std::collections::BTreeMap<std::path::PathBuf, usize>,
@@ -61,6 +145,28 @@ static DIFF_AGGREGATES: std::sync::Mutex<
 static REPO_AGGREGATES: std::sync::Mutex<
     std::collections::BTreeMap<std::path::PathBuf, DiffLanguageAggregate>,
 > = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Changed-file counts per routed language wire label, JavaScript-family
+/// files counted apart from TypeScript. Path routing only: it needs no
+/// adapter, so it names the languages a diff touched whether or not their
+/// adapter ran.
+fn routed_changed_file_counts(
+    files: &[diff::ChangedFile],
+) -> std::collections::BTreeMap<&'static str, usize> {
+    let mut counts = std::collections::BTreeMap::new();
+    for file in files {
+        let Some(language) = route(&file.path) else {
+            continue;
+        };
+        let label = if language == LanguageId::TypeScript && is_javascript_family_path(&file.path) {
+            LanguageId::JavaScript.as_str()
+        } else {
+            language.as_str()
+        };
+        *counts.entry(label).or_insert(0) += 1;
+    }
+    counts
+}
 
 /// Language labels the changed files route to, with JavaScript-family files
 /// kept apart from TypeScript (the one adapter reads both, the outcomes do
@@ -1036,6 +1142,167 @@ fn out_of_scope_limitation(
     ))
 }
 
+/// Default ceiling on the number of added/removed Python diff lines that may
+/// enter the Python adapter (#10730). Same rationale as the Rust guard's
+/// `DIFF_CHANGED_RUST_LINE_LIMIT`: bounded probes on constrained runners.
+/// Python and TypeScript had no equivalent guard, so a 167-file django diff
+/// took 212 s and a 221-file diff hit the 600 s timeout with zero findings.
+const DIFF_CHANGED_PYTHON_LINE_LIMIT: usize = 2_000;
+
+/// Env override for [`DIFF_CHANGED_PYTHON_LINE_LIMIT`]. Operators can raise
+/// it for larger runners or lower it to exercise the guard.
+pub(crate) const DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES";
+
+/// Default ceiling on the number of added/removed TypeScript diff lines that
+/// may enter the TypeScript adapter (#10730). Counts the whole TS/JS source
+/// family the one adapter reads (`.ts`/`.tsx`/`.mts`/`.cts` and
+/// `.js`/`.jsx`/`.mjs`/`.cjs`); see [`LanguageId::TypeScript`]'s routing.
+const DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT: usize = 2_000;
+
+/// Env override for [`DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT`].
+pub(crate) const DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV: &str =
+    "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES";
+
+fn diff_changed_python_line_limit() -> Result<usize, String> {
+    diff_changed_python_line_limit_from_env(diff_limit_env(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV))
+}
+
+fn diff_changed_python_line_limit_from_env(
+    value: Result<String, std::env::VarError>,
+) -> Result<usize, String> {
+    positive_limit_from_env(
+        DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
+        DIFF_CHANGED_PYTHON_LINE_LIMIT,
+        value,
+    )
+}
+
+fn diff_changed_typescript_line_limit() -> Result<usize, String> {
+    diff_changed_typescript_line_limit_from_env(diff_limit_env(
+        DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+    ))
+}
+
+fn diff_changed_typescript_line_limit_from_env(
+    value: Result<String, std::env::VarError>,
+) -> Result<usize, String> {
+    positive_limit_from_env(
+        DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+        DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT,
+        value,
+    )
+}
+
+/// Added plus removed changed lines of `language`'s files in the parsed diff
+/// that the adapter would actually admit — the same measurement the Rust
+/// guard uses (it counts the diff minus its generated sources before probe
+/// expansion), per language (#10730). Files the adapter's own authorities
+/// refuse before counting — detectable generated names and excluded
+/// directories, minus `handwritten_files` declarations — must not consume
+/// the budget: analysis would never probe them, so refusing over their
+/// lines would claim a scope the run never faced (Devin review, PR #10803).
+fn changed_language_line_count(
+    changed_files: &[diff::ChangedFile],
+    language: LanguageId,
+    language_config: &crate::config::LanguagesConfig,
+) -> usize {
+    changed_files
+        .iter()
+        .filter(|file| route(&file.path) == Some(language))
+        .filter(|file| !is_excluded_from_preview_analysis(language, &file.path, language_config))
+        .map(|file| {
+            file.added_lines
+                .len()
+                .saturating_add(file.removed_lines.len())
+        })
+        .sum()
+}
+
+/// Whether `language`'s adapter would count `path` at all: routed to the
+/// language and not refused by its generated-name / excluded-directory
+/// authorities ahead of counting.
+fn language_admits_changed_path(
+    path: &std::path::Path,
+    language: LanguageId,
+    language_config: &crate::config::LanguagesConfig,
+) -> bool {
+    route(path) == Some(language)
+        && !is_excluded_from_preview_analysis(language, path, language_config)
+}
+
+/// The `diff_scope_oversized` refusal for one preview language, in the same
+/// voice as the Rust guard's message. The exact `diff_scope_oversized:`
+/// prefix keeps `is_diff_scope_oversized`, the LSP limited-snapshot
+/// conversion and the CLI exit-2 path working unchanged (#10730). The named
+/// counts admit only files the adapter would probe.
+fn enforce_changed_language_line_limit(
+    changed_files: &[diff::ChangedFile],
+    language: LanguageId,
+    language_label: &str,
+    limit_env: &str,
+    line_limit: usize,
+    language_config: &crate::config::LanguagesConfig,
+) -> Result<(), String> {
+    let changed_line_count = changed_language_line_count(changed_files, language, language_config);
+    if changed_line_count <= line_limit {
+        return Ok(());
+    }
+    let changed_file_count = changed_files
+        .iter()
+        .filter(|file| language_admits_changed_path(&file.path, language, language_config))
+        .count();
+    Err(format!(
+        "diff_scope_oversized: {changed_line_count} changed {language_label} lines across \
+         {changed_file_count} {language_label} files exceed the {limit_env} limit ({line_limit}); \
+         analysis was not run to protect runner memory before probe expansion. Repair route: \
+         reduce the diff scope, split the extraction PR, run a narrower diff, or raise the \
+         limit via {limit_env}=<number>. To analyze a subset, pass `--path <glob>` and/or \
+         `--exclude <glob>` to `ripr check` (repeatable, repository-relative; files left out \
+         are reported as not analyzed)."
+    ))
+}
+
+/// Fail closed before any preview adapter runs when an enabled preview
+/// language's diff exceeds its changed-line budget (#10730). Checked at the
+/// dispatch level — not inside the adapters — because a preview adapter
+/// failure is non-abort (recorded in `language_runs`), while this refusal is
+/// infra-class and must propagate exactly like the Rust guard's, so the
+/// `diff_scope_oversized` prefix handling (LSP conversion, CLI exit 2,
+/// `--json` limited artifact) keeps working. Runs after the Rust adapter so
+/// a mixed Rust+Python oversized diff keeps the Rust refusal it gets today.
+/// Counts only files each adapter would admit past its generated-name and
+/// excluded-directory authorities, so generated bulk cannot refuse a diff
+/// whose hand-written surface is small (Devin review, PR #10803).
+fn enforce_changed_preview_line_limits(
+    languages: &[LanguageId],
+    changed_files: &[diff::ChangedFile],
+    language_config: &crate::config::LanguagesConfig,
+) -> Result<(), String> {
+    if languages.contains(&LanguageId::Python) {
+        enforce_changed_language_line_limit(
+            changed_files,
+            LanguageId::Python,
+            "Python",
+            DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
+            diff_changed_python_line_limit()?,
+            language_config,
+        )?;
+    }
+    // The one TypeScript adapter serves both the `typescript` and
+    // `javascript` ids, so either enablement admits the whole TS/JS family.
+    if languages.contains(&LanguageId::TypeScript) || languages.contains(&LanguageId::JavaScript) {
+        enforce_changed_language_line_limit(
+            changed_files,
+            LanguageId::TypeScript,
+            "TypeScript",
+            DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+            diff_changed_typescript_line_limit()?,
+            language_config,
+        )?;
+    }
+    Ok(())
+}
+
 /// Test-only convenience: the ~40 in-module behavioral call sites predate
 /// #7386 and run without a parsed `[languages]` config, so they keep this
 /// default-config wrapper instead of threading one at every site.
@@ -1188,13 +1455,15 @@ fn run_pipeline_for_diff_text_with_language_config(
     // partial_budget_invalid), not a per-language advisory gap.
     if languages.contains(&LanguageId::Rust) {
         cancellation::checkpoint()?;
-        let result = RustAdapter.analyze_diff_for_languages_with_rust_config(
-            options,
-            oracle_policy,
-            &analysis_changed_files,
-            languages,
-            rust_config,
-        )?;
+        let result = contain_adapter_panic(options, LanguageId::Rust, || {
+            RustAdapter.analyze_diff_for_languages_with_rust_config(
+                options,
+                oracle_policy,
+                &analysis_changed_files,
+                languages,
+                rust_config,
+            )
+        })?;
         cancellation::checkpoint()?;
         if result.skipped_files > 0 {
             // Name the files and the rule that matched: most repositories
@@ -1276,6 +1545,13 @@ fn run_pipeline_for_diff_text_with_language_config(
             &diff_scope_label(None),
         ));
     }
+    // #10730: fail closed before any preview adapter runs when an enabled
+    // preview language's changed-line count exceeds its budget. The refusal
+    // propagates like the Rust guard's, keeping the diff_scope_oversized
+    // prefix handling (LSP conversion, CLI exit 2, --json limited artifact)
+    // intact. The count admits only files each adapter's generated-name and
+    // excluded-directory authorities would let it probe.
+    enforce_changed_preview_line_limits(languages, &analysis_changed_files, language_config)?;
     let scope_label = diff_scope_label(partial_scope.as_ref());
     if let Some(limitation) = unanalyzed_source_language_limitation(&analysis_changed_files)? {
         limitations.push(limitation);
@@ -1313,6 +1589,12 @@ fn run_pipeline_for_diff_text_with_language_config(
     // counts are merged once per adapter family so enabling both ids does not
     // retain each finding twice.
     let mut typescript_family_merged = false;
+    // #10725: per-language persistent fact-cache admissions, rendered into
+    // the verbose reuse line by `app::check`.
+    let mut preview_fact_caches: Vec<(
+        LanguageId,
+        crate::analysis::language::PreviewFactCacheStats,
+    )> = Vec::new();
     for language in languages {
         cancellation::checkpoint()?;
         // Non-abort contract (Campaign 31 PR 10, #1403): a preview-language
@@ -1323,19 +1605,27 @@ fn run_pipeline_for_diff_text_with_language_config(
             continue;
         }
         let attempted = match language {
-            LanguageId::TypeScript | LanguageId::JavaScript => analyze_typescript_diff(
-                options,
-                oracle_policy,
-                preview_changed_files,
-                &language_config.typescript.handwritten_files,
-            ),
-            LanguageId::Python => analyze_python_diff(
-                options,
-                oracle_policy,
-                preview_changed_files,
-                &language_config.python.handwritten_files,
-            ),
-            LanguageId::Perl => analyze_perl_diff(options, oracle_policy, preview_changed_files),
+            LanguageId::TypeScript | LanguageId::JavaScript => {
+                contain_adapter_panic(options, *language, || {
+                    analyze_typescript_diff(
+                        options,
+                        oracle_policy,
+                        preview_changed_files,
+                        &language_config.typescript.handwritten_files,
+                    )
+                })
+            }
+            LanguageId::Python => contain_adapter_panic(options, *language, || {
+                analyze_python_diff(
+                    options,
+                    oracle_policy,
+                    preview_changed_files,
+                    &language_config.python.handwritten_files,
+                )
+            }),
+            LanguageId::Perl => contain_adapter_panic(options, *language, || {
+                analyze_perl_diff(options, oracle_policy, preview_changed_files)
+            }),
             LanguageId::Rust => {
                 continue;
             }
@@ -1390,6 +1680,13 @@ fn run_pipeline_for_diff_text_with_language_config(
                 ));
                 if repeat_typescript_pass {
                     continue;
+                }
+                // #10725: the typescript/javascript family merges above, so
+                // only the first pass's admissions are recorded — the repeat
+                // pass served everything from the caches the first pass
+                // seeded and would double-count.
+                if result.preview_fact_cache.did_work() {
+                    preview_fact_caches.push((adapter_language, result.preview_fact_cache.clone()));
                 }
                 value_origins.extend(result.value_origins);
                 findings.extend(result.findings);
@@ -1715,12 +2012,14 @@ fn run_pipeline_for_diff_text_with_language_config(
         eprintln!("{message}");
     }
 
+    // Rename metadata can register a binary file without any text hunks.
+    // That path must retain the same non-text refusal as an unrenamed blob.
     if !diff_text.trim().is_empty()
-        && changed_files.is_empty()
+        && ((changed_files.is_empty() && renamed_file_count == 0)
+            || has_only_non_text_changes(diff_text))
         && own_artifact_files.is_empty()
         && deleted_file_count == 0
         && submodule_file_count == 0
-        && renamed_file_count == 0
         && limitations.len() == supplied_evidence_limitations
     {
         // The schema token stays `malformed_diff` (a new limitation kind is a
@@ -1821,6 +2120,28 @@ fn run_pipeline_for_diff_text_with_language_config(
     let mut summary_result = summary::summarize_findings(rust_changed_files, &findings);
     for (language, files) in changed_files_by_language {
         summary_result.record_changed_files_by_language(language.as_str(), files);
+    }
+    // #10719: a routed language whose adapter produced no count (not enabled,
+    // not compiled in, or it errored) still changed files. The summary must
+    // list them, so a consumer reading `summary` alone never sees "no files
+    // changed" for a diff that `analysis_outcome` reports as skipped or
+    // failed. An adapter that returned a result keeps its own count
+    // (including an honest zero and its own generated/excluded-path
+    // denominator), so only labels outside every recorded adapter family are
+    // added here.
+    let family = |label: &str| match LanguageId::from_wire(label) {
+        Some(LanguageId::JavaScript) => Some(LanguageId::TypeScript),
+        other => other,
+    };
+    let recorded: Vec<LanguageId> = summary_result
+        .changed_files_by_language
+        .iter()
+        .filter_map(|count| family(&count.language))
+        .collect();
+    for (label, files) in routed_changed_file_counts(&analysis_changed_files) {
+        if !family(label).is_some_and(|family| recorded.contains(&family)) {
+            summary_result.record_changed_files_by_language(label, files);
+        }
     }
 
     limitations.extend(limitations_from_language_runs(&language_runs)?);
@@ -1954,6 +2275,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         rust_diagnostic_origins,
         rust_consumed_sources,
         language_view: Some(language_view),
+        preview_fact_caches,
     })
 }
 
@@ -2092,8 +2414,9 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         // failures are recorded, Rust failures still propagate.
         if !is_preview_language(*language) {
             // Rust (stable) failures propagate via `?`.
-            let result =
-                RustAdapter.analyze_repo_with_rust_config(options, oracle_policy, rust_config)?;
+            let result = contain_adapter_panic(options, LanguageId::Rust, || {
+                RustAdapter.analyze_repo_with_rust_config(options, oracle_policy, rust_config)
+            })?;
             cancellation::checkpoint()?;
             let skipped_reason = (result.skipped_files > 0).then(|| {
                 format!(
@@ -2118,13 +2441,21 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
             continue;
         }
         let attempted = match language {
-            LanguageId::TypeScript | LanguageId::JavaScript => analyze_typescript_repo(
-                options,
-                oracle_policy,
-                &language_config.typescript.handwritten_files,
-            ),
-            LanguageId::Python => analyze_python_repo(options, oracle_policy),
-            LanguageId::Perl => analyze_perl_repo(options, oracle_policy),
+            LanguageId::TypeScript | LanguageId::JavaScript => {
+                contain_adapter_panic(options, *language, || {
+                    analyze_typescript_repo(
+                        options,
+                        oracle_policy,
+                        &language_config.typescript.handwritten_files,
+                    )
+                })
+            }
+            LanguageId::Python => contain_adapter_panic(options, *language, || {
+                analyze_python_repo(options, oracle_policy)
+            }),
+            LanguageId::Perl => contain_adapter_panic(options, *language, || {
+                analyze_perl_repo(options, oracle_policy)
+            }),
             LanguageId::Rust => {
                 continue;
             }
@@ -2238,6 +2569,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         rust_diagnostic_origins,
         rust_consumed_sources,
         language_view: Some(language_view),
+        preview_fact_caches: Vec::new(),
     })
 }
 
@@ -2663,7 +2995,10 @@ fn is_excluded_from_preview_analysis(
     }
 }
 
-#[cfg(feature = "lang-typescript")]
+/// Whether the TypeScript/JS adapter's generated-name and excluded-directory
+/// authorities refuse `path`. The authorities are real in every feature lane
+/// (like the Python ones), so the diff-scope guard measures the same admitted
+/// diff in a rust-only build as in a full build (#10730).
 fn is_excluded_from_typescript_preview_analysis(
     path: &std::path::Path,
     handwritten: &[String],
@@ -2671,14 +3006,6 @@ fn is_excluded_from_typescript_preview_analysis(
     crate::config::is_detectable_generated_typescript_path(path)
         || (crate::config::is_detectable_excluded_typescript_path(path)
             && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
-}
-
-#[cfg(not(feature = "lang-typescript"))]
-fn is_excluded_from_typescript_preview_analysis(
-    _path: &std::path::Path,
-    _handwritten: &[String],
-) -> bool {
-    false
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -2776,6 +3103,10 @@ fn perl_run_status_for_err(reason: &str) -> LanguageRunStatus {
     // an availability/config failure.
     #[cfg(feature = "lang-perl")]
     if reason.starts_with(super::language::PERL_PRODUCER_FAILURE_REASON_PREFIX) {
+        return LanguageRunStatus::Failed;
+    }
+    // #11132: a contained adapter panic is a failed run, not an absent one.
+    if reason.starts_with(ADAPTER_PANIC_REASON_PREFIX) {
         return LanguageRunStatus::Failed;
     }
     if reason.starts_with("ingestion:") {
@@ -2959,11 +3290,13 @@ fn zero_file_diff_disclosure(diff_text: &str) -> &'static str {
 mod tests {
     use super::*;
     use crate::analysis::language_outcome::{DiffCompleteness, LanguageOutcomeStatus};
+    use std::env::VarError;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::super::AnalysisMode;
+    use super::super::language::{is_diff_scope_oversized, with_forced_diff_limit_env};
     use crate::config::OraclePolicy;
 
     fn temp_root(name: &str) -> Result<PathBuf, String> {
@@ -5571,6 +5904,183 @@ mod tests {
         Ok(())
     }
 
+    /// Workspace for the #11132 containment tests: a Rust file and a Python
+    /// file both changed by one diff.
+    fn mixed_panic_workspace(
+        name: &str,
+    ) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
+        let root = temp_root(name)?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn discount(price: u32) -> u32 { price / 2 }\n",
+        )?;
+        write(&root.join("calc.py"), "def double(x):\n    return x * 2\n")?;
+        let diff_file = root.join("mixed.diff");
+        write(
+            &diff_file,
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             --- /dev/null\n\
+             +++ b/src/lib.rs\n\
+             @@ -0,0 +1 @@\n\
+             +pub fn discount(price: u32) -> u32 { price / 2 }\n\
+             diff --git a/calc.py b/calc.py\n\
+             --- /dev/null\n\
+             +++ b/calc.py\n\
+             @@ -0,0 +2 @@\n\
+             +def double(x):\n\
+             +    return x * 2\n",
+        )?;
+        Ok((root, diff_file))
+    }
+
+    /// #11132 (diff scope, shared by `check`, `pilot`, the LSP sidecar and the
+    /// MCP refresh): a panic inside a preview adapter is a typed `Failed`
+    /// language run. The process survives, the sibling language's findings are
+    /// intact, and the failed adapter contributes nothing, so nothing from it
+    /// can be an actionable repair signal.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn diff_pipeline_contains_a_preview_adapter_panic() -> Result<(), String> {
+        let (root, diff_file) = mixed_panic_workspace("adapter-panic-preview-diff")?;
+        let options = aggregate_options(root.clone(), diff_file);
+        let languages = [LanguageId::Rust, LanguageId::Python];
+        let policy = OraclePolicy::default();
+
+        // Control: without the injected panic the Python adapter produces its
+        // own findings, so the absence below is the containment, not a
+        // fixture that never reached Python.
+        let control = run_diff_pipeline_with_oracle_policy(&options, &policy, &languages)?;
+        assert!(
+            control
+                .findings
+                .iter()
+                .any(|finding| finding.language == Some(crate::domain::LanguageId::Python)),
+            "control run must reach the Python adapter: {:?}",
+            control.findings
+        );
+        assert!(
+            !control
+                .language_runs
+                .iter()
+                .any(|run| run.language == "python"),
+            "control run records no failed Python run"
+        );
+
+        let _armed = super::injected_adapter_panic::arm(&root, LanguageId::Python);
+        let analysis = run_diff_pipeline_with_oracle_policy(&options, &policy, &languages)?;
+        let python_run = analysis
+            .language_runs
+            .iter()
+            .find(|run| run.language == "python")
+            .ok_or_else(|| format!("no python run in {:?}", analysis.language_runs))?;
+        assert_eq!(python_run.status, super::LanguageRunStatus::Failed);
+        let reason = python_run.reason.as_deref().unwrap_or_default();
+        assert!(
+            reason.starts_with(super::ADAPTER_PANIC_REASON_PREFIX),
+            "typed adapter_panicked reason, got {reason:?}"
+        );
+        assert!(
+            !analysis
+                .findings
+                .iter()
+                .any(|finding| finding.language == Some(crate::domain::LanguageId::Python)),
+            "a contained adapter yields no findings, actionable or otherwise"
+        );
+        assert!(
+            analysis.summary.changed_rust_files >= 1,
+            "the sibling Rust language still completes"
+        );
+        assert!(
+            !analysis
+                .language_runs
+                .iter()
+                .any(|run| run.language == "rust"),
+            "Rust ran to completion"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #11132: the Rust adapter panics are the typed analysis failure Rust
+    /// failures already are (`diff_scope_oversized`, a bad root), never an
+    /// unwind through the caller and never a result without Rust evidence.
+    #[test]
+    fn diff_pipeline_turns_a_rust_adapter_panic_into_a_typed_failure() -> Result<(), String> {
+        let (root, diff_file) = mixed_panic_workspace("adapter-panic-rust-diff")?;
+        let options = aggregate_options(root.clone(), diff_file);
+        let _armed = super::injected_adapter_panic::arm(&root, LanguageId::Rust);
+        let result = run_diff_pipeline_with_oracle_policy(
+            &options,
+            &OraclePolicy::default(),
+            &[LanguageId::Rust, LanguageId::Python],
+        );
+        let Err(error) = result else {
+            return Err("a Rust adapter panic must be an Err, not a result".to_string());
+        };
+        let message = error.to_string();
+        assert!(
+            message.starts_with(super::ADAPTER_PANIC_REASON_PREFIX)
+                && message.contains("the rust adapter"),
+            "typed adapter_panicked failure, got {message:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #11132 (repo scope, `ripr pilot` and repo-mode checks): the same
+    /// containment for the whole-workspace producers.
+    #[test]
+    fn repo_pipeline_contains_adapter_panics() -> Result<(), String> {
+        let root = temp_root("adapter-panic-repo")?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn discount(price: u32) -> u32 { price / 2 }\n",
+        )?;
+        write(&root.join("calc.py"), "def double(x):\n    return x * 2\n")?;
+        let mut options = aggregate_options(root.clone(), root.join("unused.diff"));
+        options.diff_file = None;
+        options.mode = AnalysisMode::Deep;
+        let languages = [LanguageId::Rust, LanguageId::Python];
+        let policy = OraclePolicy::default();
+
+        {
+            let _armed = super::injected_adapter_panic::arm(&root, LanguageId::Python);
+            let analysis = run_repo_pipeline_with_oracle_policy(&options, &policy, &languages)?;
+            let python_run = analysis
+                .language_runs
+                .iter()
+                .find(|run| run.language == "python")
+                .ok_or_else(|| format!("no python run in {:?}", analysis.language_runs))?;
+            assert_eq!(python_run.status, super::LanguageRunStatus::Failed);
+            assert!(
+                python_run
+                    .reason
+                    .as_deref()
+                    .unwrap_or_default()
+                    .starts_with(super::ADAPTER_PANIC_REASON_PREFIX)
+            );
+            assert!(
+                !analysis
+                    .findings
+                    .iter()
+                    .any(|finding| finding.language == Some(crate::domain::LanguageId::Python)),
+                "a contained adapter yields no findings"
+            );
+        }
+
+        let _armed = super::injected_adapter_panic::arm(&root, LanguageId::Rust);
+        let Err(error) = run_repo_pipeline_with_oracle_policy(&options, &policy, &languages) else {
+            return Err("a Rust adapter panic must be an Err".to_string());
+        };
+        assert!(
+            error
+                .to_string()
+                .starts_with(super::ADAPTER_PANIC_REASON_PREFIX)
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     fn run_repo_aggregate(
         name: &str,
         files: &[(&str, &str)],
@@ -5628,6 +6138,79 @@ mod tests {
             "{:?}",
             analysis.language_runs
         );
+        Ok(())
+    }
+
+    /// #10546: one compat row per selected label is intentional. Both ids
+    /// share one partial adapter result, so each publishes the same Partial
+    /// row (typescript, then javascript) in either id order, and a
+    /// label-matching consumer (the preview advisory's `analyzed` check)
+    /// reports a degraded run for either label.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn repo_pipeline_both_typescript_ids_publish_a_compat_row_per_label() -> Result<(), String> {
+        let files = [
+            (
+                "src/price.ts",
+                "export function price(amount: number): number {\n  return amount > 10 ? 1 : 2;\n}\n",
+            ),
+            (
+                "src/price.test.ts",
+                "import { price } from './price';\ntest('p', () => { expect(price(20)).toBe(1); });\n",
+            ),
+            (
+                "src/tax.js",
+                "export function tax(amount) {\n  return amount > 5 ? 1 : 2;\n}\n",
+            ),
+            (
+                "src/tax.test.js",
+                "import { tax } from './tax';\ntest('t', () => { expect(tax(9)).toBe(1); });\n",
+            ),
+            ("src/broken.ts", "export function (((( {\n"),
+        ];
+        let (single, _) =
+            run_repo_aggregate("repo-label-single", &files, &[LanguageId::TypeScript])?;
+        // Fixture construction: the single-id run is one Partial row.
+        assert_eq!(single.language_runs.len(), 1, "{:?}", single.language_runs);
+        let typescript = single.language_runs[0].clone();
+        assert_eq!(typescript.language, "typescript");
+        assert_eq!(typescript.status, super::LanguageRunStatus::Partial);
+        assert!(
+            typescript
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("parser error(s)")),
+            "{typescript:?}"
+        );
+        let javascript = LanguageRun {
+            language: "javascript".to_string(),
+            ..typescript.clone()
+        };
+        for (label, order) in [
+            ("both", [LanguageId::TypeScript, LanguageId::JavaScript]),
+            ("reversed", [LanguageId::JavaScript, LanguageId::TypeScript]),
+        ] {
+            let (run, _) = run_repo_aggregate(&format!("repo-label-{label}"), &files, &order)?;
+            // Rows follow the selected id order; the vector is exact.
+            let expected = if label == "both" {
+                vec![typescript.clone(), javascript.clone()]
+            } else {
+                vec![javascript.clone(), typescript.clone()]
+            };
+            assert_eq!(run.language_runs, expected, "{label}");
+            // The advisory check matches rows by label, so the degraded run
+            // is never read as analyzed for either label.
+            let advisory = run
+                .preview_language_advisories
+                .iter()
+                .find(|advisory| advisory.language == "typescript")
+                .ok_or_else(|| format!("{label}: expected a typescript advisory"))?;
+            assert!(advisory.enabled, "{label}");
+            assert!(!advisory.analyzed(&run.language_runs), "{label}");
+            let mut js_advisory = advisory.clone();
+            js_advisory.language = "javascript".to_string();
+            assert!(!js_advisory.analyzed(&run.language_runs), "{label}: js");
+        }
         Ok(())
     }
 
@@ -6661,6 +7244,141 @@ index 0000000..1111111 100644
         Ok(())
     }
 
+    /// #10719: an adapter that errored on the diff produced no count, so its
+    /// language is still listed from the routed files instead of being
+    /// omitted from the summary.
+    #[cfg(feature = "lang-perl")]
+    #[test]
+    fn diff_pipeline_summary_lists_changed_files_of_a_language_whose_adapter_errored()
+    -> Result<(), String> {
+        let root = temp_root("summary-errored-adapter")?;
+        let diff_file = root.join("perl.diff");
+        write(
+            &diff_file,
+            "diff --git a/lib/App.pm b/lib/App.pm\n\
+             --- /dev/null\n\
+             +++ b/lib/App.pm\n\
+             @@ -0,0 +1 @@\n\
+             +sub discount { return 0 }\n",
+        )?;
+        let result = run_diff_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff_file),
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: false,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: Some("Perl facts exporter exited non-zero".to_string()),
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust, LanguageId::Perl],
+        )?;
+        assert!(
+            result
+                .language_runs
+                .iter()
+                .any(|run| run.language == "perl"
+                    && run.status == super::LanguageRunStatus::Failed),
+            "precondition: the Perl adapter failed: {:?}",
+            result.language_runs
+        );
+        let per_language: Vec<(&str, usize)> = result
+            .summary
+            .changed_files_by_language
+            .iter()
+            .map(|count| (count.language.as_str(), count.files))
+            .collect();
+        assert_eq!(per_language, vec![("perl", 1), ("rust", 0)]);
+        Ok(())
+    }
+
+    /// #10719: a diff touching languages whose adapters are not enabled must
+    /// still list them in `summary.changed_files_by_language`, so the summary
+    /// agrees with the routed `analysis_outcome` file counts. An adapter that
+    /// ran keeps its own count (here the Rust adapter's honest zero).
+    #[test]
+    fn diff_pipeline_summary_lists_changed_files_of_languages_without_an_adapter()
+    -> Result<(), String> {
+        let root = temp_root("summary-disabled-languages")?;
+        let diff_file = root.join("mixed.diff");
+        write(
+            &diff_file,
+            r#"diff --git a/src/a.ts b/src/a.ts
+index 0000000..1111111 100644
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,0 +1,1 @@
++export const a = 1;
+diff --git a/src/b.tsx b/src/b.tsx
+index 0000000..1111111 100644
+--- a/src/b.tsx
++++ b/src/b.tsx
+@@ -1,0 +1,1 @@
++export const b = 1;
+diff --git a/src/c.js b/src/c.js
+index 0000000..1111111 100644
+--- a/src/c.js
++++ b/src/c.js
+@@ -1,0 +1,1 @@
++exports.c = 1;
+diff --git a/app/main.py b/app/main.py
+index 0000000..1111111 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -1,0 +1,1 @@
++VALUE = 1
+"#,
+        )?;
+
+        let result = run_diff_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff_file),
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+        )?;
+
+        let per_language: Vec<(&str, usize)> = result
+            .summary
+            .changed_files_by_language
+            .iter()
+            .map(|count| (count.language.as_str(), count.files))
+            .collect();
+        assert_eq!(
+            per_language,
+            vec![
+                ("javascript", 1),
+                ("python", 1),
+                ("rust", 0),
+                ("typescript", 2)
+            ],
+            "every routed language must be listed even when its adapter did not run"
+        );
+        assert_eq!(result.summary.changed_rust_files, 0);
+        Ok(())
+    }
+
     #[cfg(any(feature = "lang-typescript", feature = "lang-python"))]
     fn excluded_path_advisory_options(
         root: &std::path::Path,
@@ -7615,6 +8333,7 @@ index 0000000..1111111 100644
             uninspected_changed_lines_lower_bound: uninspected_lines,
             stop_reason,
             next_file_changed_lines: (uninspected_lines > 0).then_some(uninspected_lines),
+            whole_diff_budgets: None,
             partition_identity: "sha256:partition".to_string(),
         }
     }
@@ -8152,6 +8871,499 @@ index 0000000..1111111 100644
             refusal.starts_with("scope_filter_matched_nothing:"),
             "{refusal}"
         );
+        Ok(())
+    }
+
+    // --- Preview-language changed-line guards (#10730) ---
+
+    /// A changed file with `added`/`removed` dummy lines, the shape the
+    /// per-language line-count guards measure.
+    fn changed_line_file(path: &str, added: usize, removed: usize) -> diff::ChangedFile {
+        let added_lines = (0..added)
+            .map(|index| diff::ChangedLine {
+                line: index + 1,
+                text: format!("added {index}"),
+                new_side_line: index + 1,
+            })
+            .collect();
+        let removed_lines = (0..removed)
+            .map(|index| diff::ChangedLine {
+                line: index + 1,
+                text: format!("removed {index}"),
+                new_side_line: index + 1,
+            })
+            .collect();
+        diff::ChangedFile {
+            path: PathBuf::from(path),
+            added_lines,
+            removed_lines,
+        }
+    }
+
+    /// A one-file Python/TypeScript diff whose single file carries
+    /// `changed_lines` added lines — over the default 2000-line guard by
+    /// default, like `scoped_oversized_diff` on the Rust side.
+    fn oversized_preview_diff(path: &str, line_prefix: &str, changed_lines: usize) -> String {
+        let mut diff = format!(
+            "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1,{changed_lines} @@\n"
+        );
+        for index in 0..changed_lines {
+            diff.push_str(&format!("+{line_prefix} generated_{index}\n"));
+        }
+        diff
+    }
+
+    #[test]
+    fn diff_changed_python_line_limit_defaults_when_unset() -> Result<(), String> {
+        let parsed = diff_changed_python_line_limit_from_env(Err(VarError::NotPresent))?;
+        if parsed != DIFF_CHANGED_PYTHON_LINE_LIMIT {
+            return Err(format!(
+                "expected default {DIFF_CHANGED_PYTHON_LINE_LIMIT}, got {parsed}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_changed_python_line_limit_parses_positive_override() -> Result<(), String> {
+        let parsed = diff_changed_python_line_limit_from_env(Ok("  1500 ".to_string()))?;
+        if parsed != 1500 {
+            return Err(format!("expected parsed limit 1500, got {parsed}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_changed_python_line_limit_rejects_invalid_values() {
+        for value in ["0", "invalid", "-1", "", "  "] {
+            let result = diff_changed_python_line_limit_from_env(Ok(value.to_string()));
+            assert!(
+                matches!(&result, Err(err) if err.contains(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV)),
+                "{value:?}: {result:?}"
+            );
+        }
+        let non_unicode =
+            diff_changed_python_line_limit_from_env(Err(VarError::NotUnicode("x".into())));
+        assert!(
+            matches!(&non_unicode, Err(err) if err.contains("valid UTF-8")),
+            "{non_unicode:?}"
+        );
+    }
+
+    #[test]
+    fn diff_changed_typescript_line_limit_defaults_when_unset() -> Result<(), String> {
+        let parsed = diff_changed_typescript_line_limit_from_env(Err(VarError::NotPresent))?;
+        if parsed != DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT {
+            return Err(format!(
+                "expected default {DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT}, got {parsed}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_changed_typescript_line_limit_parses_positive_override() -> Result<(), String> {
+        let parsed = diff_changed_typescript_line_limit_from_env(Ok("  1500 ".to_string()))?;
+        if parsed != 1500 {
+            return Err(format!("expected parsed limit 1500, got {parsed}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_changed_typescript_line_limit_rejects_invalid_values() {
+        for value in ["0", "invalid", "-1", "", "  "] {
+            let result = diff_changed_typescript_line_limit_from_env(Ok(value.to_string()));
+            assert!(
+                matches!(&result, Err(err) if err.contains(DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV)),
+                "{value:?}: {result:?}"
+            );
+        }
+        let non_unicode =
+            diff_changed_typescript_line_limit_from_env(Err(VarError::NotUnicode("x".into())));
+        assert!(
+            matches!(&non_unicode, Err(err) if err.contains("valid UTF-8")),
+            "{non_unicode:?}"
+        );
+    }
+
+    #[test]
+    fn preview_line_limits_resolve_forced_env_without_process_mutation() -> Result<(), String> {
+        // The thread-local forcing pattern the Rust file guard uses: tests
+        // drive the real lookups without touching the process environment.
+        let resolved = with_forced_diff_limit_env(
+            &[
+                (DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, "17"),
+                (DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV, "23"),
+            ],
+            || {
+                Ok::<(usize, usize), String>((
+                    diff_changed_python_line_limit()?,
+                    diff_changed_typescript_line_limit()?,
+                ))
+            },
+        )?;
+        if resolved != (17, 23) {
+            return Err(format!("expected forced limits (17, 23), got {resolved:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_python_line_count_ignores_non_python_paths() -> Result<(), String> {
+        let files = vec![
+            changed_line_file("pkg/mod.py", 2, 1),
+            changed_line_file("tests/example.test.ts", 30, 30),
+            changed_line_file("src/lib.rs", 5, 5),
+        ];
+
+        let count = changed_language_line_count(
+            &files,
+            LanguageId::Python,
+            &crate::config::LanguagesConfig::default(),
+        );
+        if count != 3 {
+            return Err(format!(
+                "expected only Python changed lines to count, got {count}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_python_line_count_ignores_generated_and_excluded_paths() -> Result<(), String> {
+        // Devin review (PR #10803): generated names and excluded directories
+        // are refused by the adapter before counting, so their lines must not
+        // consume the guard budget. A `handwritten_files` declaration admits
+        // an excluded-directory path past the convention; a generated NAME
+        // stays excluded even when declared.
+        let files = vec![
+            changed_line_file("pkg/mod.py", 2, 1),
+            changed_line_file("pkg/generated_models.py", 2_001, 0),
+            changed_line_file(".venv/lib/site/dep.py", 2_001, 0),
+            changed_line_file("node_modules/handwritten.py", 2, 0),
+            changed_line_file("pkg/generated_declared.py", 2, 0),
+        ];
+        let mut declared = crate::config::LanguagesConfig::default();
+        declared.python.handwritten_files = vec![
+            "node_modules/handwritten.py".to_string(),
+            "pkg/generated_declared.py".to_string(),
+        ];
+
+        // Admitted: pkg/mod.py (3 lines) + node_modules/handwritten.py (2,
+        // declared past the excluded directory). Refused: both 2001-line
+        // files, and pkg/generated_declared.py (a generated NAME stays
+        // excluded even when declared, #7386 review).
+        let count = changed_language_line_count(&files, LanguageId::Python, &declared);
+        if count != 5 {
+            return Err(format!(
+                "expected only admitted Python lines to count, got {count}"
+            ));
+        }
+        let plain = changed_language_line_count(&files, LanguageId::Python, &Default::default());
+        if plain != 3 {
+            return Err(format!(
+                "without declarations only pkg/mod.py may count, got {plain}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_typescript_line_count_ignores_generated_and_excluded_paths() -> Result<(), String> {
+        // Same admission rule for the TS/JS family: `.generated.`/minified
+        // names and excluded directories (`node_modules`, `dist`, ...) do not
+        // count; a declared handwritten path under an excluded directory does.
+        let files = vec![
+            changed_line_file("web/app.ts", 2, 1),
+            changed_line_file("web/app.generated.ts", 2_001, 0),
+            changed_line_file("web/app.min.js", 2_001, 0),
+            changed_line_file("dist/bundle.ts", 2_001, 0),
+            changed_line_file("node_modules/dep/index.ts", 2_001, 0),
+        ];
+
+        let count = changed_language_line_count(
+            &files,
+            LanguageId::TypeScript,
+            &crate::config::LanguagesConfig::default(),
+        );
+        if count != 3 {
+            return Err(format!(
+                "expected only admitted TypeScript lines to count, got {count}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_typescript_line_count_counts_the_whole_ts_js_family() -> Result<(), String> {
+        // The one TypeScript adapter reads the whole routed family; the
+        // guard must measure exactly what the adapter would receive.
+        let files = vec![
+            changed_line_file("web/app.ts", 1, 0),
+            changed_line_file("web/app.tsx", 1, 0),
+            changed_line_file("web/app.mts", 1, 0),
+            changed_line_file("web/app.cts", 1, 0),
+            changed_line_file("web/app.js", 1, 0),
+            changed_line_file("web/app.jsx", 1, 0),
+            changed_line_file("web/app.mjs", 1, 0),
+            changed_line_file("web/app.cjs", 1, 0),
+            changed_line_file("pkg/mod.py", 5, 5),
+            changed_line_file("src/lib.rs", 5, 5),
+        ];
+
+        let count = changed_language_line_count(
+            &files,
+            LanguageId::TypeScript,
+            &crate::config::LanguagesConfig::default(),
+        );
+        if count != 8 {
+            return Err(format!(
+                "expected the 8 routed TS/JS extensions to count, got {count}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_python_line_limit_rejects_oversized_diff_before_probe_expansion()
+    -> Result<(), String> {
+        let files = vec![changed_line_file("pkg/mod.py", 2, 1)];
+
+        let message = match enforce_changed_language_line_limit(
+            &files,
+            LanguageId::Python,
+            "Python",
+            DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
+            2,
+            &crate::config::LanguagesConfig::default(),
+        ) {
+            Ok(()) => return Err("three changed Python lines should exceed limit two".to_string()),
+            Err(message) => message,
+        };
+
+        for needle in [
+            "diff_scope_oversized",
+            "3 changed Python lines across 1 Python files",
+            "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES",
+            "split the extraction PR",
+            "--path <glob>",
+            "--exclude <glob>",
+        ] {
+            if !message.contains(needle) {
+                return Err(format!("missing `{needle}` in message: {message}"));
+            }
+        }
+        if !is_diff_scope_oversized(&message) {
+            return Err(format!(
+                "refusal must match is_diff_scope_oversized: {message}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_python_line_limit_accepts_at_limit() -> Result<(), String> {
+        let files = vec![changed_line_file("pkg/mod.py", 1, 1)];
+        enforce_changed_language_line_limit(
+            &files,
+            LanguageId::Python,
+            "Python",
+            DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
+            2,
+            &crate::config::LanguagesConfig::default(),
+        )
+    }
+
+    #[test]
+    fn changed_typescript_line_limit_rejects_oversized_diff_before_probe_expansion()
+    -> Result<(), String> {
+        let files = vec![changed_line_file("web/app.ts", 2, 1)];
+
+        let message = match enforce_changed_language_line_limit(
+            &files,
+            LanguageId::TypeScript,
+            "TypeScript",
+            DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+            2,
+            &crate::config::LanguagesConfig::default(),
+        ) {
+            Ok(()) => {
+                return Err("three changed TypeScript lines should exceed limit two".to_string());
+            }
+            Err(message) => message,
+        };
+
+        for needle in [
+            "diff_scope_oversized",
+            "3 changed TypeScript lines across 1 TypeScript files",
+            "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES",
+            "split the extraction PR",
+            "--path <glob>",
+            "--exclude <glob>",
+        ] {
+            if !message.contains(needle) {
+                return Err(format!("missing `{needle}` in message: {message}"));
+            }
+        }
+        if !is_diff_scope_oversized(&message) {
+            return Err(format!(
+                "refusal must match is_diff_scope_oversized: {message}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_typescript_line_limit_accepts_at_limit() -> Result<(), String> {
+        let files = vec![changed_line_file("web/app.ts", 1, 1)];
+        enforce_changed_language_line_limit(
+            &files,
+            LanguageId::TypeScript,
+            "TypeScript",
+            DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+            2,
+            &crate::config::LanguagesConfig::default(),
+        )
+    }
+
+    #[test]
+    fn preview_line_limits_pass_an_at_limit_diff() -> Result<(), String> {
+        // An at-limit diff with every guard evaluated: no refusal, so the
+        // dispatch-level check stays silent on ordinary diffs.
+        let files = vec![changed_line_file("pkg/mod.py", 1, 1)];
+        enforce_changed_preview_line_limits(
+            &[LanguageId::Rust, LanguageId::Python],
+            &files,
+            &crate::config::LanguagesConfig::default(),
+        )
+    }
+
+    #[test]
+    fn generated_bulk_does_not_refuse_a_small_admitted_python_diff() -> Result<(), String> {
+        // Devin review (PR #10803): 2,001 generated lines + 1 admitted line
+        // must pass — the adapter would probe only the admitted line.
+        let root = temp_root("py-guard-generated")?;
+        write(
+            root.join("pkg/mod.py").as_path(),
+            "def f() -> int: return 1\n",
+        )?;
+        let mut diff = oversized_preview_diff("pkg/generated_models.py", "def", 2_001);
+        diff.push_str(
+            "diff --git a/pkg/mod.py b/pkg/mod.py\n--- a/pkg/mod.py\n+++ b/pkg/mod.py\n@@ -1,1 +1,1 @@\n-def f() -> int: return 0\n+def f() -> int: return 1\n",
+        );
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Python],
+            &crate::config::RustLanguageConfig::default(),
+            &diff,
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "outcome must be projected".to_string())?;
+        assert_eq!(outcome.counts.changed_file_count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn generated_bulk_does_not_refuse_a_small_admitted_typescript_diff() -> Result<(), String> {
+        // Same admission rule for the TS/JS family: 2,001 generated lines +
+        // 1 admitted line pass.
+        let root = temp_root("ts-guard-generated")?;
+        write(
+            root.join("web/app.ts").as_path(),
+            "export const admitted = 1;\n",
+        )?;
+        let mut diff = oversized_preview_diff("web/app.generated.ts", "const", 2_001);
+        diff.push_str(
+            "diff --git a/web/app.ts b/web/app.ts\n--- a/web/app.ts\n+++ b/web/app.ts\n@@ -1,1 +1,1 @@\n-export const f = 0;\n+export const f = 1;\n",
+        );
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::TypeScript],
+            &crate::config::RustLanguageConfig::default(),
+            &diff,
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "outcome must be projected".to_string())?;
+        assert_eq!(outcome.counts.changed_file_count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_python_diff_is_refused_before_python_analysis() -> Result<(), String> {
+        let root = temp_root("py-guard-oversized")?;
+        let refusal = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Python],
+            &crate::config::RustLanguageConfig::default(),
+            &oversized_preview_diff("pkg/mod.py", "def", 2_100),
+        )
+        .err()
+        .ok_or("an oversized Python diff must be refused")?;
+        assert!(is_diff_scope_oversized(&refusal), "{refusal}");
+        assert!(refusal.contains("changed Python lines"), "{refusal}");
+        assert!(
+            refusal.contains(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("--path <glob>") && refusal.contains("--exclude <glob>"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_typescript_diff_is_refused_before_typescript_analysis() -> Result<(), String> {
+        let root = temp_root("ts-guard-oversized")?;
+        let refusal = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::TypeScript],
+            &crate::config::RustLanguageConfig::default(),
+            &oversized_preview_diff("web/app.ts", "const", 2_100),
+        )
+        .err()
+        .ok_or("an oversized TypeScript diff must be refused")?;
+        assert!(is_diff_scope_oversized(&refusal), "{refusal}");
+        assert!(refusal.contains("changed TypeScript lines"), "{refusal}");
+        assert!(
+            refusal.contains(DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("--path <glob>") && refusal.contains("--exclude <glob>"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_python_diff_passes_when_python_is_not_enabled() -> Result<(), String> {
+        // The guard measures only enabled adapters' languages: with the
+        // default Rust-only set a Python-heavy diff must not be refused by a
+        // guard for an adapter that will never run.
+        let root = temp_root("py-guard-disabled")?;
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn f(x: i32) -> bool { x >= 1 }\n",
+        )?;
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig::default(),
+            &oversized_preview_diff("pkg/mod.py", "def", 2_100),
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "outcome must be projected".to_string())?;
+        assert_eq!(outcome.counts.changed_file_count, 1);
         Ok(())
     }
 

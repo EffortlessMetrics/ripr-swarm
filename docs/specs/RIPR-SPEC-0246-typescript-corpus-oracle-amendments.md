@@ -304,7 +304,26 @@ reason `gap_evidence_unresolved`:
   `mocha`, `chai` or a `chai-*` plugin and show no jest, vitest, bun, ava or
   `node:test` signal (an import, or a `jest.` / `vi.` member use anywhere in
   the file). The hook identifier must not be declared in scope or imported
-  from anything but `mocha`.
+  from anything but `mocha`. Its callable must remain known at that particular
+  registration call, using the same parsed identity fact as receiver setup.
+  A preceding write to the binding withholds the body; a later write cannot
+  revoke an already registered callback, and a separate lexical binding does
+  not replace it. Known-global member writes affect ambient bindings even when
+  a local root may alias the global object. Only an immutable empty-object
+  literal binding in the nearest lexical frame proves a disjoint root here;
+  unreadable global keys and other local root values remain conservative.
+  Parameter-default effects resolve before body-local declarations and root
+  proofs are installed, in their parameter/outer environment. Parameter values
+  are not evaluated to grant hook identity. All suite-call arguments precede
+  invocation of its synchronous callback. Named Mocha hook imports also require
+  their ambient delegate to remain known when invoked; an imported identifier
+  alone does not shield the wrapper from preceding or argument-time global writes.
+  Earlier completed registrations and independent runner imports stay valid.
+  Comments and literal contents are not writes. Helper execution, uncertain or
+  repeated registration order, self-referencing callbacks, hook-binding argument
+  effects and restoration remain unresolved. This rule
+  adds no hook-state evaluator and does not relax the existing receiver race
+  or rebinding summaries.
 
 The recommended next step then says a mocha setup hook calls the changed
 owner outside every test body, that no new assertion is needed on that
@@ -499,6 +518,23 @@ and the rejected alternative.
    getter identity, hook exclusivity, unconditional execution and JavaScript
    evaluator divergence. Rejected for now: crediting the reading test, which
    stays gated on a second real mocha-hook corpus row. Recorded on #9496.
+
+   Re-decided 2026-10-26 with the second real row in hand
+   (`mocha-nested-context-added-price`, beside
+   `mocha-before-hook-trimmed-name`; recorded on #9496 and #9619). Both rows
+   need the same evaluator: the hook's call arguments, the owner's write,
+   the accessor the test reads, and proof that the hook runs once before the
+   test and that no earlier test changed the shared state. That is
+   RIPR-SPEC-0243's evaluator extended to class and module state, and it
+   fails open on getter identity, hook exclusivity and JavaScript
+   divergence, which is the actionability risk this spec exists to avoid.
+   Adopted: keep rule 7 as the whole behavior and document both rows as
+   limited by design; their ideal verdict stays `credited` and the accepted
+   verdict stays `limited`, so the corpus keeps measuring the gap. Rejected:
+   a narrow carve-out for a hook-built receiver with literal arguments,
+   because the second row's receiver is built by one hook and fed by another,
+   and no provable subset covered both rows. Revisit with a fixture-backed
+   state evaluator under its own spec.
 
 10. **Condition comparison (rule 11, 2026-10-22).** Adopted: demote only when
     every observed argument is a numeric literal that both comparisons treat

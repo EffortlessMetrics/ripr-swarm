@@ -73,6 +73,10 @@ fn private_method_unsupported_keys_keep_file_partial_counts() -> Result<(), Stri
         "get #adjust()",
         "set #adjust(amount: number)",
         "'adjust'(amount: number)",
+        // A string key spelled like a private name stays a public-style key:
+        // `#` prefixes originate only from the `PrivateIdentifier` arm of
+        // `method_key_name`, so this must not become a private-unknown owner.
+        "'#adjust'(amount: number)",
         "12(amount: number)",
         "['adjust'](amount: number)",
         "[adjust](amount: number)",
@@ -279,5 +283,40 @@ fn private_method_nested_runtime_path_and_auto_accessor_stay_partial() -> Result
                 .is_some_and(|detail| detail.contains("typescript_owner_extraction_partial"))
         }));
     }
+    Ok(())
+}
+
+#[test]
+fn deleting_a_whole_private_method_is_a_silent_gap_until_base_ranges_exist() -> Result<(), String> {
+    // Non-claim (RIPR-SPEC-0243 Rule 21a): boundaries come from candidate-side
+    // source, so a member removed entirely leaves no owner and no disclosure.
+    let root = ts_unique_tempdir("private-whole-delete")?;
+    ts_write_file(
+        &root.join("src/ledger.ts"),
+        "export class Ledger {\n  entry(amount: number) { return amount; }\n}\n",
+    )?;
+    let deleted = ChangedFile {
+        path: PathBuf::from("src/ledger.ts"),
+        added_lines: Vec::new(),
+        removed_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            text: "  #adjust(amount: number) { return amount - 5; }".to_string(),
+            new_side_line: 2,
+        }],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root),
+        &OraclePolicy::default(),
+        &[deleted],
+    )?;
+    assert!(result.findings.is_empty(), "{:?}", result.findings);
+    assert!(
+        !result.limitations.iter().any(|limitation| limitation
+            .bounded_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("typescript_owner_extraction_partial"))),
+        "{:?}",
+        result.limitations
+    );
     Ok(())
 }

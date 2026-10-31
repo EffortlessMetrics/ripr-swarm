@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v3";
+pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v4";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
 
 /// `ripr_get_gap` / `ripr://gap/{canonical_id}` never authorizes an
@@ -72,15 +72,18 @@ pub(crate) struct RepairReadiness {
 
 impl RepairReadiness {
     /// Conjoin the shared seam-level repair validator's verdict (#8717).
-    /// A finding-level refusal stays the first failing gate, except that a
-    /// truncated inventory refuses first; a finding-ready item becomes not
-    /// ready, keeping no fix site, when the validator that backs `ripr repair`
-    /// does not admit its seam.
+    /// The validator that backs `ripr repair` is the one authority for why a
+    /// seam is refused, so its refusal outranks every finding-level gate
+    /// (#10718): the same item must carry the same typed cause here as in
+    /// `ripr repair`, never a producer-side `fix_site_not_established` for an
+    /// already-gripped, route-not-ready or seamless item. A finding-ready
+    /// item becomes not ready, keeping no fix site, when that validator does
+    /// not admit its seam. The one exception is a saved-worktree snapshot's
+    /// withheld verdict (#7357): it is a snapshot-level fact, not a seam
+    /// decision, so a finding-level gate stays the first failing gate there.
     pub(crate) fn with_seam_verdict(mut self, verdict: Option<&SeamVerdict>) -> Self {
-        // The CLI errors on a truncated inventory before it resolves any item
-        // (#9108), so that refusal outranks every finding-level gate.
         if let Some(SeamVerdict::Refused { code, detail }) = verdict
-            && (self.ready || *code == crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED)
+            && (self.ready || *code != crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE)
         {
             self.ready = false;
             self.fix_site = None;
@@ -240,7 +243,8 @@ impl RepairReadiness {
                 | crate::mcp::repair_admission::SEAM_GATE_REFUSED
                 | crate::mcp::repair_admission::SEAM_AMBIGUOUS
                 | crate::mcp::repair_admission::SEAM_NOT_FOUND
-                | crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED,
+                | crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED
+                | crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE,
             ) => {
                 "the shared seam-level repair validator behind `ripr repair` does not admit this item"
             }
@@ -494,7 +498,8 @@ fn gap_evidence_core(
         "missing": finding.missing,
         "static_limitation": static_limitation,
         "source_currentness": source_currentness,
-        "recommended_next_step": finding.recommended_next_step,
+        "recommended_next_step": crate::output::next_step::unresolved_edge_guidance(finding)
+            .or_else(|| finding.recommended_next_step.clone()),
         "readiness": {
             "repair_packet_ready": readiness.ready,
             "reason": readiness.detail(),
@@ -507,6 +512,27 @@ fn gap_evidence_core(
             "prepared_by": "#3090",
         },
     }))
+}
+
+/// #11213: the finding's own `missing` and `recommended_next_step`, read from
+/// the same committed `evidence_core` that `ripr_get_gap` serves, so a
+/// not-ready repair card or `ripr_prepare_repair` refusal tells an agent what
+/// to change without a second call. Additive and advisory: it carries no
+/// readiness, never replaces the typed refusal, and invents nothing the gap
+/// does not already hold.
+pub(super) fn finding_guidance(item: &GapItem) -> Value {
+    json!({
+        "missing": item.evidence_core.get("missing").cloned().unwrap_or(Value::Null),
+        "recommended_next_step": item
+            .evidence_core
+            .get("recommended_next_step")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "gap_route": {
+            "tool": "ripr_get_gap",
+            "arguments": { "canonical_id": item.canonical_id },
+        },
+    })
 }
 
 /// Budget items for the shared [`crate::lsp::diagnostic_budget`] authority.
@@ -690,6 +716,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
     let stage = || StageEvidence::new(StageState::Unknown, Confidence::Unknown, "test");
     Ok(Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: Vec::new(),
         id: "finding:test:1".to_string(),
         canonical_gap: Some(crate::domain::FindingCanonicalGap {
             id: "gap:test:1".to_string(),
@@ -762,6 +789,74 @@ mod tests {
 
     fn finding() -> Result<Finding, String> {
         test_finding()
+    }
+
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn limited_journey_mcp_preserves_shared_guidance_and_refusal() -> Result<(), String> {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .ok_or("missing repository root")?;
+        let fixture = repository.join("fixtures/rust_transitive_reach_positive");
+        let root = fixture.join("input");
+        let output = crate::app::check_workspace(crate::app::CheckInput {
+            root: root.clone(),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: crate::app::Mode::Fast,
+            ..Default::default()
+        })?;
+        assert_eq!(output.findings.len(), 1, "nonempty real producer subject");
+        let finding = &output.findings[0];
+        assert_eq!(finding.class, crate::domain::ExposureClass::NoStaticPath);
+        assert!(matches!(
+            finding.static_limit_kind,
+            Some(crate::domain::StaticLimitKind::RustIntegrationPublicApiPathUnresolved)
+        ));
+        let item = GapItem::from_finding(finding, &root)?;
+        let expected = crate::output::next_step::reconcile_next_step(finding);
+        assert!(expected.contains("Tests cannot close this static-analysis limitation"));
+        assert!(expected.contains("entry `outer` -> owner `inner`"));
+        assert_ne!(
+            finding.recommended_next_step.as_deref(),
+            Some(expected.as_str())
+        );
+        assert_eq!(item.evidence_core["recommended_next_step"], expected);
+        assert_eq!(item.evidence_core["class"], "no_static_path");
+        assert_eq!(
+            item.evidence_core["source_currentness"],
+            serde_json::to_value(finding.source_currentness).map_err(|error| error.to_string())?
+        );
+        assert_eq!(item.evidence_core["evidence"], json!(finding.evidence));
+        assert_eq!(
+            item.evidence_core["readiness"]["repair_packet_ready"],
+            false
+        );
+
+        let mut absent = finding.clone();
+        absent.recommended_next_step = None;
+        let absent = GapItem::from_finding(&absent, &root)?;
+        assert_eq!(absent.evidence_core["recommended_next_step"], Value::Null);
+
+        let mut no_edge = finding.clone();
+        no_edge.evidence.retain(|line| {
+            !line.starts_with(crate::domain::LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX)
+        });
+        let projected = GapItem::from_finding(&no_edge, &root)?;
+        assert_eq!(
+            projected.evidence_core["recommended_next_step"],
+            json!(no_edge.recommended_next_step)
+        );
+
+        let mut unrelated = finding.clone();
+        unrelated.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustValuePropagationUnresolved);
+        let projected = GapItem::from_finding(&unrelated, &root)?;
+        assert_eq!(
+            projected.evidence_core["recommended_next_step"],
+            json!(unrelated.recommended_next_step)
+        );
+        Ok(())
     }
 
     #[test]
@@ -1360,11 +1455,34 @@ mod tests {
             seam_detail: None,
         }
         .with_seam_verdict(Some(&refused));
-        if finding_level.ineligibility != Some("missing_discriminator")
-            || finding_level.seam_detail.is_some()
+        // #10718: the shared validator is the one authority for the cause, so
+        // its refusal outranks the producer-side gate; the same item must not
+        // read `missing_discriminator` here and "already gripped" in
+        // `ripr repair`.
+        if finding_level.ineligibility != Some("seam_already_gripped")
+            || finding_level.seam_detail.is_none()
         {
             return Err(format!(
-                "the finding-level refusal must stay first: {finding_level:?}"
+                "the shared validator's refusal must outrank the finding gate: {finding_level:?}"
+            ));
+        }
+        // The saved-worktree withheld verdict is a snapshot-level fact, not a
+        // seam decision, so a finding-level gate stays first there (#7357).
+        let withheld = SeamVerdict::Refused {
+            code: crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE,
+            detail: "withheld".to_string(),
+        };
+        let worktree = RepairReadiness {
+            ready: false,
+            fix_site: None,
+            ineligibility: Some("missing_discriminator"),
+            seam_detail: None,
+        }
+        .with_seam_verdict(Some(&withheld));
+        if worktree.ineligibility != Some("missing_discriminator") || worktree.seam_detail.is_some()
+        {
+            return Err(format!(
+                "a worktree withhold must not outrank a finding gate: {worktree:?}"
             ));
         }
         Ok(())
@@ -1442,9 +1560,8 @@ mod tests {
         {
             return Err(format!("truncation must block readiness: {blocked:?}"));
         }
-        // Precedence: a finding failing a finding-level gate still gets the
-        // inventory-level refusal, but keeps its own gate when the verdict is
-        // an ordinary seam refusal.
+        // Precedence: the shared validator's refusal, truncation or an
+        // ordinary seam refusal alike, outranks a finding-level gate (#10718).
         let unready = RepairReadiness {
             ready: false,
             fix_site: None,
@@ -1461,8 +1578,11 @@ mod tests {
             code: "seam_gate_refused",
             detail: "gate".to_string(),
         };
-        if unready.clone().with_seam_verdict(Some(&ordinary)) != unready {
-            return Err("an ordinary seam refusal must not outrank a finding gate".to_string());
+        let outranked = unready.clone().with_seam_verdict(Some(&ordinary));
+        if outranked.ineligibility != Some("seam_gate_refused") || outranked.seam_detail.is_none() {
+            return Err(format!(
+                "an ordinary seam refusal must outrank a finding gate: {outranked:?}"
+            ));
         }
         Ok(())
     }

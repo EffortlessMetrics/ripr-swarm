@@ -745,11 +745,13 @@ fn review_comments_with_admission(
         if cancellation.observed_abort()
             == Some(analysis::cancellation::AnalysisAbortKind::DeadlineExceeded)
         {
+            receipt.canonical_analysis_progress(selection_builder.observed_seams());
             record_review_comments_timeout(&mut receipt, &receipt_path, "canonical_analysis")
         } else {
             record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
         }
     })?;
+    receipt.canonical_analysis_progress(selection_builder.observed_seams());
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
@@ -2286,6 +2288,23 @@ mod tests {
         if result != Err("review-comments timed out during canonical_analysis".to_string()) {
             return Err(format!("unexpected canonical timeout result: {result:?}"));
         }
+        // Work done is disclosed (none: the budget expired at the first
+        // interior checkpoint) and the receipt says nothing was kept (#11107).
+        if receipt.get("canonical_analysis_evaluated_seams") != Some(&serde_json::json!(0)) {
+            return Err(format!(
+                "canonical timeout must report evaluated seams: {receipt}"
+            ));
+        }
+        let kept_nothing = receipt["non_claims"].as_array().is_some_and(|claims| {
+            claims.iter().any(|claim| {
+                claim == output::review_comments_receipt::CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM
+            })
+        });
+        if !kept_nothing {
+            return Err(format!(
+                "canonical timeout must disclose that nothing is persisted: {receipt}"
+            ));
+        }
         if out.exists() || out.with_extension("md").exists() {
             return Err("cancelled inventory published review artifacts".to_string());
         }
@@ -2431,6 +2450,20 @@ mod tests {
         if repair_route != error {
             return Err(format!(
                 "returned error and receipt repair_route diverged: {error} vs {repair_route}"
+            ));
+        }
+        // A failure is not a timeout: it must not claim the timeout-only
+        // retry disclosure or timeout progress field (#11107).
+        if receipt.get("canonical_analysis_evaluated_seams").is_some()
+            || receipt["non_claims"].as_array().is_some_and(|claims| {
+                claims.iter().any(|claim| {
+                    claim
+                        == output::review_comments_receipt::CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM
+                })
+            })
+        {
+            return Err(format!(
+                "ordinary failure must not carry the timeout retry disclosure: {receipt}"
             ));
         }
         if out.exists() || out.with_extension("md").exists() {
@@ -3056,6 +3089,7 @@ mod tests {
         assert_eq!(receipt["status"], "failed");
         assert_eq!(receipt["active_phase"], "language_facts");
         assert_eq!(receipt["last_completed_phase"], "diff_discovery");
+        assert_eq!(receipt["active_step"], "corpus_admission");
         assert_eq!(
             receipt["limitations"][0]["category"],
             "review_guidance_oversized"

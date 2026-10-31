@@ -19,8 +19,9 @@ Linked PRs:
 Support-tier impact:
 
 - No tier change. This spec changes only the advisory text of the
-  `recommended_next_step` field for `no_static_path` findings and the
-  all-no-path disclosure Note in human output. It does not change any
+  `recommended_next_step` field for `no_static_path` findings, the TypeScript
+  missing-link fallback, and the human all-no-path disclosure and closed
+  preview-packet inspection guidance. It does not change any
   classification, finding-set, ExposureClass, probe family, confidence score,
   or pass/fail authority.
 - The message is advisory guidance; changing its wording is not a schema change.
@@ -88,6 +89,27 @@ propagation_unknown / static_unknown`, the footer Note becomes:
 > ripr's static model does not yet trace; if none does, add co-located tests
 > that observe the changed behavior.
 
+### TypeScript ordinary-owner fallback
+
+When TypeScript establishes no static test relation and has no more specific
+alias or owner-kind explanation, both the missing-evidence message and next
+step describe the missing static link rather than asserting that no test
+exists. The guidance first asks users to inspect existing calls and their
+import/export paths. A new direct owner test is suggested only if no suitable
+test exists, followed by the project's native verifier and a refreshed check.
+
+This includes a real call through a barrel whose star-sibling facts are
+unavailable. The generic fallback does not identify a parser error, read cap,
+or particular unresolved import without evidence of that cause. Specific
+alias, method, class-method and module-initializer messages retain their own
+qualifiers. Classification, related-test cardinality and repair eligibility
+are unchanged.
+
+The human top-level safe action for a closed preview packet with no static
+path also asks users to check whether a test already observes the change.
+It retains the authority's refusal reason and disabled routing; a missing
+static path alone does not establish that another test is needed.
+
 ### What is NOT changing
 
 - `ExposureClass` values, labels, or severities.
@@ -116,6 +138,10 @@ propagation_unknown / static_unknown`, the footer Note becomes:
 3. **Golden fixtures**: all ~33 blessed fixtures that include `no_static_path`
    findings show only message-text changes — no classification, probe, or
    finding-set changes. `cargo xtask goldens check` passes after re-blessing.
+4. **Unresolved TypeScript barrel call**: an existing test calls the changed
+   owner through a barrel with unavailable star-sibling facts. The public CLI
+   retains `no_static_path`, zero credited tests and suppressed repair
+   readiness, and asks users to inspect the static link before adding a test.
 
 ## Required Evidence
 
