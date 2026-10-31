@@ -3613,6 +3613,16 @@ pub(crate) mod tests {
         more.push("incomplete evidence stage: propagation".to_string());
         let reason = route_not_ready_reason(&ret, "repair route not ready", &more, root);
         assert!(!reason.contains("ripr agent stub"), "{reason}");
+        // Negative: no module blocker and nothing missing names no route.
+        let mut plain = build(
+            SeamKind::ReturnValue,
+            RequiredDiscriminator::ReturnValue {
+                description: "changed value".to_string(),
+            },
+        );
+        plain.evidence.new_test_target = None;
+        let reason = route_not_ready_reason(&plain, "repair route not ready", &[], root);
+        assert!(!reason.contains("ripr agent stub"), "{reason}");
         let field = build(
             SeamKind::SideEffect,
             RequiredDiscriminator::Effect {
