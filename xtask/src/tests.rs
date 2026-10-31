@@ -33159,6 +33159,12 @@ jobs:
     assert!(enforced.contains(&("check-agent-skills".to_string(), String::new())));
     assert!(super::workflow_run_xtask_invocation("cargo policy preflight || true").is_none());
     assert!(super::workflow_run_xtask_invocation("# cargo policy preflight").is_none());
+    assert_eq!(
+        super::workflow_run_xtask_invocation("\"$xtask\" verify-test-shards \\"),
+        Some(("verify-test-shards".to_string(), String::new()))
+    );
+    assert!(super::workflow_run_xtask_invocation("$xtask verify-test-shards").is_none());
+    assert!(super::workflow_run_xtask_invocation("\"$other\" verify-test-shards").is_none());
     assert!(enforced.contains(&("check-network-policy".to_string(), String::new())));
     assert!(enforced.contains(&("goldens".to_string(), "check".to_string())));
     assert!(enforced.contains(&("ripr-pr".to_string(), String::new())));

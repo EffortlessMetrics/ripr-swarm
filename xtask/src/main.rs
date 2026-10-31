@@ -3016,7 +3016,12 @@ fn workflow_run_xtask_invocation(line: &str) -> Option<WorkflowXtaskInvocation> 
     if line.contains("|| true") {
         return None;
     }
-    let rest = line.strip_prefix("cargo xtask ")?;
+    // The hosted shard verifier runs the xtask binary shard 1 built (#11566),
+    // because that job has no toolchain. Only this exact quoted form counts, and
+    // the workflow contract test pins how `$xtask` is bound.
+    let rest = line
+        .strip_prefix("cargo xtask ")
+        .or_else(|| line.strip_prefix("\"$xtask\" "))?;
     let mut tokens = rest.split_whitespace();
     let root = tokens.next()?.trim_matches('"');
     if root.is_empty() || root.starts_with('$') {
