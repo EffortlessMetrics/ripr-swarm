@@ -53,7 +53,7 @@ mod tests {{
 ",
         trait_name = case.trait_name,
         impl_type = case.impl_type,
-        definition = if case.impl_type == "Money" {
+        definition = if case.impl_type == "Money" && !case.extra_items.contains("struct Money") {
             "\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\n"
         } else {
             ""
@@ -883,6 +883,79 @@ fn an_unresolved_macro_invocation_in_the_test_scope_withholds_the_credit() -> Re
         ..base
     };
     assert_eq!(classes(&foreign)?, [ExposureClass::StaticUnknown]);
+    Ok(())
+}
+
+/// `Money::add(..)` from a sibling test module, the type-path form that
+/// credits only when `add` is the sole method of that name on `Money`.
+const PATH_CALL: &str = "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }";
+
+#[test]
+fn an_impl_the_index_cannot_see_may_define_the_method_so_no_sole_credit() -> Result<(), String> {
+    let base = Case {
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    // Positive control: the same path call credits when nothing hidden can
+    // define `add` (the fixture's std derives define no `add`).
+    let plain = Case {
+        label: "sole_plain",
+        extra_items: PATH_CALL,
+        ..base
+    };
+    assert!(source(&plain).contains("derive(Debug, Clone, Copy, PartialEq)"));
+    assert_eq!(classes(&plain)?, [ExposureClass::WeaklyExposed]);
+
+    // A derive ripr cannot read may define `add` (`derive_more::Add`-style).
+    let derived = Case {
+        label: "sole_unknown_derive",
+        extra_items: concat!(
+            "#[derive(Clone, Copy, PartialEq, derive_more::Mul)]\npub struct Money(pub i64);\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }"
+        ),
+        ..base
+    };
+    assert!(source(&derived).contains("derive_more::Mul)]\npub struct Money"));
+    assert!(!source(&derived).contains("derive(Debug, Clone, Copy, PartialEq)"));
+    assert_eq!(classes(&derived)?, [ExposureClass::StaticUnknown]);
+
+    // A blanket impl of another trait that defines `add`.
+    let blanket = Case {
+        label: "sole_blanket",
+        extra_items: concat!(
+            "pub trait Wide { fn add(self, other: i64) -> i64; }\n",
+            "impl<T: Into<i64>> Wide for T { fn add(self, other: i64) -> i64 { self.into() + other } }\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }"
+        ),
+        ..base
+    };
+    assert!(source(&blanket).contains("impl<T: Into<i64>> Wide for T"));
+    assert_eq!(classes(&blanket)?, [ExposureClass::StaticUnknown]);
+
+    // A macro defined in a sibling file writes an impl for `Money` and is
+    // invoked in a module the test does not enclose.
+    let macro_generated = Case {
+        label: "sole_macro",
+        extra_items: concat!(
+            "mod generated { add_for!(i32); }\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }"
+        ),
+        sibling: "macro_rules! add_for {\n    ($t:ty) => {\n        impl Add<$t> for Money {\n            type Output = Money;\n            fn add(self, other: $t) -> Money { Money(self.0 + other as i64) }\n        }\n    };\n}\n",
+        ..base
+    };
+    assert!(source(&macro_generated).contains("mod generated { add_for!(i32); }"));
+    assert_eq!(classes(&macro_generated)?, [ExposureClass::StaticUnknown]);
+
+    // Discriminating negative for the macro rule: the same sibling macro
+    // writing an impl for an unrelated type does not remove the credit.
+    let unrelated_macro = Case {
+        label: "sole_unrelated_macro",
+        extra_items: PATH_CALL,
+        sibling: "macro_rules! add_for_other {\n    ($t:ty) => {\n        impl Add<$t> for Gold {\n            type Output = Gold;\n            fn add(self, other: $t) -> Gold { Gold(0) }\n        }\n    };\n}\n",
+        ..base
+    };
+    assert_eq!(classes(&unrelated_macro)?, [ExposureClass::WeaklyExposed]);
     Ok(())
 }
 

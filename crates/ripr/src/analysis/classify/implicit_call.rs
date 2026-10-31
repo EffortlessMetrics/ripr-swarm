@@ -37,7 +37,7 @@ use crate::analysis::rust_index::{FunctionSummary, RustIndex};
 use crate::domain::*;
 use ra_ap_syntax::{
     AstNode, ast,
-    ast::{HasModuleItem, HasName},
+    ast::{HasAttrs, HasGenericParams, HasModuleItem, HasName},
 };
 
 const LIMIT: StaticLimitKind = StaticLimitKind::RustImplicitCallUnresolved;
@@ -1322,10 +1322,145 @@ fn type_path_owner(owner: &FunctionSummary, index: &RustIndex) -> Option<TypePat
     Some(TypePathOwner {
         self_type,
         trait_name,
-        sole_method: same_name == 1,
+        sole_method: same_name == 1 && !unindexed_impl_may_define(owner, index),
         trait_unique: same_trait == 1,
         trait_args: owner_trait_args(&owner.id.0),
     })
+}
+
+/// std derives and the methods they define. A derive absent from this table is
+/// a derive ripr cannot read, so it may define any method.
+const STD_DERIVE_METHODS: [(&str, &[&str]); 9] = [
+    ("Clone", &["clone", "clone_from"]),
+    ("Copy", &[]),
+    ("Debug", &["fmt"]),
+    ("Default", &["default"]),
+    ("Eq", &[]),
+    ("Hash", &["hash", "hash_slice"]),
+    ("Ord", &["cmp", "max", "min", "clamp"]),
+    ("PartialEq", &["eq", "ne"]),
+    ("PartialOrd", &["partial_cmp", "lt", "le", "gt", "ge"]),
+];
+
+/// Whether an impl the index does not list could define the owner's method for
+/// its self type, so `Type::name(..)` is not known to resolve to the owner
+/// (#10625). The index lists only written, indexed `impl` blocks. Three other
+/// sources are invisible to it, and any one makes the answer yes (the
+/// conservative reading: when unsure, never claim a sole method):
+///
+/// - a `#[derive(..)]` on the type naming a derive that defines the method, or
+///   a derive ripr cannot read (a non-std derive, or one behind `cfg_attr`);
+/// - a blanket impl (`impl<T> Trait for T`) that defines the method;
+/// - a macro: any `macro_rules!`/`macro` definition in the workspace that
+///   mentions the type and writes an `impl`, or any item-level macro
+///   invocation that names the type.
+///
+/// A file the syntax snapshot cannot read also answers yes. Not covered: a
+/// statement-position macro that expands to a local impl inside a function
+/// body, a macro from another crate that never names the type, and a trait
+/// default method reached through a blanket impl.
+fn unindexed_impl_may_define(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    let Some(self_type) = impl_self_type_name(&owner.id.0) else {
+        return true;
+    };
+    let name = owner.name.as_str();
+    index.files().iter().any(|(file, _)| {
+        let Some(snapshot) = index.source_syntax.get(index, file) else {
+            return true;
+        };
+        let Some(tree) = snapshot.tree() else {
+            return true;
+        };
+        tree.syntax()
+            .descendants()
+            .filter_map(ast::Item::cast)
+            .any(|item| item_may_define(&item, &self_type, name))
+    })
+}
+
+fn item_may_define(item: &ast::Item, self_type: &str, name: &str) -> bool {
+    let masked = |text: String| crate::analysis::extract::mask_comments_and_strings(&text);
+    match item {
+        ast::Item::Struct(it) => type_derives_may_define(it, it.name(), self_type, name),
+        ast::Item::Enum(it) => type_derives_may_define(it, it.name(), self_type, name),
+        ast::Item::Union(it) => type_derives_may_define(it, it.name(), self_type, name),
+        ast::Item::MacroRules(_) | ast::Item::MacroDef(_) => {
+            let text = masked(item.syntax().text().to_string());
+            contains_as_whole_word(&text, self_type) && contains_as_whole_word(&text, "impl")
+        }
+        ast::Item::MacroCall(call) => {
+            // Expression and statement macros (`assert_eq!`) are not items.
+            item.syntax().parent().is_some_and(|parent| {
+                matches!(
+                    parent.kind(),
+                    ra_ap_syntax::SyntaxKind::SOURCE_FILE | ra_ap_syntax::SyntaxKind::ITEM_LIST
+                )
+            }) && call.token_tree().is_some_and(|tokens| {
+                contains_as_whole_word(&masked(tokens.syntax().text().to_string()), self_type)
+            })
+        }
+        ast::Item::Impl(imp) => blanket_impl_defines(imp, name),
+        _ => false,
+    }
+}
+
+fn type_derives_may_define<T: HasAttrs>(
+    adt: &T,
+    type_name: Option<ast::Name>,
+    self_type: &str,
+    name: &str,
+) -> bool {
+    if type_name.is_none_or(|found| found.text().trim_start_matches("r#") != self_type) {
+        return false;
+    }
+    adt.attrs().any(|attr| {
+        let text = attr.syntax().text().to_string();
+        let idents: Vec<&str> = text
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .filter(|word| !word.is_empty())
+            .collect();
+        match idents.split_first() {
+            Some((&"derive", derived)) => derived.iter().any(|derived| {
+                STD_DERIVE_METHODS
+                    .iter()
+                    .find(|(known, _)| known == derived)
+                    .map_or(*derived != "std" && *derived != "core", |(_, methods)| {
+                        methods.contains(&name)
+                    })
+            }),
+            // `cfg_attr(.., derive(..))` hides the derive list behind a cfg.
+            Some((&"cfg_attr", rest)) => rest.contains(&"derive"),
+            _ => false,
+        }
+    })
+}
+
+/// A trait impl whose self type is one of its own generic parameters
+/// (`impl<T: Into<i64>> Wide for T`, also through `&T`) and that defines `name`.
+fn blanket_impl_defines(imp: &ast::Impl, name: &str) -> bool {
+    if imp.trait_().is_none() {
+        return false;
+    }
+    let Some(self_ty) = imp.self_ty() else {
+        return false;
+    };
+    let self_text = self_ty.syntax().text().to_string();
+    let self_text = self_text.trim().trim_start_matches('&').trim();
+    let self_text = self_text.strip_prefix("mut ").unwrap_or(self_text).trim();
+    let Some(params) = imp.generic_param_list() else {
+        return false;
+    };
+    let generic = params.generic_params().any(|param| {
+        matches!(&param, ast::GenericParam::TypeParam(p)
+            if p.name().is_some_and(|n| n.text() == self_text))
+    });
+    generic
+        && imp.assoc_item_list().is_some_and(|items| {
+            items.assoc_items().any(|item| {
+                matches!(&item, ast::AssocItem::Fn(f)
+                    if f.name().is_some_and(|n| n.text() == name))
+            })
+        })
 }
 
 /// Whether the test body brings another item in under the impl type's name, by
