@@ -2852,7 +2852,7 @@ impl RustAdapter {
                 );
                 // RIPR-SPEC-0369: name a `verus!` region by the changed file's
                 // own index key; the probe's file is root-joined.
-                probes::apply_verus_macro_region_limit(&mut finding, &probe, &index, &changed.path);
+                probes::apply_verus_macro_region_limit(&mut finding, &probe, &index, changed);
                 probes::attach_changed_binding_return_evidence(
                     &mut finding,
                     binding_return.as_ref(),

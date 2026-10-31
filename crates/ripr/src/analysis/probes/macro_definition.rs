@@ -356,6 +356,8 @@ mod tests {
             "verus_other! {\n    fn f() {}\n}\n",
             "// verus! { fn f() {} }\nlet s = \"verus! { }\";\n",
             "fn verus() {}\nlet verus = 1;\n",
+            "/// Example:\n/// verus! {\n///     fn f() {}\n/// }\nfn g() {}\n",
+            "//! verus! { fn f() {} }\nfn g() {}\n",
             "verus {\n}\n",
         ] {
             assert!(verus_regions(source).is_empty(), "{source}");

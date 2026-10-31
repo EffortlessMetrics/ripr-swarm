@@ -596,7 +596,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// admission. Older entries may credit ignored or broad expected-panic tests.
 /// `1.124`: retain the opaque assertion-macro limit beside nested expected
 /// macros when a bare owner call sits outside their inputs (#9644).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.124";
+/// `1.125`: changed lines inside `verus! { .. }` seed one `static_unknown` probe
+/// per region and side and name `verus_macro_region_unsupported`; verification
+/// prelude globs (`vstd`, `creusot_std`, `prusti_contracts`) no longer refuse
+/// assertion credit (RIPR-SPEC-0369, #11703).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.125";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -766,7 +770,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.124";
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
 /// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
+/// `0.132`: same `verus!` region limit and prelude-glob credit as full `1.125`
+/// (RIPR-SPEC-0369).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.132";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -938,7 +944,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
 /// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
+/// `0.132`: same `verus!` region limit and prelude-glob credit as full `1.125`
+/// (RIPR-SPEC-0369).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.132";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only

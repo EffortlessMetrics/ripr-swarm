@@ -24,7 +24,7 @@ Linked issues:
 
 Linked PRs:
 
-- None yet
+- #11703
 
 Support-tier impact:
 
@@ -66,7 +66,9 @@ A changed line (added or removed) whose whole trimmed content lies inside the
 token tree of a `verus!` invocation (`()`, `[]` or `{}` delimiters, comments
 and strings masked, an unclosed tree running to the end of the file) is Verus
 syntax, not Rust. The probe seeder emits one `static_unknown` probe per region
-and diff side, keyed by region start line, and no expression-family probe. A
+and diff side, keyed by region start line, and no expression-family probe; a
+removed-side probe resolves its region in the reconstructed old source at the
+deleted line's old-side number, never at its new-file coordinate. A
 line that also holds code outside the region keeps normal seeding. The
 `verus` token must begin an identifier, so `my_verus!` and prose do not
 match. Attribute-style Verus (`#[verus_spec(..)]`, `#[verus_verify]`) is plain

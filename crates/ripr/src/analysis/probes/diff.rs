@@ -6792,7 +6792,7 @@ mod source_currentness_tests {
 
     /// RIPR-SPEC-0369: changed lines inside `verus! { .. }` are Verus syntax.
     /// Exec text, `ensures`, `spec fn` and `proof` lines seed one
-    /// `static_unknown` probe for the region, never an expression family; an
+    /// `static_unknown` probe per region and diff side, never an expression family; an
     /// ordinary fn beside the block keeps its normal probe.
     #[test]
     fn verus_region_lines_seed_one_static_unknown_not_expression_probes() {
@@ -6821,14 +6821,50 @@ mod source_currentness_tests {
             .iter()
             .filter(|probe| probe.location.line <= 13)
             .collect::<Vec<_>>();
-        assert_eq!(inside.len(), 1, "one probe per region: {inside:?}");
-        assert_eq!(inside[0].family, ProbeFamily::StaticUnknown);
+        assert!(
+            inside
+                .iter()
+                .all(|probe| probe.family == ProbeFamily::StaticUnknown),
+            "{inside:?}"
+        );
+        let added_side = inside.iter().filter(|probe| probe.after.is_some()).count();
+        let removed_side = inside.iter().filter(|probe| probe.after.is_none()).count();
+        assert_eq!(
+            (added_side, removed_side),
+            (1, 1),
+            "one probe per region per side: {inside:?}"
+        );
         assert!(
             probes
                 .iter()
                 .any(|probe| probe.location.line == 15 && probe.family == ProbeFamily::Predicate),
             "ordinary fn beside the block keeps its probe: {probes:?}"
         );
+    }
+
+    /// RIPR-SPEC-0369: a removed-only edit inside a region seeds exactly one
+    /// removed-side `static_unknown` probe from the old-source region, even when
+    /// the new file no longer holds the deleted lines.
+    #[test]
+    fn removed_only_verus_region_lines_seed_one_removed_side_static_unknown() {
+        let source =
+            "verus! {\nfn inc(x: u32) -> (r: u32)\n    requires x < 100,\n{\n    x + 2\n}\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let line = |number: usize, new_side: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: new_side,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![],
+            removed_lines: vec![line(4, 4, "ensures r <= 200,"), line(5, 4, "decreases x,")],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        assert_eq!(probes.len(), 1, "{probes:?}");
+        assert_eq!(probes[0].family, ProbeFamily::StaticUnknown);
+        assert!(probes[0].after.is_none() && probes[0].before.is_some());
     }
 
     /// Removed-only macro definition text is also macro text.
