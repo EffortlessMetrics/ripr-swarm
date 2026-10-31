@@ -245,10 +245,7 @@ impl Walk<'_> {
     /// (through count-preserving materializers) under an element-only edit.
     fn len_is_coarse(&self, argument: &Expr) -> bool {
         let mut inner = argument;
-        loop {
-            let Expr::Call(call) = inner else {
-                break;
-            };
+        while let Expr::Call(call) = inner {
             let name = expr_full_name(call.func.as_ref());
             let name = name.as_deref().map(|n| n.rsplit('.').next().unwrap_or(n));
             match (name, call.args.as_slice()) {
