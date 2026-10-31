@@ -5428,7 +5428,7 @@ mod tests {
         // 1.124 -> 1.125: `verus!` region limit and verification-prelude glob
         // credit (RIPR-SPEC-0369, #11703).
         // 1.124 -> 1.125: imported unit-variant receiver (#8782).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.125");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.126");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5541,8 +5541,8 @@ mod tests {
         // 0.130 -> 0.131: same nested expected-macro limit as full 1.124 (#9644).
         // 0.131 -> 0.132: same `verus!` region limit as full 1.125 (RIPR-SPEC-0369).
         // 0.131 -> 0.132: same imported-variant receiver as full 1.125 (#8782).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.132");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.132");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.133");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.133");
     }
 
     #[test]
