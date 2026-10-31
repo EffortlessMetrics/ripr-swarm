@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0367"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0367-proof-harness-is-not-a-test-or-production-seam.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #10686 follow-up: a Kani proof harness is verification source that is neither a test nor a production seam; this contract pins the exact attribute role, the fail-closed no-credit rule and the proof_harness_not_evaluated disclosure, separate from the declared-context source inventory."
