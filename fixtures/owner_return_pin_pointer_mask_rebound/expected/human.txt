@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:low_byte:return_value:return_value:n_0xff_as_u8
   Changed behavior: (n & 0xff) as u8
-  Missing check: No strong discriminator was detected
+  Missing check: No strong check was detected
   Related test: src/lib.rs:11 pointer_mask (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `pointer_mask` already has an exact assertion; this does not establish
     observation of the returned value. Check whether the change can affect the returned value. If it

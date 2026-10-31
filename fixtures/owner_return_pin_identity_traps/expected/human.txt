@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:next_word:return_value:return_value:self.base*3
   Changed behavior: self.base() * 3
-  Missing check: No strong discriminator was detected
+  Missing check: No strong check was detected
   Related test: tests/trap_tests.rs:9 fixed_reader_overrides_next_word (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `fixed_reader_overrides_next_word` already has an exact assertion;
     this does not establish observation of the returned value. Check whether the change can affect

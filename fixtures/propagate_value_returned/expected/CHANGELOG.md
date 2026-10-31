@@ -490,3 +490,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — propagate_value_returned (42)
+
+Reason:
+RIPR-SPEC-0122: render the missing check in plain language
+
+Command:
+`cargo xtask goldens bless propagate_value_returned --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

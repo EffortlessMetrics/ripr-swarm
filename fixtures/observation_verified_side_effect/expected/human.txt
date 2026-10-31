@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:process_order:return_value:return_value:notifier.send_order_id
   Changed behavior: notifier.send(order_id)
-  Missing check: No strong discriminator was detected
+  Missing check: No strong check was detected
   Related test: tests/process_tests.rs:4 process_order_sends_exact_order_id (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `process_order_sends_exact_order_id` already has an exact assertion;
     this does not establish observation of the returned value. Check whether the change can affect

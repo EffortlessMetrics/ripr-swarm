@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:weight:return_value:return_value:x*3
   Changed behavior: x * 3
-  Missing check: No strong discriminator was detected
+  Missing check: No strong check was detected
   Related test (1 of 2 matched rows): src/lib.rs:25 deref_store_is_not_independent (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `match_destructuring_is_not_independent` already has an exact
     assertion; this does not establish observation of the returned value. Check whether the change

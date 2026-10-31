@@ -115,3 +115,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_invisible_input (10)
+
+Reason:
+RIPR-SPEC-0122: render the missing check in plain language
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_invisible_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
