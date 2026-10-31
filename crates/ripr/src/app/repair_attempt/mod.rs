@@ -534,14 +534,14 @@ pub(crate) fn receipt_binding_from(
         );
         return Err(format!(
             "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt.\n\
-             Causes: command output redirected into a repository file during the run (stdout or stderr, including under `target/ripr`), a path outside `target/ripr` that changed after the after phase bound it, or an attempt that already finished.\n\
+             Causes: command output redirected into a repository file during the run (stdout or stderr, including under `target/ripr`), or a path outside `target/ripr` that changed after the after phase bound it.\n\
              Next: `{status}` reads the attempt's state.\n\
-             From `ripr agent receipt`: remove the stray file or edit and rerun.\n\
+             From `ripr agent receipt`: remove the stray file or the later edit (keep a copy first, so you do not revert your bound repair edit) and rerun.\n\
              From the after phase: the verdict is already recorded, so a rerun reports the attempt as already finished and only a new attempt recovers it.\n\
              The restart refuses while your repair edit is present, because that edit already reads the gap as exposed.\n\
              Keep your own copy of the edited test file(s) and restore their pre-edit content yourself before running `{restart}`.\n\
              Then re-apply your edit and run the new --attempt command it prints.\n\
-             Write command output outside the repository"
+             Write command output outside the repository."
         ));
     }
     validate_trusted_head_surface(

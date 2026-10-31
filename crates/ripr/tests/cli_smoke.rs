@@ -9517,13 +9517,13 @@ fn after_phase_redirect_scenario(
         refusal.contains("repair attempt after verdict binding is tampered or stale")
             && refusal.contains("the verdict is already recorded")
             && refusal.contains("only a new attempt recovers it")
-            && refusal.contains("your repair edit is present"),
+            && refusal.contains("your repair edit is present")
+            && !refusal.contains("git stash"),
         "{refusal}"
     );
     // Run the printed commands: the status command is bound to this root, and
     // the restart refuses while the repair edit is present but works once the
-    // edit is set aside with the printed recipe (copy out, `git checkout --`,
-    // copy back), which must leave an unrelated stash alone.
+    // test restores the pre-edit test content (as the message tells the user).
     let printed = |name: &str| -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let start = refusal
             .find(&format!("`ripr agent {name} --root "))
@@ -9555,7 +9555,7 @@ fn after_phase_redirect_scenario(
     assert_failure(&blocked);
     let blocked_err = String::from_utf8_lossy(&blocked.stderr);
     assert!(
-        blocked_err.contains("exposed") || blocked_err.contains("strongly_gripped"),
+        blocked_err.contains("is configured off for strongly_gripped seams"),
         "the blocked restart must say why: {blocked_err}"
     );
     // The printed guidance: restore the pre-edit test content, restart, then
@@ -9567,10 +9567,6 @@ fn after_phase_redirect_scenario(
         &restart_refs,
     )?);
     std::fs::write(&test_file, &edited)?;
-    assert!(
-        !refusal.contains("git stash"),
-        "the message prescribes no git stash: {refusal}"
-    );
 
     // Removing the file does not revive the attempt: the rerun reports it
     // finished and names the restart command.
@@ -9697,8 +9693,8 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
     assert!(
         moved_stderr.contains("the recorded binding no longer matches the attempt")
             && moved_stderr.contains("`ripr agent status --root ")
-            && moved_stderr.contains("remove the stray file or edit and rerun")
-            && moved_stderr.contains("Write command output outside the repository")
+            && moved_stderr.contains("remove the stray file or the later edit (keep a copy first")
+            && moved_stderr.contains("Write command output outside the repository.")
             && moved_stderr.contains("restore their pre-edit content yourself")
             && !moved_stderr.contains("git stash")
             && moved_stderr.contains("`ripr agent repair --root ")
