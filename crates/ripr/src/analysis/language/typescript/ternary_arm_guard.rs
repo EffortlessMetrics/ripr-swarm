@@ -425,10 +425,12 @@ fn evaluate(
     }
 }
 
-/// Source text of an array literal expectation (`[1, 2]`, `[]`).
+/// Source text of an array or object literal expectation (`[1, 2]`, `[]`,
+/// `{ a: 1 }`, `{}`). Neither equals a scalar arm (#11255).
 fn is_array_literal_text(expected: &str) -> bool {
     let trimmed = expected.trim();
-    trimmed.starts_with('[') && trimmed.ends_with(']')
+    (trimmed.starts_with('[') && trimmed.ends_with(']'))
+        || (trimmed.starts_with('{') && trimmed.ends_with('}'))
 }
 
 #[cfg(test)]

@@ -20,6 +20,7 @@ use super::diagnostics::{
     delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
     take_all_uris, withdrawn_quarantine_diagnostics,
 };
+use super::hover::NoEvidenceState;
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
     diagnostic_hover_response, finding_hover_response, hover_response_without_evidence,
@@ -50,7 +51,7 @@ use super::uri::{
 use super::{
     COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
     COLLECT_REPAIR_PACKET_COMMAND, COLLECT_TOP_LIMITATION_COMMAND,
-    COLLECT_WORKSPACE_STATUS_COMMAND, REFRESH_COMMAND,
+    COLLECT_WORKSPACE_STATUS_COMMAND, REFRESH_COMMAND, SHOW_RELATED_TEST_COMMAND,
 };
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
@@ -3700,18 +3701,41 @@ impl Backend {
         // `ripr.refresh` editor command, and the language list comes from
         // the session configuration instead of a hardcoded `Rust`.
         hover_response_without_evidence(
-            self.has_committed_analysis(),
+            self.no_evidence_state(),
             &self.configured_language_labels(),
         )
     }
 
-    /// Whether any analysis snapshot has committed in this session.
-    fn has_committed_analysis(&self) -> bool {
-        self.latest_analysis
+    /// What the no-evidence hover may say (#11253): a committed snapshot whose
+    /// producer outcome is `no_changed_lines` is a clean workspace against its
+    /// base; with no snapshot, a queued or running attempt means the result is
+    /// on its way rather than missing.
+    fn no_evidence_state(&self) -> NoEvidenceState {
+        let committed = self
+            .latest_analysis
             .lock()
             .ok()
-            .and_then(|value| value.clone())
-            .is_some()
+            .and_then(|value| value.clone());
+        if let Some(snapshot) = committed {
+            let no_changes = snapshot.analysis_outcome.as_ref().is_some_and(|outcome| {
+                outcome.kind == crate::analysis_outcome::AnalysisOutcomeKind::NoChangedLines
+            });
+            return if no_changes {
+                NoEvidenceState::AnalyzedNoChanges {
+                    base: snapshot.base.clone(),
+                }
+            } else {
+                NoEvidenceState::Analyzed
+            };
+        }
+        if matches!(
+            self.analysis_health_snapshot().state,
+            AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+        ) {
+            NoEvidenceState::Analyzing
+        } else {
+            NoEvidenceState::NotAnalyzed
+        }
     }
 
     /// The enabled language labels from the session configuration, for
@@ -6663,9 +6687,10 @@ impl LanguageServer for Backend {
     /// Locks `latest_analysis` read-only exactly like `hover_for_position` and
     /// `code_action`, then delegates to the pure `code_lens_response` helper in
     /// `lsp/lens.rs`. Returns `Some([])` (not `None`) so the client removes any
-    /// stale lenses from a previous snapshot. Returns an empty Vec when no
-    /// snapshot is available — absence of analysis is not absence of tests, and
-    /// we must not fabricate a 0-count lens.
+    /// stale lenses from a previous snapshot, including for a quarantined
+    /// (unsaved or divergent) buffer whose lines no longer match the snapshot.
+    /// Returns an empty Vec when no snapshot is available — absence of analysis
+    /// is not absence of tests, and we must not fabricate a 0-count lens.
     async fn code_lens(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
         self.trace_inbound(
             "request",
@@ -6679,10 +6704,20 @@ impl LanguageServer for Backend {
             .ok()
             .and_then(|value| value.clone());
         let uri = &params.text_document.uri;
-        let result = Ok(Some(code_lens_response(
-            uri,
-            snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
-        )));
+        // A lens anchors at the finding's line in the analyzed saved file. A
+        // buffer that diverges from that content (an unsaved edit, or an
+        // external rewrite the client reloaded) has moved lines, so the
+        // lens would sit on the wrong line while diagnostics and hover are
+        // already paused. Withdraw it with them; the paused marker and hover
+        // name the recovery.
+        let result = if self.document_quarantine(uri).is_some() {
+            Ok(Some(Vec::new()))
+        } else {
+            Ok(Some(code_lens_response(
+                uri,
+                snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
+            )))
+        };
         self.trace_response("textDocument/codeLens", &result).await;
         result
     }
@@ -7140,6 +7175,42 @@ impl Backend {
         }
         if params.command == COLLECT_RECEIPT_STATUS_COMMAND {
             return Ok(self.collect_receipt_status());
+        }
+        if params.command == SHOW_RELATED_TEST_COMMAND {
+            // Generic-client related-test navigation: answer with
+            // `window/showDocument`, guarded by the negotiated capability
+            // and the current snapshot. Navigation only.
+            let snapshot = if self.analysis_health_snapshot().allows_current_repairs()
+                && self.workspace_root_authority().allows_analysis()
+            {
+                self.latest_analysis
+                    .lock()
+                    .ok()
+                    .and_then(|value| value.clone())
+            } else {
+                None
+            };
+            let client_features = self
+                .client_features
+                .lock()
+                .map(|features| features.clone())
+                .unwrap_or_else(|_| ClientFeatureProfile::unsupported());
+            let show = super::actions::show_related_test_params(
+                &params.arguments,
+                snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
+                &client_features,
+            )
+            .map_err(LspError::invalid_params)?;
+            // Bounded by the shared client-request liveness bound (#5278): a
+            // client that advertises showDocument but never answers must not
+            // park the command handler. Any failure or timeout reports
+            // `shown: false`.
+            let shown = self
+                .bounded_client_request(self.client.show_document(show))
+                .await;
+            return Ok(Some(
+                serde_json::json!({ "shown": matches!(shown, Ok(true)) }),
+            ));
         }
         // Stable unsupported-command response (#1628): a command the server
         // does not execute — including client-registered `ripr.copy*` and
@@ -13673,8 +13744,13 @@ mod analysis_error_cancellation_tests {
 #[cfg(test)]
 mod pull_disclosure_dedup_tests {
     use super::*;
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+    };
+    use crate::lsp::hover::{NoEvidenceState, hover_response_without_evidence};
     use std::path::PathBuf;
     use tower_lsp_server::LspService;
+    use tower_lsp_server::ls_types::{Hover, HoverContents};
 
     #[test]
     fn pull_delivery_disclosure_logs_once_per_snapshot_identity() {
@@ -13743,8 +13819,9 @@ mod pull_disclosure_dedup_tests {
         // snapshot; the configured default analyzes Rust.
         let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
         let backend = service.inner();
-        assert!(
-            !backend.has_committed_analysis(),
+        assert_eq!(
+            backend.no_evidence_state(),
+            NoEvidenceState::NotAnalyzed,
             "a fresh session has no committed analysis"
         );
         assert_eq!(
@@ -13758,10 +13835,116 @@ mod pull_disclosure_dedup_tests {
                 batches: Vec::new(),
             })
             .ok_or_else(|| "expected committed snapshot".to_string())?;
-        assert!(
-            backend.has_committed_analysis(),
+        assert_eq!(
+            backend.no_evidence_state(),
+            NoEvidenceState::Analyzed,
             "a committed snapshot flips the analyzed state"
         );
+        Ok(())
+    }
+
+    fn hover_text_of(hover: &Hover) -> Result<String, String> {
+        match &hover.contents {
+            HoverContents::Markup(markup) => Ok(markup.value.clone()),
+            other => Err(format!("expected markup hover, got {other:?}")),
+        }
+    }
+
+    fn no_changes_snapshot() -> Result<crate::lsp::state::AnalysisSnapshot, String> {
+        let mut snapshot = snapshot_fixture()?;
+        snapshot.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?);
+        Ok(snapshot)
+    }
+
+    fn commit(
+        backend: &Backend,
+        snapshot: crate::lsp::state::AnalysisSnapshot,
+    ) -> Result<(), String> {
+        backend
+            .refresh_plan(crate::lsp::diagnostics::WorkspaceDiagnostics {
+                snapshot,
+                batches: Vec::new(),
+            })
+            .map(|_| ())
+            .ok_or_else(|| "expected committed snapshot".to_string())
+    }
+
+    fn rendered(backend: &Backend) -> Result<String, String> {
+        hover_text_of(&hover_response_without_evidence(
+            backend.no_evidence_state(),
+            &backend.configured_language_labels(),
+        ))
+    }
+
+    #[test]
+    fn no_evidence_hover_says_analysis_is_in_progress_only_while_an_attempt_runs()
+    -> Result<(), String> {
+        // #11253: with no snapshot, a queued or running attempt means the
+        // result is on its way; an idle session keeps "not analyzed yet".
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Running] {
+            backend.set_analysis_attempt_state_for_test(state);
+            assert_eq!(backend.no_evidence_state(), NoEvidenceState::Analyzing);
+            let text = rendered(backend)?;
+            assert!(text.contains("analysis is in progress"), "{text}");
+            assert!(text.contains("will appear"), "{text}");
+            assert!(!text.contains("has not analyzed"), "{text}");
+            assert!(
+                !text.contains("ripr.refresh"),
+                "no action is requested: {text}"
+            );
+        }
+        backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Failed);
+        assert_eq!(backend.no_evidence_state(), NoEvidenceState::NotAnalyzed);
+        let idle = rendered(backend)?;
+        assert!(
+            idle.contains("has not analyzed this workspace yet"),
+            "{idle}"
+        );
+        assert!(!idle.contains("in progress"), "{idle}");
+        Ok(())
+    }
+
+    #[test]
+    fn no_evidence_hover_reports_a_clean_workspace_only_for_no_changed_lines() -> Result<(), String>
+    {
+        // #11253: `no_changed_lines` names the base and says there is nothing
+        // to grade; a snapshot without that outcome keeps the generic text.
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        commit(backend, no_changes_snapshot()?)?;
+        let clean = rendered(backend)?;
+        assert!(
+            clean.contains(
+                "found no changed lines against the base ref `origin/main` at its last analysis"
+            ),
+            "{clean}"
+        );
+        assert!(clean.contains("nothing to grade"), "{clean}");
+        // A committed snapshot outranks an attempt in flight or a failed one;
+        // the statement is scoped to the last analysis.
+        for state in [
+            AnalysisAttemptState::Queued,
+            AnalysisAttemptState::Running,
+            AnalysisAttemptState::Failed,
+        ] {
+            backend.set_analysis_attempt_state_for_test(state);
+            let text = rendered(backend)?;
+            assert!(text.contains("at its last analysis"), "{text}");
+            assert!(!text.contains("in progress"), "{text}");
+        }
+
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        commit(backend, snapshot_fixture()?)?;
+        assert_eq!(backend.no_evidence_state(), NoEvidenceState::Analyzed);
+        assert_eq!(rendered(backend)?, crate::lsp::HOVER_TEXT);
         Ok(())
     }
 

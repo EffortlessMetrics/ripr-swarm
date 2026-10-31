@@ -1409,4 +1409,15 @@ mod tests {
             None
         );
     }
+
+    /// An empty single-quoted root (`--root ''`) is a literal empty word:
+    /// it must decode without panicking on the empty slice range.
+    #[test]
+    fn repair_commands_survive_an_empty_quoted_root() {
+        assert_eq!(
+            root_from_agent_command("ripr agent start --root '' --seam-id s").as_deref(),
+            Some(crate::agent::loop_commands::shell_arg("").as_str())
+        );
+        assert_eq!(decode_shell_word("''").as_deref(), Some(""));
+    }
 }
