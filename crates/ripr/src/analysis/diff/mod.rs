@@ -37,7 +37,9 @@ pub use parse::parse_unified_diff;
 pub(crate) use parse::{
     parse_unified_diff_bounded_scoped, parse_unified_diff_bounded_with_metadata,
 };
+#[cfg(test)]
+pub(crate) use path::diff_path_identity_key_with;
 pub(crate) use path::{
-    artifact_root_gitignore_entry, artifact_root_pathspec, is_ripr_artifact_path_under,
-    ripr_artifact_roots,
+    artifact_root_gitignore_entry, artifact_root_pathspec, diff_path_identity_key,
+    is_ripr_artifact_path_under, ripr_artifact_roots,
 };

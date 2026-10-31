@@ -1477,11 +1477,39 @@ fn find_related_tests_with_candidates<'a>(
         // method call elsewhere in the test must not hide a real formatting
         // reach. The in-package check is explicit because a name-only owner
         // call can pass the package guard below.
+        // One in-package rule for both entry routes (#8999).
+        let test_in_owner_package = match &owner_package_prefix {
+            Some(prefix) => normalize_path(&test.file).starts_with(prefix),
+            // A root-package owner has no prefix. Only a test that is
+            // itself outside every member package (`tests/..`, `src/..`
+            // of the root) shares its package; a workspace member's
+            // test, and any path that cannot be scoped, fails closed.
+            None => {
+                // `package_prefix` reads a later `/tests/` or `/src/` segment
+                // as a package marker, so a root test at `src/tests/mod.rs`
+                // would look like package `src/`. When the discovered
+                // manifests are known, the package is the nearest manifest of
+                // each file (a member under `examples/` or `tests/` has its
+                // own manifest, so it is another package); the path shape is
+                // only the fallback and fails closed.
+                let same_manifest = dependency_edges.and_then(|context| {
+                    let owner = owner_fn?;
+                    Some(
+                        nearest_manifest_identity(context.manifest_dir_prefixes, &test.file)?
+                            == nearest_manifest_identity(
+                                context.manifest_dir_prefixes,
+                                &owner.file,
+                            )?,
+                    )
+                });
+                same_manifest.unwrap_or_else(|| package_prefix(&test.file).is_none())
+                    && !path_is_absolute_form(&test.file)
+                    && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
+            }
+        };
         let dispatches_to_helper_fmt_entry = !calls_helper_entry
             && !property_only_owner_call
-            && owner_package_prefix
-                .as_ref()
-                .is_none_or(|prefix| normalize_path(&test.file).starts_with(prefix))
+            && test_in_owner_package
             && fmt_entry_hops.iter().any(|entry| {
                 Option::as_ref(&entry.context).is_some_and(|context| {
                     fmt_dispatch::test_dispatches_to_fmt(
@@ -1501,18 +1529,6 @@ fn find_related_tests_with_candidates<'a>(
                     index,
                 )
             });
-        let method_entry_in_owner_package = match &owner_package_prefix {
-            Some(prefix) => normalize_path(&test.file).starts_with(prefix),
-            // A root-package owner has no prefix. Only a test that is
-            // itself outside every member package (`tests/..`, `src/..`
-            // of the root) shares its package; a workspace member's
-            // test, and any path that cannot be scoped, fails closed.
-            None => {
-                package_prefix(&test.file).is_none()
-                    && !path_is_absolute_form(&test.file)
-                    && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
-            }
-        };
         // #8999: a plain inherent method entry is judged separately too, on
         // the same in-package terms. The receiver must be bound to the impl's
         // self type by the established receiver rules, and the test must not
@@ -1520,7 +1536,7 @@ fn find_related_tests_with_candidates<'a>(
         let calls_helper_method_entry = !calls_helper_entry
             && !dispatches_to_helper_fmt_entry
             && !property_only_owner_call
-            && method_entry_in_owner_package
+            && test_in_owner_package
             && method_entry_hops.iter().any(|entry| {
                 method_entry_uses_plain_receiver(test, &entry.caller.name, &entry.self_type, index)
                     && entry.identity.binds_inherent_entry_type(test, index)
@@ -1550,7 +1566,7 @@ fn find_related_tests_with_candidates<'a>(
         // mutation test pins on its own (the later cross-package `continue`
         // and the receiver-type check refuse the same test).
         let calls_method_entry = !calls_helper_entry
-            && method_entry_in_owner_package
+            && test_in_owner_package
             && helper_chain.is_some_and(|chain| {
                 super::helper_transfer::test_calls_method_entry(index, test, chain)
             });
@@ -9120,6 +9136,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             "type Names = Vec<u32>;\nimpl Counter for Names {}\n",
             "macro_rules! imp { ($t:ty) => { impl Counter for $t {} }; }\nimp!(Vec<u32>);\n",
             "impl<Item> Counter for Item {}\n",
+            "use crate::Counter as Alias;\nimpl Alias for Vec<u32> {}\n",
         ] {
             assert_eq!(
                 counter_default_fn_relation(body, Vec::new(), suffix),
@@ -9130,6 +9147,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         for suffix in [
             "struct Other;\nimpl Counter for Other {}\n",
             "impl Counter for Unit {}\n",
+            "trait OtherTrait { fn step(&self) -> u32; }\nuse crate::OtherTrait as Alias;\nimpl Alias for Vec<u32> {}\n",
         ] {
             assert_eq!(
                 counter_default_fn_relation(body, Vec::new(), suffix),
@@ -9157,6 +9175,39 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         assert!(rebound("use foo::*;\nfn t() {}", "pub struct Other;"));
         assert!(rebound("use foo::Vec;\nfn t() {}", "pub struct Other;"));
         assert!(rebound("struct Vec;\nfn t() {}", "pub struct Other;"));
+    }
+
+    /// #11236: a `Vec` shadow in a grandparent module still rebinds the std
+    /// name when the test module and its parent only inherit through
+    /// `use super::*;`. A parent that does not use that prelude does not pull
+    /// in the grandparent binding.
+    #[test]
+    fn std_name_rebinding_follows_grandparent_super_glob_chain() {
+        let rebound = |mod_rs: &str, inline_b: &str, module_a: &str| {
+            let mut index =
+                RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex::default());
+            with_source(&mut index, "src/a/b/t.rs", "use super::*;\nfn t() {}");
+            with_source(&mut index, "src/a/b/mod.rs", mod_rs);
+            with_source(&mut index, "src/a/b.rs", inline_b);
+            with_source(&mut index, "src/a.rs", module_a);
+            std_receiver::std_name_rebound_for_tests(&index, "src/a/b/t.rs", "Vec")
+        };
+        assert!(
+            rebound(
+                "use super::*;\n",
+                "use super::*;\npub mod b;",
+                "pub struct Vec;\npub mod b;"
+            ),
+            "grandparent declaration must rebind through chained super globs"
+        );
+        assert!(
+            !rebound(
+                "pub struct Other;\n",
+                "pub mod b;",
+                "pub struct Vec;\npub mod b;"
+            ),
+            "without a super glob on the parent, the grandparent must not rebind"
+        );
     }
 
     /// The relation of the nested out-of-line trait shape for a
