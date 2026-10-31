@@ -797,25 +797,37 @@ impl WorkspaceSession {
         };
         // Bound the in-memory map: transactions bound to an older snapshot can
         // never be served as live again, so evict them (one bounded packet
-        // each, up to 128 KiB) and keep only an attempt_id → snapshot_id
+        // each, up to 128 KiB) and keep only an attempt_id -> snapshot_id
         // tombstone that preserves the typed `superseded` failure.
-        let mut evicted = Vec::new();
-        self.repairs.retain(|id, existing| {
-            if existing.snapshot_id != snapshot_id {
-                evicted.push((id.clone(), existing.snapshot_id.clone()));
-                false
-            } else {
-                true
-            }
-        });
-        self.repairs.insert(attempt_id, transaction);
+        //
+        // Unwind-safe order (#11116): the tombstones are recorded BEFORE the
+        // stale transactions are removed, and the new transaction is inserted
+        // last. A panic at any point between these steps (contained at the
+        // tool boundary, so the session outlives it) leaves every old attempt
+        // reachable as `superseded`: either still in `repairs` under an older
+        // snapshot (read as superseded by the snapshot comparison) or already
+        // tombstoned. Removing first and tombstoning after would turn a
+        // panic in between into `attempt_not_found`.
+        let evicted: Vec<(String, String)> = self
+            .repairs
+            .iter()
+            .filter(|(_, existing)| existing.snapshot_id != snapshot_id)
+            .map(|(id, existing)| (id.clone(), existing.snapshot_id.clone()))
+            .collect();
         for (id, old_snapshot) in evicted {
             self.insert_superseded_tombstone(id, old_snapshot);
         }
+        #[cfg(test)]
+        injected_prepare_panic::fire(root_identity, "after_tombstones");
+        self.repairs
+            .retain(|_, existing| existing.snapshot_id == snapshot_id);
+        #[cfg(test)]
+        injected_prepare_panic::fire(root_identity, "after_eviction");
+        self.repairs.insert(attempt_id, transaction);
         Ok(packet)
     }
 
-    /// Records one evicted transaction's tombstone, keeping the map bounded
+    /// Records one superseded transaction's tombstone, keeping the map bounded
     /// so long sessions cannot grow it without limit (#5254 item 7).
     /// Eviction is oldest-first: the queue holds keys in insertion order,
     /// so a recent supersede is never the one dropped (#6291).
@@ -995,8 +1007,48 @@ fn fix_site_file(item: &GapItem) -> String {
         .unwrap_or_default()
 }
 
+/// Test-only fault injection inside `prepare_repair`, keyed by root identity
+/// and stage so concurrent tests never see each other's arming (#11116).
 #[cfg(test)]
-mod tests {
+pub(super) mod injected_prepare_panic {
+    use std::collections::BTreeSet;
+    use std::sync::Mutex;
+
+    static ARMED: Mutex<BTreeSet<(String, String)>> = Mutex::new(BTreeSet::new());
+
+    /// Disarms on drop.
+    pub(in crate::mcp) struct Armed(String, String);
+
+    impl Drop for Armed {
+        fn drop(&mut self) {
+            if let Ok(mut armed) = ARMED.lock() {
+                armed.remove(&(self.0.clone(), self.1.clone()));
+            }
+        }
+    }
+
+    pub(in crate::mcp) fn arm(root_identity: &str, stage: &str) -> Armed {
+        if let Ok(mut armed) = ARMED.lock() {
+            armed.insert((root_identity.to_string(), stage.to_string()));
+        }
+        Armed(root_identity.to_string(), stage.to_string())
+    }
+
+    pub(super) fn fire(root_identity: Option<&str>, stage: &str) {
+        let due = root_identity.is_some_and(|identity| {
+            ARMED
+                .lock()
+                .map(|armed| armed.contains(&(identity.to_string(), stage.to_string())))
+                .unwrap_or(false)
+        });
+        if due {
+            std::panic::resume_unwind(Box::new("injected prepare_repair panic (#11116)"));
+        }
+    }
+}
+
+#[cfg(test)]
+pub(super) mod tests {
     use super::super::workspace::CODE_STALE_SNAPSHOT;
     use super::*;
     use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind};
@@ -1043,7 +1095,7 @@ mod tests {
         })
     }
 
-    fn session_with(
+    pub(in crate::mcp) fn session_with(
         findings: &[crate::domain::Finding],
         root_identity: &str,
     ) -> Result<WorkspaceSession, String> {

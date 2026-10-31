@@ -2441,10 +2441,19 @@ fn repair_two_items_requires_explicit_selection() -> Result<(), String> {
     let remote = run_ripr(&elsewhere.root, &["repair", "--root", &root_arg])?;
     let remote_stderr = stderr_text(&remote);
     for seam in [FIXTURE_SEAM, SECOND_SEAM] {
+        // Printed commands render the root with host separators (`/` on
+        // Windows) and quote it when it needs quoting.
+        let printed_root = if cfg!(windows) {
+            root_arg.replace('\\', "/")
+        } else {
+            root_arg.clone()
+        };
         assert!(
             remote_stderr.lines().any(|line| {
                 line.contains(&format!("ripr repair {seam} --root "))
-                    && line.contains(root_arg.as_str())
+                    && line
+                        .replace(['"', '\''], "")
+                        .contains(printed_root.as_str())
             }),
             "candidate {seam} must carry the bound root:\n{remote_stderr}"
         );

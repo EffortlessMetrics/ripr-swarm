@@ -1,0 +1,13 @@
+pub fn undeclared_base() -> u32 {
+    14
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn undeclared_base_is_14() {
+        assert_eq!(undeclared_base(), 14);
+    }
+}
