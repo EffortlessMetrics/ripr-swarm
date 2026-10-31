@@ -337,8 +337,13 @@ mod tests {
             .find(|function| function.name == "next");
         assert!(owner.is_some(), "the Iterator impl must be indexed");
         let Some(owner) = owner else { return false };
-        let Some(iterator) = iterator_owner(owner, &index) else {
-            panic!("the fixture owner must read as a standard Iterator impl");
+        let iterator = iterator_owner(owner, &index);
+        assert!(
+            iterator.is_some(),
+            "the fixture owner must read as a standard Iterator impl"
+        );
+        let Some(iterator) = iterator else {
+            return false;
         };
         test_drives_owner(index.tests().at(0), owner, &iterator, Some(source), &index)
     }

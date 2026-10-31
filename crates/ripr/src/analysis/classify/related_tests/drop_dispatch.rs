@@ -504,9 +504,12 @@ mod tests {
             .find(|function| function.name == "drop");
         assert!(owner.is_some(), "the Drop impl must be indexed");
         let Some(owner) = owner else { return false };
-        let Some(drop) = drop_owner(owner, &index) else {
-            panic!("the fixture owner must read as a standard Drop impl");
-        };
+        let drop = drop_owner(owner, &index);
+        assert!(
+            drop.is_some(),
+            "the fixture owner must read as a standard Drop impl"
+        );
+        let Some(drop) = drop else { return false };
         test_drops_owner_value(index.tests().at(0), owner, &drop, Some(source), &index)
     }
 
