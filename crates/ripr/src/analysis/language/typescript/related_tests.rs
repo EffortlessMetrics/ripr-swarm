@@ -5066,11 +5066,16 @@ pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> Body
     let scopes = walk_body_lexical(body_text, |event| match event {
         BodyWalkEvent::DeclarationLine {
             line,
-            name_start,
+            line_start,
             scope,
         } => {
-            if declaration_line_declares_identifier(line, identifier) {
-                declarations.push(BodyDeclaration { name_start, scope });
+            for (name, offset) in declaration_line_declarators(line) {
+                if name == identifier {
+                    declarations.push(BodyDeclaration {
+                        name_start: line_start + offset,
+                        scope,
+                    });
+                }
             }
         }
         BodyWalkEvent::CodePosition { idx } => {
@@ -5103,11 +5108,14 @@ pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> Body
 
 /// An identifier-independent event from [`walk_body_lexical`].
 pub(super) enum BodyWalkEvent<'a> {
-    /// A line-leading `const|let|var|function` declaration line.
-    /// `name_start` is the first non-blank offset after the keyword.
+    /// A `const|let|var|function` declaration starting a statement (a line
+    /// start, or the first token after `{`, `}`, `;` or a multi-line comment).
+    /// A declaration whose line ends in a top-level comma carries the
+    /// continued declarators on the following lines.
     DeclarationLine {
         line: &'a str,
-        name_start: usize,
+        /// Byte offset of `line` within the walked body.
+        line_start: usize,
         scope: Option<usize>,
     },
     /// A byte offset the walk visited in plain code (not a comment, string
@@ -5133,7 +5141,7 @@ pub(super) fn walk_body_lexical<'a>(
     // Depths whose closing `}` returns the walk from a template
     // interpolation (which opened a pseudo-scope) to its template literal.
     let mut interpolation_returns: Vec<usize> = Vec::new();
-    let mut at_line_start = true;
+    let mut at_declaration_start = true;
     let mut escaped = false;
     let mut pending_dollar = false;
     let mut block_comment_has_newline = false;
@@ -5153,11 +5161,11 @@ pub(super) fn walk_body_lexical<'a>(
                     // Unterminated string: recover instead of mis-scoping the
                     // remainder of the body.
                     state = BodyScanState::Code;
-                    at_line_start = true;
+                    at_declaration_start = true;
                 }
                 BodyScanState::BlockComment => block_comment_has_newline = true,
                 BodyScanState::Template => pending_dollar = false,
-                BodyScanState::Code => at_line_start = true,
+                BodyScanState::Code => at_declaration_start = true,
             }
             continue;
         }
@@ -5172,7 +5180,7 @@ pub(super) fn walk_body_lexical<'a>(
                 '{' => {
                     scopes.push((idx, usize::MAX));
                     open_scopes.push(scopes.len() - 1);
-                    at_line_start = false;
+                    at_declaration_start = true;
                 }
                 '}' => {
                     if interpolation_returns.last() == Some(&open_scopes.len()) {
@@ -5183,62 +5191,53 @@ pub(super) fn walk_body_lexical<'a>(
                     } else if let Some(frame) = open_scopes.pop() {
                         scopes[frame].1 = idx;
                     }
-                    at_line_start = false;
+                    at_declaration_start = true;
                 }
+                ';' => at_declaration_start = true,
                 _ => {
-                    if at_line_start
-                        && let Some(keyword) = ["const ", "let ", "var ", "function "]
+                    if at_declaration_start
+                        && ["const ", "let ", "var ", "function "]
                             .into_iter()
-                            .find(|keyword| body_text[idx..].starts_with(*keyword))
+                            .any(|keyword| body_text[idx..].starts_with(keyword))
                     {
-                        let line_end = body_text[idx..]
-                            .find('\n')
-                            .map_or(body_text.len(), |relative| idx + relative);
-                        // Skip the declaration's own name token when
-                        // collecting uses (leading whitespace after the
-                        // keyword included).
-                        let name_start = body_text[idx + keyword.len()..]
-                            .char_indices()
-                            .find(|(_, ch)| !ch.is_whitespace())
-                            .map_or(idx + keyword.len(), |(relative, _)| {
-                                idx + keyword.len() + relative
-                            });
+                        let line_end = declaration_extent_end(body_text, idx);
                         visit(BodyWalkEvent::DeclarationLine {
                             line: &body_text[idx..line_end],
-                            name_start,
+                            line_start: idx,
                             scope: open_scopes.last().copied(),
                         });
                     }
                     visit(BodyWalkEvent::CodePosition { idx });
-                    at_line_start = false;
+                    at_declaration_start = false;
                 }
             },
             BodyScanState::LineComment => {}
             BodyScanState::BlockComment => {
                 if ch == '*' && body_text[idx + 1..].starts_with('/') {
-                    // A multi-line comment counts as a statement break for the
-                    // line-start check (ASI), so a declaration following it is
-                    // still recognized as leading its line.
+                    // Preserve a preceding statement boundary and recognize
+                    // a declaration following a multiline comment (ASI).
                     state = BodyScanState::Code;
-                    at_line_start = block_comment_has_newline;
+                    escaped = true; // Consume the closing slash too.
+                    at_declaration_start |= block_comment_has_newline;
+                    block_comment_has_newline = false;
                 }
             }
             BodyScanState::SingleQuoted => {
                 if ch == '\'' {
                     state = BodyScanState::Code;
-                    at_line_start = false;
+                    at_declaration_start = false;
                 }
             }
             BodyScanState::DoubleQuoted => {
                 if ch == '"' {
                     state = BodyScanState::Code;
-                    at_line_start = false;
+                    at_declaration_start = false;
                 }
             }
             BodyScanState::Template => {
                 if ch == '`' {
                     state = BodyScanState::Code;
-                    at_line_start = false;
+                    at_declaration_start = false;
                     pending_dollar = false;
                 } else if ch == '$' {
                     pending_dollar = true;
@@ -5257,15 +5256,39 @@ pub(super) fn walk_body_lexical<'a>(
     scopes
 }
 
-fn declaration_line_declares_identifier(line: &str, identifier: &str) -> bool {
-    declaration_line_declared_names(line).contains(&identifier)
+/// End of the declaration starting at `idx`: its line, continued over the
+/// following lines while the (masked) line ends in a top-level comma, because
+/// `const unused = 0,\n  total = () => 30;` declares `total` on a later line.
+fn declaration_extent_end(body_text: &str, idx: usize) -> usize {
+    let mut end = body_text[idx..]
+        .find('\n')
+        .map_or(body_text.len(), |relative| idx + relative);
+    while end < body_text.len() {
+        let masked = super::classifier::ts_mask_literals_and_comments(&body_text[idx..end]);
+        if !masked.trim_end().ends_with(',') {
+            break;
+        }
+        // The cut sits on the newline; the next line ends at its own newline.
+        end = body_text[end + 1..]
+            .find('\n')
+            .map_or(body_text.len(), |relative| end + 1 + relative);
+    }
+    end
 }
 
-/// Every name a declaration line declares through a PLAIN declarator;
+fn declaration_line_declares_identifier(line: &str, identifier: &str) -> bool {
+    declaration_line_declarators(line)
+        .iter()
+        .any(|(name, _)| *name == identifier)
+}
+
+/// Every name a declaration declares through a PLAIN declarator, with the byte
+/// offset of the declarator's name within `line`.
 /// `declaration_line_declares_identifier` is membership in this list, and the
 /// per-body shadow index (#10925) reads it once per line instead of once per
-/// candidate identifier.
-pub(super) fn declaration_line_declared_names(line: &str) -> Vec<&str> {
+/// candidate identifier. The offset keeps a declarator's own name from
+/// counting as a use of itself, including a non-first declarator.
+pub(super) fn declaration_line_declarators(line: &str) -> Vec<(&str, usize)> {
     // #7507: every PLAIN declarator of the list counts, not just the first:
     // `const x = 1, cost = (a) => 140` rebinds `cost` exactly like a
     // single-declarator `const cost = ...`. Destructuring patterns
@@ -5277,38 +5300,65 @@ pub(super) fn declaration_line_declared_names(line: &str) -> Vec<&str> {
     // would collapse an owner-module-anchored destructure into a shadow.
     ["const ", "let ", "var ", "function "]
         .into_iter()
-        .filter_map(|keyword| line.strip_prefix(keyword))
-        .flat_map(|after| {
+        .filter_map(|keyword| line.strip_prefix(keyword).map(|after| (keyword, after)))
+        .flat_map(|(keyword, after)| {
             // A pattern-led declaration (`{ cost } = ...`, `[cost] = ...`)
             // belongs to the source-aware destructure checks, not here.
             if after.trim_start().starts_with(['{', '[']) {
                 return Vec::new();
             }
+            // A declaration ends at its first top-level semicolon: a comma in
+            // the next statement on the same line declares nothing here.
+            let after = &after[..top_level_semicolon(after)];
+            // Comments are blanked so a `// note` between continued declarators
+            // is never read as a name; the masking keeps byte offsets.
+            let masked = super::classifier::ts_mask_literals_and_comments(after);
+            if masked.len() != after.len() {
+                return Vec::new();
+            }
             split_top_level_declarators(after)
                 .into_iter()
                 .filter_map(|declarator| {
+                    // `declarator` is a subslice of `after`.
+                    let start = declarator.as_ptr() as usize - after.as_ptr() as usize;
+                    let code = masked.get(start..start + declarator.len())?;
                     // A declarator whose own pattern opens a destructuring
                     // (`x = 1, { cost } = h`) is source-aware too; only a
                     // plain leading identifier counts here. Cut at `(` as
                     // well so a `function price(a) {` declarator is not
                     // mistaken for a destructuring because of its body brace.
-                    let pattern = declarator
-                        .split(['=', ':', '('])
-                        .next()
-                        .unwrap_or("")
-                        .trim();
+                    let pattern = code.split(['=', ':', '(']).next().unwrap_or("").trim();
                     if pattern.starts_with(['{', '[']) {
                         return None;
                     }
-                    declarator
-                        .split(|ch: char| {
-                            ch == ':' || ch == '=' || ch == '(' || ch == ';' || ch.is_whitespace()
-                        })
-                        .find(|part| !part.is_empty())
+                    let is_separator = |ch: char| {
+                        ch == ':' || ch == '=' || ch == '(' || ch == ';' || ch.is_whitespace()
+                    };
+                    let name_start = code.find(|ch: char| !is_separator(ch))?;
+                    let name_len = code[name_start..]
+                        .find(is_separator)
+                        .unwrap_or(code.len() - name_start);
+                    let name = declarator.get(name_start..name_start + name_len)?;
+                    Some((name, keyword.len() + start + name_start))
                 })
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// Byte offset of the first top-level `;` in `after`, or its length.
+fn top_level_semicolon(after: &str) -> usize {
+    let masked = super::classifier::ts_mask_literals_and_comments(after);
+    let mut depth = 0usize;
+    for (offset, ch) in masked.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ';' if depth == 0 => return offset,
+            _ => {}
+        }
+    }
+    after.len()
 }
 
 /// Split a `const|let|var` declaration remainder (`x = 1, cost = f, ...`)
