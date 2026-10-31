@@ -10,6 +10,15 @@ pub(crate) struct InitOptions {
     pub(crate) force: bool,
     pub(crate) ci: Option<InitCi>,
     pub(crate) mcp: bool,
+    /// Agent instruction files requested with `--agents`, deduplicated in
+    /// request order.
+    pub(crate) agents: Vec<InitAgent>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InitAgent {
+    Claude,
+    Codex,
+    Cursor,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum InitCi {

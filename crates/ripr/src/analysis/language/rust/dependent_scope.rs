@@ -88,7 +88,7 @@ fn most_recent_or_build<K: PartialEq, V>(
     }
     match cache.last() {
         Some((_, value)) => Ok(value),
-        None => Err("reach index cache holds no entry after insertion".to_string()),
+        None => Err("reach index cache holds no entry after insertion; report this as a ripr bug with the command and workspace shape".to_string()),
     }
 }
 

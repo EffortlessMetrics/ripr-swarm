@@ -3064,6 +3064,31 @@ mod tests {
     }
 
     #[test]
+    fn caller_walk_follows_cross_module_qualified_calls_to_a_free_owner() -> Result<(), String> {
+        // #6296: `crate::m1::f1(x)` and `super::m1::f1(x)` reach the changed
+        // owner exactly like an imported bare `f1(x)`.
+        let source = "mod m1 { pub fn f1(x: i32) -> i32 { x + 1 } }\n\
+            mod m0 {\n\
+                use crate::m1::f1;\n\
+                pub fn imported(x: i32) -> i32 { f1(x) }\n\
+                pub fn via_crate(x: i32) -> i32 { crate::m1::f1(x) }\n\
+                pub fn via_super(x: i32) -> i32 { super::m1::f1(x) }\n\
+                pub fn foreign_root(x: i32) -> i32 { std::m1::f1(x) }\n\
+                pub fn type_qualified(x: i32) -> i32 { Other::f1(x) }\n\
+                pub fn unrelated(x: i32) -> i32 { x }\n\
+            }\n\
+            pub fn api(x: i32) -> i32 { m0::via_crate(x) }\n";
+        assert_eq!(
+            caller_names_for(source, "f1")?,
+            ["api", "imported", "via_crate", "via_super"],
+            "module-qualified calls reach the owner like the imported form, and \
+             chain on to the public API; a std-rooted path, a type-qualified \
+             `Other::f1` and a non-caller do not"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn caller_walk_names_a_free_owner_by_bare_or_module_path_only() -> Result<(), String> {
         let source = "pub fn tax(subtotal: i64) -> i64 { subtotal * 8 / 100 }\n\
             pub fn reference(subtotal: i64) -> i64 { tax(subtotal) }\n\
