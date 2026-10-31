@@ -89,3 +89,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (8)
+
+Reason:
+RIPR-SPEC-0197: #10046 leaves the wrong-module rival call unresolved, so the predicate reads infection_unknown with the return-value weak limitation retained; check.json still pinned the pre-change weak-transitive reading while the corpus pins infection_unknown; human surfaces re-blessed for the plain-wording render with 2 findings retained
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
