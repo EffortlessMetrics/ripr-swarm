@@ -568,8 +568,14 @@ fn newly_discovered_foreign_write_changes_strong_producer_result() -> Result<(),
     Ok(())
 }
 
+/// Pins the honest fail-closed state until a producer-owned corpus authority
+/// lands (#7452). A fresh, current strong check is useful evidence but cannot
+/// yet support a current no-action conclusion: discovery membership and the
+/// producer's dependency/config decisions have no verifiable authority. When
+/// #7452 delivers that authority, flip these assertions to expect
+/// `no_actionable_gap` for this same fixture.
 #[test]
-fn current_strong_check_can_produce_no_action() -> Result<(), String> {
+fn current_strong_check_stays_limited_until_corpus_authority() -> Result<(), String> {
     let root = fixture()?;
     fs::write(root.join("tests/test_calculator.py"), STRONG).map_err(|e| e.to_string())?;
     let produced = check(&root)?;
@@ -586,8 +592,13 @@ fn current_strong_check_can_produce_no_action() -> Result<(), String> {
         &root.join("target/current-strong"),
         &root.join("target/current-strong-ledger.json"),
     )?;
-    assert_eq!(
+    assert_eq!(packet["status"], "blocked", "{packet}");
+    assert_ne!(
         packet["selected"]["output_state"], "no_actionable_gap",
+        "{packet}"
+    );
+    assert_eq!(
+        packet["selected"]["reason_code"], "source_currentness_unavailable",
         "{packet}"
     );
     fs::remove_dir_all(root).map_err(|e| e.to_string())?;
