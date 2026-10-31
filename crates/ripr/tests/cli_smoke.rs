@@ -17995,19 +17995,33 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         root.join("target/ripr/pilot/agent-seam-packets.json"),
     )?)?;
     assert_eq!(both_packets["run_status"], "seam_limit_applied");
-    assert_eq!(
-        both_packets["limitations"],
-        serde_json::json!([{
-            "category": "pilot_seam_budget_applied",
-            "seams_analyzed": 1,
-            "seams_total": 2,
-            "limit_source": "configured",
-            "control": "RIPR_PILOT_SEAM_BUDGET",
-            "repair_route": "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.",
-        }]),
-        "{both_packets}"
-    );
+    for artifact in [&both, &both_packets] {
+        let limits = artifact["limitations"]
+            .as_array()
+            .ok_or("missing limitations")?;
+        assert_eq!(limits.len(), 2, "{artifact}");
+        assert_eq!(limits[0]["category"], "pilot_seam_budget_applied");
+        assert_eq!(limits[0]["seams_analyzed"], 1);
+        assert_eq!(limits[0]["seams_total"], full_total);
+        assert_eq!(limits[0]["control"], "RIPR_PILOT_SEAM_BUDGET");
+        assert_eq!(limits[1]["category"], "repo_seam_limit_applied");
+        assert_eq!(limits[1]["seams_analyzed"], 2);
+        assert_eq!(limits[1]["seams_total"], full_total);
+        assert_eq!(limits[1]["control"], "RIPR_REPO_EXPOSURE_SEAM_LIMIT");
+        assert!(
+            limits[1]["repair_route"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT")
+        );
+    }
     assert_eq!(packet_count(&both_packets)?, packet_count(&packets)?);
+    let both_md = std::fs::read_to_string(root.join("target/ripr/pilot/repo-exposure.md"))?;
+    assert!(both_md.contains("RIPR_PILOT_SEAM_BUDGET"), "{both_md}");
+    assert!(
+        both_md.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"),
+        "{both_md}"
+    );
 
     // A configured pilot budget that did not fire must not relabel an inventory cut.
     assert!(
@@ -18273,6 +18287,71 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     Ok(())
 }
 
+#[test]
+fn pilot_dual_caps_with_no_actionable_seams_are_not_clean() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = unique_temp_workspace("pilot-dual-cap-no-actionable");
+    std::fs::create_dir_all(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let source = r#"pub fn a(x: i32) -> i32 { if x > 10 { 1 } else { 0 } }
+pub fn b(x: i32) -> i32 { if x > 10 { 1 } else { 0 } }
+pub fn c(x: i32) -> i32 { if x > 10 { 1 } else { 0 } }
+#[cfg(test)] mod tests {
+use super::*;
+#[test] fn test_a() { assert_eq!(a(9),0);
+assert_eq!(a(10),0);
+assert_eq!(a(11),1); }
+#[test] fn test_b() { assert_eq!(b(9),0);
+assert_eq!(b(10),0);
+assert_eq!(b(11),1); }
+#[test] fn test_c() { assert_eq!(c(9),0);
+assert_eq!(c(10),0);
+assert_eq!(c(11),1); }
+}
+"#;
+    std::fs::write(root.join("src/lib.rs"), source)?;
+    run_git(&root, &["rm", "tests/pricing.rs"])?;
+    commit_repair_fixture(&root, &["-qam", "strongly gripped fixture"])?;
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[
+            ("RIPR_PILOT_SEAM_BUDGET", "1"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "2"),
+        ],
+    )?;
+    assert_success(&output);
+    let summary: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/pilot-summary.json"),
+    )?)?;
+    assert_eq!(summary["actionable_seams_total"], 0, "{summary}");
+    assert_eq!(
+        summary["actionable_seams_total_is_lower_bound"], true,
+        "{summary}"
+    );
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("2 of 3 were not checked"), "{stdout}");
+    for name in ["repo-exposure.json", "agent-seam-packets.json"] {
+        let artifact: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+            root.join("target/ripr/pilot").join(name),
+        )?)?;
+        assert_eq!(artifact["run_status"], "seam_limit_applied", "{artifact}");
+        assert_eq!(
+            artifact["limitations"].as_array().map(Vec::len),
+            Some(2),
+            "{artifact}"
+        );
+        assert_eq!(artifact["limitations"][0]["seams_total"], 3, "{artifact}");
+        assert_eq!(
+            artifact["limitations"][1]["control"], "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+            "{artifact}"
+        );
+    }
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 /// #10726: the built-in inventory cap follows the pilot artifact budget, so
 /// pilot stops classifying seams it would only discard. The ranking and the
 /// disclosure must not move: with the inventory env var unset (bounded by the
@@ -18289,7 +18368,7 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
     init_producer_fixture_repo(&root)?;
     let mut lib = std::fs::read_to_string(root.join("src/lib.rs"))?;
     lib.push_str(
-        "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n\npub fn handling_fee(items: i32) -> i32 {\n    if items > 3 { 2 } else { 0 }\n}\n",
+        "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n\npub fn packing_fee(items: i32) -> i32 {\n    if items > 8 { 3 } else { 0 }\n}\n\npub fn handling_fee(items: i32) -> i32 {\n    if items > 3 { 2 } else { 0 }\n}\n",
     );
     std::fs::write(root.join("src/lib.rs"), lib)?;
     commit_repair_fixture(&root, &["-qam", "expanded pilot fixture"])?;
@@ -18401,6 +18480,22 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
     // not the pilot-scoped default of 1), so the run still discloses the
     // whole inventory as its total.
     let explicit = run(Some("2"))?;
+    assert_eq!(seam_ids(&explicit.0), seam_ids(&full.0));
+    assert!(
+        explicit.0["seams"]
+            .as_array()
+            .is_some_and(|seams| seams.iter().any(|seam| seam["owner"]
+                .as_str()
+                .is_some_and(|owner| owner.contains("handling_fee"))))
+    );
+    let limits = explicit.0["limitations"]
+        .as_array()
+        .ok_or("missing dual limitations")?;
+    assert_eq!(limits.len(), 2, "{}", explicit.0);
+    assert_eq!(limits[0]["seams_total"], total);
+    assert_eq!(limits[0]["control"], "RIPR_PILOT_SEAM_BUDGET");
+    assert_eq!(limits[1]["seams_total"], total);
+    assert_eq!(limits[1]["control"], "RIPR_REPO_EXPOSURE_SEAM_LIMIT");
     assert_eq!(
         explicit.1["seam_limit"]["total"], default.1["seam_limit"]["total"],
         "{}",
