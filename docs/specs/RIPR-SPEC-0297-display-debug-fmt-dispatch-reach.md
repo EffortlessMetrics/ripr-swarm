@@ -216,8 +216,8 @@ because both go through `test_dispatches_to_fmt`.
   `m.to_string();`, an unknown condition, the `else` of a literal `if false`,
   a called closure and a called nested fn; negative for a literal `if false`
   or `while false` block, `#[cfg(any())]`, code after `return`, a never-called
-  closure and a never-called nested fn
-  (`crates/ripr/tests/fmt_dispatch_live_reach.rs`).
+  closure and a never-called nested fn, on the direct route and on the
+  helper-entry route (`crates/ripr/tests/fmt_dispatch_live_reach.rs`).
 - Helper entry (#8999): positive for `to_string()` in a multi-line
   `assert_eq!` on an annotated or struct-literal receiver; negative for an
   unproven factory receiver (positive for an indexed `Self`-returning inherent constructor), another type, the other trait, a doubly declared

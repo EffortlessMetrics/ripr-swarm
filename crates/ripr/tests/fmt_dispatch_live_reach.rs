@@ -38,31 +38,94 @@ mod tests {{
     )
 }
 
-/// The `fmt` line's finding, with the names of the tests it relates by
-/// `direct_owner_call`.
+const HELPER_OLD: &str = "    n + 1";
+const HELPER_NEW: &str = "    n + 2";
+
+/// The changed line of the helper-entry fixture: `fmt` only calls `bump`.
+fn helper_source(tests: &str) -> String {
+    format!(
+        "use std::fmt;
+
+pub struct Merge {{
+    n: u32,
+}}
+
+fn bump(n: u32) -> u32 {{
+{HELPER_NEW}
+}}
+
+impl fmt::Display for Merge {{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {{
+        write!(f, \"merge-{{}}\", bump(self.n))
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+{tests}}}
+"
+    )
+}
+
+#[derive(Clone, Copy)]
+enum Route {
+    /// The changed line is in `fmt`; a test relates as `direct_owner_call`.
+    Direct,
+    /// The changed line is in `bump`, called only by `fmt`; a test relates as
+    /// `helper_owner_call` through the helper-entry route.
+    Helper,
+}
+
+/// The changed line's finding, with the names of the tests it relates to by
+/// the route's relation reason.
 fn related(tests: &str) -> Result<Vec<String>, String> {
+    related_via(Route::Direct, tests)
+}
+
+fn helper_related(tests: &str) -> Result<Vec<String>, String> {
+    related_via(Route::Helper, tests)
+}
+
+fn related_via(route: Route, tests: &str) -> Result<Vec<String>, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "ripr-fmt-live-{}-{}",
         std::process::id(),
         SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ));
-    let result = related_in(&root, tests);
+    let result = related_in(&root, route, tests);
     let _ = std::fs::remove_dir_all(&root);
     result
 }
 
-fn related_in(root: &Path, tests: &str) -> Result<Vec<String>, String> {
+fn related_in(root: &Path, route: Route, tests: &str) -> Result<Vec<String>, String> {
     std::fs::create_dir_all(root.join("src")).map_err(|error| format!("mkdir failed: {error}"))?;
     std::fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"merged\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
     )
     .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
-    let lib = source(tests);
+    let (lib, old_line, new_line, reason, owner) = match route {
+        Route::Direct => (
+            source(tests),
+            OLD_LINE,
+            NEW_LINE,
+            RelationReason::DirectOwnerCall,
+            "::fmt",
+        ),
+        Route::Helper => (
+            helper_source(tests),
+            HELPER_OLD,
+            HELPER_NEW,
+            RelationReason::HelperOwnerCall,
+            "::bump",
+        ),
+    };
     let line = lib
         .lines()
-        .position(|line| line == NEW_LINE)
+        .position(|line| line == new_line)
         .map(|index| index + 1)
         .ok_or("premise: the changed fmt line is in the source")?;
     std::fs::write(root.join("src/lib.rs"), &lib)
@@ -75,8 +138,8 @@ index 1111111..2222222 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -{line},1 +{line},1 @@
--{OLD_LINE}
-+{NEW_LINE}
+-{old_line}
++{new_line}
 "
         ),
     )
@@ -93,7 +156,14 @@ index 1111111..2222222 100644
     let findings: Vec<Finding> = output
         .findings
         .into_iter()
-        .filter(|finding| finding.probe.location.line == line)
+        .filter(|finding| {
+            finding.probe.location.line == line
+                && finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .is_some_and(|found| found.0.ends_with(owner))
+        })
         .collect();
     if findings.is_empty() {
         return Err("premise: the changed fmt line yields a finding".to_string());
@@ -109,7 +179,7 @@ index 1111111..2222222 100644
             finding
                 .related_tests
                 .iter()
-                .filter(|test| test.relation_reason == Some(RelationReason::DirectOwnerCall))
+                .filter(|test| test.relation_reason == Some(reason))
                 .map(|test| test.name.clone()),
         );
     }
@@ -258,5 +328,50 @@ fn formatting_that_cannot_run_is_not_reach() -> Result<(), String> {
     );
     // The straight-line control proves the fixture reaches fmt at all.
     assert_eq!(related(&tests)?, ["straight"]);
+    Ok(())
+}
+
+#[test]
+fn the_helper_entry_route_reads_only_live_code_too() -> Result<(), String> {
+    // `bump` is called only by `Display::fmt`. A test reaches it by formatting
+    // a `Merge` it can run; the same formatting in a dead region does not.
+    let tests = format!(
+        "{STRAIGHT}
+    #[test]
+    fn dropped_statement() {{
+        let m = Merge {{ n: 1 }};
+        m.to_string();
+    }}
+
+    #[test]
+    fn if_false() {{
+        let m = Merge {{ n: 1 }};
+        if false {{
+            assert_eq!(m.to_string(), \"merge-3\");
+        }}
+    }}
+
+    #[test]
+    fn never_called_closure() {{
+        let m = Merge {{ n: 1 }};
+        let _f = || m.to_string();
+    }}
+
+    #[test]
+    fn after_return() {{
+        let m = Merge {{ n: 1 }};
+        return;
+        #[allow(unreachable_code)]
+        {{
+            m.to_string();
+        }}
+    }}
+"
+    );
+    assert_eq!(
+        helper_related(&tests)?,
+        ["dropped_statement", "straight"],
+        "live formatting reaches the helper; dead formatting does not"
+    );
     Ok(())
 }

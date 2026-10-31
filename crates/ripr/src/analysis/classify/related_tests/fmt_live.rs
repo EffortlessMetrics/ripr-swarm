@@ -236,7 +236,7 @@ fn at_item_position(bytes: &[u8], at: usize) -> bool {
 /// What ends the header of the item at `at`.
 enum ItemBody {
     Open(usize),
-    Semicolon,
+    Semicolon(usize),
     Missing,
 }
 
@@ -250,7 +250,7 @@ fn item_body(bytes: &[u8], at: usize) -> ItemBody {
         match bytes[index] {
             b'(' | b'[' => depth += 1,
             b')' | b']' => depth = depth.saturating_sub(1),
-            b';' if depth == 0 => return ItemBody::Semicolon,
+            b';' if depth == 0 => return ItemBody::Semicolon(index),
             b'{' if depth == 0 => {
                 let const_argument = prev_non_ws(bytes, index)
                     .is_some_and(|prev| matches!(bytes[prev], b'<' | b',' | b'='));
@@ -290,7 +290,7 @@ fn container_bodies(bytes: &[u8]) -> Vec<(usize, usize)> {
                 ranges.push((at, close_of(bytes, open).unwrap_or(bytes.len())));
             }
             ItemBody::Missing => ranges.push((at, bytes.len())),
-            ItemBody::Semicolon => {}
+            ItemBody::Semicolon(_) => {}
         }
     }
     ranges
@@ -419,7 +419,12 @@ fn outer_scope(bytes: &[u8]) -> Scope {
             wrapper: Some(at),
             ..plain
         },
-        _ => plain,
+        // The text starts with a fn but has more after it (a trailing item on
+        // the closing line): which fn is the test is unknown.
+        _ => Scope {
+            unrecognised_header: true,
+            ..plain
+        },
     }
 }
 
@@ -513,19 +518,13 @@ fn item_end(bytes: &[u8], at: usize, keyword: &str, limit: usize) -> usize {
     if matches!(keyword, "use" | "const" | "static" | "type") {
         return statement_end(bytes, at, true).map_or(limit, |end| end.min(limit));
     }
-    let mut depth = 0usize;
-    for index in at..limit {
-        match bytes[index] {
-            b'(' | b'[' => depth += 1,
-            b')' | b']' => depth = depth.saturating_sub(1),
-            b';' if depth == 0 => return index + 1,
-            b'{' if depth == 0 => {
-                return close_of(bytes, index).map_or(limit, |end| end.min(limit));
-            }
-            _ => {}
-        }
+    // The same header scan as `item_body`, so a const generic brace
+    // (`G<{ N }>`, `-> Foo<{ 3 }>`) is not taken for the body.
+    match item_body(bytes, at) {
+        ItemBody::Open(open) => close_of(bytes, open).map_or(limit, |end| end.min(limit)),
+        ItemBody::Semicolon(index) => (index + 1).min(limit),
+        ItemBody::Missing => limit,
     }
-    limit
 }
 
 /// Marks `from..limit` dead except the items declared in it.
@@ -737,6 +736,28 @@ mod tests {
             out.contains("struct S") && !out.contains("b.to_string"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn hoisted_items_with_const_generic_braces_after_a_return_stay_live() {
+        for body in [
+            "a(); return; impl Drop for G<{ N }> { fn drop(&mut self) { m.to_string(); } }",
+            "let s = h(); return; fn h() -> Foo<{ 3 }> { m.to_string() }",
+            "a(); return; impl<const N: usize> Tr<{ N }, [u8; 2]> for G { fn go(&self) { m.to_string(); } }",
+        ] {
+            assert_eq!(live(body), body, "{body}");
+        }
+        let out = live("a(); return; b.to_string(); impl Foo<{ 1 }> for G {}");
+        assert!(
+            out.contains("impl Foo") && !out.contains("b.to_string"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn trailing_items_after_the_test_fn_judge_no_nested_fn() {
+        let body = "#[test] fn t() { m.to_string(); } fn other() { c.to_string(); }";
+        assert_eq!(live(body), body);
     }
 
     #[test]
