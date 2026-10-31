@@ -102,17 +102,31 @@ pub(super) fn build(args: &[&str]) -> Result<(), String> {
 /// stays a plain `cargo build -p ripr ...` so native-lock observers keep
 /// matching the child's command line, while the artifacts land outside the
 /// shared target the running suite executes from.
-pub(super) fn build_in_target_dir(args: &[&str], target_dir: &Path) -> Result<(), String> {
+pub(super) fn build_perl_variant(target_dir: &Path) -> Result<(), String> {
+    let environment = proxy_environment(environment()?, offline_mode(false));
+    build_perl_variant_with(target_dir, &environment, &|program, args, envs| {
+        crate::run::run_with_envs(program, args, envs).map(|_| ())
+    })
+}
+
+fn build_perl_variant_with(
+    target_dir: &Path,
+    environment: &[(&str, String)],
+    run: &dyn Fn(&str, &[&str], &[(&str, &str)]) -> Result<(), String>,
+) -> Result<(), String> {
     let dir = target_dir.to_str().ok_or_else(|| {
         format!(
             "fixture variant target dir must be UTF-8: {}",
             target_dir.display()
         )
     })?;
-    let environment = proxy_environment(environment()?, offline_mode(args.contains(&"--offline")));
     let mut envs: Vec<(&str, &str)> = environment.iter().map(|(k, v)| (*k, v.as_str())).collect();
     envs.push(("CARGO_TARGET_DIR", dir));
-    crate::run::run_with_envs("cargo", args, &envs).map(|_| ())
+    run(
+        "cargo",
+        &["build", "-p", "ripr", "--features", "lang-perl"],
+        &envs,
+    )
 }
 
 fn binding(environment: &[(&str, String)]) -> String {

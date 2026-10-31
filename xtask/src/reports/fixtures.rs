@@ -1182,26 +1182,10 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
 /// process owes the Perl verdict corpus. See [`ripr_perl_fixture_binary`].
 static RIPR_PERL_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 
-/// Target directory for in-suite fixture variant builds (#11197): a
-/// `fixture-variants` sibling under the resolved shared target root, so
-/// building a variant never rewrites the shared `target/debug/ripr` the
-/// running suite executes. Honors `CARGO_TARGET_DIR` like
-/// [`ripr_debug_binary`], so routed CI jobs build and cache it in the same
-/// restored target and `cargo clean` clears it with the rest of the
-/// artifacts.
-fn fixture_variant_target_dir() -> Result<PathBuf, String> {
-    let mut root = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("target"));
-    root.push("fixture-variants");
-    std::path::absolute(&root)
-        .map_err(|err| format!("resolve variant target dir {}: {err}", root.display()))
-}
-
 /// The debug binary with the `lang-perl` preview adapter compiled in, for the
 /// Perl verdict corpus (RIPR-SPEC-0245): the default build refuses Perl
 /// packets. The variant builds in a dedicated target directory
-/// ([`fixture_variant_target_dir`], #11197): it used to relink the shared
+/// (#11197): it used to relink the shared
 /// `target/debug/ripr` to the Perl feature set mid-suite and restore it
 /// afterwards, so a cross-process consumer of the suite binary could observe
 /// a different analyzer identity between two execs. The built variant is
@@ -1211,22 +1195,39 @@ fn fixture_variant_target_dir() -> Result<PathBuf, String> {
 /// to wait there. Once the variant target is warm, only the `ripr` crate
 /// recompiles.
 pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
-    let shared = ripr_debug_binary();
+    fixture_variant_binary_built_by(
+        ripr_debug_binary(),
+        &RIPR_PERL_BINARY_BUILD,
+        &preparation::build_perl_variant,
+        &|source, destination| {
+            fs::copy(source, destination).map(|_| ()).map_err(|err| {
+                format!(
+                    "copy {} to {} failed: {err}",
+                    source.display(),
+                    destination.display()
+                )
+            })
+        },
+    )
+}
+
+pub(crate) fn fixture_variant_binary_built_by(
+    shared: PathBuf,
+    build_once: &OnceLock<Result<(), String>>,
+    build: &(dyn Fn(&Path) -> Result<(), String> + Sync),
+    copy: &(dyn Fn(&Path, &Path) -> Result<(), String> + Sync),
+) -> Result<String, String> {
+    let target = shared
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("missing shared target root")?;
+    let variant_target = std::path::absolute(target.join("fixture-variants"))
+        .map_err(|err| format!("resolve variant target: {err}"))?;
     let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
-    let variant_target = fixture_variant_target_dir()?;
     let variant = ripr_debug_binary_in(Some(variant_target.clone()));
-    ripr_fixture_binary_built_by(perl.clone(), &RIPR_PERL_BINARY_BUILD, &|| {
-        preparation::build_in_target_dir(
-            &["build", "-p", "ripr", "--features", "lang-perl"],
-            &variant_target,
-        )?;
-        fs::copy(&variant, &perl).map(|_| ()).map_err(|err| {
-            format!(
-                "copy {} to {} failed: {err}",
-                variant.display(),
-                perl.display()
-            )
-        })
+    ripr_fixture_binary_built_by(perl.clone(), build_once, &|| {
+        build(&variant_target)?;
+        copy(&variant, &perl)
     })
 }
 

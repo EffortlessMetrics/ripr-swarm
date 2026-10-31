@@ -124,11 +124,10 @@ pub(crate) use fixtures::{
 #[cfg(test)]
 pub(crate) use fixtures::{
     GoldenDriftEntry, GoldenDriftProvenance, GoldenDriftSemantics, first_line_difference,
-    fixture_cache_dir, fixture_contract_violations,
+    fixture_cache_dir, fixture_contract_violations, fixture_variant_binary_built_by,
     golden_assistant_loop_health_contract_violations_at, golden_drift_semantics, golden_drift_type,
     goldens_check_failure_message, json_string_values_for_key, next_pending_heading,
-    normalize_golden_text, parse_reason, ripr_perl_fixture_binary, run_fixture,
-    run_fixture_outputs, validate_bless_reason,
+    normalize_golden_text, parse_reason, run_fixture, run_fixture_outputs, validate_bless_reason,
 };
 pub(crate) use index::{reports, reports_index};
 pub(crate) use issue_intake::issue_intake;
