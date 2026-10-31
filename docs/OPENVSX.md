@@ -18,7 +18,7 @@ namespace. The namespace must exist before publishing.
 3. Link the Eclipse account.
 4. Sign the Open VSX Publisher Agreement.
 5. Generate an Open VSX access token.
-6. Add the repository secret:
+6. Add the environment secret to `open-vsx-publish` (not a repository secret):
 
 ```text
 OVSX_PAT
@@ -48,8 +48,8 @@ npm run package
 npx ovsx publish dist/ripr-0.8.0.vsix -p "$OVSX_PAT" --skip-duplicate
 ```
 
-The GitHub release workflow uses the same `OVSX_PAT` secret for Open VSX
-publishing.
+The `publish-extension.yml` workflow reads `OVSX_PAT` from the
+`open-vsx-publish` environment for Open VSX publishing.
 
 ## Verification
 
