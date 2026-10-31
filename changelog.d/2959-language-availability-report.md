@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Added the shared `LanguageAvailabilityReport` DTO and effective-enablement resolver in `domain`, separating detection, compiled availability, configured intent and effective enablement with remediation steps for each state that needs user action (available states carry none). Check, doctor and editor consumers follow in later slices; no effective default changes (#2959, #2615).
