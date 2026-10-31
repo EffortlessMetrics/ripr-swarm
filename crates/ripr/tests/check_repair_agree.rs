@@ -705,7 +705,7 @@ fn unreached_workspace_change_is_not_called_gripped_by_repair() -> Result<(), St
         unscoped.contains(
             "ripr does not start an automatic repair here because it could not establish"
         ) && !unscoped.contains("this kind of finding"),
-        "the class refusal must name what ripr could not establish:\n{unscoped}"
+        "the class refusal must be plain and name what ripr could not establish:\n{unscoped}"
     );
 
     let repo = workspace_repo(false, false)?;
