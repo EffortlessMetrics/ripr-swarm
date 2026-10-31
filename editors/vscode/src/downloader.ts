@@ -45,6 +45,19 @@ export type ManifestFetchOutcome =
 /** A manifest placement fetch that did not return a payload. */
 export type ManifestFetchNonSuccess = Exclude<ManifestFetchOutcome, { readonly kind: 'ok' }>;
 
+/** Maximum manifest JSON payload accepted from the download source. */
+export const MANIFEST_MAX_BYTES = 1024 * 1024;
+
+/** Maximum server archive payload accepted from the download source. */
+export const ARCHIVE_MAX_BYTES = 200 * 1024 * 1024;
+
+const REDIRECT_ALLOWED_HOSTS = new Set([
+  'github.com',
+  'www.github.com',
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com'
+]);
+
 export type ManifestBytesFetcher = (url: string) => Promise<ManifestFetchOutcome>;
 
 /**
@@ -355,8 +368,34 @@ function placementFetchError(outcome: ManifestFetchNonSuccess): Error {
   return new Error(outcome.message);
 }
 
-function fetchManifestBytesOverHttps(url: string): Promise<ManifestFetchOutcome> {
+export function isAllowedHttpsRedirect(fromUrl: string, toUrl: string): boolean {
+  let from: URL;
+  let to: URL;
+  try {
+    from = new URL(fromUrl);
+    to = new URL(toUrl);
+  } catch {
+    return false;
+  }
+  if (to.protocol !== 'https:') {
+    return false;
+  }
+  if (to.host === from.host) {
+    return true;
+  }
+  return REDIRECT_ALLOWED_HOSTS.has(to.host);
+}
+
+export function fetchManifestBytesOverHttps(url: string, maxBytes = MANIFEST_MAX_BYTES): Promise<ManifestFetchOutcome> {
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (outcome: ManifestFetchOutcome): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(outcome);
+    };
     const attempt = (target: string, redirects: number): void => {
       // Request creation can throw synchronously: a redirect `Location` may
       // resolve to a non-`https:` URL, and the https request call rejects
@@ -369,7 +408,7 @@ function fetchManifestBytesOverHttps(url: string): Promise<ManifestFetchOutcome>
       let request: import('http').ClientRequest;
       try {
         if (new URL(target).protocol !== 'https:') {
-          resolve({
+          finish({
             kind: 'transport_failure',
             url: target,
             message: `Refusing non-HTTPS manifest URL ${target}.`
@@ -382,7 +421,7 @@ function fetchManifestBytesOverHttps(url: string): Promise<ManifestFetchOutcome>
           if (statusCode >= 300 && statusCode < 400 && location) {
             response.resume();
             if (redirects >= 5) {
-              resolve({
+              finish({
                 kind: 'transport_failure',
                 url: target,
                 message: `Too many redirects while fetching ${target}.`
@@ -393,10 +432,18 @@ function fetchManifestBytesOverHttps(url: string): Promise<ManifestFetchOutcome>
             try {
               redirectedUrl = new URL(location, target).toString();
             } catch (error) {
-              resolve({
+              finish({
                 kind: 'transport_failure',
                 url: target,
                 message: `Invalid redirect from ${target}: ${error instanceof Error ? error.message : String(error)}`
+              });
+              return;
+            }
+            if (!isAllowedHttpsRedirect(target, redirectedUrl)) {
+              finish({
+                kind: 'transport_failure',
+                url: target,
+                message: `Refusing redirect from ${target} to disallowed host ${new URL(redirectedUrl).host}.`
               });
               return;
             }
@@ -405,24 +452,51 @@ function fetchManifestBytesOverHttps(url: string): Promise<ManifestFetchOutcome>
           }
           if (statusCode === 404 && redirects === 0) {
             response.resume();
-            resolve({ kind: 'authoritative_absence', url: target });
+            finish({ kind: 'authoritative_absence', url: target });
             return;
           }
           if (statusCode < 200 || statusCode >= 300) {
             response.resume();
-            resolve({ kind: 'http_failure', url: target, statusCode, redirected: redirects > 0 });
+            finish({ kind: 'http_failure', url: target, statusCode, redirected: redirects > 0 });
             return;
           }
 
+          const contentLengthHeader = response.headers['content-length'];
+          if (contentLengthHeader !== undefined) {
+            const declaredLength = Number(contentLengthHeader);
+            if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+              request.destroy();
+              finish({
+                kind: 'transport_failure',
+                url: target,
+                message: `Response Content-Length ${declaredLength} exceeds the ${maxBytes} byte limit while fetching ${target}.`
+              });
+              return;
+            }
+          }
+
           const chunks: Buffer[] = [];
-          response.on('data', (chunk: Buffer) => chunks.push(chunk));
-          response.on('end', () => resolve({ kind: 'ok', bytes: Buffer.concat(chunks) }));
+          let receivedBytes = 0;
+          response.on('data', (chunk: Buffer) => {
+            receivedBytes += chunk.length;
+            if (receivedBytes > maxBytes) {
+              request.destroy();
+              finish({
+                kind: 'transport_failure',
+                url: target,
+                message: `Response body exceeds the ${maxBytes} byte limit while fetching ${target}.`
+              });
+              return;
+            }
+            chunks.push(chunk);
+          });
+          response.on('end', () => finish({ kind: 'ok', bytes: Buffer.concat(chunks) }));
           // A connection that dies mid-body closes the response without
           // `end`; without this guard the promise would pend forever. The
           // resolve is idempotent, so a complete response keeps its `ok`.
           response.on('close', () => {
             if (!response.complete) {
-              resolve({
+              finish({
                 kind: 'transport_failure',
                 url: target,
                 message: `Manifest response from ${target} closed before completion.`
@@ -430,7 +504,7 @@ function fetchManifestBytesOverHttps(url: string): Promise<ManifestFetchOutcome>
             }
           });
           response.on('error', (error) => {
-            resolve({
+            finish({
               kind: 'transport_failure',
               url: target,
               message: error instanceof Error ? error.message : String(error)
@@ -438,13 +512,13 @@ function fetchManifestBytesOverHttps(url: string): Promise<ManifestFetchOutcome>
           });
         });
         request.on('error', (error) => {
-          resolve({ kind: 'transport_failure', url: target, message: error.message });
+          finish({ kind: 'transport_failure', url: target, message: error.message });
         });
         request.setTimeout(30_000, () => {
           request.destroy(new Error(`Timed out while fetching ${target}.`));
         });
       } catch (error) {
-        resolve({
+        finish({
           kind: 'transport_failure',
           url: target,
           message: error instanceof Error ? error.message : String(error)
@@ -456,7 +530,7 @@ function fetchManifestBytesOverHttps(url: string): Promise<ManifestFetchOutcome>
 }
 
 async function fetchBuffer(url: string): Promise<Buffer> {
-  const outcome = await fetchManifestBytesOverHttps(url);
+  const outcome = await fetchManifestBytesOverHttps(url, ARCHIVE_MAX_BYTES);
   if (outcome.kind === 'ok') {
     return outcome.bytes;
   }

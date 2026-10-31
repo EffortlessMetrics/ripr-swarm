@@ -3830,8 +3830,13 @@ fn assert_check_json_refusal(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let value: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|err| format!("refusal stdout should parse as JSON: {err}\n{stdout}"))?;
+    let expected_generation = if identity == "analysis_timeout" {
+        "0.3"
+    } else {
+        "0.2"
+    };
     for (pointer, expected) in [
-        ("/schema_version", "0.2"),
+        ("/schema_version", expected_generation),
         ("/tool", "ripr"),
         ("/analysis_scope/scope", "diff"),
         ("/analysis_scope/run_status", identity),
@@ -5190,6 +5195,196 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
     if !message.contains("1000ms") {
         return Err(format!(
             "the timeout must name the caller-supplied 1s deadline, got: {message}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+/// #10796: an early analysis deadline (the diff loader still stalled) keeps
+/// the typed `analysis_timeout` identity but now renders generation 0.3 with
+/// an `input_context`: the requested committed source selection is echoed,
+/// every resolved fact is explicitly unavailable with the deadline reason,
+/// and one bounded shell-safe retry is offered. The deadline is forced by a
+/// slow-git shim under `--timeout 1`; the git deadline stays at its default
+/// so the check budget — not the git timeout — is what fires.
+#[cfg(unix)]
+#[test]
+fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-analysis-timeout", 1)?;
+    let root_arg = root.display().to_string();
+    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
+        .map_err(|err| format!("write configured deep mode: {err}"))?;
+    // Every git call takes 3 s; the 1 s check budget fires inside the first
+    // loader call, before any producer published (the early-timeout case).
+    let shim_dir = unique_temp_workspace("check-json-analysis-timeout-shim");
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
+    let shim = shim_dir.join("git");
+    std::fs::write(&shim, "#!/bin/sh\nexec sleep 3\n")
+        .map_err(|err| format!("write git shim: {err}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("make git shim executable: {err}"))?;
+    }
+    let mut paths = vec![shim_dir.clone()];
+    paths.push(
+        std::path::Path::new(env!("CARGO_BIN_EXE_ripr"))
+            .parent()
+            .ok_or("ripr binary must have a parent directory")?
+            .to_path_buf(),
+    );
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|err| format!("build shim PATH: {err}"))?
+        .to_string_lossy()
+        .into_owned();
+    let run = |extra: &[&str]| {
+        let mut args = vec!["check", "--root", root_arg.as_str(), "--base", "HEAD"];
+        args.extend_from_slice(&["--committed", "--timeout", "1"]);
+        args.extend_from_slice(extra);
+        run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &root,
+            &args,
+            &[("PATH", search_path.as_str())],
+        )
+        .map_err(|err| format!("run check under slow git: {err}"))
+    };
+
+    let configured = run(&["--json"])?;
+    let configured_stdout = assert_machine_refusal_basics(&configured)?;
+    let configured_value: serde_json::Value = serde_json::from_str(&configured_stdout)
+        .map_err(|err| format!("configured control must parse: {err}\n{configured_stdout}"))?;
+    if configured_value
+        .pointer("/input_context/requested/analysis_mode")
+        .and_then(serde_json::Value::as_str)
+        != Some("deep")
+    {
+        return Err(format!(
+            "configuration must select deep without override: {configured_value}"
+        ));
+    }
+    let started = std::time::Instant::now();
+    let output = run(&["--json", "--mode", "draft"])?;
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(45),
+        "check waited {elapsed:?} under --timeout 1 with slow git"
+    );
+    let stdout = assert_machine_refusal_basics(&output)?;
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("timeout refusal must parse as JSON: {err}\n{stdout}"))?;
+    // The #6834 contract is intact at generation 0.3, and the check budget,
+    // not the git timeout, is what fired.
+    if value["analysis_scope"]["run_status"] != "analysis_timeout"
+        || value["schema_version"] != "0.3"
+        || value["findings"].as_array().map(Vec::len) != Some(0)
+        || value["summary"]["changed_rust_files"] != 0
+        || value["analysis_scope"]["downstream_consumable"] != false
+    {
+        return Err(format!("0.3 analysis_timeout refusal contract: {value}"));
+    }
+    for (pointer, expected) in [
+        ("/input_context/requested/source", "committed"),
+        ("/input_context/requested/base", "HEAD"),
+        ("/input_context/requested/analysis_mode", "draft"),
+        ("/input_context/requested/root", root_arg.as_str()),
+        ("/input_context/recovery/kind", "retry_with_larger_budget"),
+    ] {
+        let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
+        if actual != Some(expected) {
+            return Err(format!(
+                "{pointer}: expected {expected}, got {actual:?}\n{stdout}"
+            ));
+        }
+    }
+    if value.pointer("/input_context/recovery/budget_seconds") != Some(&serde_json::json!(2)) {
+        return Err(format!("recovery budget must double to 2 s: {stdout}"));
+    }
+    // Early timeout: the loader never published, so every fact names the
+    // deadline instead of reporting a value.
+    for fact in [
+        "effective_base",
+        "base_commit",
+        "merge_base",
+        "scoped_changed_files",
+        "out_of_scope_files",
+    ] {
+        let fact = &value["input_context"]["resolved"][fact];
+        if fact["available"] != false || fact["reason"] != "not_published_before_deadline" {
+            return Err(format!(
+                "{fact} must be unavailable at the deadline: {stdout}"
+            ));
+        }
+    }
+    // The bounded retry preserves the invocation authority and never
+    // broadens or disables the time limit.
+    let command = value["input_context"]["recovery"]["command"]
+        .as_str()
+        .ok_or("recovery must carry a literal command")?;
+    let root_flag = format!("--root {root_arg}");
+    for needle in [
+        "ripr check",
+        root_flag.as_str(),
+        "--base HEAD",
+        "--committed",
+        "--mode draft",
+        "--json",
+        "--timeout 2",
+    ] {
+        if !command.contains(needle) {
+            return Err(format!(
+                "recovery command must contain `{needle}`: {command}"
+            ));
+        }
+    }
+    if command.contains("--timeout 0") {
+        return Err(format!("the retry must stay bounded: {command}"));
+    }
+    let retry = run_command_with_env(
+        "/bin/sh",
+        &root,
+        &["-c", command],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run generated retry: {err}"))?;
+    let retry_stdout = assert_machine_refusal_basics(&retry)?;
+    let retry_value: serde_json::Value = serde_json::from_str(&retry_stdout)
+        .map_err(|err| format!("retry refusal must parse: {err}\n{retry_stdout}"))?;
+    if retry_value
+        .pointer("/input_context/requested/analysis_mode")
+        .and_then(serde_json::Value::as_str)
+        != Some("draft")
+    {
+        return Err(format!(
+            "generated retry must still select draft: {retry_value}"
+        ));
+    }
+    if value["input_context"]["recovery"]["rereads"]
+        .as_array()
+        .is_none_or(Vec::is_empty)
+    {
+        return Err(format!("the retry must state what it re-reads: {stdout}"));
+    }
+
+    // Native human consumers get the same recovery on stderr, with empty
+    // stdout and exit 2 preserved.
+    let human = run(&["--mode", "draft"])?;
+    let stderr = String::from_utf8_lossy(&human.stderr);
+    if human.status.code() != Some(2)
+        || !human.stdout.is_empty()
+        || !stderr.contains("analysis_timeout")
+        || !stderr.contains("bounded retry: ripr check")
+        || !stderr.contains("--timeout 2")
+        || !stderr.contains("--mode draft")
+        || !stderr.contains("not pinned")
+    {
+        return Err(format!(
+            "human timeout recovery on stderr, exit 2, empty stdout: {stderr}"
         ));
     }
     ignore_remove_dir_all(&root);
@@ -10879,7 +11074,7 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
             ("--seam-id", "agent receipt requires --seam-id"),
             (
                 "--json",
-                "agent receipt requires --json (the supported output for this subcommand)",
+                "agent receipt requires --json (the supported output for this subcommand); add --json to the command",
             ),
         ] {
             let mut incomplete = Vec::new();
@@ -20512,6 +20707,79 @@ fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String
             "current change: not part of it. Pilot withholds the analyzed seam on a line changed since origin/main: its static evidence is unknown or opaque"
         ),
         "{stdout}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #5863: the pilot seam budget keeps a changed seam past the cut only when
+/// pilot can recommend it (`keeps_past_budget`, not `touches`). Here the
+/// change touches only `is_large`, whose boundary is discriminated by its
+/// tests, and it sits after the untouched, weakly tested `discounted` seam in
+/// inventory order. With the budget at one, a solved changed seam must not
+/// take the only slot: pilot still recommends `discounted` and reports that
+/// the change does not contain it.
+#[test]
+fn pilot_budget_does_not_keep_a_solved_changed_seam_over_an_actionable_one() -> Result<(), String> {
+    let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_large(amount: u32) -> bool {\n    amount > 1000\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-budget-solved-change",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"two_fns\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "tests/pricing.rs",
+                "use two_fns::{discounted, is_large};\n\n#[test]\nfn big_orders_get_a_discount() {\n    assert_eq!(discounted(200), 190);\n}\n\n#[test]\nfn the_large_boundary_is_exclusive() {\n    assert_eq!(is_large(1000), false);\n    assert_eq!(is_large(1001), true);\n}\n",
+            ),
+        ],
+        (
+            "src/lib.rs",
+            &lib.replace("amount > 1000", "amount >= 1000"),
+        ),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-budget-solved-change-out");
+    let root_arg = root.display().to_string();
+    let out_arg = out_dir.display().to_string();
+    let run = |budget: &str| -> Result<serde_json::Value, String> {
+        let output = run_ripr_with_env(
+            &["pilot", "--root", &root_arg, "--out", &out_arg],
+            &[("RIPR_PILOT_SEAM_BUDGET", budget)],
+        );
+        assert_success(&output);
+        serde_json::from_str(
+            &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+                .map_err(|err| format!("read pilot summary json: {err}"))?,
+        )
+        .map_err(|err| format!("parse pilot summary json: {err}"))
+    };
+    // Unbudgeted precondition: the fixture really is "untouched actionable
+    // seam first, changed seam solved".
+    let full = run("0")?;
+    assert_eq!(full["current_change"]["state"], "changed", "{full}");
+    assert_eq!(full["top_actionable_seams"][0]["line"], 2, "{full}");
+    assert_eq!(
+        full["current_change"]["actionable_seams_in_change"], 0,
+        "{full}"
+    );
+    assert_eq!(
+        full["current_change"]["withheld_seams_in_change"], 0,
+        "{full}"
+    );
+    assert_eq!(
+        full["current_change"]["top_recommendation_in_change"], false,
+        "{full}"
+    );
+    // Budget one: the solved changed seam must not displace `discounted`.
+    let budgeted = run("1")?;
+    assert_eq!(budgeted["current_change"]["state"], "changed", "{budgeted}");
+    assert_eq!(budgeted["top_actionable_seams"][0]["line"], 2, "{budgeted}");
+    assert_eq!(
+        budgeted["current_change"]["top_recommendation_in_change"], false,
+        "{budgeted}"
     );
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&out_dir);

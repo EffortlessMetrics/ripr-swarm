@@ -2940,8 +2940,32 @@ pub(crate) fn include_explicit_store_operational_write(
     root: &Path,
     store: Option<&Path>,
 ) -> Result<(), String> {
-    let Some(store) = store else {
+    let Some(locator) = explicit_store_locator(root, store)? else {
         return Ok(());
+    };
+    if policy
+        .expected_operational_writes
+        .iter()
+        .any(|rule| rule.matches(locator.path()))
+    {
+        return Ok(());
+    }
+    policy.expected_operational_writes.push(locator);
+    Ok(())
+}
+
+/// The explicit store's operational-write locator, shared by the policy
+/// constructor above and the dirty-premise preflight
+/// (`conservative_dirty_premise_violations`) so the two cannot disagree on
+/// which subtree the store covers (#11458). `None` means the
+/// repository-local default, which stays covered by the `target/ripr`
+/// subtree without a second rule.
+fn explicit_store_locator(
+    root: &Path,
+    store: Option<&Path>,
+) -> Result<Option<crate::edit_cage::CagePathRule>, String> {
+    let Some(store) = store else {
+        return Ok(None);
     };
     let relative = if store.is_absolute() {
         store
@@ -2957,16 +2981,7 @@ pub(crate) fn include_explicit_store_operational_write(
     } else {
         store.to_path_buf()
     };
-    let locator = crate::edit_cage::CagePathRule::subtree(&relative)?;
-    if policy
-        .expected_operational_writes
-        .iter()
-        .any(|rule| rule.matches(locator.path()))
-    {
-        return Ok(());
-    }
-    policy.expected_operational_writes.push(locator);
-    Ok(())
+    Ok(Some(crate::edit_cage::CagePathRule::subtree(&relative)?))
 }
 
 /// Captures the edit-cage baseline and writes it to a workflow compatibility
@@ -4560,13 +4575,8 @@ pub(crate) const TRUSTED_SURFACE_REFUSAL_TAIL: &str = "outside trusted edit surf
 /// HEAD to refuse a dirty production premise before any attempt exists
 /// (#5262), where a dirty allowed-surface test file stays allowed because the
 /// loop expects the focused test edit.
-pub(crate) fn trusted_head_surface_violations(
-    root: &Path,
-    policy: &EditCagePolicy,
-    observed_changes: &[String],
-    head: &str,
-) -> Result<Vec<String>, String> {
-    let tracked = git_paths(
+fn tracked_dirty_paths(root: &Path, head: &str) -> Result<Vec<String>, String> {
+    git_paths(
         root,
         &[
             "diff",
@@ -4577,7 +4587,115 @@ pub(crate) fn trusted_head_surface_violations(
             head,
             "--",
         ],
-    )?;
+    )
+}
+
+/// Policy-free early subset of [`trusted_head_surface_violations`] (#11458):
+/// tracked dirty paths that cannot be any seam's repair target, so the before
+/// phase can refuse a dirty production premise before the classified-seam
+/// inventory. The subset property is anchored on the policy's own
+/// authorities: every packet-allowed edit path satisfies
+/// `is_test_surface_path` or is the confined #5210 target
+/// (`edit_cage_policy_from_packet`), and every operational write lives under
+/// `target/ripr` or the explicit store subtree. Anything outside all of those
+/// (modulo the unreadable/oversized fall-through below) is refused late by
+/// the exact check too. Conservative extras: preview test-support naming
+/// (`conftest.*`) that a future packet could target, and files containing an
+/// inline `#[cfg(test)]` module.
+pub(crate) fn conservative_dirty_premise_violations(
+    root: &Path,
+    head: &str,
+    store: Option<&Path>,
+) -> Result<Vec<String>, String> {
+    let operational = operational_write_rules(root, store)?;
+    Ok(tracked_dirty_paths(root, head)?
+        .into_iter()
+        .filter(|path| {
+            !operational.iter().any(|rule| rule.matches(path))
+                && dirty_path_cannot_be_repair_target(root, path)
+        })
+        .collect())
+}
+
+/// The tracked subtrees the exact policy check always allows as operational
+/// writes: the default `target/ripr` subtree plus the explicit store
+/// subtree when one is configured outside it. Built with the same rules the
+/// policy constructor uses (see `explicit_store_locator`), so the preflight
+/// cannot refuse early what the exact check would allow late.
+fn operational_write_rules(
+    root: &Path,
+    store: Option<&Path>,
+) -> Result<Vec<crate::edit_cage::CagePathRule>, String> {
+    // Mirrors `edit_cage_policy_from_packet`: command-declared generated or
+    // receipt writes that may occur alongside the authored test edit.
+    let mut rules = vec![crate::edit_cage::CagePathRule::subtree("target/ripr")?];
+    if let Some(locator) = explicit_store_locator(root, store)?
+        && !rules.iter().any(|rule| rule.matches(locator.path()))
+    {
+        rules.push(locator);
+    }
+    Ok(rules)
+}
+
+fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
+    // Canonical test-surface recognition first: the policy constructor
+    // admits only `is_test_surface_path` targets (or the confined #5210
+    // target below), so anything the analyzer calls test surface can be a
+    // repair target. This also carries every TypeScript adapter convention
+    // (`*.test.*`, `*.spec.*`, `test-*`, `*.test-d.*`, `*.cy.*`, `__tests__`)
+    // without forking that taxonomy here.
+    if is_test_surface_path(path) {
+        return false;
+    }
+    let candidate = Path::new(path);
+    if candidate.components().any(|part| {
+        matches!(
+            part.as_os_str().to_str(),
+            Some("tests" | "test" | "__tests__")
+        )
+    }) {
+        return false;
+    }
+    let Some(name) = candidate.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+    let stem = lower.split('.').next().unwrap_or(&lower);
+    if stem == "conftest" {
+        // pytest fixture support is test routing, never a production seam
+        // target; matching the stem keeps every `conftest.*` spelling on the
+        // same fall-through path.
+        return false;
+    }
+    // #5210 confined target: a production Rust file carrying the governed
+    // inline test module is the allowed edit region, so any file containing
+    // the marker falls through for the exact check to admit or refuse.
+    let candidate_path = root.join(candidate);
+    if std::fs::metadata(&candidate_path)
+        .map(|metadata| metadata.len() > DIRTY_PREMISE_PREFLIGHT_MAX_SNIFF_BYTES)
+        .unwrap_or(true)
+    {
+        return false;
+    }
+    match std::fs::read_to_string(&candidate_path) {
+        Ok(content) => !content.contains("#[cfg(test)]"),
+        Err(_) => false,
+    }
+}
+
+/// Upper bound for the preflight's content sniff above: the marker search
+/// must not load an arbitrarily large dirty file into memory. An oversized
+/// candidate falls through to the exact policy check, which never reads
+/// file content, so the bound only costs earliness, never correctness.
+const DIRTY_PREMISE_PREFLIGHT_MAX_SNIFF_BYTES: u64 = 256 * 1024;
+
+pub(crate) fn trusted_head_surface_violations(
+    root: &Path,
+    policy: &EditCagePolicy,
+    observed_changes: &[String],
+    head: &str,
+) -> Result<Vec<String>, String> {
+    let tracked = tracked_dirty_paths(root, head)?;
     let untracked = git_paths(root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
     let observed = observed_changes
         .iter()
@@ -6020,6 +6138,151 @@ mod tests {
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
         Ok(())
+    }
+
+    /// #11458: the pre-inventory preflight names only plain production
+    /// paths. Canonical test surfaces, the `tests`/`test`/`__tests__`
+    /// layout, `conftest.*`, an inline `#[cfg(test)]` module, and any
+    /// unreadable or oversized path fall through to the exact policy check,
+    /// so the preflight can only refuse early what that check would refuse
+    /// late.
+    #[test]
+    fn dirty_premise_preflight_only_names_plain_production_paths() -> Result<(), String> {
+        let root = test_repo_root("dirty-preflight")?;
+        let result = (|| -> Result<(), String> {
+            for (name, content) in [
+                ("src/lib.rs", "pub fn f() {}\n"),
+                ("src/main.py", "def f():\n    return 1\n"),
+                ("src/pricing.ts", "export function f() { return 1; }\n"),
+            ] {
+                let path = root.join(name);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                std::fs::write(&path, content).map_err(|e| e.to_string())?;
+                if !dirty_path_cannot_be_repair_target(&root, name) {
+                    return Err(format!("preflight must name {name}"));
+                }
+            }
+            for name in [
+                "src/inline.rs",
+                "tests/pricing.rs",
+                "src/lib_test.rs",
+                "conftest.py",
+                "conftest.pyc",
+                "src/missing.rs",
+            ] {
+                if dirty_path_cannot_be_repair_target(&root, name) {
+                    return Err(format!("preflight must not name {name}"));
+                }
+            }
+            // An oversized production-shaped file falls through instead of
+            // being sniffed: the bound only costs earliness, never correctness.
+            let big = root.join("src/big.rs");
+            std::fs::write(&big, "x\n".repeat(300 * 1024)).map_err(|e| e.to_string())?;
+            if dirty_path_cannot_be_repair_target(&root, "src/big.rs") {
+                return Err("preflight must not name src/big.rs".to_string());
+            }
+            // The inline `#[cfg(test)]` module reads as a test target even
+            // though the file itself is production-shaped (#5210).
+            std::fs::write(root.join("src/inline.rs"), "#[cfg(test)]\nmod t {}\n")
+                .map_err(|e| e.to_string())?;
+            if dirty_path_cannot_be_repair_target(&root, "src/inline.rs") {
+                return Err("preflight must not name src/inline.rs".to_string());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// #11458: TypeScript adapter test conventions (`*.spec.*`, `test-*`,
+    /// `*.test-d.*`, `*.cy.*`) defer to the canonical `is_test_surface_path`
+    /// taxonomy rather than a second local list. Gated on the adapter
+    /// feature: without it these names are production-shaped in that build,
+    /// matching what its policy gate would refuse.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn dirty_premise_preflight_defers_to_adapter_test_conventions() -> Result<(), String> {
+        let root = test_repo_root("dirty-preflight-ts")?;
+        let result = (|| -> Result<(), String> {
+            for name in [
+                "src/pricing.spec.ts",
+                "src/test-cart.ts",
+                "src/cart.test-d.ts",
+                "src/cart.cy.ts",
+            ] {
+                let path = root.join(name);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                std::fs::write(&path, "export function f() { return 1; }\n")
+                    .map_err(|e| e.to_string())?;
+                if dirty_path_cannot_be_repair_target(&root, name) {
+                    return Err(format!("preflight must not name {name}"));
+                }
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// #11458: tracked dirt under the default `target/ripr` operational
+    /// subtree or the configured explicit store subtree defers to the exact
+    /// policy check, which allows both. The store contrast pins the
+    /// exemption to the parameter: with no store the same tracked store
+    /// file is named.
+    #[test]
+    fn dirty_premise_preflight_defers_to_operational_write_subtrees() -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok;
+        let root = test_repo_root("dirty-preflight-ops")?;
+        let result = (|| -> Result<(), String> {
+            for (name, content) in [
+                ("src/lib.rs", "pub fn f() {}\n"),
+                (".ripr/attempts/id/attempt.json", "{}\n"),
+                ("target/ripr/workflow/snap.json", "{}\n"),
+            ] {
+                let path = root.join(name);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                std::fs::write(&path, content).map_err(|e| e.to_string())?;
+            }
+            fixture_git_ok(&root, &["add", "-A"])?;
+            fixture_git_ok(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+            std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\npub fn g() {}\n")
+                .map_err(|e| e.to_string())?;
+            std::fs::write(root.join(".ripr/attempts/id/attempt.json"), "{\"a\":1}\n")
+                .map_err(|e| e.to_string())?;
+            std::fs::write(root.join("target/ripr/workflow/snap.json"), "{\"b\":2}\n")
+                .map_err(|e| e.to_string())?;
+            let head = crate::agent::artifact::current_git_head(&root)?;
+            let plain = conservative_dirty_premise_violations(
+                &root,
+                &head,
+                Some(Path::new(".ripr/attempts")),
+            )?;
+            if !plain.contains(&"src/lib.rs".to_string())
+                || plain.iter().any(|path| path != "src/lib.rs")
+            {
+                return Err(format!("only the production path may be named: {plain:?}"));
+            }
+            let unstored = conservative_dirty_premise_violations(&root, &head, None)?;
+            if !unstored.contains(&"src/lib.rs".to_string())
+                || !unstored.contains(&".ripr/attempts/id/attempt.json".to_string())
+                || unstored
+                    .iter()
+                    .any(|path| path != "src/lib.rs" && path != ".ripr/attempts/id/attempt.json")
+            {
+                return Err(format!(
+                    "without the store the store file is named: {unstored:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
     }
 
     /// The receipt's tracked-surface check compares with the prepared head,
