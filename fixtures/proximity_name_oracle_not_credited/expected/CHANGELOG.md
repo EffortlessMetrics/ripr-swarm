@@ -369,3 +369,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — proximity_name_oracle_not_credited (31)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -1,0 +1,15 @@
+fn bench_base() -> u32 {
+    8
+}
+
+#[test]
+fn bench_base_is_8() {
+    assert_eq!(bench_base(), 8);
+}
+
+mod common;
+
+#[test]
+fn shared_bench_helper_is_twenty() {
+    assert_eq!(common::bench_shared(), 20);
+}

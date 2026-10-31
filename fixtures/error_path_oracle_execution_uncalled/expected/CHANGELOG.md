@@ -436,3 +436,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_uncalled (33)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_uncalled --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

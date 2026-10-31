@@ -64,7 +64,8 @@
         "powershell": null,
         "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. Use the Bash form, or inspect the raw command in JSON and run it from the selected repository in PowerShell, checking its result before recording a receipt."
       }
-    }
+    },
+    "recommended_repair_command": "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base origin/main --root <cwd>/fixtures/first_successful_pr/typescript-preview-gap --phase before"
   },
   "commands": {
     "regenerate_gap_ledger": "ripr check --root <cwd>/fixtures/first_successful_pr/typescript-preview-gap --base origin/main --json > <cwd>/fixtures/first_successful_pr/typescript-preview-gap/target/ripr/reports/check.json && ripr reports gap-ledger --check-output <cwd>/fixtures/first_successful_pr/typescript-preview-gap/target/ripr/reports/check.json --root <cwd>/fixtures/first_successful_pr/typescript-preview-gap --out <cwd>/fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/gap-decision-ledger.json --out-md <cwd>/fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/gap-decision-ledger.md",

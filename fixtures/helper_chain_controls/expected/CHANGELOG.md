@@ -360,3 +360,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — helper_chain_controls (27)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless helper_chain_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
