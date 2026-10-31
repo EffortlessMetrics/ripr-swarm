@@ -113,7 +113,7 @@ pub(super) fn file_uri_for_path(path: &Path) -> Result<Uri, String> {
     };
     if windows_paths::is_foreign_windows_spelling(text) {
         return Err(format!(
-            "refusing to build a local file URI for the Windows-style spelling {} on a non-Windows host",
+            "refusing to build a local file URI for the Windows-style spelling {} on a non-Windows host; use a path spelled for this host",
             path.display()
         ));
     }
@@ -124,19 +124,19 @@ pub(super) fn file_uri_for_path(path: &Path) -> Result<Uri, String> {
     };
     if normalized.starts_with("//") {
         return Err(format!(
-            "refusing to build a local file URI for the network-share path {}",
+            "refusing to build a local file URI for the network-share path {}; use a local path inside the workspace",
             path.display()
         ));
     }
     let Some(collapsed) = collapse_parent_segments(&normalized) else {
         return Err(format!(
-            "refusing to build a local file URI for a relative path that escapes its prefix {}",
+            "refusing to build a local file URI for a relative path that escapes its prefix {}; use a path that stays inside the workspace",
             path.display()
         ));
     };
     let uri = format!("file://{}", rooted_uri_path(encode_uri_path(&collapsed)));
     uri.parse()
-        .map_err(|err| format!("failed to build LSP file URI for {}: {err}", path.display()))
+        .map_err(|err| format!("failed to build LSP file URI for {}: {err}; open a file with a plain local path under the workspace", path.display()))
 }
 
 /// Root an encoded path for the URI. On a non-Windows host a first segment of
@@ -169,19 +169,19 @@ fn non_utf8_file_uri_for_path(path: &Path) -> Result<Uri, String> {
         let bytes = path.as_os_str().as_bytes();
         if bytes.starts_with(b"//") || bytes.split(|byte| *byte == b'/').any(|s| s == b"..") {
             return Err(format!(
-                "refusing to build a local file URI for the non-UTF-8 path {}",
+                "refusing to build a local file URI for the non-UTF-8 path {}; rename the file so its path is valid UTF-8",
                 path.display()
             ));
         }
         let encoded = percent_codec::encode_uri_bytes(bytes);
         let uri = format!("file://{}", rooted_uri_path(encoded));
         uri.parse()
-            .map_err(|err| format!("failed to build LSP file URI for {}: {err}", path.display()))
+            .map_err(|err| format!("failed to build LSP file URI for {}: {err}; open a file with a plain local path under the workspace", path.display()))
     }
     #[cfg(not(unix))]
     {
         Err(format!(
-            "refusing to build a local file URI for the non-UTF-8 path {}",
+            "refusing to build a local file URI for the non-UTF-8 path {}; rename the file so its path is valid UTF-8",
             path.display()
         ))
     }

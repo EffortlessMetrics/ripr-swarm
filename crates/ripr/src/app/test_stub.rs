@@ -1708,7 +1708,7 @@ fn package_edition(root: &Path, manifest: &Path, package: &toml::Table) -> Optio
             // included) that has a `[workspace]` table. If that workspace has
             // no `[workspace.package] edition`, the inheritance is invalid.
             let workspace_manifest = |dir: &Path| -> Option<toml::Table> {
-                std::fs::read_to_string(root.join(dir).join("Cargo.toml"))
+                crate::bounded_input::read_metadata_toml(root.join(dir).join("Cargo.toml"))
                     .ok()?
                     .parse::<toml::Table>()
                     .ok()

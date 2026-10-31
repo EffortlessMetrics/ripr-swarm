@@ -163,6 +163,8 @@ use init::parse_init_options;
 
 // The generated `ripr init --ci github` workflow template lives beside the
 // init command; its tests here pin rendered placeholders against it.
+#[path = "commands/init_agents.rs"]
+mod init_agents;
 #[path = "commands/init_workflow.rs"]
 mod init_workflow;
 #[cfg(test)]
@@ -7930,6 +7932,7 @@ language = "rust"
                 force: true,
                 ci: Some(InitCi::Github),
                 mcp: false,
+                agents: Vec::new(),
             })
         );
     }

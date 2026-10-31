@@ -97,8 +97,8 @@
         "probe_family": "predicate",
         "related_test": {
           "file": "tests/pricing.test.ts",
-          "line": 11,
-          "name": "namespace import observes threshold"
+          "line": 7,
+          "name": "alias import observes threshold"
         },
         "repair_packet_ready": false,
         "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",

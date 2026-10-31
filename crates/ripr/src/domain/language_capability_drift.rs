@@ -169,19 +169,19 @@ fn documented_registry_block(doc: &str) -> Result<&str, String> {
     let end = doc.matches(REGISTRY_END).count();
     if begin != 1 || end != 1 {
         return Err(format!(
-            "expected exactly one capability-registry begin/end marker pair, found {begin}/{end}"
+            "expected exactly one capability-registry begin/end marker pair, found {begin}/{end}; keep exactly one pair in the doc"
         ));
     }
-    let start = doc
-        .find("<!-- capability-registry:begin")
-        .ok_or_else(|| "begin marker missing".to_string())?;
-    let stop = doc
-        .find(REGISTRY_END)
-        .ok_or_else(|| "end marker missing".to_string())?
-        + REGISTRY_END.len();
+    let start = doc.find("<!-- capability-registry:begin").ok_or_else(|| {
+        "begin marker missing; add the `<!-- capability-registry:begin` marker back to the doc"
+            .to_string()
+    })?;
+    let stop = doc.find(REGISTRY_END).ok_or_else(|| {
+        "end marker missing; add the capability-registry end marker back to the doc".to_string()
+    })? + REGISTRY_END.len();
     doc.get(start..stop)
         .filter(|_| start < stop)
-        .ok_or_else(|| "end marker precedes begin marker".to_string())
+        .ok_or_else(|| "end marker precedes begin marker; move the capability-registry end marker below the begin marker in the doc".to_string())
 }
 
 /// Empty when the documented block equals the rendering of the table.

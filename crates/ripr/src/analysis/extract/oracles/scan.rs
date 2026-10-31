@@ -1282,7 +1282,10 @@ fn statement_diverges_with(statement: &str, admit_pinned_if: bool) -> bool {
         || statement.starts_with("return\t")
     {
         let value = statement["return".len()..].trim_start();
-        return value.starts_with("Err(") && invocation_covers_statement(value, "Err");
+        return value
+            .strip_prefix("Err")
+            .is_some_and(|rest| rest.starts_with('('))
+            && invocation_covers_statement(value, "Err");
     }
     // #3731 review: `process::exit(..)` is a loud failure only when the
     // exit code is a NONZERO integer literal — `exit(0)` reports success,
