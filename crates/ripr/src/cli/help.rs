@@ -385,6 +385,7 @@ pub(super) fn print_pr_ledger_help() {
     println!("{}", render_command_help(PR_LEDGER_HELP, &[]));
 }
 
+#[cfg(test)]
 pub(super) fn print_pr_comments_help() {
     println!("{}", render_command_help(PR_COMMENTS_HELP, &[]));
 }
