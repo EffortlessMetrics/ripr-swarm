@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-moose-birthday-smoke.json",
-    "sha256": "3bb8b2d7b36c1eb656369aa9e3adde464b48140874b9f24edf5e2cb2a0782f80",
+    "sha256": "6129ab0bb1018e3b55d32764c05a54fbbad7eda0ed6db0a94a75a47f7a111da2",
     "provenance": "producer"
   }
 }

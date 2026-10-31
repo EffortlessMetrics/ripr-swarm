@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-test2-summary-deep-is-count.json",
-    "sha256": "ba63d43227972e0630d79439527ee7701a1c5616ad2624ac2439510363dad216",
+    "sha256": "7a768f3f78c1b298d63a24feef8968d55545828a0497c818ffdf909229de605a",
     "provenance": "producer"
   },
   "spec_examples": [

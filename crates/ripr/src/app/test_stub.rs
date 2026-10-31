@@ -646,7 +646,13 @@ pub(crate) fn stub_route_for_finding(
         };
     // #10683: `agent stub` refuses a weak-oracle boundary seam (an existing
     // test already reaches it); never advertise a stub command it will refuse.
-    if resolution.weak_oracle_guidance.is_none() {
+    // #8547: the guidance producer only accepts PredicateBoundary. The
+    // --kind resolver above selects that same mapped seam kind, so other
+    // families cannot gain this pointer from a full-workspace inventory.
+    // Keep the explicit stub command's lookup: it also discloses grip class.
+    if resolution.weak_oracle_guidance.is_none()
+        && analysis::seam_kind_for_probe_family(kind) == Some(SeamKind::PredicateBoundary)
+    {
         resolution.weak_oracle_guidance =
             inventory_entry_facts(root, config, &file, &resolution.seam_id)
                 .and_then(|(_, guidance)| guidance);
@@ -1405,6 +1411,9 @@ pub(crate) fn write_test_stub(
 ) -> Result<PathBuf, String> {
     let relative = stub.placement.file();
     let path = root.join(relative);
+    // A committed `tests -> /elsewhere` link must not redirect the write or
+    // the directory creation below (#11477 item 4); checked before either.
+    crate::atomic_file::ensure_path_within_root(root, &path, "test stub")?;
     match &stub.placement {
         TestStubPlacement::ExistingInlineModule { offset, .. }
         | TestStubPlacement::NewInlineModule { offset, .. } => {
@@ -2981,6 +2990,51 @@ impl Size {
         Ok(())
     }
 
+    /// #11477 item 4: a committed `tests -> /elsewhere` link must not redirect
+    /// `agent stub --write`; a real `tests/` directory still receives the file.
+    #[cfg(unix)]
+    #[test]
+    fn write_test_stub_refuses_symlinked_tests_dir() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-stub-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        let stub = RustTestStub {
+            placement: TestStubPlacement::NewIntegrationFile {
+                file: PathBuf::from("tests/clamp_tests.rs"),
+            },
+            test_name: "clamp_to_boundary".to_string(),
+            text: "#[test]\nfn t() {}\n".to_string(),
+            already_present: false,
+            fill_ins: Vec::new(),
+            derived_inputs: Vec::new(),
+        };
+        let resolution = TestStubResolution {
+            seam_id: "seam".to_string(),
+            owner: "clamp_to".to_string(),
+            source: String::new(),
+            outcome: Ok(stub.clone()),
+            grip_class: None,
+            at_note: None,
+            next_repair: None,
+            seam_line: 1,
+            weak_oracle_guidance: None,
+        };
+        std::os::unix::fs::symlink(&outside, ws.join("tests")).map_err(|e| e.to_string())?;
+        let refused = write_test_stub(&ws, &resolution, &stub);
+        let leaked = outside.join("clamp_tests.rs").exists();
+        std::fs::remove_file(ws.join("tests")).map_err(|e| e.to_string())?;
+        let written = write_test_stub(&ws, &resolution, &stub);
+        let landed = ws.join("tests/clamp_tests.rs").exists();
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(refused.is_err_and(|e| e.contains("resolves outside the workspace")));
+        assert!(!leaked, "nothing may be written through the link");
+        assert!(written.is_ok() && landed, "real tests/ dir must still work");
+        Ok(())
+    }
+
     /// #8727 review: the start command renders the selected root exactly as
     /// the filesystem spells it. On Unix a `\` is an ordinary filename
     /// character; rewriting it into a separator before binding would make
@@ -3023,3 +3077,7 @@ impl Size {
         Ok(())
     }
 }
+
+#[cfg(all(test, feature = "lang-rust"))]
+#[path = "test_stub_inventory_tests.rs"]
+mod inventory_lookup_tests;
