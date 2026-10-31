@@ -89,7 +89,19 @@ pub(super) fn cache(args: &[String]) -> Result<(), String> {
 pub(super) use config_command::config;
 
 fn write_text_file(path: &Path, rendered: &str) -> Result<(), String> {
-    output::file_write::write(path, rendered.as_bytes()).map_err(|err| {
+    write_text_file_in(Path::new("."), path, rendered)
+}
+
+fn write_text_file_in(base: &Path, path: &Path, rendered: &str) -> Result<(), String> {
+    if path.is_relative() && path.starts_with("target") {
+        crate::atomic_file::ensure_report_output_contained(base)?;
+    }
+    let write_path = if path.is_relative() && base != Path::new(".") {
+        base.join(path)
+    } else {
+        path.to_path_buf()
+    };
+    output::file_write::write(&write_path, rendered.as_bytes()).map_err(|err| {
         format!(
             "write output {} failed: {err}",
             output::outcome::display_path(path)
@@ -8816,6 +8828,54 @@ language = "rust"
         assert!(matches!(result, Err(message) if message.contains("already exists")));
         assert!(!dir.join(CONFIG_FILE_NAME).exists());
         let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_text_file_refuses_hostile_target_symlink_without_writing_outside() -> Result<(), String>
+    {
+        let layout = unique_command_test_dir("write-text-hostile-target");
+        let _ = std::fs::remove_dir_all(&layout);
+        let ws = layout.join("ws");
+        let outside = layout.join("outside");
+        std::fs::create_dir_all(&ws).map_err(|err| format!("create workspace: {err}"))?;
+        std::fs::create_dir_all(&outside).map_err(|err| format!("create outside dir: {err}"))?;
+        std::os::unix::fs::symlink(&outside, ws.join("target"))
+            .map_err(|err| format!("plant target symlink: {err}"))?;
+        let result = write_text_file_in(
+            &ws,
+            Path::new("target/ripr/reports/evidence-health.json"),
+            "{}",
+        );
+        let outside_empty = std::fs::read_dir(&outside)
+            .map_err(|err| format!("read outside dir: {err}"))?
+            .next()
+            .is_none();
+        let _ = std::fs::remove_dir_all(&layout);
+        assert!(result.is_err_and(|message| message.contains("refusing to write ripr output")));
+        assert!(
+            outside_empty,
+            "write_text_file wrote through the hostile symlink"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_text_file_writes_under_in_tree_target() -> Result<(), String> {
+        let base = unique_command_test_dir("write-text-in-tree-target");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("target/ripr/reports"))
+            .map_err(|err| format!("create in-tree target: {err}"))?;
+        let out = base.join("target/ripr/reports/evidence-health.json");
+        write_text_file_in(
+            &base,
+            Path::new("target/ripr/reports/evidence-health.json"),
+            "ok",
+        )?;
+        assert!(out.is_file());
+        let _ = std::fs::remove_dir_all(&base);
         Ok(())
     }
 
