@@ -591,3 +591,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_tape_equal_oracle (32)
+
+Reason:
+RIPR-SPEC-0118 / #10692: observed-assertion label replaces Discriminator in the default check digest; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_tape_equal_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

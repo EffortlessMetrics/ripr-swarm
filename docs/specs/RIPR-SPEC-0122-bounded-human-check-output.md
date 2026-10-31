@@ -235,7 +235,10 @@ five stages for every finding and never silently drops one. The `missing` state
 covers absent inputs and absent assertions, such as an exact error
 variant assertion when the test already supplies the relevant input.
 
-The discriminator token keeps the full evidence line's semantic: the
+The fifth stage is labelled `assertion` in the default digest and its legend
+(#10692; the internal stage name `discriminate` and the word "discriminator"
+stay in JSON, SARIF, the editor and `--format human-full`). The assertion token
+keeps the full evidence line's semantic: the
 `discriminate` stage grades the strongest related oracle, so on a non-`exposed`
 finding a `yes` grade
 renders as `missing` (a named missing discriminator exists) or
@@ -254,12 +257,17 @@ repair-card authority. A card-less Python finding therefore never hides a
 carded one, so `check` does not report "no repair card" while `ripr pilot` and
 `ripr first-pr` route a card for the same diff. Classification is unchanged.
 
-The digest's discriminator line label reflects the discriminator state:
+The digest's assertion line label reflects the assertion state. Boundary
+(#10692): stage and producer prose that is shared with JSON (for example "No
+strong discriminator was detected", "equality-boundary discriminator is
+missing", and the Python preview next-step text) still says "discriminator" in the
+default digest; changing it needs the shared producer strings and the JSON
+contracts to move together.
 
 - `Missing check` — the finding is not `exposed`; the named
   discriminator is absent from the related tests (#10691: the digest says
   "check"; the internal word stays in JSON and specs).
-- `Discriminator (observed, advisory)` — the finding is `exposed` and the
+- `Assertion (observed, advisory)` — the finding is `exposed` and the
   field carries an observation rationale instead of a missing discriminator.
   Preview-language classifiers record that rationale in the same field, so an
   unconditional `Missing discriminator` header would contradict the exposure

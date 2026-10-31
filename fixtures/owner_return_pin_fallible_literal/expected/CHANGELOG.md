@@ -158,10 +158,12 @@ Updated:
 ## Pending — owner_return_pin_fallible_literal (13)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged (hand-applied: this fixture's locked anyhow dependency cannot be prepared offline; hosted `goldens check` is the proof)
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged (hand-applied: this fixture's locked anyhow dependency cannot be prepared offline, so the generator output could not be run here; the repair-start line matches the sibling exposed fixtures owner_return_pin_direct and asserting_same_file_test_positive_control; hosted `goldens check` is the proof)
 
 Command:
 `cargo xtask goldens bless owner_return_pin_fallible_literal --reason "..."`
 
 Updated:
+- `expected/check.json`
 - `expected/human.txt`
+- `expected/human-full.txt`

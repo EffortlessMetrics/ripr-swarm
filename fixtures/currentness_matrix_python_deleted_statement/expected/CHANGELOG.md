@@ -216,3 +216,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_python_deleted_statement (18)
+
+Reason:
+RIPR-SPEC-0118 / #10692: observed-assertion label replaces Discriminator in the default check digest; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless currentness_matrix_python_deleted_statement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

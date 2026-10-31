@@ -6181,7 +6181,7 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     assert!(
         stderr.contains("run `ripr pilot --root ")
             && stderr.contains("agent-packet-unknown-seam")
-            && stderr.contains("to list current gap IDs"),
+            && stderr.contains("to list current repair IDs"),
         "{stderr}"
     );
 
@@ -6282,7 +6282,7 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     let stderr = String::from_utf8_lossy(&packet.stderr);
     assert!(!stderr.contains("not a seam ID"), "{stderr}");
     assert!(
-        stderr.contains("Run `ripr pilot --root ") && stderr.contains("to list current gap IDs"),
+        stderr.contains("Run `ripr pilot --root ") && stderr.contains("to list current repair IDs"),
         "{stderr}"
     );
     std::fs::remove_dir_all(root)?;
@@ -6401,7 +6401,7 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
     let plain_stdout = String::from_utf8_lossy(&plain.stdout);
     for needle in [
         "Repair brief for this gap",
-        "  Gap ID: 67fc764ba37d77bd",
+        "  Repair ID: 67fc764ba37d77bd",
         "  Files you may change: ",
         "  Do not change: ",
         "  Done when: ",

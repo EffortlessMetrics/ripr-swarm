@@ -170,3 +170,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_enum_canonical_alias (14)
+
+Reason:
+RIPR-SPEC-0118 / #10692: observed-assertion label replaces Discriminator in the default check digest; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_enum_canonical_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

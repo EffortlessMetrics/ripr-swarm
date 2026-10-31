@@ -4367,9 +4367,8 @@ mod tests {
         );
 
         assert!(
-            digest.contains(
-                "  Discriminator (observed, advisory): Related test reaches `applyDiscount`"
-            ),
+            digest
+                .contains("  Assertion (observed, advisory): Related test reaches `applyDiscount`"),
             "expected observed-advisory label in digest; got:\n{digest}"
         );
         assert!(
@@ -4631,7 +4630,7 @@ mod tests {
                 finding.class
             );
             assert!(
-                !digest.contains("Discriminator (observed, advisory)"),
+                !digest.contains("Assertion (observed, advisory)"),
                 "non-exposed digest must not use the observed-advisory label; got:\n{digest}"
             );
         }

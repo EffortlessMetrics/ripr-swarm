@@ -505,3 +505,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_runner_detect_no_runner (30)
+
+Reason:
+RIPR-SPEC-0118 / #10692: observed-assertion label replaces Discriminator in the default check digest; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless ts_runner_detect_no_runner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

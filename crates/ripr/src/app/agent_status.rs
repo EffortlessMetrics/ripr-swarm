@@ -1019,7 +1019,7 @@ fn finished_attempt_warnings(
                                     )
                                 ),
                                 None => format!(
-                                    ". If gap `{}` still has its gap open, start a new attempt with `{}`",
+                                    ". If `{}` still has its gap open, start a new attempt with `{}`",
                                     attempt.seam_id,
                                     new_repair_attempt_command(
                                         root_display,
@@ -1768,9 +1768,9 @@ fn pilot_withheld_message(
     declined_files: bool,
 ) -> String {
     let seams = if withheld == 1 {
-        "1 gap".to_string()
+        "1 spot".to_string()
     } else {
-        format!("{withheld} gaps")
+        format!("{withheld} spots")
     };
     let inspect = "Inspect them in `target/ripr/pilot/repo-exposure.md`, where each one names the stage ripr could not resolve";
     if seam_limit_applied.is_none() {
@@ -2058,7 +2058,7 @@ fn legacy_next_command(
             warnings.push(AgentStatusWarning {
                 kind: "pilot_found_no_repair_target".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
-                message: "the last complete `ripr pilot` run offered no repair attempt: its top gap is not eligible for `ripr agent repair`, and running pilot again unchanged ranks the same seams. Read `target/ripr/pilot/pilot-summary.md` for that gap, add a test for it by hand in the crate that owns it, then rerun `ripr pilot` to rank the gaps against that test".to_string(),
+                message: "the last complete `ripr pilot` run offered no repair attempt: its top gap is not eligible for `ripr agent repair`, and running pilot again unchanged ranks the same gaps. Read `target/ripr/pilot/pilot-summary.md` for that gap, add a test for it by hand in the crate that owns it, then rerun `ripr pilot` to rank the gaps against that test".to_string(),
             });
             return None;
         }
@@ -6386,7 +6386,7 @@ mod tests {
             .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
         assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
         for expected in [
-            "withheld 138 gaps whose static evidence is unknown or opaque",
+            "withheld 138 spots whose static evidence is unknown or opaque",
             "target/ripr/pilot/repo-exposure.md",
             "no repair attempt applies until a gap ranks",
         ] {
@@ -6407,7 +6407,7 @@ mod tests {
             .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
             .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
         for expected in [
-            "withheld at least 138 gaps",
+            "withheld at least 138 spots",
             "repairable gaps may sit past the cut",
             "raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT",
         ] {

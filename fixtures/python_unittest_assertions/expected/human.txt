@@ -19,7 +19,7 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Gap ID (for scripts): gap:python:src/risk.py:risk_score:predicate_boundary:predicate:amount>=100
   Changed behavior: if amount >= 100:
-  Discriminator (observed, advisory): Related Python test reaches `risk_score` with an `exact_value`
+  Assertion (observed, advisory): Related Python test reaches `risk_score` with an `exact_value`
     oracle. Static evidence suggests the changed behavior is observed under an exact-value
     discriminator
   Related test: tests/test_risk.py:7 test_high_risk_score

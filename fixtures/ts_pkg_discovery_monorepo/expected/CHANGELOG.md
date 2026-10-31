@@ -613,3 +613,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_pkg_discovery_monorepo (31)
+
+Reason:
+RIPR-SPEC-0118 / #10692: observed-assertion label replaces Discriminator in the default check digest; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless ts_pkg_discovery_monorepo --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

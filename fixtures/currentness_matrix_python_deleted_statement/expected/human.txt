@@ -19,7 +19,7 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Gap ID (for scripts): gap:python:src/cart.py:doubled:return_value:return_value:x*2
   Changed behavior: return x * 2
-  Discriminator (observed, advisory): Related Python test reaches `doubled` with an `exact_value`
+  Assertion (observed, advisory): Related Python test reaches `doubled` with an `exact_value`
     oracle. Static evidence suggests the changed behavior is observed under an exact-value
     discriminator
   Related test: tests/test_cart.py:12 test_doubled_doubles

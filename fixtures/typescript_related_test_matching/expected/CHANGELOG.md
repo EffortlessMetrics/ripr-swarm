@@ -721,3 +721,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_related_test_matching (30)
+
+Reason:
+RIPR-SPEC-0118 / #10692: observed-assertion label replaces Discriminator in the default check digest; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_related_test_matching --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
