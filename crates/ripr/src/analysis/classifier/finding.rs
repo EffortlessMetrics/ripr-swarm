@@ -1205,6 +1205,7 @@ mod tests {
             propagation_witness: None,
             activation: ActivationEvidence::default(),
             related_tests_matched_total: related_tests.len(),
+            complete_proximity_oracles_only: false,
             direct_rows: Vec::new(),
             related_tests,
             reach: yes.clone(),

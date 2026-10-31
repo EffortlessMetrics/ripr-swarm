@@ -294,6 +294,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         .map(|test| test.miss)
         .collect();
 
+    let complete_proximity_oracles_only = evidence.complete_proximity_oracles_only;
     let direct_rows = std::mem::take(&mut evidence.direct_rows);
     let mut finding = build_finding_with_origins(&context, class, evidence, value_origins);
     if let Some(chain) = resolved_chain.as_ref() {
@@ -304,6 +305,13 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     // decides.
     super::classify::mark_receiver_unestablished(&mut finding, owner_fn, index);
     let pre_cap_syntax_only = super::classify::pre_cap_syntax_only(&finding, index, &direct_rows);
+    if complete_proximity_oracles_only
+        && let Some(owner) = context
+            .owner_fn
+            .filter(|owner| owner.impl_context == crate::analysis::facts::FunctionImplContext::Free)
+    {
+        super::language::apply_complete_proximity_macro_limit(&mut finding, index, &owner.name);
+    }
     read_trace.finish();
     (finding, pre_cap_syntax_only)
 }
