@@ -189,15 +189,15 @@ async fn sdk_session(
                 .pointer("/mcp/tools")
                 .and_then(Value::as_array)
                 .map(Vec::len)
-                != Some(9)
+                != Some(10)
             {
-                return Err("SDK status surface block lost the nine-tool contract".into());
+                return Err("SDK status surface block lost the ten-tool contract".into());
             }
             if status
                 .pointer("/mcp/resource_templates")
                 .and_then(Value::as_array)
                 .map(Vec::len)
-                != Some(5)
+                != Some(6)
             {
                 return Err("SDK status surface block lost the five-template contract".into());
             }

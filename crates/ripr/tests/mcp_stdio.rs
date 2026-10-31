@@ -728,7 +728,7 @@ fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Resul
         || recovered
             .pointer("/result/tools")
             .and_then(Value::as_array)
-            .is_none_or(|tools| tools.len() != 9)
+            .is_none_or(|tools| tools.len() != 10)
     {
         return Err(format!(
             "protocol controls lost same-session recovery: {recovered}"
@@ -2162,9 +2162,9 @@ fn unsupported_inline_version_is_rejected_and_next_request_recovers() -> Result<
         || recovered
             .pointer("/result/tools")
             .and_then(Value::as_array)
-            .is_none_or(|tools| tools.len() != 9)
+            .is_none_or(|tools| tools.len() != 10)
     {
-        return Err("valid inline request did not recover the nine-tool slice surface".into());
+        return Err("valid inline request did not recover the ten-tool slice surface".into());
     }
     Ok(())
 }
