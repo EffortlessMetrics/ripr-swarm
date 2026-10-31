@@ -6152,6 +6152,55 @@ mod diagnostic_policy_tests {
         Ok(())
     }
 
+    /// #11296: Python and TypeScript preview findings reach the editor as
+    /// INFORMATION diagnostics under the full profile, and the actionable
+    /// profile keeps withholding the same finding (no promotion).
+    #[test]
+    fn preview_findings_publish_as_information_only_under_full_profile() -> Result<(), String> {
+        for (language, file) in [
+            (crate::domain::LanguageId::Python, "src/click/core.py"),
+            (crate::domain::LanguageId::TypeScript, "src/v4/core/util.ts"),
+        ] {
+            let mut finding = policy_finding();
+            finding.class = ExposureClass::WeaklyExposed;
+            finding.probe.location.file = std::path::PathBuf::from(file);
+            finding.language = Some(language);
+            finding.language_status = Some(LanguageStatus::Preview);
+            let project = |profile| {
+                finding_diagnostics_by_uri_with_profile(
+                    Path::new("/workspace"),
+                    std::slice::from_ref(&finding),
+                    &SeverityConfig::default(),
+                    true,
+                    FindingDiagnosticProjection::new(
+                        profile,
+                        &PositionEncodingKind::UTF16,
+                        &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+                    ),
+                )
+            };
+            let full = project(LspDiagnosticProfile::Full)?;
+            let diagnostic = full
+                .values()
+                .flatten()
+                .next()
+                .ok_or_else(|| format!("{file}: full profile dropped the preview finding"))?;
+            if diagnostic.severity != Some(DiagnosticSeverity::INFORMATION) {
+                return Err(format!(
+                    "{file}: preview severity must clamp to INFORMATION: {:?}",
+                    diagnostic.severity
+                ));
+            }
+            let actionable = project(LspDiagnosticProfile::Actionable)?;
+            if actionable.values().any(|list| !list.is_empty()) {
+                return Err(format!(
+                    "{file}: actionable profile must keep withholding a preview finding without a fix route"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn finding_span_width_uses_negotiated_encoding_end_to_end() -> Result<(), String> {
         // "café" is 4 UTF-16 code units, 4 UTF-32 scalars, and 5 UTF-8 bytes.

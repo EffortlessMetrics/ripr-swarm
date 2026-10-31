@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0069"
+tests = [
+  "crates/ripr/src/lsp/backend.rs::list_actionable_items_tests::actionable_profile_discloses_withheld_python_and_typescript_preview_findings",
+  "crates/ripr/src/lsp/backend.rs::list_actionable_items_tests::preview_withholding_disclosure_ignores_non_preview_and_non_current_findings",
+  "crates/ripr/src/lsp/tests.rs::refresh_completion_log_message_counts_profile_withheld_preview_findings",
+  "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::preview_findings_publish_as_information_only_under_full_profile",
+]
+code = ["crates/ripr/src/lsp/backend.rs"]

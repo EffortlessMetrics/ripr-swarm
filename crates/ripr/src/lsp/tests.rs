@@ -3666,6 +3666,43 @@ fn refresh_completion_log_message_counts_profile_withheld_unknown_findings() -> 
     Ok(())
 }
 
+/// #11296: the completion log names the preview-language findings the
+/// actionable profile withheld, so `findings=1, diagnostics=0` is explained.
+#[test]
+fn refresh_completion_log_message_counts_profile_withheld_preview_findings() -> Result<(), String> {
+    let mut preview = sample_finding();
+    preview.language = Some(crate::domain::LanguageId::Python);
+    preview.language_status = Some(crate::domain::LanguageStatus::Preview);
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri,
+        Vec::new(),
+        vec![preview.clone()],
+    );
+    snapshot.refresh.record_duration(Duration::from_millis(5));
+
+    snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+    assert!(message.contains("withheld_preview=1"), "{message}");
+
+    snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Full;
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+    assert!(message.contains("withheld_preview=0"), "{message}");
+
+    // Negative control: a non-preview hidden gap is not a preview withholding.
+    let mut rust = sample_finding();
+    rust.language_status = None;
+    snapshot.findings = vec![rust];
+    snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+    assert!(message.contains("withheld_preview=0"), "{message}");
+    Ok(())
+}
+
 #[test]
 fn refresh_completion_log_message_counts_preview_findings_and_limits() -> Result<(), String> {
     let mut finding = sample_finding();

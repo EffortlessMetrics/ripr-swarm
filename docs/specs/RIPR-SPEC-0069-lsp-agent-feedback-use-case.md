@@ -388,6 +388,20 @@ the only word about a live finding:
   `withheld_unknown=N` beside the existing `findings` and `diagnostics`
   counts.
 
+Preview-language withholding (#11296): the same discipline covers Python,
+TypeScript and other `language_status = "preview"` findings of a gap class
+(`weakly_exposed`, `reachable_unrevealed`, `no_static_path`) that the
+`actionable` profile withholds because they carry no producer-backed fix
+route. Eligibility is unchanged and fail-closed: nothing is promoted to a
+diagnostic, and under `full` such a finding publishes as an `INFORMATION`
+diagnostic. Under `actionable` the disclosure is additive: `ripr/analysisStatus`
+`withheld_findings` counts them in `count`/`classes` with a separate
+`preview_count`; the pull-channel disclosure and the completion log
+(`withheld_preview=N`) name them, so `findings=N, diagnostics=0` is never the
+only word about a live preview finding. These findings are disjoint from the
+`*_unknown` set and remain listed under `hidden_gaps` by
+`ripr/listActionableItems`.
+
 ## Non-Goals
 
 - No autonomous edits. The LSP never modifies source; every command
