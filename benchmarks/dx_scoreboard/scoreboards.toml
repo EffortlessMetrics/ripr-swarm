@@ -75,6 +75,27 @@ note = "large long-lived binary workspace (~1400 .rs files); shared corpus pin"
 heavy = true
 
 [[corpus]]
+id = "rust-analyzer"
+url = "https://github.com/rust-lang/rust-analyzer"
+sha = "8399dcb353388061755fad89b0eadb7f74ca34cb"
+note = "large IDE workspace (~100 crates); the pinned change edits crates/hir and crates/ide-diagnostics"
+heavy = true
+
+[[corpus]]
+id = "tokio"
+url = "https://github.com/tokio-rs/tokio"
+sha = "6470b5e4b8e943ad014383a5bf6a93ba415678a3"
+note = "async runtime workspace, cfg- and macro-heavy; the pinned change edits tokio/src/sync/barrier.rs and its test"
+heavy = true
+
+[[corpus]]
+id = "servo"
+url = "https://github.com/servo/servo"
+sha = "436d98daa8cc128d96371709bc514b5b4d9cbce3"
+note = "browser engine workspace (several thousand .rs files); the pinned change edits components/net/http_cache.rs"
+heavy = true
+
+[[corpus]]
 id = "ripr-swarm-2026-10"
 url = "https://github.com/EffortlessMetrics/ripr-swarm"
 sha = "8fbe8bd1598e0b11752c6c989aa54198a0510a2f"
