@@ -34,6 +34,7 @@ pub(crate) use ids::{
     collision_ordinals, collision_rank_key, fingerprint_probe_id, legacy_whole_line_diff_probe_id,
     normalize_expression, normalize_rust_expression, sanitize_path,
 };
+pub(crate) use macro_definition::verus_region_lines;
 #[cfg(test)]
 pub(crate) use repo::probes_for_repo_file;
 pub(crate) use repo::probes_for_repo_file_seeded;
