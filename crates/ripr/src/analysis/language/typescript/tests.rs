@@ -19897,6 +19897,7 @@ mod guard_entry_tests;
 mod infection_tests;
 mod instance_class_tests;
 mod instance_factory_tests;
+mod issue10925_alias_resolution_tests;
 mod issue10925_shadow_index_tests;
 mod issue10925_shadow_scan_tests;
 mod issue7507_shadow_tests;
