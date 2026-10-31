@@ -165,13 +165,16 @@ vim.lsp.enable("ripr")
 any root, which would stop with `root_unavailable`. Refresh with the
 `exec_cmd` call in the recipe's step 4.
 
-Neovim v0.12.5 and v0.12.6 (checked 2026-10-31 on Linux with the snippet above,
-`ripr.refresh` through `exec_cmd`) do not show refreshed pull diagnostics in an
-open buffer on their own, though one manual `textDocument/diagnostic` request
-afterwards returns the `weakly_exposed` finding; the recipe's
+Neovim v0.12.5 does not redraw refreshed pull diagnostics in an open buffer on
+its own; the recipe's
 [measured compatibility limit](neovim-lsp.md#measured-compatibility-limit)
-records the run and the upstream fix. On that release, re-open the buffer or
-request document diagnostics after a refresh.
+records that run and the upstream fix. In one further check on 2026-10-31
+(Linux, Neovim v0.12.6, the snippet above, `ripr.refresh` through `exec_cmd`),
+the refreshed finding also did not appear within 60 seconds; after analysis had
+finished, one manual `textDocument/diagnostic` request made the `weakly_exposed`
+finding available. That check is recorded only on this page, and its transcript
+was not retained. On these releases, re-open the buffer or request document
+diagnostics after a refresh has finished analyzing.
 
 ## Zed
 
