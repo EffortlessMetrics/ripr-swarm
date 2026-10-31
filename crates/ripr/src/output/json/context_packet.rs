@@ -308,6 +308,29 @@ mod tests {
         assert!(packet.contains("No test checks \\\"boundary\\\"\\ncase"));
     }
 
+    /// #10717: the witness `DiagnosticConfidence` serializes at the contract's
+    /// two decimals; computed `f32` noise is rounded, clean values are kept.
+    #[test]
+    fn witness_confidence_value_serializes_at_contract_precision() -> Result<(), String> {
+        let noisy = 0.1_f32 + 0.6_f32;
+        assert_ne!(noisy.to_string(), "0.7", "fixture must carry f32 noise");
+        for (value, expected) in [(noisy, "0.7"), (0.4, "0.4"), (0.75, "0.75"), (0.0, "0.0")] {
+            let confidence = DiagnosticConfidence {
+                value: Some(value),
+                basis: "b".to_string(),
+            };
+            let json = serde_json::to_value(&confidence).map_err(|e| e.to_string())?;
+            assert_eq!(json["value"].to_string(), expected);
+        }
+        let none = DiagnosticConfidence {
+            value: None,
+            basis: "b".to_string(),
+        };
+        let json = serde_json::to_value(&none).map_err(|e| e.to_string())?;
+        assert!(json.get("value").is_none());
+        Ok(())
+    }
+
     #[test]
     fn context_packet_witness_nests_at_the_packet_indent() -> Result<(), String> {
         // The witness is a serde-owned DTO; it must expand at the

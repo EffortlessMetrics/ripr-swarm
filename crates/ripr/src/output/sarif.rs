@@ -586,7 +586,10 @@ fn finding_properties(finding: &Finding, severity: ConfigSeverity) -> Value {
         "probe_delta".to_string(),
         json!(finding.probe.delta.as_str()),
     );
-    properties.insert("confidence".to_string(), json!(finding.confidence));
+    properties.insert(
+        "confidence".to_string(),
+        json!(crate::domain::contract_confidence(finding.confidence)),
+    );
     if let Some(owner) = &finding.probe.owner {
         properties.insert("owner".to_string(), json!(owner.0.as_str()));
     }
@@ -2269,6 +2272,34 @@ weakly_exposed = "note"
 
         assert_eq!(result["level"], "note");
         assert_eq!(result["properties"]["severity"], "note");
+        Ok(())
+    }
+
+    /// #10717: `properties.confidence` is the contract's two-decimal value, not
+    /// the `f32` widened to `f64` (`0.4000000059604645`).
+    #[test]
+    fn sarif_finding_confidence_uses_contract_precision() -> Result<(), String> {
+        for (stored, wire, noisy) in [
+            (0.4_f32, 0.4_f64, true),
+            (0.92, 0.92, true),
+            (0.6, 0.6, true),
+            (0.75, 0.75, false),
+        ] {
+            // Fixture check: the pre-fix widening really is noisy for the
+            // inexact values, and exact ones (0.75) are the clean control.
+            let widened = serde_json::json!(stored).to_string();
+            assert_eq!(widened.len() > 6, noisy, "fixture {stored}: {widened}");
+            let mut output = sample_output();
+            output.findings[0].confidence = stored;
+            let rendered = render_findings_sarif(&output, &parse_config("")?, &[]);
+            let sarif = parse_json(&rendered)?;
+            let result = first_result(&sarif)?;
+            assert_eq!(result["properties"]["confidence"], serde_json::json!(wire));
+            assert_eq!(
+                result["properties"]["confidence"].to_string(),
+                format!("{wire}")
+            );
+        }
         Ok(())
     }
 
