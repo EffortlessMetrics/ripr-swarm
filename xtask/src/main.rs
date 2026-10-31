@@ -69,6 +69,7 @@ mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
 mod types;
+mod warm_ab;
 mod work_adapter_identity;
 mod work_burndown_identity;
 mod work_claim_identity;

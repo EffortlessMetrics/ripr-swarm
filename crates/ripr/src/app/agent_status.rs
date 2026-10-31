@@ -315,8 +315,30 @@ impl AgentStatusReport {
             })
     }
 
+    /// #10984: a current gap-bound attempt that finished with its own retained
+    /// receipt showing the gap closed. A gap-bound route never writes the
+    /// legacy seam workflow files, so their absence says nothing about it.
+    /// Only a non-legacy gap binding, a `finished` disposition at a current
+    /// head and a receipt issued from retained terminal evidence qualify;
+    /// every pending, refused, stale, unconfirmed or unavailable attempt
+    /// keeps absent legacy artifacts counted.
+    fn has_current_finished_gap_attempt(&self) -> bool {
+        self.repair_attempts.iter().any(|attempt| {
+            attempt.gap_base.is_some()
+                && !attempt.legacy_gap_binding
+                && attempt.disposition == "finished"
+                && attempt.head_current == Some(true)
+                && matches!(
+                    &attempt.receipt,
+                    AgentStatusAttemptReceipt::Issued { reading, .. } if reading.shows_gap_closed()
+                )
+        })
+    }
+
     pub(crate) fn status(&self) -> &'static str {
-        if self.next_command.is_some() || self.artifacts.iter().any(|artifact| !artifact.present) {
+        let artifact_absent = self.artifacts.iter().any(|artifact| !artifact.present)
+            && !self.has_current_finished_gap_attempt();
+        if self.next_command.is_some() || artifact_absent {
             "incomplete"
         } else if self.warnings.is_empty() {
             "complete"
@@ -6959,6 +6981,95 @@ mod tests {
             verification_status: None,
             test_changed: None,
         }
+    }
+
+    /// #10984: the aggregate status of a current finished gap-bound attempt
+    /// is not `incomplete` solely because legacy seam files are absent, and
+    /// every unconfirmed variant keeps the absence counted.
+    #[test]
+    fn finished_gap_attempt_is_not_incomplete_for_absent_legacy_artifacts() {
+        let improved = || AgentReceiptReading {
+            movement: Some("improved".to_string()),
+            receipt_state: crate::output::receipt_lifecycle::RECEIPT_MOVEMENT_IMPROVED.to_string(),
+            ..open_gap_reading()
+        };
+        assert!(
+            improved().shows_gap_closed(),
+            "positive reading must close the gap"
+        );
+        assert!(
+            !open_gap_reading().shows_gap_closed(),
+            "unchanged reading must not close the gap"
+        );
+        let finished = || {
+            let mut attempt = canonical_test_view();
+            attempt.gap_base = Some("0d2028aa".to_string());
+            attempt.state = "ready_to_finish";
+            attempt.disposition = "finished";
+            attempt.command = None;
+            attempt.receipt = AgentStatusAttemptReceipt::Issued {
+                path: "receipt.json".to_string(),
+                reading: improved(),
+            };
+            attempt
+        };
+        let report = |attempt: AgentStatusRepairAttempt| AgentStatusReport {
+            root: ".".to_string(),
+            seam: None,
+            artifacts: vec![AgentStatusArtifact {
+                name: "agent_brief".to_string(),
+                label: "agent brief".to_string(),
+                path: "target/ripr/workflow/agent-brief.md".to_string(),
+                present: false,
+                bytes: None,
+                modified: None,
+            }],
+            repair_attempts: vec![attempt],
+            missing_commands: Vec::new(),
+            next_command: None,
+            warnings: Vec::new(),
+        };
+        assert_eq!(report(finished()).status(), "complete");
+
+        let mut seam_bound = finished();
+        seam_bound.gap_base = None;
+        assert_eq!(report(seam_bound).status(), "incomplete");
+
+        let mut legacy = finished();
+        legacy.legacy_gap_binding = true;
+        assert_eq!(report(legacy).status(), "incomplete");
+
+        let mut historical = finished();
+        historical.head_current = Some(false);
+        assert_eq!(report(historical).status(), "incomplete");
+
+        let mut unknown_head = finished();
+        unknown_head.head_current = None;
+        assert_eq!(report(unknown_head).status(), "incomplete");
+
+        let mut unavailable = finished();
+        unavailable.receipt = AgentStatusAttemptReceipt::Unavailable {
+            path: None,
+            reason: "retained terminal evidence is missing".to_string(),
+        };
+        assert_eq!(report(unavailable).status(), "incomplete");
+
+        let mut not_advisory = finished();
+        not_advisory.receipt = AgentStatusAttemptReceipt::Issued {
+            path: "receipt.json".to_string(),
+            reading: AgentReceiptReading {
+                status: Some("invalid".to_string()),
+                ..improved()
+            },
+        };
+        assert_eq!(report(not_advisory).status(), "incomplete");
+
+        let mut open_gap = finished();
+        open_gap.receipt = AgentStatusAttemptReceipt::Issued {
+            path: "receipt.json".to_string(),
+            reading: open_gap_reading(),
+        };
+        assert_eq!(report(open_gap).status(), "incomplete");
     }
 
     /// Every status class routes its arm through the canonical decision:
