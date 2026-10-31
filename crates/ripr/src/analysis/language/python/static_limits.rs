@@ -2539,7 +2539,9 @@ pub(super) mod tests {
         for prefix in ["r", "u", "R", "U"] {
             assert_eq!(
                 import_limit(
-                    Some(&format!("    return itertools.starmap(f, **{{{prefix}\"x\": 1}})")),
+                    Some(&format!(
+                        "    return itertools.starmap(f, **{{{prefix}\"x\": 1}})"
+                    )),
                     &format!("    return itertools.starmap(f, **{{{prefix}\"y\": 1}})")
                 ),
                 limited,
