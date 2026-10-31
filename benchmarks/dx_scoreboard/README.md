@@ -378,14 +378,18 @@ actionable 0/28, false exposed 1/26 (the parked `perl-testmore-tier-far-from-bou
 known-false row, #8979) and false silent 0/26, at
 `ea5229fba660d284841b3954f73ca7948a88d0ea`. The aggregate rates are at or better than
 the ones they replace, but this is a corpus migration with retained per-case
-regressions, not a regression-free acceptance: no case is unchanged across the
+changes, not a regression-free acceptance: no case is unchanged across the
 two populations, and four producer cases that read ideal in the old population
 read abstained now (`perl-test2-format-entry-like`,
 `perl-testexception-close-out-dies-ok`, `perl-testmore-points-cmp-ok-positive`,
 `perl-testmore-round-cents-like`; the first three are `not_discriminated` and
 the last is `partially_discriminated`). RIPR-SPEC-0235 rule 16 (broad oracle)
-and rule 18 (null observable) cause them deliberately, and #10897 tracks the
-producer-side fix. Those losses need an explicit source disposition. The Perl
+and rule 18 (null observable) cause them deliberately. Owner-delegated
+disposition (2026-10-31, recorded on #10874): all four are accepted as correct
+fail-closed abstentions, not false verdicts (each case's acceptable verdicts
+are `gap` and `limited`, and `limited` is what they now read); the
+producer-side matcher grading that would restore the `gap` on the first three
+and the last remains tracked by #10897. The Perl
 abstention row is deliberately not re-recorded: its rate
 rose from 8/27 to 40/54 (derivation and per-case list in
 `testdata/10809-perl-abstention-ea5229f.json`, rebuilt from the committed expected
