@@ -25,9 +25,10 @@ use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::{
     ImportedMacros, MacroScope, first_macro_call, generator_calls, macro_scope,
 };
+use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 #[cfg(test)]
 mod prefilter_tests;
@@ -62,6 +63,42 @@ pub(crate) struct MacroVisibility {
 struct ExportIndex {
     definitions: BTreeMap<String, Vec<(PathBuf, Option<String>)>>,
     opaque: BTreeSet<PathBuf>,
+}
+
+/// Scopes already derived this run, keyed by the identity of the source
+/// allocation. The facts pass and the classifier each build a resolver over
+/// the same index, and a resolver (or a clone of one) starts with an empty
+/// memo, so every file was parsed again for each (about three parses of 1,700
+/// files on servo, 62% of the bytes a cold pilot parsed). An entry is valid
+/// only while its `Weak` still upgrades to the same allocation, so a freed and
+/// reused address cannot return another file's scope and nothing here keeps a
+/// source alive.
+type SharedScopes = HashMap<usize, (Weak<str>, Option<Arc<MacroScope>>)>;
+const SHARED_SCOPE_ENTRIES: usize = 16_384;
+static SHARED_SCOPES: Mutex<Option<SharedScopes>> = Mutex::new(None);
+
+fn shared_scope(source: &Arc<str>) -> Option<Arc<MacroScope>> {
+    let key = Arc::as_ptr(source).cast::<u8>() as usize;
+    if let Ok(guard) = SHARED_SCOPES.lock()
+        && let Some((weak, scope)) = guard.as_ref().and_then(|map| map.get(&key))
+        && weak
+            .upgrade()
+            .is_some_and(|live| Arc::ptr_eq(&live, source))
+    {
+        return scope.clone();
+    }
+    let scope = macro_scope(source).map(Arc::new);
+    if let Ok(mut guard) = SHARED_SCOPES.lock() {
+        let map = guard.get_or_insert_with(HashMap::new);
+        if map.len() >= SHARED_SCOPE_ENTRIES {
+            map.retain(|_, (weak, _)| weak.strong_count() > 0);
+            if map.len() >= SHARED_SCOPE_ENTRIES {
+                map.clear();
+            }
+        }
+        map.insert(key, (Arc::downgrade(source), scope.clone()));
+    }
+    scope
 }
 
 impl Clone for MacroVisibility {
@@ -120,9 +157,12 @@ impl MacroVisibility {
             if !source.contains("macro_rules") || !source.contains("test") {
                 continue;
             }
-            for scoped in macro_scope(source).unwrap_or_default().macros {
+            let Some(scope) = shared_scope(source) else {
+                continue;
+            };
+            for scoped in &scope.macros {
                 if scoped.text.contains("test") {
-                    generators.insert(scoped.name);
+                    generators.insert(scoped.name.clone());
                 }
             }
         }
@@ -336,11 +376,7 @@ impl MacroVisibility {
         if let Some(cached) = cached {
             return cached;
         }
-        let scope = self
-            .sources
-            .get(file)
-            .and_then(|source| macro_scope(source))
-            .map(Arc::new);
+        let scope = self.sources.get(file).and_then(shared_scope);
         self.scopes
             .borrow()
             .insert(file.to_path_buf(), scope.clone());
@@ -1112,5 +1148,29 @@ mod tests {
         let b = format!("{GENERATOR}#[macro_use]\nmod a;\n");
         let files = [("tests/a.rs", a), ("tests/b.rs", b.as_str())];
         assert_eq!(imported(&files, "tests/a.rs"), "");
+    }
+
+    /// Resolvers built over the same source allocations (the facts pass, then
+    /// the classifier, or a clone) must share the derived scope instead of
+    /// parsing each file again; a different allocation holding the same text
+    /// is a different key and derives its own.
+    #[test]
+    fn resolvers_over_one_source_share_its_scope() {
+        let source: Arc<str> = Arc::from("macro_rules! t { () => { #[test] fn a() {} }; }\n");
+        let path = PathBuf::from("tests/a.rs");
+        let build = |source: &Arc<str>| {
+            MacroVisibility::new(std::iter::once((path.clone(), Arc::clone(source))))
+        };
+        let (first, second) = (build(&source), build(&source));
+        let (a, b) = (first.scope(&path), second.scope(&path));
+        assert!(a.is_some() && b.is_some(), "a clean macro file has a scope");
+        let shared = a
+            .as_ref()
+            .zip(b.as_ref())
+            .is_some_and(|(a, b)| Arc::ptr_eq(a, b));
+        assert!(shared, "the second resolver re-derived the scope");
+        let copy: Arc<str> = Arc::from(&*source);
+        let other = build(&copy).scope(&path);
+        assert!(other.is_some_and(|other| a.as_ref().is_some_and(|a| !Arc::ptr_eq(&other, a))));
     }
 }
