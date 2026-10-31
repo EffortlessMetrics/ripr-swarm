@@ -6814,6 +6814,115 @@ mod source_currentness_tests {
         );
     }
 
+    /// RIPR-SPEC-0369: changed lines inside `verus! { .. }` are Verus syntax.
+    /// Exec text, `ensures`, `spec fn` and `proof` lines seed one
+    /// `static_unknown` probe per region and diff side (a replaced line pairs its
+    /// old text into the added-side probe), never an expression family; an
+    /// ordinary fn beside the block keeps its normal probe.
+    #[test]
+    fn verus_region_lines_seed_one_static_unknown_not_expression_probes() {
+        let source = "use vstd::prelude::*;\nverus! {\nfn inc(x: u32) -> (r: u32)\n    requires x < 100,\n    ensures r <= 200,\n{\n    x + 2\n}\nspec fn adult(age: u32) -> bool { age >= 21 }\nproof fn lemma(x: int) {\n    assert(x / 2 <= x + 1) by (nonlinear_arith);\n}\n}\nfn check(n: usize) -> bool {\n    n >= 4\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let line = |number: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: number,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![
+                line(4, "requires x < 100,"),
+                line(5, "ensures r <= 200,"),
+                line(7, "x + 2"),
+                line(9, "spec fn adult(age: u32) -> bool { age >= 21 }"),
+                line(11, "assert(x / 2 <= x + 1) by (nonlinear_arith);"),
+                line(15, "n >= 4"),
+            ],
+            removed_lines: vec![line(5, "ensures r <= 100,"), line(15, "n > 4")],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let inside = probes
+            .iter()
+            .filter(|probe| probe.location.line <= 13)
+            .collect::<Vec<_>>();
+        assert!(
+            inside
+                .iter()
+                .all(|probe| probe.family == ProbeFamily::StaticUnknown),
+            "{inside:?}"
+        );
+        // A removed line replaced by an added one is paired into the added-side
+        // probe (`before` carries the old text); only a removed line with no
+        // added counterpart gets a removed-side probe (see the removed-only test).
+        assert_eq!(
+            inside.len(),
+            1,
+            "one paired probe for the region: {inside:?}"
+        );
+        assert!(
+            inside[0].before.is_some() && inside[0].after.is_some(),
+            "removed text is paired into the added-side probe: {inside:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.location.line == 15 && probe.family == ProbeFamily::Predicate),
+            "ordinary fn beside the block keeps its probe: {probes:?}"
+        );
+    }
+
+    /// RIPR-SPEC-0369: a removed-only edit inside a region seeds exactly one
+    /// removed-side `static_unknown` probe from the old-source region, even when
+    /// the new file no longer holds the deleted lines.
+    #[test]
+    fn removed_only_verus_region_lines_seed_one_removed_side_static_unknown() {
+        let source =
+            "verus! {\nfn inc(x: u32) -> (r: u32)\n    requires x < 100,\n{\n    x + 2\n}\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let line = |number: usize, new_side: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: new_side,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![],
+            removed_lines: vec![line(4, 4, "ensures r <= 200,"), line(5, 4, "decreases x,")],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        assert_eq!(probes.len(), 1, "{probes:?}");
+        assert_eq!(probes[0].family, ProbeFamily::StaticUnknown);
+        assert!(probes[0].after.is_none() && probes[0].before.is_some());
+    }
+
+    /// RIPR-SPEC-0369: a changed line that also holds code outside the `verus!`
+    /// extent keeps ordinary seeding end to end.
+    #[test]
+    fn a_line_mixing_verus_region_and_outside_code_keeps_ordinary_probes() {
+        let source = "fn a(n: usize) -> bool { verus! { fn b() {} } n >= 4 }\n";
+        let path = PathBuf::from("src/lib.rs");
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![ChangedLine {
+                line: 1,
+                new_side_line: 1,
+                text: "fn a(n: usize) -> bool { verus! { fn b() {} } n >= 4 }".to_string(),
+            }],
+            removed_lines: vec![],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.family != ProbeFamily::StaticUnknown)
+                && !probes.is_empty(),
+            "{probes:?}"
+        );
+    }
+
     /// Removed-only macro definition text is also macro text.
     #[test]
     fn removed_macro_rules_lines_do_not_seed_expression_probes() {
