@@ -1,0 +1,4 @@
+crates/ripr/src/mcp/transport.rs|MCP SDK service failed
+crates/ripr/src/mcp/transport.rs|MCP SDK startup failed
+crates/ripr/src/mcp/transport.rs|MCP status projection failed
+crates/ripr/src/mcp/transport.rs|MCP transport status unavailable

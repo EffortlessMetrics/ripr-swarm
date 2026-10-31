@@ -1422,6 +1422,10 @@ impl PythonAdapter {
             BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
+        let mut module_attribute_writes: Vec<(
+            PathBuf,
+            Vec<module_constants::PythonModuleAttributeWrite>,
+        )> = Vec::new();
         let mut limitations = Vec::new();
         let mut parse_failure_paths = BTreeSet::new();
         // The diff-scoped limitation set describes the changed scope (the
@@ -1516,6 +1520,7 @@ impl PythonAdapter {
                 {
                     reach_conftests.insert(relative.clone());
                 }
+                module_attribute_writes.push((relative.clone(), facts.module_attribute_writes));
                 if is_test_file(relative) {
                     all_tests.extend(facts.tests);
                 } else {
@@ -1555,6 +1560,10 @@ impl PythonAdapter {
         fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
             options.root.join(path).exists()
         });
+        module_constants::apply_foreign_module_attribute_writes(
+            &mut all_tests,
+            &module_attribute_writes,
+        );
         reexports::apply_package_reexports(
             &mut all_owners,
             |file| workspace_read.sources.get(file).map(String::as_str),
