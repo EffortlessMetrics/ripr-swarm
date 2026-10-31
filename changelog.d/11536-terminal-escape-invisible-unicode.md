@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Human reports, stderr notices and one-row printer entries now spell invisible Unicode (the tag block, zero-width space, word joiner, byte-order mark, U+2028/U+2029 and the variation-selector supplement) as `\u{XXXX}` instead of printing it raw, so a hostile repository cannot hide text in `ripr check` output. ZWNJ and ZWJ stay literal for scripts and emoji that need them (#11536).

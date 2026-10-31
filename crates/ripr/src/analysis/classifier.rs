@@ -63,9 +63,10 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     )
 }
 
+#[cfg(test)]
 #[allow(
     clippy::too_many_arguments,
-    reason = "classification inputs plus explicit run-local origin context"
+    reason = "classification inputs plus origin context"
 )]
 pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     probe: &Probe,
@@ -77,6 +78,33 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
     value_origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
 ) -> Finding {
+    classify_probe_with_candidate_index_and_origins_with_direct_rows(
+        probe,
+        index,
+        workspace_complete,
+        dependency_edges,
+        candidate_index,
+        transitive_reach,
+        propagation_origin,
+        value_origins,
+    )
+    .0
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "classification inputs plus explicit run-local origin context"
+)]
+pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_direct_rows(
+    probe: &Probe,
+    index: &RustIndex,
+    workspace_complete: bool,
+    dependency_edges: Option<&DependencyEdgeContext<'_>>,
+    candidate_index: &RelatedTestCandidateIndex,
+    transitive_reach: &TransitiveReachIndex<'_>,
+    propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
+    value_origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
+) -> (Finding, Option<bool>) {
     let read_trace = super::probe_read_trace::Scope::begin(probe);
     let owner_fn = resolve_owner_function(probe, index);
     // #3296: one chain resolution per probe, shared by the relation
@@ -266,12 +294,22 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
         .map(|test| test.miss)
         .collect();
 
+    let complete_proximity_oracles_only = evidence.complete_proximity_oracles_only;
+    let direct_rows = std::mem::take(&mut evidence.direct_rows);
     let mut finding = build_finding_with_origins(&context, class, evidence, value_origins);
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
     }
+    let pre_cap_syntax_only = super::classify::pre_cap_syntax_only(&finding, index, &direct_rows);
+    if complete_proximity_oracles_only
+        && let Some(owner) = context
+            .owner_fn
+            .filter(|owner| owner.impl_context == crate::analysis::facts::FunctionImplContext::Free)
+    {
+        super::language::apply_complete_proximity_macro_limit(&mut finding, index, &owner.name);
+    }
     read_trace.finish();
-    finding
+    (finding, pre_cap_syntax_only)
 }
 
 /// Evidence line that marks a finding whose classification stopped on an

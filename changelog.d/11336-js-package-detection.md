@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A package-led root (a `package.json` with JavaScript or TypeScript source at the root or under `src/`, `test/` or `tests/`) is now analyzed with no `ripr.toml`, including beside a `Cargo.toml` or Python project. Before this, `ripr doctor` detected the language and `ripr check` then reported "not analyzed" until you hand-enabled `typescript`. A manifest alone, or tooling config files such as `eslint.config.js`, still select nothing (#11336).

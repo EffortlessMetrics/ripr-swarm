@@ -225,7 +225,9 @@ pub(crate) fn render_finding_digest_with_config(
         let missing = missing
             .strip_prefix(MISSING_DISCRIMINATOR_VALUE_PREFIX)
             .unwrap_or(missing);
-        let missing = &super::evidence_lines::plain_internal_wording(missing);
+        let missing = &super::evidence_lines::plain_default_missing(
+            &super::evidence_lines::plain_internal_wording(missing),
+        );
         // #4320: the digest renders one entry while the exhaustive form's
         // Weakness section may carry several; disclose the window the same way
         // the evidence window below does, so the reader knows more

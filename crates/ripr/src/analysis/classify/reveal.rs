@@ -320,6 +320,10 @@ pub(in crate::analysis) struct RevealOutcome {
     pub(in crate::analysis) discriminate: StageEvidence,
     pub(in crate::analysis) related: Vec<RelatedTest>,
     pub(in crate::analysis) related_total: usize,
+    /// Complete admitted assertion rows, before the display window drops any.
+    /// This licenses only a named macro limitation, never oracle credit.
+    pub(in crate::analysis) complete_proximity_oracles_only: bool,
+    pub(in crate::analysis) direct_rows: Vec<RelatedTest>,
     /// #6692: an assertion credited to this probe pinned the owner's
     /// return value through `ReturnOracleAdmission::owner_return_pin`
     /// after every reveal gate (name-only relations next to a
@@ -365,6 +369,8 @@ pub(in crate::analysis) fn reveal_outcome(
             ),
             related: Vec::new(),
             related_total: 0,
+            complete_proximity_oracles_only: false,
+            direct_rows: Vec::new(),
             owner_pin_credited: false,
         };
     }
@@ -379,9 +385,10 @@ pub(in crate::analysis) fn reveal_outcome(
         return_admission,
         arm_selector,
     );
+    let complete_proximity_oracles_only = only_proximity_oracles(&analysis.related);
     let owner_calls = owner_call_demoted_rows(probe, related_tests);
-    let (related, related_tests_total) =
-        finalize_related_tests_with_owner_calls(analysis.related, diff_touched, &owner_calls);
+    let (related, related_tests_total, direct_rows) =
+        finalize_related_tests_with_direct_rows(analysis.related, diff_touched, &owner_calls);
     let observe = build_observe_evidence(analysis.matched_any, analysis.refused_context);
     let discriminate = if analysis.refused_context && !analysis.matched_any {
         StageEvidence::new(
@@ -432,6 +439,8 @@ pub(in crate::analysis) fn reveal_outcome(
         discriminate,
         related,
         related_total: related_tests_total,
+        complete_proximity_oracles_only,
+        direct_rows,
         owner_pin_credited: analysis.owner_pin_credited,
     }
 }
@@ -5052,6 +5061,30 @@ pub(in crate::analysis) fn contains_as_whole_word(text: &str, token: &str) -> bo
     false
 }
 
+/// Every recognized oracle is proximity-only, and at least one reaching test
+/// has neither a recognized nor a refused assertion. Read admitted reveal
+/// rows, never raw assertion counts or a truncated display window.
+pub(in crate::analysis) fn only_proximity_oracles(related: &[RelatedTest]) -> bool {
+    let mut direct_seen = false;
+    let mut proximity_oracle_seen = false;
+    for related in related.iter().filter(|related| related.is_contributing()) {
+        let direct = related.relation_reason.is_some_and(|reason| {
+            !super::is_proximity_only(reason) && reason != RelationReason::OwnerNamedTest
+        });
+        if related.relation_reason.is_none() || direct {
+            if related.oracle.is_some()
+                || related.miss == Some(RelatedTestMiss::AssertionNotCredited)
+            {
+                return false;
+            }
+            direct_seen |= direct;
+        } else if related.oracle.is_some() {
+            proximity_oracle_seen = true;
+        }
+    }
+    direct_seen && proximity_oracle_seen
+}
+
 /// Dedup, rank and cap the related-test rows.
 ///
 /// #8387: tests the diff touches may now lead the capped render window ahead
@@ -5205,11 +5238,22 @@ fn retain_owner_calling_rows(
     window.splice(at..at, lifted.into_iter().take(take));
 }
 
+#[cfg(test)]
 fn finalize_related_tests_with_owner_calls(
-    mut related: Vec<RelatedTest>,
+    related: Vec<RelatedTest>,
     diff_touched: Option<&super::DiffTouchedTests>,
     owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
 ) -> (Vec<RelatedTest>, usize) {
+    let (rows, total, _) =
+        finalize_related_tests_with_direct_rows(related, diff_touched, owner_calls);
+    (rows, total)
+}
+
+fn finalize_related_tests_with_direct_rows(
+    mut related: Vec<RelatedTest>,
+    diff_touched: Option<&super::DiffTouchedTests>,
+    owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
+) -> (Vec<RelatedTest>, usize, Vec<RelatedTest>) {
     related.sort_by(|a, b| {
         a.name
             .cmp(&b.name)
@@ -5250,6 +5294,14 @@ fn finalize_related_tests_with_owner_calls(
     // Same post-dedup row unit as before; retain the total separately without
     // exposing discarded rows to downstream evidence/target selection.
     let matched_total = oracle_rows.len() + unmatched.len();
+    let mut seen_direct = std::collections::BTreeSet::new();
+    let direct_rows = oracle_rows
+        .iter()
+        .chain(&unmatched)
+        .filter(|row| row.relation_reason == Some(RelationReason::DirectOwnerCall))
+        .filter(|row| seen_direct.insert((row.name.clone(), row.file.clone(), row.line)))
+        .cloned()
+        .collect();
     // JSON/human renderers cap at eight rows. When one test's assertions would
     // fill that window, unique tests go first (#4760). Under the cap, keep
     // per-assertion rows so existing goldens and #1728 witnesses stay intact.
@@ -5262,7 +5314,7 @@ fn finalize_related_tests_with_owner_calls(
     }
     let free = RELATED_TESTS_RENDER_CAP.saturating_sub(oracle_rows.len());
     oracle_rows.extend(unmatched.into_iter().take(free));
-    (oracle_rows, matched_total)
+    (oracle_rows, matched_total, direct_rows)
 }
 
 const RELATED_TESTS_RENDER_CAP: usize = 8;
@@ -6526,6 +6578,35 @@ mod tests {
             oracle_kind: OracleKind::SmokeOnly,
             oracle_strength: OracleStrength::Smoke,
             ..related(name, line, Some(RelationReason::DirectOwnerCall))
+        }
+    }
+
+    #[test]
+    fn complete_proximity_scope_rejects_a_hidden_direct_or_refused_oracle() {
+        let mut direct = related("snapshot", 1, Some(RelationReason::DirectOwnerCall));
+        direct.oracle = None;
+        direct.miss = Some(RelatedTestMiss::NoAssertion);
+        let mut rows = vec![direct.clone()];
+        rows.extend((0..12).map(|n| {
+            related(
+                &format!("sibling{n}"),
+                n + 2,
+                Some(RelationReason::SameTestFile),
+            )
+        }));
+        assert!(super::only_proximity_oracles(&rows));
+        for hidden in [
+            related("hidden", 100, Some(RelationReason::DirectOwnerCall)),
+            RelatedTest {
+                name: "refused".to_string(),
+                miss: Some(RelatedTestMiss::AssertionNotCredited),
+                ..direct.clone()
+            },
+            related("unknown_relation", 101, None),
+        ] {
+            let mut control = rows.clone();
+            control.push(hidden);
+            assert!(!super::only_proximity_oracles(&control));
         }
     }
 
