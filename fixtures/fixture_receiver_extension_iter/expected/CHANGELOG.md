@@ -47,3 +47,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — fixture_receiver_extension_iter (5)
+
+Reason:
+RIPR-SPEC-0240: re-render on current main plain-word renderer after merging origin/main (#9766)
+
+Command:
+`cargo xtask goldens bless fixture_receiver_extension_iter --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
