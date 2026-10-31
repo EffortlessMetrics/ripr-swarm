@@ -515,7 +515,36 @@ pub(crate) fn receipt_binding_from(
     }
     let (verdict, binding_holds) = recompute_after_verdict_binding(&root, &manifest, after)?;
     if !binding_holds {
-        return Err("repair attempt after verdict binding is tampered or stale".to_string());
+        // Name what is known and the route for each caller. The after phase
+        // reaches this refusal after it recorded its verdict, so only a new
+        // attempt recovers it; a receipt retry recovers by undoing the change.
+        let store_flag = quoted_store_flag_from_identity(manifest.store.as_ref());
+        let status = format!(
+            "ripr agent status --root {}{store_flag}",
+            shell_arg(&root_display)
+        );
+        let restart = crate::app::gap_bound_repair::repair_start_command(
+            &root_display,
+            &store_flag,
+            &manifest.seam_id,
+            manifest
+                .gap_binding
+                .as_ref()
+                .map(|binding| binding.base.as_str()),
+        );
+        return Err(format!(
+            "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt.\n\
+             Causes: command output redirected into a repository file during the run (stdout or stderr, including under `target/ripr`), or a path outside `target/ripr` that changed after the after phase bound it.\n\
+             Next: `{status}` reads the attempt's state.\n\
+             From `ripr agent receipt`: remove the stray file or the later edit (keep a copy first, so you do not revert your bound repair edit) and rerun.\n\
+             From the after phase: the verdict is already recorded, so a rerun reports the attempt as already finished and only a new attempt recovers it.\n\
+             The restart refuses while your repair edit is present, because that edit already reads the gap as exposed.\n\
+             To restart: 1. Copy your edited test file(s) outside the repository and check the copy is complete before overwriting anything.\n\
+             2. Restore each file's pre-edit content yourself; a newly created test file has no pre-edit content, so move it aside or remove it. Restoring bytes can leave the repair staged, so unstage it if needed (`git restore --staged <file>`).\n\
+             3. Run `{restart}`; if it fails, put your copy back.\n\
+             4. Re-apply your edit and run the new --attempt command it prints.\n\
+             Write command output outside the repository."
+        ));
     }
     validate_trusted_head_surface(
         &root,
