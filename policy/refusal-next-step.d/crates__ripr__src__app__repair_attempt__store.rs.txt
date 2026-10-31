@@ -1,0 +1,8 @@
+crates/ripr/src/app/repair_attempt/store.rs|explicit repair attempt store `{}` is missing or unreadable under {}; it does not fall back to the default sto
+crates/ripr/src/app/repair_attempt/store.rs|repair attempt --store requires a non-empty path
+crates/ripr/src/app/repair_attempt/store.rs|repair attempt belongs to store `{}` ({:?}), not `{}` ({:?}); an attempt ID from one store cannot resolve thro
+crates/ripr/src/app/repair_attempt/store.rs|repair attempt store schema must be {REPAIR_ATTEMPT_STORE_SCHEMA_VERSION}, got {}
+crates/ripr/src/app/repair_attempt/store.rs|repair attempt store {} is not a directory
+crates/ripr/src/app/repair_attempt/store.rs|repair attempt store {} is not a portable repository-relative locator
+crates/ripr/src/app/repair_attempt/store.rs|repair attempt store {} is not contained in repository root {}
+crates/ripr/src/app/repair_attempt/store.rs|repair attempt store {} is not contained in repository root {}; traversal components are refused
