@@ -19,7 +19,8 @@
 //! `monkey`, any string containing one of those (or `spy`, `setitem`,
 //! `delitem`) outside a docstring, any name that reaches a patcher indirectly
 //! (`getattr`, `getfixturevalue`, `__import__`, `__self__`, `builtins`,
-//! `partial`, `setitem`, `delitem`, `spy`, `context`, `syspath_prepend`, ..),
+//! `partial`; and `setitem`, `delitem`, `spy`, `context`, `syspath_prepend` or an
+//! f-string when the file also names a patcher),
 //! and any allowed call whose arguments name the callee or owner, contain a
 //! backslash, an f-string, adjacent literals, `*args` / `**kwargs` or
 //! `autospec`, disqualifies.
@@ -37,7 +38,7 @@ use rustpython_parser::{
 const PATCH_MARKERS: [&str; 5] = ["patch", "mock", "Mock", "setattr", "delattr"];
 
 /// Names that reach or apply a patcher without containing a marker.
-const INDIRECT_NAMES: [&str; 13] = [
+const INDIRECT_NAMES: [&str; 8] = [
     "getattr",
     "__getattribute__",
     "getfixturevalue",
@@ -46,12 +47,12 @@ const INDIRECT_NAMES: [&str; 13] = [
     "builtins",
     "__self__",
     "partial",
-    "setitem",
-    "delitem",
-    "spy",
-    "context",
-    "syspath_prepend",
 ];
+
+/// Ordinary names that only reach a patcher when the file also names one
+/// (`monkeypatch.context()`, `mocker.spy`). Without any patcher in the source
+/// they are plain identifiers, so they do not disqualify on their own.
+const CONTEXTUAL_NAMES: [&str; 5] = ["setitem", "delitem", "spy", "context", "syspath_prepend"];
 
 /// Constructors that build a mock object without patching a binding.
 const MOCK_OBJECT_NAMES: [&str; 7] = [
@@ -106,6 +107,11 @@ pub(super) fn may_patch_names(source: &str, names: &[&str], module: &[Stmt]) -> 
         }
     }
     let regions = Regions::of(&tokens);
+    // An f-string hides expressions inside one token. It can only hide a
+    // patcher when the source names one, or an indirect route to one.
+    let mentions_patcher = string_names_patcher(source)
+        || source.contains("syspath_prepend")
+        || INDIRECT_NAMES.iter().any(|name| source.contains(name));
     let bindings = Bindings {
         source,
         module,
@@ -119,10 +125,13 @@ pub(super) fn may_patch_names(source: &str, names: &[&str], module: &[Stmt]) -> 
             // the ASCII import/receiver proof for a different token spelling.
             Tok::Name { name } if !name.is_ascii() => return true,
             Tok::Name { name } if INDIRECT_NAMES.contains(&name.as_str()) => return true,
+            Tok::Name { name } if mentions_patcher && CONTEXTUAL_NAMES.contains(&name.as_str()) => {
+                return true;
+            }
             Tok::String { value, kind, .. } => {
                 // Their expressions are hidden inside a string token, including
                 // fixture calls and normalized references to tracked receivers.
-                if kind.is_any_fstring() {
+                if kind.is_any_fstring() && mentions_patcher {
                     return true;
                 }
                 let docstring = is_statement_start(&tokens, index)
