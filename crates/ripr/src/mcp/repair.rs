@@ -1192,7 +1192,7 @@ pub(super) mod tests {
     /// by-hand route carries the verify route.
     #[test]
     fn refusal_next_maps_each_reason_to_one_route() -> Result<(), String> {
-        let expect = |reason: &str, class: &str, kind: &str, verify: bool| {
+        let check_route = |reason: &str, class: &str, kind: &str, verify: bool| {
             let next = refusal_next(reason, class, "gap:x");
             if next["kind"] != kind
                 || next["reason"] != reason
@@ -1202,38 +1202,38 @@ pub(super) mod tests {
             }
             Ok(())
         };
-        expect("seam_already_gripped", "exposed", "nothing_to_do", false)?;
-        expect(
+        check_route("seam_already_gripped", "exposed", "nothing_to_do", false)?;
+        check_route(
             "seam_already_gripped",
             "weakly_exposed",
             "write_test_by_hand",
             true,
         )?;
-        expect(
+        check_route(
             "seam_not_found",
             "infection_unknown",
             "write_test_by_hand",
             true,
         )?;
-        expect(
+        check_route(
             "seam_gate_refused",
             "weakly_exposed",
             "write_test_by_hand",
             true,
         )?;
-        expect(
+        check_route(
             "seam_inventory_truncated",
             "weakly_exposed",
             "change_policy",
             false,
         )?;
-        expect(
+        check_route(
             "worktree_source_not_committed",
             "weakly_exposed",
             "commit_then_refresh",
             false,
         )?;
-        expect(
+        check_route(
             "something_new",
             "weakly_exposed",
             "await_producer_fact",
