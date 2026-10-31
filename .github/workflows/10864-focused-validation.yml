@@ -23,16 +23,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 5ea6355531dd4c54120dcaf78e018c0d3927bea6
+          ref: b357156874a7898d7d0c6a112149aad2394f0054
           fetch-depth: 0
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591
         with:
           components: rustfmt, clippy
-      - name: Reproduce setup cause and validate exact candidate
+      - name: Validate exact repaired candidate
         env:
           GH_TOKEN: ${{ github.token }}
-          CARGO_TARGET_DIR: ${{ runner.temp }}/ripr-10864-target-v2
+          CARGO_TARGET_DIR: ${{ runner.temp }}/ripr-10864-target-v3
         run: |
           python - <<'PY'
           import base64, hashlib, json, os, urllib.request
@@ -46,22 +46,23 @@ jobs:
               if len(data)>2_000_000:
                   raise RuntimeError('bounded response exceeded')
               return json.loads(data)
-          sha='29446cf44c687a211a85dca24b03e3ec2be9b9d5'
+          sha='faa8533779ddeedffbd54b0231d4b35e19b04219'
           blob=get('git/blobs/'+sha)
           data=base64.b64decode(blob['content'])
           assert hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()==sha
+          assert hashlib.sha256(data).hexdigest()=='2bb69a4d01a03b86b75d563b0fd29c91d55c14458fd2d60aa4b9decd56a608a6'
           pr=get('pulls/11331')
-          assert pr['head']['sha']=='5ea6355531dd4c54120dcaf78e018c0d3927bea6'
+          assert pr['head']['sha']=='b357156874a7898d7d0c6a112149aad2394f0054'
           assert pr['state']=='open' and pr['draft']
           (Path(os.environ['RUNNER_TEMP'])/'ripr-10864-pr-body.json').write_text(json.dumps({'body':pr['body']}))
           del token
-          exec(compile(data,'exact-10864-focused-proof-v2','exec'),{'__name__':'__main__'})
+          exec(compile(data,'exact-10864-focused-proof-v3','exec'),{'__name__':'__main__'})
           PY
       - name: Retain actual command logs and identities
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: ripr-10864-focused-proof-v2-${{ github.run_id }}
-          path: ${{ runner.temp }}/ripr-10864-proof-v2/
+          name: ripr-10864-focused-proof-v3-${{ github.run_id }}
+          path: ${{ runner.temp }}/ripr-10864-proof-v3/
           retention-days: 7
           if-no-files-found: warn
