@@ -209,7 +209,7 @@ fn finding_to_code_lens(
         end: Position { line, character: 0 },
     };
     let title = format!(
-        "Refresh saved-workspace analysis · {}",
+        "{} · refresh saved workspace",
         related_test_lens_title(finding, age)
     );
     CodeLens {
@@ -248,11 +248,14 @@ fn finding_matches_uri(finding: &Finding, uri: &Uri, root: &Path) -> bool {
 ///
 /// - Preview tier (`language_status == Some(Preview)`): prefix `preview:`,
 ///   use softened phrasing — the count may be incomplete for preview adapters.
+/// - `NoStaticPath`: `ripr: no test reaches this change (PLAIN) · static, cached`
+///   regardless of file/name-token overlap in `related_tests` (count is not shown
+///   as a positive related-test grip).
 /// - N > 0 + discriminating class (`Exposed`):
-///   `ripr: N related tests (exposed) · static, cached`
+///   `ripr: N related test(s) (exposed) · static, cached`
 /// - N > 0 + non-discriminating class (anything except `Exposed`):
-///   `ripr: N related tests, no static discriminator (PLAIN) · static, cached`
-/// - N == 0: `ripr: no related tests found (PLAIN) · static, cached`
+///   `ripr: N related test(s), no static discriminator (PLAIN) · static, cached`
+/// - N == 0 (non-`NoStaticPath`): `ripr: no related tests found (PLAIN) · static, cached`
 ///   where `PLAIN` is the same plain vocabulary word (`exposed`, `weak`,
 ///   `unrevealed`, `no path`, `unknown`) the `ripr check` summary uses, not
 ///   the schema value (`as_str` stays in JSON / `human-full` / `explain`).
@@ -268,26 +271,39 @@ pub(super) fn related_test_lens_title(finding: &Finding, age: Option<Duration>) 
     let class_label = finding.class.plain_label();
     let count = finding.related_tests.len();
 
+    let related_tests_phrase = |n: usize| {
+        if n == 1 {
+            "1 related test".to_string()
+        } else {
+            format!("{n} related tests")
+        }
+    };
+
     let body = if is_preview {
         // Preview tier: count may be incomplete; soften claim.
-        if count == 0 {
+        if matches!(finding.class, ExposureClass::NoStaticPath) {
+            format!("preview: no test reaches this change ({class_label}) · static, cached")
+        } else if count == 0 {
             format!("preview: no related tests found ({class_label}) · static, cached")
         } else {
-            format!("preview: {count} related tests (preview, {class_label}) · static, cached")
+            format!(
+                "preview: {} (preview, {class_label}) · static, cached",
+                related_tests_phrase(count)
+            )
         }
+    } else if matches!(finding.class, ExposureClass::NoStaticPath) {
+        format!("ripr: no test reaches this change ({class_label}) · static, cached")
     } else {
-        match (count, &finding.class) {
-            (0, _) => {
-                format!("ripr: no related tests found ({class_label}) · static, cached")
-            }
-            (n, ExposureClass::Exposed) => {
-                format!("ripr: {n} related tests (exposed) · static, cached")
-            }
-            (n, _) => {
-                format!(
-                    "ripr: {n} related tests, no static discriminator ({class_label}) · static, cached"
-                )
-            }
+        match count {
+            0 => format!("ripr: no related tests found ({class_label}) · static, cached"),
+            n if finding.class == ExposureClass::Exposed => format!(
+                "ripr: {} (exposed) · static, cached",
+                related_tests_phrase(n)
+            ),
+            n => format!(
+                "ripr: {}, no static discriminator ({class_label}) · static, cached",
+                related_tests_phrase(n)
+            ),
         }
     };
 
@@ -647,8 +663,8 @@ mod tests {
                 .get("title")
                 .and_then(serde_json::Value::as_str)
                 .ok_or("missing wire command title")?;
-            if !title.starts_with("Refresh saved-workspace analysis · ")
-                || !title.contains("2 related tests")
+            if !title.contains("2 related tests")
+                || !title.ends_with("· refresh saved workspace")
                 || !title.contains("exposed")
                 || !title.contains("static, cached")
                 || preview != title.contains("preview")
@@ -766,9 +782,9 @@ mod tests {
             .ok_or("expected command in lens")?
             .title
             .clone();
-        if !title.contains("no related tests found") {
+        if !title.contains("no test reaches this change") {
             return Err(format!(
-                "title must say 'no related tests found', got: {title}"
+                "title must say no test reaches this change, got: {title}"
             ));
         }
         if !title.contains("no path") {
@@ -783,6 +799,50 @@ mod tests {
             return Err(format!(
                 "title must not use forbidden static-language vocabulary, got: {title}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn related_test_lens_title_no_static_path_never_claims_related_test_grip() -> Result<(), String>
+    {
+        for count in [0_usize, 1, 3] {
+            let finding = make_finding("src/lib.rs", 5, ExposureClass::NoStaticPath, count, None);
+            let title = related_test_lens_title(&finding, None);
+            if !title.contains("no test reaches this change") {
+                return Err(format!(
+                    "NoStaticPath count={count} must not imply reach, got: {title}"
+                ));
+            }
+            if title.contains("related test") {
+                return Err(format!(
+                    "NoStaticPath count={count} must not cite related-test count, got: {title}"
+                ));
+            }
+            if !title.contains("no path") {
+                return Err(format!(
+                    "NoStaticPath must include plain class label, got: {title}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn related_test_lens_title_pluralizes_related_test_count() -> Result<(), String> {
+        let one = related_test_lens_title(
+            &make_finding("src/lib.rs", 1, ExposureClass::Exposed, 1, None),
+            None,
+        );
+        if !one.contains("1 related test (exposed)") || one.contains("1 related tests") {
+            return Err(format!("expected singular related test label, got: {one}"));
+        }
+        let many = related_test_lens_title(
+            &make_finding("src/lib.rs", 1, ExposureClass::Exposed, 2, None),
+            None,
+        );
+        if !many.contains("2 related tests (exposed)") {
+            return Err(format!("expected plural related tests label, got: {many}"));
         }
         Ok(())
     }
