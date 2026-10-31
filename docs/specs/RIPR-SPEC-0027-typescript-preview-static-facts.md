@@ -426,6 +426,15 @@ Probes the adapter must generate (syntax-first):
 - mock-interaction probes for changed call surfaces against identifiers
   resolved through a syntactic `vi.fn()` / `jest.fn()` initializer
 
+A changed line whose old and new text differ only in a trailing `//` comment or
+in trailing whitespace emits no probe (#10706): the statement runs identically,
+so no gap id or discriminator can embed the comment text. The executable text
+of both lines, semicolon included, must be equal and both lines must split into
+code and comment reliably; a changed token, a dropped semicolon, a changed
+indentation, a `//` inside a string, a line inside a template literal, block
+comment, line-continued string or JSX text that crosses a line break, and a
+file that does not parse all keep the probe.
+
 Added lines that are blank, comment-only, or punctuation-only (`}`, `});`,
 `)`) produce no probe. Neither do lines inside a top-level ambient
 declaration found in the parsed syntax tree (`declare function`,
