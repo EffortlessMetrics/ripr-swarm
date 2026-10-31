@@ -2,7 +2,7 @@
 
 use super::*;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptProbeShape {
     pub(crate) family: ProbeFamily,
     pub(crate) delta: DeltaKind,
@@ -324,27 +324,34 @@ pub(crate) fn typescript_boundary_discriminator_with_shape(
     // path for it would credit a `null` argument through a boundary that
     // never reads a nullish side (#4213 thread PRRT_kwDOSiSx0c6mUnSc).
     let (expression, nullish) = normalize_ts_comparison_operands(&expression);
-    for operator in COMPARISON_OPERATORS {
-        if let Some(idx) = expression.find(operator) {
-            let left_raw = expression.get(..idx)?.trim();
-            let right_raw = expression.get(idx + operator.len()..)?.trim();
-            if operand_looks_like_call(left_raw) || operand_looks_like_call(right_raw) {
-                return None;
-            }
-            // `typeof input === "function"` tests the KIND of `input`, so
-            // `input == "function"` would name a value the guard never
-            // compares (#11196). Name the kind test or name nothing.
-            if let Some(kind_test) = typeof_kind_test(&expression, idx, operator) {
-                return kind_test.map(|boundary| (boundary, false));
-            }
-            let left = comparison_operand_before(&expression, idx)?;
-            let right = comparison_operand_after(&expression, idx + operator.len())?;
-            if is_simple_typescript_discriminator_operand(&left)
-                && is_simple_typescript_discriminator_operand(&right)
-            {
-                return Some((format!("{left} == {right}"), nullish));
-            }
-        }
+    // Read the comparison in code spans only: an operator inside a string
+    // literal (`kind === "a>=b"`) is never the boundary (#11256). Which
+    // comparison of a compound condition changed is chosen from the old and
+    // new line by `typescript_changed_boundary_text` (#10399), not here.
+    let operators = comparison_operators_in_code(&expression);
+    let (idx, operator) = COMPARISON_OPERATORS.iter().find_map(|operator| {
+        operators
+            .iter()
+            .find(|(_, found)| found == operator)
+            .copied()
+    })?;
+    let left_raw = expression.get(..idx)?.trim();
+    let right_raw = expression.get(idx + operator.len()..)?.trim();
+    if operand_looks_like_call(left_raw) || operand_looks_like_call(right_raw) {
+        return None;
+    }
+    // `typeof input === "function"` tests the KIND of `input`, so
+    // `input == "function"` would name a value the guard never
+    // compares (#11196). Name the kind test or name nothing.
+    if let Some(kind_test) = typeof_kind_test(&expression, idx, operator) {
+        return kind_test.map(|boundary| (boundary, false));
+    }
+    let left = comparison_operand_before(&expression, idx)?;
+    let right = comparison_operand_after(&expression, idx + operator.len())?;
+    if is_simple_typescript_discriminator_operand(&left)
+        && is_simple_typescript_discriminator_operand(&right)
+    {
+        return Some((format!("{left} == {right}"), nullish));
     }
     None
 }
@@ -1058,8 +1065,96 @@ fn normalize_ts_comparison_operands(expression: &str) -> (String, bool) {
     (out, saw_nullish)
 }
 
+/// Every comparison operator in the code spans of `expression`, as a byte
+/// offset and the operator. String literals are skipped, so `"a>=b"` holds no
+/// comparison; `=>` is an arrow, not a comparison.
+fn comparison_operators_in_code(expression: &str) -> Vec<(usize, &'static str)> {
+    let mut found = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut skip_until = 0;
+    for (idx, ch) in expression.char_indices() {
+        if idx < skip_until {
+            continue;
+        }
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        if matches!(ch, '"' | '\'' | '`') {
+            quote = Some(ch);
+            continue;
+        }
+        let rest = expression.get(idx..).unwrap_or("");
+        if rest.starts_with("=>") {
+            skip_until = idx + 2;
+            continue;
+        }
+        if let Some(operator) = COMPARISON_OPERATORS
+            .iter()
+            .find(|operator| rest.starts_with(**operator))
+        {
+            found.push((idx, *operator));
+            skip_until = idx + operator.len();
+        }
+    }
+    found
+}
+
+/// The whole quoted string literal that begins `text`, escapes honored.
+fn leading_string_literal(text: &str) -> Option<&str> {
+    let quote = text.chars().next().filter(|ch| matches!(ch, '"' | '\''))?;
+    let mut escaped = false;
+    for (idx, ch) in text.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == quote {
+            return text.get(..idx + 1);
+        }
+    }
+    None
+}
+
+/// The whole quoted string literal that ends `text`.
+fn trailing_string_literal(text: &str) -> Option<&str> {
+    let quote = text
+        .chars()
+        .next_back()
+        .filter(|ch| matches!(ch, '"' | '\''))?;
+    let body = text.get(..text.len() - 1)?;
+    let mut open = None;
+    let mut search_end = body.len();
+    while let Some(idx) = body.get(..search_end)?.rfind(quote) {
+        let backslashes = body
+            .get(..idx)?
+            .chars()
+            .rev()
+            .take_while(|ch| *ch == '\\')
+            .count();
+        if backslashes % 2 == 0 {
+            open = Some(idx);
+            break;
+        }
+        search_end = idx;
+    }
+    text.get(open?..)
+}
+
 fn comparison_operand_before(expression: &str, operator_start: usize) -> Option<String> {
     let left = expression.get(..operator_start)?.trim_end();
+    // A quoted literal is one operand whatever it holds; splitting it at an
+    // embedded `-` or space would name a truncated value (#11256).
+    if let Some(literal) = trailing_string_literal(left) {
+        return Some(literal.to_string());
+    }
     let operand = left
         .rsplit(|ch: char| {
             ch.is_whitespace()
@@ -1074,6 +1169,9 @@ fn comparison_operand_before(expression: &str, operator_start: usize) -> Option<
 
 fn comparison_operand_after(expression: &str, operator_end: usize) -> Option<String> {
     let right = expression.get(operator_end..)?.trim_start();
+    if right.starts_with(['"', '\'']) {
+        return leading_string_literal(right).map(str::to_string);
+    }
     let operand = right
         .split(|ch: char| {
             ch.is_whitespace()

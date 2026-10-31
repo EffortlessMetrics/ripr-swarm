@@ -45,5 +45,7 @@ Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
     - ./src/lib.rs:6 (weak); kind: match_arm; reason: No strong discriminator was detected
     - ./src/lib.rs:6 (weak); kind: return_value; reason: No strong discriminator was detected
+  Hidden classes:
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

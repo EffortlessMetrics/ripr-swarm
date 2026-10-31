@@ -5,6 +5,7 @@
 //! the call, and nothing else in the test can write or shadow it.
 
 use super::boundary::literal_value;
+use super::module_constants::mentions_identifier;
 use super::source_facts::parse_module_result;
 use super::{PythonTest, static_limits::is_simple_python_identifier};
 use rustpython_parser::ast::{self, Expr, ExprContext, Fold, Ranged, Stmt};
@@ -174,4 +175,67 @@ impl LocalUses<'_> {
             |asname| asname.as_str() == self.name,
         )
     }
+}
+
+/// The literal a bare name reads when it is a scalar constant of the test's
+/// own module (`TH = 50` above the tests), or None. The constant must be bound
+/// once at module scope with no `global` rebind or attribute write (the
+/// module's stable-name rule), the test must not bind the name itself, and
+/// neither the test nor its module may run code that could replace it
+/// (#10707): an autouse fixture, `pytestmark` or setup hook, or a
+/// `monkeypatch`, `patch`, `setattr`, `globals`, `vars`, `exec` or `eval` in the
+/// body. A workspace file that writes the test module's constant
+/// (`conftest.py` doing `module.TH = 49`, `setattr`, or `monkeypatch.setattr`)
+/// also refuses credit (#11424). The parsed body must also never bind the
+/// name in any scope (store, comprehension or loop target, lambda or nested
+/// parameter, import, match). A test file that is also changed in the diff
+/// gets no credit, since its constant may carry the edit.
+pub(super) fn test_module_constant(test: &PythonTest, name: &str) -> Option<String> {
+    const REPLACERS: [&str; 7] = [
+        "monkeypatch",
+        "patch",
+        "setattr",
+        "globals",
+        "vars",
+        "exec",
+        "eval",
+    ];
+    let rebinding = &test.constant_rebinding;
+    if !is_simple_python_identifier(name)
+        || rebinding.rebinds(name)
+        || rebinding.module_opaque
+        || rebinding.implicit_reach
+        || rebinding.edited_in_diff
+        || rebinding.assigns_attribute(name)
+        || REPLACERS
+            .iter()
+            .any(|word| mentions_identifier(&test.body_text, word))
+    {
+        return None;
+    }
+    if !body_never_binds(test, name) {
+        return None;
+    }
+    rebinding
+        .module_constants
+        .iter()
+        .find(|constant| constant.name == name)
+        .map(|constant| constant.value.clone())
+}
+
+/// Whether the parsed test body binds `name` nowhere, in any scope.
+fn body_never_binds(test: &PythonTest, name: &str) -> bool {
+    let Ok(module) = parse_module_result(&test.file, &test.body_text) else {
+        return false;
+    };
+    let ast::Mod::Module(module) = &module else {
+        return false;
+    };
+    // No store is the binding, so any store of the name is refused.
+    let mut uses = LocalUses {
+        name,
+        binding_start: usize::MAX,
+        binding_seen: false,
+    };
+    module_fold(&mut uses, &module.body).is_ok()
 }

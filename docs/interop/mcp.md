@@ -237,8 +237,16 @@ mean identical input. `ripr check --committed` selects committed input;
 edits outside MCP, or inside MCP with the opt-in `source: "worktree"`
 (RIPR-SPEC-0211, #7357: repair cards and readiness only with an
 established producer-custody agreement, withheld with the cause
-otherwise). The existing response `scope` note discloses detected excluded
-edits. The call blocks until the attempt reaches a terminal state and reports it: `completed` with the new
+otherwise). A committed refresh whose findings and checkout Rust files were not
+shown to agree (a consumed file edited, staged, deleted or changed during the
+refresh, or any uncommitted or untracked Rust source or test file, including
+one outside the diff) likewise withholds repair cards (`incomplete_inventory`)
+and turns repair-ready items not ready (`worktree_source_not_committed`; an
+item already not ready keeps its own reason) and says why, because its
+findings read committed content while the cards would read the checkout;
+commit the uncommitted Rust source or test files (untracked ones included) and
+refresh again. A dirty non-Rust file does not withhold, and gitignored Rust files are not claimed. The
+existing response `scope` note discloses detected excluded edits. The call blocks until the attempt reaches a terminal state and reports it: `completed` with the new
 snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the
 canonical item identities, and each item's evidence digest — equivalent
 roots at equivalent inputs share one portable identity, while the concrete
@@ -452,8 +460,8 @@ returns `repair_packet_ready: false` with the typed ineligibility reason and
 `attempt: null` — no attempt is created and no field is guessed. The reasons
 the shared seam-level repair gate behind `ripr repair` contributes are
 `seam_already_gripped` (the seam's existing tests already grip it),
-`seam_gate_refused` (route not ready, cross-language limits or policy
-omission), `seam_ambiguous` (several seams name the item), `seam_not_found`
+`seam_gate_refused` (route not ready, cross-language limits, policy
+omission or an uncommitted inline test target), `seam_ambiguous` (several seams name the item), `seam_not_found`
 (no classified seam names it) and `seam_inventory_truncated` (the repo-wide
 seam inventory is truncated by the seam limit, or its completeness could not
 be established, so `ripr repair` refuses every item; widen the budget with
@@ -668,6 +676,14 @@ only it is the mapping, not an observed `resources/read` response.
 | `workspace_ambiguous` | `-32603` | reserved | reserved for a later slice |
 | `static_limitation` | `-32603` | reserved | reserved for a later slice |
 | `cancelled` | `-32603` | reserved | reserved for a later slice |
+
+`analysis_failed` is also the code for a contained internal handler panic in
+any tool, including a glue panic in `ripr_refresh` (#11116). It names the tool and is retryable:
+retry the tool, then `ripr_refresh`; if it repeats, restart `ripr mcp` and
+report the stderr panic message. A glue panic in `resources/read` or
+`tools/list` answers a `-32603` JSON-RPC error with `error.data.code`
+`analysis_failed` and the session keeps serving. The `initialize` handshake
+runs inside the SDK before the service loop and is not covered.
 
 Genuine invariant failures are different: the server could not build or
 serialize a result it should always be able to build (`serialize workspace
