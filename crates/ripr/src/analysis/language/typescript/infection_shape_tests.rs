@@ -201,3 +201,19 @@ fn only_a_real_declaration_head_makes_a_default_parameter_edit() {
         assert_eq!(shape(old, new), Some("default_parameter"), "{old}");
     }
 }
+
+#[test]
+fn a_block_comment_hiding_a_double_slash_is_undecidable_not_comment_only() {
+    // #11723: the line-comment cut stops at the `//` inside `/* a // b */`, so
+    // both lines would compare equal and hide a real edit. Fail closed.
+    assert_eq!(
+        shape("x /* a // b */ y", "x /* a // b */ z"),
+        None,
+        "a block comment line is not a comment-only no-op"
+    );
+    // Positive control: the same edit without a block comment is still read.
+    assert_eq!(
+        shape("  return price;", "  return price; // fallback"),
+        Some("comment_only")
+    );
+}
