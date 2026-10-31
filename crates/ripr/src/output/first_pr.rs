@@ -857,9 +857,10 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
         }
         // `doctor` detects TypeScript or JavaScript from a `package.json` or
         // shallow source files, but the no-config rule above enables the
-        // adapter only from a `tsconfig.json`/`jsconfig.json` marker or
-        // TypeScript below `src`/`tests` (`package.json` alone is deliberately
-        // not a marker). The root is the right one in that case, so name the
+        // adapter only from a `tsconfig.json`/`jsconfig.json` marker, or from a
+        // `package.json` beside JavaScript or TypeScript source at the root or
+        // in `src`/`test`/`tests` (`package.json` alone is deliberately not a
+        // marker). The root is the right one in that case, so name the
         // missing marker instead of calling it a wrong root and looping back
         // to `doctor` (#10713). A root `doctor` also detects as Python keeps
         // `wrong_root` (its `package.json` is likely tooling), and Rust below
@@ -881,7 +882,7 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
                 "blocked_artifact",
                 "typescript_project_marker_missing",
                 format!(
-                    "The first-pr root `{}` looks like a {kind} project, but first-pr needs a `tsconfig.json` or `jsconfig.json` at the root, or TypeScript files under `src/` or `tests/`; a `package.json` alone is not enough. This root is not necessarily wrong: add a `{marker}` (an empty `{{}}` is enough) and rerun `ripr first-pr`.",
+                    "The first-pr root `{}` looks like a {kind} project, but first-pr needs a `tsconfig.json` or `jsconfig.json` at the root, or a `package.json` with JavaScript or TypeScript files at the root or under `src/`, `test/` or `tests/`; a `package.json` alone is not enough. This root is not necessarily wrong: add a `{marker}` (an empty `{{}}` is enough) and rerun `ripr first-pr`.",
                     options.root
                 ),
                 None,

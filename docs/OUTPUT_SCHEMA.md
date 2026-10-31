@@ -14388,7 +14388,8 @@ Field contract:
 - A root without `Cargo.toml` that `ripr doctor` detects as TypeScript or
   JavaScript (for example a `package.json` plus `.ts` files), not also as
   Python, and that has no `tsconfig.json` or `jsconfig.json` at the root and
-  no TypeScript under `src/` or `tests/` (`package.json` alone is not enough)
+  no `package.json` with JavaScript or TypeScript source at the root or under
+  `src/`, `test/` or `tests/` (`package.json` alone is not enough)
   reports `blocked_artifact` with
   `selected.reason_code = "typescript_project_marker_missing"` and no next
   command, not `wrong_root`. Its message says to add `tsconfig.json`
