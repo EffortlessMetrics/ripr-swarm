@@ -1274,10 +1274,6 @@ mod tests {
         }
     }
 
-    fn write(path: &Path, text: &str) -> Result<(), String> {
-        std::fs::write(path, text).map_err(|err| format!("write {} failed: {err}", path.display()))
-    }
-
     #[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
     #[test]
     fn init_plan_preserves_detected_preview_languages() -> Result<(), String> {
