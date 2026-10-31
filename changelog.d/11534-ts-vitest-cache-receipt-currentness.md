@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A TypeScript or JavaScript repair receipt stays current when the project's Vitest run writes its git-ignored caches (`node_modules/.vite`, `node_modules/.vitest-cache`) after `ripr continue`. `ripr agent status` no longer reports `repair_receipt_stale` for those files, because the receipt is static evidence they cannot change. The edit cage still refuses the same caches written before the after phase, and any other ignored `node_modules` write still stales the receipt (#11534, #4519).
