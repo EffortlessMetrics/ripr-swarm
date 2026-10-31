@@ -8032,6 +8032,8 @@ mod tests {
         let command = recommended_gap_repair_command(&record, &ledger, &options)
             .ok_or("validator-accepted TypeScript record must recommend the start")?;
         let base = crate::agent::loop_commands::shell_arg("HEAD~1");
+        #[cfg(unix)]
+        assert_eq!(base, "'HEAD~1'");
         assert!(
             command.starts_with(&format!(
                 "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base {base} --root "

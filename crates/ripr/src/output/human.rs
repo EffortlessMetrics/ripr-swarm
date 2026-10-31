@@ -2697,6 +2697,8 @@ mod tests {
         // `--base` is quoted for the host shell (single quotes on Unix,
         // double quotes on the Windows console).
         let base = crate::agent::loop_commands::shell_arg("HEAD~1");
+        #[cfg(unix)]
+        assert_eq!(base, "'HEAD~1'");
         assert!(
             with_route.contains(&format!(
                 "Recommended follow-through (start the repair):\n  ripr agent repair --gap-id gap:typescript:typescript_preview:abcd1234 --base {base} --phase before"

@@ -195,6 +195,22 @@ fn is_normal_relative_path(path: &Path) -> bool {
 mod tests {
     use super::*;
 
+    /// #11444: a refusal names the changed file with `/` separators on every
+    /// host (a Windows path arrives with `\`).
+    #[test]
+    fn refusal_reasons_name_paths_with_forward_slashes() {
+        let path = || PathBuf::from("src\\lib.rs");
+        for refusal in [
+            CustodyRefusal::FindingsUnobserved(path()),
+            CustodyRefusal::InventoryUnobserved(path()),
+            CustodyRefusal::Moved(path()),
+        ] {
+            let text = refusal.describe();
+            assert!(text.contains("`src/lib.rs`"), "{text}");
+            assert!(!text.contains('\\'), "{text}");
+        }
+    }
+
     #[test]
     fn raw_encoding_and_conflicting_observations_remain_distinct() -> Result<(), String> {
         let path = Path::new("src/lib.rs");

@@ -2952,6 +2952,10 @@ mod tests {
         // double quotes on the Windows console).
         let refspec = shell_arg(&base_fetch_refspec("main"));
         assert!(
+            refspec.contains("+refs/heads/main:refs/remotes/origin/main"),
+            "{refspec}"
+        );
+        assert!(
             message.contains(&format!("fetch --unshallow origin {refspec}")),
             "{message}"
         );
