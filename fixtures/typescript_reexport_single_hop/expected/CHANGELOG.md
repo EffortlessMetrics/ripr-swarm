@@ -529,3 +529,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_single_hop (30)
+
+Reason:
+RIPR-SPEC-0118 / #10692: observed-assertion label replaces Discriminator in the default check digest; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_reexport_single_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

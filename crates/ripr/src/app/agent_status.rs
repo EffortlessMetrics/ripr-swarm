@@ -1019,7 +1019,7 @@ fn finished_attempt_warnings(
                                     )
                                 ),
                                 None => format!(
-                                    ". If gap `{}` still has its gap open, start a new attempt with `{}`",
+                                    ". If `{}` still has its gap open, start a new attempt with `{}`",
                                     attempt.seam_id,
                                     new_repair_attempt_command(
                                         root_display,
@@ -2058,7 +2058,7 @@ fn legacy_next_command(
             warnings.push(AgentStatusWarning {
                 kind: "pilot_found_no_repair_target".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
-                message: "the last complete `ripr pilot` run offered no repair attempt: its top gap is not eligible for `ripr agent repair`, and running pilot again unchanged ranks the same seams. Read `target/ripr/pilot/pilot-summary.md` for that gap, add a test for it by hand in the crate that owns it, then rerun `ripr pilot` to rank the gaps against that test".to_string(),
+                message: "the last complete `ripr pilot` run offered no repair attempt: its top gap is not eligible for `ripr agent repair`, and running pilot again unchanged ranks the same gaps. Read `target/ripr/pilot/pilot-summary.md` for that gap, add a test for it by hand in the crate that owns it, then rerun `ripr pilot` to rank the gaps against that test".to_string(),
             });
             return None;
         }

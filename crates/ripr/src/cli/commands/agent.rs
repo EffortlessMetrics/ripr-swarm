@@ -654,7 +654,7 @@ pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
         &root.to_string_lossy(),
     ));
     let pilot = format!(
-        "`ripr pilot --root {root}` to list current gap IDs with their exact `ripr agent repair` commands."
+        "`ripr pilot --root {root}` to list current repair IDs with their exact `ripr agent repair` commands."
     );
     if seam_id.starts_with("probe:") {
         format!(
@@ -708,7 +708,7 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
             Err(crate::cli::CommandError::Decision(format!(
-                "agent repair seam_id `{seam_id}` names gap `{resolved}`, which is not repair-eligible: {reason}; no repair attempt was started. Run `ripr pilot --root {root_arg}` to list current gap IDs"
+                "agent repair: repair ID `{seam_id}` resolves to gap `{resolved}`, which is not repair-eligible: {reason}; no repair attempt was started. Run `ripr pilot --root {root_arg}` to list current repair IDs"
             )))
         }
         Ok(RepairSubjectOutcome::Ambiguous(seam_ids)) => {
@@ -720,7 +720,7 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                 .collect();
             listed.sort_unstable();
             let mut message = format!(
-                "agent repair seam_id `{seam_id}` names {} seams; select one explicitly: {}",
+                "agent repair seam_id `{seam_id}` names {} gaps; select one explicitly: {}",
                 seam_ids.len(),
                 listed.join(", ")
             );
@@ -739,7 +739,7 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
             let root_arg = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
-            let list = format!("`ripr pilot --root {root_arg}` to list current gap IDs");
+            let list = format!("`ripr pilot --root {root_arg}` to list current repair IDs");
             // The shared resolver just ran and returned `Unknown`, so the
             // packet surface's `ripr repair <finding-id>` recovery route
             // would repeat the refusal that failed; name the stale state in

@@ -665,7 +665,7 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
         // The auto selector needs a named seam: `ripr repair` alone would
         // not start one, so it is not printed as the start.
         Ok(RepairStartDecision::Action(..)) => format!(
-            "`ripr repair` cannot choose a start by itself right now; run `ripr pilot --root {root_arg}` to list current gap IDs and name one"
+            "`ripr repair` cannot choose a start by itself right now; run `ripr pilot --root {root_arg}` to list current repair IDs and name one"
         ),
         Err(error) => format!(
             "could not verify a repair start ({error}); rerun `ripr check --root {root_arg}` to re-read the current gaps"

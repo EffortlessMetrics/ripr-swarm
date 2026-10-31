@@ -19,7 +19,7 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Gap ID (for scripts): gap:python:rates/table.py:<module>:predicate_boundary:predicate:rates=6
   Changed behavior: RATES = 6
-  Discriminator (observed, advisory): Related Python test reaches `<module>` with an `exact_value`
+  Assertion (observed, advisory): Related Python test reaches `<module>` with an `exact_value`
     oracle. Static evidence suggests the changed behavior is observed under an exact-value
     discriminator
   Related test: tests/test_table.py:4 test_silver_price

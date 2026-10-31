@@ -33,7 +33,7 @@ From a Rust `ripr check` finding, `ripr agent stub --at FILE:LINE` (the location
 the finding prints) gives a ready-to-run test for that gap in one step. Stub
 generation supports Rust files only; a Python or TypeScript path exits `3`.
 
-`--seam-id` takes a gap ID from `ripr pilot --root .` or `ripr agent status`,
+`--seam-id` takes a repair ID from `ripr pilot --root .` or `ripr agent status`,
 and `--phase before` also accepts a `ripr check` finding ID (`probe:...` or
 `repo-probe:...`), a canonical gap ID, or a `file:line` location that names
 one repair-eligible gap.

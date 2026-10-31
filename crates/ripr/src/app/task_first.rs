@@ -1880,7 +1880,7 @@ fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) 
         shell_arg(&bound_root(&root.to_string_lossy()))
     );
     format!(
-        "repair item `{item}` names gap `{seam_id}`, which is not ready for an automatic repair: {reason}; no repair attempt was started. Run {list} to list current gap IDs"
+        "repair item `{item}` names gap `{seam_id}`, which is not ready for an automatic repair: {reason}; no repair attempt was started. Run {list} to list current repair IDs"
     )
 }
 
@@ -2055,10 +2055,10 @@ pub(crate) fn unknown_repair_item_reason(root: Option<&Path>, item: &str) -> Str
     }
     let list = match root {
         Some(root) => format!(
-            "`ripr pilot --root {}` to list current gap IDs",
+            "`ripr pilot --root {}` to list current repair IDs",
             shell_arg(&bound_root(&root.to_string_lossy()))
         ),
-        None => "`ripr pilot` to list current gap IDs".to_string(),
+        None => "`ripr pilot` to list current repair IDs".to_string(),
     };
     if item.starts_with("probe:") || item.starts_with("repo-probe:") {
         return format!(

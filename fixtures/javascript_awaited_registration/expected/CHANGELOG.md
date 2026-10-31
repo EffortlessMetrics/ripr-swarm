@@ -219,3 +219,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — javascript_awaited_registration (19)
+
+Reason:
+RIPR-SPEC-0118 / #10692: observed-assertion label replaces Discriminator in the default check digest; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless javascript_awaited_registration --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

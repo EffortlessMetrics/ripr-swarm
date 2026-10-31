@@ -556,7 +556,7 @@ pub(crate) fn agent_card_plain_lines(
     }
     // The raw gap id is a copy-paste handle, not a title: it sits below the
     // actionable lines, next to the machine-readable route that takes it.
-    lines.push(format!("  Gap ID: {}", card.subject.seam_id));
+    lines.push(format!("  Repair ID: {}", card.subject.seam_id));
     lines.push("  This is a suggestion; ripr has not run or verified anything.".to_string());
     lines.push(format!(
         "  Machine-readable details (JSON): {packet_command}"
@@ -1135,7 +1135,7 @@ mod tests {
 
     /// #10693: the default brief is short, plain, and projects the same typed
     /// fields; the ledger rows and internal vocabulary are `--verbose` only.
-    /// The title is a plain label; the raw gap id is demoted to a `Gap ID:` row.
+    /// The title is a plain label; the raw gap id is demoted to a `Repair ID:` row.
     #[test]
     fn plain_brief_is_short_and_free_of_ledger_vocabulary() -> Result<(), String> {
         let mut card = prose_test_card();
@@ -1146,7 +1146,7 @@ mod tests {
         let text = lines.join("\n");
         for needle in [
             "Repair brief for this gap",
-            "  Gap ID: ",
+            "  Repair ID: ",
             "  Files you may change: tests/t.rs",
             "  Do not change: src/lib.rs",
             "  Done when: ",

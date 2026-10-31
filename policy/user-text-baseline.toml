@@ -7,19 +7,9 @@
 schema_version = "1.0"
 
 [[ceiling]]
-surface = "agent-card-unknown-id"
-term = "seam"
-max_lines = 1
-
-[[ceiling]]
-surface = "agent-repair-refusal"
-term = "seam"
-max_lines = 1
-
-[[ceiling]]
 surface = "check"
 term = "discriminator"
-max_lines = 4
+max_lines = 1
 
 [[ceiling]]
 surface = "golden-human"
@@ -34,7 +24,7 @@ max_lines = 3
 [[ceiling]]
 surface = "golden-human"
 term = "discriminator"
-max_lines = 3274
+max_lines = 638
 
 [[ceiling]]
 surface = "golden-human"
@@ -44,7 +34,7 @@ max_lines = 1
 [[ceiling]]
 surface = "golden-human"
 term = "seam"
-max_lines = 595
+max_lines = 11
 
 [[ceiling]]
 surface = "golden-human"
@@ -52,76 +42,21 @@ term = "state token"
 max_lines = 74
 
 [[ceiling]]
-surface = "help-agent"
-term = "seam"
-max_lines = 8
-
-[[ceiling]]
-surface = "help-all"
-term = "probe"
-max_lines = 2
-
-[[ceiling]]
 surface = "help-all"
 term = "seam"
-max_lines = 3
-
-[[ceiling]]
-surface = "help-check"
-term = "seam"
-max_lines = 1
-
-[[ceiling]]
-surface = "help-check"
-term = "state token"
-max_lines = 1
-
-[[ceiling]]
-surface = "help-doctor"
-term = "probe"
 max_lines = 1
 
 [[ceiling]]
 surface = "help-doctor"
 term = "state token"
-max_lines = 1
-
-[[ceiling]]
-surface = "help-explain"
-term = "probe"
 max_lines = 1
 
 [[ceiling]]
 surface = "help-pilot"
 term = "seam"
-max_lines = 10
-
-[[ceiling]]
-surface = "help-repair"
-term = "seam"
-max_lines = 10
-
-[[ceiling]]
-surface = "help-top"
-term = "seam"
-max_lines = 1
+max_lines = 4
 
 [[ceiling]]
 surface = "pilot"
 term = "seam"
 max_lines = 1
-
-[[ceiling]]
-surface = "repair-commit-first"
-term = "seam"
-max_lines = 1
-
-[[ceiling]]
-surface = "repair-refusal"
-term = "seam"
-max_lines = 1
-
-[[ceiling]]
-surface = "status"
-term = "seam"
-max_lines = 2
