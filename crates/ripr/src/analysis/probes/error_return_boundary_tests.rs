@@ -314,8 +314,8 @@ fn twin_check_reads_every_shape_in_a_start_group() {
 /// Deep chains that share a start byte must not make the twin check
 /// quadratic. Before #6954, 100k shapes at one start took about a minute,
 /// and two 20k chains side by side ran past ten minutes; a linear pass takes
-/// milliseconds. The check compares depth 1k against 2k (cache-resident, so hosted-runner
-/// memory effects do not masquerade as growth, #11238) on the same runner
+/// milliseconds. The check compares depth 1k against 2k (moved from 10k/20k after hosted
+/// runs measured about 3.4x; cause not established, #11238) on the same runner
 /// (linear doubles, quadratic quadruples), with equal repetition counts and
 /// measured batches above the helper's timing floor.
 #[test]
