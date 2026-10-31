@@ -49,7 +49,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-hostile-glob-double.json",
-    "sha256": "8a1f2b2d6c13fa16a50fed89aa53698a436c31229d4631aa42126d9879e302d1",
+    "sha256": "3c8d5f4105a19a08aabe3a91c8caaeda30188f92b90b5f18e38749e78f0c8f59",
     "provenance": "producer"
   }
 }

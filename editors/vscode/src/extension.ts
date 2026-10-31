@@ -12,6 +12,7 @@ import {
   DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS,
   ExtensionLifecycleCoordinator,
 } from './lifecycleCoordinator';
+import { workspaceHasAnalyzableProject } from './workspaceHelpers';
 
 let controller: RiprClientController | undefined;
 let lifecycleCoordinator = new ExtensionLifecycleCoordinator();
@@ -78,6 +79,22 @@ export async function pauseRemovedWorkspaceRootOnce(
     await lifecycleCoordinator.pause(currentController);
     currentController.completeWorkspaceRootRemoval();
   }
+}
+
+const NO_ANALYZABLE_PROJECT_LOG =
+  'ripr: no analyzable project marker in the workspace (Cargo.toml, ripr.toml, or a Python project file); staying idle.';
+
+/** Activation-only gate (#5315): skip server download/start when nothing is analyzable. */
+export async function startServerOnActivationIfAnalyzable(
+  currentController: Pick<RiprClientController, 'start'> | undefined,
+  output: vscode.LogOutputChannel,
+  folders: readonly vscode.WorkspaceFolder[] = vscode.workspace.workspaceFolders ?? []
+): Promise<void> {
+  if (!(await workspaceHasAnalyzableProject(folders))) {
+    output.appendLine(NO_ANALYZABLE_PROJECT_LOG);
+    return;
+  }
+  await startServerOnce(currentController);
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -347,7 +364,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   try {
-    await startServerOnce(controller);
+    await startServerOnActivationIfAnalyzable(controller, output);
   } catch (error) {
     // A handshake failure is already surfaced by the controller (status bar
     // and a warning), and rejecting activation would only add a generic

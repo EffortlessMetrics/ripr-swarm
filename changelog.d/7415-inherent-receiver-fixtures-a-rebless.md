@@ -1,2 +1,0 @@
-<!-- section: Internal / CI -->
-- Re-blessed the `inherent_receiver_*` golden fixtures of the first #7415 slice (`async_function`, `foreign_helper`, `free_helper_identity`, `helper_scope_shadow`, `macro_discard`) against current main: `macro_discard`'s `ignored_operand` finding moves `weakly_exposed` -> `reachable_unrevealed` (a demoted decoy never credits an oracle; less credit, never more) and the rest differ only in next-step and summary wording from #10886/#10887 (#7415).

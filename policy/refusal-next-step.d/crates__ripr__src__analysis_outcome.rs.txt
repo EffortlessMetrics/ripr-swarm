@@ -1,0 +1,14 @@
+crates/ripr/src/analysis_outcome.rs|analysis limitation affected_items must be positive
+crates/ripr/src/analysis_outcome.rs|analysis limitation path has no portable segments: {path}
+crates/ripr/src/analysis_outcome.rs|analysis limitation path must be repository-relative: {path}
+crates/ripr/src/analysis_outcome.rs|analysis outcome NoChangedLines requires zero changed-line, candidate, probe, and finding counts
+crates/ripr/src/analysis_outcome.rs|analysis outcome NoScope requires every count to be zero
+crates/ripr/src/analysis_outcome.rs|analysis outcome {kind:?} cannot carry incomplete-analysis limitations
+crates/ripr/src/analysis_outcome.rs|analysis outcome {kind:?} requires at least one typed limitation
+crates/ripr/src/analysis_outcome.rs|complete_no_findings requires a behavioral candidate or probe subject
+crates/ripr/src/analysis_outcome.rs|complete_no_findings requires finding_count = 0
+crates/ripr/src/analysis_outcome.rs|complete_with_findings requires finding_count > 0
+crates/ripr/src/analysis_outcome.rs|format analysis outcome digest failed: {error}
+crates/ripr/src/analysis_outcome.rs|no_behavioral_candidates requires changed lines and zero candidate, probe, and finding counts (changed_line_co
+crates/ripr/src/analysis_outcome.rs|serialize analysis outcome for digest failed: {error}
+crates/ripr/src/analysis_outcome.rs|{field} must not be empty
